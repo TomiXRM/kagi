@@ -22,14 +22,17 @@ pub enum BottomTab {
     Terminal,
     /// Commit-activity line chart + contributor ranking.
     Activity,
+    /// Shared staging lists in the compact allocation.
+    Changes,
 }
 
 impl BottomTab {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            BottomTab::OperationLog => "Operation Log",
-            BottomTab::Terminal => "Terminal",
-            BottomTab::Activity => "Activity",
+            BottomTab::OperationLog => super::i18n::Msg::BottomTabOperationLog.t(),
+            BottomTab::Terminal => super::i18n::Msg::ToolbarTerminal.t(),
+            BottomTab::Activity => super::i18n::Msg::BottomTabActivity.t(),
+            BottomTab::Changes => super::i18n::Msg::BottomTabChanges.t(),
         }
     }
 }
@@ -77,6 +80,8 @@ impl gpui::Render for BranchDragGhost {
         // drag and the sidebar drag (kept consistent).
         let (badge_bg, badge_border, badge_text) = theme::badge_style(theme::theme().color_branch);
         div()
+            // Active drag views are separate GPUI roots, not descendants of Kit Root.
+            .font(kagi_ui_core::fonts::ui_font())
             .px_1()
             .rounded_sm()
             .bg(gpui::rgba(badge_bg))
@@ -85,6 +90,11 @@ impl gpui::Render for BranchDragGhost {
             .text_sm()
             .text_color(rgb(badge_text))
             .child(self.name.clone())
+            .map(|ghost| {
+                #[cfg(feature = "gui-e2e")]
+                let ghost = ghost.child(kagi_ui_core::fonts::e2e::probe("branch-drag-ghost"));
+                ghost
+            })
     }
 }
 
@@ -125,6 +135,16 @@ pub enum ToastKind {
     Sync,
 }
 
+/// A shared toast retains a distinct close-button handle for every host window.
+pub type ToastCloseFocus =
+    std::rc::Rc<std::cell::RefCell<Vec<(gpui::WindowId, gpui::FocusHandle)>>>;
+
+/// Actions remain inert until the user activates the notification's Button.
+#[derive(Clone, Debug)]
+pub enum ToastAction {
+    OpenRepository(std::path::PathBuf),
+}
+
 /// One snackbar entry, stacked bottom-right above the status bar.
 ///
 /// Rendered by `render_toasts`; pruned by a 500ms ticker task that runs only
@@ -138,8 +158,14 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub message: SharedString,
+    pub action: Option<ToastAction>,
     /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,
+    /// Hover pause began here; elapsed hover time is excluded from the timer.
+    pub paused_at: Option<std::time::Instant>,
+    /// Per-window rendered Button handles, retained until removal repairs focus.
+    pub close_focus: ToastCloseFocus,
+    pub action_focus: Option<ToastCloseFocus>,
     /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
     /// button): `t` is when the exit animation started. The toast keeps
     /// rendering during the exit so the slide-out is visible, then a one-shot
@@ -148,17 +174,19 @@ pub struct Toast {
 }
 
 impl Toast {
-    /// Auto-dismiss lifetime by kind (errors stay longer).
+    /// Success/info/sync previews expire after four seconds of unhovered time.
+    /// Errors require explicit dismissal, giving readers an unlimited interval.
     fn lifetime(&self) -> Duration {
-        match self.kind {
-            ToastKind::Error => Duration::from_secs(8),
-            _ => Duration::from_secs(4),
-        }
+        crate::ui::toast_stack::TOAST_ROUTINE_LIFETIME
     }
 
     /// The toast has been visible long enough to start sliding out (and is not
     /// already doing so).
     pub(crate) fn should_start_exit(&self) -> bool {
-        self.dismissing.is_none() && self.born.elapsed() >= self.lifetime()
+        self.kind != ToastKind::Error
+            && self.action.is_none()
+            && self.paused_at.is_none()
+            && self.dismissing.is_none()
+            && self.born.elapsed() >= self.lifetime()
     }
 }

@@ -4,29 +4,40 @@ use std::borrow::Cow;
 
 use crate::theme::{SyntaxPalette, Theme};
 
+/// macOS standard accent palette, graphite then red/orange/yellow/green/blue/purple/pink.
+pub(crate) const SYSTEM_ACCENTS: [u32; 8] = [
+    0x8e8e93, 0xff3b30, 0xff9500, 0xffcc00, 0x34c759, 0x007aff, 0xaf52de, 0xff2d55,
+];
+
+/// Identifying input/unchecked-checkbox boundary: 3:1 on white and panel grey.
+pub const INPUT_BORDER: u32 = 0x8e8e8e;
+
 pub const APPLE_LIGHT: Theme = Theme {
     slug: Cow::Borrowed("apple-light"),
     name: Cow::Borrowed("Apple Light"),
     dark: false,
 
-    // systemBackground / systemGray6 / systemGray5 ramp.
+    // Opaque chrome tuned against the same Mac's Finder window (ADR-0125).
     bg_base: 0xffffff,
-    bg_row_alt: 0xf4f5f5,
-    surface: 0xe5e5ea,  // systemGray5
+    bg_row_alt: 0xf5f5f5,
+    surface: 0xe5e5e5,
     selected: 0xd9edff, // systemBlue 15% on white
-    panel: 0xf9f9f9,    // systemGray6
-    sidebar: 0xf2f2f7,  // systemGray6 (increased contrast)
+    inactive_selected: 0xd3d3d3,
+    panel: 0xf7f7f7,
+    sidebar: 0xf7f7f7,
     modal: 0xffffff,
     modal_overlay: 0x000000,
 
-    text_main: 0x000000,  // label
-    text_sub: 0x6c6c70,   // systemGray (increased contrast)
-    text_muted: 0xaeaeb2, // systemGray2
-    text_label: 0x8a8a8e, // secondaryLabel composited on white
+    text_main: 0x000000,
+    text_sub: 0x606060,
+    // Readable metadata/labels, including on the darker hover surface.
+    text_muted: 0x666666,
+    text_label: 0x606060,
 
     // Ref chips render solid with white text → vivid Default (light) set.
     color_head: 0xff2d55,   // pink
     color_branch: 0x0088ff, // blue
+    link: 0x0066cc,         // readable body-link blue on white; ref/Primary stays vivid
     selection_tint: 0x0088ff,
     color_remote: 0x34c759, // green
     color_tag: 0xff8d28,    // orange

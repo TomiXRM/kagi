@@ -65,6 +65,22 @@ remote snapshot が成功した read に見えてはならない。spawn 後の 
 - **`reaped` が指すもの**: 直接の child のみ。子孫 process と、child が既に
   他所（remote host、ネットワーク）で始めた作業は含まない。
 
+### Fixture の停止確認（#1094、PR #1088 の macOS CI）
+
+deadline / 子孫の pipe / cleanup のテストは、private fixture が公開した PID と
+kernel の start identity を保持し、**その子孫**が停止したことを確認する。
+leader を reap した後の numeric pgid の `group_alive` は fixture identity ではなく、
+製品の writer lease を安全側に保つための保守的な存在 probe である。
+実 CI で子孫 identity の停止 assertion は通った後、この追加の numeric group
+消滅 assertion だけが失敗したため、後者を除去した。終了後の番号に属する
+process を探索・signal して CI を通したり、停止 guard を短縮したりはしない。
+
+製品の group signal は引き続き所有 Child が未 reap の間だけ行う。
+fixture の RAII cleanup、同名の別 fixture の生存、deadline の `Unknown`、
+未完了 I/O を成功扱いしない consumer 回帰は保持する。CI の残存 group が
+何だったかはログから確定できず、PID reuse や platform の reap timing を
+実測した原因としては主張しない。
+
 ### 呼び出し側の写像
 
 | 経路 | `ProcStop` の扱い | `ProcIo` の扱い |

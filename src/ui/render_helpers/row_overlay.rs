@@ -7,7 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, AnyElement, App, ListState};
+use gpui::{div, px, AnyElement, App, Window};
+use kagi_ui_core::variable_list::VariableListState;
 
 use crate::ui::diff_split::SplitDiffRow;
 use crate::ui::diff_view::DiffRow;
@@ -31,7 +32,7 @@ pub(crate) trait RowOverlay {
     /// `row` is expanded: its expansion follows the list row showing it.
     fn expanded(&self, row: usize) -> bool;
     /// What goes under a list row whose expanded rows are `rows`.
-    fn expansion(&self, rows: &[usize], cx: &mut App) -> AnyElement;
+    fn expansion(&self, rows: &[usize], window: &mut Window, cx: &mut App) -> AnyElement;
 }
 
 /// The diff rows each base list row shows: one unified; a pair's two split.
@@ -84,7 +85,7 @@ pub(crate) fn items(layout: &[[Option<usize>; 2]], expanded: &dyn Fn(usize) -> b
 /// `after`: splice the item under its base row in or out (or re-measure it),
 /// so the scroll position survives instead of the count check resetting it.
 pub(crate) fn splice_expansion(
-    list: &ListState,
+    list: &VariableListState,
     layout: &[[Option<usize>; 2]],
     row: usize,
     before: &dyn Fn(usize) -> bool,
@@ -190,7 +191,7 @@ mod tests {
         let none = |_: usize| false;
         let three = |row: usize| row == 3;
         let two_and_three = |row: usize| row == 2 || row == 3;
-        let list = ListState::new(LAYOUT.len(), gpui::ListAlignment::Top, px(100.));
+        let list = VariableListState::new(LAYOUT.len(), px(100.));
         let steps: [(&dyn Fn(usize) -> bool, &dyn Fn(usize) -> bool, usize); 4] = [
             (&none, &three, 3),          // open: one item appears
             (&three, &two_and_three, 2), // same pair: re-measured, not added

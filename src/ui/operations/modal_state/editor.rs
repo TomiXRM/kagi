@@ -20,6 +20,12 @@ impl KagiApp {
             _ => None,
         }
     }
+    pub(crate) fn editor_dirty_guard_modal_mut(&mut self) -> Option<&mut EditorDirtyGuardModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::EditorDirtyGuard(modal)) => Some(modal),
+            _ => None,
+        }
+    }
     #[inline]
     pub fn set_editor_dirty_guard_modal(&mut self, m: EditorDirtyGuardModal) {
         self.replace_modal_from_user(ActiveModal::EditorDirtyGuard(m));
@@ -28,6 +34,15 @@ impl KagiApp {
     pub fn clear_editor_dirty_guard_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::EditorDirtyGuard(_))) {
             self.active_modal = None;
+        }
+    }
+    pub(crate) fn take_editor_dirty_guard_modal(&mut self) -> Option<EditorDirtyGuardModal> {
+        if !matches!(self.active_modal, Some(ActiveModal::EditorDirtyGuard(_))) {
+            return None;
+        }
+        match self.active_modal.take() {
+            Some(ActiveModal::EditorDirtyGuard(modal)) => Some(modal),
+            _ => unreachable!("the dirty guard variant was checked"),
         }
     }
     #[inline]

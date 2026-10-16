@@ -46,6 +46,11 @@ impl ChecklistNote {
             ),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 #[cfg(test)]

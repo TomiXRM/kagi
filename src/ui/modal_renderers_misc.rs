@@ -2,13 +2,14 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::button_style::{modal_button, modal_button_without_tab_stop, ModalButtonKind};
+use super::button_style::{modal_button, modal_button_with_tab_stop, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{
-    modal_body, modal_card, modal_card_sized, modal_scroll_body, MODAL_W_MD, MODAL_W_SM,
+    modal_body, modal_card, modal_card_sized, modal_list_max_h, modal_scroll_body,
+    MODAL_LIST_ROW_H, MODAL_W_MD, MODAL_W_SM,
 };
-use super::modals::{AppNotice, EditorDirtyGuardModal};
+use super::modals::AppNotice;
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
@@ -18,6 +19,81 @@ use gpui_component::IconName;
 // Smart Commit modal renderer (T-COMMIT-016, ADR-0044)
 // ──────────────────────────────────────────────────────────────
 
+/// One privacy disclosure for Generate and both Settings hosts.
+pub(super) fn smart_consent_card(
+    confirm: super::dialog_a11y::DialogHandler,
+    cancel: super::dialog_a11y::DialogHandler,
+    cx: &gpui::App,
+) -> gpui::Div {
+    let mut lines = div().flex().flex_col().gap_1();
+    for (index, line) in smart_commit::CONSENT_LINES.into_iter().enumerate() {
+        let text = line.t();
+        let row = div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .text_sm()
+            .child(
+                div()
+                    .text_color(rgb(current_theme().color_branch))
+                    .child("•"),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .text_color(rgb(current_theme().text_main))
+                    .child(text),
+            );
+        #[cfg(feature = "gui-e2e")]
+        let row = super::e2e::measure_control(format!("smart-consent-line-{index}-{text}"), row);
+        #[cfg(not(feature = "gui-e2e"))]
+        let _ = index;
+        lines = lines.child(row);
+    }
+    modal_card(MODAL_W_MD)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            Msg::SmartConsentTitle.t().into(),
+            Some((
+                ModalIcon::Path("icons/sparkles.svg"),
+                current_theme().color_success,
+            )),
+        )))
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().text_sub))
+                .child(Msg::SmartConsentIntro.t()),
+        )
+        .child(lines)
+        .child(
+            div().flex_shrink_0().child(
+                super::button_style::modal_button_row()
+                    .child(super::e2e::measure_control(
+                        "smart-consent-cancel",
+                        modal_button(
+                            "smart-consent-cancel",
+                            Msg::PlanCancel.t(),
+                            ModalButtonKind::Cancel,
+                            None,
+                            move |_, window, cx| cancel(window, cx),
+                            cx,
+                        ),
+                    ))
+                    .child(super::e2e::measure_control(
+                        "smart-consent-confirm",
+                        modal_button(
+                            "smart-consent-confirm",
+                            Msg::SmartConsentEnable.t(),
+                            ModalButtonKind::Primary,
+                            None,
+                            move |_, window, cx| confirm(window, cx),
+                            cx,
+                        ),
+                    )),
+            ),
+        )
+}
+
 /// Render the Smart Commit consent / model-picker overlay.
 ///
 /// * `Consent` — the first-time opt-in dialog carrying the four mandated
@@ -26,151 +102,154 @@ use gpui_component::IconName;
 /// * `ModelPicker` — choose one installed model; the choice is persisted.
 pub(crate) fn render_smart_commit_modal(
     modal: smart_commit::SmartCommitModal,
+    app: &KagiApp,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    let card =
-        match modal {
-            smart_commit::SmartCommitModal::Consent => {
-                let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.cancel_smart_modal(cx);
-                });
-                let confirm = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.confirm_smart_consent(cx);
-                });
-                let mut lines_col = div().flex().flex_col().gap_1();
-                for line in smart_commit::CONSENT_LINES {
-                    lines_col = lines_col.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_1()
-                            .text_sm()
-                            .child(
-                                div()
-                                    .text_color(rgb(current_theme().color_branch))
-                                    .child(SharedString::from("•")),
-                            )
-                            .child(
-                                div()
-                                    .text_color(rgb(current_theme().text_main))
-                                    .child(SharedString::from(line.t())),
-                            ),
-                    );
-                }
-                // The short intro and four fixed `CONSENT_LINES` are bounded;
-                // this card needs no scrolling body (#454).
-                modal_card(MODAL_W_MD)
-                    .child(div().flex_shrink_0().child(render_modal_title_row(
-                        SharedString::from(Msg::SmartConsentTitle.t()),
-                        Some((
-                            ModalIcon::Path("icons/sparkles.svg"),
-                            current_theme().color_success,
-                        )),
-                    )))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_sub))
-                            .child(SharedString::from(Msg::SmartConsentIntro.t())),
-                    )
-                    .child(lines_col)
-                    .child(
-                        div().flex_shrink_0().child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .justify_end()
-                                .child(modal_button(
-                                    "smart-consent-cancel",
-                                    Msg::PlanCancel.t(),
-                                    ModalButtonKind::Cancel,
-                                    None,
-                                    cancel,
-                                    cx,
-                                ))
-                                .child(modal_button(
-                                    "smart-consent-confirm",
-                                    Msg::SmartConsentEnable.t(),
-                                    ModalButtonKind::Primary,
-                                    None,
-                                    confirm,
-                                    cx,
-                                )),
-                        ),
-                    )
+    let card = match modal {
+        smart_commit::SmartCommitModal::Consent => {
+            let owner = cx.entity().downgrade();
+            let cancel: super::dialog_a11y::DialogHandler = std::rc::Rc::new(move |_, cx| {
+                let _ = owner.update(cx, |app, cx| app.cancel_smart_modal(cx));
+            });
+            let owner = cx.entity().downgrade();
+            let confirm: super::dialog_a11y::DialogHandler = std::rc::Rc::new(move |window, cx| {
+                let _ = owner.update(cx, |app, cx| app.confirm_smart_consent(window, cx));
+            });
+            smart_consent_card(confirm, cancel, cx)
+        }
+        smart_commit::SmartCommitModal::ModelPicker { models } => {
+            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.cancel_smart_modal(cx);
+            });
+            let state = &app.smart_model_focus;
+            let scroll = super::keyboard_nav::RowScroll::List(state.scroll.clone());
+            let rows = std::rc::Rc::new(state.focus.borrow_mut().rows(
+                state.keys.clone(),
+                &scroll,
+                app.root_focus.as_ref(),
+                window,
+                cx,
+            ));
+            if state.focus_first.replace(false) {
+                state.focus.borrow().focus_first(&scroll, window, cx);
             }
-            smart_commit::SmartCommitModal::ModelPicker { models } => {
-                let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.cancel_smart_modal(cx);
-                });
-                let mut list = div().flex().flex_col().gap_1();
-                for (i, m) in models.iter().enumerate() {
-                    let model_name = m.clone();
-                    let pick = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                        this.choose_smart_model(model_name.clone(), window, cx);
+            let selected = state
+                .focus
+                .borrow()
+                .focused(window)
+                .and_then(|key| models.iter().position(|model| model == key));
+            let size = models.len();
+            let window_active = app.window_active;
+            let entity = cx.entity();
+            let wrapper = rows.list(super::list_a11y::list_box(
+                "smart-model-list",
+                div().id("smart-model-list").w_full().min_h_0(),
+                Msg::SmartModelTitle.t(),
+            ));
+            let list = gpui::list(state.scroll.clone(), move |i, _window, _cx| {
+                let model = models[i].clone();
+                let entity = entity.clone();
+                rows.row(
+                    i,
+                    super::list_a11y::list_option(
+                        "smart-model-list",
+                        div().id(("smart-model", i)),
+                        i,
+                        size,
+                        model.clone(),
+                        selected == Some(i),
+                    ),
+                )
+                .w_full()
+                .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                .flex()
+                .items_center()
+                .px(super::keyboard_nav::inset(12.))
+                .py_0()
+                .rounded_sm()
+                .bg(if selected == Some(i) {
+                    current_theme().selected_for_window(window_active)
+                } else {
+                    rgb(current_theme().surface).into()
+                })
+                .text_xs()
+                .line_height(
+                    theme::scaled_px(MODAL_LIST_ROW_H) - px(2. * super::keyboard_nav::RING),
+                )
+                .text_color(
+                    if current_theme().selection_uses_on_accent(selected == Some(i), window_active)
+                    {
+                        current_theme().selection_foreground(window_active)
+                    } else {
+                        rgb(current_theme().text_main).into()
+                    },
+                )
+                .on_click(move |_, window, cx| {
+                    entity.update(cx, |app, cx| {
+                        app.choose_smart_model(model.clone(), window, cx)
                     });
-                    list = list.child(
-                        div()
-                            .id(("smart-model", i))
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(current_theme().surface))
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .on_click(pick)
-                            .hover(|s| s.bg(rgb(current_theme().selected)).cursor_pointer())
-                            .child(SharedString::from(m.clone())),
-                    );
-                }
-                // The installed-model list is unbounded and nothing inside it
-                // scrolls, so the body is this card's single scroll region (#454).
-                // Its rows stay `flex_shrink_0` or flex compresses them instead of
-                // handing the overflow to the scroller (T027).
-                modal_card(MODAL_W_SM)
-                    .child(div().flex_shrink_0().child(render_modal_title_row(
-                        SharedString::from(Msg::SmartModelTitle.t()),
-                        Some((
-                            ModalIcon::Path("icons/sparkles.svg"),
-                            current_theme().color_branch,
-                        )),
-                    )))
-                    .child(
-                        modal_scroll_body()
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_sm()
-                                    .text_color(rgb(current_theme().text_sub))
-                                    .child(Msg::SmartModelRemembered.t()),
-                            )
-                            .child(list.flex_shrink_0()),
-                    )
-                    .child(div().flex_shrink_0().child(
-                        div().flex().flex_row().justify_end().child(modal_button(
+                })
+                .cursor_pointer()
+                .when(selected != Some(i), |row| {
+                    row.hover(|s| s.bg(rgb(current_theme().surface)))
+                })
+                .child(
+                    div()
+                        .w_full()
+                        .truncate()
+                        .child(SharedString::from(models[i].clone())),
+                )
+                .into_any_element()
+            })
+            .w_full()
+            .h(modal_list_max_h(size));
+            modal_card(MODAL_W_SM)
+                .child(div().flex_shrink_0().child(render_modal_title_row(
+                    SharedString::from(Msg::SmartModelTitle.t()),
+                    Some((
+                        ModalIcon::Path("icons/sparkles.svg"),
+                        current_theme().color_branch,
+                    )),
+                )))
+                .child(
+                    modal_body()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(rgb(current_theme().text_sub))
+                                .child(Msg::SmartModelRemembered.t()),
+                        )
+                        .child(wrapper.child(list)),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .child(super::button_style::modal_button_row().child(modal_button(
                             "smart-model-cancel",
                             Msg::PlanCancel.t(),
                             ModalButtonKind::Cancel,
                             None,
                             cancel,
                             cx,
-                        )),
-                    ))
-            }
-        };
+                        ))),
+                )
+        }
+    };
 
     modal_overlay(card)
 }
 
 /// Auto-update detail modal (ADR-0082, T-AUTOUPDATE-001).
 ///
-/// Shows current → latest, the chosen asset, release notes, and — Phase 1 — a
-/// "Update now" button that downloads + verifies + installs + relaunches. Phase-0
-/// fallbacks ("Open release page", "Skip this version") are always present.
+/// Shows current → latest, the chosen asset and release notes. Installation
+/// becomes an explicit Restart action while the installed update is pending.
 pub(crate) fn render_update_modal(
     plan: kagi_domain::update::UpdatePlan,
     installing: bool,
+    restart_pending: bool,
     status: Option<SharedString>,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
@@ -298,6 +377,11 @@ pub(crate) fn render_update_modal(
         );
     }
 
+    let status = if restart_pending {
+        Some(SharedString::from(Msg::UpdateRestartReady.t()))
+    } else {
+        status
+    };
     if let Some(s) = status {
         body = body.child(super::e2e::measure_control(
             "update/status",
@@ -309,19 +393,23 @@ pub(crate) fn render_update_modal(
         ));
     }
 
-    // Installation is the only primary action; release notes and skip are quieter.
-    let actions = div()
-        .flex()
-        .flex_row()
+    // Restart replaces installation after success; skip cannot undo an installed update.
+    let actions = super::button_style::modal_button_row()
         .items_center()
-        .gap_2()
-        .child(modal_button(
+        .child(super::e2e::measure_control(
             "update-skip",
-            Msg::UpdateSkipVersion.t(),
-            ModalButtonKind::Secondary,
-            None,
-            skip,
-            cx,
+            modal_button(
+                "update-skip",
+                Msg::UpdateSkipVersion.t(),
+                ModalButtonKind::Secondary,
+                if installing {
+                    Some(SharedString::from(Msg::UpdateInstallingReason.t()))
+                } else {
+                    restart_pending.then(|| SharedString::from(Msg::UpdateRestartReady.t()))
+                },
+                skip,
+                cx,
+            ),
         ))
         .child(modal_button(
             "update-page",
@@ -332,25 +420,39 @@ pub(crate) fn render_update_modal(
             cx,
         ))
         .child(div().flex_grow(1.))
-        .child(modal_button(
+        .child(super::e2e::measure_control(
             "update-cancel",
-            Msg::UpdateLater.t(),
-            ModalButtonKind::Cancel,
-            None,
-            cancel,
-            cx,
+            modal_button(
+                "update-cancel",
+                if installing {
+                    Msg::UpdateHideContinuing.t()
+                } else if restart_pending {
+                    Msg::EditorWorkspaceCancel.t()
+                } else {
+                    Msg::UpdateLater.t()
+                },
+                ModalButtonKind::Cancel,
+                None,
+                cancel,
+                cx,
+            ),
         ))
-        .child(modal_button(
+        .child(super::e2e::measure_control(
             "update-now",
-            if installing {
-                Msg::UpdateInstalling.t()
-            } else {
-                Msg::UpdateNow.t()
-            },
-            ModalButtonKind::Primary,
-            installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
-            update_now,
-            cx,
+            modal_button(
+                "update-now",
+                if installing {
+                    Msg::UpdateInstalling.t()
+                } else if restart_pending {
+                    Msg::UpdateRestart.t()
+                } else {
+                    Msg::UpdateNow.t()
+                },
+                ModalButtonKind::Primary,
+                installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
+                update_now,
+                cx,
+            ),
         ));
     let card = card.child(body).child(div().flex_shrink_0().child(actions));
 
@@ -365,9 +467,17 @@ pub(crate) fn render_update_modal(
 /// workspace while its buffer is dirty. Enter/Esc come free from the
 /// existing `confirm_active_modal`/`cancel_active_modal` root plumbing.
 pub(crate) fn render_editor_dirty_guard_modal(
-    _modal: EditorDirtyGuardModal,
+    host_close: bool,
+    count: usize,
+    saving: bool,
+    restart_waiting: bool,
+    restart_message: Msg,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let busy = saving.then(|| SharedString::from(Msg::OpInProgress.t()));
+    let save = cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
+        this.save_host_dirty_guard(cx);
+    });
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_dirty_guard();
         if let Some(fh) = this.root_focus.clone() {
@@ -385,19 +495,33 @@ pub(crate) fn render_editor_dirty_guard_modal(
 
     let card = modal_card(MODAL_W_SM)
         .child(div().flex_shrink_0().child(render_modal_title_row(
-            SharedString::from(Msg::EditorWorkspaceUnsavedTitle.t()),
+            SharedString::from(if restart_waiting {
+                Msg::UpdateRestart.t()
+            } else if host_close {
+                Msg::EditorHostUnsavedTitle.t()
+            } else {
+                Msg::EditorWorkspaceUnsavedTitle.t()
+            }),
             Some((
                 ModalIcon::Path("icons/file-text.svg"),
                 current_theme().color_warning,
             )),
         )))
+        .when(restart_waiting, |card| {
+            card.child(div().child(restart_message.t()))
+        })
+        .when(host_close && !restart_waiting, |card| {
+            card.child(
+                div().child(
+                    Msg::EditorHostUnsavedCount
+                        .t()
+                        .replace("{count}", &count.to_string()),
+                ),
+            )
+        })
         .child(
             div().flex_shrink_0().child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .justify_end()
+                super::button_style::modal_button_row()
                     .child(modal_button(
                         "editor-dirty-guard-cancel",
                         Msg::EditorWorkspaceCancel.t(),
@@ -408,12 +532,30 @@ pub(crate) fn render_editor_dirty_guard_modal(
                     ))
                     .child(modal_button(
                         "editor-dirty-guard-discard",
-                        Msg::EditorWorkspaceDiscard.t(),
-                        ModalButtonKind::Destructive,
-                        None,
+                        if restart_waiting {
+                            Msg::UpdateRestart.t()
+                        } else {
+                            Msg::EditorWorkspaceDiscard.t()
+                        },
+                        if restart_waiting {
+                            ModalButtonKind::Primary
+                        } else {
+                            ModalButtonKind::Destructive
+                        },
+                        busy.clone(),
                         discard,
                         cx,
-                    )),
+                    ))
+                    .when(host_close && !restart_waiting, |row| {
+                        row.child(modal_button(
+                            "editor-dirty-guard-save",
+                            Msg::EditorHostSaveAll.t(),
+                            ModalButtonKind::Primary,
+                            busy,
+                            save,
+                            cx,
+                        ))
+                    }),
             ),
         );
 
@@ -446,64 +588,64 @@ pub(crate) fn render_app_notice_modal(
         Msg::AppNoticeDismiss.t()
     };
 
-    let card =
-        modal_card(MODAL_W_SM)
-            .child(div().flex_shrink_0().child(render_modal_title_row(
-                SharedString::from(Msg::AppNoticeTitle.t()),
-                Some((IconName::Info.into(), current_theme().color_warning)),
-            )))
-            .child(
-                // One scroll region for the whole card: the message is producer
-                // text of unbounded length (a multi-line evidence string among
-                // them), and the header and the action row stay pinned.
-                modal_scroll_body()
-                    .child(
+    let card = modal_card(MODAL_W_SM)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            SharedString::from(Msg::AppNoticeTitle.t()),
+            Some((IconName::Info.into(), current_theme().color_warning)),
+        )))
+        .child(
+            // One scroll region for the whole card: the message is producer
+            // text of unbounded length (a multi-line evidence string among
+            // them), and the header and the action row stay pinned.
+            modal_scroll_body()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_main))
+                        .child(SharedString::from(notice.message)),
+                )
+                // #706 stage two. Never behind disclosure: this is the
+                // sentence the second confirm acts on.
+                .when(notice.release_armed, |body| {
+                    body.child(super::e2e::measure_control(
+                        "app-notice-release-warning",
                         div()
                             .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .child(SharedString::from(notice.message)),
-                    )
-                    // #706 stage two. Never behind disclosure: this is the
-                    // sentence the second confirm acts on.
-                    .when(notice.release_armed, |body| {
-                        body.child(super::e2e::measure_control(
-                            "app-notice-release-warning",
-                            div()
-                                .text_sm()
-                                .text_color(rgb(current_theme().color_warning))
-                                .child(Msg::AppReconcileReleaseArmed.t()),
-                        ))
-                    })
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(current_theme().text_muted))
-                            .child(Msg::AppNoticeDetailsInOpLog.t()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .child(div().flex().flex_row().justify_end().child(
-                        super::e2e::measure_control(
-                            "app-notice-confirm",
-                            modal_button_without_tab_stop(
-                                "app-notice-dismiss",
-                                action_label,
-                                if notice.release_armed {
-                                    ModalButtonKind::Destructive
-                                } else {
-                                    ModalButtonKind::Primary
-                                },
-                                None,
-                                cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
-                                    this.confirm_app_notice(cx);
-                                }),
-                                cx,
-                            ),
+                            .text_color(rgb(current_theme().color_warning))
+                            .child(Msg::AppReconcileReleaseArmed.t()),
+                    ))
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(current_theme().text_muted))
+                        .child(Msg::AppNoticeDetailsInOpLog.t()),
+                ),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .child(
+                    super::button_style::modal_button_row().child(super::e2e::measure_control(
+                        "app-notice-confirm",
+                        modal_button_with_tab_stop(
+                            "app-notice-dismiss",
+                            action_label,
+                            if notice.release_armed {
+                                ModalButtonKind::Destructive
+                            } else {
+                                ModalButtonKind::Primary
+                            },
+                            None,
+                            cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
+                                this.confirm_app_notice(cx);
+                            }),
+                            notice.release_armed,
+                            cx,
                         ),
                     )),
-            );
+                ),
+        );
 
     modal_overlay(card)
         .child(super::e2e::measure_inside("active-modal/app-notice"))

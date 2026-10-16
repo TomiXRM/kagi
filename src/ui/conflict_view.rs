@@ -25,6 +25,7 @@
 //! Terminology (ADR-0058): every side label comes from `side_labels` — the words
 //! "ours"/"theirs" never appear in any user-facing string.
 
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,13 +41,24 @@ use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::conflicts::{ConflictKind, ConflictStatus, SideLabels};
 
-use super::button_style::{apply_accent, KagiButton};
+use super::button_style::{apply_role, ButtonRole, KagiButton};
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
 use super::i18n::Msg;
 use super::menu_overlay;
 use super::theme::{self, theme};
 use super::ConflictEditorInputs;
 use super::KagiApp;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static NEXT_CONFLICT_FOCUS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Records real keyboard focus without assuming this is the window's last Tab stop.
+#[cfg(feature = "gui-e2e")]
+pub fn take_next_conflict_focus_probe() -> bool {
+    NEXT_CONFLICT_FOCUS.with(|focused| focused.replace(false))
+}
 
 /// T-CONFLICT-UI: the per-pane editor state for the open file.
 /// Held on [`KagiApp`] (they need a `Window` to create) and passed into the
@@ -70,6 +82,8 @@ pub struct EditorChrome {
     pub inputs: Option<EditorInputs>,
     /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
     pub ab_scroll: UniformListScrollHandle,
+    pub(crate) resolver_keyboard:
+        std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     /// Scroll handle for the Result *preview* row list (ADR-0135 badges).
     pub result_scroll: UniformListScrollHandle,
     /// Syntax-highlight cache for the Result preview, keyed by the assembled
@@ -80,6 +94,8 @@ pub struct EditorChrome {
     pub result_editing: bool,
     /// Whether the destructive "Reset all" is armed (POLISH-042).
     pub reset_all_armed: bool,
+    pub reset_focus: Option<gpui::FocusHandle>,
+    pub result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
     /// A·B / Result vertical split ratio (fraction given to the A·B row).
@@ -91,6 +107,7 @@ pub struct EditorChrome {
     pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    pub raw_preview_scroll: gpui::ScrollHandle,
     /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
     /// Interior-mutable so the render path can fill it lazily; keyed by
     /// (path, theme slug) — row TEXT never changes within a session, only the
@@ -122,6 +139,9 @@ pub struct EditorChrome {
 /// Session-owned but outside this entity: `conflict_merge_pending` and the
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
+    window_activation_subscription: Option<gpui::Subscription>,
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) window_active_override: Option<bool>,
     /// `Some(_)` while a conflict/merge is in progress (set by
     /// `detect_conflict_mode` via `apply_conflict_detect`). The repository is
     /// untouched until Continue / Abort execute through the existing plan
@@ -139,8 +159,11 @@ pub struct ConflictView {
     /// T-CONFLICT-UX-015: whether the Result pane is in Edit mode (editable)
     /// rather than Preview (read-only).
     pub result_editing: bool,
-    /// T-CONFLICT-POLISH-042: armed state for the destructive "Reset all".
-    pub reset_all_armed: bool,
+    /// The edited path whose first-stage Reset all approval is still current.
+    pub reset_all_target: Option<PathBuf>,
+    reset_focus: Option<gpui::FocusHandle>,
+    reset_blur_subscription: Option<gpui::Subscription>,
+    result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// T-CONFLICT-UI-003: A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
     /// T-CONFLICT-UI-003: A·B / Result vertical split ratio (fraction to A·B).
@@ -154,12 +177,16 @@ pub struct ConflictView {
     /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
     /// row, for the vertical A|B divider drag. Shared with `KagiApp` as above.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// Stable raw-preview scroll owner, shared by production and E2E renders.
+    pub raw_preview_scroll: gpui::ScrollHandle,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk
     /// in the per-hunk Conflict Editor.
     pub selected_hunk: usize,
     /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
     /// scrolling in the Conflict Editor.
     pub ab_scroll_handle: UniformListScrollHandle,
+    pub(crate) resolver_keyboard:
+        std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     /// See [`EditorChrome::result_scroll`] / [`EditorChrome::result_hl`]; both
     /// live on the entity so they survive across frames.
     pub result_scroll_handle: UniformListScrollHandle,
@@ -199,19 +226,27 @@ impl ConflictView {
     ) -> Self {
         static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
+            window_activation_subscription: None,
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             mode: None,
             editing: None,
             editing_before_text: HashMap::new(),
             editor_inputs: None,
             result_editing: false,
-            reset_all_armed: false,
+            reset_all_target: None,
+            reset_focus: None,
+            reset_blur_subscription: None,
+            result_mode_focus: Default::default(),
             ab_split: super::CONFLICT_AB_DEFAULT,
             result_split: super::CONFLICT_RESULT_DEFAULT,
             geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            raw_preview_scroll: gpui::ScrollHandle::new(),
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
+            resolver_keyboard: Default::default(),
             result_scroll_handle: UniformListScrollHandle::new(),
             result_hl: std::rc::Rc::new(std::cell::RefCell::new(None)),
             file_menu: None,
@@ -347,7 +382,7 @@ impl ConflictView {
     }
 
     fn after_selection_change(&mut self, path: &std::path::Path, selected_hunk: Option<usize>) {
-        self.reset_all_armed = false;
+        self.reset_all_target = None;
         if let Some(hunk) = selected_hunk {
             self.selected_hunk = hunk;
         }
@@ -534,7 +569,38 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 // ────────────────────────────────────────────────────────────
 
 impl Render for ConflictView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.reset_focus.is_none() {
+            let focus = cx.focus_handle().tab_stop(false);
+            self.reset_blur_subscription =
+                Some(cx.on_focus_out(&focus, window, |view, _, _, cx| {
+                    view.reset_all_target = None;
+                    cx.notify();
+                }));
+            self.reset_focus = Some(focus);
+        }
+        // Reconcile logical focus as well as native focus-out: inactive windows
+        // retain logical focus, but GPUI suppresses their native focus events.
+        if self.reset_all_target.is_some()
+            && self
+                .reset_focus
+                .as_ref()
+                .is_some_and(|focus| !focus.contains_focused(window, cx))
+        {
+            self.reset_all_target = None;
+        }
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |view, window, cx| {
+                    if !window.is_window_active() {
+                        view.reset_all_target = None;
+                    }
+                    cx.notify();
+                }));
+        }
+        let window_active = window.is_window_active();
+        #[cfg(feature = "gui-e2e")]
+        let window_active = self.window_active_override.unwrap_or(window_active);
         // entity-exists ⟺ mode-is-some in practice (the parent drops the entity on
         // clear), but guard defensively so a transient empty entity paints nothing.
         // `as_ref`, not `clone`: `ConflictMode` owns the whole `ResolutionBuffer`
@@ -544,10 +610,17 @@ impl Render for ConflictView {
         // allocation on the one screen where the user types, so every keystroke
         // paid for it. `render_body` already takes a reference, and `cx` is a
         // separate parameter from `self`, so the borrow is fine.
+        let resolver = self.mode.as_ref().and_then(|mode| {
+            let file = mode.selected_file.and_then(|i| mode.session.files.get(i))?;
+            Some((file.path.as_path(), mode.buffer.hunk_model(&file.path)?))
+        });
+        self.resolver_keyboard
+            .borrow_mut()
+            .prepare(resolver, &self.ab_scroll_handle, window, cx);
         match self.mode.as_ref() {
             Some(mode) => {
                 let chrome = self.editor_chrome();
-                render_body(mode, &chrome, cx)
+                render_body(mode, &chrome, window_active, cx)
             }
             None => div().into_any_element(),
         }
@@ -617,15 +690,20 @@ impl ConflictView {
                 result: i.result.clone(),
             }),
             ab_scroll: self.ab_scroll_handle.clone(),
+            resolver_keyboard: self.resolver_keyboard.clone(),
             result_scroll: self.result_scroll_handle.clone(),
             result_hl: self.result_hl.clone(),
             result_editing: self.result_editing,
-            reset_all_armed: self.reset_all_armed,
+            reset_all_armed: self.reset_all_target.as_ref() == self.editing.as_ref()
+                && self.reset_all_target.is_some(),
+            reset_focus: self.reset_focus.clone(),
+            result_mode_focus: self.result_mode_focus.clone(),
             ab_split: self.ab_split,
             result_split: self.result_split,
             selected_hunk: self.selected_hunk,
             geom: self.geom.clone(),
             ab_geom: self.ab_geom.clone(),
+            raw_preview_scroll: self.raw_preview_scroll.clone(),
             hl_cache: self.hl_cache.clone(),
         }
     }
@@ -662,6 +740,9 @@ impl ConflictView {
     /// materialization, then sets `editing`. Read-only repo open via `repo_path`.
     /// (Moved from `KagiApp::conflict_open_editor`, sourcing `repo_path` from self.)
     pub fn conflict_open_editor(&mut self, path: &std::path::Path) {
+        if self.editing.as_deref() != Some(path) {
+            self.reset_all_target = None;
+        }
         // Materialize the markers (needs the repo) and build the hunk model.
         if let Ok(repo) = kagi_git::Backend::open(&self.repo_path) {
             if let Some(c) = self.mode.as_mut() {
@@ -682,6 +763,7 @@ impl ConflictView {
 
     /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
     pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
+        self.reset_all_target = None;
         self.selected_hunk = hunk_index;
     }
 
@@ -727,24 +809,33 @@ impl ConflictView {
     /// T-CONFLICT-POLISH-042: "Reset all" two-stage confirm. First click arms,
     /// second performs the reset. (Moved from `KagiApp`.)
     pub fn conflict_editor_reset_all_request(&mut self, path: &std::path::Path) {
-        if self.reset_all_armed {
-            self.reset_all_armed = false;
+        if self.writer_busy || self.editing.as_deref() != Some(path) {
+            return;
+        }
+        if self.reset_all_target.as_deref() == Some(path) {
+            self.reset_all_target = None;
             self.conflict_editor_reset_all(path);
         } else {
-            self.reset_all_armed = true;
+            self.reset_all_target = Some(path.to_path_buf());
         }
     }
 
-    /// T-CONFLICT-UX-015: toggle the Result pane between Preview / Edit mode.
-    pub fn conflict_editor_toggle_result_mode(&mut self) {
-        if self.writer_busy {
+    /// Explicitly select Preview / Edit; reactivation preserves manual input.
+    pub fn conflict_editor_set_result_mode(&mut self, editing: bool) {
+        if self.writer_busy || self.result_editing == editing {
             return;
         }
-        self.result_editing = !self.result_editing;
+        self.reset_all_target = None;
+        self.result_editing = editing;
         // Force the inputs to re-sync (mode is part of the content signature).
         if let Some(i) = self.editor_inputs.as_mut() {
             i.content_sig = 0;
         }
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn result_mode_tabs_for_e2e(&self) -> Vec<(gpui::Role, String, bool, bool)> {
+        self.result_mode_focus.recorded_tabs()
     }
 
     /// Reset every hunk of `path` to unresolved (toolbar "Reset all").
@@ -769,40 +860,30 @@ impl ConflictView {
         let _ = c.buffer.autosave();
     }
 
-    /// Move to the next / previous unresolved hunk by selecting an adjacent
-    /// still-conflicted file and re-opening the editor on it.
-    pub fn conflict_editor_nav_hunk(&mut self, dir: i32) {
-        self.conflict_nav_unresolved(dir);
-        if let Some(c) = self.mode.as_ref() {
-            if let Some(idx) = c.selected_file {
-                if let Some(f) = c.session.files.get(idx) {
-                    let p = f.path.clone();
-                    self.conflict_open_editor(&p);
-                }
-            }
-        }
-    }
-
-    /// Select a conflicting file (open its detail + Result preview). Activating a
-    /// content conflict also opens the dedicated hunk-level Conflict Editor.
+    /// Select a file and open its matching content editor (or binary preview).
+    /// All row and navigation activations use this path.
     pub fn conflict_select_file(&mut self, idx: usize) {
-        let mut open_path: Option<PathBuf> = None;
-        if let Some(c) = self.mode.as_mut() {
-            if let Some(f) = c.session.files.get(idx) {
-                c.selected_file = Some(idx);
-                if f.kind == kagi_git::ConflictKind::Content {
-                    open_path = Some(f.path.clone());
-                }
-            }
-        }
+        let Some(mode) = self.mode.as_mut() else {
+            return;
+        };
+        let Some(file) = mode.session.files.get(idx) else {
+            return;
+        };
+        let open_path = (file.kind == ConflictKind::Content).then(|| file.path.clone());
+        self.reset_all_target = None;
+        mode.selected_file = Some(idx);
+        mode.editing_file = open_path.as_ref().map(|_| idx);
         if let Some(p) = open_path {
             self.conflict_open_editor(&p);
+        } else {
+            self.editing = None;
+            self.editor_inputs = None;
         }
     }
 
     /// Move the selection to the previous / next unresolved file, wrapping.
     pub fn conflict_nav_unresolved(&mut self, dir: i32) {
-        let Some(c) = self.mode.as_mut() else {
+        let Some(c) = self.mode.as_ref() else {
             return;
         };
         let n = c.session.files.len();
@@ -810,23 +891,23 @@ impl ConflictView {
             return;
         }
         let start = c.selected_file.unwrap_or(0);
-        for step in 1..=n {
-            let i = if dir >= 0 {
-                (start + step) % n
-            } else {
-                (start + n - (step % n)) % n
-            };
-            if c.session.files[i].status == kagi_git::ConflictStatus::Unresolved {
-                c.selected_file = Some(i);
-                return;
-            }
-        }
-        let i = if dir >= 0 {
-            (start + 1) % n
-        } else {
-            (start + n - 1) % n
-        };
-        c.selected_file = Some(i);
+        let next = (1..=n)
+            .map(|step| {
+                if dir >= 0 {
+                    (start + step) % n
+                } else {
+                    (start + n - (step % n)) % n
+                }
+            })
+            .find(|&i| c.session.files[i].status == ConflictStatus::Unresolved)
+            .unwrap_or_else(|| {
+                if dir >= 0 {
+                    (start + 1) % n
+                } else {
+                    (start + n - 1) % n
+                }
+            });
+        self.conflict_select_file(next);
     }
 
     /// Apply a per-file side choice to the in-memory resolution buffer, emit the
@@ -935,6 +1016,11 @@ impl ConflictView {
     /// mode signature changes, so an in-progress edit is never clobbered); in Edit
     /// mode it instead *pulls* the editor's text into the buffer.
     pub fn sync_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(inputs) = &self.editor_inputs {
+            inputs.result.update(cx, |state, cx| {
+                state.set_search_labels(kagi_ui_core::find::labels(), cx);
+            });
+        }
         // Only relevant while editing a content file with a hunk model.
         let Some(path) = self.editing.clone() else {
             self.editor_inputs = None;
@@ -1006,6 +1092,7 @@ impl ConflictView {
             let result = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor(lang)
+                    .search_labels(kagi_ui_core::find::labels())
                     .line_number(true)
             });
             self.editor_inputs = Some(super::ConflictEditorInputs {
@@ -1036,6 +1123,7 @@ impl ConflictView {
 pub fn render_body(
     mode: &ConflictMode,
     chrome: &EditorChrome,
+    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // GitKraken-style layout: the CENTER is the main 3-pane Conflict Editor
@@ -1049,7 +1137,7 @@ pub fn render_body(
             let path = file.path.clone();
             super::conflict_editor::render_editor(mode, chrome, &path, cx)
         }
-        _ => render_center(mode, chrome.writer_busy, cx),
+        _ => render_center(mode, chrome.writer_busy, &chrome.raw_preview_scroll, cx),
     };
     // flex_1 + min_h(0) (NOT size_full): in the root flex_col the conflict body
     // must share height with the bottom panel + status bar, not take 100% and
@@ -1061,7 +1149,7 @@ pub fn render_body(
         .min_h(px(0.))
         .bg(rgb(theme().bg_base))
         .child(center)
-        .child(render_dashboard(mode, cx))
+        .child(render_dashboard(mode, window_active, cx))
         .into_any_element()
 }
 
@@ -1069,7 +1157,11 @@ pub fn render_body(
 // Right panel: Conflict Dashboard (ADR-0063)
 // ────────────────────────────────────────────────────────────
 
-fn render_dashboard(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
+fn render_dashboard(
+    mode: &ConflictMode,
+    window_active: bool,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
     // T-CONFLICT-DASH-021/022: information hierarchy is state → next action →
     // files. The right sidebar shows what's left and the next steps (Continue
     // and Abort side by side); each file card carries its own actions (open
@@ -1091,7 +1183,7 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui
         // ── Next action (Continue + Abort side by side) ──
         .child(dash_primary(mode, cx))
         // ── Files (per-card actions: icons + "…" overflow menu) ──
-        .child(dash_sections(mode, cx))
+        .child(dash_sections(mode, window_active, cx))
         .into_any_element()
 }
 
@@ -1124,10 +1216,6 @@ fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyE
             .rounded_md()
             .border_1()
             .border_color(rgb(accent))
-            .tooltip(move |window, cx| {
-                Tooltip::new(format!("{} — {}", role, Msg::ConflictGitTermHint.t()))
-                    .build(window, cx)
-            })
             .child(
                 div()
                     .text_size(theme::scaled_px(10.))
@@ -1141,6 +1229,10 @@ fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyE
                     .truncate()
                     .child(SharedString::from(name.to_string())),
             )
+            .hover_tooltip_builder((id, 0usize), move |window, cx| {
+                Tooltip::new(format!("{} — {}", role, Msg::ConflictGitTermHint.t()))
+                    .build(window, cx)
+            })
     };
 
     div()
@@ -1291,7 +1383,7 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         .gap_2()
         .child(action_button(
             Msg::ConflictContinue.t(),
-            theme().color_success,
+            ButtonRole::Success,
             can_continue,
             if can_continue {
                 Some(continue_handler)
@@ -1304,7 +1396,7 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             "conflict-abort",
             action_button(
                 Msg::ConflictAbort.t(),
-                theme().color_blocker,
+                ButtonRole::Danger,
                 true,
                 Some(abort_handler),
                 cx,
@@ -1342,12 +1434,19 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             view.conflict_nav_unresolved(1);
             cx.notify();
         });
-        row = row.child(secondary_button(
+        let next_button = secondary_button(
             "conflict-next".to_string(),
             Msg::ConflictNextConflict.t(),
             true,
             Some(next),
-        ));
+        );
+        #[cfg(feature = "gui-e2e")]
+        let next_button = next_button.on_key_down(|event, _, _| {
+            if event.keystroke.key == "f19" {
+                NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
+            }
+        });
+        row = row.child(super::e2e::measure_control("conflict-next", next_button));
         has_secondary = true;
     }
     if is_sequencer {
@@ -1403,30 +1502,43 @@ fn card_icon<H>(
     icon: gpui_component::IconName,
     tip: &'static str,
     on_down: H,
-) -> gpui::Stateful<gpui::Div>
+    selected_active: Option<bool>,
+) -> impl IntoElement
 where
     H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 {
+    let foreground = if theme()
+        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
+    {
+        theme().selection_secondary_foreground(true)
+    } else {
+        rgb(theme().text_sub).into()
+    };
+    let id = SharedString::from(id);
     div()
-        .id(SharedString::from(id))
+        .id(id.clone())
         .flex()
         .items_center()
         .justify_center()
         .w(theme::scaled_px(22.))
         .h(theme::scaled_px(22.))
         .rounded_md()
-        .text_color(rgb(theme().text_sub))
-        .hover(|s| {
-            s.bg(rgb(theme().bg_row_alt))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
+        .text_color(foreground)
+        .cursor_pointer()
+        .when(selected_active.is_none(), |el| {
+            el.hover(|s| {
+                s.bg(rgb(theme().bg_row_alt))
+                    .text_color(rgb(theme().text_main))
+            })
         })
-        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         .on_mouse_down(MouseButton::Left, on_down)
         .child(
             gpui_component::Icon::new(icon)
                 .with_size(gpui_component::Size::Size(theme::scaled_px(14.))),
         )
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            Tooltip::new(tip).build(window, cx)
+        })
 }
 
 /// Actions for the per-file "…" overflow menu.
@@ -1449,11 +1561,13 @@ enum ConflictFileAction {
 /// its `on_select` may call the parent's conflict actions directly without
 /// leasing the entity. The owning `file_menu` state lives on the entity, so the
 /// dismiss/select close over the entity handle to clear it via `entity.update`.
+#[allow(clippy::too_many_arguments)]
 pub fn render_file_menu(
     entity: &Entity<ConflictView>,
     mode: &ConflictMode,
     idx: usize,
     pos: gpui::Point<gpui::Pixels>,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -1465,11 +1579,13 @@ pub fn render_file_menu(
         .map(|f| SharedString::from(f.path.to_string_lossy().into_owned()))
         .unwrap_or_default();
 
-    let item = |action: ConflictFileAction, label: &str| MenuItem {
-        action,
-        label: SharedString::from(label.to_string()),
-        state: ItemState::Enabled,
-        dangerous: false,
+    let item = |action: ConflictFileAction, label: &str| {
+        MenuItem::command(
+            action,
+            SharedString::from(label.to_string()),
+            ItemState::Enabled,
+            false,
+        )
     };
     let groups = vec![
         MenuGroup {
@@ -1529,6 +1645,7 @@ pub fn render_file_menu(
         on_dismiss,
         on_select,
         None,
+        window_active,
         window,
         cx,
     )
@@ -1554,7 +1671,11 @@ where
 }
 
 /// Two sections: Conflicted Files and Resolved Files, each row with a kind badge.
-fn dash_sections(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
+fn dash_sections(
+    mode: &ConflictMode,
+    window_active: bool,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
     let conflicted: Vec<usize> = mode
         .session
         .files
@@ -1581,6 +1702,7 @@ fn dash_sections(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             &conflicted,
             Msg::ConflictNoConflictedFiles.t(),
             true,
+            window_active,
             cx,
         ))
         .child(section(
@@ -1589,29 +1711,38 @@ fn dash_sections(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             &resolved,
             Msg::ConflictNoResolvedFiles.t(),
             false,
+            window_active,
             cx,
         ))
         .into_any_element()
 }
 
-/// A labelled section listing the given file indices.  `is_conflicted` rows are
-/// "activatable": clicking sets the editing-file state (W32 opens the editor).
+/// A labelled selectable file list. Both sections preview the selected file.
 fn section(
     mode: &ConflictMode,
-    title: &str,
+    title: &'static str,
     indices: &[usize],
     empty_msg: &str,
-    _is_conflicted: bool,
+    is_conflicted: bool,
+    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let mut col = div().flex().flex_col().child(
-        div()
-            .px(theme::scaled_px(12.))
-            .py(theme::scaled_px(6.))
-            .text_size(theme::scaled_px(10.))
-            .text_color(rgb(theme().text_label))
-            .child(SharedString::from(format!("{} ({})", title, indices.len()))),
-    );
+    let list_id = if is_conflicted {
+        "conflict-files"
+    } else {
+        "conflict-resolved-files"
+    };
+    let mut col = super::list_a11y::list_box(list_id, div().id(list_id), title)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px(theme::scaled_px(12.))
+                .py(theme::scaled_px(6.))
+                .text_size(theme::scaled_px(10.))
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!("{} ({})", title, indices.len()))),
+        );
 
     if indices.is_empty() {
         col = col.child(
@@ -1625,10 +1756,11 @@ fn section(
         return col.into_any_element();
     }
 
-    for &idx in indices {
+    for (position, &idx) in indices.iter().enumerate() {
         let file = &mode.session.files[idx];
         let selected = mode.selected_file == Some(idx);
-        let path_str = file.path.to_string_lossy().into_owned();
+        let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
+        let path_str = SharedString::from(file.path.to_string_lossy().into_owned());
         let kind = file.kind;
         let (status_color, status_text) = match file.status {
             ConflictStatus::Unresolved => (theme().color_blocker, Msg::ConflictUnresolved.t()),
@@ -1669,8 +1801,13 @@ fn section(
             .py(theme::scaled_px(6.))
             .rounded_md()
             .cursor_pointer()
-            .when(selected, |s| s.bg(rgb(theme().selected)))
-            .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+            .when(selected, |s| {
+                s.bg(theme().selected_for_window(window_active))
+            })
+            .when(selection_on_accent, |s| {
+                s.text_color(theme().selection_foreground(window_active))
+            })
+            .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
             .on_click(row_click)
             // Left: file name + status/kind (flex-shrinks; name truncates).
             .child(
@@ -1683,9 +1820,13 @@ fn section(
                     .child(
                         div()
                             .text_size(theme::scaled_px(12.))
-                            .text_color(rgb(theme().text_main))
+                            .text_color(if selection_on_accent {
+                                theme().selection_foreground(window_active)
+                            } else {
+                                rgb(theme().text_main).into()
+                            })
                             .truncate()
-                            .child(SharedString::from(path_str)),
+                            .child(path_str.clone()),
                     )
                     .child(
                         div()
@@ -1696,10 +1837,14 @@ fn section(
                             .child(
                                 div()
                                     .text_size(theme::scaled_px(10.))
-                                    .text_color(rgb(status_color))
+                                    .text_color(if selection_on_accent {
+                                        theme().selection_secondary_foreground(window_active)
+                                    } else {
+                                        rgb(status_color).into()
+                                    })
                                     .child(SharedString::from(status_text)),
                             )
-                            .child(kind_badge(kind)),
+                            .child(kind_badge(kind, selected.then_some(window_active))),
                     ),
             )
             // Right: Keynote-style icon group — "…" / open externally / copy path.
@@ -1717,8 +1862,21 @@ fn section(
                         gpui_component::IconName::Ellipsis,
                         Msg::ConflictMore.t(),
                         more,
+                        selected.then_some(window_active),
                     )),
             );
+        let row_el = super::list_a11y::list_option(
+            list_id,
+            row_el,
+            position,
+            indices.len(),
+            path_str,
+            selected,
+        );
+        #[cfg(feature = "gui-e2e")]
+        let row_el = row_el
+            .relative()
+            .child(super::e2e::measure_inside(format!("conflict-row-{idx}")));
 
         col = col.child(row_el);
     }
@@ -1727,15 +1885,22 @@ fn section(
 }
 
 /// A conflict-type badge (ADR-0065): both modified / rename-delete / etc.
-fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
+fn kind_badge(kind: ConflictKind, selected_active: Option<bool>) -> gpui::AnyElement {
+    let foreground = if theme()
+        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
+    {
+        theme().selection_secondary_foreground(true)
+    } else {
+        rgb(theme().text_muted).into()
+    };
     div()
         .px(theme::scaled_px(5.))
         .py(px(1.))
         .rounded_md()
         .border_1()
-        .border_color(rgb(theme().text_muted))
+        .border_color(foreground)
         .text_size(theme::scaled_px(9.))
-        .text_color(rgb(theme().text_muted))
+        .text_color(foreground)
         .child(SharedString::from(kind_tag(kind)))
         .into_any_element()
 }
@@ -1744,7 +1909,7 @@ fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
 /// click handler (e.g. the Continue gate).
 fn action_button<H>(
     label: &str,
-    accent: u32,
+    role: ButtonRole,
     enabled: bool,
     handler: Option<H>,
     cx: &gpui::App,
@@ -1757,7 +1922,7 @@ where
         .label(SharedString::from(label))
         .small()
         .disabled(!enabled);
-    btn = apply_accent(btn, accent, cx);
+    btn = apply_role(btn, role, cx);
     if enabled {
         if let Some(h) = handler {
             btn = btn.on_click(h);
@@ -1828,7 +1993,7 @@ fn render_dir_file_center(
             "conflict-keep-directory",
             choose_button(
                 Msg::ConflictKeepDirectory.t().to_string(),
-                theme().color_branch,
+                ButtonRole::SideCurrent,
                 keep_dir,
                 cx,
             )
@@ -1838,7 +2003,7 @@ fn render_dir_file_center(
             "conflict-keep-file",
             choose_button(
                 Msg::ConflictKeepFile.t().to_string(),
-                theme().color_remote,
+                ButtonRole::SideIncoming,
                 keep_file,
                 cx,
             )
@@ -1864,6 +2029,7 @@ fn render_dir_file_center(
 fn render_center(
     mode: &ConflictMode,
     writer_busy: bool,
+    raw_preview_scroll: &gpui::ScrollHandle,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
@@ -1942,13 +2108,13 @@ fn render_center(
         .border_color(rgb(theme().surface))
         .child(choose_button(
             keep_current_label,
-            theme().color_branch,
+            ButtonRole::SideCurrent,
             keep_current,
             cx,
         ))
         .child(choose_button(
             take_incoming_label,
-            theme().color_remote,
+            ButtonRole::SideIncoming,
             take_incoming,
             cx,
         ));
@@ -1956,13 +2122,13 @@ fn render_center(
     if kind == ConflictKind::Content {
         choose_row = choose_row.child(choose_button(
             keep_both_label,
-            theme().text_sub,
+            ButtonRole::Neutral,
             keep_both,
             cx,
         ));
     }
 
-    let preview = render_preview(mode, &path, kind, &labels, cx);
+    let preview = render_preview(mode, &path, kind, &labels, raw_preview_scroll, cx);
 
     div()
         .flex()
@@ -1974,14 +2140,14 @@ fn render_center(
         .into_any_element()
 }
 
-fn choose_button<H>(label: String, accent: u32, handler: H, cx: &gpui::App) -> Button
+fn choose_button<H>(label: String, role: ButtonRole, handler: H, cx: &gpui::App) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    KagiButton::accent(
+    KagiButton::styled(
         SharedString::from(format!("conflict-choose-{}", label)),
         SharedString::from(label),
-        accent,
+        role,
         cx,
     )
     .small()
@@ -1994,11 +2160,19 @@ fn render_preview(
     path: &std::path::Path,
     kind: ConflictKind,
     labels: &SideLabels,
+    raw_preview_scroll: &gpui::ScrollHandle,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // #321: binary / symlink / submodule get an informative side-by-side viewer.
     if kind.is_raw() {
-        return super::conflict_binary_view::render_raw_preview(mode, path, kind, labels, cx);
+        return super::conflict_binary_view::render_raw_preview(
+            mode,
+            path,
+            kind,
+            labels,
+            raw_preview_scroll,
+            cx,
+        );
     }
     let body: gpui::AnyElement = if let Some(text) = mode.buffer.resolved_text(path) {
         let mut col = div().flex().flex_col();

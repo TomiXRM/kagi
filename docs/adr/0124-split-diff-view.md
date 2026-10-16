@@ -37,7 +37,8 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
    `split_projection(&Arc<Vec<DiffRow>>)` がペア列と moved-row 集合を一緒に
    保持する。旧来の title + row count キーは同名・同サイズの別内容を
    区別できず、ペア列も毎 frame 再構築していたため置き換えた。
-   選択範囲のキーとは分離し、選択・コピーの挙動は変えない。
+   派生レイアウトは選択範囲とは別 cache のまま保つ。2026-10-13 の下記 amendment
+   で選択も title/count から既存の owner/content-source token へ移行する。
    `ListState` のモード切替時の count-sync/reset は従来どおり。
 
 ### 派生 cache の所有・上限
@@ -68,3 +69,55 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
 - unified 行列が唯一のソースなので、今後の diff 機能(word-diff 等)は
   unified 側に足せば split にも波及する。
 - モード切替で ListState が reset され、スクロール位置は先頭に戻る(許容)。
+
+## Amendment — 2026-10-13: visual keyboard order (#1373)
+
+Split-body arrows, Home/End and viewport-sized PageUp/PageDown navigate the
+cached aligned visual rows captured by the rendered pane. The caret retains
+its left/right affinity; missing affinity-side cells in an unequal replacement
+are skipped symmetrically in both directions. Wholly one-sided add/delete
+runs remain navigable through their non-filler cells. Headers remain
+full-width caret targets. Selection still stores unified source indices:
+Shift retains the original anchor, and code-only clipboard extraction keeps ADR-0016's
+inclusive source-range semantics. Cmd+A still selects all source rows.
+Unified presentation and its existing bindings remain unchanged. The shared
+body and existing ListState own focus and reveal across all diff embeddings.
+Tier A `split_diff_keyboard_order` covers an unequal five-to-three replacement,
+right-affinity Shift extension, reverse Up traversal, a wrapped-row page and
+one-sided additions. Page distance walks only rendered list items beginning
+at the logical scroll top, counting fully visible Row bounds and stopping at
+the viewport bottom; expansion items consume space without becoming targets.
+
+## Amendment — 2026-10-13: content identity and invisible changes (#1444/#1445/#1446)
+
+Selection is bound to the existing diff-list owner and content-source revision,
+not a title/row-count hash. Replacement, close and repository-owner departure
+retire the selection. Syntax/theme-only row allocations preserve the source
+revision and valid selection. The focused body handles Copy using only its
+matching selection. Root Graph Copy additionally requires the visible, uncovered
+commit list to own focus (ADR-0170); a saved diff range cannot hijack that action.
+The existing inclusive, code-only extraction policy remains unchanged.
+
+Both Unified rows and Split cells use one unsafe-Unicode badge/Tooltip helper.
+Context warnings appear in both Split columns; Added and Removed warnings
+appear on their actual side, ordinary/filler cells remain unmarked. The badge
+retains the existing warning-fill grammar, localized caption and full help;
+neither source text nor raw approval data is rewritten.
+
+Pure `kagi-domain` line-ending metadata distinguishes LF, CRLF and no terminator.
+The existing index-wise Removed/Added pairing identifies equal visible content
+with different endings before UI normalization. `DiffRow` retains that ending
+and whether it changed; both renderers show a muted localized annotation naming
+the affected side's ending. Ordinary body changes do not receive an ending-only
+annotation. Display removes the line terminator, never paints its raw CR, and
+clipboard extraction remains code-only. Backend approval digests continue to
+hash the original raw patch bytes, not the presentation model.
+
+The surfaces remain dense source-review rows, with existing line numbers,
+syntax/word emphasis, synchronized Split layout and full-width hunk controls.
+Annotations are noninteractive labels, not extra Tab stops; warning hover opens
+the existing Tooltip. Tier A scenarios `diff_selection_revision`,
+`diff_split_unicode_badge` and `diff_line_ending_annotation` exercise real Git
+fixtures and renderer-fed markers/help; the visible-marker scenarios cover
+940×660 / 1392×883, 100% / 167%, EN / JA and Apple Light / Dark.
+Native VoiceOver delivery and real-window visual comparison remain Tier B.

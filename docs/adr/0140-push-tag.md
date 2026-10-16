@@ -29,8 +29,15 @@ two-stage that delete-remote-branch and force-with-lease use. What it *does*
 get is a warning saying out loud that this leaves the machine — every other
 tag action in kagi is purely local, and that asymmetry is worth stating.
 
-**Never forced.** `execute_push_tag` runs `git push <remote> refs/tags/<name>`
-with no force flag, ever. If the tag already exists on the remote pointing at
+**Never forced.** `execute_push_tag` runs `git push <approved-remote> <approved-object-oid>:refs/tags/<name>`
+with no force flag, ever. The plan binds the remote name, every resolved push
+URL, raw tag object OID and peeled target. Preflight and the executor's final
+check refuse request, transport or local tag drift with a localized typed blocker.
+Execution uses the approved remote name so Git retains multiple push URLs,
+single-pass URL rewriting and remote-specific receivepack/proxy configuration.
+Verification and reconcile expectations retain the remote name and approved raw
+object (including an annotated tag object), never a mutable tag ref re-read.
+If the tag already exists on the remote pointing at
 a different commit, the remote refuses the push. That refusal *is* the safety
 property: kagi cannot know what a moved tag would break for everyone who
 already fetched it, so the right answer is to let the remote say no and
@@ -60,3 +67,42 @@ discoverable.
   product avoids. One tag, named, per confirmation.
 - There is still no delete-tag (local or remote). Deleting a published tag is
   the genuinely dangerous direction, and it can wait for its own ADR.
+
+## Amendment (2026-10-12): unloaded sidebar targets (#1304)
+
+Tag navigation is separate from tag write availability. A target absent from
+the loaded commit window (including Branch Solo's saved window) remains
+activatable: its row uses the muted theme label and exposes the same EN/JA
+reason in the TreeItem description and tooltip. Click and Enter share one
+read-only path that first reports “Commit not loaded; load more history.”,
+then invokes existing history paging only when its positive limit has been
+reached. During Solo, this check uses saved rows, not the filtered rows.
+Exhausted or disabled paging leaves the explanation without issuing a request.
+A loaded target hidden only by Branch Solo instead reports a localized filter
+hint and preserves Solo without paging. Once visible and loaded, activation
+jumps normally; paging does not silently change the current selection or
+create a tag-operation receipt. Push/Delete menu plans, approval targets and
+safety checks remain unchanged.
+
+## Amendment (2026-10-15): publish scope (#1560)
+
+The dense confirmation preview presents the already-approved `TagPushIdentity`:
+tag name, raw tag object OID, ultimate peeled target OID, lightweight/annotated
+kind and every resolved push URL (not the fetch URL). The tag object's type is
+resolved with the identity at planning time; rendering performs no Git reads.
+The current active branch is not the publication target: replace its duplicate
+CURRENT/AFTER rows with this scope and a quieter unchanged-local-state note.
+Blocked plans without an approved identity retain the existing blocker preview.
+
+The existing Copy all action includes the same complete scope. Presentation
+sanitizes control bytes and redacts all URL userinfo, query and fragment data;
+the unmodified URLs stay private to execution authority and drift checks.
+Do not replace semantic `StateSummary` values with display prose: receipts,
+klog and operation verification remain unchanged.
+
+Reference: macOS publication alerts name what leaves the machine and its
+destination. Reuse the existing card, typography, focus trap, Copy all and
+single confirm rather than introduce a new control. Rest, native accessibility
+and Copy expose identical frozen data; loading/error/blocked handling and
+Escape/Return safety stay with the existing modal lifecycle. The read-only
+scope has no hover/pressed/selected state.

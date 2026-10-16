@@ -8,6 +8,7 @@ use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 use kagi_git::github_repos_cache::{WorkItem, WorkKind};
 use kagi_ui_core::avatar::AvatarImages;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::home_github_list::HomeItem;
 use super::home_work::{HomePane, HomeWork};
@@ -53,8 +54,12 @@ fn matches(item: &WorkItem, query: &str) -> bool {
 
 /// The pane's entries: per list a heading, why its last read failed, its
 /// rows matching `query`, and a note when it is empty or cut at the search
-/// limit. A list without a match is left out while filtering. Before any
-/// list has been read or loaded from the cache, one spinner row.
+/// limit. While filtering, a list without a match is left out only when it
+/// was read in full; one whose read failed or was cut keeps its note, as
+/// its missing items might match (#1070). "No match" is said only for a
+/// current, complete read: every list of the pane read in full, none failed,
+/// and no search still running. Before any list has been read or loaded
+/// from the cache, one spinner row.
 pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<HomeItem> {
     let Some(lists) = &work.lists else {
         return vec![HomeItem::Loading(
@@ -68,6 +73,7 @@ pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<Ho
     };
     let mut items = Vec::new();
     let mut shown = 0usize;
+    let mut complete = !work.reading;
     for &kind in kinds {
         let list = lists.get(kind);
         let rows: Vec<HomeItem> = list
@@ -84,17 +90,21 @@ pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<Ho
                 HomeItem::Work(kind, item.clone(), state)
             })
             .collect();
-        if rows.is_empty() && !query.is_empty() {
+        let failed = work.errors.get(&kind);
+        if failed.is_some() || list.truncated {
+            complete = false;
+        } else if rows.is_empty() && !query.is_empty() {
             continue;
         }
         shown += rows.len();
         items.push(HomeItem::Heading(heading(kind).to_string()));
-        if let Some(error) = work.errors.get(&kind) {
+        if let Some(error) = failed {
             items.push(HomeItem::WorkFailed(
-                Msg::HomeWorkFailed.t().replace("{}", error),
+                Msg::HomeWorkFailed
+                    .t()
+                    .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error)),
             ));
-        }
-        if list.items.is_empty() && !work.errors.contains_key(&kind) {
+        } else if list.items.is_empty() {
             items.push(HomeItem::Note(empty(kind).to_string()));
         }
         items.extend(rows);
@@ -102,7 +112,7 @@ pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<Ho
             items.push(HomeItem::Note(Msg::HomeWorkTruncated.t().to_string()));
         }
     }
-    if shown == 0 && !query.is_empty() {
+    if shown == 0 && !query.is_empty() && complete {
         items.push(HomeItem::Note(Msg::HomeWorkNoMatch.t().to_string()));
     }
     items
@@ -176,11 +186,14 @@ pub(super) fn work_row(
                 Button::new(SharedString::from(format!("{key}-open")))
                     .label(Msg::HomeGithubOpen.t())
                     .small()
-                    .tooltip(Msg::HomeWorkOpenOnGithub.t())
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
                         app.update(cx, |app, cx| app.open_work_item_url(&url, cx));
-                    }),
+                    })
+                    .hover_tooltip(
+                        SharedString::from(format!("{key}-open-hover-help")),
+                        Msg::HomeWorkOpenOnGithub.t(),
+                    ),
             )
         }
     };
@@ -207,7 +220,7 @@ pub(super) fn work_row(
         .py(super::keyboard_nav::inset(8.))
         .rounded_lg()
         .when(state != WorkRowState::Opening, |el| {
-            el.cursor(gpui::CursorStyle::PointingHand)
+            el.cursor(gpui::CursorStyle::Arrow)
                 .hover(|s| s.bg(rgb(theme().surface)))
         })
         .on_click(move |_, window, cx| {

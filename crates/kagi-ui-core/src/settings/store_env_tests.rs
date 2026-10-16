@@ -79,6 +79,61 @@ fn public_scale_migration_child() {
     assert_eq!(std::fs::read(&path).expect("persisted"), first_bytes);
 }
 
+#[test]
+fn accent_source_migration_uses_the_live_settings_store() {
+    for (document, expected) in [
+        (
+            r#"{"accent":"blue","future_only_key":"keepme"}"#,
+            Some("theme"),
+        ),
+        (
+            r#"{"accent":"system","future_only_key":"keepme"}"#,
+            Some("system"),
+        ),
+        (
+            r#"{"accent_source":"blue","future_only_key":"keepme"}"#,
+            Some("theme"),
+        ),
+        (
+            r#"{"accent_source":"theme","accent":"system","future_only_key":"keepme"}"#,
+            Some("theme"),
+        ),
+        (r#"{"future_only_key":"keepme"}"#, None),
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("settings.json"), document).expect("seed");
+        run_child("accent_source_migration_child", tmp.path());
+        let saved: serde_json::Value =
+            serde_json::from_str(&settings_text(tmp.path())).expect("json");
+        assert_eq!(saved["accent_source"].as_str(), expected);
+        assert!(saved.get("accent").is_none(), "legacy key removed");
+        assert_eq!(saved["future_only_key"], "keepme");
+    }
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn accent_source_migration_child() {
+    use crate::{settings::read_setting, system_accent};
+    system_accent::init();
+    match read_setting("accent_source").as_deref() {
+        Some("system") => {
+            assert!(system_accent::follows_system_accent_for(false));
+            assert!(system_accent::follows_system_accent_for(true));
+        }
+        Some("theme") => {
+            assert!(!system_accent::follows_system_accent_for(false));
+            assert!(!system_accent::follows_system_accent_for(true));
+        }
+        None => {
+            assert!(system_accent::follows_system_accent_for(false));
+            assert!(!system_accent::follows_system_accent_for(true));
+        }
+        other => panic!("uncanonical accent source: {other:?}"),
+    }
+    assert!(read_setting("accent").is_none());
+}
+
 // ── #617 review 3: the public read path sees a stat-invisible edit ─────────
 
 #[test]
@@ -169,6 +224,74 @@ fn burst_and_graceful_quit_child() {
     let text = std::fs::read_to_string(&path).expect("written");
     assert!(text.contains("\"graph_col_w\": \"199\""), "{text}");
     assert!(text.contains("session_repos"), "{text}");
+}
+
+#[test]
+fn settings_window_bounds_burst_coalesces_frame() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    run_child("settings_window_bounds_burst_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(
+        saved["settings_window_frame"],
+        "99,198,599,000000000000000000000000000000ab"
+    );
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn settings_window_bounds_burst_child() {
+    use crate::settings::{flush, write_settings_window_frame, SettingsWindowFrame};
+    let before = super::store::committed_flushes();
+    for i in 0..100 {
+        write_settings_window_frame(SettingsWindowFrame {
+            x: i as f32,
+            y: (i * 2) as f32,
+            height: (500 + i) as f32,
+            display_uuid: Some(0xab),
+        });
+    }
+    flush();
+    let commits = super::store::committed_flushes() - before;
+    assert!(
+        commits <= 2,
+        "100 bounds changes must coalesce into <=2 commits, got {commits}"
+    );
+}
+
+#[test]
+fn settings_window_frame_migrates_legacy_geometry_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(tmp.path().join("settings.json"),
+        r#"{"settings_window_position":"-120,240","settings_window_height":"640","future_only_key":"keepme"}"#)
+        .expect("seed");
+    run_child("settings_window_frame_migration_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["settings_window_frame"], "-120,240,640");
+    assert_eq!(saved["future_only_key"], "keepme");
+    assert!(saved.get("settings_window_position").is_none());
+    assert!(saved.get("settings_window_height").is_none());
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn settings_window_frame_migration_child() {
+    use crate::settings::{read_setting, settings_window_frame, SettingsWindowFrame};
+    let expected = Some(SettingsWindowFrame {
+        x: -120.,
+        y: 240.,
+        height: 640.,
+        display_uuid: None,
+    });
+    assert_eq!(settings_window_frame(), expected);
+    assert!(read_setting("settings_window_position").is_none());
+    assert!(read_setting("settings_window_height").is_none());
+    let committed = super::store::committed_flushes();
+    assert_eq!(settings_window_frame(), expected);
+    assert_eq!(
+        super::store::committed_flushes(),
+        committed,
+        "migration never repeats"
+    );
 }
 
 #[test]
@@ -268,4 +391,35 @@ fn path_switch_child() {
     std::env::set_var("KAGI_LOG_DIR", &a);
     std::fs::remove_dir(&a_file).expect("unblock A");
     write_setting("recovered", Some("yes"));
+}
+
+#[test]
+fn main_window_frame_preserves_unknown_preferences_and_retires_size() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("settings.json"),
+        r#"{"window_size":"640x480","future_only_key":"keepme"}"#,
+    )
+    .expect("seed");
+    run_child("main_window_frame_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["window_frame"], "-120,240,640,480,display-id");
+    assert_eq!(saved["future_only_key"], "keepme");
+    assert!(saved.get("window_size").is_none());
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn main_window_frame_child() {
+    use crate::settings::{flush, main_window_frame, write_main_window_frame, MainWindowFrame};
+    let frame = MainWindowFrame {
+        x: -120.,
+        y: 240.,
+        width: 640.,
+        height: 480.,
+        display: "display-id".into(),
+    };
+    write_main_window_frame(&frame);
+    flush();
+    assert_eq!(main_window_frame(), Some(frame));
 }

@@ -19,13 +19,22 @@ pub(crate) const ADVICE_DELETE_UNMERGED: &str =
     "未 merge の branch です。削除すると {} commit が他の ref から到達不能になりますが、復元用 ref で保持します。2 回確認すると削除します。\nbranch `{}` / 先端 `{}`";
 
 pub(crate) const ADVICE_BRANCH_RENAME_REF_ONLY_DIRTY: &str =
-    "リネームは ref だけを変更します。作業ツリーは変わりません。";
+    "リネームは ref だけを変更します。working tree は変わりません。";
 pub(crate) const ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED: &str =
     "remote branch はリネームされません。local の設定だけ引き継ぎます。";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG: &str = "引き継ぐ local branch の設定キー: {}。";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CHANGED: &str =
+    "確認後に branch の設定が変わりました。もう一度リネームして確認してください。";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_EXTERNAL: &str =
+    "branch の設定が Git directory の外にあります。リネーム前に local Git config へ移してください。\n設定ファイル: {}";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CONDITIONAL: &str =
+    "branch 名に依存する設定はリネーム時に参照できなくなります。先に条件付き include を削除または更新してください。\n条件: onbranch:{}";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_HEADER: &str =
+    "Git がこの branch 設定の header を安全にリネームできません。先に section／subsection の表記を揃えてください。\n設定ファイル: {}";
 pub(crate) const ADVICE_BRANCH_DELETE_CURRENT_BRANCH: &str =
     "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_CHECKED_OUT: &str =
-    "ブランチ '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別のブランチへ切り替えてください。";
+    "branch '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別の branch へ切り替えてください。";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_LOCKED_WORKTREE: &str =
     "ロックされた worktree で checkout 中です。先にロックを解除してください。\nbranch `{}` / worktree `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_DIRTY_WORKTREE: &str =
@@ -33,7 +42,7 @@ pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_DIRTY_WORKTREE: &str =
 pub(crate) const ADVICE_BRANCH_DELETE_REMOVES_PINNING_WORKTREE: &str =
     "clean な worktree で checkout 中です。worktree を削除してから branch を削除します。\nbranch `{}` / worktree `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_SQUASH_MERGED: &str =
-    "squash merge 済みです。変更は取り込み済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`";
+    "squash merge 済みです。変更は merge 先に反映済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_KEEPS_REMOTE: &str =
     "削除するのは local branch だけです。remote は残ります。\nbranch `{}`";
 
@@ -48,6 +57,26 @@ pub fn note_ja(note: &BranchNote) -> String {
         }
         BranchNote::RenameRemoteNotRenamed => {
             super::advice_text(Msg::AdviceBranchRenameRemoteNotRenamed, &[])
+        }
+        BranchNote::RenameConfig { keys, .. } => {
+            let keys = if keys.is_empty() {
+                "なし".into()
+            } else {
+                keys.join(", ")
+            };
+            super::advice_text(Msg::AdviceBranchRenameConfig, &[&keys])
+        }
+        BranchNote::RenameConfigChanged => {
+            super::advice_text(Msg::AdviceBranchRenameConfigChanged, &[])
+        }
+        BranchNote::RenameConfigExternal { path } => {
+            super::advice_text(Msg::AdviceBranchRenameConfigExternal, &[path])
+        }
+        BranchNote::RenameConfigConditional { condition } => {
+            super::advice_text(Msg::AdviceBranchRenameConfigConditional, &[condition])
+        }
+        BranchNote::RenameConfigHeader { path } => {
+            super::advice_text(Msg::AdviceBranchRenameConfigHeader, &[path])
         }
         BranchNote::DeleteCurrentBranch { name } => {
             super::advice_text(Msg::AdviceBranchDeleteCurrentBranch, &[name])
@@ -77,6 +106,27 @@ pub fn note_ja(note: &BranchNote) -> String {
         BranchNote::DeleteKeepsRemote { name } => {
             super::advice_text(Msg::AdviceBranchDeleteKeepsRemote, &[name])
         }
+    }
+}
+
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &BranchNote) -> String {
+    match note {
+        BranchNote::RenameConfigChanged => "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn rename_config_changed_preserves_legacy_bytes() {
+        assert_eq!(
+            note_ja_contract(&BranchNote::RenameConfigChanged),
+            "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。"
+        );
     }
 }
 
@@ -114,7 +164,7 @@ pub fn recovery_ja(recovery: &BranchRecovery) -> String {
             name,
             tip: Some(tip),
         } => format!(
-            "復元する:\n  git branch {} {}\n先端 commit `{}` は復元用 ref で保持します。GC 後は操作記録の backup ref から復元してください。",
+            "復元する:\n  git branch {} {}\n先端 commit `{}` はバックアップとして保持します。Git の GC 後は操作ログから復元してください。",
             name, tip, tip
         ),
         BranchRecovery::DeleteBranch { name, tip: None } => {

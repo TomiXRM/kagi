@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Sizable as _;
-use kagi_ui_core::i18n;
+use gpui_component::{Disableable as _, Sizable as _};
+use kagi_ui_core::i18n::{self, Msg};
 use kagi_ui_core::slow_read::{is_slow, SlowRead};
 
 use super::theme::{self, theme};
@@ -99,17 +99,35 @@ impl KagiApp {
     /// driven by KagiApp state: the write latch, and a read that has been slow
     /// for two seconds (#355). Returns `None` before the window (and thus the
     /// toast entity) exists.
-    pub(super) fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub(super) fn render_toasts(
+        &self,
+        repository_window: Option<&gpui::Window>,
+        show_clone_action: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
-        let mut stack = div()
-            .absolute()
-            .bottom(theme::scaled_px(34.))
-            .left(theme::scaled_px(super::TOAST_INSET_PX))
-            .w(theme::scaled_px(460.))
-            .max_w(gpui::relative(0.9))
-            .flex()
-            .flex_col()
-            .gap_2();
+        let mut stack = toast_container();
+        if let Some(window) = repository_window
+            .filter(|window| super::compact::for_window(window) && self.bottom_panel_open)
+        {
+            // Keep compact panel tabs above the stack, without moving its
+            // status-bar anchor. The viewport's 30% cap still applies below.
+            let ui = self.ui();
+            let layout = super::workspace::resolve_workspace(
+                &self.workspace_inputs(
+                    ui.commit_panel_open,
+                    ui.commit_panel.is_some(),
+                    ui.selected
+                        .and_then(|index| self.view().details.get(index))
+                        .is_some(),
+                ),
+            );
+            let body = self.bottom_panel_body_height(
+                window,
+                matches!(layout.center, super::workspace::CenterPane::Editor),
+            );
+            stack = stack.max_h(theme::scaled_px((body - super::TOAST_INSET_PX).max(0.)));
+        }
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
         // (user request) — a lighter alternative to a blocking popup. A slow
@@ -117,10 +135,25 @@ impl KagiApp {
         let slow = self.slow_read_shown();
         let write = self.slow_write_shown(cx.background_executor().now());
         let label = self
-            .busy_snackbar_label()
-            .or(slow.map(i18n::slow_read_label));
+            .home_github
+            .cloning
+            .as_ref()
+            .and_then(|card| card.target.as_ref())
+            .map(|target| {
+                super::render_helpers::safe_text(
+                    &Msg::CloneHiddenRunning
+                        .t()
+                        .replace("{}", &target.request.source),
+                )
+            })
+            .or_else(|| {
+                self.busy_snackbar_label()
+                    .or(slow.map(i18n::slow_read_label))
+                    .map(SharedString::from)
+            });
         if let Some(label) = label {
-            stack = stack.child(self.render_busy_snackbar(label, slow, write, cx));
+            stack =
+                stack.child(self.render_busy_snackbar(label, slow, write, show_clone_action, cx));
         }
 
         // The toast cards are an independently-rendered child entity.
@@ -137,19 +170,22 @@ impl KagiApp {
     /// read and, when its result can be shown as unknown, Skip (#355).
     fn render_busy_snackbar(
         &self,
-        label: &'static str,
+        label: SharedString,
         slow: Option<SlowRead>,
         write: Option<(&'static str, u64)>,
+        show_clone_action: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let accent = theme().color_branch;
+        let accent = theme().ui_accent();
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
+        let caption = self.busy_caption(label);
         let mut text = div()
             .flex_1()
+            .min_w(gpui::px(0.))
             .overflow_hidden()
             .flex()
             .flex_col()
-            .child(SharedString::from(label));
+            .child(caption);
         if let Some((kind, elapsed)) = write {
             let advice = i18n::slow_write_advice(kind, elapsed);
             #[cfg(feature = "gui-e2e")]
@@ -184,6 +220,8 @@ impl KagiApp {
             )
         });
         div()
+            .relative()
+            .child(super::e2e::measure_inside("busy-snackbar"))
             .w_full()
             .flex()
             .flex_row()
@@ -194,15 +232,62 @@ impl KagiApp {
             .px_4()
             .py_3()
             .rounded(theme::scaled_px(8.))
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .border_1()
-            .border_color(rgb(accent))
+            .border_color(rgb(theme().elevated_border(accent)))
             .text_base()
             .text_color(rgb(theme().text_main))
             .child(div().flex_shrink_0().child(icon))
             .child(text)
             .children(skip)
+            .when(show_clone_action, |el| {
+                el.children(self.render_clone_progress_action(cx))
+            })
             .into_any()
+    }
+
+    fn busy_caption(&self, label: SharedString) -> gpui::AnyElement {
+        if self.home_github.cloning.is_none() {
+            return div().child(label).into_any();
+        }
+        let role = gpui::Role::Status;
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_clone_busy_status(role, &label);
+        super::e2e::measure_control(
+            "clone-busy-status",
+            div()
+                .id("clone-busy-status")
+                .role(role)
+                .aria_label(label.clone())
+                .text_ellipsis()
+                .child(label),
+        )
+        .into_any()
+    }
+
+    fn render_clone_progress_action(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.home_github.cloning.is_none() || self.clone_modal().is_some() {
+            return None;
+        }
+        let button = Button::new("clone-busy-show")
+            .label(Msg::CloneShowProgress.t())
+            .small()
+            .ghost()
+            .flex_shrink_0()
+            .disabled(self.has_active_modal())
+            .on_click(cx.listener(|this, _, window, cx| {
+                // Restore the existing task, never construct or confirm a new clone.
+                if this.has_active_modal() {
+                    return;
+                }
+                if let Some(card) = this.home_github.cloning.as_ref() {
+                    this.home_github_pick(card.listing.clone(), cx);
+                    this.focus_after_pick(window, cx);
+                }
+            }));
+        #[cfg(feature = "gui-e2e")]
+        let button = super::e2e::probe_clone_busy_button(button);
+        Some(super::e2e::measure_control("clone-busy-show", button).into_any())
     }
 }
 
@@ -257,4 +342,19 @@ mod tests {
             assert_eq!(writer, None);
         }
     }
+}
+
+/// Shared out-of-flow toast placement for repository and Settings windows.
+pub(super) fn toast_container() -> gpui::Div {
+    div()
+        .absolute()
+        .bottom(theme::scaled_px(
+            super::STATUS_BAR_H + super::TOAST_INSET_PX,
+        ))
+        .left(theme::scaled_px(super::TOAST_INSET_PX))
+        .w(theme::scaled_px(460.))
+        .max_w(gpui::relative(0.45))
+        .flex()
+        .flex_col()
+        .gap_2()
 }

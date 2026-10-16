@@ -31,12 +31,12 @@ pub enum StashAction {
 }
 
 fn item(action: StashAction, label: &str, dangerous: bool) -> MenuItem<StashAction> {
-    MenuItem {
+    MenuItem::command(
         action,
-        label: SharedString::from(label.to_string()),
-        state: ItemState::Enabled,
+        SharedString::from(label.to_string()),
+        ItemState::Enabled,
         dangerous,
-    }
+    )
 }
 
 /// Build the stash menu groups. Pop is included too (discoverability) even
@@ -63,6 +63,7 @@ pub fn render_stash_menu_overlay(
     header: SharedString,
     groups: Vec<MenuGroup<StashAction>>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -88,6 +89,7 @@ pub fn render_stash_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )

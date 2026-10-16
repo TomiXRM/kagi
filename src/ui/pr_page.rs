@@ -520,12 +520,12 @@ pub(super) fn render_checks_card(
 /// is amber only while it can be pressed.
 ///
 /// `None` until the window-bearing render pass has built the input
-/// (`sync_pr_comment_input`): `InputState::new` needs a `&mut Window`, and this
-/// renderer has none. POST is disabled while the box is empty and while a
-/// transport hold is parked on this PR's comment - an unproven post must not be
-/// retried blindly.
+/// (`sync_pr_comment_input`). POST is disabled while the box is empty and
+/// while a transport hold is parked on this PR's comment - an unproven post
+/// must not be retried blindly.
 pub(super) fn render_composer(
     app: &KagiApp,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<gpui::AnyElement> {
     use gpui_component::{Disableable as _, Sizable as _};
@@ -567,11 +567,14 @@ pub(super) fn render_composer(
                 .child(super::timeline_row::body_markdown(
                     ("pr-comment-preview", number as usize),
                     typed.as_ref(),
+                    super::timeline_row::BodyMarkdownFormat::Original,
                     super::timeline_row::markdown_style(15., cx),
+                    window,
+                    cx,
                 )),
         )
     } else {
-        super::timeline_row::body_input(&input).into_any_element()
+        super::timeline_row::body_input(&input, Msg::A11yCommentBody.t()).into_any_element()
     };
     // #906: the PR's host identity posts the comment, not github.com's.
     let viewer = app.host_login(base_repo).unwrap_or("?");
@@ -603,26 +606,45 @@ pub(super) fn render_composer(
                         // GitHub requires words on a "request changes" review and
                         // allows a wordless approval, so only one of the three is
                         // usable with an empty box (mock 7a).
-                        // The verdicts carry their colour; a plain comment is the
-                        // composer's own amber submit.
+                        // Verdicts carry their semantic colour; ordinary
+                        // comments use the composer's Primary submit.
                         .child(
-                            super::button_style::KagiButton::accent_icon(
+                            super::button_style::KagiButton::icon(
                                 "pr-review-request-changes",
                                 "icons/review-request-changes.svg",
                                 Msg::PrReviewRequestChanges.t(),
-                                theme().color_warning,
+                                super::button_style::ButtonRole::Warning,
                                 cx,
                             )
+                            .map(|button| {
+                                #[cfg(feature = "gui-e2e")]
+                                {
+                                    super::e2e::pr_detail::record_control(
+                                        "pr-review-request-changes",
+                                        Some(gpui::Role::Button),
+                                        Some(Msg::PrReviewRequestChanges.t()),
+                                        None,
+                                        None,
+                                    );
+                                    super::e2e::pr_detail::record_button_state(
+                                        "pr-review-request-changes",
+                                        true,
+                                        empty || review_held,
+                                        Some(super::button_style::ButtonRole::Warning),
+                                    );
+                                }
+                                button
+                            })
                             .small()
                             .disabled(empty || review_held)
                             .on_click(request_changes),
                         )
                         .child(
-                            super::button_style::KagiButton::accent_icon(
+                            super::button_style::KagiButton::icon(
                                 "pr-review-approve",
                                 "icons/review-approve.svg",
                                 Msg::PrReviewApprove.t(),
-                                theme().color_success,
+                                super::button_style::ButtonRole::Success,
                                 cx,
                             )
                             .small()

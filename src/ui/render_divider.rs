@@ -6,6 +6,17 @@
 use super::*;
 
 impl KagiApp {
+    pub(super) fn finish_bottom_panel_resize(&mut self) {
+        if let Some((_, _, original_height)) = self.bottom_panel_drag_origin.take() {
+            if !self.compact.enabled && (self.bottom_panel_height - original_height).abs() > 0.5 {
+                settings::write_setting(
+                    "bottom_panel_height",
+                    Some(&self.bottom_panel_height.to_string()),
+                );
+            }
+        }
+    }
+
     /// T023: divider drag-move handler (single listener handles every divider).
     /// On the root div so a drag continues outside the narrow divider strip.
     /// Widths use absolute pointer positions, not deltas: outer panes anchor to
@@ -26,7 +37,7 @@ impl KagiApp {
         // #957: sidebar and outer-pane dividers stay put during a slide.
         // Graph column dividers use their painted column origins instead,
         // so they can follow the pointer while the sidebar is moving (#1011).
-        let now = super::panel_motion::now();
+        let now = kagi_ui_core::motion::now();
         let sliding = match drag.kind {
             DividerKind::Sidebar => self.panel_motion.sidebar.animating(now),
             DividerKind::Panel => self.panel_motion.right.animating(now),
@@ -40,6 +51,12 @@ impl KagiApp {
             DividerKind::Sidebar | DividerKind::PrModeLeft => {
                 // Divider sits at x = sidebar_width * physical scale.
                 let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                if matches!(drag.kind, DividerKind::Sidebar) {
+                    let candidate = self.pane_fit.refit(new_width, self.panel_width);
+                    if (candidate.sidebar - self.pane_fit.sidebar).abs() <= 0.5 {
+                        return;
+                    }
+                }
                 if (new_width - self.sidebar.width).abs() > 0.5 {
                     self.sidebar.width = new_width;
                     cx.notify();
@@ -58,6 +75,14 @@ impl KagiApp {
                 // Divider sits at x = viewport_width - panel_width * physical scale.
                 let viewport_w = f32::from(window.viewport_size().width);
                 let new_width = ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
+                // File History owns a nested divider; only the outer right
+                // slot shares this budget. Ignore already-capped expansions.
+                if self.panel_motion.right_pane.is_some() {
+                    let candidate = self.pane_fit.refit(self.sidebar.width, new_width);
+                    if (candidate.right - self.pane_fit.right).abs() <= 0.5 {
+                        return;
+                    }
+                }
                 if (new_width - self.panel_width).abs() > 0.5 {
                     self.panel_width = new_width;
                     // ADR-0117: the File History detail divider drags `panel_width`
@@ -80,6 +105,12 @@ impl KagiApp {
                 };
                 let new_w =
                     ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(BADGE_COL_MIN, BADGE_COL_MAX);
+                // A capped expansion must not replace the larger saved preference
+                // with a candidate measured from its compressed painted origin.
+                let candidate = self.graph_column_fit.refit(new_w, self.graph_col_w);
+                if (candidate.badge - self.graph_column_fit.badge).abs() <= 0.5 {
+                    return;
+                }
                 if (new_w - self.badge_col_w).abs() > 0.5 {
                     self.badge_col_w = new_w;
                     theme::set_col_width("badge_col_w", new_w);
@@ -92,6 +123,10 @@ impl KagiApp {
                 };
                 let new_w =
                     ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
+                let candidate = self.graph_column_fit.refit(self.badge_col_w, new_w);
+                if (candidate.graph - self.graph_column_fit.graph).abs() <= 0.5 {
+                    return;
+                }
                 if (new_w - self.graph_col_w).abs() > 0.5 {
                     self.graph_col_w = new_w;
                     theme::set_col_width("graph_col_w", new_w);
@@ -99,18 +134,41 @@ impl KagiApp {
                 }
             }
             DividerKind::BottomPanel => {
-                // T-BP-002: absolute-coordinate formula from ADR-0007:
-                //   height = viewport_h - cursor_y - status_bar_h(22) - 2
-                // W28: the panel is rendered scaled, so the on-screen gap
-                // between the cursor and the window bottom is the *scaled*
-                // height; divide by the physical scale to recover its stored
-                // value. The status bar and divider half use the same scale.
-                let viewport_h = f32::from(window.viewport_size().height);
+                // Start from the actual pressed body height: the rendered panel
+                // already includes its divider and tab strip. Applying the
+                // pointer delta also preserves an off-centre grab, and keeping
+                // the origin immutable prevents drift after clamp overshoot.
+                let Some((origin_y, origin_height, preferred_height)) =
+                    self.bottom_panel_drag_origin
+                else {
+                    return;
+                };
                 let cursor_y = f32::from(event.event.position.y);
-                // max fraction is a screen-space cap → convert to unscaled.
-                let max_h = (viewport_h * BOTTOM_PANEL_MAX_FRAC) / z;
-                let new_h = ((viewport_h - cursor_y - (22.0 + 2.0) * z) / z)
-                    .clamp(BOTTOM_PANEL_MIN_H, max_h);
+                let max_h = super::render_bottom::max_body_height(
+                    window,
+                    self.workspace_mode() == workspace_mode::WorkspaceMode::Editor,
+                );
+                let new_h =
+                    (origin_height + (origin_y - cursor_y) / z).clamp(BOTTOM_PANEL_MIN_H, max_h);
+                // Returning to the press position restores a preference that
+                // was larger than its fitted presentation; a stationary frame
+                // must never convert that cap into a new preference.
+                let new_h = if (cursor_y - origin_y).abs() <= 0.5 * z {
+                    preferred_height
+                } else {
+                    new_h
+                };
+                if self.compact.enabled {
+                    if self
+                        .compact
+                        .bottom_height
+                        .is_none_or(|height| (new_h - height).abs() > 0.5)
+                    {
+                        self.compact.bottom_height = Some(new_h);
+                        cx.notify();
+                    }
+                    return;
+                }
                 if (new_h - self.bottom_panel_height).abs() > 0.5 {
                     self.bottom_panel_height = new_h;
                     cx.notify();
@@ -231,15 +289,19 @@ impl KagiApp {
                 }
             }
             DividerKind::EditorTree => {
-                // T-WS-EDITOR-004: the Editor Workspace's left tree pane
-                // occupies the sidebar's slot (LeftPane::FileTree hides the
-                // real sidebar in Editor mode), so its divider sits at
-                // x = tree_w * physical scale from the window's left edge.
+                // Fit and input share the actual Editor body, whose left edge
+                // can sit after the host's Compact rail.
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
-                let new_w = ((cursor_x - 2.0 * z) / z).clamp(EDITOR_TREE_MIN, EDITOR_TREE_MAX);
                 entity.update(cx, |v, cx| {
+                    let bounds = v.pane_bounds(window);
+                    let new_w = v
+                        .pane_width_from_rendered(
+                            (cursor_x - f32::from(bounds.left()) - 2.0 * z) / z,
+                            bounds.size.width,
+                        )
+                        .clamp(EDITOR_TREE_MIN, EDITOR_TREE_MAX);
                     if (new_w - v.tree_w).abs() > 0.5 {
                         v.tree_w = new_w;
                         cx.notify();
@@ -247,17 +309,19 @@ impl KagiApp {
                 });
             }
             DividerKind::EditorHunks => {
-                // T-WS-EDITOR-004: the hunks pane is the rightmost slot and
-                // this divider sits at its LEFT edge, so dragging right
-                // SHRINKS it — same geometry as the Panel arm (measure from
-                // the viewport's right edge).
+                // The hunks divider sits at the pane's LEFT edge; dragging
+                // right shrinks it, measured from the Editor body's right edge.
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
-                let viewport_w = f32::from(window.viewport_size().width);
-                let new_w = ((viewport_w - cursor_x - 2.0 * z) / z)
-                    .clamp(EDITOR_HUNKS_MIN, EDITOR_HUNKS_MAX);
                 entity.update(cx, |v, cx| {
+                    let bounds = v.pane_bounds(window);
+                    let new_w = v
+                        .pane_width_from_rendered(
+                            (f32::from(bounds.right()) - cursor_x - 2.0 * z) / z,
+                            bounds.size.width,
+                        )
+                        .clamp(EDITOR_HUNKS_MIN, EDITOR_HUNKS_MAX);
                     if (new_w - v.hunks_w).abs() > 0.5 {
                         v.hunks_w = new_w;
                         cx.notify();
@@ -270,7 +334,7 @@ impl KagiApp {
                 // cursor to pane-relative logical px and let the pane's own
                 // handler do the per-column offset math.
                 let pane_left = if self.sidebar.visible {
-                    self.sidebar.width + INNER_DIV_W
+                    self.pane_fit.sidebar + INNER_DIV_W
                 } else {
                     0.0
                 };

@@ -73,6 +73,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 
     // ── 3. Early blockers (before touching git objects) ──────
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Unborn HEAD: no commits → cannot cherry-pick.
@@ -173,6 +174,9 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             dirty: current.dirty.clone(),
         };
         return Ok(OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
                 sha: id.short().to_string(),
@@ -193,6 +197,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head_at_plan: head,
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -251,6 +256,9 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             dirty: current.dirty.clone(),
         };
         return Ok(OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
                 sha: id.short().to_string(),
@@ -271,6 +279,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head_at_plan: head,
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -351,6 +360,9 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             dirty: current.dirty.clone(),
         };
         return Ok(OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
                 sha: id.short().to_string(),
@@ -371,6 +383,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             head_at_plan: head,
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -404,6 +417,9 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
             sha: id.short().to_string(),
@@ -424,6 +440,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files,
         preview_commits: Vec::new(),
@@ -450,7 +467,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 /// 4. Creates a new commit via `repo.commit(Some("HEAD"), original_author,
 ///    committer_from_config, original_message, &tree, &[&head_commit])`.
 ///    Author and message are preserved from the source commit; committer is
-///    read from repo config (falls back to `"kagi <kagi@local>"`).
+///    read from the Git committer identity; missing identity blocks execution.
 /// 5. Syncs the working tree to the new HEAD with
 ///    `repo.checkout_head(Some(CheckoutBuilder::new().safe()))`.
 ///
@@ -463,6 +480,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 ///
 /// Returns [`GitError::Other`] on any failure.
 pub(crate) fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
+    let committer = build_signature(repo)?;
     // ── 1. Resolve target commit ──────────────────────────────
     let target_oid = git2::Oid::from_str(&id.0)
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
@@ -508,10 +526,6 @@ pub(crate) fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<Co
     let new_tree = repo
         .find_tree(new_tree_oid)
         .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-
-    // ── 6. Build committer signature ──────────────────────────
-    let committer = build_signature(repo)?;
-
     // ── 7. Preserve author and message from source commit ────
     let original_author = commit.author();
     // message() returns Result<&str, Error> in git2 0.21.
@@ -603,6 +617,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     };
 
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings: Vec<PlanNote> = Vec::new();
 
     if let Head::Unborn { .. } = &head {
@@ -708,6 +723,9 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     let blocked_plan =
         |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: title.clone(),
             current: current.clone(),
@@ -721,6 +739,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -839,6 +858,9 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
         current,
@@ -849,6 +871,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files,
         preview_commits: Vec::new(),
@@ -863,6 +886,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 /// safe-checkout the new tree while HEAD still points at the old baseline, then
 /// move the current branch ref to the new commit.
 pub(crate) fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
+    let committer = build_signature(repo)?;
     let target_oid = if id.0.len() == 40 {
         git2::Oid::from_str(&id.0).or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
     } else {
@@ -923,7 +947,6 @@ pub(crate) fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitI
         .find_tree(new_tree_oid)
         .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
 
-    let committer = build_signature(repo)?;
     let summary_line: String = commit
         .summary()
         .ok()

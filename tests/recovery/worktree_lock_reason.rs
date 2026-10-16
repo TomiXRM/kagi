@@ -162,6 +162,25 @@ pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
         let before = repo_fingerprint(fixture.path());
         let (app, window) = mount(cx, fixture.path());
 
+        enter_reason(cx, &app, window, "planning failure");
+        let index_path = fixture.path().join(".git/index");
+        let index = std::fs::read(&index_path).unwrap();
+        std::fs::write(&index_path, b"invalid index for planning error").unwrap();
+        click(cx, window, "worktree-lock-reason-review");
+        std::fs::write(&index_path, index).unwrap();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let error = state.worktree_lock_reason_modal().unwrap().error.as_ref()
+                .expect("planning error stays in the reason dialog");
+            assert!(!error.is_empty());
+            for internal in [" plan failed:", " の plan に失敗しました:", "session unavailable"] {
+                assert!(!error.contains(internal), "{error}");
+            }
+            assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message) if message == error));
+        });
+        cx.simulate_keystrokes(window, "escape");
+        cx.run_until_parked();
+
         enter_reason(cx, &app, window, "cancelled edit");
         cx.simulate_keystrokes(window, "escape");
         cx.run_until_parked();
@@ -303,7 +322,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
@@ -357,7 +376,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
@@ -491,7 +510,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     // ── shell exit → owner-scoped wait delivery → pending release ───────
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -630,7 +649,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {

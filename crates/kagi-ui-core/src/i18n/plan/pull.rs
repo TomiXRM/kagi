@@ -9,31 +9,31 @@ use crate::i18n::Msg;
 /// JA template for `Msg::AdvicePullAutoStash`. The single `{}` takes the
 /// assembled changes fragment (`stage 済み 2 件、未追跡 1 件` …).
 pub(crate) const ADVICE_AUTO_STASH: &str =
-    "作業ツリーに{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
+    "working tree に{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
 
 pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
-    "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
+    "working tree に{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
-    "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。";
+    "この pull は conflict する見込みです。remote が変わっていなければ、何も変更せずに安全に停止します。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
-    "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:{}\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。";
+    "stash を戻すときに次のファイルが conflict します:{}\n先に対象ファイルを commit か stash するか、pull 後に conflict を解決してください。どちらの場合も stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
     "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
 pub(crate) const ADVICE_PULL_CONFLICTED_REF_ONLY: &str =
-    "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。";
+    "conflict ファイルが {} 件あります。この ref-only pull は working tree に影響しません。";
 pub(crate) const ADVICE_PULL_DIRTY_REF_ONLY: &str =
-    "作業ツリーに変更があります。この ref-only pull は作業ツリーに影響しません。";
+    "working tree に変更があります。この ref-only pull は working tree に影響しません。";
 pub(crate) const ADVICE_PULL_CANNOT_FAST_FORWARD: &str =
     "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。";
 pub(crate) const ADVICE_PULL_REMOTE_DIVERGED: &str =
     "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はremote上で merge commit を作成します。";
 pub(crate) const ADVICE_PULL_REMOTE_DIRTY: &str =
-    "remoteの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。";
+    "remote の working tree に未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。";
 pub(crate) const ADVICE_PULL_REMOTE_PREVIEW_STALE: &str =
-    "remote pull の確認内容とホストの現在の branch・upstream・HEAD commit・作業ツリーの変更状態が一致しません。remote の表示を更新してから、もう一度お試しください。";
+    "remote pull の確認内容とホストの現在の branch・upstream・HEAD commit・working tree の変更状態が一致しません。remote の表示を更新してから、もう一度お試しください。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
@@ -121,6 +121,18 @@ pub fn note_ja(note: &PullNote) -> String {
     }
 }
 
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &PullNote) -> String {
+    match note {
+        PullNote::MergePrediction => "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。".to_string(),
+        PullNote::RestoreConflict { paths } => format!(
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:{}\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。",
+            path_block_ja(paths)
+        ),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one pull title.
 pub fn title_ja(title: &PullTitle) -> String {
     match title {
@@ -130,10 +142,10 @@ pub fn title_ja(title: &PullTitle) -> String {
             behind,
         } => {
             if *behind == 0 {
-                format!("{} を pull(最新、ローカル情報)", branch)
+                format!("{} を pull(前回の fetch 時点で最新)", branch)
             } else {
                 format!(
-                    "`{}` を `{}` から pull({} commit 遅れ)",
+                    "`{}` を `{}` から pull({} commit 遅れ、前回の fetch 時点)",
                     branch, upstream, behind
                 )
             }
@@ -144,12 +156,9 @@ pub fn title_ja(title: &PullTitle) -> String {
             behind,
         } => {
             let behind_label = if *behind == 0 {
-                "最新、ローカル情報、fetch でさらに判明する場合あり".to_string()
+                "前回の fetch 時点で最新".to_string()
             } else {
-                format!(
-                    "{} commit 遅れ、ローカル情報、fetch でさらに判明する場合あり",
-                    behind
-                )
+                format!("{} commit 遅れ、前回の fetch 時点", behind)
             };
             format!("`{}` を `{}` から pull({})", branch, remote, behind_label)
         }
@@ -158,7 +167,7 @@ pub fn title_ja(title: &PullTitle) -> String {
             remote,
             behind,
         } => format!(
-            "`{}` を `{}` から pull(ff-only, ref-only, {} 遅れ)",
+            "`{}` を `{}` から pull(ff-only, {} 遅れ)",
             branch, remote, behind
         ),
     }
@@ -184,8 +193,15 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
             "ホスト上でホストの認証情報を使い `git pull` を実行します。conflict はホスト側で解決します。"
                 .to_string()
         }
+        PullRecovery::PullCurrentFf { branch } => format!(
+            "refs/heads/{} を fast-forward し、この checkout の index と working tree を安全に更新します。\
+             履歴が乖離している場合は拒否し、merge commit は作成しません。更新が未 commit の変更パスに触れる場合は pull を拒否して変更を保持します。\n\
+             Partial では、branch が以前の先端のままで index とファイルだけ更新された可能性があります。再試行前に操作ログの実行後状態とエラーを確認し、incoming の stage 済み変更をローカルの作業として commit しないでください。\n\
+             以前の先端は git reflog show refs/heads/{} で確認できます。不要な incoming commit は履歴を書き換えず git revert で取り消せます。",
+            branch, branch
+        ),
         PullRecovery::PullBranchFf { branch } => format!(
-            "fast-forward を確認後、refs/heads/{} のみを更新します。作業ツリーは変更されません。\n\
+            "fast-forward を確認後、refs/heads/{} のみを更新します。working tree は変更されません。\n\
              以前の先端に戻すには:\n  git branch -f {} <old-sha>",
             branch, branch
         ),
@@ -195,6 +211,26 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_paths() {
+        assert_eq!(
+            note_ja_contract(&PullNote::MergePrediction),
+            "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
+        );
+        assert_eq!(
+            note_ja_contract(&PullNote::RestoreConflict {
+                paths: vec!["raw{}\n\u{1b}.txt".into(), "日本語.rs".into()],
+            }),
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:\n  - raw{}\n\u{1b}.txt\n  - 日本語.rs\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。"
+        );
+        assert_eq!(
+            note_ja_contract(&PullNote::RestoreConflict {
+                paths: (0..15).map(|i| format!("f{i}.txt")).collect(),
+            }),
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:\n  - f0.txt\n  - f1.txt\n  - f2.txt\n  - f3.txt\n  - f4.txt\n  - f5.txt\n  - f6.txt\n  - f7.txt\n  - f8.txt\n  - f9.txt\n  - f10.txt\n  - f11.txt\n  - 他 3 件\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。"
+        );
+    }
 
     /// #625: JA must name the paths too — a localized count is still a count.
     #[test]
@@ -235,5 +271,18 @@ mod tests {
         let text = recovery_ja(&PullRecovery::Pull);
         assert!(text.contains("git revert -m 1 HEAD"));
         assert!(!text.contains("reset --hard"));
+    }
+
+    #[test]
+    fn current_pull_ff_recovery_names_checkout_and_strict_policy() {
+        let text = recovery_ja(&PullRecovery::PullCurrentFf {
+            branch: "main".into(),
+        });
+        assert!(text.contains("index と working tree"));
+        assert!(text.contains("merge commit は作成しません"));
+        assert!(text.contains("git reflog show refs/heads/main"));
+        assert!(text.contains("Partial"));
+        assert!(text.contains("branch が以前の先端のまま"));
+        assert!(!text.contains("git branch -f"));
     }
 }

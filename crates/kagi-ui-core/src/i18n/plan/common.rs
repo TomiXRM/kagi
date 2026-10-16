@@ -1,6 +1,8 @@
 //! JA strings for the cross-op `CommonNote` templates (ADR-0129 §A).
 
-use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, OpPhrase, PlanOp, SparseCheckoutKind, UntrackedCtx,
+};
 
 use crate::i18n::{branch_name_error, worktree_path_error, Msg};
 
@@ -22,19 +24,32 @@ pub(crate) const ADVICE_COMMON_CONFLICTED_FILES: &str =
 
 /// JA template for `Msg::AdviceCommonDirtyBlocksOp`.
 pub(crate) const ADVICE_COMMON_DIRTY_BLOCKS_OP: &str =
-    "作業ツリーに{}があります。{}の前に stash か commit してください。";
+    "working tree に{}があります。{}の前に stash か commit してください。";
 
 /// JA template for `Msg::AdviceCommonDirtyRollbackHint`.
 pub(crate) const ADVICE_COMMON_DIRTY_ROLLBACK_HINT: &str =
-    "作業ツリーに{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。";
+    "working tree に{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。";
 
 /// JA template for `Msg::AdviceCommonPartialCloneObjectMissing`.
 pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
-    "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。";
+    "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。";
 
 /// JA template for `Msg::AdviceCommonSparseExcludedPath`.
 pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
-    "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
+    "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に working tree に存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
+
+/// JA template for `Msg::AdviceCommonExternalFilter`.
+pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
+    "'{}' は Kagi が扱えない外部 filter ({}) を使っています。git で stage / discard してください。何も変更していません。";
+
+pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER_SYNC: &str =
+    "'{}' は Kagi が扱えない外部 filter ({}) を使っています。git で sync してください。何も変更していません。";
+
+pub(crate) const ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED: &str =
+    "{} を使う repository では Kagi はこの操作を行えません。git で操作してください。何も変更していません。";
+
+pub(crate) const ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED: &str =
+    "submodule '{}' が{}のため実行できません。先に git で初期化するか変更を保存してください。何も変更していません。";
 
 /// JA template for `Msg::AdviceCommonHunkChanged`.
 pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =
@@ -110,6 +125,9 @@ fn parts_ja(parts: &DirtyParts) -> String {
 /// Japanese rendering of one cross-op note.
 pub fn note_ja(note: &CommonNote) -> String {
     match note {
+        CommonNote::GitIdentityUnavailable => {
+            super::advice_text(Msg::AdviceGitIdentityUnavailable, &[])
+        }
         CommonNote::ConflictedFiles { count, before } => super::advice_text(
             Msg::AdviceCommonConflictedFiles,
             &[count, &phrase_ja(*before)],
@@ -132,6 +150,34 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::SparseExcludedPath { path } => {
             super::advice_text(Msg::AdviceCommonSparseExcludedPath, &[path])
         }
+        CommonNote::ExternalFilter { path, filter } => {
+            super::advice_text(Msg::AdviceCommonExternalFilter, &[path, filter])
+        }
+        CommonNote::ExternalFilterSync { path, filter } => {
+            super::advice_text(Msg::AdviceCommonExternalFilterSync, &[path, filter])
+        }
+        CommonNote::SparseCheckoutUnsupported { kind } => super::advice_text(
+            Msg::AdviceCommonSparseCheckoutUnsupported,
+            &[&match kind {
+                SparseCheckoutKind::Cone => "cone sparse-checkout",
+                SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                SparseCheckoutKind::SkipWorktree => "skip-worktree エントリー",
+            }],
+        ),
+        CommonNote::SubmoduleCheckoutUnsupported {
+            path,
+            uninitialized,
+        } => super::advice_text(
+            Msg::AdviceCommonSubmoduleCheckoutUnsupported,
+            &[
+                path,
+                &if *uninitialized {
+                    "未初期化"
+                } else {
+                    "未保存の変更あり"
+                },
+            ],
+        ),
         CommonNote::HunkChanged { path } => {
             super::advice_text(Msg::AdviceCommonHunkChanged, &[path])
         }
@@ -154,7 +200,7 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::BranchMissing { name, .. } => {
             format!("branch `{}` は存在しません。", name)
         }
-        // Error messages stay untranslated (error keying is out of scope).
+        // Known diagnostic payloads were localized by plan_note_text.
         CommonNote::GitErrorPassthrough { message } => message.clone(),
         // §E — delegate to the existing keyed-error localizers so there is
         // exactly one source of truth for their JA text.
@@ -164,5 +210,116 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::MergeConflictWarning => {
             super::advice_text(Msg::AdviceCommonMergeConflictWarning, &[])
         }
+    }
+}
+
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &CommonNote) -> String {
+    match note {
+        CommonNote::PartialCloneObjectMissing { detail } => format!(
+            "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。",
+            detail
+        ),
+        CommonNote::ExternalFilter { path, filter } => format!(
+            "'{}' は外部 filter ({}) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。",
+            path, filter
+        ),
+        CommonNote::ExternalFilterSync { path, filter } => format!(
+            "'{}' は外部 filter ({}) を使用しています。Kagi は強制 checkout でその filter を実行できないため、まだ sync できません。書込みは行っていません。filter に対応するまで git で sync してください。",
+            path, filter
+        ),
+        CommonNote::SparseCheckoutUnsupported { kind } => format!(
+            "この repository は {} を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。",
+            match kind {
+                SparseCheckoutKind::Cone => "cone sparse-checkout",
+                SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                SparseCheckoutKind::SkipWorktree => "skip-worktree エントリー",
+            }
+        ),
+        CommonNote::SubmoduleCheckoutUnsupported {
+            path,
+            uninitialized,
+        } => format!(
+            "'{}' は{}の submodule です。内部の working tree を保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。",
+            path,
+            if *uninitialized {
+                "未初期化"
+            } else {
+                "未保存の変更あり"
+            }
+        ),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn changed_notes_preserve_legacy_bytes_and_raw_payloads() {
+        let cases = [
+            (
+                CommonNote::PartialCloneObjectMissing {
+                    detail: "object {}\nraw".into(),
+                },
+                "この repository は partial clone で、必要な object がまだ取得されていないため読めません(object {}\nraw)。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。",
+            ),
+            (
+                CommonNote::ExternalFilter {
+                    path: "日本語/{}".into(),
+                    filter: "filter{}\nraw".into(),
+                },
+                "'日本語/{}' は外部 filter (filter{}\nraw) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。",
+            ),
+            (
+                CommonNote::ExternalFilterSync {
+                    path: "日本語/{}".into(),
+                    filter: "filter{}\nraw".into(),
+                },
+                "'日本語/{}' は外部 filter (filter{}\nraw) を使用しています。Kagi は強制 checkout でその filter を実行できないため、まだ sync できません。書込みは行っていません。filter に対応するまで git で sync してください。",
+            ),
+            (
+                CommonNote::SparseCheckoutUnsupported {
+                    kind: SparseCheckoutKind::Cone,
+                },
+                "この repository は cone sparse-checkout を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。",
+            ),
+            (
+                CommonNote::SparseCheckoutUnsupported {
+                    kind: SparseCheckoutKind::NonCone,
+                },
+                "この repository は non-cone sparse-checkout を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。",
+            ),
+            (
+                CommonNote::SparseCheckoutUnsupported {
+                    kind: SparseCheckoutKind::SkipWorktree,
+                },
+                "この repository は skip-worktree エントリー を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。",
+            ),
+            (
+                CommonNote::SubmoduleCheckoutUnsupported {
+                    path: "日本語/{}".into(),
+                    uninitialized: true,
+                },
+                "'日本語/{}' は未初期化の submodule です。内部の working tree を保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。",
+            ),
+            (
+                CommonNote::SubmoduleCheckoutUnsupported {
+                    path: "日本語/{}".into(),
+                    uninitialized: false,
+                },
+                "'日本語/{}' は未保存の変更ありの submodule です。内部の working tree を保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。",
+            ),
+        ];
+        for (note, expected) in cases {
+            assert_eq!(note_ja_contract(&note), expected);
+        }
+        assert_eq!(
+            note_ja_contract(&CommonNote::GitErrorPassthrough {
+                message: "transport {}\nraw 日本語".into(),
+            }),
+            "transport {}\nraw 日本語"
+        );
     }
 }

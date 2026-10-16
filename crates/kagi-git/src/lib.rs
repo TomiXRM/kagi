@@ -37,12 +37,11 @@ pub mod benchmark;
 pub mod blame;
 mod checklist;
 pub mod cli;
-mod conflict_abort;
 mod conflict_abort_guard;
 mod conflict_labels;
 // #704: the abort's stage sequence is contract (ADR-0196 evidence), so the
 // progress-reporting executor is observable from outside the crate.
-pub use conflict_abort::execute_conflict_abort_with_progress;
+pub use ops::conflict_abort::execute_conflict_abort_with_progress;
 pub mod conflicts;
 mod diff;
 mod diffstat;
@@ -65,16 +64,17 @@ pub mod github_threads;
 pub mod hotspot;
 mod log;
 pub mod message_gen;
+pub mod revision;
 pub use kagi_domain::message_template; // ADR-0121: was a shim file
 pub mod oplog;
 pub mod ops;
 pub mod proc;
 use kagi_domain::refs; // ADR-0121: was a shim file
-mod hunk_staging;
 pub mod resolution;
 pub mod ruleset;
 pub mod session;
 mod snapshot;
+mod special_repo;
 mod staging;
 mod status;
 pub mod trust;
@@ -169,6 +169,7 @@ pub(crate) use ops::{
 };
 pub use proc::{run_child, ProcIo, ProcRun, ProcStop};
 // PR review "suggested change" local apply (#351, ADR-0172).
+pub use kagi_domain::plan::PullIdentity;
 pub use kagi_domain::plan::SuggestionOutcome;
 pub use kagi_domain::suggestion::{parse_suggestion, Suggestion};
 #[allow(unused_imports)]
@@ -183,6 +184,7 @@ pub use ops::{
 };
 #[allow(unused_imports)]
 pub use ops::{plan_absorb, preflight_absorb, verify_absorb, DEFAULT_ABSORB_WINDOW};
+pub use ops::{plan_commit, preflight_commit};
 #[allow(unused_imports)]
 pub use refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
@@ -195,11 +197,9 @@ pub use snapshot::{
     snapshot, snapshot_repairing_stat_cache, RepoSnapshot, SnapshotPhase, SnapshotProbe,
 };
 #[allow(unused_imports)]
-pub use staging::{
-    commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, CommitPreview,
-};
+pub use staging::{commit_preview, staged_file_diff, unstaged_file_diff, CommitPreview};
 #[allow(unused_imports)]
-pub(crate) use staging::{execute_commit, stage_file, stage_files, unstage_file, unstage_files};
+pub(crate) use staging::{stage_file, stage_files};
 #[allow(unused_imports)]
 pub use status::{
     working_tree_status, working_tree_status_repairing_stat_cache, ChangeKind, FileStatus,
@@ -391,6 +391,11 @@ pub enum GitError {
     /// repository settings. The underlying Git failure is retained for oplog
     /// and CLI consumers; presentation must not attribute a specific cause.
     RebaseCannotStartWithRepoSettingsDisabled(String),
+    /// A Fetch authentication failure. Keep remote identity separate from the
+    /// complete technical diagnostic so the UI can lead with localized advice.
+    FetchAuthentication { remote: String, detail: String },
+    /// Direct revision resolution failed without changing repository state.
+    Revision(revision::RevisionError),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -429,7 +434,9 @@ impl std::fmt::Display for GitError {
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Blocked(note) => f.write_str(&note.message_en()),
+            GitError::Revision(error) => std::fmt::Display::fmt(error, f),
             GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason()),
+            GitError::FetchAuthentication { detail, .. } => f.write_str(detail),
             GitError::Other(msg)
             | GitError::StashIdentityUnverified(msg)
             | GitError::RebaseCannotStartWithRepoSettingsDisabled(msg) => {

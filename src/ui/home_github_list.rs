@@ -6,11 +6,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use super::button_style::{ButtonRole, KagiButton};
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Input, InputState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
 use kagi_git::github_repos_cache::{WorkItem, WorkKind};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::home_github::GithubRepos;
 use super::home_work::HomePane;
@@ -23,10 +26,11 @@ use super::KagiApp;
 /// Everything the list's entries are built from (#937): the filter, the
 /// pane and what that pane shows — the repositories / local clones, the clone
 /// running and whether organizations are still being read for Repositories;
-/// the pull request / issue lists for the other two — and the language their
-/// text is in. The entries are built again only when it changes. The panes
-/// not on screen are not part of it: a read landing for one of them must not
-/// rebuild (and so scroll back to the top) the list being read (#942 review).
+/// the pull request / issue lists for the other two — whether that pane's
+/// read is running, and the language their text is in. The entries are
+/// built again only when it changes. The panes not on screen are not part
+/// of it: a read landing for one of them must not rebuild (and so scroll
+/// back to the top) the list being read (#942 review).
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ListKey {
     query: String,
@@ -36,6 +40,10 @@ pub(super) struct ListKey {
     version: u64,
     cloning: Option<String>,
     orgs_loading: bool,
+    /// The pane's lists are being read again (Repositories: `refreshing`;
+    /// the others: the work lists' `reading`): a search over them is not
+    /// current until the read lands (#1070).
+    reading: bool,
 }
 
 /// One entry of the virtualized list.
@@ -43,12 +51,15 @@ pub(super) struct ListKey {
 pub(super) enum HomeItem {
     Heading(String),
     Note(String),
-    Repo(RepoListing, &'static str),
+    Repo(Rc<RepoListing>, &'static str, SharedString),
     /// Something is still being read: a spinner row with its label and the
     /// spinner's id.
     Loading(&'static str, &'static str),
     /// The organizations could not be listed at all, and why.
     OrgsFailed(String),
+    /// The user's own list could not be read again: the list shown is the
+    /// last one read, and why (#1070).
+    RefreshFailed(SharedString),
     /// A pull request or issue (#928), and what a click on it does.
     Work(WorkKind, WorkItem, WorkRowState),
     /// A pull request / issue list could not be read, and why.
@@ -63,6 +74,7 @@ impl KagiApp {
     pub(super) fn render_github_list(
         &mut self,
         query: String,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -90,6 +102,11 @@ impl KagiApp {
                 })
                 .flatten(),
             orgs_loading: repos && self.home_github.orgs_loading,
+            reading: if repos {
+                self.home_github.refreshing
+            } else {
+                self.home_github.work.reading
+            },
         };
         let state = self
             .home_github
@@ -123,7 +140,9 @@ impl KagiApp {
                 .enumerate()
                 .map(|(ix, item)| {
                     let key = match item {
-                        HomeItem::Repo(listing, _) => format!("repo:{}", listing.name_with_owner),
+                        HomeItem::Repo(listing, _, _) => {
+                            format!("repo:{}", listing.name_with_owner)
+                        }
                         HomeItem::Work(kind, work, _) => {
                             format!("{kind:?}:{}#{}", work.name_with_owner, work.number)
                         }
@@ -151,11 +170,14 @@ impl KagiApp {
             cx,
         ));
         let list_rows = rows.clone();
-        let list = gpui::list(state, move |i, _window, _cx| match items.get(i) {
+        let list = gpui::list(state.clone(), move |i, _window, cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
-            Some(HomeItem::Note(text)) => muted(text.clone()),
+            Some(HomeItem::Note(text)) => note_row(text),
             Some(HomeItem::OrgsFailed(text)) => {
                 super::e2e::measure_control("home-github-orgs-failed", muted(text.clone()))
+            }
+            Some(HomeItem::RefreshFailed(text)) => {
+                super::e2e::measure_control("home-github-refresh-failed", muted(text.clone()))
             }
             Some(HomeItem::Loading(text, spinner)) => super::e2e::measure_control(
                 *spinner,
@@ -192,14 +214,16 @@ impl KagiApp {
                     .text_color(rgb(theme().color_blocker))
                     .child(safe_text(text)),
             ),
-            Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
+            Some(HomeItem::Repo(listing, state, description)) => super::e2e::measure_control(
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(
                     listing.clone(),
-                    state,
+                    (state, compact),
                     &rows,
                     positions[i].unwrap_or(0),
                     &app,
+                    description.clone(),
+                    cx,
                 ),
             ),
             None => div().into_any_element(),
@@ -217,7 +241,12 @@ impl KagiApp {
                 div().id(HOME_LIST).flex().flex_col().flex_1().min_h(px(0.)),
                 name,
             ))
-            .child(list)
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "home-github-scrollbar",
+                &state,
+                list,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -235,8 +264,15 @@ impl KagiApp {
                     orgs_error,
                 },
             ) => {
-                let mut items =
-                    github_items(sections, orgs_error.as_deref(), &home.local, query, cloning);
+                let mut items = github_items(
+                    (sections, home.section_host().as_ref()),
+                    orgs_error.as_deref(),
+                    home.refresh_error.as_deref(),
+                    key.orgs_loading || key.reading,
+                    &home.local,
+                    query,
+                    cloning,
+                );
                 if key.orgs_loading {
                     items.push(HomeItem::Loading(
                         Msg::HomeGithubOrgsLoading.t(),
@@ -253,19 +289,37 @@ impl KagiApp {
 /// The list's id, which its rows name as theirs.
 pub(super) const HOME_LIST: &str = "home-list";
 
-/// The list's entries: per owner a heading, its notes (empty, unreadable,
-/// truncated) and the repositories matching `query`; an owner without a
-/// match is left out while filtering. When the organizations could not be
-/// listed at all, a section says so instead of there being none.
+/// The list's entries: why the user's own list could not be read again (the
+/// list shown is the last one read), then per owner a heading, its notes
+/// (empty, unreadable, truncated) and the repositories matching `query`.
+/// While filtering, an owner without a match is left out only when its list
+/// was read in full; one that could not be read or was cut at the limit
+/// keeps its note, as its missing repositories might match (#1070). When
+/// the organizations could not be listed at all, a section says so instead
+/// of there being none. "No match" is said only for a current, complete
+/// read: every list read in full, nothing failed and nothing still being
+/// read (`reading`: the organizations, or a refresh).
 fn github_items(
-    sections: &[OwnerRepos],
+    scope: (&[OwnerRepos], &str),
     orgs_error: Option<&str>,
+    refresh_error: Option<&str>,
+    reading: bool,
     local: &HashMap<String, PathBuf>,
     query: &str,
     cloning: Option<&str>,
 ) -> Vec<HomeItem> {
+    let (sections, host) = scope;
     let mut items = Vec::new();
     let mut shown = 0usize;
+    let mut complete = !reading && orgs_error.is_none() && refresh_error.is_none();
+    if let Some(error) = refresh_error {
+        items.push(HomeItem::RefreshFailed(
+            Msg::HomeGithubRefreshFailed
+                .t()
+                .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error))
+                .into(),
+        ));
+    }
     for section in sections {
         let title = section
             .owner
@@ -274,12 +328,13 @@ fn github_items(
         let list = match &section.list {
             Ok(list) => list,
             Err(error) => {
-                if query.is_empty() {
-                    items.push(HomeItem::Heading(title));
-                    items.push(HomeItem::Note(
-                        Msg::HomeGithubOwnerFailed.t().replace("{}", error),
-                    ));
-                }
+                complete = false;
+                items.push(HomeItem::Heading(title));
+                items.push(HomeItem::Note(
+                    Msg::HomeGithubOwnerFailed
+                        .t()
+                        .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error)),
+                ));
                 continue;
             }
         };
@@ -299,19 +354,30 @@ fn github_items(
                 } else {
                     Msg::HomeGithubClone.t()
                 };
-                HomeItem::Repo(l.clone(), state)
+                HomeItem::Repo(Rc::new(l.clone()), state, safe_text(&l.description))
             })
             .collect();
-        if rows.is_empty() && !query.is_empty() {
+        if rows.is_empty() && !query.is_empty() && !list.truncated {
             continue;
         }
         shown += rows.len();
+        let empty = list.repos.is_empty().then(|| {
+            if section.owner.is_none() {
+                Msg::HomeGithubMineEmpty.t().replace("{host}", host)
+            } else {
+                Msg::HomeGithubSectionEmpty
+                    .t()
+                    .replace("{owner}", &title)
+                    .replace("{host}", host)
+            }
+        });
         items.push(HomeItem::Heading(title));
-        if list.repos.is_empty() {
-            items.push(HomeItem::Note(Msg::HomeGithubEmpty.t().to_string()));
+        if let Some(empty) = empty {
+            items.push(HomeItem::Note(empty));
         }
         items.extend(rows);
         if list.truncated {
+            complete = false;
             items.push(HomeItem::Note(
                 Msg::HomeGithubTruncated
                     .t()
@@ -319,13 +385,15 @@ fn github_items(
             ));
         }
     }
-    if let Some(error) = orgs_error.filter(|_| query.is_empty()) {
+    if let Some(error) = orgs_error {
         items.push(HomeItem::Heading(Msg::HomeGithubOrgs.t().to_string()));
         items.push(HomeItem::OrgsFailed(
-            Msg::HomeGithubOrgsFailed.t().replace("{}", error),
+            Msg::HomeGithubOrgsFailed
+                .t()
+                .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error)),
         ));
     }
-    if shown == 0 && !query.is_empty() {
+    if shown == 0 && !query.is_empty() && complete {
         items.push(HomeItem::Note(Msg::HomeGithubNoMatch.t().to_string()));
     }
     items
@@ -338,6 +406,8 @@ pub(super) fn search_field(input: &Entity<InputState>) -> AnyElement {
     // its `size_full` did not resolve, leaving the text area zero-wide —
     // typed characters and the placeholder were drawn into nothing.
     div()
+        .relative()
+        .child(super::e2e::measure_inside("home-search"))
         .flex()
         .flex_row()
         .items_center()
@@ -350,6 +420,8 @@ pub(super) fn search_field(input: &Entity<InputState>) -> AnyElement {
         .border_color(rgb(theme().surface))
         .child(
             Input::new(input)
+                .context_menu(kagi_ui_core::input::context_menu(input, false))
+                .aria_label(Msg::A11yHomeFilter.t())
                 .appearance(false)
                 .cleanable(true)
                 .large()
@@ -373,14 +445,49 @@ fn section_heading(title: &str) -> impl IntoElement {
         .child(SharedString::from(title.to_string()))
 }
 
-pub(super) fn muted(text: String) -> AnyElement {
+pub(super) fn muted(text: impl Into<SharedString>) -> AnyElement {
+    let text: SharedString = text.into();
     div()
         .px_3()
         .py_1()
         .text_sm()
         .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(text))
+        .child(text)
         .into_any_element()
+}
+
+/// A note row: `muted`, unchanged. Tier A builds (#1070) also measure the
+/// notes a search has to keep apart, named after the message they show.
+fn note_row(text: &str) -> AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(name) = note_probe(text) {
+        return super::e2e::measure_control(name, muted(text.to_string()));
+    }
+    muted(text.to_string())
+}
+
+/// Which of the list's notes `text` is: no match, a list cut at its limit,
+/// or an owner that could not be read. Tier A only; the message decides,
+/// in the language on screen.
+#[cfg(feature = "gui-e2e")]
+fn note_probe(text: &str) -> Option<&'static str> {
+    let filled = |msg: Msg| {
+        let (before, after) = msg.t().split_once("{}").unwrap_or((msg.t(), ""));
+        text.len() >= before.len() + after.len()
+            && text.starts_with(before)
+            && text.ends_with(after)
+    };
+    if text == Msg::HomeGithubNoMatch.t() || text == Msg::HomeWorkNoMatch.t() {
+        Some("home-list-no-match")
+    } else if text == Msg::HomeWorkTruncated.t() {
+        Some("home-work-truncated")
+    } else if filled(Msg::HomeGithubTruncated) {
+        Some("home-github-truncated")
+    } else if filled(Msg::HomeGithubOwnerFailed) {
+        Some("home-github-owner-failed")
+    } else {
+        None
+    }
 }
 
 /// Muted text without its own padding, for use beside a spinner.
@@ -392,19 +499,23 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 }
 
 /// One repository: its name over its description on the left; on the right
-/// the last update, private / fork marks and what a click does, as a chip.
+/// the last update, private / fork marks and a small Secondary push button.
 /// It is row `at` of `rows`: ↑/↓ move from it, Tab reaches it as the list's
 /// stop.
 fn github_row(
-    listing: RepoListing,
-    state: &'static str,
+    listing: Rc<RepoListing>,
+    presentation: (&'static str, bool),
     rows: &super::keyboard_nav::RowList,
     at: usize,
     app: &Entity<KagiApp>,
+    full_description: SharedString,
+    cx: &gpui::App,
 ) -> AnyElement {
+    let (state, compact) = presentation;
     let chip = |text: &str| {
         div()
-            .flex_shrink_0()
+            .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
+            .when(!compact, |el| el.flex_shrink_0())
             .px_2()
             .rounded_md()
             .bg(rgb(theme().surface))
@@ -417,40 +528,97 @@ fn github_row(
         .flex_row()
         .items_center()
         .gap_2()
-        .flex_shrink_0();
+        .when(compact, |el| {
+            el.min_w(px(0.)).flex_shrink(1.).max_w(gpui::relative(0.5))
+        })
+        .when(!compact, |el| el.flex_shrink_0());
     if let Some(day) = listing.updated_at.get(..10) {
         meta = meta.child(
             div()
                 .text_sm()
+                .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(day.to_string())),
         );
     }
     if listing.is_private {
-        meta = meta.child(chip(Msg::HomeGithubPrivate.t()));
+        meta = meta.child(super::e2e::measure_control(
+            format!("home-gh-private-{}", listing.name_with_owner),
+            chip(Msg::HomeGithubPrivate.t()),
+        ));
     }
     if listing.is_fork {
         meta = meta.child(chip(Msg::HomeGithubFork.t()));
     }
+    let button_app = app.clone();
+    let button_listing = listing.clone();
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_home_repository_action(&listing.name_with_owner, state);
     meta = meta.child(super::e2e::measure_control(
         format!("home-gh-{}:{state}", listing.name_with_owner),
-        chip(state).text_color(rgb(theme().color_branch)),
+        KagiButton::styled(
+            SharedString::from(format!("home-gh-action-{}", listing.name_with_owner)),
+            state,
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .h(super::theme::scaled_px(22.))
+        .flex_shrink_0()
+        .tab_stop(false)
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            button_app.update(cx, |app, cx| {
+                app.home_github_pick((*button_listing).clone(), cx);
+                app.focus_after_pick(window, cx);
+            });
+        }),
     ));
-    let description = (!listing.description.is_empty()).then(|| {
+    let tooltip_description = full_description.clone();
+    #[cfg(feature = "gui-e2e")]
+    let tooltip_name = listing.name_with_owner.clone();
+    let description = (!full_description.is_empty()).then(|| {
         div()
+            .id(SharedString::from(format!(
+                "home-gh-description-{}",
+                listing.name_with_owner
+            )))
             .text_sm()
             .text_color(rgb(theme().text_muted))
             .truncate()
-            .child(safe_text(&listing.description))
+            .child(full_description.clone())
+            .child(super::e2e::measure_inside(format!(
+                "home-gh-description-{}",
+                listing.name_with_owner
+            )))
+            .hover_tooltip_builder(
+                SharedString::from(format!(
+                    "home-gh-description-help-{}",
+                    listing.name_with_owner
+                )),
+                move |window, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::record_home_repository_description(
+                        &format!("tooltip:{tooltip_name}"),
+                        &tooltip_description,
+                    );
+                    Tooltip::new(tooltip_description.clone()).build(window, cx)
+                },
+            )
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();
+    #[cfg(feature = "gui-e2e")]
+    let column_id = format!("home-gh-{}-name-column", listing.name_with_owner);
+    #[cfg(not(feature = "gui-e2e"))]
+    let column_id = "home-repository-name-column";
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
     rows.row(
         at,
         super::list_a11y::list_item(HOME_LIST, div().id(id), at, rows.len(), label),
     )
+    .map(|row| repository_row_description(row, &listing.name_with_owner, full_description))
     .w_full()
     .flex()
     .flex_row()
@@ -459,11 +627,11 @@ fn github_row(
     .px(super::keyboard_nav::inset(12.))
     .py(super::keyboard_nav::inset(8.))
     .rounded_lg()
-    .cursor(gpui::CursorStyle::PointingHand)
+    .cursor(gpui::CursorStyle::Arrow)
     .hover(|s| s.bg(rgb(theme().surface)))
     .on_click(move |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.home_github_pick(listing.clone(), cx);
+            app.home_github_pick((*listing).clone(), cx);
             app.focus_after_pick(window, cx);
         });
     })
@@ -473,6 +641,9 @@ fn github_row(
             .flex_col()
             .flex_1()
             .min_w(px(0.))
+            .when(compact, |el| el.min_w(gpui::relative(0.45)))
+            .relative()
+            .child(super::e2e::measure_inside(column_id))
             .child(
                 div()
                     .text_base()
@@ -489,6 +660,25 @@ fn github_row(
 /// Tier A hooks for the list's place (#942 review).
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn invalidate_home_items_for_e2e(&mut self) {
+        self.home_github.list_key = None;
+    }
+    /// Observe the actual cached entries consumed by the production renderer.
+    pub fn home_item_text_for_e2e(&self) -> Vec<(String, String)> {
+        self.home_github
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                HomeItem::Heading(text) => Some(("heading".into(), text.clone())),
+                HomeItem::Note(text) => Some(("note".into(), text.clone())),
+                HomeItem::Repo(repo, _, _) => Some(("repo".into(), repo.name_with_owner.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+    pub fn home_scroll_for_e2e(&self) -> Option<gpui::ListState> {
+        self.home_github.list.clone()
+    }
     /// Scroll Home's list so entry `ix` is at its top.
     pub fn scroll_home_list_for_e2e(&self, ix: usize) {
         if let Some(state) = &self.home_github.list {
@@ -510,5 +700,25 @@ impl KagiApp {
     /// Read only the pull request / issue lists again, as a Refresh does.
     pub fn reload_home_work_for_e2e(&mut self, cx: &mut Context<Self>) {
         self.reload_home_work(cx);
+    }
+}
+
+/// Keep the description assignment and Tier A observation on one call path.
+fn repository_row_description(
+    row: gpui::Stateful<gpui::Div>,
+    name: &str,
+    description: SharedString,
+) -> gpui::Stateful<gpui::Div> {
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_home_repository_description(name, &description);
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = name;
+    row.aria_description(description)
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn take_home_repository_description_for_e2e(&self, name: &str) -> Option<String> {
+        super::e2e::take_home_repository_description(name)
     }
 }

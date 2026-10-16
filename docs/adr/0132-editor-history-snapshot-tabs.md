@@ -42,7 +42,7 @@ pipeline does not apply.
 dependency ("status/diff types... never the Git backend crate"). Since
 `FileHistory`/`FileHistoryEntry`/`CommitSummary`/`FileSnapshotContent` are all
 pure `kagi_domain` types, the crate names and renders them directly —
-`history: Option<FileHistory>` and `snapshot: Option<FileSnapshotContent>` are
+`history: Option<Arc<FileHistory>>` and `snapshot: Option<FileSnapshotContent>` are
 typed fields, not `Box<dyn Any>`. Only the *diff* view needs the existing
 opacity trick: `history_diff: Option<Box<dyn Any>>` holds a bin-owned
 `MainDiffView`, downcast by a new `EditorHooks::render_history_diff` hook —
@@ -87,6 +87,13 @@ does. `MainDiffSource::Unstaged { path }` is reused for the historical
 commit diff (not a new `Commit`-shaped variant) — the same choice
 `FileHistoryView::load_diff` already made for its own per-commit diff, since
 neither embedding wires up `MainDiffSource`'s image-preview stepping context.
+
+The accepted file-history read owns one immutable `Arc<FileHistory>`. Rendering
+retains that same snapshot in the visible-range callback rather than cloning
+all entries, commit messages and bodies on each redraw. Replacing or clearing
+the file read replaces or clears the snapshot; the domain `FileHistory` remains
+a plain owned value, and the existing file/request ownership guards still
+control publication.
 
 ## What ended up shared with File History (revised after review)
 
@@ -154,3 +161,174 @@ first step rather than a cleanup afterwards.
   code surface in kagi must set the font itself. Known remaining duplicate:
   `src/ui/inspector.rs::change_badge` is a third copy of
   `kagi_ui_core::file_tree::status_badge` — flagged, not yet merged.
+
+## Amendment — 2026-10-12: immutable selectable historical content (#1264)
+
+Historical snapshots must not own an `InputState`. The previous independent
+code editor accepted input without dirty tracking or a persistence owner:
+its edits appeared real until switching revisions discarded them. The pinned
+gpui-kit Input has no read-only-but-selectable mode; disabling it also prevents
+the focus/selection needed for copy. Do not vendor or fork the widget for this
+surface.
+
+Use the existing selectable `TextView` for literal monospace code, with encoded
+content prepared once when the accepted snapshot is installed. No typing,
+paste, cut, delete, undo or IME mutation path exists, and no insertion caret is
+drawn. The working-tree Input and its save/dirty owner remain independent.
+
+The snapshot pane header exposes an EN/JA read-only indicator with historical
+file path and full revision SHA to accessibility and its tooltip. Two bounded
+rows keep the read-only title separate from the truncated identity and named
+`Open current` Button, rather than allowing a full SHA to consume the body
+height at high zoom. Open current returns to the already-owned live buffer,
+without reloading or discarding edits. No restore action exists on this Editor
+surface and none is added: historical content must not become a working-tree
+write outside the existing approved write lifecycle.
+
+The Editor's bottom-panel presentation cap reserves 200 reference pixels for
+the compound workspace header, file tabs, history selector, snapshot identity,
+and at least two source lines, after subtracting titlebar/toolbar/status chrome.
+Fitting never overwrites the preferred panel height. The native snapshot
+oracle retains its 60px readable-body floor at 940×660 / 167%, including a
+166-reference-pixel preference retained from a desktop window. Header styling,
+Button hit targets, terminal ownership and the live buffer remain unchanged.
+Pointer resizing uses the same presentation cap, preserves its measured press
+origin through clamp overshoot, and restores the larger preference when the
+pointer returns to that origin. Its native oracle independently calculates the
+mode-specific cap from the viewport, chrome, and compound Editor budget, checks
+overshoot against that cap, and requires visible movement whenever room remains.
+
+Horizontal Editor fitting measures its actual body bounds, excluding the host's
+Compact icon rail. Both side-pane presentation widths and divider inverse
+coordinates use those bounds, preserving the preferred widths while reserving
+180 reference pixels for a fully revealed, maximum-width buffer tab. The
+out-of-flow measurement requests a new frame only when horizontal geometry
+changes; it does not override manual tab scrolling on ordinary redraws.
+
+Copy retains the pinned selectable TextView's existing clipboard semantics:
+the shared Root trims outer whitespace, including the final newline. Snapshot
+source content remains unchanged; no local clipboard override or second
+selection owner is introduced. Native coverage checks the copied literal code
+before and after editing attempts and separately compares the complete raw
+snapshot content.
+
+The snapshot body additionally has an `EditorSnapshot` key context, but key
+predicates alone are not a safety boundary: selecting a revision leaves root
+focus, and its header Button is outside the body. Save and repository Undo/Redo
+handlers therefore require foreground `WorkspaceMode::Editor` and
+`showing_history_commit()` (History right pane with a selected commit),
+independent of focus. A retained historical Editor behind PRs, Issues or a
+takeover must not block those surfaces' normal shortcuts. Native coverage
+switches from a selected historical commit to PRs and opens its real Undo modal.
+A dirty live buffer in the foreground historical Editor must remain
+dirty and unchanged on disk before and after clicking the reader. Native
+coverage retains a real undo-capable history entry and verifies no modal opens.
+Open current leaves historical state with the same live Input focused.
+
+Native Save availability and dispatched writer admission are separate:
+menus remain disabled while busy, but Cmd-S stays registered for a visible live
+buffer and reaches the existing lease refusal/footer/toast path.
+Hidden or historical buffers cannot save. Ordinary modal routing remains
+inert; a reconciled panic notice must be dismissed before retrying.
+
+For LF content, each literal block contains at most 32 source lines so
+TextView's existing `ListState` virtualizes chunks rather than laying out the
+whole file on every frame. Syntax highlighting is disabled above 128 KiB or
+2,048 lines; initial
+parsing/measurement is still proportional to source size. Native coverage
+copies the complete 20,000-line fixture, then compares median warm forced
+TextView redraws against a 102-line fixture (8× plus 15 ms allowance, not the
+196× source growth).
+Small-file highlighting follows the kit's block-local behavior; multiline syntax
+context is not carried across chunk boundaries.
+
+CRLF content deliberately uses a single literal block: Markdown consumes the CR
+before a closing fence, so splitting on line boundaries would silently replace
+those source separators with LF in copied text. The native 102-line CRLF leg
+compares complete clipboard content across the former 32-line boundaries.
+This correctness fallback does not provide bounded warm layout for large CRLF
+files; the 20,000-line performance claim applies to LF content only.
+
+Accepted presentation trade-off: this pinned selectable reader loses the former
+CodeEditor's line-number gutter and horizontal no-wrap scrolling; long lines
+wrap. Genuine immutability and the shared selection/copy owner take precedence
+over an editable-looking viewer or a fork. [#1275](https://github.com/TomiXRM/kagi/issues/1275)
+tracks restoring these capabilities, preferably by aligning a line-number
+column with source rows/chunks in the same `ListState`, never an independent
+scroll or selection owner.
+
+## Amendment — 2026-10-12: Find/Replace accessibility (#1348)
+
+The editable code buffer keeps gpui-kit's built-in SearchPanel: Kagi does not
+introduce a second query, matcher, text input or replacement owner. The fork
+provides `InputState::search_labels` / `set_search_labels`: standalone replacement
+captions keep their existing rust_i18n translation and `Replace All` spelling,
+while the new default icon names are English. `kagi-ui-core::find` supplies EN/JA
+`Msg` names to every code-editor caller (Editor, Conflict Result and Issue body),
+including retained language changes without resetting query or buffer.
+Previous/Next, case, replacement disclosure,
+Close, Replace and Replace all remain real Buttons with their existing
+callbacks, icon geometry, unavailable states and theme styling. Accessible
+Button names and lazily constructed hover help share the localized text;
+case and replacement disclosure additionally expose `aria_toggled`.
+Both `gpui-component` and `gpui-component-assets` are pinned to the published
+TomiXRM/gpui-kit revision `ac2f8ceb088541251d0badca4b81743b5c745c65`; the
+production dependency graph contains no local development path patch.
+
+The search field precedes case/disclosure/navigation/Close in focus traversal;
+the replacement field precedes Replace/Replace all. Escape from any Find-bar
+control closes it and focuses its owning editable buffer, as does Close.
+The component binds Escape for its `SearchPanel` context as well as Input;
+Kagi's global CloseMainDiff binding excludes that context, so it cannot consume
+the key before the Find control's action handler.
+The bar has a separate non-Tab-stop container focus handle, rather than reusing
+the field's handle. Its Buttons' Return key suppresses the ancestor Input's
+Find Next binding so the normal GPUI keyboard click invokes the named action.
+When replacement can disable its focused action, focus goes to the replacement
+field rather than leaving Escape on an untracked control.
+Find Buttons and the bar consume inherited editing/selection/movement actions
+before they can reach the enclosing code Input. The case Button also guards
+its enclosing query Input. A mouse-down on unclaimed padding focuses the query,
+preserving either field's normal mouse selection and never selecting underlying
+code. The Issue body's existing capture-stage fenced-paste handler only runs
+when the body itself is focused, not when a descendant Find control is focused.
+Input shortcuts, IME handling, replacement history and the host-owned guarded
+Save path remain unchanged. No Git/backend dependency enters the Editor crate.
+
+Tier A observes assignments from the actual component renderer, native bounds,
+invoked Tooltip builders, rendered focus traversal and simulated activation.
+Its matrix is 940×660 / 1392×883, EN/JA, 100%/167%, Apple Light/Dark.
+The ownership regression records a before-FAIL when Button-focused Backspace
+clears the hidden buffer, then checks editing refusal and padding focus. Actual
+Issue-body and Conflict-Result legs check initial/live EN/JA names and help.
+Native VoiceOver, Full Keyboard Access and live IME are separate PM-owned
+Tier B checks, not claims from these renderer/TestDispatcher observations.
+
+## Amendment — 2026-10-14: History read failure feedback (#1515)
+
+An accepted History `Err` retains its cause on the current Editor file owner,
+distinct from `Ok` with zero entries. The settled pane displays an EN/JA failure
+heading, the cause and a pinned ghost Retry Button with ordinary keyboard/AX
+semantics. The open/dense pane keeps the same typography and spacing as its
+neighboring snapshot actions; no modal or write-operation receipt is appropriate
+for this read.
+
+Backend causes may include untrusted Git stderr. Retain the complete original
+cause in state, but bound the preview before `sanitize_control_bytes`, then cap
+the escaped display at 480 characters and three lines (plus an ellipsis when
+truncated). Renderer probes observe that same safe preview, never raw stderr.
+Only the cause owns a flexible scroll region; the heading and Retry are fixed
+siblings outside it, so arbitrarily long causes cannot displace recovery.
+History and Snapshot use one shared named Button adapter.
+
+Retry clears the error and emits the existing `HistoryRequested` through the
+same `(file_req, path)` request slot. While loading, repeated activation is inert.
+Mode changes preserve the accepted error until explicit Retry; changing files
+clears it alongside the immutable history and stale responses are rejected before
+either field is touched. Success clears the failure, including a genuinely empty
+history. Commit selection, virtualization, Diff and read-only Snapshot ownership
+remain unchanged.
+
+The `editor_history_fetch_error` regression injects only the History transport
+task at `start_editor_history_load`; production dispatch and publication remain
+the real path. Its neighbors run with `editor_history,editor_`.

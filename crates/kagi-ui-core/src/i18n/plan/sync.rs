@@ -41,7 +41,7 @@ pub fn note_ja(note: &SyncNote) -> String {
             unstaged,
             untracked,
         } => format!(
-            "ローカルの変更（staged {}、unstaged {}、untracked {}）は stash 形式の commit として refs/kagi/backups/ に保持され（復元: git stash apply --index <ref>）、その後作業ツリーから取り除かれます。",
+            "ローカルの変更（staged {}、unstaged {}、untracked {}）は stash 形式の commit として refs/kagi/backups/ に保持され（復元: git stash apply --index <ref>）、その後 working tree から取り除かれます。",
             staged, unstaged, untracked
         ),
         SyncNote::KeepsIgnored => "ignored ファイルには触れません。remote のファイルが ignored ファイルを上書きする場合、何も動かす前に sync を中止します。".to_string(),
@@ -74,10 +74,10 @@ pub fn recovery_ja(recovery: &SyncRecovery) -> String {
             );
             if let Some(work) = work_backup {
                 s.push_str(&format!(
-                    "\nindex と作業ツリー（staged / unstaged / untracked）を復元:\n  git stash apply --index {work}"
+                    "\nindex と working tree（staged / unstaged / untracked）を復元:\n  git stash apply --index {work}"
                 ));
             }
-            s.push_str("\nどちらの ref も、この entry を forget するまで残ります。");
+            s.push_str("\nバックアップは自動では削除されません。");
             s
         }
     }

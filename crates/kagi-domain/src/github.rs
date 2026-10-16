@@ -122,6 +122,9 @@ pub struct PullRequest {
     pub changed_files: u32,
     pub additions: u32,
     pub deletions: u32,
+    /// Authoritative GitHub commit total; absent in reduced projections.
+    /// Never infer this from loaded history or a potentially capped array.
+    pub commit_total: Option<usize>,
     /// `createdAt` / `updatedAt`, verbatim RFC-3339 as `gh` returns them
     /// (always UTC, zero-padded, fixed width). Kept as text on purpose: in
     /// that form lexicographic order *is* chronological order, so sorting
@@ -161,10 +164,21 @@ impl Default for PullRequest {
             changed_files: 0,
             additions: 0,
             deletions: 0,
+            commit_total: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
     }
+}
+
+/// One bounded, successful PR-list page from a resolved base repository.
+/// `next_cursor` is opaque and is present only when the server proves another
+/// page exists. Rows and page metadata belong to the same request generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrListSnapshot {
+    pub prs: Vec<PullRequest>,
+    pub base_repo: String,
+    pub next_cursor: Option<String>,
 }
 
 /// Which pull request: the repository it targets (`base_repo`,
@@ -533,6 +547,8 @@ pub struct IssueLabel {
 /// One comment in an issue conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueComment {
+    /// Opaque GraphQL node ID returned by GitHub for this comment.
+    pub id: String,
     pub author: String,
     pub body: String,
     pub created_at: String,

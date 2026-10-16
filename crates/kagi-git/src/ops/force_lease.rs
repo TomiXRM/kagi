@@ -135,6 +135,9 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
     }
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::ForceLease(ForceLeaseTitle::ForceLeasePush {
             branch: title_branch,
@@ -148,6 +151,7 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

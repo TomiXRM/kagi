@@ -13,6 +13,7 @@ pub const CATPPUCCIN_MOCHA: Theme = Theme {
     bg_row_alt: 0x1a1a2a,
     surface: 0x313244,
     selected: 0x45475a,
+    inactive_selected: 0x414141,
     panel: 0x181825,
     sidebar: 0x11111b,
     modal: 0x313244,
@@ -25,6 +26,7 @@ pub const CATPPUCCIN_MOCHA: Theme = Theme {
 
     color_head: 0xf38ba8,
     color_branch: 0x89b4fa,
+    link: 0x89b4fa,
     selection_tint: 0x89b4fa,
     color_remote: 0xa6e3a1,
     color_tag: 0xfab387,

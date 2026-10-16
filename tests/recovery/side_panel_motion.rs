@@ -44,7 +44,7 @@ const SELECTED: usize = 45;
 const PROBES: [&str; 3] = ["sidebar-clip", "right-pane-clip", "commit-list-viewport"];
 
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
-    e2e::set_panel_motion_clock(Some(at));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(at));
     for name in PROBES {
         e2e::clear_control_bounds(window.window_id(), name);
     }
@@ -317,7 +317,7 @@ pub fn scenario_side_panel_motion(cx: &mut VisualTestAppContext) {
     frame(cx, window, t5 + Duration::from_millis(60));
     assert_eq!(width(window, "right-pane-clip"), Some(right_full));
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(reduce_before);
     unmount(cx, app, window);
     eprintln!(
@@ -349,6 +349,12 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
     let full = f32::from(theme::scaled_px(
         cx.read(|cx| app.read(cx).panel_width + 4.),
     ));
+    // Native layout snaps to device pixels (327.6 logical px becomes 327.5
+    // at 2x). Use the same one-pixel tolerance as the reversal checks below.
+    let assert_full_width = |reason: &str| {
+        let actual = width(window, "right-pane-clip").expect(reason);
+        assert!((actual - full).abs() <= 1., "{reason}: {actual} vs {full}");
+    };
     assert!(
         0. < opening && opening < full,
         "opening: {opening} of {full}"
@@ -384,7 +390,7 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
     });
     frame(cx, window, t1);
     frame(cx, window, t1 + Duration::from_millis(300));
-    assert_eq!(width(window, "right-pane-clip"), Some(full));
+    assert_full_width("selection finishes opening");
     app.update(cx, |app, cx| {
         app.select(0);
         cx.notify();
@@ -400,7 +406,7 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
     let reversed = width(window, "right-pane-clip").expect("click reopens Inspector");
     assert!((reversed - mid).abs() <= 1., "turn: {reversed} vs {mid}");
     frame(cx, window, t1 + Duration::from_millis(600));
-    assert_eq!(width(window, "right-pane-clip"), Some(full));
+    assert_full_width("reversal finishes opening");
 
     // Reduced motion uses the same selection and Escape paths, without a
     // single intermediate width.
@@ -416,7 +422,7 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     frame(cx, window, tr);
-    assert_eq!(width(window, "right-pane-clip"), Some(full), "instant open");
+    assert_full_width("instant open");
     theme::set_reduce_motion(false);
 
     // Tab entry is a whole-workspace change. The destination starts with no
@@ -436,11 +442,7 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
     );
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     frame(cx, window, ts);
-    assert_eq!(
-        width(window, "right-pane-clip"),
-        Some(full),
-        "tab return jumps"
-    );
+    assert_full_width("tab return jumps");
 
     // A mode change resets both sides of the boundary: the right pane is
     // absent in PRs, then the retained Graph selection is full-width on return.
@@ -453,13 +455,9 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
     );
     app.update(cx, |app, cx| app.show_graph_mode(cx));
     frame(cx, window, ts);
-    assert_eq!(
-        width(window, "right-pane-clip"),
-        Some(full),
-        "Graph mode return is instant"
-    );
+    assert_full_width("Graph mode return is instant");
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(reduce_before);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS right_selection_motion");

@@ -44,7 +44,7 @@ impl StageFailure {
         action: StageAction,
         repo: &Path,
         paths: &[PathBuf],
-        error: &str,
+        error: &GitError,
         refused: bool,
     ) -> Self {
         let paths = paths
@@ -57,7 +57,7 @@ impl StageFailure {
             head: "unobserved".into(),
             dirty: format!("paths: {paths}"),
         };
-        let outcome = if refused {
+        let outcome = if refused || matches!(error, GitError::Blocked(_)) {
             OpOutcome::Refused {
                 blockers: vec![detail.clone()],
             }
@@ -69,7 +69,14 @@ impl StageFailure {
         let entry = OpLogEntry::new(action.name(), repo.display().to_string(), before, outcome)
             .with_worktree(Some(repo.display().to_string()));
         let recording = recording::finalize(entry);
-        let mut footer = i18n::op_failed(action.label(), detail);
+        let display_error = match error {
+            GitError::Blocked(note) => i18n::plan_note_text(note),
+            _ => i18n::op::user_text::diagnostic(&error.to_string()).into_owned(),
+        };
+        let mut footer = i18n::op_failed(
+            action.label(),
+            format!("{}: {paths}: {display_error}", repo.display()),
+        );
         if let Recording::Failed { error, .. } = &recording {
             // A failed stage is not evidence of a completed mutation. Preserve
             // Failed/Refused while making the missing durable record explicit.
@@ -101,7 +108,7 @@ impl KagiApp {
                 action,
                 repo,
                 paths,
-                &error.to_string(),
+                error,
                 matches!(error, GitError::Untrusted(_)),
             ),
             cx,
@@ -110,8 +117,11 @@ impl KagiApp {
     fn deliver_stage_failure(&mut self, failure: StageFailure, cx: &mut Context<Self>) {
         // The synchronous lease has ended and the receipt has settled before
         // presentation. Never append a second time or turn this into success.
-        self.present_recorded(&failure.recording, cx);
-        self.status_footer = FooterStatus::Failed(failure.footer.clone().into());
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
+        self.record_op_impl(entry, cx, false, Some(failure.footer.clone()));
+        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+            failure.footer.clone().into(),
+        ));
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());
             self.present_app_notice();
@@ -140,7 +150,13 @@ impl KagiApp {
             }
             Err(error) => {
                 self.deliver_stage_failure(
-                    StageFailure::record(action, repo, paths, &error.to_string(), true),
+                    StageFailure::record(
+                        action,
+                        repo,
+                        paths,
+                        &GitError::Other(error.to_string()),
+                        true,
+                    ),
                     cx,
                 );
                 None

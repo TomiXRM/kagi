@@ -83,6 +83,9 @@ impl KagiApp {
                     for number in [None, selected.map(Some)].into_iter().flatten() {
                         app.prepare_issue_composer_for(owner, repo.clone(), number, cx);
                     }
+                    if let Some(number) = selected {
+                        app.ensure_issue_conversation_for(owner, number, cx);
+                    }
                 }
             });
         })
@@ -152,6 +155,7 @@ impl KagiApp {
             return;
         }
         klog!("github: issues retarget {identity}");
+        self.retire_issue_conversation(cx);
         self.with_ui(|ui| ui.retarget_github_issues(identity));
         self.refresh_github_issues(cx);
     }
@@ -167,6 +171,9 @@ impl KagiApp {
         if let Some(focus) = self.root_focus.clone() {
             window.focus(&focus, cx);
         }
+        if self.ui().selected_github_issue != Some(number) {
+            self.retire_issue_conversation(cx);
+        }
         self.select_github_issue(number);
         self.prepare_issue_composer(Some(number), cx);
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
@@ -179,6 +186,9 @@ impl KagiApp {
     /// selected metadata and Reply destination change together.
     pub(super) fn select_github_issue(&mut self, number: u64) {
         self.with_ui(|ui| {
+            if ui.selected_github_issue != Some(number) {
+                ui.retire_issue_conversation_scope();
+            }
             ui.selected_github_issue = Some(number);
             for editor in ui.issue_composer.editors.values_mut() {
                 editor.focused = false;
@@ -236,6 +246,7 @@ impl KagiApp {
             window.focus(&focus, cx);
         }
         self.with_ui(TabUiState::clear_github_issue_selection);
+        self.retire_issue_conversation(cx);
         self.refresh_github_issues(cx);
     }
 
@@ -261,34 +272,45 @@ impl KagiApp {
             };
             (generation, selected, ui.issue_composer.base_repo.clone())
         };
+        self.ensure_issue_conversation_for(owner, number, cx);
+        if self.active_session() == Some(owner) && selected {
+            self.activate_issue_conversation(cx);
+        }
         cx.notify();
+        #[cfg(feature = "gui-e2e")]
+        let held_read = super::e2e::take_github_issue_detail();
+        #[cfg(not(feature = "gui-e2e"))]
+        let held_read: Option<
+            gpui::Task<Result<kagi_domain::github::Issue, kagi_git::github::PrFetchError>>,
+        > = None;
         cx.spawn(async move |this, acx| {
-            let result = acx
-                .background_executor()
-                .spawn(async move {
-                    kagi_git::github::issue_detail(&repo, base_repo.as_deref(), number)
-                })
-                .await;
+            let result = match held_read {
+                Some(task) => task.await,
+                None => {
+                    acx.background_executor()
+                        .spawn(async move {
+                            kagi_git::github::issue_detail(&repo, base_repo.as_deref(), number)
+                        })
+                        .await
+                }
+            };
             let _ = this.update(acx, |app, cx| {
-                let owner_is_active = app.active_session() == Some(owner);
                 let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
                 if !selected {
                     // Refresh a posted thread without changing the user's
                     // selected Issue or another thread's loading/error state.
-                    if ui.github_issue_detail_gen == generation {
+                    let accepted = ui.github_issue_detail_gen == generation && result.is_ok();
+                    if accepted {
                         if let Ok(issue) = result {
                             ui.github_issue_details.insert(number, issue);
                         }
+                        app.reconcile_issue_conversation_for(owner, number, cx);
                     }
                     return;
                 }
-                if ui.finish_github_issue_detail_request(generation, number, result)
-                    && owner_is_active
-                {
-                    cx.notify();
-                }
+                app.accept_github_issue_detail_for(owner, generation, number, result, cx);
             });
         })
         .detach();

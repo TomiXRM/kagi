@@ -1,7 +1,8 @@
 //! Origin- and freshness-aware transitions for the single modal slot (#718).
 
 use super::super::super::modals::{
-    ActiveModal, PopPlanModal, PullPlanModal, StashApplyModal, StashDropModal,
+    ActiveModal, EditorDirtyGuardModal, PopPlanModal, PullPlanModal, StashApplyModal,
+    StashDropModal,
 };
 use super::super::super::KagiApp;
 
@@ -45,6 +46,12 @@ impl KagiApp {
     /// Callers are synchronous user intents; async producers use the typed
     /// offer/update/notice seams below (#718 / ADR-0196).
     pub(super) fn replace_modal_from_user(&mut self, modal: ActiveModal) {
+        self.with_ui(|ui| ui.retire_issue_conversation_scope());
+        if let Some(flight) = self.fetch_in_flight.as_mut() {
+            if !flight.waiters.is_empty() {
+                flight.pull_confirm_displaced = true;
+            }
+        }
         self.sidebar.swipe.cancel();
         if let Some(ActiveModal::AppNotice(mut notice)) = self.active_modal.take() {
             notice.release_armed = false;
@@ -56,14 +63,41 @@ impl KagiApp {
     }
 
     pub(crate) fn offer_plan_from_async(&mut self, offer: AsyncPlanOffer) -> bool {
-        if self.active_modal.is_none() {
-            self.sidebar.swipe.cancel();
-            self.modal_list_scroll = gpui::UniformListScrollHandle::new();
-            self.reset_modal_sections();
-            self.active_modal = Some(offer.modal);
+        if self.offer_modal_from_async(offer.modal) {
             return true;
         }
         self.discard_contended_plan_from_async(offer.operation, offer.token);
+        false
+    }
+
+    /// Completion may offer a host guard, never replace a newer user decision.
+    /// The installed replacement remains owned by the host if this is declined.
+    pub(crate) fn offer_editor_dirty_guard_from_async(
+        &mut self,
+        modal: EditorDirtyGuardModal,
+    ) -> bool {
+        self.offer_modal_from_async(ActiveModal::EditorDirtyGuard(modal))
+    }
+
+    fn offer_modal_from_async(&mut self, modal: ActiveModal) -> bool {
+        if self.active_modal.is_none() {
+            self.with_ui(|ui| ui.retire_issue_conversation_scope());
+            if let Some(flight) = self.fetch_in_flight.as_mut() {
+                if !flight.waiters.is_empty() {
+                    flight.pull_confirm_displaced = true;
+                }
+            }
+            self.sidebar.swipe.cancel();
+            self.modal_list_scroll = gpui::UniformListScrollHandle::new();
+            self.reset_modal_sections();
+            let pr_merge = matches!(&modal, ActiveModal::PrMerge(_));
+            self.active_modal = Some(modal);
+            if pr_merge {
+                // #817: a keyboard opener must not retain Return behind the plan.
+                self.focus_root_for_modal();
+            }
+            return true;
+        }
         false
     }
 

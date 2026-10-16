@@ -1,9 +1,10 @@
 //! Shared button variants for Kagi's theme tokens.
 
 use gpui::{div, prelude::*, rgb, ElementId, Hsla, Role, SharedString, Window};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, Sizable as _};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
 
@@ -32,6 +33,85 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
         .active(active)
 }
 
+/// An operation's hierarchy is independent of its palette's RGB values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonRole {
+    Primary,
+    Secondary,
+    Destructive,
+    SideCurrent,
+    SideIncoming,
+    Success,
+    Warning,
+    Danger,
+    Neutral,
+    NeutralTinted,
+}
+
+impl ButtonRole {
+    fn accent(self, t: &super::theme::Theme) -> u32 {
+        match self {
+            Self::Primary => t.ui_accent(),
+            Self::Secondary => t.text_sub,
+            Self::Destructive => t.color_blocker,
+            Self::SideCurrent => t.color_branch,
+            Self::SideIncoming => t.color_remote,
+            Self::Success => t.color_success,
+            Self::Warning => t.color_warning,
+            Self::Danger => t.color_blocker,
+            Self::Neutral | Self::NeutralTinted => t.text_sub,
+        }
+    }
+
+    fn filled_variant(self) -> Option<ButtonVariant> {
+        match self {
+            Self::Primary | Self::SideCurrent => Some(ButtonVariant::Primary),
+            Self::Secondary => Some(ButtonVariant::Default),
+            Self::Destructive => Some(ButtonVariant::Danger),
+            Self::SideIncoming => Some(ButtonVariant::Info),
+            Self::Neutral => Some(ButtonVariant::Ghost),
+            Self::Success | Self::Warning | Self::Danger | Self::NeutralTinted => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    #[test]
+    fn button_roles_do_not_collide_with_palette_colors() {
+        for t in super::super::theme::THEMES {
+            assert_eq!(
+                ButtonRole::SideCurrent.filled_variant(),
+                Some(ButtonVariant::Primary),
+                "{}: Keep Current must be a filled Primary",
+                t.slug,
+            );
+            assert_eq!(
+                ButtonRole::SideIncoming.filled_variant(),
+                Some(ButtonVariant::Info),
+                "{}: Take Incoming must be a filled Info",
+                t.slug,
+            );
+            assert_eq!(
+                ButtonRole::Primary.filled_variant(),
+                Some(ButtonVariant::Primary)
+            );
+            assert_eq!(ButtonRole::Success.filled_variant(), None);
+            assert_eq!(ButtonRole::Warning.filled_variant(), None);
+            assert_eq!(ButtonRole::Danger.filled_variant(), None);
+            assert_eq!(
+                ButtonRole::Neutral.filled_variant(),
+                Some(ButtonVariant::Ghost)
+            );
+            assert_eq!(ButtonRole::NeutralTinted.filled_variant(), None);
+            assert_eq!(ButtonRole::SideCurrent.accent(t), t.color_branch);
+            assert_eq!(ButtonRole::SideIncoming.accent(t), t.color_remote);
+        }
+    }
+}
+
 /// Kagi-owned constructors for gpui-component buttons.
 ///
 /// Use these for semantic action buttons instead of calling
@@ -41,43 +121,115 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
 pub struct KagiButton;
 
 impl KagiButton {
-    pub fn accent(
+    pub fn styled(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
-        accent: u32,
+        role: ButtonRole,
         cx: &gpui::App,
     ) -> Button {
-        apply_accent(Button::new(id).label(label), accent, cx)
+        apply_role(Button::new(id).label(label), role, cx)
     }
 
-    pub fn accent_icon(
+    pub fn icon(
         id: impl Into<ElementId>,
         icon_path: &'static str,
         label: impl Into<SharedString>,
-        accent: u32,
+        role: ButtonRole,
         cx: &gpui::App,
     ) -> Button {
-        apply_accent(
+        apply_role(
             Button::new(id)
                 .icon(gpui_component::Icon::empty().path(icon_path))
                 .label(label),
-            accent,
+            role,
             cx,
         )
     }
 }
 
-pub fn apply_accent(btn: Button, accent: u32, cx: &gpui::App) -> Button {
-    let t = theme();
-    if accent == t.color_success || accent == t.color_warning || accent == t.color_blocker {
-        btn.custom(tinted_action_variant(accent, cx))
-    } else if accent == t.color_branch {
-        btn.primary()
-    } else if accent == t.color_remote {
-        btn.info()
-    } else {
-        btn.ghost()
+pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
+    match role.filled_variant() {
+        Some(variant) => btn.with_variant(variant),
+        None => btn.custom(tinted_action_variant(role.accent(&theme()), cx)),
     }
+}
+
+/// Name glyph-only kit buttons without adding a second accessibility node.
+/// The pinned Button exposes Interactivity, but not its stateful AX builders.
+pub(crate) fn named_button(
+    button: Button,
+    label: impl Into<SharedString>,
+    toggled: Option<bool>,
+) -> Button {
+    button_accessibility(button, label.into(), toggled, None, false)
+}
+
+/// The pinned kit disables interaction/paint but does not publish AX disabled.
+pub(crate) fn named_disabled_button(
+    button: Button,
+    label: impl Into<SharedString>,
+    disabled: bool,
+) -> Button {
+    button_accessibility(button, label.into(), None, None, disabled)
+}
+
+pub(crate) fn named_button_with_description(
+    id: impl Into<ElementId>,
+    button: Button,
+    label: SharedString,
+    toggled: Option<bool>,
+    description: Option<SharedString>,
+    disabled: bool,
+) -> gpui::AnyElement {
+    let button = button_accessibility(button, label, toggled, description.clone(), disabled);
+    if let Some(description) = description {
+        button
+            .hover_tooltip_builder(id, move |window, cx| {
+                super::render_helpers::subject_tooltip(description.clone(), window, cx)
+            })
+            .into_any_element()
+    } else {
+        button.into_any_element()
+    }
+}
+
+fn button_accessibility(
+    button: Button,
+    label: SharedString,
+    toggled: Option<bool>,
+    description: Option<SharedString>,
+    disabled: bool,
+) -> Button {
+    struct AccessibleButton(Button);
+    impl gpui::InteractiveElement for AccessibleButton {
+        fn interactivity(&mut self) -> &mut gpui::Interactivity {
+            self.0.interactivity()
+        }
+    }
+    impl gpui::StatefulInteractiveElement for AccessibleButton {}
+    let mut button = AccessibleButton(button).aria_label(label);
+    if disabled {
+        button = button.a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+            builder.parent_node().set_disabled();
+        });
+    }
+    if let Some(description) = description {
+        button = button.aria_description(description);
+    }
+    if let Some(toggled) = toggled {
+        button = button.aria_toggled(if toggled {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        });
+    }
+    #[cfg(feature = "gui-e2e")]
+    if let Some(id) = button.interactivity().element_id.clone() {
+        button.0 = button.0.on_key_down(move |_, _, _| {
+            super::e2e::pr_detail::record_key_focus(id.clone());
+        });
+    }
+    button.0
 }
 
 // Tier A observes the AX attributes set on both active and inert modal controls.
@@ -94,6 +246,7 @@ pub struct ModalButtonA11y {
 thread_local! {
     static MODAL_BUTTONS: std::cell::RefCell<std::collections::HashMap<&'static str, ModalButtonA11y>> =
         std::cell::RefCell::new(Default::default());
+    static MODAL_FOCUS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -104,6 +257,11 @@ pub fn clear_recorded_modal_buttons() {
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_modal_button(id: &str) -> Option<ModalButtonA11y> {
     MODAL_BUTTONS.with(|buttons| buttons.borrow().get(id).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn modal_focus_probe() -> Option<&'static str> {
+    MODAL_FOCUS.with(|focus| focus.take())
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -124,6 +282,12 @@ fn record_modal_button(id: &'static str, label: &SharedString, reason: Option<&S
 #[cfg(not(feature = "gui-e2e"))]
 #[inline]
 fn record_modal_button(_id: &'static str, _label: &SharedString, _reason: Option<&SharedString>) {}
+
+/// Fixed, right-aligned dialog footer. Callers append Cancel first and the
+/// default action last; button sizing and semantics stay in `modal_button`.
+pub(crate) fn modal_button_row() -> gpui::Div {
+    div().flex().flex_row().gap_2().justify_end()
+}
 
 /// Dialog actions share the small (24px) control, regardless of operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,20 +312,35 @@ pub(crate) fn modal_button(
     modal_button_with_tab_stop(id, label, kind, reason, on_click, true, cx)
 }
 
-/// AppNotice keeps window/root focus for its Enter/Escape confirmation
-/// sequence; unlike other dialog actions its button is not a Tab stop.
-pub(crate) fn modal_button_without_tab_stop(
+struct ModalCaption {
+    label: SharedString,
+    detail: Option<SharedString>,
+}
+
+/// The Rebase/Replay footer keeps identity in AX/tooltip, not intrinsic width.
+pub(crate) fn bounded_modal_button(
     id: &'static str,
-    label: impl Into<SharedString>,
+    caption: (SharedString, SharedString),
     kind: ModalButtonKind,
     reason: Option<SharedString>,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
-    modal_button_with_tab_stop(id, label, kind, reason, on_click, false, cx)
+    render_modal_button(
+        id,
+        ModalCaption {
+            label: caption.0,
+            detail: Some(caption.1),
+        },
+        kind,
+        reason,
+        on_click,
+        true,
+        cx,
+    )
 }
-
-fn modal_button_with_tab_stop(
+/// AppNotice opts into Tab activation only for its armed danger action.
+pub(crate) fn modal_button_with_tab_stop(
     id: &'static str,
     label: impl Into<SharedString>,
     kind: ModalButtonKind,
@@ -170,46 +349,142 @@ fn modal_button_with_tab_stop(
     tab_stop: bool,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
-    let label = label.into();
+    render_modal_button(
+        id,
+        ModalCaption {
+            label: label.into(),
+            detail: None,
+        },
+        kind,
+        reason,
+        on_click,
+        tab_stop,
+        cx,
+    )
+}
+
+fn render_modal_button(
+    id: &'static str,
+    caption: ModalCaption,
+    kind: ModalButtonKind,
+    reason: Option<SharedString>,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    tab_stop: bool,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    let ModalCaption { label, detail } = caption;
     record_modal_button(id, &label, reason.as_ref());
-    if let Some(reason) = reason {
-        let accent = match kind {
-            ModalButtonKind::Destructive => theme().color_blocker,
-            ModalButtonKind::Primary => theme().color_branch,
-            ModalButtonKind::Cancel | ModalButtonKind::Secondary => theme().text_sub,
-        };
-        return div()
-            .id(id)
-            .role(Role::Button)
-            .aria_label(label.clone())
-            .aria_description(reason.clone())
-            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
-                builder.parent_node().set_disabled();
-            })
-            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .justify_center()
-            .h_6()
-            .px_3()
-            .text_xs()
-            .rounded(cx.theme().radius)
-            .bg(Hsla::from(rgb(accent)).opacity(0.15))
-            .text_color(cx.theme().muted_foreground.opacity(0.5))
-            .child(label)
-            .into_any_element();
+    let description = detail.map(|detail| match &reason {
+        Some(reason) => SharedString::from(format!("{detail}\n{reason}")),
+        None => detail,
+    });
+    #[cfg(feature = "gui-e2e")]
+    if let Some(description) = &description {
+        MODAL_BUTTONS.with(|buttons| {
+            if let Some(button) = buttons.borrow_mut().get_mut(id) {
+                button.description = Some(description.to_string());
+            }
+        });
     }
-    let button = match kind {
-        ModalButtonKind::Cancel => Button::new(id).label(label).ghost(),
-        ModalButtonKind::Primary => Button::new(id).label(label).primary(),
-        ModalButtonKind::Destructive => KagiButton::accent(id, label, theme().color_blocker, cx),
-        ModalButtonKind::Secondary => Button::new(id).label(label),
+    if let Some(reason) = reason {
+        return unavailable_modal_button(id, label, kind, reason, description, cx);
+    }
+    let role = match kind {
+        ModalButtonKind::Cancel | ModalButtonKind::Secondary => ButtonRole::Secondary,
+        ModalButtonKind::Primary => ButtonRole::Primary,
+        ModalButtonKind::Destructive => ButtonRole::Destructive,
     };
-    button
+    let button = if let Some(description) = &description {
+        button_accessibility(
+            apply_role(
+                Button::new(id).child(modal_caption(label.clone(), true)),
+                role,
+                cx,
+            ),
+            label,
+            None,
+            Some(description.clone()),
+            false,
+        )
+    } else {
+        KagiButton::styled(id, label, role, cx)
+    };
+    let button = button
         .small()
         .tab_stop(tab_stop)
-        .on_click(on_click)
+        .on_key_down(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            MODAL_FOCUS.with(|focus| focus.set(Some(id)));
+            super::keyboard_nav::stop_activation_keys(event, window, cx);
+        })
+        .on_click(on_click);
+    if let Some(description) = description {
+        button
+            .hover_tooltip_builder((id, 0usize), move |window, cx| {
+                super::render_helpers::subject_tooltip(description.clone(), window, cx)
+            })
+            .into_any_element()
+    } else {
+        button.into_any_element()
+    }
+}
+
+fn unavailable_modal_button(
+    id: &'static str,
+    label: SharedString,
+    kind: ModalButtonKind,
+    reason: SharedString,
+    description: Option<SharedString>,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    let bounded = description.is_some();
+    let description = description.unwrap_or(reason);
+    let accent = match kind {
+        ModalButtonKind::Destructive => theme().color_blocker,
+        ModalButtonKind::Primary => theme().ui_accent(),
+        ModalButtonKind::Cancel | ModalButtonKind::Secondary => theme().text_sub,
+    };
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .aria_description(description.clone())
+        .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+            builder.parent_node().set_disabled();
+        })
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .h_6()
+        .px_3()
+        .text_xs()
+        .rounded(cx.theme().radius)
+        .bg(Hsla::from(rgb(accent)).opacity(0.15))
+        .text_color(cx.theme().muted_foreground.opacity(0.5))
+        .child(modal_caption(label, bounded))
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            if bounded {
+                super::render_helpers::subject_tooltip(description.clone(), window, cx)
+            } else {
+                Tooltip::new(description.clone()).build(window, cx)
+            }
+        })
+        .into_any_element()
+}
+
+fn modal_caption(label: SharedString, bounded: bool) -> gpui::AnyElement {
+    if !bounded {
+        return label.into_any_element();
+    }
+    div()
+        .max_w(super::theme::scaled_px(160.))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis_middle()
+        .relative()
+        .child(super::e2e::measure_inside("plan-confirm-caption"))
+        .child(label)
         .into_any_element()
 }
 
@@ -260,7 +535,6 @@ impl RenderOnce for ModalIconButton {
             .role(Role::Button)
             .aria_label(label.clone())
             .track_focus(&focus)
-            .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
             .flex()
             .flex_shrink_0()
             .items_center()
@@ -277,5 +551,8 @@ impl RenderOnce for ModalIconButton {
             .hover(|style| style.bg(cx.theme().secondary_hover))
             .on_click(move |event, window, cx| on_click(event, window, cx))
             .child(gpui_component::Icon::new(self.icon).small())
+            .hover_tooltip_builder((self.id, 0usize), move |window, cx| {
+                Tooltip::new(label.clone()).build(window, cx)
+            })
     }
 }

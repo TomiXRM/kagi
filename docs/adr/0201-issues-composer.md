@@ -114,3 +114,12 @@ body とする。
 - 分割規則は `kagi_domain::issue_composer::title_paste_split` に置き、
   `fenced_code_paste` と同じ pure な domain 境界に留める。UI 側は title の
   既存 wrapper div(Enter guard と同じ div)で Paste を capture する。
+
+## 追記 3: nested Find の入力所有 (#1348)
+
+本文の既存 fenced-paste capture は、本文 `InputState` 自体に focus がある場合だけ
+適用する。子の Find field / Button に focus がある場合は capture を通過させ、
+その field または SearchPanel の編集 action guard に任せる。隠れた draft を
+Find 操作から書き換えない。Find の EN/JA labels は `kagi-ui-core::find` を共用し、
+既存 placeholder の言語同期と同じ経路で更新する。
+

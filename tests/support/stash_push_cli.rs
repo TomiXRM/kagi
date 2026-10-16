@@ -150,7 +150,24 @@ fn incomplete_push_capture_records_unknown_and_requires_reconcile() {
     std::fs::write(
         &wrapper,
         format!(
-            "#!/bin/sh\n'{}' \"$@\" || exit $?\nsleep 4 &\nexit 0\n",
+            "#!/bin/sh\n\
+             is_stash_push() {{\n\
+               while [ \"$#\" -gt 0 ]; do\n\
+                 case \"$1\" in\n\
+                   -c) shift; shift ;;\n\
+                   -*) shift ;;\n\
+                   *) [ \"$1\" = stash ] && [ \"${{2-}}\" = push ]; return ;;\n\
+                 esac\n\
+               done\n\
+               return 1\n\
+             }}\n\
+             if ! is_stash_push \"$@\"; then\n\
+               exec '{}' \"$@\"\n\
+             fi\n\
+             '{}' \"$@\" || exit $?\n\
+             sleep 4 &\n\
+             exit 0\n",
+            real_git.trim().replace('\'', "'\\''"),
             real_git.trim().replace('\'', "'\\''")
         ),
     )

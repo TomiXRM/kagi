@@ -4,27 +4,19 @@
 //!
 //! Split out of `pr_mode.rs`. Pure renderers over the fetched PR list; the
 //! only state they touch is `pr_mode.active` (via `pr_mode_home`).
-//!
-//! ```text
-//! ┌ Pull Requests · owner/repo ──────────────── [⟳ Refresh] ┐
-//! │  ● 3        ● 2          ● 1                            │  attention tiles
-//! │  NEEDS YOU  IN PROGRESS  READY                          │
-//! │ Mine 3                                                  │
-//! │ ▌ feat: PR merge from kagi                 ✓  approved  │  one card per PR
-//! │   #247 · @tomixrm · feat/pr → main · ready to merge     │
-//! └─────────────────────────────────────────────────────────┘
-//! ```
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{div, prelude::*, px, rgb, uniform_list, Context, SharedString};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use kagi_domain::github::{PrAttention, PrDetailAvailability, PrReason, PullRequest};
 use kagi_domain::list_filter::apply_prs;
 
 use super::i18n::Msg;
 use super::pr_attention::{
-    attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
+    attention_color, card_border, ci_glyph, dash_card_bg, focus_queue, queue_bucket_label,
+    reason_text,
 };
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
@@ -39,89 +31,33 @@ fn page_bg() -> u32 {
     theme().bg_base
 }
 
-/// A card on that page. No grey anywhere (user request): solid white in light
-/// themes, and in dark ones plain black over the page. A partly transparent
-/// white still mixed with what was behind it and came out grey, which is why
-/// the light theme kept looking washed out.
-fn dash_card_bg() -> gpui::Hsla {
-    if theme().dark {
-        gpui::hsla(0., 0., 0., 0.35)
-    } else {
-        gpui::hsla(0., 0., 1., 1.)
-    }
-}
+#[path = "pr_dashboard_controls.rs"]
+pub(super) mod controls;
 
-/// A header-bar button: icon + label, the same weight as the existing
-/// `GitHub ↗` one so the row reads as one set of controls.
-fn bar_button(
-    id: &'static str,
-    icon: &'static str,
-    label: String,
-    click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .flex_shrink_0()
-        .px_2()
-        .py_px()
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .text_xs()
-        .text_color(rgb(theme().text_sub))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .child(
-            gpui::svg()
-                .path(icon)
-                .flex_shrink_0()
-                .w(theme::scaled_px(12.))
-                .h(theme::scaled_px(12.))
-                .text_color(rgb(theme().text_sub)),
-        )
-        .child(SharedString::from(label))
-}
-
-/// Back to the dashboard. Opening a PR replaced the center for good — there
-/// was no way back to the home screen short of closing the tab (user report).
-pub(super) fn home_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::Div> {
-    let click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_home(cx);
-    });
-    bar_button(
-        "pr-mode-home",
-        "icons/git-pull-request.svg",
-        format!("\u{2190} {}", Msg::PrAllPrs.t()),
-        click,
-    )
-}
-
-/// Fetch the PR list now instead of waiting out the 60s ticker (user request).
-pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::Div> {
-    let click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_refresh(cx);
-    });
-    bar_button(
-        "pr-mode-refresh",
-        "icons/refresh-cw.svg",
-        Msg::PrRefresh.t().to_string(),
-        click,
-    )
-}
-
-pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(super) fn render_dashboard(
+    app: &KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let ui = app.ui();
     let all = ui.pr_list_rows();
+    if !all.is_empty() && ui.filter_controls.focus.focused(window) == Some(10) {
+        if let Some(root) = &app.root_focus {
+            window.focus(root, cx);
+        }
+    }
     let error = ui.pr_list_error();
     let rows = apply_prs(all, &ui.github_pr_filter, |pr| {
         app.pr_status_availability(pr)
     });
     let filtered_count = rows.len();
+    if rows.is_empty() {
+        if let Some(mode) = app.pr_mode() {
+            mode.dashboard_keys
+                .borrow_mut()
+                .yield_focus(app.root_focus.as_ref(), window, cx);
+        }
+    }
     let numbers: HashSet<_> = rows.iter().map(|&index| all[index].number).collect();
     let now = kagi_ui_core::time::now_unix_secs();
     let mut buckets = focus_queue(app);
@@ -139,6 +75,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
     let mut body = div()
         .id("pr-mode-dashboard")
         .flex_1()
+        .min_w(px(0.))
         .min_h(px(0.))
         .flex()
         .flex_col()
@@ -198,7 +135,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                             .text_color(rgb(theme().text_muted))
                             .child(safe_text(e))
                     }))
-                    .child(refresh_button(cx)),
+                    .child(controls::refresh_button(app, cx)),
             )
         });
     } else {
@@ -227,16 +164,30 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
             );
         }
         body = body.child(render_tiles(&buckets));
-        body = body.child(render_column_header());
+        let horizontal_scroll = app
+            .pr_mode()
+            .map(|mode| mode.dashboard_horizontal_scroll.clone())
+            .unwrap_or_default();
+        // One horizontal viewport owns the header and virtualized body. The
+        // list's height stays bounded, so width never turns into eager rows.
+        let mut table = div()
+            .w_full()
+            .min_w(theme::scaled_px(TABLE_MIN_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .child(render_column_header());
         if rows.is_empty() {
-            body = body.child(
+            table = table.child(
                 div()
                     .px_4()
                     .py_3()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrPaneEmpty.t())),
+                    .child(SharedString::from(Msg::HomeWorkNoMatch.t())),
             );
+            table = table.child(super::github_pr_strip::render_pr_page_tail(app, true, cx));
         } else {
             let rows: Rc<Vec<(usize, PrAttention, PrReason)>> = Rc::new(
                 rows.into_iter()
@@ -255,6 +206,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .pr_mode()
                 .map(|mode| mode.dashboard_scroll.clone())
                 .unwrap_or_default();
+            let keyboard = controls::dashboard_rows(app, &rows, all, &scroll, window, cx);
             let owner = app.active_session();
             let generation = ui.pr_list_revision();
             let list = div()
@@ -262,37 +214,47 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .flex_1()
                 .min_h(px(0.))
                 .flex()
-                .flex_col();
-            body = body.child(
-                super::list_a11y::plain_list("pr-list", list, Msg::A11yPrList.t()).child(
+                .flex_col()
+                .map(|list| {
+                    if let Some(keys) = &keyboard {
+                        keys.list(list)
+                    } else {
+                        list
+                    }
+                });
+            table = table.child(
+                super::list_a11y::list_box("pr-list", list, Msg::A11yPrList.t()).child(
                     uniform_list(
                         "pr-home-list",
-                        row_count,
-                        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        row_count + usize::from(ui.pr_list_has_more()),
+                        cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
                             if this.active_session() != owner
                                 || this.ui().pr_list_revision() != generation
                             {
                                 return Vec::new();
                             }
+                            if let Some(mode) = this.pr_mode() {
+                                *mode.dashboard_drawn.borrow_mut() = range.clone();
+                            }
+                            let keyboard = keyboard.as_ref().map(|keys| keys.as_drawn(&range));
+                            let selected = keyboard.as_ref().and_then(|keys| keys.focused_stop(window, cx));
                             let start = range.start.saturating_sub(2);
                             let end = (range.end + 2).min(render_rows.len());
-                            let visible: BTreeSet<kagi_domain::github::PrKey> = render_rows
-                                [start..end]
-                                .iter()
-                                .filter_map(|(index, _, _)| {
-                                    this.ui().pr_list_rows().get(*index).map(|pr| pr.key())
-                                })
-                                .collect();
-                            this.observe_visible_prs(visible, cx);
+                            let first = range.start;
                             range
                                 .filter_map(|index| {
+                                    if index == render_rows.len() {
+                                        return Some(super::github_pr_strip::render_pr_page_tail(
+                                            this, true, cx,
+                                        ));
+                                    }
                                     render_rows.get(index).and_then(|(source, bucket, why)| {
                                         let pr = this.ui().pr_list_rows().get(*source)?;
                                         // Borrowed, not cloned: a `clone()` here
                                         // copied the whole avatar map for every
                                         // visible row, every frame (#750 review).
                                         let status = this.pr_status_availability(pr);
-                                        Some(render_table_row(
+                                        let row = render_table_row(
                                             pr,
                                             *bucket,
                                             why,
@@ -300,45 +262,160 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                                             now,
                                             &this.avatars.images,
                                             (index, render_rows.len()),
+                                            (selected == Some(index), this.window_active),
                                             cx,
-                                        ))
+                                        );
+                                        let row = if let Some(keys) = &keyboard {
+                                            keys.row(index, row).px(super::keyboard_nav::inset(super::timeline_row::GUTTER))
+                                                .pt(super::keyboard_nav::inset(ROW_PY))
+                                                .pb(super::keyboard_nav::inset(ROW_PY) + px(1.))
+                                                .child(div().absolute().left_0().right_0().bottom_0()
+                                                    .h(px(1.)).bg(rgb(theme().surface)))
+                                        } else { row };
+                                        let row = if index == first {
+                                            let entity = cx.entity().downgrade();
+                                            let rows = render_rows.clone();
+                                            row.child(
+                                                gpui::canvas(
+                                                    move |bounds, window, cx| {
+                                                        // Measurement also calls this processor
+                                                        // for item zero, but never prepaints it.
+                                                        if !bounds.intersects(&window.content_mask().bounds) {
+                                                            return;
+                                                        }
+                                                        let entity = entity.clone();
+                                                        let rows = rows.clone();
+                                                        cx.defer(move |cx| {
+                                                            let _ = entity.update(cx, |app, cx| {
+                                                                if app.active_session() != owner
+                                                                    || app.ui().pr_list_revision() != generation
+                                                                    || app.workspace_mode() != super::workspace_mode::WorkspaceMode::Prs
+                                                                    || !app.pr_mode().is_some_and(|mode| mode.active.is_none())
+                                                                {
+                                                                    return;
+                                                                }
+                                                                let visible: BTreeSet<_> = rows[start..end]
+                                                                    .iter()
+                                                                    .filter_map(|(index, _, _)| app.ui().pr_list_rows().get(*index).map(|pr| pr.key()))
+                                                                    .collect();
+                                                                app.observe_visible_prs(visible, cx);
+                                                            });
+                                                        });
+                                                    },
+                                                    |_, _, _, _| {},
+                                                )
+                                                .absolute()
+                                                .top_0()
+                                                .left_0()
+                                                .size_full(),
+                                            )
+                                        } else {
+                                            row
+                                        };
+                                        Some(row.into_any_element())
                                     })
                                 })
                                 .collect::<Vec<_>>()
                         }),
                     )
                     .track_scroll(&scroll)
+                    .map(|mut list| {
+                        // GPUI otherwise maps horizontal-only wheel deltas to Y.
+                        list.style().restrict_scroll_to_axis = Some(true);
+                        list
+                    })
                     .flex_1()
                     .min_h(px(0.)),
                 ),
             );
         }
+        body = body.child(
+            div()
+                .id("pr-home-table")
+                .relative()
+                .flex_1()
+                .min_w(px(0.))
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                .when(cfg!(feature = "gui-e2e"), |area| {
+                    area.child(super::e2e::measure_inside("pr-home-table"))
+                })
+                // Non-auto-hide macOS settings map to Hover in gpui-kit.
+                // Keep its hitbox clear of rows and make that table bar persistent.
+                .when(
+                    gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling,
+                    |area| area.pb(px(16.)),
+                )
+                .child(
+                    div()
+                        .id("pr-home-table-scroll")
+                        .flex_1()
+                        .min_w(px(0.))
+                        .min_h(px(0.))
+                        .flex()
+                        .overflow_x_scroll()
+                        .track_scroll(&horizontal_scroll)
+                        .map(|mut area| {
+                            // Vertical wheel deltas belong to the virtual list.
+                            area.style().restrict_scroll_to_axis = Some(true);
+                            area
+                        })
+                        .when(cfg!(feature = "gui-e2e"), |area| {
+                            area.child(super::e2e::measure_inside("pr-home-table-viewport"))
+                        })
+                        .child(table),
+                )
+                .child(Scrollbar::horizontal(&horizontal_scroll).when(
+                    gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling,
+                    |bar| bar.scrollbar_show(ScrollbarShow::Always),
+                )),
+        );
     }
 
     div()
         .flex()
         .flex_col()
         .flex_1()
+        .min_w(px(0.))
         .min_h(px(0.))
         .bg(rgb(page_bg()))
-        .child(super::list_filter_strip::render_strip(
-            app,
-            super::list_filter_strip::ListKind::Prs,
-            filtered_count,
-            cx,
-        ))
+        .when(
+            !super::compact_sidebar::owns_list_filter(window, cx),
+            |page| {
+                // The navigator projects the same Input and focus slots. Only one
+                // surface may mount them while the compact Popover is open.
+                page.child(super::list_filter_strip::render_strip(
+                    app,
+                    super::list_filter_strip::ListKind::Prs,
+                    filtered_count,
+                    cx,
+                ))
+            },
+        )
         .child(body)
         .into_any_element()
 }
 
-/// Column widths (unscaled px), shared by the header and every row so the two
-/// cannot drift. `TITLE / BRANCH` is the flexible one.
+/// Column widths (unscaled px), shared by the header and every row. The title
+/// grows at normal widths but never gives up its readable minimum to metadata.
 const COL_NO: f32 = 56.0;
+const COL_TITLE_MIN: f32 = 320.0;
 const COL_STATE: f32 = 116.0;
 const COL_AUTHOR: f32 = 116.0;
 const COL_CHECKS: f32 = 72.0;
 const COL_FILES: f32 = 52.0;
 const COL_AGE: f32 = 52.0;
+const TABLE_MIN_WIDTH: f32 = super::timeline_row::GUTTER * 2.
+    + super::timeline_row::AVATAR
+    + super::timeline_row::GAP
+    + COL_NO
+    + COL_TITLE_MIN
+    + COL_STATE
+    + COL_AUTHOR
+    + COL_CHECKS
+    + COL_FILES
+    + COL_AGE;
 /// Row padding for the triage table: denser than the feed's `ROW_PY`, because
 /// this page is scanned rather than read (PM Tier B, #750). With the shared
 /// 40px avatar and the hairline the row settles at 65px.
@@ -348,6 +425,7 @@ fn col(width: f32, label: &'static str) -> gpui::Div {
     div()
         .w(theme::scaled_px(width))
         .flex_shrink_0()
+        .whitespace_nowrap()
         .child(SharedString::from(label))
 }
 
@@ -363,10 +441,16 @@ fn render_column_header() -> gpui::Div {
         .px(theme::scaled_px(super::timeline_row::GUTTER))
         .gap(theme::scaled_px(super::timeline_row::GAP))
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
+        .map(|header| super::e2e::probe_chrome_border("pr-table-header", header))
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))
+        .relative()
+        .whitespace_nowrap()
+        .when(cfg!(feature = "gui-e2e"), |header| {
+            header.child(super::e2e::measure_inside("pr-home-table-header"))
+        })
         // The rows' avatar column has no name; the header reserves its width,
         // and the labels sit in one strip like the row's cells, so the two
         // line up by construction rather than by two lists of paddings.
@@ -386,14 +470,24 @@ fn render_column_header() -> gpui::Div {
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(theme::scaled_px(COL_TITLE_MIN))
+                        .relative()
+                        .when(cfg!(feature = "gui-e2e"), |title| {
+                            title.child(super::e2e::measure_inside("pr-home-header-title"))
+                        })
                         .child(SharedString::from(Msg::PrColTitle.t())),
                 )
                 .child(col(COL_STATE, Msg::PrColState.t()))
                 .child(col(COL_AUTHOR, Msg::PrColAuthor.t()))
                 .child(col(COL_CHECKS, Msg::PrColChecks.t()))
                 .child(col(COL_FILES, Msg::PrColFiles.t()))
-                .child(col(COL_AGE, Msg::PrColAge.t())),
+                .child(
+                    col(COL_AGE, Msg::PrColAge.t())
+                        .relative()
+                        .when(cfg!(feature = "gui-e2e"), |age| {
+                            age.child(super::e2e::measure_inside("pr-home-header-age"))
+                        }),
+                ),
         )
 }
 
@@ -415,10 +509,13 @@ fn render_table_row(
     avatars: &kagi_ui_core::avatar::AvatarImages,
     // #354: position (0-based) and size within the PR list.
     (position, size): (usize, usize),
+    (selected, window_active): (bool, bool),
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-home-row-{}", open.number));
         this.pr_mode_open(&open, cx);
     });
     let menu_pr = pr.clone();
@@ -442,8 +539,13 @@ fn render_table_row(
         PrDetailAvailability::Stale => format!("{}*", Msg::PrWhyPending.t()),
     };
     // An age needs an instant; the list's stamp is text (see `PullRequest`).
-    let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
-        .map(|at| kagi_ui_core::time::relative_time(at, now))
+    let (age, age_description) = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
+        .map(|at| {
+            (
+                kagi_ui_core::time::relative_time(at, now),
+                kagi_ui_core::time::relative_time_description(at, now),
+            )
+        })
         .unwrap_or_default();
     use kagi_domain::github::IssueState;
     let state = match pr.state {
@@ -453,13 +555,21 @@ fn render_table_row(
         IssueState::Open => reason_text(why),
     };
     let label = super::list_a11y::pr_row_label(
-        pr.number, &pr.title, &state, &pr.author, &pr.head, &pr.base, &checks, &age,
+        pr.number,
+        &pr.title,
+        &state,
+        &pr.author,
+        &pr.head,
+        &pr.base,
+        &checks,
+        &age_description,
     );
     // The cells fill everything right of the shared row's avatar column. The
     // strip must take the table's width, not its own content's: without
     // `flex_1` + `overflow_hidden` a long title sets the column's intrinsic
     // width and the fixed columns land at a different x on each row (user
     // report).
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let cells = div()
         .flex_1()
         .min_w(px(0.))
@@ -468,18 +578,36 @@ fn render_table_row(
         .flex_row()
         .items_center()
         .text_xs()
-        .text_color(rgb(theme().text_muted))
+        .text_color(if selection_on_accent {
+            theme().selection_secondary_foreground(window_active)
+        } else {
+            rgb(theme().text_muted).into()
+        })
         .child(
             div()
                 .w(theme::scaled_px(COL_NO))
                 .flex_shrink_0()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(super::e2e::measure_inside(format!(
+                        "pr-home-number-{}",
+                        pr.number
+                    )))
+                })
                 .child(SharedString::from(format!("#{}", pr.number))),
         )
         // Title over its branch pair: the two lines that identify the PR.
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(theme::scaled_px(COL_TITLE_MIN))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |title| {
+                    title.child(super::e2e::measure_inside(format!(
+                        "pr-home-title-{}",
+                        pr.number
+                    )))
+                })
                 .pr_4()
                 .flex()
                 .flex_col()
@@ -493,7 +621,11 @@ fn render_table_row(
                         .w_full()
                         .truncate()
                         .text_sm()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(window_active)
+                        } else {
+                            rgb(theme().text_main).into()
+                        })
                         .child(safe_text(&pr.title)),
                 )
                 .child(
@@ -508,7 +640,23 @@ fn render_table_row(
                 .w(theme::scaled_px(COL_STATE))
                 .flex_shrink_0()
                 .truncate()
-                .text_color(rgb(attention_color(bucket)))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(super::e2e::measure_inside(format!(
+                        "pr-home-state-{}",
+                        pr.number
+                    )))
+                })
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(if matches!(why, PrReason::Draft) {
+                        theme().text_muted
+                    } else {
+                        attention_color(bucket)
+                    })
+                    .into()
+                })
                 .child(SharedString::from(state)),
         )
         .child(
@@ -516,17 +664,29 @@ fn render_table_row(
                 .w(theme::scaled_px(COL_AUTHOR))
                 .flex_shrink_0()
                 .truncate()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(super::e2e::measure_inside(format!(
+                        "pr-home-author-{}",
+                        pr.number
+                    )))
+                })
                 .child(safe_text(&format!("@{}", pr.author))),
         )
         .child(
             div()
                 .w(theme::scaled_px(COL_CHECKS))
                 .flex_shrink_0()
-                .text_color(rgb(if pr.failed_checks() > 0 {
-                    theme().color_blocker
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
                 } else {
-                    glyph_ink
-                }))
+                    rgb(if pr.failed_checks() > 0 {
+                        theme().color_blocker
+                    } else {
+                        glyph_ink
+                    })
+                    .into()
+                })
                 .child(SharedString::from(checks)),
         )
         .child(
@@ -547,27 +707,44 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_AGE))
                 .flex_shrink_0()
-                .child(SharedString::from(age)),
+                .child(SharedString::from(age))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |age| {
+                    age.child(super::e2e::measure_inside(format!(
+                        "pr-home-age-{}",
+                        pr.number
+                    )))
+                }),
         );
-    super::list_a11y::list_item(
+    super::list_a11y::list_option(
         "pr-list",
-        super::timeline_row::clickable(super::timeline_row::row(
+        super::timeline_row::row(
             ("pr-home-row", pr.number as usize),
             &pr.author,
             kagi_git::github::repo_host(&pr.base_repo),
             avatars,
             cells,
-        )),
+        ),
         position,
         size,
         label,
+        selected,
     )
     .relative()
+    .cursor_pointer()
+    .when(!selected, super::timeline_row::clickable)
     .when(cfg!(feature = "gui-e2e"), |row| {
         row.child(super::e2e::measure_inside(format!(
             "pr-home-row-{}",
             pr.number
         )))
+    })
+    .when(selected, |row| {
+        row.bg(theme().selected_for_window(window_active))
+            .cursor_pointer()
+    })
+    .when(selection_on_accent, |row| {
+        row.text_color(theme().selection_foreground(window_active))
     })
     .items_center()
     .flex_shrink_0()
@@ -578,8 +755,6 @@ fn render_table_row(
     .py(theme::scaled_px(ROW_PY))
     .on_click(click)
     .on_mouse_down(gpui::MouseButton::Right, menu)
-    .when(pr.is_draft, |el| el.opacity(0.75))
-    .into_any_element()
 }
 
 /// One badge per non-empty attention bucket — dot, count, label, all on one
@@ -596,10 +771,16 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
         .flex_shrink_0()
         .px_4()
         .pt_3();
-    for (a, members) in buckets {
+    for (index, (a, members)) in buckets.iter().enumerate() {
         let c = attention_color(*a);
         row = row.child(
             div()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |tile| {
+                    tile.child(super::e2e::measure_inside(format!(
+                        "pr-attention-tile-{index}"
+                    )))
+                })
                 .flex()
                 .flex_row()
                 .items_center()

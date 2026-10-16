@@ -168,13 +168,26 @@ impl KagiApp {
     /// caller's: the fixture under `tests/support` is the one document every
     /// surface is checked against.
     pub fn set_issue_body_for_e2e(&mut self, number: u64, body: &str, cx: &mut Context<Self>) {
+        let session = self.active_session().expect("fixture session");
         let ui = self.ui_mut().expect("fixture session");
         let issue = ui
             .github_issue_details
             .get_mut(&number)
             .expect("seeded Issue detail");
         issue.body = body.to_string();
+        self.reconcile_issue_conversation_for(session, number, cx);
         cx.notify();
+    }
+
+    /// Read the production New Issue body entity for renderer/keyboard probes.
+    pub fn issue_body_input_for_e2e(
+        &self,
+    ) -> Option<gpui::Entity<gpui_component::input::InputState>> {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .and_then(|editor| editor.body_input.clone())
     }
 
     /// Exercise InputState's normal edit/Change event, not a direct draft write.
@@ -221,6 +234,43 @@ impl KagiApp {
         input.update(cx, |state, cx| {
             state.replace_all(text.to_owned(), window, cx);
         });
+    }
+
+    pub fn replace_issue_reply_body_for_e2e(
+        &mut self,
+        number: u64,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_issue_inputs(window, cx);
+        let input = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&Some(number))
+            .and_then(|editor| editor.body_input.clone())
+            .expect("Reply body input created by window-bearing render");
+        input.update(cx, |state, cx| {
+            state.replace_all(text.to_owned(), window, cx);
+        });
+    }
+
+    pub fn focus_issue_body_for_e2e(
+        &mut self,
+        number: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_issue_inputs(window, cx);
+        let input = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&number)
+            .and_then(|editor| editor.body_input.clone())
+            .expect("Composer body input created by window-bearing render");
+        input.update(cx, |state, cx| state.focus(window, cx));
     }
 
     /// Put the New Issue Composer back where a scenario found it: empty
@@ -275,6 +325,16 @@ impl KagiApp {
             .get(&None)
             .expect("seeded Composer");
         (editor.draft.clone(), editor.focused)
+    }
+
+    pub fn issue_reply_snapshot_for_e2e(&self, number: u64) -> IssueDraft {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&Some(number))
+            .expect("seeded Reply Composer")
+            .draft
+            .clone()
     }
 
     /// Focus the production New Issue title input before the harness sends a

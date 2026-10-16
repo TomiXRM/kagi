@@ -18,6 +18,7 @@ fn entry(op: &str) -> OpLogEntry {
         ref_scope: Default::default(),
         repo_identity: Default::default(),
         issue_fields: None,
+        technical_detail: None,
         actor: Actor::Human,
         worktree: None,
         timestamp: 1,

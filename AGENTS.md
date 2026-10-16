@@ -35,6 +35,25 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
    Keep the `plan_X` / `preflight_X` / `execute_X` triple together in the matching
    per-feature module under `crates/kagi-git/src/ops/<feature>.rs`. Never let the UI
    mutate the repo outside this path.
+5. **Official upstream public APIs first; converge to zero `[patch]` (#1479).**
+   Use libraries as-is through their official public APIs. During the migration,
+   only reduce the existing fork pins listed in #1479: no new fork commits,
+   fork pins or patches, and no reintroduction of retired ones. After #1479-S6, the
+   dependency graph has no `[patch]`; GPUI packages share the `gpui-pre` package
+   identity adopted by official GPUI Kit. Official upstream revision updates
+   belong to the explicit migration slice, not incidental dependency churn.
+   Resolve missing requirements at Kagi-owned domain/UI boundaries first. If
+   an upstream API is still missing, open an upstream PR or Discussion and record
+   the requirement, link and migration/removal condition in `docs/decisions.md`
+   (agents without publishing authorization prepare the proposal for the owner).
+   Do not copy dependency sources or hide compatibility shims to bypass this rule.
+   Scope reductions require an explicit owner decision plus coordinated ADR and
+   consumer-oracle updates. The Kagi-owned terminal is an exceptional ownership
+   boundary retaining upstream provenance and MIT/Apache notices, not permission
+   to fork other libraries. Keep `CLAUDE.md` a symlink to this file.
+   Slice names use the issue-qualified `#1479-S0`–`#1479-S6` namespace defined in
+   [the upstream migration plan](docs/rearch/upstream-migration-1479.md), not the
+   separate strangler plan's S1–S7.
 
 ## Layering — where things are allowed to live
 
@@ -296,7 +315,8 @@ often:
   failure stops the push.
 - Read and answer every Codex comment before merge; fix P0/P1 and P2s that can
   cause a wrong write.
-- herdr: `agent prompt` places text, `agent send-keys <pane> enter` sends it.
+- herdr: use mail for assignments and replies; require `[ack]` and `[done]`.
+  No terminal-prompt fallback; see `docs/agents/workflow.md`.
 
 ## Code Review Rules
 

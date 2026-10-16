@@ -249,6 +249,290 @@ fn fixture_is_identical_under_a_hostile_home() {
     assert_eq!(tree(&decoy), decoy_before, "the fixture wrote into GIT_DIR");
 }
 
+/// Local settings must serve consumers that do not use the fixture command's
+/// identity/global-config overrides, including after re-init through a gitfile.
+#[test]
+fn fixture_reinit_preserves_local_config_for_in_process_consumers() {
+    if let Some(out_file) = std::env::var_os(PROBE_OUT) {
+        let global = git2::Config::open_default().unwrap();
+        assert_eq!(global.get_string("user.name").unwrap(), "Hostile");
+        assert!(global.get_bool("commit.gpgsign").unwrap());
+        for layout in ["directory", "gitfile", "linked"] {
+            let scratch = TempDir::new().unwrap();
+            let base = scratch.path().join("repo with spaces");
+            std::fs::create_dir(&base).unwrap();
+            if layout == "gitfile" {
+                let admin = scratch.path().join("separate git dir");
+                git(
+                    &base,
+                    &[
+                        "init",
+                        "-q",
+                        "-b",
+                        "main",
+                        "--separate-git-dir",
+                        admin.to_str().unwrap(),
+                        ".",
+                    ],
+                );
+            }
+            init_repo(&base, "main");
+            write_file(&base, "seed.txt", "seed\n");
+            commit_all(&base, "seed");
+            let dir = if layout == "linked" {
+                let linked = scratch.path().join("linked worktree with spaces");
+                git(
+                    &base,
+                    &[
+                        "worktree",
+                        "add",
+                        "-q",
+                        "-b",
+                        "linked",
+                        linked.to_str().unwrap(),
+                    ],
+                );
+                linked
+            } else {
+                base
+            };
+            git(&dir, &["config", "user.name", "Old local"]);
+            git(&dir, &["config", "user.email", "old@example.invalid"]);
+            git(&dir, &["config", "commit.gpgsign", "true"]);
+            git(&dir, &["config", "--add", "fixture.keep", "first value"]);
+            git(&dir, &["config", "--add", "fixture.keep", "second value"]);
+            git(
+                &dir,
+                &["remote", "add", "preserved", "../remote with spaces"],
+            );
+            let head = git_output(&dir, &["rev-parse", "HEAD"]);
+            let branch = git_output(&dir, &["symbolic-ref", "HEAD"]);
+            init_repo(&dir, "ignored-on-reinit");
+            assert_eq!(git_output(&dir, &["rev-parse", "HEAD"]), head, "{layout}");
+            assert_eq!(
+                git_output(&dir, &["symbolic-ref", "HEAD"]),
+                branch,
+                "{layout}"
+            );
+            assert_eq!(
+                git_output(&dir, &["config", "--get-all", "fixture.keep"]),
+                "first value\nsecond value",
+                "{layout}"
+            );
+            let repo = git2::Repository::open(&dir).unwrap();
+            assert_eq!(
+                repo.find_remote("preserved").unwrap().url().unwrap(),
+                "../remote with spaces",
+                "{layout}"
+            );
+            let signature = repo.signature().unwrap();
+            assert_eq!(signature.name().unwrap(), git_fixture::NAME, "{layout}");
+            assert_eq!(signature.email().unwrap(), git_fixture::EMAIL, "{layout}");
+            write_file(&dir, "consumer.txt", "in-process commit\n");
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("consumer.txt")).unwrap();
+            index.write().unwrap();
+            let tree_id = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let parent = repo.head().unwrap().peel_to_commit().unwrap();
+            let oid = repo
+                .commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    "consumer",
+                    &tree,
+                    &[&parent],
+                )
+                .unwrap();
+            let commit = repo.find_commit(oid).unwrap();
+            assert_eq!(
+                commit.author().name().unwrap(),
+                git_fixture::NAME,
+                "{layout}"
+            );
+            assert_eq!(
+                commit.committer().email().unwrap(),
+                git_fixture::EMAIL,
+                "{layout}"
+            );
+            // Unlike git_command, plain git sees hostile signing=true and a
+            // failing signing program; only the repository-local false saves it.
+            let plain = Command::new("git")
+                .current_dir(&dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
+                .args(["commit", "--allow-empty", "-qm", "unsigned local consumer"])
+                .output()
+                .unwrap();
+            assert!(
+                plain.status.success(),
+                "{layout}: plain git did not consume local signing settings: {}",
+                String::from_utf8_lossy(&plain.stderr)
+            );
+            assert_eq!(
+                git_output(&dir, &["log", "-1", "--format=%an <%ae> %cn <%ce>"]),
+                "Test <test@example.com> Test <test@example.com>",
+                "{layout}"
+            );
+        }
+        std::fs::write(out_file, "directory, gitfile, linked consumers passed\n").unwrap();
+        return;
+    }
+    let scratch = TempDir::new().unwrap();
+    let home = scratch.path().join("hostile identity home");
+    std::fs::create_dir_all(home.join(".config")).unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n\
+         [commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n",
+    )
+    .unwrap();
+    let before = tree(&home);
+    let result = describe_in_child(
+        scratch.path(),
+        "local-consumer",
+        &[("HOME", &home), ("XDG_CONFIG_HOME", &home.join(".config"))],
+    );
+    assert_eq!(result, "directory, gitfile, linked consumers passed\n");
+    assert_eq!(tree(&home), before, "the fixture wrote into hostile HOME");
+}
+
+/// A local write must override included identity without writing the include,
+/// whether the include is repo-relative or names the isolated parent's HOME.
+#[test]
+fn fixture_reinit_preserves_local_include_consumers() {
+    if let Some(out_file) = std::env::var_os(PROBE_OUT) {
+        for (label, include, duplicate) in [
+            ("local-only", "identity.inc", false),
+            ("local-and-main", "identity.inc", true),
+            ("home-only", "~/identity.inc", false),
+            ("home-and-main", "~/identity.inc", true),
+        ] {
+            let scratch = TempDir::new().unwrap();
+            let dir = scratch.path();
+            // Do not call init_repo before installing the include: the behavior
+            // under test is its first local write against valid included keys.
+            git(dir, &["init", "-q", "-b", "main", "."]);
+            write_file(dir, "seed.txt", "included-config consumer\n");
+            commit_all(dir, "seed");
+            let local_include = dir.join(".git/identity.inc");
+            std::fs::write(
+                &local_include,
+                "[user]\n\tname = Old included\n\temail = included@example.invalid\n\
+                 [commit]\n\tgpgSign = true\n",
+            )
+            .unwrap();
+            let include_before = std::fs::read(&local_include).unwrap();
+            git(dir, &["config", "--add", "fixture.keep", "first value"]);
+            git(dir, &["config", "--add", "fixture.keep", "second value"]);
+            git(dir, &["config", "include.path", include]);
+            if duplicate {
+                git(dir, &["config", "user.name", "Old main"]);
+                git(dir, &["config", "user.email", "main@example.invalid"]);
+                git(dir, &["config", "commit.gpgsign", "true"]);
+            }
+            let head = git_output(dir, &["rev-parse", "HEAD"]);
+            init_repo(dir, "ignored-on-reinit");
+            assert_eq!(git_output(dir, &["rev-parse", "HEAD"]), head, "{label}");
+            assert_eq!(
+                git_output(dir, &["config", "--get-all", "fixture.keep"]),
+                "first value\nsecond value",
+                "{label}"
+            );
+            let repo = git2::Repository::open(dir).unwrap();
+            let signature = repo.signature().unwrap();
+            assert_eq!(signature.name().unwrap(), git_fixture::NAME, "{label}");
+            assert_eq!(signature.email().unwrap(), git_fixture::EMAIL, "{label}");
+            let parent = repo.head().unwrap().peel_to_commit().unwrap();
+            let tree = parent.tree().unwrap();
+            let oid = repo
+                .commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    "included identity consumer",
+                    &tree,
+                    &[&parent],
+                )
+                .unwrap();
+            let commit = repo.find_commit(oid).unwrap();
+            assert_eq!(
+                commit.author().name().unwrap(),
+                git_fixture::NAME,
+                "{label}"
+            );
+            assert_eq!(
+                commit.committer().email().unwrap(),
+                git_fixture::EMAIL,
+                "{label}"
+            );
+            let plain = Command::new("git")
+                .current_dir(dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
+                .args([
+                    "commit",
+                    "--allow-empty",
+                    "-qm",
+                    "included signing consumer",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                plain.status.success(),
+                "{label}: included signing overrode the main local setting: {}",
+                String::from_utf8_lossy(&plain.stderr)
+            );
+            assert_eq!(
+                git_output(dir, &["log", "-1", "--format=%an <%ae> %cn <%ce>"]),
+                "Test <test@example.com> Test <test@example.com>",
+                "{label}"
+            );
+            assert_eq!(
+                std::fs::read(&local_include).unwrap(),
+                include_before,
+                "{label}"
+            );
+            assert_eq!(
+                std::fs::read(dir.join("seed.txt")).unwrap(),
+                b"included-config consumer\n"
+            );
+        }
+        std::fs::write(out_file, "local and HOME include consumers passed\n").unwrap();
+        return;
+    }
+    let scratch = TempDir::new().unwrap();
+    let home = scratch.path().join("include consumer home");
+    std::fs::create_dir_all(home.join(".config")).unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n\
+         [commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("identity.inc"),
+        "[user]\n\tname = Old HOME include\n\temail = home-include@example.invalid\n\
+         [commit]\n\tgpgSign = true\n",
+    )
+    .unwrap();
+    let before = tree(&home);
+    let result = describe_in_child(
+        scratch.path(),
+        "include-consumer",
+        &[("HOME", &home), ("XDG_CONFIG_HOME", &home.join(".config"))],
+    );
+    assert_eq!(result, "local and HOME include consumers passed\n");
+    assert_eq!(
+        tree(&home),
+        before,
+        "a local write changed the included HOME"
+    );
+}
+
 /// #819: the `GIT_DIR` untouched-check above flaked on CI because `git commit`
 /// in the decoy spawned `git maintenance run --auto --detach`, whose
 /// `.git/objects/maintenance.lock` was caught by the "before" snapshot and

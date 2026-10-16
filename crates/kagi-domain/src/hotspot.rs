@@ -40,6 +40,8 @@ pub struct FileChange {
 pub struct CommitChanges {
     pub time: i64,
     pub author: String,
+    /// Display name; email remains the stable aggregation key.
+    pub author_name: String,
     pub files: Vec<FileChange>,
 }
 
@@ -325,6 +327,7 @@ pub fn top_couplings(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> 
 pub struct FileOwnership {
     pub path: String,
     pub primary_author: String,
+    pub primary_author_name: String,
     /// Primary author's share of in-window commits to this file, in `(0, 1]`.
     pub primary_share: f64,
     pub authors: u32,
@@ -338,10 +341,14 @@ pub struct FileOwnership {
 pub fn ownership(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> Vec<FileOwnership> {
     let start = window_start(raw, now, g);
     // path → (author → commits)
+    let mut names: BTreeMap<&str, &str> = BTreeMap::new();
     let mut by_path: BTreeMap<&str, BTreeMap<&str, u32>> = BTreeMap::new();
     for c in &raw.commits {
         if c.time < start || c.time > now {
             continue;
+        }
+        if !c.author_name.is_empty() {
+            names.entry(&c.author).or_insert(&c.author_name);
         }
         for f in &c.files {
             *by_path
@@ -363,6 +370,7 @@ pub fn ownership(raw: &RawEcosystem, now: i64, g: Granularity, n: usize) -> Vec<
                 .unwrap_or_default();
             FileOwnership {
                 path: path.to_string(),
+                primary_author_name: names.get(primary.as_str()).copied().unwrap_or("").into(),
                 primary_author: primary,
                 primary_share: top as f64 / total.max(1) as f64,
                 authors: authors.len() as u32,
@@ -414,6 +422,7 @@ mod tests {
         CommitChanges {
             time,
             author: author.into(),
+            author_name: String::new(),
             files: paths.iter().map(|p| fc(p)).collect(),
         }
     }
@@ -606,6 +615,24 @@ mod tests {
         let solo = owners.iter().find(|o| o.path == "solo.rs").unwrap();
         assert_eq!(solo.authors, 1);
         assert!((solo.primary_share - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ownership_names_do_not_merge_email_keys_or_change_ties() {
+        let mut a = commit_by(NOW - 100, "a@example.test", &["shared.rs"]);
+        a.author_name = "Same Name".into();
+        let mut b = commit_by(NOW - 200, "b@example.test", &["shared.rs"]);
+        b.author_name = "Same Name".into();
+        let mut older = commit_by(NOW - 300, "a@example.test", &["older.rs"]);
+        older.author_name = "Old Name".into();
+        let r = raw(vec![a, b, older], &[]);
+        let owners = ownership(&r, NOW, Granularity::All, 10);
+        assert_eq!(owners[0].path, "shared.rs");
+        assert_eq!(owners[0].authors, 2);
+        assert_eq!(owners[0].primary_author, "a@example.test");
+        assert_eq!(owners[0].primary_author_name, "Same Name");
+        assert_eq!(owners[0].primary_share, 0.5);
+        assert_eq!(owners[1].primary_author_name, "Same Name");
     }
 
     #[test]

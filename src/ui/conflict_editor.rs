@@ -31,8 +31,8 @@
 //! same tree-sitter + per-theme pipeline as the diff (ADR-0133), cached per
 //! (path, theme) so selection clicks never re-parse.
 //!
-//! Terminology (ADR-0058): side labels come from `mode.labels()`; the words
-//! "ours" / "theirs" never appear.  All prose is via [`Msg`] (en + ja).  Sizes
+//! All side names use the operation-dependent role/name labels (ADR-0058).
+//! All prose is via [`Msg`] (en + ja). Sizes
 //! go through [`theme::scaled_px`] so the editor respects zoom.
 
 use std::ops::Range;
@@ -42,20 +42,30 @@ use gpui::{
     canvas, div, prelude::*, px, relative, rgb, uniform_list, AnyElement, Bounds, Context, Pixels,
     SharedString, UniformListScrollHandle, Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::Button;
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::resolution::{LineOrder, LineOrigin, Region, SelectionSide, TriState};
 
-use super::button_style::KagiButton;
+use super::button_style::{ButtonRole, KagiButton};
 use super::conflict_view::ConflictMode;
 use super::conflict_view::ConflictView;
 use super::conflict_view::EditorChrome;
 use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::{terminal, DividerDrag, DividerGhost, DividerKind};
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static RESET_BUTTON_FOCUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_reset_focus_probe() -> bool {
+    RESET_BUTTON_FOCUSED.with(|focused| focused.replace(false))
+}
 
 /// Render the full Conflict Editor, replacing the normal body while editing.
 pub fn render_editor(
@@ -98,11 +108,11 @@ fn render_toolbar(
     let n_of_m = format!("{} {}/{}", Msg::EditorConflictNofM.t(), resolved, total);
 
     let prev = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_nav_hunk(-1);
+        this.conflict_nav_unresolved(-1);
         cx.notify();
     });
     let next = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_nav_hunk(1);
+        this.conflict_nav_unresolved(1);
         cx.notify();
     });
     let p_ext = path.to_path_buf();
@@ -111,7 +121,13 @@ fn render_toolbar(
         cx.notify();
     });
     let p_reset = path.to_path_buf();
-    let reset = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+    let reset_focus = chrome.reset_focus.clone();
+    let reset = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+        if let Some(focus) = &reset_focus {
+            if !focus.contains_focused(window, cx) {
+                focus.focus(window, cx);
+            }
+        }
         this.conflict_editor_reset_all_request(&p_reset);
         cx.notify();
     });
@@ -152,77 +168,85 @@ fn render_toolbar(
                         .child(SharedString::from(n_of_m)),
                 ),
         )
-        .child(tool_button(
-            "editor-prev",
-            Msg::EditorPrevHunk.t(),
-            theme().text_sub,
-            prev,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-editor-prev",
+            tool_button(
+                "editor-prev",
+                Msg::EditorPrevHunk.t(),
+                ButtonRole::NeutralTinted,
+                prev,
+                cx,
+            ),
         ))
-        .child(tool_button(
-            "editor-next",
-            Msg::EditorNextHunk.t(),
-            theme().text_sub,
-            next,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-editor-next",
+            tool_button(
+                "editor-next",
+                Msg::EditorNextHunk.t(),
+                ButtonRole::NeutralTinted,
+                next,
+                cx,
+            ),
         ))
         .child(icon_button(
             "editor-open-external",
             "icons/external-link.svg",
             Msg::EditorOpenExternal.t(),
-            theme().text_sub,
+            ButtonRole::NeutralTinted,
             open_ext,
             cx,
         ))
         // Reset all — destructive: trash icon, armed → blocker colour + confirm label.
-        .child(icon_button(
-            "editor-reset",
-            "icons/trash-2.svg",
-            if reset_armed {
-                Msg::EditorResetAllConfirm.t()
-            } else {
-                Msg::EditorReset.t()
-            },
-            if reset_armed {
-                theme().color_blocker
-            } else {
-                theme().color_warning
-            },
-            reset,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-editor-reset",
+            div()
+                .when_some(chrome.reset_focus.as_ref(), |el, focus| {
+                    el.track_focus(focus)
+                })
+                .child(
+                    icon_button(
+                        "editor-reset",
+                        "icons/trash-2.svg",
+                        if reset_armed {
+                            Msg::EditorResetAllConfirm.t()
+                        } else {
+                            Msg::EditorReset.t()
+                        },
+                        if reset_armed {
+                            ButtonRole::Danger
+                        } else {
+                            ButtonRole::Warning
+                        },
+                        reset,
+                        cx,
+                    )
+                    .when(cfg!(feature = "gui-e2e"), |button| {
+                        button.on_key_down(|event, _, _| {
+                            #[cfg(feature = "gui-e2e")]
+                            if event.keystroke.key == "f19" {
+                                RESET_BUTTON_FOCUSED.with(|focused| focused.set(true));
+                            }
+                            #[cfg(not(feature = "gui-e2e"))]
+                            let _ = event;
+                        })
+                    }),
+                ),
         ))
         .into_any_element()
 }
 
-fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H, cx: &gpui::App) -> Button
+fn tool_button<H>(id: &str, label: &str, role: ButtonRole, handler: H, cx: &gpui::App) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    outline_if_neutral(
-        KagiButton::accent(
-            SharedString::from(id.to_string()),
-            SharedString::from(label.to_string()),
-            accent,
-            cx,
-        ),
-        accent,
+    KagiButton::styled(
+        SharedString::from(id.to_string()),
+        SharedString::from(label.to_string()),
+        role,
         cx,
     )
     .small()
     .on_click(handler)
-}
-
-/// `apply_accent` maps a neutral accent to the *ghost* variant: no border, no
-/// fill, so prev/next/external were indistinguishable from the toolbar
-/// background (user report). `.outline()` draws a border too close to the
-/// surface to help, so neutral buttons get the same tinted chip the accent
-/// actions use — a visible fill, in a neutral hue.
-fn outline_if_neutral(btn: Button, accent: u32, cx: &gpui::App) -> Button {
-    if accent == theme().text_sub || accent == theme().text_muted {
-        btn.custom(super::button_style::tinted_action_variant(accent, cx))
-    } else {
-        btn
-    }
 }
 
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).
@@ -230,22 +254,18 @@ fn icon_button<H>(
     id: &str,
     icon_path: &'static str,
     label: &str,
-    accent: u32,
+    role: ButtonRole,
     handler: H,
     cx: &gpui::App,
 ) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    outline_if_neutral(
-        KagiButton::accent_icon(
-            SharedString::from(id.to_string()),
-            icon_path,
-            SharedString::from(label.to_string()),
-            accent,
-            cx,
-        ),
-        accent,
+    KagiButton::icon(
+        SharedString::from(id.to_string()),
+        icon_path,
+        SharedString::from(label.to_string()),
+        role,
         cx,
     )
     .small()
@@ -271,6 +291,10 @@ fn render_panes(
     };
 
     let labels = mode.labels();
+    chrome.resolver_keyboard.borrow_mut().side_names = [
+        Msg::conflict_side(&labels.current.role, &labels.current.name),
+        Msg::conflict_side(&labels.incoming.role, &labels.incoming.name),
+    ];
     let current_label = format!("{} — {}", Msg::EditorCurrentSide.t(), labels.current.name);
     let incoming_label = format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
 
@@ -305,6 +329,7 @@ fn render_panes(
             path,
             model.file_side_state(SelectionSide::Current),
             SelectionSide::Current,
+            chrome,
             cx,
         )),
         side_row_list(
@@ -326,6 +351,7 @@ fn render_panes(
             path,
             model.file_side_state(SelectionSide::Incoming),
             SelectionSide::Incoming,
+            chrome,
             cx,
         )),
         side_row_list(
@@ -558,6 +584,7 @@ fn side_use_all_pill(
     path: &std::path::Path,
     state: TriState,
     side: SelectionSide,
+    chrome: &EditorChrome,
     cx: &mut Context<ConflictView>,
 ) -> gpui::Stateful<gpui::Div> {
     let p = path.to_path_buf();
@@ -568,24 +595,21 @@ fn side_use_all_pill(
     });
     let accent = side_accent(side);
     let on = state == TriState::All;
-    div()
-        .id(SharedString::from(format!("file-side-{:?}", side)))
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(1.))
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(if on { accent } else { theme().text_muted }))
-        .bg(rgb(if on {
-            theme().bg_base
-        } else {
-            theme().bg_row_alt
-        }))
-        .text_size(theme::scaled_px(9.))
-        .text_color(rgb(if on { accent } else { theme().text_main }))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().bg_row_alt)))
-        .child(SharedString::from(Msg::EditorUseAll.t()))
-        .on_click(handler)
+    super::conflict_editor_keys::adoption(
+        format!("resolver-file-{}", side_key(side)),
+        Msg::conflict_file(chrome.resolver_keyboard.borrow().side_name(side)),
+        selection_state(state),
+        div()
+            .px(theme::scaled_px(6.))
+            .text_size(theme::scaled_px(10.))
+            .text_color(rgb(if on { accent } else { theme().text_main }))
+            .child(SharedString::from(Msg::EditorUseAll.t())),
+        None,
+        &chrome.resolver_keyboard,
+        handler,
+        cx,
+    )
+    .h(theme::scaled_px(22.))
 }
 
 /// Byte ranges in `text` that differ from `other`, the same-index line on the
@@ -725,11 +749,16 @@ fn side_row_list(
         .flex()
         .flex_col()
         .overflow_x_scroll()
+        .child(super::e2e::measure_inside(format!(
+            "resolver-{}-viewport",
+            side_key(side)
+        )))
         .child(
             uniform_list(
                 list_id,
                 row_count,
-                cx.processor(move |_this, range, _window, cx| {
+                cx.processor(move |_this, range: std::ops::Range<usize>, _window, cx| {
+                    _this.resolver_keyboard.borrow_mut().drawn = range.clone();
                     render_side_rows(
                         &rows_for_list,
                         &highlights,
@@ -738,6 +767,7 @@ fn side_row_list(
                         selected_hunk,
                         range,
                         cx,
+                        &_this.resolver_keyboard,
                     )
                 }),
             )
@@ -748,6 +778,8 @@ fn side_row_list(
         .child(Scrollbar::vertical(&scroll))
 }
 
+// Keep the row identity and shared highlight/focus owners explicit, as in the row renderers below.
+#[allow(clippy::too_many_arguments)]
 fn render_side_rows(
     rows: &[SideRow],
     highlights: &[RowHl],
@@ -756,6 +788,7 @@ fn render_side_rows(
     selected_hunk: usize,
     range: std::ops::Range<usize>,
     cx: &mut Context<ConflictView>,
+    keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
 ) -> Vec<AnyElement> {
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row.clone())))
@@ -774,6 +807,7 @@ fn render_side_rows(
                 resolved,
                 side,
                 selected_hunk,
+                keyboard,
                 cx,
             ),
             SideRow::Line {
@@ -799,6 +833,7 @@ fn render_side_rows(
                 dim,
                 side,
                 selected_hunk,
+                keyboard,
                 cx,
             ),
             SideRow::Context { line_no, text } => render_context_row(
@@ -882,6 +917,7 @@ fn render_hunk_header_row(
     resolved: bool,
     side: SelectionSide,
     selected_hunk: usize,
+    keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
     // ADR-0135 (Xcode-style): clicking the header takes/releases this whole
@@ -894,15 +930,15 @@ fn render_hunk_header_row(
         cx.notify();
     });
     let p_order = path;
-    let next_order = match order {
-        LineOrder::CurrentFirst => LineOrder::IncomingFirst,
-        LineOrder::IncomingFirst => LineOrder::CurrentFirst,
+    let target_order = match side {
+        SelectionSide::Current => LineOrder::CurrentFirst,
+        SelectionSide::Incoming => LineOrder::IncomingFirst,
     };
     let order_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_set_hunk_order(&p_order, hunk_index, next_order);
+        this.conflict_editor_set_hunk_order(&p_order, hunk_index, target_order);
         cx.notify();
     });
-    let order_label = match order {
+    let order_label = match target_order {
         LineOrder::CurrentFirst => Msg::EditorCurrentFirst.t(),
         LineOrder::IncomingFirst => Msg::EditorIncomingFirst.t(),
     };
@@ -935,23 +971,31 @@ fn render_hunk_header_row(
                 el.bg(rgb(theme().bg_base))
             }
         })
-        .cursor_pointer()
-        .hover(|s| s.bg(side_tint(side, 0.35)))
-        .on_click(take)
         .child(
-            div()
-                .pl(theme::scaled_px(6.))
-                .text_size(theme::scaled_px(10.))
-                .text_color(rgb(if state == TriState::None {
-                    theme().text_muted
-                } else {
-                    accent
-                }))
-                .child(SharedString::from(format!(
-                    "{} {}",
-                    Msg::EditorHunkLabel.t(),
-                    hunk_index + 1
-                ))),
+            super::conflict_editor_keys::adoption(
+                format!("resolver-hunk-{hunk_index}-{}", side_key(side)),
+                Msg::conflict_hunk(keyboard.borrow().side_name(side), hunk_index + 1),
+                selection_state(state),
+                div()
+                    .pl(theme::scaled_px(6.))
+                    .text_size(theme::scaled_px(10.))
+                    .text_color(rgb(if state == TriState::None {
+                        theme().text_muted
+                    } else {
+                        accent
+                    }))
+                    .child(SharedString::from(format!(
+                        "{} {}",
+                        Msg::EditorHunkLabel.t(),
+                        hunk_index + 1
+                    ))),
+                Some(hunk_index),
+                keyboard,
+                take,
+                cx,
+            )
+            .flex_1()
+            .h_full(),
         )
         .when(state == TriState::Partial, |el| {
             el.child(
@@ -962,21 +1006,29 @@ fn render_hunk_header_row(
             )
         })
         .child(
-            div()
-                .id(SharedString::from(format!("hunk-order-{}", row_index)))
-                .ml_auto()
-                .px(theme::scaled_px(6.))
-                .py(theme::scaled_px(1.))
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(theme().text_muted))
-                .bg(rgb(theme().bg_base))
-                .text_size(theme::scaled_px(9.))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().bg_row_alt)))
-                .child(SharedString::from(order_label))
-                .on_click(order_click),
+            super::conflict_editor_keys::adoption(
+                format!("resolver-hunk-{hunk_index}-{}-first", side_key(side)),
+                Msg::conflict_order(keyboard.borrow().side_name(side)),
+                super::conflict_editor_keys::ControlState::Order {
+                    selected: order == target_order,
+                    description: Msg::conflict_selected_order(keyboard.borrow().side_name(
+                        match order {
+                            LineOrder::CurrentFirst => SelectionSide::Current,
+                            LineOrder::IncomingFirst => SelectionSide::Incoming,
+                        },
+                    )),
+                },
+                div()
+                    .px(theme::scaled_px(6.))
+                    .text_size(theme::scaled_px(10.))
+                    .text_color(rgb(theme().text_main))
+                    .child(SharedString::from(order_label)),
+                Some(hunk_index),
+                keyboard,
+                order_click,
+                cx,
+            )
+            .h_full(),
         )
         .into_any_element()
 }
@@ -1027,6 +1079,17 @@ fn side_accent(side: SelectionSide) -> u32 {
     }
 }
 
+fn side_key(side: SelectionSide) -> &'static str {
+    match side {
+        SelectionSide::Current => "current",
+        SelectionSide::Incoming => "incoming",
+    }
+}
+
+fn selection_state(state: TriState) -> super::conflict_editor_keys::ControlState {
+    super::conflict_editor_keys::ControlState::Adoption(state)
+}
+
 /// The side accent as a translucent row background — the diff-view idiom
 /// (coloured code rows), so conflict regions read as *colour*, not just
 /// bright-vs-dim (user report).
@@ -1038,7 +1101,7 @@ fn side_tint(side: SelectionSide, alpha: f32) -> gpui::Hsla {
 
 #[allow(clippy::too_many_arguments)]
 fn render_code_line_row(
-    row_index: usize,
+    _row_index: usize,
     path: Arc<std::path::PathBuf>,
     hunk_index: usize,
     line_index: usize,
@@ -1051,6 +1114,7 @@ fn render_code_line_row(
     dim: bool,
     side: SelectionSide,
     selected_hunk: usize,
+    keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
     // ADR-0135: the line itself is the control — clicking it toggles just this
@@ -1062,13 +1126,12 @@ fn render_code_line_row(
         cx.notify();
     });
     let accent = side_accent(side);
-    div()
-        .id(SharedString::from(format!("side-line-{}", row_index)))
+    let content = div()
         .flex()
         .flex_row()
         .items_center()
         .min_w(relative(1.0))
-        .h(theme::scaled_px(17.))
+        .h_full()
         .pr(theme::scaled_px(4.))
         .gap_1()
         .border_l(theme::scaled_px(3.))
@@ -1087,9 +1150,6 @@ fn render_code_line_row(
         } else {
             theme().bg_base
         }))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(toggle)
         // Untaken lines keep their syntax colours but fade — Xcode-style
         // "the other side is dimmed", per line. 0.22: at 0.4 the rejected side
         // still read almost as clearly as the taken one (user report). The fade
@@ -1118,8 +1178,23 @@ fn render_code_line_row(
                 side_tint(side, 0.30),
             )
             .when(dim, |el| el.opacity(0.22)),
-        )
-        .into_any_element()
+        );
+    super::conflict_editor_keys::adoption(
+        format!(
+            "resolver-hunk-{hunk_index}-{}-line-{line_index}",
+            side_key(side)
+        ),
+        Msg::conflict_line(keyboard.borrow().side_name(side), line_no),
+        selection_state(if taken { TriState::All } else { TriState::None }),
+        content,
+        Some(hunk_index),
+        keyboard,
+        toggle,
+        cx,
+    )
+    .h(theme::scaled_px(17.))
+    .min_w(relative(1.0))
+    .into_any_element()
 }
 
 /// Monospace code text with validated syntax-highlight spans (the same
@@ -1409,10 +1484,6 @@ fn render_result_pane(
         theme().color_warning
     };
 
-    let toggle = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_toggle_result_mode();
-        cx.notify();
-    });
     // File-level "Save resolution" lives near the Result (deliverable #4).
     // Save writes the working tree + stages + re-detects (reload) → it touches
     // `app.conflict`, so it MUST defer to the parent (calling it synchronously
@@ -1450,7 +1521,7 @@ fn render_result_pane(
                 .text_color(rgb(theme().text_label))
                 .child(SharedString::from(Msg::EditorResultOutput.t())),
         )
-        .child(mode_toggle(editing, toggle))
+        .child(mode_toggle(chrome, cx))
         .child(
             div()
                 .flex_grow(1.)
@@ -1471,7 +1542,7 @@ fn render_result_pane(
             tool_button(
                 "editor-save",
                 Msg::EditorSave.t(),
-                theme().color_success,
+                ButtonRole::Success,
                 save,
                 cx,
             )
@@ -1494,6 +1565,11 @@ fn render_result_pane(
             .font_family(terminal::pick_font_family())
             .child(
                 Input::new(&inputs.result)
+                    .context_menu(kagi_ui_core::input::context_menu(
+                        &inputs.result,
+                        chrome.writer_busy,
+                    ))
+                    .aria_label(Msg::A11yConflictResult.t())
                     .disabled(chrome.writer_busy)
                     .appearance(false)
                     .bordered(false)
@@ -1517,41 +1593,83 @@ fn render_result_pane(
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().bg_base))
         .child(header)
-        .child(preview_body)
+        .child(super::e2e::measure_control(
+            if editing {
+                "conflict-result-edit-body"
+            } else {
+                "conflict-result-preview-body"
+            },
+            preview_body,
+        ))
         .into_any_element()
 }
 
-/// A two-segment Preview | Edit toggle (UX-015).
-fn mode_toggle<H>(editing: bool, handler: H) -> gpui::Stateful<gpui::Div>
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let seg = |label: &str, active: bool| {
-        let accent = if active {
-            theme().color_branch
-        } else {
-            theme().text_sub
-        };
-        div()
-            .px(theme::scaled_px(7.))
-            .py(theme::scaled_px(2.))
-            .text_size(theme::scaled_px(10.))
-            .text_color(rgb(accent))
-            .when(active, |s| s.bg(rgb(theme().selected)))
-            .child(SharedString::from(label.to_string()))
+/// Explicit Preview | Edit selection using the shared roving TabList.
+fn mode_toggle(chrome: &EditorChrome, cx: &mut Context<ConflictView>) -> gpui::Stateful<gpui::Div> {
+    use super::keyboard_nav::{self, Activation, TabList};
+    let weak = cx.entity().downgrade();
+    let tabs = TabList::new(
+        &chrome.result_mode_focus,
+        keyboard_nav::slot_keys(2),
+        vec![0, 1],
+        Some(usize::from(chrome.result_editing)),
+        Activation::Automatic,
+        None,
+        move |slot, _, _, cx| {
+            let _ = weak.update(cx, |view, cx| {
+                view.conflict_editor_set_result_mode(slot == 1);
+                cx.notify();
+            });
+        },
+        cx,
+    );
+    let cell = |slot, id: &'static str, label: &'static str| {
+        let selected = chrome.result_editing == (slot == 1);
+        tabs.cell(
+            slot,
+            label,
+            div()
+                .id(id)
+                .m(px(-keyboard_nav::RING))
+                .relative()
+                .role(gpui::Role::Tab)
+                .aria_label(label)
+                .aria_selected(selected)
+                .child(super::e2e::measure_inside(id))
+                .child(
+                    div()
+                        .px(theme::scaled_px(7.))
+                        .py(theme::scaled_px(2.))
+                        .text_size(theme::scaled_px(10.))
+                        .text_color(rgb(if selected {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .when(selected, |el| el.bg(theme().segment_selected_bg()))
+                        .child(label),
+                ),
+        )
     };
-    div()
-        .id("result-mode-toggle")
-        .flex()
-        .flex_row()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .overflow_hidden()
-        .cursor_pointer()
-        .child(seg(Msg::EditorPreviewMode.t(), !editing))
-        .child(seg(Msg::EditorEditMode.t(), editing))
-        .on_click(handler)
+    tabs.list(
+        div()
+            .id("result-mode-toggle")
+            .relative()
+            .child(super::e2e::measure_inside("conflict-result-group"))
+            .flex()
+            .flex_row()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(theme().surface)),
+    )
+    .role(gpui::Role::TabList)
+    .aria_label(Msg::EditorResultOutput.t())
+    .child(cell(
+        0,
+        "conflict-result-preview",
+        Msg::EditorPreviewMode.t(),
+    ))
+    .child(cell(1, "conflict-result-edit", Msg::EditorEditMode.t()))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1562,11 +1680,32 @@ where
 fn vertical_divider() -> gpui::Stateful<gpui::Div> {
     div()
         .id("conflict-divider-ab")
+        .group("conflict-divider-ab")
         .w(theme::scaled_px(4.))
         .h_full()
-        .bg(rgb(theme().selected))
+        .bg(rgb(theme().bg_base))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("conflict-divider-ab", |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>("conflict-divider-ab", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
         .cursor_col_resize()
-        .hover(|s| s.bg(rgb(theme().color_branch)))
+        .hover(|s| s.bg(rgb(theme().ui_accent())))
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::ConflictAB {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .on_drag(
             DividerDrag {
                 kind: DividerKind::ConflictAB,
@@ -1580,11 +1719,35 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
 fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
     div()
         .id("conflict-divider-result")
+        .group("conflict-divider-result")
         .w_full()
         .h(theme::scaled_px(4.))
-        .bg(rgb(theme().selected))
+        .bg(rgb(theme().bg_base))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("conflict-divider-result", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                })
+                .group_drag_over::<DividerDrag>("conflict-divider-result", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
         .cursor_row_resize()
-        .hover(|s| s.bg(rgb(theme().color_branch)))
+        .hover(|s| s.bg(rgb(theme().ui_accent())))
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::ConflictResult {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .on_drag(
             DividerDrag {
                 kind: DividerKind::ConflictResult,

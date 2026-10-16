@@ -157,7 +157,8 @@ fn next_page_cursor(
 pub fn parse_issue_detail(json: &str) -> Result<Issue, GitError> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
-    issue_from_value(&value).ok_or_else(|| GitError::Other("gh json: missing issue number".into()))
+    issue_from_value(&value)
+        .ok_or_else(|| GitError::Other("gh json: missing issue number or comment ID".into()))
 }
 
 fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
@@ -188,39 +189,37 @@ fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
     let state = IssueState::from_github(&string("state"));
     let assignees = logins_anywhere(value, "assignees");
     let labels = labels_anywhere(value);
-    let comments: Vec<IssueComment> = value
-        .get("comments")
-        .and_then(serde_json::Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| {
-                    let body = entry
-                        .get("body")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    if body.trim().is_empty() {
-                        return None;
-                    }
-                    Some(IssueComment {
-                        author: entry.get("author").map(login).unwrap_or_default(),
-                        body,
-                        created_at: entry
-                            .get("createdAt")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        updated_at: entry
-                            .get("updatedAt")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut comments = Vec::new();
+    if let Some(entries) = value.get("comments").and_then(serde_json::Value::as_array) {
+        for entry in entries {
+            let body = entry
+                .get("body")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if body.trim().is_empty() {
+                continue;
+            }
+            let id = entry.get("id")?.as_str()?;
+            if id.trim().is_empty() {
+                return None;
+            }
+            comments.push(IssueComment {
+                id: id.to_string(),
+                author: entry.get("author").map(login).unwrap_or_default(),
+                body: body.to_string(),
+                created_at: entry
+                    .get("createdAt")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                updated_at: entry
+                    .get("updatedAt")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            });
+        }
+    }
     Some(Issue {
         number: value.get("number")?.as_u64()?,
         title: string("title"),
@@ -274,7 +273,7 @@ mod tests {
         let json = r#"{
           "number":7,"title":"broken","state":"OPEN","body":null,
           "comments":[
-            {"author":{"login":"bob"},"body":"confirmed","createdAt":"t3","updatedAt":null},
+            {"id":"IC_kwDOVAY5As8AAAABaMVSfg","author":{"login":"bob"},"body":"confirmed","createdAt":"t3","updatedAt":null},
             {"author":null,"body":"  "}
           ]
         }"#;
@@ -285,6 +284,95 @@ mod tests {
         assert_eq!(issue.comment_count, 1);
         assert_eq!(issue.comments[0].author, "bob");
         assert_eq!(issue.comments[0].updated_at, "");
+    }
+
+    #[test]
+    fn detail_comment_identity_survives_equal_metadata_body_edit_and_reorder() {
+        let before = parse_issue_detail(
+            r#"{
+              "number":7,
+              "comments":[
+                {"id":"IC_kwDOVAY5As8AAAABaMVSfg","author":{"login":"bob"},
+                 "body":"first","createdAt":"t1","updatedAt":"t1"},
+                {"id":"IC_kwDOVAY5As8AAAABaMVSfw","author":{"login":"bob"},
+                 "body":"second","createdAt":"t1","updatedAt":"t1"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let after = parse_issue_detail(
+            r#"{
+              "number":7,
+              "comments":[
+                {"id":"IC_kwDOVAY5As8AAAABaMVSfw","author":{"login":"bob"},
+                 "body":"second","createdAt":"t1","updatedAt":"t1"},
+                {"id":"IC_kwDOVAY5As8AAAABaMVSfg","author":{"login":"bob"},
+                 "body":"first edited","createdAt":"t1","updatedAt":"t2"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            before.comments,
+            vec![
+                IssueComment {
+                    id: "IC_kwDOVAY5As8AAAABaMVSfg".into(),
+                    author: "bob".into(),
+                    body: "first".into(),
+                    created_at: "t1".into(),
+                    updated_at: "t1".into(),
+                },
+                IssueComment {
+                    id: "IC_kwDOVAY5As8AAAABaMVSfw".into(),
+                    author: "bob".into(),
+                    body: "second".into(),
+                    created_at: "t1".into(),
+                    updated_at: "t1".into(),
+                },
+            ]
+        );
+        assert_eq!(after.comments[0], before.comments[1]);
+        let mut edited = before.comments[0].clone();
+        edited.body = "first edited".into();
+        edited.updated_at = "t2".into();
+        assert_eq!(after.comments[1], edited);
+    }
+
+    #[test]
+    fn detail_rejects_every_displayed_comment_with_missing_or_malformed_id() {
+        let detail = serde_json::json!({
+            "number": 7,
+            "body": "issue body",
+            "comments": [
+                {"id": "IC_kwDOVAY5As8AAAABaMVSfg", "body": "first"},
+                {"id": "IC_kwDOVAY5As8AAAABaMVSfw", "body": "middle"},
+                {"id": "IC_kwDOVAY5As8AAAABaMVSfx", "body": "last"}
+            ]
+        });
+        for index in 0..3 {
+            for id in [
+                None,
+                Some(serde_json::Value::Null),
+                Some(serde_json::json!(42)),
+                Some(serde_json::json!("")),
+                Some(serde_json::json!(" \t\n")),
+            ] {
+                let mut malformed = detail.clone();
+                let comment = malformed["comments"][index].as_object_mut().unwrap();
+                match id {
+                    Some(id) => {
+                        comment.insert("id".into(), id);
+                    }
+                    None => {
+                        comment.remove("id");
+                    }
+                }
+                assert!(
+                    parse_issue_detail(&malformed.to_string()).is_err(),
+                    "a malformed displayed comment must reject the whole detail: {malformed}"
+                );
+            }
+        }
     }
 
     #[test]

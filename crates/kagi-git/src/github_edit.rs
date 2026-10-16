@@ -178,6 +178,9 @@ pub fn plan_pr_edit(pr: &PullRequest, edit: &PrFieldEdit) -> OperationPlan {
         }));
     }
     OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {
@@ -208,6 +211,7 @@ pub fn plan_pr_edit(pr: &PullRequest, edit: &PrFieldEdit) -> OperationPlan {
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         // Nothing local is rewritten or dropped.
         destructive: false,

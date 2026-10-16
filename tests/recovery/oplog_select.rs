@@ -91,7 +91,7 @@ pub fn scenario_oplog_detail_select_copy(cx: &mut VisualTestAppContext) {
     );
     let start = gpui::point(
         recovery.origin.x + gpui::px(14.),
-        summary.origin.y + gpui::px(30.),
+        summary.bottom() + gpui::px(8.),
     );
     let end = gpui::point(
         moved.origin.x + gpui::px(200.),
@@ -126,19 +126,11 @@ pub fn scenario_oplog_detail_select_copy(cx: &mut VisualTestAppContext) {
         .and_then(|item| item.text())
         .expect("clipboard text");
     assert_ne!(copied, "before-copy", "⌘C copies the selection");
-    let entry = cx.read(|cx| panel.read(cx).entries()[row].clone());
-    let command = entry.recovery_plan.as_ref().unwrap().commands[0].clone();
-    for part in [
-        "before:",
-        "after:",
-        command.as_str(),
-        "refs/heads/select-demo",
-    ] {
-        assert!(
-            copied.contains(part),
-            "selection lacks {part:?}: {copied:?}"
-        );
-    }
+    assert_eq!(
+        copied.trim_end(),
+        selected.trim_end(),
+        "⌘C copies the selected content, without pinning the layout's trailing newline"
+    );
 
     // A plain press inside the block keeps it open too.
     cx.simulate_click(window, start, Modifiers::none());

@@ -239,55 +239,45 @@ pub fn render_raw_preview(
     path: &Path,
     kind: ConflictKind,
     labels: &SideLabels,
+    scroll: &gpui::ScrollHandle,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    // #409: the cache key comes from the buffer alone (`side_raw_meta`, no
-    // repository access) and SIDE_CACHE is consulted first — the backend is
-    // opened, and blob bytes read, only when a side misses the cache. Before
-    // this, every repaint on the one screen where the user types opened a
-    // git2 Repository and copied both sides' full blobs.
-    let mut backend: Option<kagi_git::Backend> = None;
-    let mut side = |s: SelectionSide| -> Option<SideData> {
-        let Some((oid, _)) = mode.buffer.side_raw_meta(path, s) else {
-            return Some(SideData::absent());
-        };
-        cached_or_build(&format!("{oid}:{kind:?}"), || {
-            if backend.is_none() {
-                backend = kagi_git::Backend::open(mode.buffer.repo_path()).ok();
-            }
-            let b = backend.as_ref()?;
-            Some(build_side(b, &mode.buffer, path, s, kind))
-        })
-    };
-    let (current, incoming) = match (side(SelectionSide::Current), side(SelectionSide::Incoming)) {
-        (Some(c), Some(i)) => (c, i),
-        _ => return raw_error_box(),
+    let Some((current, incoming)) = side_pair(mode, path, kind) else {
+        return raw_error_box();
     };
 
     // Any non-image binary side offers the external-compare action.
     let show_external =
         current.mode == BinaryViewMode::Binary || incoming.mode == BinaryViewMode::Binary;
 
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::diff_presentation::record_conflict_scroll(scroll.clone());
     let mut col = div()
         .id("conflict-raw-preview")
         .flex()
         .flex_col()
-        .flex_grow(1.)
-        .w_full()
+        .flex_1()
+        .min_h(px(0.))
+        .min_w(px(0.))
+        .self_stretch()
         .overflow_y_scroll()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
+        .track_scroll(scroll)
         .gap(theme::scaled_px(8.))
         .child(
             div()
                 .flex()
                 .flex_row()
-                .w_full()
+                .when(
+                    current.mode == BinaryViewMode::Image || incoming.mode == BinaryViewMode::Image,
+                    |row| row.flex_1().min_h(px(0.)),
+                )
+                .self_stretch()
                 .justify_center()
                 .gap(theme::scaled_px(12.))
                 .child(side_column(
                     &format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
                     &current,
+                    "conflict-image-current",
                 ))
                 .child(side_column(
                     &format!(
@@ -296,48 +286,54 @@ pub fn render_raw_preview(
                         labels.incoming.name
                     ),
                     &incoming,
+                    "conflict-image-incoming",
                 )),
         );
 
     if show_external {
-        let p = path.to_path_buf();
-        use gpui_component::Sizable as _;
-        col = col.child(
-            super::button_style::KagiButton::accent(
-                SharedString::from("conflict-open-both-external"),
-                SharedString::from(Msg::ConflictOpenBothExternal.t()),
-                theme().text_sub,
-                _cx,
-            )
-            .small()
-            .on_click(_cx.listener(move |view: &mut ConflictView, _e, _w, cx| {
-                view.open_raw_sides_external(&p, cx);
-            })),
-        );
+        col = col.child(super::e2e::measure_control(
+            "conflict-open-both-external",
+            external_compare_button(path, _cx),
+        ));
     }
 
-    col.into_any_element()
+    // Padding belongs to the bounded pane, not the scroll content: fractional
+    // zoom padding must not become a spurious horizontal scroll extent.
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_w(px(0.))
+        .min_h(px(0.))
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .child(super::e2e::measure_inside("conflict-image-pane"))
+        .child(col)
+        .into_any_element()
 }
 
-/// One side's column: header + mode-specific body.
-fn side_column(header: &str, data: &SideData) -> gpui::AnyElement {
-    let body: gpui::AnyElement = if !data.present {
+fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
+    if !data.present {
         muted(Msg::ConflictBinaryNoPreview.t())
     } else {
         match data.mode {
             BinaryViewMode::Image => match &data.image {
-                // Mirror the WORKING avatar path (inspector.rs:558): an
-                // EXPLICIT-pixel-size, flex_shrink_0 container + img.size_full().
-                // `w_full` here resolves to 0 inside the flex_basis(0)/min_w(0)
-                // column, so the image box collapsed and painted nothing (#362).
-                // object_fit(Contain) keeps aspect ratio inside the fixed box.
+                // Match the bounded absolute-image layout in diff_state: image
+                // intrinsic dimensions must not contribute to the flex minimum.
                 Some(img) => div()
-                    .w(px(IMAGE_MAX_PX))
-                    .h(px(IMAGE_MAX_PX))
-                    .flex_shrink_0()
+                    .w_full()
+                    .relative()
+                    .child(super::e2e::measure_inside(probe))
+                    .aspect_ratio(1.)
+                    .flex_shrink(1.)
+                    .min_h(px(0.))
+                    .max_h(theme::scaled_px(IMAGE_MAX_PX))
                     .overflow_hidden()
                     .child(
                         gpui::img(gpui::ImageSource::Image(img.clone()))
+                            .absolute()
+                            .inset_0()
                             .size_full()
                             .object_fit(gpui::ObjectFit::Contain),
                     )
@@ -347,49 +343,129 @@ fn side_column(header: &str, data: &SideData) -> gpui::AnyElement {
             BinaryViewMode::Symlink => div()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(theme::scaled_px(2.))
                 .child(label_line(Msg::ConflictSymlinkTarget.t()))
                 .child(mono(data.symlink_target.clone().unwrap_or_default()))
                 .into_any_element(),
             BinaryViewMode::Submodule => div()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(theme::scaled_px(2.))
                 .child(label_line(Msg::ConflictSubmoduleCommit.t()))
                 .child(mono(data.oid_short.clone()))
                 .into_any_element(),
             BinaryViewMode::Binary => div()
+                .relative()
+                .child(super::e2e::measure_inside(
+                    if probe == "conflict-image-current" {
+                        "conflict-binary-current-body"
+                    } else {
+                        "conflict-binary-incoming-body"
+                    },
+                ))
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(theme::scaled_px(2.))
                 .child(mono(format!(
                     "{} · {}",
                     size_text(data.size),
                     data.oid_short
                 )))
-                .child(muted(Msg::ConflictBinaryCompareHint.t()))
+                .child(super::render_helpers::diff_state::caption(
+                    Msg::DiffBinaryNoText,
+                ))
                 .into_any_element(),
         }
-    };
+    }
+}
 
-    // #377: size each column to the image box (not flex-grow to half the pane),
-    // so the two previews sit adjacent — the row centers the pair with a small
-    // gap instead of stranding two fixed-size images at opposite edges.
+/// One side's column: header + mode-specific body.
+fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyElement {
+    let body = side_body(data, probe);
+
+    // Keep adjacent preferred-width columns, shrinking both equally at high
+    // zoom rather than allowing the pair to overflow the available pane.
     div()
         .flex()
+        .relative()
+        .child(super::e2e::measure_inside(
+            if probe == "conflict-image-current" {
+                "conflict-image-current-column"
+            } else {
+                "conflict-image-incoming-column"
+            },
+        ))
         .flex_col()
         .w(theme::scaled_px(IMAGE_MAX_PX))
-        .flex_shrink_0()
+        .flex_shrink(1.)
+        .when(data.mode == BinaryViewMode::Image, |column| column.h_full())
+        .min_h(px(0.))
         .min_w(px(0.))
-        .gap(px(4.))
+        .gap(theme::scaled_px(4.))
         .child(
             div()
+                .relative()
+                .child(super::e2e::measure_inside(
+                    if probe == "conflict-image-current" {
+                        "conflict-image-current-header"
+                    } else {
+                        "conflict-image-incoming-header"
+                    },
+                ))
                 .text_size(theme::scaled_px(11.))
                 .text_color(rgb(theme().text_label))
                 .child(SharedString::from(header.to_string())),
         )
         .child(body)
+        .when_some(data.image.clone(), |column, image| {
+            column.child(ImageMetadata {
+                image,
+                size: data.size,
+                probe,
+            })
+        })
         .into_any_element()
+}
+
+#[derive(gpui::IntoElement)]
+struct ImageMetadata {
+    image: Arc<Image>,
+    size: Option<u64>,
+    probe: &'static str,
+}
+
+impl gpui::RenderOnce for ImageMetadata {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let dimensions = self
+            .image
+            .use_render_image(window, cx)
+            .map(|image| image.size(0));
+        let mut text = format!("{}: {}", Msg::ImageFileSize.t(), size_text(self.size));
+        if let Some(size) = dimensions {
+            use std::fmt::Write as _;
+            let _ = write!(
+                text,
+                " · {}: {} × {} px",
+                Msg::ImageDimensions.t(),
+                size.width.0,
+                size.height.0
+            );
+        }
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::diff_presentation::record_image_caption(self.probe, &text);
+        div()
+            .relative()
+            .child(super::e2e::measure_inside(
+                if self.probe == "conflict-image-current" {
+                    "conflict-image-current-caption"
+                } else {
+                    "conflict-image-incoming-caption"
+                },
+            ))
+            .text_size(theme::scaled_px(11.))
+            .text_color(rgb(theme().text_muted))
+            .child(text)
+    }
 }
 
 fn size_text(size: Option<u64>) -> String {
@@ -482,6 +558,45 @@ impl ConflictView {
     }
 }
 
+fn external_compare_button(path: &Path, cx: &mut Context<ConflictView>) -> impl IntoElement {
+    let path = path.to_path_buf();
+    use gpui_component::Sizable as _;
+    super::button_style::KagiButton::styled(
+        SharedString::from("conflict-open-both-external"),
+        SharedString::from(Msg::ConflictOpenBothExternal.t()),
+        super::button_style::ButtonRole::Neutral,
+        cx,
+    )
+    .small()
+    .on_click(cx.listener(move |view: &mut ConflictView, _e, _w, cx| {
+        view.open_raw_sides_external(&path, cx);
+    }))
+}
+
+fn side_pair(mode: &ConflictMode, path: &Path, kind: ConflictKind) -> Option<(SideData, SideData)> {
+    // #409: the cache key comes from the buffer alone (`side_raw_meta`, no
+    // repository access) and SIDE_CACHE is consulted first — the backend is
+    // opened, and blob bytes read, only when a side misses the cache. Before
+    // this, every repaint on the one screen where the user types opened a
+    // git2 Repository and copied both sides' full blobs.
+    let mut backend: Option<kagi_git::Backend> = None;
+    let mut side = |s: SelectionSide| -> Option<SideData> {
+        let Some((oid, _)) = mode.buffer.side_raw_meta(path, s) else {
+            return Some(SideData::absent());
+        };
+        cached_or_build(&format!("{oid}:{kind:?}"), || {
+            if backend.is_none() {
+                backend = kagi_git::Backend::open(mode.buffer.repo_path()).ok();
+            }
+            let b = backend.as_ref()?;
+            Some(build_side(b, &mode.buffer, path, s, kind))
+        })
+    };
+    Some((
+        side(SelectionSide::Current)?,
+        side(SelectionSide::Incoming)?,
+    ))
+}
 // ────────────────────────────────────────────────────────────
 // Tests — pure helpers only (the render path needs a gpui window; see #321
 // acceptance: GUI-verify the rendering).

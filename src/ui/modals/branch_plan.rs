@@ -24,6 +24,15 @@ pub struct BranchPlanModal {
     /// Two-stage confirm gate for a `destructive` plan (SyncToRemote):
     /// `false` = first click pending, `true` = armed.
     pub confirm_armed: bool,
+    /// Only this visit's successful fetch can retain the unchanged confirmation.
+    pub fetch_owner: Option<(crate::app::SessionId, u64)>,
+    pub dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
+    /// Local tip, upstream name and upstream tip; external ref/config moves sweep it.
+    pub fetched_refs: Option<(
+        kagi_domain::commit::CommitId,
+        String,
+        kagi_domain::commit::CommitId,
+    )>,
 }
 
 impl BranchPlanModal {

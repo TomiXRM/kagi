@@ -77,32 +77,61 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The Input entity is this form's identity; the existing attachment
+        // visit also retires a request on tab departure, even after return.
+        let Some(path_input) = self
+            .create_worktree_modal()
+            .and_then(|modal| modal.path_state.as_ref())
+            .map(Entity::entity_id)
+        else {
+            return;
+        };
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
+            return;
+        };
         let prompt = i18n::Msg::InputChooseFolder.t();
         #[cfg(feature = "gui-e2e")]
-        if let Some(folder) = crate::ui::e2e::take_folder_prompt(prompt) {
-            self.place_create_worktree_in(&folder, window, cx);
-        }
+        let Some(receiver) = crate::ui::e2e::take_folder_prompt(prompt) else {
+            return;
+        };
         #[cfg(not(feature = "gui-e2e"))]
-        {
-            let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: false,
-                directories: true,
-                multiple: false,
-                prompt: Some(SharedString::from(prompt)),
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(SharedString::from(prompt)),
+        });
+        cx.spawn_in(window, async move |app, acx| {
+            #[cfg(feature = "gui-e2e")]
+            let folder = receiver.await.ok().flatten();
+            #[cfg(not(feature = "gui-e2e"))]
+            let folder = receiver
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+                .and_then(|paths| paths.into_iter().next());
+            let Some(folder) = folder else {
+                return;
+            };
+            let _ = app.update_in(acx, |app, window, cx| {
+                let current = app
+                    .active_session()
+                    .and_then(|session| app.app_sessions.attachment(session));
+                if !current.is_some_and(|current| {
+                    current.session == owner.session && current.visit == owner.visit
+                }) || !app.create_worktree_modal().is_some_and(|modal| {
+                    modal.path_state.as_ref().map(Entity::entity_id) == Some(path_input)
+                }) {
+                    return;
+                }
+                app.place_create_worktree_in(&folder, window, cx);
             });
-            cx.spawn_in(window, async move |app, acx| {
-                let Ok(Ok(Some(paths))) = receiver.await else {
-                    return;
-                };
-                let Some(folder) = paths.into_iter().next() else {
-                    return;
-                };
-                let _ = app.update_in(acx, |app, window, cx| {
-                    app.place_create_worktree_in(&folder, window, cx);
-                });
-            })
-            .detach();
-        }
+        })
+        .detach();
     }
 
     /// Put `<folder>/<branch>` in the open card's path field. The next input
@@ -161,8 +190,8 @@ impl KagiApp {
         };
         match &plan_result {
             Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
+                klog!(
+                    "plan: create-worktree '{}' path='{}' blockers={} warnings={}",
                     branch,
                     path,
                     plan.blockers.len(),
@@ -199,6 +228,11 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
+        // An unfilled new-name request is not an attempted operation. Return
+        // must remain as quiet as the disabled Create button.
+        if !modal.allow_existing_branch && modal.branch_input.trim().is_empty() {
+            return;
+        }
         // #510: pending/failed yield None, refusing Enter and the button alike.
         let Some(plan) = modal.plan.plan().cloned() else {
             return;
@@ -231,7 +265,9 @@ impl KagiApp {
             let sha = kagi_git::ops::plan_worktree_config_sha(&plan).unwrap_or("");
             if let Err(e) = kagi_git::ops::trust_worktree_config_at(&repo_path, sha) {
                 klog!("refused: create-worktree config changed after plan, not executing");
-                self.status_footer = FooterStatus::Failed(SharedString::from(e.to_string()));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(e.to_string()),
+                ));
                 self.record_op(
                     "create-worktree",
                     plan.current.clone(),
@@ -247,7 +283,9 @@ impl KagiApp {
         }
 
         self.clear_create_worktree_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyCreateWorktree.t()),
+        ));
         klog!("async: create-worktree started");
 
         let branch_input = modal.branch_input.clone();
@@ -332,10 +370,9 @@ impl KagiApp {
         match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => Some(r),
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "{}: repo open error: {}",
-                    op, e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("{}: repo open error: {}", op, e)),
+                ));
                 None
             }
         }
@@ -412,7 +449,7 @@ impl KagiApp {
                     i18n::Op::RemoveWorktree,
                     reason.as_deref().unwrap_or(error),
                 );
-                self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+                self.status_footer = FooterStatus::Failed(message.clone().into());
                 self.app_notices.push_back(message.into());
             }
             _ => {}
@@ -466,9 +503,10 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::PruneWorktrees, e),
-                ));
+                self.status_footer =
+                    FooterStatus::Failed(crate::ui::operations::display_text(SharedString::from(
+                        i18n::op::op_plan_failed_contract(i18n::Op::PruneWorktrees, e),
+                    )));
             }
         }
     }
@@ -517,14 +555,13 @@ impl KagiApp {
                     cx,
                 );
                 self.clear_prune_worktrees_modal();
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "pruned {} stale worktree(s)",
-                    pruned
-                )));
+                self.status_footer = FooterStatus::Success(
+                    i18n::op::user_text::operations::pruned_worktrees(pruned).into(),
+                );
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::PruneWorktrees, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::PruneWorktrees, e);
                 self.record_op_persist_nothing_moved(
                     "prune-worktrees",
                     modal.plan.current.clone(),
@@ -554,9 +591,10 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::RepairWorktrees, e),
-                ));
+                self.status_footer =
+                    FooterStatus::Failed(crate::ui::operations::display_text(SharedString::from(
+                        i18n::op::op_plan_failed_contract(i18n::Op::RepairWorktrees, e),
+                    )));
             }
         }
     }
@@ -591,12 +629,13 @@ impl KagiApp {
                     cx,
                 );
                 self.clear_repair_worktrees_modal();
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from("repaired worktree links"));
+                self.status_footer = FooterStatus::Success(
+                    i18n::op::user_text::operations::completed("repair-worktrees").into(),
+                );
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepairWorktrees, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::RepairWorktrees, e);
                 self.record_op_persist_nothing_moved(
                     "repair-worktrees",
                     modal.plan.current.clone(),

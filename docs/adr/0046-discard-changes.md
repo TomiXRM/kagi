@@ -68,3 +68,40 @@ backup が 1 ファイルでも失敗したら **discard 自体を中止**(blob 
 - ODB に discard backup blob が溜まるが、サイズは捨てた WT 内容ぶんのみで、ユーザーデータ保全の
   対価として妥当。将来「oplog から restore」UI の土台になる
 - untracked 削除は引き続き不可能(git clean 非実装の規約を保つ)
+
+## Amendment — 2026-10-12: keyboard file menu (#1333–#1335)
+
+The single-file menu is reachable from its Unstaged row using Shift+F10 or
+the Menu key as well as right-click. Stable path/section focus, roving row
+navigation and the shared MenuKeys preserve the frozen session owner and
+repository-relative path. Escape returns to the launching row; choosing
+Discard still only plans the operation. The destructive confirmation retains
+root Return = Cancel and explicit danger-button approval. All three compact
+menu rows fit the actual viewport at the current zoom. Backend semantics,
+mandatory backups, preflight, verification and oplog ownership are unchanged.
+
+## Amendment — 2026-10-14: compact row-focus reconciliation
+
+Only the surface drawing Changes file lists reconciles their retained row focus:
+the desktop panel or compact Changes, never the compact composer projection.
+Reconciling twice before virtual-list layout consumed an End/arrow focus
+transition and incorrectly treated its not-yet-drawn destination as wheel-scrolled
+away. The native discard oracle now compares the frozen menu and plan paths with
+the opener's actual focused-row AX name, as well as its requested row. In the
+audited regression the menu path still matched the actual focused row; the defect
+was premature focus relocation, not a cross-row discard write.
+
+The inline-action menu-anchor regression resizes within each presentation:
+desktop width changes and compact height changes. Crossing the breakpoint
+unmounts that surface's Button and is covered by the compact lifecycle's focus
+handoff, not an assertion that the unmounted Button still dispatches a file menu.
+
+## Amendment — 2026-10-14: focus follows file selection (#1536)
+
+Changes keyboard arrows, Home/End and PageUp/PageDown select the destination
+file through the existing owner-bound deferred diff path as they move the
+retained row focus. The selected fill and AX selected state therefore identify
+the same file as the focus ring and Shift+F10/Menu target. Pointer behavior,
+frozen menu identity, plan/confirmation, mandatory backup and execution remain
+unchanged. Compact focus reconciliation remains owned only by the visible
+Changes surface, as established by #1546.

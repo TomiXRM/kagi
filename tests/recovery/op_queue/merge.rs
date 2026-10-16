@@ -1,4 +1,5 @@
 use super::*;
+use kagi_ui_core::i18n::{queue_text, QueueText};
 
 /// Feature changes a separate file; main can make an independent commit.
 fn merge_fixture() -> tempfile::TempDir {
@@ -44,7 +45,10 @@ pub fn scenario_queue_replans_merge_after_predecessor(cx: &mut VisualTestAppCont
     cx.run_until_parked();
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("merge feature → main".into(), "waiting: write".into())]
+        vec![(
+            "merge feature → main".into(),
+            queue_text(QueueText::WaitWrite).into()
+        )]
     );
     assert!(!cx.read(|cx| e2e::active_modal_present(app.read(cx))));
     click(cx, window, "queue-strip");
@@ -265,12 +269,17 @@ pub fn scenario_queue_menu_merge_while_busy(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, _| {
         app.open_local_branch_menu("feature".into(), gpui::point(gpui::px(40.), gpui::px(200.)));
     });
-    click(cx, window, "branch-menu-item-2-0");
+    click(cx, window, "branch-menu-item-3-0");
+    assert_eq!(cx.read(|cx| app.read(cx).submenu_depth_for_e2e()), 1);
+    click(cx, window, "branch-menu-item-3-0-submenu-0-0");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).branch_menu.is_none()));
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("merge feature → main".into(), "waiting: write".into())]
+        vec![(
+            "merge feature → main".into(),
+            queue_text(QueueText::WaitWrite).into()
+        )]
     );
     release.send(());
     await_merge_modal(cx, &app);
@@ -330,7 +339,10 @@ pub fn scenario_queue_confirm_blocked_merge_refuses(cx: &mut VisualTestAppContex
     });
     assert_eq!(
         strip(cx, &app).unwrap().2,
-        vec![("merge feature → main".into(), "plan failed".into())]
+        vec![(
+            "merge feature → main".into(),
+            queue_text(QueueText::ReasonPlanError).into()
+        )]
     );
     assert!(klog_index("[kagi] refused: merge plan has blockers, not executing").is_some());
     assert!(cx.read(|cx| app.read(cx).merge_modal().is_none()));
@@ -364,7 +376,10 @@ pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) 
     release.send(());
     tick_until(cx, &app, "the merge replan", |app| {
         rows(&app.queue_strip_for_e2e(std::time::Instant::now()))
-            == vec![("merge feature → main".to_string(), "planning".to_string())]
+            == vec![(
+                "merge feature → main".to_string(),
+                queue_text(QueueText::Planning).to_string(),
+            )]
     });
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     plan_release.send(());

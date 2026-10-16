@@ -43,7 +43,7 @@ pub fn build_tag_menu(remote: Option<&str>) -> Vec<MenuGroup<TagAction>> {
         title: None,
         items: vec![
             MenuItem {
-                action: TagAction::Push,
+                kind: super::context_menu::MenuItemKind::Command(TagAction::Push),
                 label: SharedString::from(push_label),
                 state: match remote {
                     Some(_) => ItemState::Enabled,
@@ -52,7 +52,7 @@ pub fn build_tag_menu(remote: Option<&str>) -> Vec<MenuGroup<TagAction>> {
                 dangerous: false,
             },
             MenuItem {
-                action: TagAction::CopyName,
+                kind: super::context_menu::MenuItemKind::Command(TagAction::CopyName),
                 label: SharedString::from(Msg::TagCopyName.t()),
                 state: ItemState::Enabled,
                 dangerous: false,
@@ -66,6 +66,7 @@ pub fn render_tag_menu_overlay(
     header: SharedString,
     groups: Vec<MenuGroup<TagAction>>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -91,6 +92,7 @@ pub fn render_tag_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )

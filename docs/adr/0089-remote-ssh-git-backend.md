@@ -103,6 +103,31 @@ whose banner matches no known marker degrades to "empty", never to a silent
 transport error appears. Failure and emptiness stay distinguishable — the
 discipline ADR-0177 applies to writes and #506 applied to PR fetches.
 
+### Directory picker keyboard ownership (#1071)
+
+The accepted directory read owns one immutable entry snapshot, virtual list
+state and roving row selection. The list is one Tab stop, not one stop per
+directory; arrows, Home/End and Page Up/Down move the selection and reveal it.
+Enter/Space activation is handled by the focused row on key-up and stops at
+that row: directories and the parent navigate, while files remain inert.
+The existing modal-level Enter route still opens an already recognized repo
+when the directory list is not the event owner; connection-input and Escape
+contracts are unchanged.
+
+A loading read disables activation without replacing the accepted row owner.
+Failed reads retain that owner; successful reads replace the entries, reset
+the virtual list and transfer focus only for the current modal generation.
+Closing/reopening cannot accept an earlier modal's result or focus. The picker
+remains read-only; reaching a repo does not stage or write repository state.
+
+The native `remote_browse_keyboard_rows` regression uses 300 directories in
+EN and JA. Forty consecutive Down presses must select row 40, whose measured
+control bounds must fit wholly inside the list viewport; Enter then navigates
+to `dir-039`, not the current directory. An action-wiring negative control
+with the RowList action context removed fails with selection still at row 0;
+this negative control does not independently prove reveal or activation.
+
+
 ## Alternatives considered
 - **Pure-Rust SSH (`russh`)** — full control and no external `ssh` dependency,
   but re-implements auth, `~/.ssh/config`, and `known_hosts`, pulls a large
@@ -179,3 +204,19 @@ discipline ADR-0177 applies to writes and #506 applied to PR fetches.
 - Consistent with the safety thesis: inspection is read-only; connections never
   hang and never silently trust a new host; remote *writes* remain gated on the
   predict→confirm→execute pipeline when they land.
+
+## Amendment — 2026-10-13: bounded SSH task presentation (#1368)
+
+The dense connection/directory task uses the shared `modal_card` viewport cap.
+Connect diagnostics scroll in `modal_scroll_body`; Browse keeps scrollable
+identity/summary/diagnostics separate from its existing virtual directory
+panel, never nesting one scroller inside another (#454). The directory
+ListState/RowList owner, read generation guards, roving Tab stop and keyboard
+reveal remain unchanged. Cancel/Connect/Close are pinned outside both panels.
+Long host/path identity uses native middle ellipsis with full Tooltip and AX
+Label values, not a shortened transport argument. Busy is a separate status,
+not an alteration of the path. Reference: macOS connection sheet/HIG layout;
+take bounded detail and persistent actions, not native material/sheet claims.
+Rest/hover/pressed/focus-visible, unavailable reasons and loading remain owned
+by existing modal buttons; empty/error and selected-directory states remain
+visible and complete. No new handmade interactive control is introduced.

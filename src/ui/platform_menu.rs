@@ -1,19 +1,20 @@
 //! Linux/FreeBSD in-app platform menu dropdown (ADR-0085).
 //!
-//! Moved verbatim from `ui/mod.rs` (T-HOTSPOT-UIMOD-001) as an additional
-//! `impl KagiApp` block. Behaviour and signatures are unchanged; a descendant
-//! module can access `KagiApp` privates, but `render_platform_menu_dropdown`
-//! is called from `render.rs` (a sibling), so it is `pub(crate)` here.
+//! Split from `ui/mod.rs` (T-HOTSPOT-UIMOD-001) as an additional `impl KagiApp`
+//! block. The owner passes its activation state so menu highlights follow the
+//! same render seam as selected rows.
 //!
 //! Only the Linux/FreeBSD titlebar opens the dropdown (`platform_menu_open`),
 //! but the renderer compiles on every target so the macOS GUI runner can lay
 //! it out (#935); elsewhere it returns `None` because nothing opens it.
 
 use crate::ui::*;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 impl KagiApp {
     pub(crate) fn render_platform_menu_dropdown(
         &self,
+        window_active: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         // Use the same filtered section as the visibility/keyboard gate; the
@@ -45,8 +46,8 @@ impl KagiApp {
             .py_1()
             .rounded(theme::scaled_px(6.0))
             .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
+            .border_color(rgb(theme().elevated_border(theme().selected)))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg();
         // Tier A reads the panel's bounds (#935); compiled out of normal builds.
         #[cfg(feature = "gui-e2e")]
@@ -64,19 +65,45 @@ impl KagiApp {
                            row_ix: usize,
                            id: &'static str|
          -> gpui::AnyElement {
-            let command = commands::command(id);
-            let state = commands::command_state(this, id);
+            let state = if id == "editor.save" {
+                if this.editor_save_available(cx) {
+                    commands::CommandState::Enabled
+                } else {
+                    commands::CommandState::Disabled(Msg::NothingToSave.t())
+                }
+            } else {
+                commands::command_state(this, id)
+            };
             let enabled = matches!(state, commands::CommandState::Enabled);
-            // `platform_menu_label` adds the "✓ " active marker for the current
-            // language (no-op for ordinary commands).
-            let label = platform_menu_label(id, command.map(|c| c.label).unwrap_or(id));
+            // Selection is a separate renderer column, not part of the name.
+            let menu_state = super::window_menu::ViewMenuState {
+                sidebar_visible: this.sidebar.visible,
+                workspace_mode: (!this.home_in_front()).then(|| this.workspace_mode()),
+                ..super::window_menu::current_state(cx)
+            };
+            let checked = super::window_menu::checked(id, &menu_state);
+            let label = super::window_menu::state_label(id, &menu_state).unwrap_or_else(|| {
+                if id == "editor.save" {
+                    Msg::MenuSave.t()
+                } else {
+                    super::command_palette::command_label(id, i18n::lang())
+                }
+            });
             // Render the stored `secondary-*` notation as a platform label
             // (Ctrl+J on Linux), so the menu matches what the user must press.
-            let key = commands::effective_keystroke(id)
-                .map(|k| commands::display_keystroke(&k))
-                .unwrap_or_default();
+            let key = if id == "editor.save" {
+                commands::display_keystroke("secondary-s")
+            } else {
+                commands::effective_keystroke(id)
+                    .map(|k| commands::display_keystroke(&k))
+                    .unwrap_or_default()
+            };
             let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-                if commands::is_enabled(this, id) {
+                if id == "editor.save" && this.editor_save_available(cx) {
+                    this.close_platform_menu(cx);
+                    this.save_editor_file(cx);
+                    cx.notify();
+                } else if commands::is_enabled(this, id) {
                     this.close_platform_menu(cx);
                     this.handle_menu_command(id, window, cx);
                     cx.notify();
@@ -92,6 +119,7 @@ impl KagiApp {
                 .id(SharedString::from(format!(
                     "platform-menu-item-{ix}-{row_ix}"
                 )))
+                .group("platform-menu-row")
                 .flex()
                 .items_center()
                 .justify_between()
@@ -106,19 +134,44 @@ impl KagiApp {
                 })
                 .when(enabled, |s| {
                     s.cursor_pointer()
-                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .hover(move |s| super::menu_overlay::highlight_style(s, window_active))
                         .on_click(invoke)
                 })
-                .when_some(disabled_reason, |s, reason| {
-                    s.tooltip(move |window, cx| Tooltip::new(reason.to_string()).build(window, cx))
-                })
-                .child(div().flex_1().truncate().child(SharedString::from(label)))
+                .child(check_column(checked))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .child(SharedString::from(label))
+                        .when(cfg!(feature = "gui-e2e"), |s| {
+                            s.relative().child(super::e2e::measure_inside(format!(
+                                "platform-menu-cmd-{id}-primary"
+                            )))
+                        }),
+                )
                 .when(!key.is_empty(), move |s| {
                     s.child(
                         div()
+                            // Group hover must reach text layout, not only its paint probe.
+                            .id("shortcut")
                             .text_xs()
                             .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(key)),
+                            .when(
+                                enabled && theme().selection_uses_on_accent(true, window_active),
+                                |s| {
+                                    s.group_hover("platform-menu-row", |s| {
+                                        s.text_color(
+                                            theme().selection_secondary_foreground(window_active),
+                                        )
+                                    })
+                                },
+                            )
+                            .child(SharedString::from(key))
+                            .when(cfg!(feature = "gui-e2e"), |s| {
+                                s.relative().child(super::e2e::measure_inside(format!(
+                                    "platform-menu-cmd-{id}-shortcut"
+                                )))
+                            }),
                     )
                 });
             // Tier A reads the row's bounds (#935). Absolute and compiled out
@@ -127,7 +180,15 @@ impl KagiApp {
             let row = row.relative().child(super::e2e::measure_inside(format!(
                 "platform-menu-cmd-{id}"
             )));
-            row.into_any_element()
+            if let Some(reason) = disabled_reason {
+                row.hover_tooltip_builder(
+                    SharedString::from(format!("platform-menu-help-{ix}-{row_ix}")),
+                    move |window, cx| Tooltip::new(reason.to_string()).build(window, cx),
+                )
+                .into_any_element()
+            } else {
+                row.into_any_element()
+            }
         };
 
         // `row_ix` is a running counter (submenus expand to several rows, so it
@@ -143,11 +204,15 @@ impl KagiApp {
                             )))
                             .my_1()
                             .h(px(1.0))
-                            .bg(rgb(theme().surface)),
+                            .bg(rgb(theme().elevated_border(theme().surface))),
                     );
                 }
                 commands::MenuNode::Command(id) => {
                     panel = panel.child(command_row(self, cx, row_ix, id));
+                    row_ix += 1;
+                }
+                commands::MenuNode::EditorSave => {
+                    panel = panel.child(command_row(self, cx, row_ix, "editor.save"));
                     row_ix += 1;
                 }
                 // ADR-0085 §3: the dropdown has no nested-panel support, so the
@@ -157,7 +222,7 @@ impl KagiApp {
                 // themes appear here too.
                 commands::MenuNode::Submenu(commands::DynSubmenu::Theme) => {
                     for entry in commands::theme_menu_entries() {
-                        panel = panel.child(theme_row(cx, ix, row_ix, entry));
+                        panel = panel.child(theme_row(cx, ix, row_ix, entry, window_active));
                         row_ix += 1;
                     }
                 }
@@ -167,9 +232,138 @@ impl KagiApp {
                         row_ix += 1;
                     }
                 }
+                commands::MenuNode::Submenu(commands::DynSubmenu::ToolbarDisplay) => {
+                    for (mode, label, checked) in commands::toolbar_display_menu_entries() {
+                        let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                            this.close_platform_menu(cx);
+                            window.dispatch_action(
+                                Box::new(commands::SetToolbarDisplay { mode }),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        });
+                        let row = div()
+                            .id(SharedString::from(format!(
+                                "platform-menu-item-{ix}-{row_ix}"
+                            )))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py(theme::scaled_px(5.0))
+                            .text_sm()
+                            .text_color(rgb(theme().text_main))
+                            .cursor_pointer()
+                            .hover(move |style| {
+                                super::menu_overlay::highlight_style(style, window_active)
+                            })
+                            .on_click(invoke)
+                            .child(check_column(checked))
+                            .child(div().flex_1().truncate().child(label).when(
+                                cfg!(feature = "gui-e2e"),
+                                |s| {
+                                    s.relative().child(super::e2e::measure_inside(format!(
+                                        "platform-menu-toolbar-{}-primary",
+                                        mode.as_str()
+                                    )))
+                                },
+                            ));
+                        #[cfg(feature = "gui-e2e")]
+                        let row = row.relative().child(super::e2e::measure_inside(format!(
+                            "platform-menu-toolbar-{}",
+                            mode.as_str()
+                        )));
+                        panel = panel.child(row);
+                        row_ix += 1;
+                    }
+                }
+                commands::MenuNode::Submenu(commands::DynSubmenu::OpenRecent) => {
+                    let separator = |probe| {
+                        div()
+                            .my_1()
+                            .h(px(1.0))
+                            .bg(rgb(theme().elevated_border(theme().surface)))
+                            .when(cfg!(feature = "gui-e2e"), |el| {
+                                el.relative().child(super::e2e::measure_inside(probe))
+                            })
+                    };
+                    let recent = commands::recent_menu();
+                    panel = panel.child(separator("platform-menu-recent-before")).child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py(theme::scaled_px(5.0))
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(check_column(false))
+                            .child(recent.name)
+                            .when(cfg!(feature = "gui-e2e"), |el| {
+                                el.relative().child(super::e2e::measure_inside(
+                                    "platform-menu-recent-heading",
+                                ))
+                            }),
+                    );
+                    for (recent_ix, item) in recent.items.into_iter().enumerate() {
+                        if matches!(item, gpui::MenuItem::Separator) {
+                            panel = panel.child(separator("platform-menu-recent-separator"));
+                            continue;
+                        }
+                        let gpui::MenuItem::Action {
+                            name,
+                            action,
+                            disabled,
+                            ..
+                        } = item
+                        else {
+                            continue;
+                        };
+                        let row = div()
+                            .id(SharedString::from(format!(
+                                "platform-menu-item-{ix}-{row_ix}"
+                            )))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py(theme::scaled_px(5.0))
+                            .text_sm()
+                            .text_color(rgb(if disabled {
+                                theme().text_muted
+                            } else {
+                                theme().text_main
+                            }))
+                            .child(check_column(false))
+                            .child(div().flex_1().truncate().child(name).when(
+                                cfg!(feature = "gui-e2e"),
+                                |el| {
+                                    el.relative().child(super::e2e::measure_inside(format!(
+                                        "platform-menu-recent-{recent_ix}",
+                                    )))
+                                },
+                            ))
+                            .when(!disabled, |row| {
+                                row.cursor_pointer()
+                                    .hover(move |style| {
+                                        super::menu_overlay::highlight_style(style, window_active)
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.close_platform_menu(cx);
+                                        window.dispatch_action(action.boxed_clone(), cx);
+                                    }))
+                            });
+                        panel = panel.child(row);
+                        row_ix += 1;
+                    }
+                    panel = panel.child(separator("platform-menu-recent-after"));
+                }
                 // OsEdit only ever appears in `mac_only` sections, which are
                 // filtered out before we get here — but match exhaustively.
+                commands::MenuNode::Submenu(commands::DynSubmenu::Find) => {}
                 commands::MenuNode::OsEdit(_) => {}
+                #[cfg(target_os = "macos")]
+                commands::MenuNode::Services => {}
             }
         }
 
@@ -212,21 +406,23 @@ fn theme_row(
     ix: usize,
     row_ix: usize,
     entry: commands::ThemeMenuEntry,
+    window_active: bool,
 ) -> gpui::AnyElement {
-    let label = if entry.active {
-        format!("\u{2713} {}", entry.name)
-    } else {
-        entry.name.to_string()
-    };
     // Tier A reads the row's bounds (#935); compiled out of normal builds.
     #[cfg(feature = "gui-e2e")]
     let probe = super::e2e::measure_inside(format!("platform-menu-theme-{}", entry.slug));
+    #[cfg(feature = "gui-e2e")]
+    let primary_probe =
+        super::e2e::measure_inside(format!("platform-menu-theme-{}-primary", entry.slug));
     let slug = entry.slug;
     let invoke = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
         this.platform_menu_open = None;
         this.set_theme(&slug, cx);
         cx.stop_propagation();
     });
+    let primary = div().flex_1().truncate().child(entry.name);
+    #[cfg(feature = "gui-e2e")]
+    let primary = primary.relative().child(primary_probe);
     let row = div()
         .id(SharedString::from(format!(
             "platform-menu-item-{ix}-{row_ix}"
@@ -239,22 +435,20 @@ fn theme_row(
         .text_sm()
         .text_color(rgb(theme().text_main))
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
+        .hover(move |s| super::menu_overlay::highlight_style(s, window_active))
         .on_click(invoke)
-        .child(div().flex_1().truncate().child(SharedString::from(label)));
+        .child(check_column(entry.active))
+        .child(primary);
     #[cfg(feature = "gui-e2e")]
     let row = row.relative().child(probe);
     row.into_any_element()
 }
 
-// Only the in-app menu calls this (✓ marker for the language).
-fn platform_menu_label(id: &str, fallback: &str) -> String {
-    if let Some(lang) = commands::lang_for_command(id) {
-        if i18n::lang() == lang {
-            return format!("\u{2713} {fallback}");
-        }
-    }
-    fallback.to_string()
+fn check_column(checked: bool) -> impl IntoElement {
+    div()
+        .w(theme::scaled_px(12.0))
+        .flex_shrink_0()
+        .child(if checked { "✓" } else { "" })
 }
 
 #[cfg(feature = "gui-e2e")]

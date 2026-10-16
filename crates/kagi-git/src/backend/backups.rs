@@ -5,8 +5,10 @@ use crate::{ops, GitError};
 pub use retention::ForgetOplogPlan;
 
 impl Backend {
-    /// Read recovery bytes from the recorded ref, without overwriting any file.
-    /// Equivalent to `git cat-file blob <backup-ref>`; bare OIDs are not accepted.
+    /// Read recovery bytes without overwriting any file or dereferencing a link.
+    /// Accepts legacy blob roots and mode-bearing discard trees (`<ref>:file`).
+    /// This is a content reader, not a filesystem restore: symlink target bytes
+    /// must never be written as a regular file by a restore consumer.
     pub fn read_backup(&self, reference: &str) -> Result<Vec<u8>, GitError> {
         ops::backup::read_blob(&self.repo, reference)
     }

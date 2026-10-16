@@ -32,3 +32,48 @@
 - toast / busy_op はアプリ全域の状態として tab 切替後も維持(busy 中の switch は許可するが、
   busy 操作の finish はその repo_path に対して記録されるため安全)
 - 既存 headless 経路(引数1つで起動)は「初期 tab が1枚ある状態」として互換維持
+
+## Amendment — 2026-10-12: bounded document strip (#1339 / #1340)
+
+The document-count visibility rule and zoom-scaled strip height remain unchanged.
+Tabs keep their previous natural widths while they fit. When the measured natural
+widths exceed the strip capacity, tab widths are capped progressively toward a
+scaled 80px minimum with middle ellipsis, then the viewport scrolls horizontally.
+Active selection and roving keyboard focus reveal their actual child bounds.
+Only the constrained strip shows a trailing named » menu listing all repository
+tabs and Home, reusing the toolbar's overflow affordance and gpui-kit
+PopupMenu/Popover keyboard/focus contract. The unconstrained two-tab appearance
+is protected by Apple Light / JA / 167% native pixel pins.
+Repository menu items retain ☁/🌲 markers and full-path accessibility descriptions.
+Duplicate names display a parent-directory qualifier (the full repository path
+when the parent itself is shared). Vertical wheel input is not remapped to tab
+scrolling; only horizontal wheel input scrolls this viewport.
+This is independent of compact workspace-pane width breakpoints (#1225).
+
+The visible × remains a non-Tab-stop kit Button. Its independent accessibility
+name is `Close <repo>` / `<repo> を閉じる` (Home uses `Close Home` /
+`ホーム を閉じる`). Each repository close Button also describes its full path.
+Repository close callbacks resolve their frozen session identity,
+not a stale strip index; existing dirty-close guards and Cmd+W remain authoritative.
+
+## Amendment — 2026-10-13: active identity and contextual close (#1442 / #1443)
+
+`session_repos` still contains only local repository paths. `session_active`
+now stores the active local path, never its index in an array containing
+ephemeral SSH views. Restore resolves that identity in the surviving local set.
+Legacy numeric values first resolve against the saved paths, before failed
+opens are filtered. If the active repository is missing (or the active view
+was SSH), choose the first surviving local repository; with no survivors,
+remain on document-free Home. SSH descriptors are never reopened as local.
+
+The existing Cmd-W / CloseTab command is contextual: repository and explicit
+Home documents keep their existing close paths and dirty/busy protections.
+With no document it requests host closure through `hold_host_close`, exactly
+like Window > Close Window. Closing the last repository still returns to Home;
+a subsequent Cmd-W closes that window. A running/background clone or retained
+write lease continues to hold host closure.
+When the final repository closes while Home is retained in the strip, Home
+becomes window content rather than another document to close. The contextual
+Close command therefore uses the host path whenever repository tabs are empty,
+even if that retained Home descriptor still exists. One Cmd-W closes the idle
+host; busy host closure remains held.

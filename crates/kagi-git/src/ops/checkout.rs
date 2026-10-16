@@ -165,6 +165,9 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Checkout(CheckoutTitle::Checkout {
             branch: branch.to_string(),
@@ -177,6 +180,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -225,6 +229,8 @@ pub fn preflight_check(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
             ));
         }
     }
+    super::remote_common::check_pull_identity(repo, plan)?;
+    super::rebase::check_rebase_identity(repo, plan)?;
     Ok(())
 }
 
@@ -386,6 +392,9 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Checkout(CheckoutTitle::CheckoutCommit {
             sha: target_short,
@@ -399,6 +408,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

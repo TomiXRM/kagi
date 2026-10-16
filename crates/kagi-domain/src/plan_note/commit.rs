@@ -1,10 +1,8 @@
 //! CommitNote / CommitTitle / CommitRecovery — ADR-0129 Phase 2.
 //!
-//! Source of truth is `crates/kagi-git/src/staging.rs::plan_commit` (a
-//! producer that lives outside `ops/` — see the appendix's "staging.rs(ops
-//! 外)" row, discovered mid-Phase-1). `backend.rs::plan_merge_commit` reuses
-//! `plan_commit`, permits an unchanged tree for an active merge, and uses the
-//! [`CommitTitle::FinalizeMergeCommit`] variant added here.
+//! Source of truth is `crates/kagi-git/src/ops/commit.rs::plan_commit`.
+//! `backend.rs::plan_merge_commit` reuses the plan, permits an unchanged tree
+//! for an active merge, and uses [`CommitTitle::FinalizeMergeCommit`].
 
 /// The `"{n} modified" / "{n} untracked"` fragment of the leftover-changes
 /// warning. Only the non-zero parts are rendered, joined by `", "`, exactly
@@ -32,15 +30,19 @@ impl CommitLeftoverParts {
     }
 }
 
-/// Plan notes for the commit op family (`staging.rs::plan_commit`).
+/// Plan notes for the commit op family (`ops/commit.rs::plan_commit`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitNote {
+    /// Git cannot resolve the effective author or committer identity.
+    IdentityUnavailable,
     /// blocker — the commit message is empty after trimming.
     EmptyMessage,
     /// blocker — nothing is staged in the index.
     NothingStaged,
     /// blocker — the repository has conflicted files.
     ConflictedFiles { count: usize },
+    /// Preflight refusal — the approved staged content no longer matches.
+    StagedContentChanged,
     /// warning — unstaged/untracked changes will not be part of this commit.
     LeftoverNotIncluded {
         count: usize,
@@ -53,9 +55,13 @@ impl CommitNote {
     /// strings — golden-tested below).
     pub fn message_en(&self) -> String {
         match self {
+            CommitNote::IdentityUnavailable => "Git author or committer identity is unavailable. Set user.name and user.email before committing.".to_string(),
             CommitNote::EmptyMessage => "Commit message must not be empty.".to_string(),
             CommitNote::NothingStaged => {
                 crate::advice_template_en!(CommitNothingStaged).to_string()
+            }
+            CommitNote::StagedContentChanged => {
+                crate::advice_template_en!(CommitStagedContentChanged).to_string()
             }
             CommitNote::ConflictedFiles { count } => {
                 format!(crate::advice_template_en!(CommitConflictedFiles), count)
@@ -67,9 +73,22 @@ impl CommitNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CommitNote::NothingStaged => {
+                crate::advice_template_display_en!(CommitNothingStaged).to_string()
+            }
+            CommitNote::StagedContentChanged => {
+                crate::advice_template_display_en!(CommitStagedContentChanged).to_string()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
-/// Plan titles for the commit op family (`staging.rs::plan_commit` +
+/// Plan titles for the commit op family (`ops/commit.rs::plan_commit` +
 /// `backend.rs::plan_merge_commit`'s override).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitTitle {
@@ -88,9 +107,14 @@ impl CommitTitle {
             CommitTitle::FinalizeMergeCommit => "Finalize merge commit".to_string(),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
-/// Recovery kinds for the commit op family (`staging.rs::plan_commit`).
+/// Recovery kinds for the commit op family (`ops/commit.rs::plan_commit`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitRecovery {
     /// The sole commit recovery template: amend / revert HEAD, listing the
@@ -109,6 +133,11 @@ impl CommitRecovery {
                 staged_files.join(", ")
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

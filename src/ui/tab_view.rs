@@ -46,6 +46,7 @@ use crate::graph::WipAnchor;
 #[derive(Clone, Default)]
 pub struct TabViewState {
     pub header: SharedString,
+    pub window_title: SharedString,
     pub rows: Vec<CommitRow>,
     pub stash_graph_rows: Vec<commit_list::StashRow>,
     pub stash_graph_lanes: Vec<usize>,
@@ -58,6 +59,9 @@ pub struct TabViewState {
     pub status_summary: StatusBarSummary,
     pub toolbar_state: ToolbarState,
     pub remote_branches: Vec<RemoteBranch>,
+    /// Full remote ref names, rebuilt with this session's inventory. Drag
+    /// predicates borrow names for constant-time lookups without formatting.
+    pub remote_branch_names: HashSet<String>,
     pub tags: Vec<Tag>,
     /// Commits `refs/kagi/pr/**` point at (graph roots no branch names).
     pub pr_heads: Vec<CommitId>,
@@ -197,6 +201,11 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 
     // W2-SIDEBAR: collect remote branches and tags.
     let remote_branches = snap.remote_branches.clone();
+    let remote_branch_names = snap
+        .remote_branches
+        .iter()
+        .map(|branch| format!("{}/{}", branch.remote, branch.name))
+        .collect();
     let tags = snap.tags.clone();
 
     // W2-SIDEBAR: build upstream info map (branch name → UpstreamInfo).
@@ -232,6 +241,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     toolbar_state.log_headless();
 
     TabViewState {
+        window_title: format!("{repo_name} — {}", status_summary.branch).into(),
         header,
         rows,
         stash_graph_rows,
@@ -245,6 +255,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         status_summary,
         toolbar_state,
         remote_branches,
+        remote_branch_names,
         tags,
         pr_heads: snap.pr_heads.clone(),
         branch_upstream_info,
@@ -340,6 +351,7 @@ impl TabViewState {
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
+    pub(crate) graph_motion: super::render_body::motion::GraphMotion,
     /// Main commit-list position and the graph walk limit that produced it.
     pub commit_scroll_handle: UniformListScrollHandle,
     pub commit_limit: usize,
@@ -353,6 +365,9 @@ pub struct TabUiState {
     pub branch_groups_collapsed: HashSet<String>,
     /// Branch Cleanup list position and checked branch names.
     pub cleanup_scroll: UniformListScrollHandle,
+    /// Positional state belongs to this repository session, not the active app.
+    pub inspector_message_scroll: gpui::ScrollHandle,
+    pub activity_ranking_scroll: gpui::ScrollHandle,
     pub cleanup_selected: HashSet<String>,
     /// ADR-0128 Branch Cleanup takeover and GitHub Phase 1c PR mode are this
     /// tab's workspace mode; the PR tabs they hold name this repository's PRs.
@@ -360,10 +375,12 @@ pub struct TabUiState {
     pub pr_mode: Option<super::pr_mode::PrModeState>,
     /// Right-click menu on one of this tab's PR rows: `Some((pr, cursor))`.
     pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
+    pub(super) pr_menu_keys: super::menu_keys::MenuKeys,
     pub(super) filter_controls: super::list_filter_strip::FilterControls,
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
     pub smart_commit_generating: bool,
+    pub smart_commit_generation: Option<super::smart_commit::SmartGeneration>,
     pub smart_commit_status: Option<String>,
     /// Identifies the published model, independently of read-request revisions.
     pub view_publish_gen: u64,
@@ -395,6 +412,9 @@ pub struct TabUiState {
     pub github_prs_epoch: u64,
     pub github_prs_gen: u64,
     pub github_prs_loading: bool,
+    pub(super) github_prs_paging: super::github_pr_strip::PrPageState,
+    /// PR workspace incarnation; departure/state change invalidates appends.
+    pub(super) github_prs_visit: u64,
     /// #753 this session's PR-list filter intent. A fresh tab holds
     /// [`default_pr_filter`], not the domain default: `common.state` is the
     /// only predicate the *fetch* carries, and the list a tab opens on is the
@@ -418,7 +438,8 @@ pub struct TabUiState {
     pub github_issues_cursor: Option<String>,
     pub github_issues_loading_more: bool,
     pub github_issues_page: usize,
-    pub github_issues_list: gpui::ListState,
+    pub github_issues_list: kagi_ui_core::variable_list::VariableListState,
+    pub(super) issue_rows: super::list_keyboard::ListKeyboard,
     pub github_issue_mentions: Vec<u64>,
     pub github_issue_tab: kagi_domain::github::IssueListTab,
     /// #753 this session's Issue-list filter intent ([`default_issue_filter`]
@@ -437,6 +458,11 @@ pub struct TabUiState {
     pub github_issue_detail_loading: Option<u64>,
     pub github_issue_detail_error: Option<String>,
     pub github_issue_detail_gen: u64,
+    pub(super) issue_conversations:
+        HashMap<String, HashMap<u64, Entity<super::issue_conversation::IssueConversation>>>,
+    pub(super) issue_conversation_gen: u64,
+    pub(super) issue_conversation_scope: Option<super::issue_conversation::ConversationActivation>,
+    pub(super) issue_thread_pending_list: kagi_ui_core::variable_list::VariableListState,
     pub(super) issue_composer: super::issues_composer::IssuesComposerState,
     /// Scan revisions reject superseded completions without consulting the active tab.
     pub cleanup_gen: u64,
@@ -506,18 +532,23 @@ impl Default for TabUiState {
     fn default() -> Self {
         Self {
             selected: None,
+            graph_motion: Default::default(),
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: super::DEFAULT_COMMIT_LIMIT,
             load_more_gen: 0,
             graph_scroll_x: 0.0,
             branch_groups_collapsed: HashSet::new(),
             cleanup_scroll: UniformListScrollHandle::new(),
+            inspector_message_scroll: gpui::ScrollHandle::new(),
+            activity_ranking_scroll: gpui::ScrollHandle::new(),
             smart_commit_generating: false,
+            smart_commit_generation: None,
             smart_commit_status: None,
             cleanup_selected: HashSet::new(),
             branch_cleanup_open: false,
             pr_mode: None,
             pr_menu: None,
+            pr_menu_keys: Default::default(),
             filter_controls: Default::default(),
             view_publish_gen: 0,
             cache_epoch: 0,
@@ -537,6 +568,8 @@ impl Default for TabUiState {
             github_prs_epoch: 0,
             github_prs_gen: 0,
             github_prs_loading: false,
+            github_prs_paging: Default::default(),
+            github_prs_visit: 0,
             github_pr_filter: default_pr_filter(),
             github_prs_strip: Default::default(),
             pr_details: Default::default(),
@@ -550,7 +583,11 @@ impl Default for TabUiState {
             github_issues_cursor: None,
             github_issues_loading_more: false,
             github_issues_page: 0,
-            github_issues_list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.)),
+            github_issues_list: kagi_ui_core::variable_list::VariableListState::new(
+                0,
+                gpui::px(400.),
+            ),
+            issue_rows: Default::default(),
             github_issue_mentions: Vec::new(),
             github_issue_tab: Default::default(),
             github_issue_filter: default_issue_filter(),
@@ -560,6 +597,13 @@ impl Default for TabUiState {
             github_issue_detail_loading: None,
             github_issue_detail_error: None,
             github_issue_detail_gen: 0,
+            issue_conversations: HashMap::new(),
+            issue_conversation_gen: 0,
+            issue_conversation_scope: None,
+            issue_thread_pending_list: kagi_ui_core::variable_list::VariableListState::new(
+                2,
+                gpui::px(400.),
+            ),
             issue_composer: Default::default(),
             cleanup_gen: 0,
             cleanup_scanning: false,
@@ -586,38 +630,6 @@ impl Default for TabUiState {
             main_diff_commit_read: None,
             compare_view: None,
         }
-    }
-}
-
-impl TabUiState {
-    pub(super) fn begin_github_prs_request(&mut self) -> u64 {
-        self.github_prs_gen = self.github_prs_gen.wrapping_add(1);
-        self.github_prs_loading = true;
-        self.github_prs_gen
-    }
-
-    pub(super) fn accept_github_prs_completion(&mut self, generation: u64) -> bool {
-        if generation != self.github_prs_gen {
-            return false;
-        }
-        self.github_prs_loading = false;
-        true
-    }
-}
-
-#[cfg(test)]
-mod github_pr_state_tests {
-    use super::*;
-
-    #[test]
-    fn later_pr_list_request_rejects_delayed_completion() {
-        let mut state = TabUiState::default();
-        let old = state.begin_github_prs_request();
-        let newest = state.begin_github_prs_request();
-        assert!(!state.accept_github_prs_completion(old));
-        assert!(state.github_prs_loading);
-        assert!(state.accept_github_prs_completion(newest));
-        assert!(!state.github_prs_loading);
     }
 }
 

@@ -14,11 +14,58 @@
 
 use gpui::{div, prelude::*, rgb, Context, MouseButton, SharedString, Window};
 use gpui_component::input::{Input, InputState};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::commands::{self, command_state, CommandState, MenuOverlay, COMMANDS};
 use super::i18n::{self, Lang};
 use super::theme::{self, theme};
 use super::KagiApp;
+
+pub use super::palette_scroll::PaletteScroll;
+
+/// Sections are derived from existing action kinds, never selectable entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaletteSection {
+    Actions,
+    Appearance,
+    Language,
+}
+
+impl PaletteSection {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Actions => "actions",
+            Self::Appearance => "appearance",
+            Self::Language => "language",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Actions => i18n::Msg::CommandPaletteActions.t(),
+            Self::Appearance => i18n::Msg::SettingsAppearance.t(),
+            Self::Language => i18n::Msg::SettingsLanguage.t(),
+        }
+    }
+}
+
+impl PaletteRow {
+    pub fn section(&self) -> PaletteSection {
+        match &self.action {
+            PaletteAction::Command(_) => PaletteSection::Actions,
+            PaletteAction::SetTheme(_) => PaletteSection::Appearance,
+            PaletteAction::SetLang(_) => PaletteSection::Language,
+        }
+    }
+
+    fn description(&self) -> String {
+        i18n::command_palette_description(
+            i18n::lang(),
+            self.section().label(),
+            self.disabled_reason.as_deref(),
+        )
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pure: fuzzy matcher
@@ -247,16 +294,23 @@ impl KagiApp {
     /// the selection, and shows the overlay.
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         klog!("palette: open");
+        let scroll = self
+            .command_palette_scroll
+            .get_or_insert_with(PaletteScroll::new);
+        scroll.set_offset(Default::default());
         if self.command_palette_input.is_none() {
             let input = cx.new(|cx| {
                 InputState::new(window, cx).placeholder(i18n::Msg::CommandPalettePlaceholder.t())
             });
-            // Re-render (and reset the highlight to the top hit) on every
-            // keystroke; `Change` carries no `Window`, which is fine — filtering
-            // only needs `cx.notify()`.
+            // Reset and reveal the top hit on query changes. The handle applies
+            // the one-shot request against the next frame's filtered children;
+            // neither a Window nor a uniform row height is needed here.
             cx.subscribe(&input, |this, _input, event, cx| {
                 if matches!(event, gpui_component::input::InputEvent::Change) {
                     this.command_palette_selected = 0;
+                    if let Some(scroll) = &this.command_palette_scroll {
+                        scroll.scroll_to_item(0);
+                    }
                     cx.notify();
                 }
             })
@@ -268,10 +322,15 @@ impl KagiApp {
             });
         }
         self.command_palette_selected = 0;
+        self.command_palette_pointer = Some(window.mouse_position());
+        if let Some(scroll) = &self.command_palette_scroll {
+            scroll.scroll_to_item(0);
+        }
         self.capture_overlay_return_focus(window, cx);
         if let Some(input) = &self.command_palette_input {
             input.update(cx, |st, cx| st.focus(window, cx));
         }
+        self.with_ui(|ui| ui.retire_issue_conversation_scope());
         self.menu_overlay = Some(MenuOverlay::CommandPalette);
         cx.notify();
     }
@@ -289,15 +348,31 @@ impl KagiApp {
     pub fn run_selected_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.command_palette_query(cx);
         let rows = rows_for(self, &query);
-        let Some(row) = rows.get(self.command_palette_selected) else {
+        // Use the same clamped index as the highlight if live results shrink.
+        let selected = self
+            .command_palette_selected
+            .min(rows.len().saturating_sub(1));
+        let Some(row) = rows.get(selected) else {
             return;
         };
-        if !row.enabled {
-            return;
-        }
         let action = row.action.clone();
-        self.close_command_palette(window, cx);
-        self.run_palette_action(&action, window, cx);
+        self.activate_palette_row(selected, &action, row.enabled, window, cx);
+    }
+
+    /// One result identity and enabled gate for keyboard, pointer and AX entry.
+    fn activate_palette_row(
+        &mut self,
+        index: usize,
+        action: &PaletteAction,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.command_palette_selected = index;
+        if enabled {
+            self.close_command_palette(window, cx);
+            self.run_palette_action(action, window, cx);
+        }
         cx.notify();
     }
 
@@ -309,6 +384,8 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::palette::executed(action);
         match action {
             PaletteAction::Command(id) => self.handle_menu_command(id, window, cx),
             PaletteAction::SetTheme(slug) => self.set_theme(slug, cx),
@@ -326,6 +403,11 @@ impl KagiApp {
         }
         let cur = self.command_palette_selected as i64;
         self.command_palette_selected = (cur + delta).clamp(0, n as i64 - 1) as usize;
+        // Event-driven, not render-driven: a mouse scroll stays put until the
+        // next navigation, even when that key hits an unchanged end boundary.
+        if let Some(scroll) = &self.command_palette_scroll {
+            scroll.scroll_to_item(self.command_palette_selected);
+        }
     }
 
     /// Render the command-palette overlay. Returns the wrapped element (dim
@@ -366,39 +448,79 @@ impl KagiApp {
             }
         });
 
+        let (width, height, top) = super::modal_shell::search_card_geometry(560., 480., 80.);
         let mut panel = div()
             .occlude()
             .id("command-palette")
             .on_key_down(on_key)
-            .w(theme::scaled_px(560.0))
-            .max_h(theme::scaled_px(480.0))
+            .w(width)
+            .max_h(height)
             .flex()
             .flex_col()
             .overflow_hidden()
             .rounded(theme::scaled_px(8.0))
             .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
+            .border_color(rgb(theme().elevated_border(theme().surface)))
+            .map(|panel| super::e2e::probe_chrome_border("palette-frame", panel))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg();
+        #[cfg(feature = "gui-e2e")]
+        {
+            panel = panel
+                .relative()
+                .child(super::e2e::measure_inside("palette-card"));
+        }
 
         // Search input.
         if let Some(input) = &self.command_palette_input {
             panel = panel.child(
                 div()
                     .p(theme::scaled_px(8.0))
+                    .flex_shrink_0()
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.relative()
+                            .child(super::e2e::measure_inside("palette-input"))
+                    })
                     .border_b_1()
-                    .border_color(rgb(theme().selected))
-                    .child(Input::new(input).appearance(true)),
+                    .border_color(rgb(theme().elevated_border(theme().surface)))
+                    .map(|input| super::e2e::probe_chrome_border("palette-divider", input))
+                    .child(
+                        Input::new(input)
+                            .context_menu(kagi_ui_core::input::context_menu(input, false))
+                            .aria_label(i18n::Msg::A11yCommandPaletteQuery.t())
+                            .appearance(true),
+                    ),
             );
         }
 
+        let list = self.render_palette_results(&query, &rows, selected, cx);
+        let panel_el = panel.child(list).into_any_element();
+        self.wrap_command_palette(panel_el, top, cx)
+    }
+
+    fn render_palette_results(
+        &self,
+        query: &str,
+        rows: &[PaletteRow],
+        selected: usize,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         // Results list.
         let mut list = div()
             .id("command-palette-list")
             .flex()
             .flex_col()
             .overflow_y_scroll()
-            .max_h(theme::scaled_px(420.0));
+            .min_h(gpui::px(0.))
+            .flex_shrink(1.);
+        list = super::list_a11y::list_box(
+            "command-palette-list",
+            list,
+            i18n::Msg::CommandPalettePlaceholder.t(),
+        );
+        if let Some(scroll) = &self.command_palette_scroll {
+            list = list.track_scroll(scroll.handle());
+        }
 
         if rows.is_empty() {
             list = list.child(
@@ -411,82 +533,124 @@ impl KagiApp {
             );
         }
 
-        for (i, row) in rows.iter().enumerate() {
-            list = list.child(self.render_palette_row(i, row, i == selected, cx));
+        super::e2e::palette::begin_sections();
+        if query.trim().is_empty() {
+            let mut start = 0;
+            while start < rows.len() {
+                let section = rows[start].section();
+                let end = start
+                    + rows[start..]
+                        .iter()
+                        .take_while(|row| row.section() == section)
+                        .count();
+                let group =
+                    palette_section(section, start..end).children((start..end).map(|i| {
+                        self.render_palette_row(i, rows.len(), &rows[i], i == selected, cx)
+                    }));
+                let group = group.into_any_element();
+                let group = match &self.command_palette_scroll {
+                    Some(scroll) => scroll.measure_group(start, group),
+                    None => group,
+                };
+                list = list.child(group);
+                start = end;
+            }
+        } else {
+            list =
+                list.children(rows.iter().enumerate().map(|(i, row)| {
+                    self.render_palette_row(i, rows.len(), row, i == selected, cx)
+                }));
         }
 
-        let panel_el = panel.child(list).into_any_element();
-        self.wrap_command_palette(panel_el, cx)
+        match &self.command_palette_scroll {
+            Some(scroll) => scroll.wrap(list.into_any_element(), rows.len()),
+            None => list.into_any_element(),
+        }
     }
 
     fn render_palette_row(
         &self,
         index: usize,
+        count: usize,
         row: &PaletteRow,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let action = row.action.clone();
         let enabled = row.enabled;
+        let pointer_action = action.clone();
+        let owner = cx.entity().downgrade();
         let click = cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
-            // MouseDown (not click): the dismiss scrim would unmount the overlay
-            // on the same down-event before a click could complete — same fix as
-            // the branch picker (see commands.rs).
-            this.command_palette_selected = index;
-            if enabled {
-                this.close_command_palette(window, cx);
-                this.run_palette_action(&action, window, cx);
-            }
+            // Keep MouseDown: the dismiss scrim can unmount before mouse-up.
+            this.activate_palette_row(index, &pointer_action, enabled, window, cx);
             cx.stop_propagation();
-            cx.notify();
         });
 
-        let label_color = if enabled {
-            theme().text_main
-        } else {
-            theme().text_muted
-        };
-
-        // Left: label (+ disabled reason subtitle). Right: keystroke.
-        let mut left = div().flex().flex_col().child(
-            div()
-                .text_sm()
-                .text_color(rgb(label_color))
-                .child(SharedString::from(row.label.clone())),
+        let label: SharedString = row.label.clone().into();
+        let tooltip = label.clone();
+        let mut r = super::list_a11y::list_option(
+            "command-palette-list",
+            div().id(("palette-row", index)),
+            index,
+            count,
+            label.clone(),
+            is_selected,
+        )
+        .aria_description(super::e2e::palette::description(index, row.description()))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .px_4()
+        .py(theme::scaled_px(6.0))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, click)
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            let _ = owner.update(cx, |this, cx| {
+                this.activate_palette_row(index, &action, enabled, window, cx);
+            });
+        })
+        .on_mouse_move(
+            cx.listener(move |this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                if this.command_palette_pointer == Some(ev.position) {
+                    return;
+                }
+                this.command_palette_pointer = Some(ev.position);
+                if this.command_palette_selected != index {
+                    this.command_palette_selected = index;
+                    cx.notify();
+                }
+            }),
         );
-        if let Some(reason) = &row.disabled_reason {
-            left = left.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(reason.clone())),
-            );
-        }
-
-        let mut r = div()
-            .id(("palette-row", index))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_4()
-            .py(theme::scaled_px(6.0))
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, click);
         if is_selected {
-            r = r.bg(rgb(theme().selected));
+            r = r.bg(theme().selected_for_window(self.window_active));
         }
-        r = r.hover(|s| s.bg(rgb(theme().selected))).child(left);
+        r = r.child(palette_row_label(
+            index,
+            row,
+            label,
+            is_selected,
+            self.window_active,
+        ));
 
         if let Some(ks) = &row.keystroke {
-            r = r.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(ks.clone())),
-            );
+            r = r.child(palette_row_shortcut(
+                index,
+                ks,
+                is_selected,
+                self.window_active,
+            ));
         }
-        r.into_any_element()
+        let row = r
+            .hover_tooltip_builder(("palette-row-help", index), move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .into_any_element();
+        match &self.command_palette_scroll {
+            Some(scroll) => scroll.measure_row(index, row),
+            None => row,
+        }
     }
 
     /// Centre the palette over a dim, click-to-dismiss backdrop (mirrors
@@ -494,6 +658,7 @@ impl KagiApp {
     fn wrap_command_palette(
         &self,
         panel: gpui::AnyElement,
+        top: gpui::Pixels,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
@@ -507,6 +672,12 @@ impl KagiApp {
             .left_0()
             .size_full()
             .flex()
+            .on_mouse_move(
+                cx.listener(|this, ev: &gpui::MouseMoveEvent, _window, _cx| {
+                    // Track movement outside rows too, without changing the target.
+                    this.command_palette_pointer = Some(ev.position);
+                }),
+            )
             .flex_col()
             .items_center()
             .child(
@@ -519,204 +690,108 @@ impl KagiApp {
                     .opacity(0.55)
                     .on_mouse_down(MouseButton::Left, dismiss),
             )
-            .child(div().h(theme::scaled_px(80.0)))
+            .child(div().h(top).flex_shrink_0())
             .child(panel)
             .into_any_element()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── fuzzy matcher ──────────────────────────────────────────────────
-
-    #[test]
-    fn fuzzy_empty_query_matches_anything() {
-        assert_eq!(fuzzy_match("", "anything"), Some(0));
-    }
-
-    #[test]
-    fn fuzzy_subsequence_matches_and_is_case_insensitive() {
-        // "nb" is a subsequence of "New Branch…" (N…B).
-        assert!(fuzzy_match("nb", "New Branch…").is_some());
-        assert!(fuzzy_match("NB", "new branch…").is_some());
-        // "push" is a contiguous substring.
-        assert!(fuzzy_match("push", "Push").is_some());
-    }
-
-    #[test]
-    fn fuzzy_non_subsequence_returns_none() {
-        // A char not present at all → None.
-        assert_eq!(fuzzy_match("zzz", "New Branch"), None);
-        // Order matters: 'h' only appears at the very end, so no 'b' follows it.
-        assert_eq!(fuzzy_match("hb", "New Branch"), None);
-    }
-
-    #[test]
-    fn fuzzy_word_start_beats_scattered() {
-        // Both contain the letters, but a word-start / contiguous hit must
-        // outrank a scattered one. This is what makes ranking meaningful.
-        let contiguous = fuzzy_match("branch", "New Branch").unwrap();
-        // Same letters, but interleaved with 'x' so none are contiguous and only
-        // the first sits at a word start.
-        let scattered = fuzzy_match("branch", "bxrxaxnxcxh").unwrap();
-        assert!(
-            contiguous > scattered,
-            "contiguous {contiguous} should beat scattered {scattered}"
-        );
-    }
-
-    // ── row-model builder ──────────────────────────────────────────────
-
-    fn all_enabled(_id: &'static str) -> CommandState {
-        CommandState::Enabled
-    }
-    fn no_keys(_id: &'static str) -> Option<String> {
-        None
-    }
-
-    #[test]
-    fn build_rows_empty_query_enumerates_all_commands() {
-        let rows = build_rows("", |id| id.to_string(), all_enabled, no_keys);
-        // Static `theme.*` / `lang.*` commands are replaced by dynamic rows
-        // (issue #373), so the count is the non-dynamic commands plus one row
-        // per theme and per language.
-        let static_cmds = COMMANDS
-            .iter()
-            .filter(|c| !is_dynamic_command(c.id))
-            .count();
-        assert_eq!(
-            rows.len(),
-            static_cmds + theme::all_themes().len() + Lang::ALL.len()
-        );
-        // Registry order is preserved for the static-command prefix.
-        for (row, cmd) in rows
-            .iter()
-            .zip(COMMANDS.iter().filter(|c| !is_dynamic_command(c.id)))
-        {
-            assert_eq!(row.id, cmd.id);
-        }
-    }
-
-    #[test]
-    fn build_rows_includes_every_theme_and_language() {
-        // Issue #373: the palette must offer EVERY registered theme and EVERY
-        // UI language, not just the handful with a static `theme.*` /
-        // `lang.*` command. Fails before the dynamic-append fix (only 6 of
-        // the themes had a static command).
-        let rows = build_rows("", |id| id.to_string(), all_enabled, no_keys);
-        let themes = theme::all_themes();
-        for t in &themes {
-            let slug = SharedString::from(t.slug.clone());
-            assert!(
-                rows.iter()
-                    .any(|r| r.action == PaletteAction::SetTheme(slug.clone())),
-                "palette missing theme {}",
-                t.slug
-            );
-        }
-        for &l in Lang::ALL {
-            assert!(
-                rows.iter().any(|r| r.action == PaletteAction::SetLang(l)),
-                "palette missing language {}",
-                l.slug()
-            );
-        }
-        // Every theme slug is present exactly once (no duplicate static row).
-        let theme_rows = rows
-            .iter()
-            .filter(|r| matches!(r.action, PaletteAction::SetTheme(_)))
-            .count();
-        assert_eq!(theme_rows, themes.len());
-    }
-
-    #[test]
-    fn build_rows_fuzzy_filters_to_subsequence_matches() {
-        // Label the commands by their own English registry label so we search
-        // real labels. "push" should surface repo.push and only matching rows.
-        let rows = build_rows(
-            "push",
-            |id| command_label(id, Lang::En).to_string(),
-            all_enabled,
-            no_keys,
-        );
-        assert!(!rows.is_empty());
-        assert!(rows.iter().all(|r| fuzzy_match("push", &r.label).is_some()));
-        assert!(rows.iter().any(|r| r.id == "repo.push"));
-        // A command with no 'push' subsequence is excluded.
-        assert!(rows.iter().all(|r| r.id != "repo.fetch"));
-    }
-
-    #[test]
-    fn build_rows_disabled_command_carries_command_state_reason() {
-        let state_of = |id: &'static str| {
-            if id == "repo.push" {
-                CommandState::Disabled("no repo open")
-            } else {
-                CommandState::Enabled
-            }
-        };
-        let rows = build_rows("", |id| id.to_string(), state_of, no_keys);
-        let push = rows.iter().find(|r| r.id == "repo.push").unwrap();
-        assert!(!push.enabled);
-        assert_eq!(push.disabled_reason.as_deref(), Some("no repo open"));
-        // An enabled row has no reason.
-        let other = rows.iter().find(|r| r.id == "repo.fetch").unwrap();
-        assert!(other.enabled);
-        assert_eq!(other.disabled_reason, None);
-    }
-
-    #[test]
-    fn build_rows_keystroke_is_carried_for_the_right_edge() {
-        let keys = |id: &'static str| {
-            if id == "repo.push" {
-                Some("Cmd+Shift+K".to_string())
-            } else {
-                None
-            }
-        };
-        let rows = build_rows("", |id| id.to_string(), all_enabled, keys);
-        let push = rows.iter().find(|r| r.id == "repo.push").unwrap();
-        assert_eq!(push.keystroke.as_deref(), Some("Cmd+Shift+K"));
-    }
-
-    #[test]
-    fn selected_command_id_resolves_from_row() {
-        // "test: selecting a command runs it" — the run path is
-        // `rows[selected].id → handle_menu_command`. Assert the row model
-        // carries the id that the click/Enter handlers dispatch.
-        let rows = build_rows(
-            "settings",
-            |id| command_label(id, Lang::En).to_string(),
-            all_enabled,
-            no_keys,
-        );
-        assert_eq!(rows.first().map(|r| &*r.id), Some("app.settings"));
-    }
-
-    // ── i18n: EN + JA both render ──────────────────────────────────────
-
-    #[test]
-    fn command_label_renders_en_and_ja() {
-        // A localizable label differs between languages…
-        let en = command_label("app.settings", Lang::En);
-        let ja = command_label("app.settings", Lang::Ja);
-        assert_eq!(en, "Settings…");
-        assert_eq!(ja, "設定…");
-        assert_ne!(en, ja);
-        // …while a domain word stays English in both (ADR-0048).
-        assert_eq!(command_label("repo.push", Lang::En), "Push");
-        assert_eq!(command_label("repo.push", Lang::Ja), "Push");
-    }
-
-    #[test]
-    fn every_command_has_a_ja_label_or_is_an_english_domain_word() {
-        // Guard: no command renders as its raw id in Japanese (that would be a
-        // missing translation, not a deliberate domain word).
-        for cmd in COMMANDS {
-            let ja = command_label(cmd.id, Lang::Ja);
-            assert_ne!(ja, cmd.id, "command {} has no JA label", cmd.id);
-        }
-    }
+fn palette_section(
+    section: PaletteSection,
+    rows: std::ops::Range<usize>,
+) -> gpui::Stateful<gpui::Div> {
+    super::e2e::palette::section(
+        section.id(),
+        section.label(),
+        rows,
+        div().id(section.id()).flex().flex_col().flex_shrink_0(),
+    )
+    .child(
+        div()
+            .px_4()
+            .py(theme::scaled_px(6.))
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(theme().text_muted))
+            .when(cfg!(feature = "gui-e2e"), |heading| {
+                heading.relative().child(super::e2e::measure_inside(format!(
+                    "palette-heading-{}",
+                    section.id()
+                )))
+            })
+            .child(section.label()),
+    )
 }
+
+fn palette_row_shortcut(
+    index: usize,
+    keystroke: &str,
+    is_selected: bool,
+    window_active: bool,
+) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .text_right()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.relative().child(super::e2e::measure_inside(format!(
+                "palette-shortcut-{index}"
+            )))
+        })
+        .text_xs()
+        .text_color(
+            if theme().selection_uses_on_accent(is_selected, window_active) {
+                theme().selection_secondary_foreground(window_active)
+            } else {
+                rgb(theme().text_muted).into()
+            },
+        )
+        .child(super::e2e::palette::shortcut(index, keystroke.to_string()))
+}
+
+fn palette_row_label(
+    index: usize,
+    row: &PaletteRow,
+    text: SharedString,
+    is_selected: bool,
+    window_active: bool,
+) -> gpui::Div {
+    let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+    let label_color = if uses_on_accent {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(if row.enabled {
+            theme().text_main
+        } else {
+            theme().text_muted
+        })
+        .into()
+    };
+    let mut label = div().flex_1().min_w(gpui::px(0.)).flex().flex_col().child(
+        div()
+            .truncate()
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.relative()
+                    .child(super::e2e::measure_inside(format!("palette-label-{index}")))
+            })
+            .text_sm()
+            .text_color(label_color)
+            .child(text),
+    );
+    if let Some(reason) = &row.disabled_reason {
+        label = label.child(
+            div()
+                .text_xs()
+                .text_color(if uses_on_accent {
+                    theme().selection_secondary_foreground(window_active)
+                } else {
+                    rgb(theme().text_muted).into()
+                })
+                .child(SharedString::from(reason.clone())),
+        );
+    }
+    label
+}
+
+#[cfg(test)]
+#[path = "command_palette_tests.rs"]
+mod tests;

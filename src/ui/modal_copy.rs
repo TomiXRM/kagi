@@ -12,25 +12,35 @@ use super::types::ToastKind;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use kagi_domain::plan::OperationPlan;
+use kagi_ui_core::i18n::op::user_text::state_text;
 use kagi_ui_core::i18n::plan;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// A hover-quiet copy button for a popup surface.
 ///
 /// #454: popup text could not be copied at all — no selection, no button (user
-/// report 2026-09-06). Same shape as the PR-hunk copy button
-/// (`pr_conversation::render_diff_hunk`): quiet until hovered, a tooltip, a
-/// toast on success, and it swallows the mouse-**down** as well as the click so
-/// pressing it never starts a text selection underneath.
+/// report 2026-09-06). Quiet until hovered, with a tooltip and a success toast.
+/// Swallow the mouse-**down** as well as the click so pressing it never starts
+/// a text selection underneath.
 pub(crate) fn modal_copy_button(
     id: &'static str,
     tooltip: &'static str,
     text: String,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    modal_copy_button_lazy(id, tooltip, move || text.clone(), cx)
+}
+
+pub(crate) fn modal_copy_button_lazy(
+    id: &'static str,
+    tooltip: &'static str,
+    text: impl Fn() -> String + 'static,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let copy = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text()));
         this.push_toast(
             ToastKind::Info,
             SharedString::from(Msg::ModalCopied.t()),
@@ -49,7 +59,6 @@ pub(crate) fn modal_copy_button(
             .aria_label(SharedString::from(tooltip))
             .opacity(0.55)
             .hover(|st| st.bg(rgb(current_theme().selected)).opacity(1.0))
-            .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(tooltip).build(w, cx))
             .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
                 cx.stop_propagation();
             })
@@ -65,7 +74,35 @@ pub(crate) fn modal_copy_button(
     // Measured, so a scenario can press the real button (#883 review).
     .relative()
     .child(super::e2e::measure_inside(id))
+    .hover_tooltip_builder((id, 0usize), move |w, cx| {
+        gpui_component::tooltip::Tooltip::new(tooltip).build(w, cx)
+    })
     .into_any_element()
+}
+
+/// Display-only identities; semantic summaries remain unchanged for receipts.
+pub(crate) fn plan_display_heads(
+    plan: &OperationPlan,
+) -> (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>) {
+    use std::borrow::Cow;
+    match &plan.rebase_scope {
+        Some(scope) => (
+            Cow::Owned(format!("{} @ {}", scope.current_ref, scope.current_oid)),
+            Cow::Owned(format!(
+                "{} onto {} @ {}",
+                scope.current_ref, scope.onto_ref, scope.onto_oid
+            )),
+        ),
+        None => (
+            Cow::Borrowed(&plan.current.head),
+            plan::cherry_revert::predicted_head_text(
+                &plan.title,
+                &plan.disposition,
+                &plan.predicted.head,
+                kagi_ui_core::i18n::lang(),
+            ),
+        ),
+    }
 }
 
 /// The whole popup as plain text, for [`modal_copy_button`].
@@ -80,13 +117,35 @@ pub(crate) fn plan_clipboard_text(
     shell: kagi_domain::plan_note::ShellKind,
 ) -> String {
     let mut out = String::new();
-    let predicted_dirty = plan::after_state_detail(&plan.title, &plan.predicted.dirty);
+    let predicted_dirty = if plan.rebase_scope.is_some() {
+        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
+    } else {
+        plan::after_state_detail(&plan.title, &plan.predicted.dirty)
+    };
+    let (current_head, predicted_head) = plan_display_heads(plan);
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
-    out.push_str(&format!(
-        "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-        plan.current.head, plan.current.dirty, plan.predicted.head, predicted_dirty
-    ));
+    if let Some(identity) = &plan.tag_push_identity {
+        out.push('\n');
+        out.push_str(Msg::PlanTagPublishScope.t());
+        out.push('\n');
+        for row in plan::tag::push_scope_rows(identity) {
+            out.push_str(&row);
+            out.push('\n');
+        }
+        out.push_str(Msg::PlanTagLocalUnchanged.t());
+        out.push('\n');
+    } else {
+        out.push_str(&format!(
+            "\n{}: {} [{}]\n{}: {} [{}]\n",
+            Msg::InputStashCurrent.t(),
+            state_text(&current_head),
+            state_text(&plan.current.dirty),
+            Msg::InputStashAfter.t(),
+            state_text(&predicted_head),
+            state_text(&predicted_dirty)
+        ));
+    }
     for w in &plan.warnings {
         out.push_str(&format!("\nwarning: {}", plan_note_text(w)));
     }
@@ -96,10 +155,78 @@ pub(crate) fn plan_clipboard_text(
     if !plan.warnings.is_empty() || !plan.blockers.is_empty() {
         out.push('\n');
     }
+    if matches!(
+        &plan.title,
+        kagi_domain::plan_note::PlanTitle::Stash(
+            kagi_domain::plan_note::StashTitle::Apply { .. }
+                | kagi_domain::plan_note::StashTitle::Pop { .. }
+        )
+    ) && !plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::ManifestUnavailable { .. }
+            )
+        )
+    }) {
+        out.push('\n');
+        out.push_str(
+            &Msg::ModalFilesToChange
+                .t()
+                .replace("{}", &plan.preview_files.len().to_string()),
+        );
+        out.push('\n');
+        for file in &plan.preview_files {
+            out.push_str(file.change.label());
+            out.push(' ');
+            out.push_str(&file.path.to_string_lossy());
+            out.push('\n');
+        }
+    }
     if !rows.is_empty() {
         out.push('\n');
+        if let Some(scope) = &plan.rebase_scope {
+            out.push_str(&format!(
+                "{}: {}\n",
+                Msg::PlanRebaseCandidates.t(),
+                scope.total_commits
+            ));
+        }
         for r in rows {
             out.push_str(r);
+            out.push('\n');
+        }
+        if let Some(scope) = &plan.rebase_scope {
+            let remaining = scope.total_commits.saturating_sub(rows.len());
+            if remaining > 0 {
+                out.push_str(
+                    &Msg::PlanRebaseMore
+                        .t()
+                        .replace("{}", &remaining.to_string()),
+                );
+                out.push('\n');
+            }
+        }
+    }
+    if !plan.preview_files.is_empty()
+        && matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Github(
+                kagi_domain::plan_note::GithubTitle::MergePr { .. }
+            )
+        )
+    {
+        out.push('\n');
+        out.push_str(
+            &Msg::ModalFilesToChange
+                .t()
+                .replace("{}", &plan.preview_files.len().to_string()),
+        );
+        out.push('\n');
+        for file in &plan.preview_files {
+            out.push_str(&kagi_domain::text_safety::sanitize_control_bytes(
+                &file.path.to_string_lossy(),
+            ));
             out.push('\n');
         }
     }
@@ -151,7 +278,7 @@ pub(crate) fn plan_clipboard_text(
 
 #[cfg(test)]
 mod tests {
-    use super::plan_clipboard_text;
+    use super::{plan_clipboard_text, Msg};
 
     /// The copy button's payload must carry the **full** rows, not what the
     /// card shows: the list truncates a deep path visually (leading ellipsis),
@@ -164,6 +291,9 @@ mod tests {
 
         let deep = "crates/kagi-git/src/ops/very/deeply/nested/file.rs".to_string();
         let mut plan = OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             title: PlanTitle::Discard {
                 single: None,
                 count: 2,
@@ -189,12 +319,45 @@ mod tests {
             },
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: true,
             equivalent_command: None,
         };
+        plan.preview_files = vec![kagi_domain::status::FileStatus {
+            path: deep.clone().into(),
+            change: kagi_domain::status::ChangeKind::Modified,
+        }];
+        let original_title = plan.title.clone();
+        for title in [
+            original_title.clone(),
+            PlanTitle::History(kagi_domain::plan_note::HistoryTitle::Amend {
+                sha: "a".repeat(40),
+                summary: "message".into(),
+                mode: kagi_domain::plan::AmendMode::Staged,
+                blocked: false,
+            }),
+            PlanTitle::CherryRevert(kagi_domain::plan_note::CherryRevertTitle::CherryPick {
+                sha: "b".repeat(40),
+                summary: None,
+                branch: "main".into(),
+            }),
+        ] {
+            plan.title = title;
+            let copied = plan_clipboard_text(
+                &plan,
+                std::slice::from_ref(&deep),
+                kagi_domain::plan_note::ShellKind::Posix,
+            );
+            assert_eq!(
+                copied.matches(&deep).count(),
+                1,
+                "one full path per Copy all"
+            );
+        }
+        plan.title = original_title;
 
         let text = plan_clipboard_text(
             &plan,
@@ -207,7 +370,10 @@ mod tests {
             "clipboard must not carry the display ellipsis"
         );
         assert!(text.contains("a.txt"));
-        assert!(text.contains("current:"), "state summary missing:\n{text}");
+        assert!(
+            text.contains(Msg::InputStashCurrent.t()),
+            "state summary missing:\n{text}"
+        );
         assert!(
             text.contains("git cat-file -p <blob-sha>"),
             "the structured recovery command must appear verbatim:\n{text}"
@@ -256,6 +422,22 @@ mod tests {
             !text.contains("\nequivalent command:\n"),
             "a recovery command must not acquire a duplicate equivalent block: {text}"
         );
+
+        plan.current.head = "session=merge file=src/user_file.rs".into();
+        plan.current.dirty = "hunks=[] before=abc123".into();
+        plan.predicted.head = "staged (stage 0) before=abc123 after=def456".into();
+        plan.predicted.dirty = "staged (stage 0)".into();
+        let before = plan.current.clone();
+        let after = plan.predicted.clone();
+        let copied = plan_clipboard_text(&plan, &[], kagi_domain::plan_note::ShellKind::Posix);
+        assert!(copied.contains("src/user_file.rs"), "{copied}");
+        for internal in ["session=merge", "hunks=[", "stage 0"] {
+            assert!(!copied.contains(internal), "{copied}");
+        }
+        assert_eq!(plan.current.head, before.head);
+        assert_eq!(plan.current.dirty, before.dirty);
+        assert_eq!(plan.predicted.head, after.head);
+        assert_eq!(plan.predicted.dirty, after.dirty);
     }
 
     /// A no-op without blockers must not expose a stale structured command.
@@ -270,6 +452,9 @@ mod tests {
 
         let command = "git push origin main";
         let mut plan = OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             title: PlanTitle::Push(PushTitle::Push {
                 branch: "main".into(),
                 remote: "origin".into(),
@@ -296,6 +481,7 @@ mod tests {
             },
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),

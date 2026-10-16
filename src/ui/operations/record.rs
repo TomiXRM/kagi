@@ -72,10 +72,10 @@ impl KagiApp {
             .with_ref_moves(ref_moves);
         self.record_op_impl(entry, cx, true, None);
     }
-    /// Persist a conflict completion even after its owner departs, without
-    /// routing its footer/toast to the tab that replaced it.
+    /// Persist an async operation for its frozen owner. Quiet completions keep
+    /// the live footer/toast and bottom panel with their current presentation owner.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::ui) fn record_conflict_completion(
+    pub(in crate::ui) fn record_operation_completion(
         &mut self,
         op: &str,
         before: StateSummary,
@@ -121,8 +121,14 @@ impl KagiApp {
         // footer, toast and bottom panel belong to the tab currently on screen.
         klog!("footer: {}", footer_msg);
         if failed {
-            self.app_notices
-                .push_back(format!("{}: {}", repo_path.display(), footer_msg).into());
+            self.app_notices.push_back(
+                format!(
+                    "{}: {}",
+                    repo_path.display(),
+                    super::outcome_text(op, &recording.entry().outcome)
+                )
+                .into(),
+            );
         }
     }
 
@@ -246,8 +252,10 @@ mod tests {
             blockers: vec!["uncommitted changes".into(), "detached HEAD".into()],
         };
         let shown = refused_display("checkout", &outcome).unwrap();
-        assert!(shown.contains("uncommitted changes"), "{shown}");
-        assert!(!shown.contains("detached HEAD"), "{shown}");
+        let first = i18n::op::user_text::diagnostic("uncommitted changes");
+        let second = i18n::op::user_text::diagnostic("detached HEAD");
+        assert!(shown.contains(first.as_ref()), "{shown}");
+        assert!(!shown.contains(second.as_ref()), "{shown}");
         assert!(
             shown.contains('1'),
             "the second blocker is counted: {shown}"

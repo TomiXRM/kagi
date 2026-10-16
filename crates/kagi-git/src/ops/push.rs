@@ -138,6 +138,9 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 dirty: current.dirty.clone(),
             };
             return Ok(OperationPlan {
+                rebase_scope: None,
+                tag_push_identity: None,
+                approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
                 title: PlanTitle::Push(PushTitle::PushBlocked),
                 current,
@@ -151,6 +154,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 head_at_plan: head,
                 stash_count_at_plan: 0,
                 stash_identity: None,
+                pull_identity: None,
                 worktree_digest: None,
                 preview_files: Vec::new(),
                 preview_commits: Vec::new(),
@@ -287,6 +291,9 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: if nothing_to_push {
             PlanDisposition::NoOp(NoOpKind::PushUpToDate)
         } else {
@@ -301,6 +308,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,
@@ -501,14 +509,9 @@ fn build_push_preview(
             .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
 
         let short = &oid.to_string()[..8];
-        let summary: String = commit
-            .summary()
-            .ok()
-            .flatten()
-            .unwrap_or("(no message)")
-            .chars()
-            .take(72)
-            .collect();
+        let summary = kagi_domain::text_safety::display_subject(
+            commit.summary().ok().flatten().unwrap_or("(no message)"),
+        );
         result.push(format!("{}  {}", short, summary));
     }
 
@@ -574,14 +577,9 @@ fn build_push_preview_for_oid(
             .find_commit(oid)
             .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
         let short = short_oid_string(oid);
-        let summary: String = commit
-            .summary()
-            .ok()
-            .flatten()
-            .unwrap_or("(no message)")
-            .chars()
-            .take(72)
-            .collect();
+        let summary = kagi_domain::text_safety::display_subject(
+            commit.summary().ok().flatten().unwrap_or("(no message)"),
+        );
         result.push(format!("{}  {}", short, summary));
     }
     Ok(result)
@@ -683,6 +681,9 @@ pub fn plan_push_branch(
     });
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: if nothing_to_push {
             PlanDisposition::NoOp(NoOpKind::PushUpToDate)
         } else {
@@ -703,6 +704,7 @@ pub fn plan_push_branch(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,

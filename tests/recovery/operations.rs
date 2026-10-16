@@ -358,7 +358,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             .unwrap_err();
         let expected = i18n::op_failed(Op::Preflight, error);
         cx.run_until_parked();
-        press_enter(cx, &app, window);
+        crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
         cx.read(|cx| {
             assert_eq!(
                 app.read(cx).history_modal().unwrap().error.as_deref(),
@@ -584,7 +584,7 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
     )
     .unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     wait_idle(cx, &app);
     assert!(output(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
@@ -1060,7 +1060,7 @@ pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS remote_browse_modal_routing");
 }
 
-fn fake_update_offer() -> (
+pub(super) fn fake_update_offer() -> (
     kagi_domain::update::UpdatePlan,
     kagi_domain::update::ReleaseInfo,
 ) {
@@ -1186,9 +1186,9 @@ pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS window_modal_exclusivity");
 }
 
-/// #718: modal displacement preserves every unread AppNotice, while explicit
-/// user dismissal requeues only actionable notices. Remote Browse and Update
-/// exercise unrelated setters; the final plain notice distinguishes the events.
+/// #718: modal displacement preserves every unread AppNotice, while #1366
+/// makes explicit user dismissal acknowledge the presentation only. Remote
+/// Browse and Update exercise unrelated setters without dismissing the notice.
 pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
@@ -1294,6 +1294,8 @@ pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
 /// Switching cannot paint them onto another tab, and closing the owner drops the
 /// result rather than delivering it to a same-path reopen.
 pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
+    let _consent = crate::gui_isolation::SavedKeys::keep(&["smart_commit_consent_accepted"]);
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
     let fixture_a = build_fixture();
     let fixture_b = build_fixture();
     let repo_a = fixture_a.path().canonicalize().expect("canonical A");
@@ -1351,7 +1353,8 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
         assert_eq!(app.active_session(), Some(session_a));
         assert!(
             !app.ui().smart_commit_generating
-                && app.ui().smart_commit_status.as_deref() == Some("Generated with local LLM"),
+                && app.ui().smart_commit_status.as_deref()
+                    == Some(kagi_ui_core::i18n::Msg::SmartGeneratedLocal.t()),
             "smart-owner-a-restores-result: A must retain its own completed status"
         );
     });
@@ -1411,6 +1414,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
 /// #643 S3c: capability detection is process/window-global, while Smart Commit
 /// presentation uses the same ActiveModal slot and key routing as every modal.
 pub fn scenario_smart_commit_modal_and_probe(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["smart_commit_model"]);
     let fixture_a = build_fixture();
     let fixture_b = build_fixture();
     let repo_a = fixture_a.path().canonicalize().expect("canonical A");
@@ -1436,14 +1440,33 @@ pub fn scenario_smart_commit_modal_and_probe(cx: &mut VisualTestAppContext) {
             "modal-list-scroll-resets-on-replacement: each modal must start at the top"
         );
     });
-    press_enter(cx, &app, window);
+    kagi::ui::e2e::queue_smart_generation(
+        cx.background_executor
+            .spawn(async { Some(("fixture draft".to_string(), true)) }),
+    );
+    paint(cx, window);
+    paint(cx, window);
+    cx.simulate_keystrokes(window, "enter");
+    cx.simulate_event(
+        window,
+        gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        },
+    );
     assert!(
         cx.read(|cx| {
             let app = app.read(cx);
-            app.smart_commit_modal().is_some() && app.plan_modal().is_none()
+            app.smart_commit_modal().is_none()
+                && app.plan_modal().is_none()
+                && app.smart_commit.model.as_deref() == Some("fixture")
         }),
-        "smart-modal-enter-does-not-checkout: Enter must stay in the Smart Commit modal slot"
+        "smart-modal-enter-does-not-checkout: Enter confirms the model, never the graph selection"
     );
+    app.update(cx, |app, _| {
+        app.set_smart_commit_modal(kagi::ui::smart_commit::SmartCommitModal::ModelPicker {
+            models: vec!["fixture".to_string()],
+        });
+    });
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
     assert!(
@@ -1893,6 +1916,53 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
     );
 }
 
+/// #1092: deliver every post-dismissal key where the product left focus.
+/// Keeping the old InputState alive makes hidden-input focus observable.
+fn assert_created_branch_dismissed(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+) {
+    wait_painted(cx, app, window, |app| {
+        app.view().branch_targets.contains_key("feat")
+    });
+    assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
+        })
+        .unwrap(),
+        "verified creation must return focus from the removed input to the root"
+    );
+    let receipt = records(repo, "create-branch");
+    assert_eq!(receipt.len(), 1);
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    paint(cx, window);
+    let after_enter = records(repo, "create-branch");
+    assert_eq!(
+        after_enter.len(),
+        1,
+        "second Enter must not attempt creation again"
+    );
+    assert_eq!(after_enter[0].id, receipt[0].id);
+    cx.simulate_keystrokes(window, "cmd-p");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| matches!(
+            app.read(cx).menu_overlay,
+            Some(kagi::ui::commands::MenuOverlay::CommandPalette)
+        )),
+        "the next root shortcut must open the palette without test-side refocusing"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+}
+
 /// ADR-0196 Wave 2: the synchronous inline sites (create-branch, create-tag,
 /// the auto-stash before a checkout, the continued-merge commit) present the
 /// receipt through `present_report`. Create-branch stands in for the four.
@@ -1902,6 +1972,7 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let original_branch = output(&repo, &["symbolic-ref", "--short", "HEAD"]);
     let seed = OpLogEntry::new(
         "seed",
         repo.display().to_string(),
@@ -1938,14 +2009,46 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
             .is_some_and(|plan| plan.blockers.is_empty())
     });
 
+    // Ordinary accepted reloads preserve unsent text and the same live input.
+    git(&repo, &["branch", "reload-marker"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_painted(cx, &app, window, |app| {
+        app.view().branch_targets.contains_key("reload-marker")
+    });
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .create_branch_modal()
+            .expect("unsent form survives reload");
+        assert_eq!(modal.input, "feat");
+        assert_eq!(
+            modal.input_state.as_ref().unwrap().entity_id(),
+            input.entity_id()
+        );
+        assert_eq!(input.read(cx).value().as_str(), "feat");
+        assert!(!modal.checkout_after);
+        assert!(modal.error.is_none());
+    });
+    assert!(
+        records(&repo, "create-branch").is_empty(),
+        "reload never submits unsent input"
+    );
+
     press_enter(cx, &app, window);
     cx.run_until_parked();
     assert!(
         !output(&repo, &["branch", "--list", "feat"]).is_empty(),
         "Enter on a clean plan creates the branch"
     );
+    assert_eq!(
+        output(&repo, &["symbolic-ref", "--short", "HEAD"]),
+        original_branch,
+        "unchecked checkout leaves HEAD on the original branch"
+    );
+    assert_created_branch_dismissed(cx, &app, window, &repo);
     let durable = records(&repo, "create-branch");
     assert_eq!(durable.len(), 1, "one attempt, one durable entry");
+    assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     assert!(
         durable[0].id >= 1,
         "the seeded log puts the receipt past entry 0"
@@ -1964,10 +2067,115 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
         );
     });
 
+    drop(input);
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS create_branch_presents_backend_receipt: panel shows the recorded receipt"
     );
+}
+
+/// #1092: an external ref lock can make a valid plan fail at execution.
+pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let before = repo_fingerprint(&repo);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    paint(cx, window);
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .unwrap()
+                .input_state
+                .clone()
+        })
+        .expect("branch input is mounted");
+    cx.simulate_keystrokes(window, "c o l l i s i o n / c h i l d");
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+    let confirm = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("valid collision/child plan offers Create");
+    let lock = repo.join(".git/refs/heads/collision/child.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"external writer").unwrap();
+    let refs_before = output(&repo, &["show-ref", "--heads"]);
+    cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    paint(cx, window);
+    let durable = records(&repo, "create-branch");
+    assert_eq!(
+        durable.len(),
+        1,
+        "the failed execution has exactly one receipt"
+    );
+    assert!(
+        matches!(durable[0].outcome, OpOutcome::Failed { .. }),
+        "external ref lock must fail execution, not planning: {:?}",
+        durable[0].outcome
+    );
+    let error = cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app.create_branch_modal().expect("failed form stays open");
+        assert_eq!(modal.input, "collision/child");
+        assert_eq!(input.read(cx).value().as_str(), "collision/child");
+        let error = modal.error.clone().expect("execution error is inspectable");
+        assert!(app.app_notice().is_none());
+        let shown = app.op_log.as_ref().unwrap().read(cx).entries();
+        let shown: Vec<_> = shown
+            .iter()
+            .filter(|entry| entry.op == "create-branch" && entry.repo == durable[0].repo)
+            .collect();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(
+            shown[0].id, durable[0].id,
+            "failure presents the backend receipt"
+        );
+        error
+    });
+    assert_eq!(repo_fingerprint(&repo), before);
+    assert_eq!(output(&repo, &["show-ref", "--heads"]), refs_before);
+    assert!(output(&repo, &["branch", "--list", "collision/child"]).is_empty());
+    std::fs::remove_file(lock).unwrap();
+
+    git(&repo, &["branch", "reload-marker"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_painted(cx, &app, window, |app| {
+        app.view().branch_targets.contains_key("reload-marker")
+    });
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .create_branch_modal()
+            .expect("failed form survives reload");
+        assert_eq!(modal.input, "collision/child");
+        assert_eq!(
+            modal.error.as_ref(),
+            Some(&error),
+            "reload retains the exact error"
+        );
+        assert_eq!(
+            modal.input_state.as_ref().unwrap().entity_id(),
+            input.entity_id()
+        );
+        assert_eq!(input.read(cx).value().as_str(), "collision/child");
+    });
+    assert_eq!(
+        records(&repo, "create-branch").len(),
+        1,
+        "reload never retries"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+    drop(input);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS create_branch_execution_failure_keeps_input");
 }
 
 /// ADR-0196 Wave 3 / #501: a write that happened but could not be recorded is
@@ -2080,7 +2288,10 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
     let (app, window) = mount(cx, &repo);
 
-    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    app.update(cx, |app, cx| {
+        app.open_create_branch_modal(head, cx);
+        app.create_branch_modal_mut().unwrap().checkout_after = true;
+    });
     paint(cx, window);
     wait_painted(cx, &app, window, |app| {
         app.create_branch_modal()
@@ -2249,6 +2460,16 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         output(&repo, &["branch", "--list", "feat"]).is_empty(),
         "composition Enter must not create a Git ref"
     );
+    assert!(
+        records(&repo, "create-branch").is_empty(),
+        "composition Enter must not record any create attempt"
+    );
+    cx.read(|cx| {
+        let modal = app.read(cx).create_branch_modal().unwrap();
+        assert_eq!(modal.input, "feat");
+        assert!(modal.checkout_after);
+        assert!(modal.error.is_none());
+    });
 
     cx.update_window(window, |_, window, cx| {
         input.update(cx, |state, cx| {
@@ -2256,12 +2477,21 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
-    press_enter(cx, &app, window);
+    // Do not use press_enter: it forcibly focuses root and would conceal a
+    // broken input → confirmation → root handoff.
+    paint(cx, window);
+    cx.simulate_keystrokes(window, "enter");
     cx.run_until_parked();
     assert!(
         !output(&repo, &["branch", "--list", "feat"]).is_empty(),
         "ordinary Enter after composition still creates the branch"
     );
+    assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "feat");
+    let durable = records(&repo, "create-branch");
+    assert_eq!(durable.len(), 1);
+    assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
+    assert_created_branch_dismissed(cx, &app, window, &repo);
+    drop(input);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
 }
@@ -2473,9 +2703,9 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             });
         } else if case == "rename" {
             wait_painted(cx, &app, window, |app| {
+                // #1552: unchanged prefill stays neutral but unavailable.
                 app.rename_branch_modal()
-                    .and_then(|m| m.plan.plan())
-                    .is_some_and(|plan| !plan.blockers.is_empty())
+                    .is_some_and(|m| m.plan.plan().is_none() && m.error.is_none())
             });
         }
         kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
@@ -2562,6 +2792,9 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             );
         }
         if case == "rename" || case == "upstream" {
+            if case == "upstream" {
+                git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+            }
             let input = cx
                 .read(|cx| {
                     let app = app.read(cx);
@@ -2927,7 +3160,7 @@ fn confirm_branch_delete(
     input: &str,
 ) {
     if input == "enter" {
-        press_enter(cx, app, window);
+        crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     } else {
         paint(cx, window);
         let bounds =
@@ -3009,7 +3242,7 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
         .open(log_dir.join("operations.jsonl.lock"))
         .unwrap();
     lock.lock().unwrap();
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     wait_idle(cx, &app);
     drop(lock);
     assert_eq!(output(repo, &["branch", "--list", "victim"]), "");
@@ -3021,7 +3254,7 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
             "completed deletion cannot be retried"
         );
         let notice = kagi::ui::e2e::app_notice_message(state).unwrap();
-        assert!(notice.contains("recording failed") && notice.contains(repo.to_str().unwrap()));
+        assert!(notice.contains(repo.to_str().unwrap()));
         let panel = state.op_log.as_ref().unwrap().read(cx);
         let entry = panel
             .entries()
@@ -3151,6 +3384,69 @@ pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+/// #1136: a filtered Stage refusal reaches the actual Failed footer in EN/JA.
+pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e;
+    use kagi_ui_core::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("asset.bin"), "version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 42\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", "pointer fixture"]);
+        std::fs::write(repo.join("asset.bin"), "not an LFS pointer\n").unwrap();
+        let (app, window) = mount(cx, repo);
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        let fingerprint = repo_fingerprint(repo);
+        app.update(cx, |app, cx| {
+            app.do_stage_file_by_path(app.active_session().unwrap(), "asset.bin".into(), cx);
+        });
+        wait_idle(cx, &app);
+        paint(cx, window);
+        let expected = match language {
+            Lang::En => "external filter (lfs)",
+            Lang::Ja => "外部 filter (lfs)",
+        };
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let FooterStatus::Failed(footer) = &state.status_footer else {
+                panic!("filtered Stage must show failure footer")
+            };
+            assert!(footer.contains(expected), "{footer}");
+            assert!(footer.contains("asset.bin") && footer.contains("git"));
+            let toast = state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert_eq!(toast.kind, ToastKind::Error);
+            assert!(toast.message.contains(expected), "{}", toast.message);
+            assert!(e2e::app_notice_message(state).is_none());
+        });
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(repo_fingerprint(repo), fingerprint);
+        let entries = records(repo, "stage");
+        assert_eq!(entries.len(), 1);
+        assert!(
+            matches!(&entries[0].outcome, OpOutcome::Refused { blockers } if blockers[0].contains("external filter (lfs)"))
+        );
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(previous);
+}
+
 /// #490: same real index.lock failure from panel indices, batch buttons and
 /// editor paths, including a linked panel while the main tab stays active.
 ///
@@ -3255,7 +3551,8 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last();
                 assert!(
                     toast.is_some_and(|t| t.kind == ToastKind::Error
-                        && t.message.starts_with(&format!("{op}: failed"))),
+                        && t.message.contains("f.txt")
+                        && !t.message.contains("index.write")),
                     "stage-failure-toasts: {op} via {entry} must toast its failure, got {toast:?}"
                 );
                 assert!(
@@ -3556,6 +3853,34 @@ fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindo
     .unwrap();
 }
 
+fn assert_dialog_pixel(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    x: gpui::Pixels,
+    y: gpui::Pixels,
+    expected: u32,
+) {
+    let actual = cx
+        .update_window(window, |_, window, _| {
+            let image = window.render_to_image().expect("native dialog capture");
+            let scale = window.scale_factor();
+            image
+                .get_pixel((f32::from(x) * scale) as u32, (f32::from(y) * scale) as u32)
+                .0
+        })
+        .unwrap();
+    for (actual, expected) in actual[..3].iter().zip([
+        (expected >> 16) as u8,
+        (expected >> 8) as u8,
+        expected as u8,
+    ]) {
+        assert!(
+            actual.abs_diff(expected) <= 2,
+            "native dialog pixel: {actual}, expected {expected}"
+        );
+    }
+}
+
 /// #354 slice 2: confirmation cards are dialogs for assistive technology.
 /// The AccessKit tree only exists with an AT connected (#840), so the oracle
 /// is what the renderer set: role, name, description, the Confirm/Cancel
@@ -3564,6 +3889,10 @@ fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindo
 /// card (delete-branch) and a bespoke card (discard).
 pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     use gpui::Role;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
+    let previous_theme = kagi::ui::theme::theme().slug.to_owned();
+    let previous_lang = kagi::ui::i18n::lang();
+    let previous_zoom = kagi::ui::theme::zoom();
     let fixture = build_fixture();
     let repo = fixture.path();
     git(repo, &["branch", "merged-delete", "HEAD~1"]);
@@ -3573,6 +3902,89 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     git(repo, &["commit", "-q", "-m", "unmerged work"]);
     git(repo, &["checkout", "-q", "main"]);
     let (app, window) = mount(cx, repo);
+    for slug in ["apple-light", "apple-dark"] {
+        for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+            kagi::ui::i18n::set_lang(lang);
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            for zoom in [1., 1.67] {
+                kagi::ui::theme::set_zoom(zoom);
+                let head = CommitId(output(repo, &["rev-parse", "HEAD"]));
+                app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+                wait_idle(cx, &app);
+                redraw(cx, &app, window);
+                let dialog = kagi::ui::dialog_a11y::recorded_dialog("create-branch-card")
+                    .expect("Create Branch has a named modal task boundary");
+                assert_eq!(dialog.role, Role::Dialog);
+                assert_eq!(dialog.label, kagi::ui::i18n::Msg::InputBranchTitle.t());
+                assert!(
+                    cx.update_window(window, |_, window, cx| {
+                        app.read(cx).modal_focus.as_ref().is_some_and(|focus| {
+                            focus.is_focused(window) || focus.contains_focused(window, cx)
+                        })
+                    })
+                    .unwrap(),
+                    "opening puts focus inside the task"
+                );
+                cx.simulate_keystrokes(window, "f e a t");
+                cx.run_until_parked();
+                wait_painted(cx, &app, window, |app| {
+                    app.create_branch_modal()
+                        .and_then(|modal| modal.plan.plan())
+                        .is_some_and(|plan| plan.blockers.is_empty())
+                });
+                redraw(cx, &app, window);
+                let cancel =
+                    kagi::ui::e2e::control_bounds(window.window_id(), "create-branch-cancel")
+                        .unwrap();
+                let confirm = kagi::ui::e2e::confirm_bounds(window.window_id()).unwrap();
+                assert_eq!(cancel.size.height, confirm.size.height);
+                assert!(
+                    cancel.right() < confirm.left(),
+                    "Cancel leads the default action"
+                );
+                let t = kagi::ui::theme::theme();
+                let border = if slug == "apple-light" {
+                    0x8e8e8e
+                } else {
+                    kagi_ui_core::theme_apple_dark::INPUT_BORDER
+                };
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    cancel.left() + gpui::px(0.25),
+                    cancel.center().y,
+                    border,
+                );
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    confirm.left() + gpui::px(6.),
+                    confirm.center().y,
+                    t.ui_accent(),
+                );
+                for key in ["tab", "tab", "tab", "shift-tab", "shift-tab", "shift-tab"] {
+                    cx.simulate_keystrokes(window, key);
+                    cx.run_until_parked();
+                    redraw(cx, &app, window);
+                    assert!(
+                        cx.update_window(window, |_, window, cx| {
+                            app.read(cx).modal_focus.as_ref().is_some_and(|focus| {
+                                focus.is_focused(window) || focus.contains_focused(window, cx)
+                            })
+                        })
+                        .unwrap(),
+                        "focus remains in the dialog after {key}"
+                    );
+                }
+                cx.simulate_keystrokes(window, "escape");
+                cx.run_until_parked();
+                assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+            }
+        }
+    }
+    kagi::ui::theme::set_zoom(previous_zoom);
+    kagi::ui::i18n::set_lang(previous_lang);
+    app.update(cx, |app, cx| app.set_theme(&previous_theme, cx));
 
     // Two-stage (unmerged): AlertDialog, "needs two confirmations", Confirm
     // named by the visible label, warning row is a Note.
@@ -3599,7 +4011,7 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     assert!(!text.is_empty());
 
     // Armed: description and Confirm name change.
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).delete_branch_modal().unwrap().confirm_armed));
     redraw(cx, &app, window);
@@ -3679,18 +4091,76 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
             .read(cx)
             .owner
     });
+    for slug in ["apple-light", "apple-dark"] {
+        for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+            kagi::ui::i18n::set_lang(lang);
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            for zoom in [1., 1.67] {
+                kagi::ui::theme::set_zoom(zoom);
+                app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
+                wait_idle(cx, &app);
+                redraw(cx, &app, window);
+                let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").unwrap();
+                assert_eq!(d.role, Role::AlertDialog);
+                assert!(!d.label.is_empty());
+                let cancel =
+                    kagi::ui::e2e::control_bounds(window.window_id(), "discard-cancel").unwrap();
+                let confirm =
+                    kagi::ui::e2e::control_bounds(window.window_id(), "discard-confirm").unwrap();
+                assert_eq!(cancel.size.height, confirm.size.height);
+                assert!(cancel.right() < confirm.left());
+                let t = kagi::ui::theme::theme();
+                let border = if slug == "apple-light" {
+                    0x8e8e8e
+                } else {
+                    kagi_ui_core::theme_apple_dark::INPUT_BORDER
+                };
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    cancel.left() + gpui::px(0.25),
+                    cancel.center().y,
+                    border,
+                );
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    confirm.left() + gpui::px(6.),
+                    confirm.center().y,
+                    t.color_blocker,
+                );
+                press_key(cx, &app, window, "escape");
+                cx.run_until_parked();
+                assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
+            }
+        }
+    }
+    kagi::ui::theme::set_zoom(previous_zoom);
+    kagi::ui::i18n::set_lang(previous_lang);
+    app.update(cx, |app, cx| app.set_theme(&previous_theme, cx));
     app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
     wait_idle(cx, &app);
     redraw(cx, &app, window);
     let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").expect("discard card drawn");
     assert_eq!(d.role, Role::AlertDialog);
+    let cancel = kagi::ui::e2e::control_bounds(window.window_id(), "discard-cancel").unwrap();
+    let confirm = kagi::ui::e2e::control_bounds(window.window_id(), "discard-confirm").unwrap();
+    assert_eq!(cancel.size.height, confirm.size.height);
+    assert!(cancel.right() < confirm.left());
+    assert_dialog_pixel(
+        cx,
+        window,
+        confirm.left() + gpui::px(6.),
+        confirm.center().y,
+        kagi::ui::theme::theme().color_blocker,
+    );
     assert_eq!(
         d.actions[0].1,
         kagi_ui_core::i18n::Msg::PlanDiscardConfirm
             .t()
             .replace("{}", "1")
     );
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "discard-confirm");
     cx.run_until_parked();
     redraw(cx, &app, window);
     let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").expect("armed discard drawn");
@@ -3923,8 +4393,14 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
             row.summary.to_string(),
             row.short_id.to_string(),
             row.author.to_string(),
-            row.date.to_string(),
-            row.date_short.to_string(),
+            kagi_ui_core::time::relative_time_description(
+                row.author_secs,
+                kagi_ui_core::time::now_unix_secs(),
+            ),
+            kagi_ui_core::time::relative_time_short(
+                row.author_secs,
+                kagi_ui_core::time::now_unix_secs(),
+            ),
             row.badges.iter().any(|b| b.label.as_ref() == "v-mark"),
         )
     });
@@ -4032,7 +4508,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
             .unwrap_or_else(|| panic!("no row naming {needle}: {:?}", list.rows))
     };
     // Section header: level 1, expanded.
-    let (_, _, (level, expanded, ..)) = find(&list, "LOCAL BRANCHES");
+    let (_, _, (level, expanded, ..)) = find(&list, kagi::ui::i18n::Msg::A11ySidebarLocal.t());
     assert_eq!((level, expanded), (1, Some(true)));
     // The current branch is level 2 and named as current.
     let (_, main_label, (level, expanded, ..)) = find(&list, "main");
@@ -4077,7 +4553,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     redraw(cx);
     let list = recorded_list("sidebar-local").expect("local branches drawn after collapse");
-    let (_, _, (_, expanded, ..)) = find(&list, "LOCAL BRANCHES");
+    let (_, _, (_, expanded, ..)) = find(&list, kagi::ui::i18n::Msg::A11ySidebarLocal.t());
     assert_eq!(expanded, Some(false));
     assert!(
         !list.rows.values().any(|(l, _)| l.contains("feat/a")),
@@ -4115,7 +4591,9 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
             ..pull_request(7, "cached", "main")
         },
     ];
-    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(prs)));
+    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        prs, "", None,
+    ))));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     cx.run_until_parked();
     app.update(cx, |app, cx| app.show_pr_mode(cx));
@@ -4128,7 +4606,7 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     let list = recorded_list("pr-list").expect("PR list drawn");
-    assert_eq!(list.role, Some(Role::List));
+    assert_eq!(list.role, Some(Role::ListBox));
     assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11yPrList.t());
     assert_eq!(list.size, 3);
     let labels: Vec<&str> = list.rows.values().map(|(l, _)| l.as_str()).collect();
@@ -4147,8 +4625,8 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
             label.contains("@alice") && label.contains("main"),
             "{label}"
         );
-        assert!(!selected, "the table keeps no selection");
+        assert!(!selected, "unfocused dashboard options are not selected");
     }
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS pr_list_roles: List + ListItem, named rows in filtered order, positions/size");
+    eprintln!("[gui-e2e] PASS pr_list_roles: ListBox + options, named rows in filtered order, positions/size");
 }

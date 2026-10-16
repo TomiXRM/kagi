@@ -11,6 +11,7 @@
 //! `confirm_active_modal` / `cancel_active_modal` plumbing.
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
@@ -36,7 +37,10 @@ impl KagiApp {
         }
         let repo_path = session.path().to_path_buf();
         klog!("repo untrusted (foreign owner): {}", repo_path.display());
-        self.set_trust_repo_modal(TrustRepoModal { repo_path });
+        self.set_trust_repo_modal(TrustRepoModal {
+            repo_path,
+            error: None,
+        });
     }
 
     /// Confirm trust: persist the grant (`trusted_repos`) and re-open the
@@ -47,19 +51,46 @@ impl KagiApp {
         let Some(modal) = self.trust_repo_modal().cloned() else {
             return;
         };
-        match kagi_git::trust::trust_repo(&modal.repo_path) {
+        let error = match kagi_git::trust::trust_repo(&modal.repo_path) {
             Ok(()) => {
                 klog!("repo trusted: {}", modal.repo_path.display());
-                let session = kagi_git::session::RepoSession::open(&modal.repo_path).ok();
-                if let Some(ui) = self.ui_mut() {
-                    ui.repo_session = session;
+                match kagi_git::session::RepoSession::open(&modal.repo_path) {
+                    Ok(session) => {
+                        if let Some(ui) = self.ui_mut() {
+                            ui.repo_session = Some(session);
+                        }
+                        None
+                    }
+                    Err(e) => Some(format!(
+                        "{}\n\n{e}",
+                        Msg::TrustRepoReopenFailed.t().replacen(
+                            "{}",
+                            &modal.repo_path.display().to_string(),
+                            1
+                        )
+                    )),
                 }
             }
             Err(e) => {
                 klog!("trust grant failed: {e}");
+                Some(format!(
+                    "{}\n\n{e}",
+                    Msg::TrustRepoSaveFailed.t().replacen(
+                        "{}",
+                        &modal.repo_path.display().to_string(),
+                        1
+                    )
+                ))
             }
+        };
+        if let Some(error) = error {
+            self.set_trust_repo_modal(TrustRepoModal {
+                repo_path: modal.repo_path,
+                error: Some(error),
+            });
+        } else {
+            self.clear_trust_repo_modal();
         }
-        self.clear_trust_repo_modal();
         cx.notify();
     }
 
@@ -84,17 +115,9 @@ pub(crate) fn render_trust_repo_modal(
         this.confirm_trust_repo(cx);
     });
 
-    let card = div()
-        .w(theme::scaled_px(460.))
-        // Same popup surface as `modal_shell::modal_card` and the Settings
-        // panel (`theme.panel`); `modal` is lighter and read as a different
-        // surface class next to them (#454 follow-up).
-        .bg(rgb(current_theme().panel))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
+    let body = super::modal_shell::modal_scroll_body()
+        .relative()
+        .child(super::e2e::measure_inside("trust-repo-body"))
         .child(render_modal_title_row(
             SharedString::from(Msg::TrustRepoTitle.t()),
             Some((
@@ -108,18 +131,47 @@ pub(crate) fn render_trust_repo_modal(
                 .text_color(rgb(current_theme().text_sub))
                 .child(SharedString::from(Msg::TrustRepoBody.t())),
         )
+        .child(trust_path(SharedString::from(
+            modal.repo_path.display().to_string(),
+        )))
+        .when_some(modal.error.clone(), |card, error| {
+            let error = super::i18n::op::user_text::diagnostic(&error).into_owned();
+            card.child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("trust-repo-error")
+                            .flex_1()
+                            .min_w_0()
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(current_theme().color_blocker))
+                            .child(SharedString::from(error.clone()))
+                            .child(super::e2e::measure_control(
+                                "trust-repo-error-tail",
+                                div().h(theme::scaled_px(1.)),
+                            )),
+                    )
+                    .child(super::modal_copy::modal_copy_button(
+                        "trust-repo-copy-error",
+                        Msg::ModalCopyAll.t(),
+                        error,
+                        cx,
+                    )),
+            )
+        });
+    let card = super::modal_shell::modal_card(460.)
+        .relative()
+        .child(super::e2e::measure_inside("trust-repo-card"))
+        .child(body)
         .child(
-            div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(modal.repo_path.display().to_string())),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .justify_end()
+            super::button_style::modal_button_row()
+                .flex_shrink_0()
                 .child(super::e2e::measure_control(
                     "trust-repo-cancel",
                     modal_button(
@@ -135,7 +187,11 @@ pub(crate) fn render_trust_repo_modal(
                     "trust-repo-confirm",
                     modal_button(
                         "trust-repo-confirm",
-                        Msg::TrustRepoConfirm.t(),
+                        if modal.error.is_some() {
+                            Msg::TrustRepoRetry.t()
+                        } else {
+                            Msg::TrustRepoConfirm.t()
+                        },
                         ModalButtonKind::Primary,
                         None,
                         confirm,
@@ -145,4 +201,24 @@ pub(crate) fn render_trust_repo_modal(
         );
 
     modal_overlay(card).into_any_element()
+}
+
+fn trust_path(full: SharedString) -> impl IntoElement {
+    let tooltip = full.clone();
+    div()
+        .id("trust-repo-path")
+        .role(gpui::Role::Label)
+        .aria_label(full.clone())
+        .aria_description(full.clone())
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis_middle()
+        .relative()
+        .child(super::e2e::measure_inside("trust-repo-path"))
+        .child(full)
+        .text_xs()
+        .text_color(rgb(current_theme().text_label))
+        .hover_tooltip_builder("trust-repo-path-help", move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
 }

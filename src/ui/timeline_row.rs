@@ -5,14 +5,18 @@
 //! controls — so the Issues feed, the PR feed and the PR home table cannot
 //! drift apart by a padding value.
 //!
-//! Renderers only: no state, no I/O. What a row *says* stays with the caller.
+//! Renderers only: no application state or I/O. Body preparation is memoized
+//! for consecutive rendered frames; what a row *says* stays with the caller.
 
-use gpui::{div, prelude::*, px, rgb, AnyElement, Div, ElementId, SharedString, Stateful};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, App, Div, ElementId, SharedString, Stateful, Window,
+};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::text::{TextView, TextViewStyle};
 use gpui_component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _};
 use kagi_ui_core::avatar::{login_key, AvatarImages};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
@@ -51,7 +55,8 @@ pub(super) fn row(
         .px(theme::scaled_px(GUTTER))
         .py(theme::scaled_px(ROW_PY))
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
+        .map(|row| super::e2e::probe_chrome_border("timeline-row", row))
         .text_color(rgb(theme().text_main))
         .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
             AVATAR,
@@ -62,8 +67,9 @@ pub(super) fn row(
         .child(content)
 }
 
-/// A row that opens what it shows: pointer and hover fill, one definition for
-/// the Issues list and the PR home table.
+/// An unselected row that opens what it shows: pointer and surface hover fill,
+/// shared by the Issues list and PR home table. Selected rows retain their own
+/// active/inactive fill and pointer cursor instead of applying this hover wash.
 pub(super) fn clickable(row: Stateful<Div>) -> Stateful<Div> {
     row.cursor_pointer().hover(|s| s.bg(rgb(theme().surface)))
 }
@@ -117,6 +123,43 @@ pub(super) fn markdown_style(heading_base: f32, cx: &gpui::App) -> TextViewStyle
     }
 }
 
+/// Preserve the caller's source presentation without copying it per frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BodyMarkdownFormat {
+    Original,
+    Trimmed,
+    Placeholder { text: &'static str, italic: bool },
+}
+
+pub(super) struct PreparedBody {
+    pub(super) raw: String,
+    pub(super) format: BodyMarkdownFormat,
+    pub(super) text: SharedString,
+}
+
+impl PreparedBody {
+    pub(super) fn new(body: &str, format: BodyMarkdownFormat) -> Self {
+        let placeholder;
+        let source = match format {
+            BodyMarkdownFormat::Original => body,
+            BodyMarkdownFormat::Trimmed => body.trim(),
+            BodyMarkdownFormat::Placeholder { text, italic } => {
+                if italic {
+                    placeholder = format!("_{text}_");
+                    &placeholder
+                } else {
+                    text
+                }
+            }
+        };
+        Self {
+            raw: body.to_owned(),
+            format,
+            text: kagi_ui_editor::markdown::prepare_github_markdown(source).into(),
+        }
+    }
+}
+
 /// A body through the GitHub-markdown pipeline the feeds share
 /// (`kagi_ui_editor::markdown::prepare_github_markdown`): normalise the text,
 /// turn images into links so a remote-origin comment cannot make the app
@@ -127,23 +170,39 @@ pub(super) fn markdown_style(heading_base: f32, cx: &gpui::App) -> TextViewStyle
 pub(super) fn body_markdown(
     id: impl Into<ElementId>,
     body: &str,
+    format: BodyMarkdownFormat,
     style: TextViewStyle,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    TextView::markdown(
-        id,
-        SharedString::from(kagi_ui_editor::markdown::prepare_github_markdown(body)),
-    )
-    .selectable(true)
-    .style(style)
-    .font_features(kagi_ui_editor::markdown::literal_text_features())
-    .into_any_element()
+    let id = id.into();
+    // A direct ElementId in a separate namespace avoids formatted cache keys
+    // and cannot alias the SDK's "{id}/state" TextViewState entity.
+    let prepared = window.with_element_namespace("github-markdown-preparation", |window| {
+        window.use_keyed_state(id.clone(), cx, |_, _| PreparedBody::new(body, format))
+    });
+    let text = prepared.update(cx, |prepared, _| {
+        // Compare the original bytes, not their length, hash or normalized
+        // output: edits and reused/reordered row identities replace one payload.
+        if prepared.raw != body || prepared.format != format {
+            *prepared = PreparedBody::new(body, format);
+        }
+        prepared.text.clone()
+    });
+    TextView::markdown(id, text)
+        .selectable(true)
+        .style(style)
+        .font_features(kagi_ui_editor::markdown::literal_text_features())
+        .into_any_element()
 }
 
-/// The composer's text box: borderless, at the feed's reading size. The
-/// entity is the caller's — this only styles the box it is drawn in, so a
+/// The composer's named text box: borderless, at the feed's reading size.
+/// The caller supplies the contextual field name and owns the entity, so its
 /// single-line/multi-line or auto-grow choice made at creation still stands.
-pub(super) fn body_input(input: &gpui::Entity<InputState>) -> Input {
+pub(super) fn body_input(input: &gpui::Entity<InputState>, label: &'static str) -> Input {
     Input::new(input)
+        .context_menu(kagi_ui_core::input::context_menu(input, false))
+        .aria_label(label)
         .appearance(false)
         .bordered(false)
         .focus_bordered(false)
@@ -210,37 +269,96 @@ pub(super) fn mode_toggle(
     id: impl Into<SharedString>,
     preview: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> Button {
+) -> impl IntoElement {
     let (icon, tooltip) = if preview {
         ("icons/square-pen.svg", Msg::ComposerWrite.t())
     } else {
         ("icons/eye.svg", Msg::ComposerPreview.t())
     };
-    Button::new(id.into())
+    let id = id.into();
+    let name = Msg::ComposerPreview.t();
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::pr_detail::record_control(
+            id.to_string(),
+            Some(gpui::Role::Button),
+            Some(name),
+            Some(preview),
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&id, true, false, None);
+    }
+    #[cfg(feature = "gui-e2e")]
+    let probe_id = id.to_string();
+    Button::new(id.clone())
         .icon(Icon::empty().path(icon))
         .small()
-        .tooltip(tooltip)
-        .on_click(on_click)
+        .tab_stop(true)
+        .map(|button| super::button_style::named_button(button, name, Some(preview)))
+        .on_click(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::pr_detail::record_activation(&probe_id);
+            on_click(event, window, cx);
+        })
+        .hover_tooltip((id, 0usize), tooltip)
 }
 
-/// The submit. Amber only while it can actually be pressed: an unavailable
-/// action tinted like an available one is a lie the reader acts on, so the
-/// disabled state stays on Button's neutral path.
+/// Ordinary submit uses the same Primary variant as `KagiButton`; unavailable
+/// actions keep Button's existing neutral disabled appearance.
 pub(super) fn submit(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     disabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> Button {
-    let button = Button::new(id.into())
+) -> AnyElement {
+    let id = id.into();
+    let label = label.into();
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::pr_detail::record_control(
+            id.to_string(),
+            Some(gpui::Role::Button),
+            Some(&label),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(
+            &id,
+            !disabled,
+            disabled,
+            Some(if disabled {
+                super::button_style::ButtonRole::Secondary
+            } else {
+                super::button_style::ButtonRole::Primary
+            }),
+        );
+    }
+    #[cfg(feature = "gui-e2e")]
+    let probe_id = id.to_string();
+    #[cfg(feature = "gui-e2e")]
+    let measure_id = id.to_string();
+    let button = Button::new(id)
         .icon(Icon::empty().path("icons/comment-send.svg"))
-        .label(label.into());
-    if disabled { button } else { button.warning() }
+        .label(label.clone())
+        .map(|button| super::button_style::named_button(button, label, None));
+    let button = if disabled { button } else { button.primary() }
         .rounded(px(999.))
         .h(theme::scaled_px(36.))
         .px_3()
         .disabled(disabled)
-        .on_click(on_click)
+        .on_click(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::pr_detail::record_activation(&probe_id);
+            on_click(event, window, cx);
+        });
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::measure_control(measure_id, button)
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        button.into_any_element()
+    }
 }
 
 /// The composer's one-line status: where the text you typed currently lives.

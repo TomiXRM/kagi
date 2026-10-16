@@ -215,7 +215,11 @@ pub fn scenario_pr_viewed(cx: &mut VisualTestAppContext) {
     // The head moves and changes a.txt only: a.txt is unviewed, b.txt stays.
     let head2 = push_pr_head(&repo, &remote, &head1, &[("a.txt", "a2\n")]);
     let moved = pr_at(&head2);
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(vec![moved])));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        vec![moved],
+        "",
+        None,
+    ))));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     wait_loaded(cx, &app, &head2);
     paint(cx, window);

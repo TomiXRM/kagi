@@ -123,6 +123,9 @@ pub fn plan_reset_current_to_head(
     });
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Reset(ResetTitle::ResetCurrentToHead {
             branch: branch_name.unwrap_or_default(),
@@ -136,6 +139,7 @@ pub fn plan_reset_current_to_head(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

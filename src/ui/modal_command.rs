@@ -3,7 +3,7 @@
 
 use super::i18n::Msg;
 use super::modal_copy::modal_copy_button;
-use super::modal_shell::section_open;
+use super::modal_shell::{modal_reveal, section_open, ModalSections};
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
@@ -39,7 +39,7 @@ struct CommandDisclosure<'a> {
 pub(crate) fn render_equivalent_command(
     cmd: &str,
     lines: Option<usize>,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_command_disclosure(
@@ -64,7 +64,7 @@ pub(crate) fn render_recovery_commands(
     id: &'static str,
     copy_id: &'static str,
     body_id: &'static str,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let text = commands.join("\n");
@@ -90,7 +90,7 @@ pub(crate) fn render_recovery_commands(
 
 fn render_command_disclosure(
     spec: CommandDisclosure<'_>,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let CommandDisclosure {
@@ -101,7 +101,9 @@ fn render_command_disclosure(
         ax_label,
         text,
     } = spec;
-    let open = section_open(overrides, id, false).is_open();
+    let presentation = section_open(overrides, id, false);
+    let open = presentation.is_open();
+    let retain_content = presentation.retain_content();
     #[cfg(feature = "gui-e2e")]
     DISCLOSURES.with(|items| {
         items
@@ -109,6 +111,8 @@ fn render_command_disclosure(
             .insert(id, (summary.to_string(), ax_label.to_string(), open));
     });
     let header = div()
+        .relative()
+        .child(presentation.measure_width())
         .flex()
         .flex_row()
         .items_center()
@@ -155,26 +159,44 @@ fn render_command_disclosure(
         .flex_shrink_0()
         .flex()
         .flex_col()
-        .gap_1()
         .text_xs()
         .text_color(rgb(current_theme().text_main))
         .child(header)
-        .when(open, |section| {
-            section.child(
-                div()
-                    .id(body_id)
-                    .relative()
-                    .max_h(theme::scaled_px(120.))
+        .when(retain_content, |section| {
+            let scroll = overrides.scroll_handle(id);
+            let offset = scroll.offset();
+            let content = div()
+                .when(!open, |content| {
+                    content.relative().left(offset.x).top(offset.y)
+                })
+                .child(SharedString::from(text.to_owned()));
+            let body = div()
+                .relative()
+                .max_h(theme::scaled_px(120.))
+                .overflow_hidden()
+                .rounded_sm()
+                .bg(gpui::rgba(theme::panel_style().0))
+                .p_1()
+                .font_family(MONO_FONT)
+                .text_color(rgb(current_theme().text_main))
+                .child(content);
+            // Closing retains the same clipped drawing and scroll position,
+            // but no identified scroll container or input handlers.
+            let body = if open {
+                body.id(body_id)
                     .overflow_y_scroll()
                     .overflow_x_scroll()
-                    .rounded_sm()
-                    .bg(gpui::rgba(theme::panel_style().0))
-                    .p_1()
-                    .font_family(MONO_FONT)
-                    .text_color(rgb(current_theme().text_main))
-                    .child(SharedString::from(text.to_owned()))
-                    .child(super::e2e::measure_inside(body_id)),
-            )
+                    .track_scroll(&scroll)
+                    .child(super::e2e::measure_inside(body_id))
+                    .into_any_element()
+            } else {
+                body.into_any_element()
+            };
+            section.child(modal_reveal(
+                id,
+                presentation,
+                div().pt_1().child(body).into_any_element(),
+            ))
         })
         .into_any_element()
 }

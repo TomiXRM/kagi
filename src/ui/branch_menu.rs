@@ -10,6 +10,10 @@ use super::{
     menu_overlay, KagiApp,
 };
 
+#[path = "branch_menu_availability.rs"]
+mod availability;
+use availability::*;
+
 const MENU_W: f32 = 300.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +55,7 @@ pub enum BranchAction {
     SetUpstream,
     NoUpstreamInfo,
     FetchRemoteBranch,
+    Fetch,
     CreatePr,
     MergeIntoCurrent,
     RebaseCurrentOnto,
@@ -78,8 +83,8 @@ pub struct BranchMenuContext {
     pub is_current: bool,
     pub has_upstream: bool,
     pub upstream_name: Option<String>,
-    /// `None` when the count is unknown (skipped, #355): Pull / Push stay
-    /// enabled and the plan counts again.
+    /// Counts reflect the last fetch, not live upstream freshness. Pull stays
+    /// enabled even at zero; an unknown count is re-read during planning (#355).
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
     pub dirty: bool,
@@ -107,231 +112,273 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
     if ctx.dirty {
         checkout_label.push_str(" (dirty working tree)");
     }
-    if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+    if ctx.conflict_mode == BranchConflictMode::Conflicted {
         checkout_label.push_str(" (conflicts)");
     }
-    let merge_label = match &ctx.current_branch {
-        Some(current) => format!("Merge {} into {}", ctx.name, current),
-        None => format!("Merge {} into current branch", ctx.name),
-    };
-    let rebase_label = match &ctx.current_branch {
-        Some(current) => format!("Rebase {} onto {}", current, ctx.name),
-        None => format!("Rebase current branch onto {}", ctx.name),
-    };
-    let replay_label = match &ctx.current_branch {
-        Some(current) => format!("Replay {} onto {}…", ctx.name, current),
-        None => format!("Replay {} onto current branch…", ctx.name),
-    };
+    vec![
+        group(vec![item(
+            BranchAction::Checkout,
+            checkout_label,
+            checkout_state(ctx),
+            false,
+        )]),
+        group(primary_sync_items(ctx)),
+        group(vec![
+            item(
+                BranchAction::CreateBranchFromHere,
+                "Create branch here…",
+                create_branch_state(ctx),
+                false,
+            ),
+            item(
+                BranchAction::RenameBranch,
+                "Rename branch…",
+                rename_state(ctx),
+                false,
+            ),
+            item(
+                BranchAction::DeleteBranch,
+                delete_label(ctx),
+                delete_state(ctx),
+                true,
+            ),
+        ]),
+        group(vec![
+            MenuItem::submenu(Msg::BcmIntegrateMenu.t(), integrate_items(ctx)),
+            MenuItem::submenu(Msg::BcmWorktreeMenu.t(), worktree_items(ctx)),
+            MenuItem::submenu(Msg::BcmAdvancedMenu.t(), advanced_items(ctx)),
+        ]),
+    ]
+}
 
-    let mut groups = vec![
-        MenuGroup {
-            title: Some("Checkout / Open"),
-            items: vec![
-                item(
-                    BranchAction::Checkout,
-                    checkout_label,
-                    checkout_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::SwitchToLatest,
-                    switch_to_latest_label(ctx),
-                    switch_to_latest_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::OpenWorktreeFromBranch,
-                    "Open worktree from branch...",
-                    open_worktree_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::RevealHead,
-                    "Reveal branch HEAD in graph",
-                    ItemState::Enabled,
-                    false,
-                ),
-                item(
-                    BranchAction::ToggleSolo,
-                    if ctx.is_soloed { "Exit Solo" } else { "Solo" },
-                    ItemState::Enabled,
-                    false,
-                ),
-            ],
-        },
-        MenuGroup {
-            title: Some("Sync"),
-            items: vec![
-                item(
-                    BranchAction::NoUpstreamInfo,
-                    Msg::NoUpstreamSet.t(),
-                    no_upstream_info_state(ctx),
-                    false,
-                ),
-                item(BranchAction::Pull, pull_label(ctx), pull_state(ctx), false),
-                item(
-                    BranchAction::PullFfOnly,
-                    "Pull ff-only",
-                    pull_state(ctx),
-                    false,
-                ),
-                item(BranchAction::Push, push_label(ctx), push_state(ctx), false),
-                item(
-                    BranchAction::PushAndCreateUpstream,
-                    "Push and create upstream",
-                    push_create_upstream_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::SetUpstream,
-                    set_upstream_label(ctx),
-                    set_upstream_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::FetchRemoteBranch,
-                    "Fetch remote branch",
-                    fetch_remote_branch_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::SyncToRemote,
-                    "Sync to remote (keep local)…",
-                    sync_to_remote_state(ctx),
-                    true,
-                ),
-                item(
-                    BranchAction::CreatePr,
-                    "Create PR",
-                    create_pr_state(ctx),
-                    false,
-                ),
-            ],
-        },
-        MenuGroup {
-            title: Some("Integrate"),
-            items: vec![
-                item(
-                    BranchAction::MergeIntoCurrent,
-                    merge_label,
-                    merge_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::RebaseCurrentOnto,
-                    rebase_label,
-                    rebase_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::ReplayOnto,
-                    replay_label,
-                    replay_state(ctx),
-                    true,
-                ),
-            ],
-        },
-        MenuGroup {
-            title: Some("Create"),
-            items: vec![
-                item(
-                    BranchAction::CreateBranchFromHere,
-                    "Create branch from here...",
-                    create_branch_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::CreateWorktreeFromHere,
-                    "Create worktree from here...",
-                    create_worktree_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::CreateTagHere,
-                    "Create tag here...",
-                    create_tag_state(ctx),
-                    false,
-                ),
-            ],
-        },
-        MenuGroup {
-            title: Some("Manage"),
-            items: vec![
-                item(
-                    BranchAction::RenameBranch,
-                    "Rename branch...",
-                    rename_state(ctx),
-                    false,
-                ),
-                item(
-                    BranchAction::DeleteBranch,
-                    delete_label(ctx),
-                    delete_state(ctx),
-                    true,
-                ),
-                item(
-                    BranchAction::CopyBranchName,
-                    "Copy branch name",
-                    ItemState::Enabled,
-                    false,
-                ),
-                item(
-                    BranchAction::CopyHeadSha,
-                    copy_head_sha_label(ctx),
-                    ItemState::Enabled,
-                    false,
-                ),
-                item(
-                    BranchAction::CopyUpstreamName,
-                    "Copy upstream name",
-                    copy_upstream_state(ctx),
-                    false,
-                ),
-            ],
-        },
-        MenuGroup {
-            title: Some("Advanced / Dangerous"),
-            items: vec![
-                item(
-                    BranchAction::ResetCurrentToHead,
-                    if ctx.protected {
-                        "Reset current to this HEAD... (protected)"
-                    } else {
-                        "Reset current to this HEAD..."
-                    },
-                    reset_current_state(ctx),
-                    true,
-                ),
-                item(
-                    BranchAction::ForceWithLeasePush,
-                    "Force-with-lease push...",
-                    force_lease_push_state(ctx),
-                    true,
-                ),
-                item(
-                    BranchAction::DeleteRemoteBranch,
-                    "Delete remote branch...",
-                    delete_remote_state(ctx),
-                    true,
-                ),
-            ],
-        },
-    ];
-    // #473: a branch checked out in ANOTHER worktree can be reached directly —
-    // Checkout is disabled for it (git refuses two checkouts of one branch), so
-    // without this the menu offered no way to get to that working tree at all.
-    if let Some(path) = &ctx.worktree_path {
-        groups[0].items.insert(
-            1,
+fn group(items: Vec<MenuItem<BranchAction>>) -> MenuGroup<BranchAction> {
+    MenuGroup { title: None, items }
+}
+
+fn primary_sync_items(ctx: &BranchMenuContext) -> Vec<MenuItem<BranchAction>> {
+    if ctx.is_current {
+        vec![
+            item(BranchAction::Pull, pull_label(ctx), pull_state(ctx), false),
+            item(BranchAction::Push, push_label(ctx), push_state(ctx), false),
+            item(
+                BranchAction::Fetch,
+                "Fetch",
+                if ctx.busy {
+                    disabled(Msg::BcmBusy.t())
+                } else {
+                    ItemState::Enabled
+                },
+                false,
+            ),
+        ]
+    } else {
+        vec![item(
+            BranchAction::FetchRemoteBranch,
+            "Fetch remote branch",
+            fetch_remote_branch_state(ctx),
+            false,
+        )]
+    }
+}
+
+fn integrate_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<BranchAction>> {
+    let current = ctx.current_branch.as_deref().unwrap_or("current branch");
+    vec![group(vec![
+        item(
+            BranchAction::MergeIntoCurrent,
+            format!("Merge {} into {}", ctx.name, current),
+            merge_state(ctx),
+            false,
+        ),
+        item(
+            BranchAction::RebaseCurrentOnto,
+            format!("Rebase {} onto {}", current, ctx.name),
+            rebase_state(ctx),
+            false,
+        ),
+        item(
+            BranchAction::ReplayOnto,
+            format!("Replay {} onto {}…", ctx.name, current),
+            replay_state(ctx),
+            true,
+        ),
+    ])]
+}
+
+fn worktree_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<BranchAction>> {
+    let open = ctx
+        .worktree_path
+        .as_ref()
+        .map(|path| {
             item(
                 BranchAction::OpenWorktreeDir,
                 format!("{}: {}", Msg::MenuOpenWorktreeDir.t(), path.display()),
                 ItemState::Enabled,
                 false,
+            )
+        })
+        .into_iter()
+        .collect();
+    vec![
+        group(open),
+        group(vec![
+            item(
+                BranchAction::OpenWorktreeFromBranch,
+                "Open worktree from branch…",
+                open_worktree_state(ctx),
+                false,
             ),
-        );
+            item(
+                BranchAction::CreateWorktreeFromHere,
+                "Create worktree here…",
+                create_worktree_state(ctx),
+                false,
+            ),
+        ]),
+    ]
+}
+
+fn advanced_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<BranchAction>> {
+    let sync = if ctx.is_current {
+        Vec::new()
+    } else {
+        vec![
+            item(BranchAction::Pull, pull_label(ctx), pull_state(ctx), false),
+            item(BranchAction::Push, push_label(ctx), push_state(ctx), false),
+        ]
+    };
+    vec![
+        group(inspect_items(ctx)),
+        group(vec![
+            item(
+                BranchAction::CreateTagHere,
+                "Create tag here…",
+                create_tag_state(ctx),
+                false,
+            ),
+            item(
+                BranchAction::CreatePr,
+                "Create PR",
+                create_pr_state(ctx),
+                false,
+            ),
+        ]),
+        group(sync),
+        group(sync_options(ctx)),
+        group(danger_items(ctx)),
+    ]
+}
+
+fn inspect_items(ctx: &BranchMenuContext) -> Vec<MenuItem<BranchAction>> {
+    vec![
+        item(
+            BranchAction::RevealHead,
+            "Reveal branch HEAD in graph",
+            ItemState::Enabled,
+            false,
+        ),
+        item(
+            BranchAction::ToggleSolo,
+            if ctx.is_soloed { "Exit Solo" } else { "Solo" },
+            ItemState::Enabled,
+            false,
+        ),
+        item(
+            BranchAction::CopyBranchName,
+            "Copy branch name",
+            ItemState::Enabled,
+            false,
+        ),
+        item(
+            BranchAction::CopyHeadSha,
+            copy_head_sha_label(ctx),
+            ItemState::Enabled,
+            false,
+        ),
+        item(
+            BranchAction::CopyUpstreamName,
+            "Copy upstream name",
+            copy_upstream_state(ctx),
+            false,
+        ),
+    ]
+}
+
+fn sync_options(ctx: &BranchMenuContext) -> Vec<MenuItem<BranchAction>> {
+    let mut items = vec![
+        item(
+            BranchAction::NoUpstreamInfo,
+            Msg::NoUpstreamSet.t(),
+            no_upstream_info_state(ctx),
+            false,
+        ),
+        item(
+            BranchAction::PullFfOnly,
+            "Pull ff-only",
+            pull_state(ctx),
+            false,
+        ),
+        item(
+            BranchAction::PushAndCreateUpstream,
+            "Push and create upstream",
+            push_create_upstream_state(ctx),
+            false,
+        ),
+        item(
+            BranchAction::SetUpstream,
+            set_upstream_label(ctx),
+            set_upstream_state(ctx),
+            false,
+        ),
+        item(
+            BranchAction::SwitchToLatest,
+            switch_to_latest_label(ctx),
+            switch_to_latest_state(ctx),
+            false,
+        ),
+    ];
+    if ctx.is_current {
+        items.push(item(
+            BranchAction::FetchRemoteBranch,
+            "Fetch remote branch",
+            fetch_remote_branch_state(ctx),
+            false,
+        ));
     }
-    groups
+    items
+}
+
+fn danger_items(ctx: &BranchMenuContext) -> Vec<MenuItem<BranchAction>> {
+    vec![
+        item(
+            BranchAction::SyncToRemote,
+            "Sync to remote (keep local)…",
+            sync_to_remote_state(ctx),
+            true,
+        ),
+        item(
+            BranchAction::ResetCurrentToHead,
+            if ctx.protected {
+                "Reset current to this HEAD… (protected)"
+            } else {
+                "Reset current to this HEAD…"
+            },
+            reset_current_state(ctx),
+            true,
+        ),
+        item(
+            BranchAction::ForceWithLeasePush,
+            "Force-with-lease push…",
+            force_lease_push_state(ctx),
+            true,
+        ),
+        item(
+            BranchAction::DeleteRemoteBranch,
+            "Delete remote branch…",
+            delete_remote_state(ctx),
+            true,
+        ),
+    ]
 }
 
 pub fn header(ctx: &BranchMenuContext) -> SharedString {
@@ -354,6 +401,7 @@ pub fn render_branch_menu_overlay(
     header: SharedString,
     groups: Vec<MenuGroup<BranchAction>>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -379,6 +427,7 @@ pub fn render_branch_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )
@@ -405,717 +454,9 @@ fn item(
     state: ItemState,
     dangerous: bool,
 ) -> MenuItem<BranchAction> {
-    MenuItem {
-        action,
-        label: SharedString::from(label.into()),
-        state,
-        dangerous,
-    }
-}
-
-fn disabled(reason: impl Into<SharedString>) -> ItemState {
-    ItemState::Disabled(reason.into())
-}
-
-fn force_lease_push_state(ctx: &BranchMenuContext) -> ItemState {
-    // force_with_lease_push always acts on the currently checked-out branch
-    // (mirrors ResetCurrentToHead) — only offer it from that row's menu.
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if !ctx.is_current {
-        disabled(Msg::BcmOnlyFromCurrentBranch.t())
-    } else if !ctx.has_upstream {
-        disabled(Msg::BcmNoUpstream.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn reset_current_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn create_pr_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.is_current {
-        disabled(Msg::BcmCurrentBranch.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn fetch_remote_branch_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Local) {
-        ItemState::Hidden
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn checkout_state(ctx: &BranchMenuContext) -> ItemState {
-    // A local checkout behind a running operation is queued (#355 stage 3a);
-    // the remote one creates a tracking branch, which the queue does not take.
-    if ctx.busy && !matches!(ctx.kind, BranchKind::Local) {
-        disabled(Msg::BcmBusy.t())
-    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
-        disabled(Msg::BcmConflictMode.t())
-    } else if ctx.is_current {
-        disabled(Msg::BcmCurrentBranch.t())
-    } else if ctx.checked_out_in_other_worktree {
-        let path = ctx
-            .checked_out_worktree_path
-            .as_deref()
-            .unwrap_or("another worktree");
-        disabled(format!("{}: {}", Msg::BcmCheckedOutElsewhere.t(), path))
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn switch_to_latest_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
-        disabled(Msg::BcmConflictMode.t())
-    } else if matches!(ctx.kind, BranchKind::Local) && !ctx.has_upstream {
-        disabled(Msg::BcmNoUpstream.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn switch_to_latest_label(ctx: &BranchMenuContext) -> String {
-    let local_name = match ctx.kind {
-        BranchKind::Local => ctx.name.clone(),
-        BranchKind::Remote => ctx
-            .name
-            .split_once('/')
-            .map(|(_, name)| name.to_string())
-            .unwrap_or_else(|| ctx.name.clone()),
-    };
-    let behind = ctx.behind.filter(|&n| n > 0);
-    if let (BranchKind::Local, true, Some(n)) = (&ctx.kind, ctx.has_upstream, behind) {
-        format!("Switch to latest {} ↓{}", local_name, n)
-    } else {
-        format!("Switch to latest {}", local_name)
-    }
-}
-
-fn open_worktree_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Remote) {
-        disabled(Msg::BcmNotImplementedYet.t())
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn create_branch_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn create_worktree_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn create_tag_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn merge_state(ctx: &BranchMenuContext) -> ItemState {
-    // A branch-backed merge can freeze its destination while a write runs.
-    // The enqueue path rechecks the live HEAD and refuses if it detached.
-    if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
-        disabled(Msg::BcmConflictMode.t())
-    } else if ctx.is_current {
-        disabled(Msg::BcmCurrentBranch.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn rebase_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
-        disabled(Msg::BcmConflictMode.t())
-    } else if ctx.is_current {
-        disabled(Msg::BcmCurrentBranch.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-/// Replay rewrites the clicked branch (not HEAD) without a checkout, so the
-/// current worktree's state is irrelevant except for busy/conflict latches;
-/// the plan itself reports a dirty other-worktree, merges and conflicts as
-/// blockers (`plan_replay_onto`).
-fn replay_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
-        disabled(Msg::BcmConflictMode.t())
-    } else if ctx.is_current {
-        disabled(Msg::BcmCurrentBranch.t())
-    } else if !matches!(ctx.kind, BranchKind::Local) {
-        disabled(Msg::BcmLocalOnly.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn rename_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Remote) {
-        ItemState::Hidden
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn delete_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Remote) {
-        ItemState::Hidden
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.is_current {
-        disabled(Msg::BcmCurrentBranch.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn delete_remote_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Local) {
-        ItemState::Hidden
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn copy_upstream_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.has_upstream {
-        ItemState::Enabled
-    } else {
-        disabled(Msg::BcmNoUpstream.t())
-    }
-}
-
-/// #536: only the current branch (its index and working tree are what gets
-/// replaced), and only with an upstream to sync to; the plan reports
-/// not-fetched / conflicts / already-in-sync as blockers.
-fn sync_to_remote_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
-        disabled(Msg::BcmConflictMode.t())
-    } else if !ctx.is_current {
-        disabled(Msg::BcmCurrentBranchOnly.t())
-    } else if !ctx.has_upstream {
-        disabled(Msg::BcmNoUpstream.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn pull_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.kind, BranchKind::Remote) {
-        disabled(Msg::BcmNotImplementedYet.t())
-    } else if !ctx.has_upstream {
-        disabled(Msg::BcmNoUpstream.t())
-    } else if ctx.behind == Some(0) {
-        disabled(Msg::BcmNothingToPull.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn push_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else if matches!(ctx.kind, BranchKind::Remote) || !ctx.has_upstream {
-        ItemState::Hidden
-    } else if ctx.ahead == Some(0) {
-        disabled(Msg::BcmNothingToPush.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn push_create_upstream_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Remote) || ctx.has_upstream {
-        ItemState::Hidden
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn set_upstream_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Remote) {
-        ItemState::Hidden
-    } else if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
-        disabled(Msg::BcmDetachedHead.t())
-    } else {
-        ItemState::Enabled
-    }
-}
-
-fn no_upstream_info_state(ctx: &BranchMenuContext) -> ItemState {
-    if matches!(ctx.kind, BranchKind::Local) && !ctx.has_upstream {
-        disabled(Msg::BcmNoUpstream.t())
-    } else {
-        ItemState::Hidden
-    }
-}
-
-fn pull_label(ctx: &BranchMenuContext) -> String {
-    match (ctx.has_upstream, ctx.behind) {
-        (true, Some(0)) => "Pull (up to date)".to_string(),
-        (true, Some(n)) => format!("Pull ↓{}", n),
-        (true, None) => "Pull".to_string(),
-        (false, _) => "Pull (no upstream)".to_string(),
-    }
-}
-
-fn push_label(ctx: &BranchMenuContext) -> String {
-    match (ctx.has_upstream, ctx.ahead) {
-        (true, Some(0)) => "Push (up to date)".to_string(),
-        (true, Some(n)) => format!("Push ↑{}", n),
-        (true, None) => "Push".to_string(),
-        (false, _) if !ctx.is_pushed => "Push and create upstream".to_string(),
-        (false, _) => "Push".to_string(),
-    }
-}
-
-fn delete_label(ctx: &BranchMenuContext) -> &'static str {
-    if ctx.merged_into_current {
-        "Delete branch..."
-    } else {
-        "Delete branch... (unmerged)"
-    }
-}
-
-fn copy_head_sha_label(ctx: &BranchMenuContext) -> String {
-    let short: String = ctx.head_sha.chars().take(8).collect();
-    if short.is_empty() {
-        "Copy branch HEAD SHA".to_string()
-    } else {
-        format!("Copy branch HEAD SHA ({})", short)
-    }
-}
-
-fn set_upstream_label(ctx: &BranchMenuContext) -> String {
-    match ctx.upstream_name.as_ref() {
-        Some(upstream) => format!("Set upstream ({})", upstream),
-        None => "Set upstream".to_string(),
-    }
+    MenuItem::command(action, SharedString::from(label.into()), state, dangerous)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ctx() -> BranchMenuContext {
-        BranchMenuContext {
-            name: "feature/x".to_string(),
-            head_sha: "1234567890abcdef".to_string(),
-            kind: BranchKind::Local,
-            is_current: false,
-            has_upstream: true,
-            upstream_name: Some("origin/feature/x".to_string()),
-            ahead: Some(2),
-            behind: Some(3),
-            dirty: false,
-            conflict_mode: BranchConflictMode::None,
-            protected: false,
-            checked_out_in_other_worktree: false,
-            checked_out_worktree_path: None,
-            worktree_path: None,
-            merged_into_current: true,
-            is_pushed: true,
-            detached_head: false,
-            busy: false,
-            current_branch: Some("main".to_string()),
-            is_soloed: false,
-        }
-    }
-
-    fn item_for(
-        groups: &[MenuGroup<BranchAction>],
-        action: BranchAction,
-    ) -> &MenuItem<BranchAction> {
-        groups
-            .iter()
-            .flat_map(|group| group.items.iter())
-            .find(|item| item.action == action)
-            .expect("action must exist")
-    }
-
-    fn state_for(groups: &[MenuGroup<BranchAction>], action: BranchAction) -> ItemState {
-        item_for(groups, action).state.clone()
-    }
-
-    fn assert_enabled(groups: &[MenuGroup<BranchAction>], action: BranchAction) {
-        assert_eq!(state_for(groups, action), ItemState::Enabled);
-    }
-
-    fn assert_hidden(groups: &[MenuGroup<BranchAction>], action: BranchAction) {
-        assert_eq!(state_for(groups, action), ItemState::Hidden);
-    }
-
-    fn assert_disabled_contains(
-        groups: &[MenuGroup<BranchAction>],
-        action: BranchAction,
-        needle: &str,
-    ) {
-        match state_for(groups, action) {
-            ItemState::Disabled(reason) => assert!(
-                reason.as_ref().contains(needle),
-                "reason {:?} must contain {:?}",
-                reason,
-                needle
-            ),
-            other => panic!("expected disabled, got {:?}", other),
-        }
-    }
-
-    /// #473: a branch checked out in ANOTHER worktree gets an "Open worktree"
-    /// item naming that directory — Checkout is disabled for it, so without
-    /// this the menu offered no route to that working tree.
-    #[test]
-    fn open_worktree_dir_only_when_checked_out_elsewhere() {
-        let plain = branch_context_menu_items(&ctx());
-        assert!(
-            plain
-                .iter()
-                .flat_map(|g| g.items.iter())
-                .all(|i| i.action != BranchAction::OpenWorktreeDir),
-            "no worktree → no Open worktree item"
-        );
-
-        let mut c = ctx();
-        c.worktree_path = Some(std::path::PathBuf::from("/tmp/wt-ahead"));
-        let groups = branch_context_menu_items(&c);
-        assert_enabled(&groups, BranchAction::OpenWorktreeDir);
-        assert!(
-            item_for(&groups, BranchAction::OpenWorktreeDir)
-                .label
-                .as_ref()
-                .contains("/tmp/wt-ahead"),
-            "the item must name the worktree directory"
-        );
-    }
-
-    #[test]
-    fn local_non_current_with_upstream() {
-        let groups = branch_context_menu_items(&ctx());
-
-        assert_enabled(&groups, BranchAction::Checkout);
-        assert_enabled(&groups, BranchAction::Pull);
-        assert_enabled(&groups, BranchAction::Push);
-        assert_enabled(&groups, BranchAction::SetUpstream);
-        assert_enabled(&groups, BranchAction::RenameBranch);
-        assert_enabled(&groups, BranchAction::RevealHead);
-        assert_enabled(&groups, BranchAction::ToggleSolo);
-        assert_enabled(&groups, BranchAction::CreateBranchFromHere);
-        assert_enabled(&groups, BranchAction::DeleteBranch);
-        assert_enabled(&groups, BranchAction::CopyBranchName);
-        assert_enabled(&groups, BranchAction::CopyHeadSha);
-        assert_enabled(&groups, BranchAction::CopyUpstreamName);
-        assert_enabled(&groups, BranchAction::MergeIntoCurrent);
-        assert_eq!(
-            item_for(&groups, BranchAction::Pull).label.as_ref(),
-            "Pull ↓3"
-        );
-        assert_eq!(
-            item_for(&groups, BranchAction::Push).label.as_ref(),
-            "Push ↑2"
-        );
-    }
-
-    #[test]
-    fn local_non_current_without_upstream() {
-        let mut c = ctx();
-        c.has_upstream = false;
-        c.upstream_name = None;
-        c.ahead = Some(0);
-        c.behind = Some(0);
-        let groups = branch_context_menu_items(&c);
-
-        assert_disabled_contains(&groups, BranchAction::Pull, "upstream");
-        assert_hidden(&groups, BranchAction::Push);
-        assert_enabled(&groups, BranchAction::PushAndCreateUpstream);
-        assert_disabled_contains(&groups, BranchAction::NoUpstreamInfo, "upstream");
-        assert_disabled_contains(&groups, BranchAction::CopyUpstreamName, "upstream");
-    }
-
-    #[test]
-    fn current_branch_disables_checkout_and_delete() {
-        let mut c = ctx();
-        c.is_current = true;
-        let groups = branch_context_menu_items(&c);
-
-        assert_disabled_contains(&groups, BranchAction::Checkout, "current");
-        assert_disabled_contains(&groups, BranchAction::DeleteBranch, "current");
-    }
-
-    #[test]
-    fn remote_branch_hides_local_delete() {
-        let mut c = ctx();
-        c.name = "origin/feature/x".to_string();
-        c.kind = BranchKind::Remote;
-        c.has_upstream = false;
-        c.upstream_name = None;
-        let groups = branch_context_menu_items(&c);
-
-        assert_enabled(&groups, BranchAction::Checkout);
-        assert_enabled(&groups, BranchAction::MergeIntoCurrent);
-        assert_hidden(&groups, BranchAction::DeleteBranch);
-        assert_hidden(&groups, BranchAction::RenameBranch);
-        assert_hidden(&groups, BranchAction::SetUpstream);
-        assert_enabled(&groups, BranchAction::DeleteRemoteBranch);
-    }
-
-    #[test]
-    fn busy_keeps_queueable_actions_enabled() {
-        let mut c = ctx();
-        c.busy = true;
-        let groups = branch_context_menu_items(&c);
-
-        // Local checkout and merge freeze their targets for the queue (#355).
-        assert_enabled(&groups, BranchAction::Checkout);
-        assert_enabled(&groups, BranchAction::MergeIntoCurrent);
-        assert_disabled_contains(&groups, BranchAction::CreateBranchFromHere, "operation");
-        assert_disabled_contains(&groups, BranchAction::Pull, "operation");
-        assert_disabled_contains(&groups, BranchAction::Push, "operation");
-        assert_disabled_contains(&groups, BranchAction::SetUpstream, "operation");
-        assert_disabled_contains(&groups, BranchAction::RenameBranch, "operation");
-        assert_disabled_contains(&groups, BranchAction::DeleteBranch, "operation");
-        assert_enabled(&groups, BranchAction::RevealHead);
-        assert_enabled(&groups, BranchAction::ToggleSolo);
-        assert_enabled(&groups, BranchAction::CopyBranchName);
-        assert_enabled(&groups, BranchAction::CopyHeadSha);
-    }
-
-    #[test]
-    fn busy_still_disables_checking_out_a_remote_branch() {
-        let mut c = ctx();
-        c.busy = true;
-        c.kind = BranchKind::Remote;
-        let groups = branch_context_menu_items(&c);
-        assert_disabled_contains(&groups, BranchAction::Checkout, "operation");
-    }
-
-    #[test]
-    fn solo_item_toggles_label_when_active() {
-        let groups = branch_context_menu_items(&ctx());
-        assert_eq!(
-            item_for(&groups, BranchAction::ToggleSolo).label.as_ref(),
-            "Solo"
-        );
-
-        let mut c = ctx();
-        c.is_soloed = true;
-        let groups = branch_context_menu_items(&c);
-        assert_eq!(
-            item_for(&groups, BranchAction::ToggleSolo).label.as_ref(),
-            "Exit Solo"
-        );
-    }
-
-    #[test]
-    fn upstream_zero_counts_are_noop_disabled() {
-        let mut c = ctx();
-        c.ahead = Some(0);
-        c.behind = Some(0);
-        let groups = branch_context_menu_items(&c);
-
-        assert_eq!(
-            item_for(&groups, BranchAction::Pull).label.as_ref(),
-            "Pull (up to date)"
-        );
-        assert_eq!(
-            item_for(&groups, BranchAction::Push).label.as_ref(),
-            "Push (up to date)"
-        );
-        assert_disabled_contains(&groups, BranchAction::Pull, "nothing");
-        assert_disabled_contains(&groups, BranchAction::Push, "nothing");
-    }
-
-    /// #355: a skipped count is unknown, not zero — Pull and Push stay
-    /// enabled, unlabelled, for the plan to count again.
-    #[test]
-    fn unknown_counts_keep_pull_and_push_enabled() {
-        let mut c = ctx();
-        c.ahead = None;
-        c.behind = None;
-        let groups = branch_context_menu_items(&c);
-
-        for (action, label) in [(BranchAction::Pull, "Pull"), (BranchAction::Push, "Push")] {
-            let item = item_for(&groups, action);
-            assert_eq!(item.label.as_ref(), label);
-            assert!(matches!(item.state, ItemState::Enabled), "{label} disabled");
-        }
-    }
-
-    #[test]
-    fn remote_branch_sync_and_manage_availability() {
-        let mut c = ctx();
-        c.name = "origin/feature/x".to_string();
-        c.kind = BranchKind::Remote;
-        c.has_upstream = false;
-        c.upstream_name = None;
-        c.ahead = Some(0);
-        c.behind = Some(0);
-        let groups = branch_context_menu_items(&c);
-
-        assert_hidden(&groups, BranchAction::Push);
-        assert_hidden(&groups, BranchAction::PushAndCreateUpstream);
-        assert_hidden(&groups, BranchAction::SetUpstream);
-        assert_hidden(&groups, BranchAction::RenameBranch);
-        assert_hidden(&groups, BranchAction::DeleteBranch);
-        assert_enabled(&groups, BranchAction::DeleteRemoteBranch);
-    }
-
-    #[test]
-    fn merge_and_rebase_labels_include_direction() {
-        let groups = branch_context_menu_items(&ctx());
-
-        assert_eq!(
-            item_for(&groups, BranchAction::MergeIntoCurrent)
-                .label
-                .as_ref(),
-            "Merge feature/x into main"
-        );
-        assert_eq!(
-            item_for(&groups, BranchAction::RebaseCurrentOnto)
-                .label
-                .as_ref(),
-            "Rebase main onto feature/x"
-        );
-    }
-
-    #[test]
-    fn conflict_mode_disables_integrate_items() {
-        let mut c = ctx();
-        c.conflict_mode = BranchConflictMode::Conflicted;
-        let groups = branch_context_menu_items(&c);
-
-        assert_disabled_contains(&groups, BranchAction::MergeIntoCurrent, "conflicts");
-        assert_disabled_contains(&groups, BranchAction::RebaseCurrentOnto, "conflicts");
-        assert_disabled_contains(&groups, BranchAction::ReplayOnto, "conflicts");
-    }
-
-    /// #536: sync is current-branch-only, needs an upstream, is dangerous.
-    #[test]
-    fn sync_to_remote_item_gating() {
-        let mut c = ctx();
-        c.is_current = true;
-        c.has_upstream = true;
-        let groups = branch_context_menu_items(&c);
-        let item = item_for(&groups, BranchAction::SyncToRemote);
-        assert_eq!(item.label.as_ref(), "Sync to remote (keep local)…");
-        assert!(item.dangerous);
-        assert_enabled(&groups, BranchAction::SyncToRemote);
-
-        let mut c = ctx();
-        c.is_current = false;
-        c.has_upstream = true;
-        assert_disabled_contains(
-            &branch_context_menu_items(&c),
-            BranchAction::SyncToRemote,
-            "current branch only",
-        );
-        let mut c = ctx();
-        c.is_current = true;
-        c.has_upstream = false;
-        assert_disabled_contains(
-            &branch_context_menu_items(&c),
-            BranchAction::SyncToRemote,
-            "upstream",
-        );
-    }
-
-    /// #344: replay moves the *clicked* branch onto the current one — the
-    /// label reads in that direction, the item is dangerous (history
-    /// rewrite), and only a non-current local branch can be replayed.
-    #[test]
-    fn replay_item_direction_and_gating() {
-        let groups = branch_context_menu_items(&ctx());
-        let item = item_for(&groups, BranchAction::ReplayOnto);
-        assert_eq!(item.label.as_ref(), "Replay feature/x onto main…");
-        assert!(item.dangerous);
-        assert_enabled(&groups, BranchAction::ReplayOnto);
-
-        let mut c = ctx();
-        c.is_current = true;
-        assert_disabled_contains(
-            &branch_context_menu_items(&c),
-            BranchAction::ReplayOnto,
-            "current branch",
-        );
-        let mut c = ctx();
-        c.kind = BranchKind::Remote;
-        assert_disabled_contains(
-            &branch_context_menu_items(&c),
-            BranchAction::ReplayOnto,
-            "local branches only",
-        );
-        let mut c = ctx();
-        c.detached_head = true;
-        assert_disabled_contains(
-            &branch_context_menu_items(&c),
-            BranchAction::ReplayOnto,
-            "detached",
-        );
-    }
-}
+#[path = "branch_menu_tests.rs"]
+mod tests;

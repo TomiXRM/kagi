@@ -294,16 +294,51 @@ impl PrDetailController {
         Some(payload_matches)
     }
 
-    fn reconcile_heads(&mut self, prs: &[PullRequest]) {
+    fn reconcile_heads<'a>(
+        &mut self,
+        shared_open: &'a [PullRequest],
+        selected_strip: Option<&'a [PullRequest]>,
+        opened: impl Iterator<Item = &'a PullRequest> + Clone,
+    ) {
+        let prs = selected_strip.unwrap_or(shared_open);
+        let owners = shared_open
+            .iter()
+            .chain(selected_strip.into_iter().flatten())
+            .chain(opened);
         let listed: HashMap<PrKey, bool> = prs
             .iter()
             .map(|pr| (pr.key(), pr.state == IssueState::Closed))
             .collect();
+        // A zero-match replacement may not produce another visible-row report.
+        // Retained payload owners do not authorize demand outside this list.
+        self.visible.retain(|key| listed.contains_key(key));
         self.pending
             .retain(|request| match listed.get(&request.key.pr) {
                 Some(closed) => !closed || request.key.stage != PrDetailStage::Status,
                 None => self.opened.contains(&request.key.pr),
             });
+        // Selected membership governs demand, not payload lifetime. Shared Open,
+        // the selected strip and opened tabs can each retain same-head details.
+        // Keep generation history when the last matching owner disappears, so
+        // an already-running old read cannot settle a replacement slot.
+        for (key, slot) in &mut self.slots {
+            if !listed.contains_key(&key.pr)
+                && (slot.availability != PrDetailAvailability::Missing
+                    || slot.successful_head.is_some()
+                    || slot.next_retry_at.is_some()
+                    || slot.error.is_some())
+                && !owners
+                    .clone()
+                    .any(|pr| pr.is(&key.pr) && pr.head_sha == slot.head_sha)
+            {
+                slot.generation = slot.generation.wrapping_add(1);
+                slot.availability = PrDetailAvailability::Missing;
+                slot.refreshed_at = None;
+                slot.successful_head = None;
+                slot.next_retry_at = None;
+                slot.error = None;
+            }
+        }
         for pr in prs {
             for stage in [PrDetailStage::Status, PrDetailStage::Body] {
                 let key = DetailKey {
@@ -327,6 +362,26 @@ impl PrDetailController {
 
     fn targets(&self) -> (BTreeSet<PrKey>, BTreeSet<PrKey>) {
         (self.visible.clone(), self.opened.clone())
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub(super) fn paging_demand_for_e2e(
+        &self,
+    ) -> (
+        BTreeSet<PrKey>,
+        BTreeSet<PrKey>,
+        Vec<(PrKey, PrDetailStage)>,
+        usize,
+    ) {
+        (
+            self.visible.clone(),
+            self.opened.clone(),
+            self.pending
+                .iter()
+                .map(|request| (request.key.pr.clone(), request.key.stage))
+                .collect(),
+            self.active.len(),
+        )
     }
 }
 
@@ -478,6 +533,30 @@ impl KagiApp {
         self.ui().pr_details.availability(pr, PrDetailStage::Status)
     }
 
+    /// Install only a fixture's L2 freshness; classification and row paint stay production-owned.
+    #[cfg(feature = "gui-e2e")]
+    pub fn seed_pr_status_fresh_for_e2e(&mut self, number: u64, cx: &mut Context<Self>) {
+        let ui = self.ui_mut().expect("mounted repository UI");
+        let pr = ui
+            .github_prs
+            .iter()
+            .find(|pr| pr.number == number)
+            .expect("fixture PR");
+        let key = DetailKey {
+            pr: pr.key(),
+            stage: PrDetailStage::Status,
+        };
+        let slot = ui.pr_details.slots.entry(key).or_default();
+        slot.generation = slot.generation.wrapping_add(1);
+        slot.head_sha.clone_from(&pr.head_sha);
+        slot.availability = PrDetailAvailability::Fresh;
+        slot.refreshed_at = Some(Instant::now());
+        slot.successful_head = Some(pr.head_sha.clone());
+        slot.next_retry_at = None;
+        slot.error = None;
+        cx.notify();
+    }
+
     /// Called by the dashboard `uniform_list` processor after layout identifies
     /// the visible range. Repeated frames with the same PR set are free.
     pub(super) fn observe_visible_prs(&mut self, visible: BTreeSet<PrKey>, cx: &mut Context<Self>) {
@@ -548,10 +627,11 @@ impl KagiApp {
             let opened = ui.opened_pr_keys();
             ui.pr_details.opened = opened;
             ui.pr_details.reconcile_heads(
-                ui.github_prs_strip
-                    .rows
-                    .as_deref()
-                    .unwrap_or(&ui.github_prs),
+                &ui.github_prs,
+                ui.github_prs_strip.rows.as_deref(),
+                ui.pr_mode
+                    .iter()
+                    .flat_map(|mode| mode.tabs.iter().map(|tab| &tab.pr)),
             );
             ui.pr_details.targets()
         };

@@ -11,12 +11,81 @@
 //! a destructive confirm can never hide its own targets (and a sticky user
 //! override can never carry a collapsed state into the next confirm).
 
-use super::i18n::Msg;
-use super::modal_copy::modal_copy_button;
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use kagi_domain::status::ChangeKind;
+use kagi_ui_core::motion::{self, Reveal};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+
+/// One confirmation owns both explicit choices and transient presentation.
+/// Clearing choices also drops measurements and closing content generations.
+#[derive(Default)]
+pub struct ModalSections {
+    choices: HashMap<&'static str, bool>,
+    presentation: RefCell<HashMap<&'static str, SectionPresentation>>,
+}
+
+#[derive(Default)]
+struct SectionPresentation {
+    reveal: Reveal,
+    natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+    scroll: Option<gpui::ScrollHandle>,
+}
+
+impl std::ops::Deref for ModalSections {
+    type Target = HashMap<&'static str, bool>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.choices
+    }
+}
+
+impl std::ops::DerefMut for ModalSections {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.choices
+    }
+}
+
+impl ModalSections {
+    pub fn clear(&mut self) {
+        self.choices.clear();
+        self.presentation.get_mut().clear();
+    }
+
+    /// Keep the last drawn scroll position when a disclosure becomes paint-only.
+    pub(crate) fn scroll_handle(&self, id: &'static str) -> gpui::ScrollHandle {
+        self.presentation
+            .borrow_mut()
+            .entry(id)
+            .or_default()
+            .scroll
+            .get_or_insert_with(gpui::ScrollHandle::new)
+            .clone()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn scroll_for_e2e(&self, id: &str) -> Option<gpui::ScrollHandle> {
+        self.presentation
+            .borrow()
+            .get(id)
+            .and_then(|state| state.scroll.clone())
+    }
+
+    /// Called from the owning app render, independently of scrolling layout.
+    pub(crate) fn request_frame(&self, window: &gpui::Window) {
+        let now = motion::now();
+        motion::request_frame(
+            window,
+            self.presentation
+                .borrow()
+                .values()
+                .any(|state| state.reveal.animating(now)),
+        );
+    }
+}
 
 /// Modal list geometry, shared by every scrollable list in a card (#454). The
 /// row height must match the `uniform_list` item height exactly
@@ -50,17 +119,7 @@ pub(crate) fn modal_compact() -> bool {
 /// Observe actual layout without adding a wrapper or participating in flex sizing.
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn modal_probe(name: impl Into<String>) -> impl IntoElement {
-    let name = name.into();
-    gpui::canvas(
-        move |bounds, window, _| {
-            super::e2e::record_control_bounds(window.window_handle().window_id(), &name, bounds);
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+    super::e2e::measure_inside(name)
 }
 
 /// Height for a scrolling modal list of `rows` rows: it hugs its content while
@@ -111,6 +170,31 @@ pub(crate) const MODAL_W_SM: f32 = 504.;
 pub(crate) const MODAL_W_MD: f32 = 640.;
 pub(crate) const MODAL_W_LG: f32 = 648.;
 
+/// Shared viewport cap for top-aligned search cards; design values scale once.
+pub(crate) fn search_card_geometry(
+    width: f32,
+    height: f32,
+    top: f32,
+) -> (gpui::Pixels, gpui::Pixels, gpui::Pixels) {
+    let gutter = theme::scaled_px(16.);
+    let width = theme::scaled_px(width).min(
+        theme::viewport_w()
+            .map(|w| (gpui::px(w) - gutter * 2.).max(gpui::px(0.)))
+            .unwrap_or_else(|| theme::scaled_px(width)),
+    );
+    let top = theme::scaled_px(top).min(
+        theme::viewport_h()
+            .map(|h| gpui::px(h * 0.1))
+            .unwrap_or_else(|| theme::scaled_px(top)),
+    );
+    let height = theme::scaled_px(height).min(
+        theme::viewport_h()
+            .map(|h| (gpui::px(h) - top - gutter).max(gpui::px(0.)))
+            .unwrap_or_else(|| theme::scaled_px(height)),
+    );
+    (width, height, top)
+}
+
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
     // Spend spare horizontal space before shrinking safety prose vertically.
     let width = if modal_compact() {
@@ -139,21 +223,20 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
     // scrim (#454 review). The border is derived like the panel tints, so it
     // holds on every theme.
     let (_, border) = theme::panel_style();
+    let t = current_theme();
+    let border: gpui::Hsla = if t.slug == "apple-dark" {
+        rgb(t.elevated_border(t.surface)).into()
+    } else {
+        gpui::rgba(border).into()
+    };
     let card = div()
         .when_some(theme::viewport_h(), |card, height| {
             card.max_h((gpui::px(height) - theme::scaled_px(32.)).max(gpui::px(0.)))
         })
         .overflow_hidden()
         .border_1()
-        .border_color(gpui::rgba(border))
-        // `panel`, not `modal`: the Settings popup already used `panel`, so a
-        // discard/push card next to it read as a different kind of surface —
-        // and `modal` is the lighter of the two in every dark theme (Apple
-        // Dark 0x2c2c2e vs 0x161618), which is the "popups are all grey"
-        // complaint (user report 2026-09-06). One token for every popup
-        // surface; the inset panels inside tint on top of it
-        // (`theme::panel_style`).
-        .bg(rgb(current_theme().panel))
+        .border_color(border)
+        .bg(rgb(t.elevated_surface(t.panel)))
         .rounded_lg()
         .p_4()
         .flex()
@@ -221,11 +304,21 @@ pub(crate) fn modal_scroll_body() -> gpui::Stateful<gpui::Div> {
 /// Missing entries use the responsive default; a user's explicit choice is
 /// stable across height changes and is cleared for the next confirmation.
 pub(crate) fn section_open(
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &ModalSections,
     id: &'static str,
     default_open: bool,
 ) -> SectionOpen {
-    SectionOpen(overrides.get(id).copied().unwrap_or(default_open))
+    let open = overrides.get(id).copied().unwrap_or(default_open);
+    let mut presentations = overrides.presentation.borrow_mut();
+    let presentation = presentations.entry(id).or_default();
+    presentation
+        .reveal
+        .sync(open, motion::now(), motion::instant());
+    SectionOpen {
+        open,
+        reveal: presentation.reveal.clone(),
+        natural_size: presentation.natural_size.clone(),
+    }
 }
 
 /// Whether a section is expanded — constructible only by [`section_open`].
@@ -236,12 +329,185 @@ pub(crate) fn section_open(
 /// once. A CI rule can only pattern-match the mistake (and a review found both
 /// false positives and false negatives in the pattern); a type makes it
 /// unrepresentable, so the rule can go away.
-#[derive(Clone, Copy)]
-pub(crate) struct SectionOpen(bool);
+#[derive(Clone)]
+pub(crate) struct SectionOpen {
+    open: bool,
+    reveal: Reveal,
+    natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+}
 
 impl SectionOpen {
-    pub(crate) fn is_open(self) -> bool {
-        self.0
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub(crate) fn retain_content(&self) -> bool {
+        self.reveal
+            .sample(self.natural_size.get().height, motion::now())
+            .retain_content
+    }
+
+    /// Remember the fitted width even while the body is unmounted, so opening
+    /// (including Reduce Motion) can measure before constructing its clip.
+    pub(crate) fn measure_width(&self) -> impl IntoElement {
+        let natural_size = self.natural_size.clone();
+        gpui::canvas(
+            move |bounds, _, _| {
+                let mut natural = natural_size.get();
+                natural.width = bounds.size.width;
+                natural_size.set(natural);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+}
+
+/// Shared measured body for supporting detail and command disclosures.
+/// Callers must assemble closing content without semantics, IDs or handlers.
+#[derive(IntoElement)]
+pub(crate) struct ModalReveal {
+    id: &'static str,
+    state: SectionOpen,
+    body: gpui::AnyElement,
+}
+
+pub(crate) fn modal_reveal(
+    id: &'static str,
+    state: SectionOpen,
+    body: gpui::AnyElement,
+) -> ModalReveal {
+    ModalReveal { id, state, body }
+}
+
+impl gpui::RenderOnce for ModalReveal {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let now = motion::now();
+        let body = div().w_full().flex().flex_col().child(self.body);
+        #[cfg(feature = "gui-e2e")]
+        let body = body
+            .relative()
+            .child(modal_probe(format!("{}-reveal-content", self.id)));
+        let mut body = body.into_any_element();
+        let width = self.state.natural_size.get().width;
+        if width > gpui::px(0.) {
+            // Measurement and presentation must share the clip's identity
+            // namespace: GPUI retains descendant IDs between layout/prepaint.
+            let natural = window.with_element_namespace((self.id, 0usize), |window| {
+                body.layout_as_root(
+                    gpui::size(
+                        gpui::AvailableSpace::Definite(width),
+                        gpui::AvailableSpace::MaxContent,
+                    ),
+                    window,
+                    cx,
+                )
+            });
+            self.state.natural_size.set(natural);
+        }
+        let sample = self
+            .state
+            .reveal
+            .sample(self.state.natural_size.get().height, now);
+        motion::request_frame(window, !sample.done);
+        let clip = motion::clip(
+            (self.id, 0usize),
+            motion::Axis::Vertical,
+            motion::Anchor::Start,
+            self.state.natural_size.get().height,
+            sample.fraction,
+            NaturalModalBody {
+                body,
+                natural_size: self.state.natural_size,
+                laid_out_width: (width > gpui::px(0.)).then_some(width),
+            },
+        );
+        #[cfg(feature = "gui-e2e")]
+        let clip = clip.child(modal_probe(format!("{}-reveal-clip", self.id)));
+        clip
+    }
+}
+
+/// Reconcile first-mount/resize geometry at the actual parent width using public
+/// GPUI APIs. Later toggles already know this width and measure before layout.
+/// Never recurse into Taffy from its callback or measure the clipped height.
+struct NaturalModalBody {
+    body: gpui::AnyElement,
+    natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+    laid_out_width: Option<gpui::Pixels>,
+}
+
+impl IntoElement for NaturalModalBody {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for NaturalModalBody {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        let mut style = gpui::Style::default();
+        style.size.width = gpui::relative(1.).into();
+        style.size.height = gpui::relative(1.).into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        let natural = if self.laid_out_width == Some(bounds.size.width) {
+            self.natural_size.get()
+        } else {
+            self.body.layout_as_root(
+                gpui::size(
+                    gpui::AvailableSpace::Definite(bounds.size.width),
+                    gpui::AvailableSpace::MaxContent,
+                ),
+                window,
+                cx,
+            )
+        };
+        if self.natural_size.replace(natural) != natural {
+            // Geometry convergence is required even when motion itself is instant.
+            window.request_animation_frame();
+        }
+        self.body.prepaint_at(bounds.origin, window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.body.paint(window, cx);
     }
 }
 
@@ -270,10 +536,11 @@ pub(crate) fn modal_chip(text: impl Into<SharedString>, color: u32) -> gpui::Div
 /// chip) and, while open, its body.
 ///
 /// Clicking the header flips the section via `KagiApp::toggle_modal_section`.
-/// `body` is built by the caller and only attached while open, so a closed
-/// section costs nothing to render. The count chip stays visible when closed —
-/// the audit's finding was modals that printed a total and then cut the rows,
-/// so the size of what is hidden is never lost.
+/// `body` is built by the caller while open or closing; closing bodies must be
+/// drawing-only (no roles, IDs, focus, scroll or other input handlers). The reveal
+/// retains their geometry, not their interactivity, until it settles. The count
+/// chip stays visible when closed. Choices, measurements, scroll and motion are
+/// reset together for the next confirmation.
 ///
 /// `count == 0` renders no chip (the recovery section has instructions, not a
 /// count); pass a chip label through `chip` instead when the section wants a
@@ -298,17 +565,25 @@ pub(crate) fn modal_section_chipped(
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::Div {
+    let retain_content = open.retain_content();
+    let presentation = open.clone();
     let open = open.is_open();
+    let title = title.into();
     let (panel_bg, panel_border) = theme::panel_style();
     let caret = if open { "\u{25be}" } else { "\u{25b8}" };
     let mut header = div()
         .id(id)
+        .relative()
+        .child(presentation.measure_width())
         .flex_shrink_0()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
         .cursor_pointer()
+        .role(gpui::Role::Button)
+        .aria_label(title.clone())
+        .aria_expanded(open)
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, _ev, _window, cx| {
@@ -326,7 +601,7 @@ pub(crate) fn modal_section_chipped(
             div()
                 .text_sm()
                 .text_color(rgb(current_theme().text_label))
-                .child(title.into()),
+                .child(title),
         );
     if let Some(chip) = chip {
         header = header.child(
@@ -350,7 +625,6 @@ pub(crate) fn modal_section_chipped(
     let mut section = div()
         .flex()
         .flex_col()
-        .gap_2()
         .min_h(theme::scaled_px(2. * MODAL_LIST_ROW_H))
         .overflow_hidden()
         .p_2()
@@ -358,12 +632,16 @@ pub(crate) fn modal_section_chipped(
         .bg(gpui::rgba(panel_bg))
         .border_1()
         .border_color(gpui::rgba(panel_border))
-        .when(modal_compact(), |section| section.p_1p5().gap_1())
-        .when(!open, |section| section.flex_shrink_0())
+        .when(modal_compact(), |section| section.p_1p5())
+        .when(!retain_content, |section| section.flex_shrink_0())
         .child(header);
-    if open {
+    if retain_content {
         if let Some(body) = body {
-            section = section.child(body);
+            let body = div()
+                .pt_2()
+                .when(modal_compact(), |body| body.pt_1())
+                .child(body);
+            section = section.child(modal_reveal(id, presentation, body.into_any_element()));
             #[cfg(feature = "gui-e2e")]
             {
                 section = section.relative().child(modal_probe(format!("{id}-body")));
@@ -384,12 +662,11 @@ pub(crate) fn modal_section_chipped(
 pub(crate) fn modal_list_panel(
     title: impl Into<SharedString>,
     count: usize,
-    // `(element id, text)` for the header's copy button: the rows as text, so
-    // the list is copyable without selection (#454 follow-up).
-    copy: Option<(&'static str, String)>,
+    // Prebuilt header action, so large row copies can be generated on click.
+    copy: Option<gpui::AnyElement>,
     summary: Option<gpui::Div>,
     body: gpui::AnyElement,
-    cx: &mut Context<KagiApp>,
+    _cx: &mut Context<KagiApp>,
 ) -> gpui::Div {
     // Theme-independent panel tint: `surface == modal` in several themes, so a
     // `surface` fill would be invisible on the card (see `theme::panel_style`).
@@ -451,9 +728,7 @@ pub(crate) fn modal_list_panel(
                         .items_center()
                         .gap_1()
                         .child(modal_chip(count.to_string(), current_theme().text_sub))
-                        .children(copy.map(|(id, text)| {
-                            modal_copy_button(id, Msg::ModalCopyList.t(), text, cx)
-                        })),
+                        .children(copy),
                 ),
         )
         .children(summary.map(|summary| summary.h(theme::scaled_px(MODAL_LIST_ROW_H))))
@@ -491,6 +766,17 @@ pub(crate) fn modal_file_row(
     let path = path.into();
     #[cfg(feature = "gui-e2e")]
     let probe_name = format!("modal-file-{path}");
+    let badge = div()
+        .flex_shrink_0()
+        .w(theme::scaled_px(10.))
+        .font_family(MONO_FONT)
+        .text_xs()
+        .text_color(rgb(color))
+        .child(SharedString::from(letter.to_string()));
+    #[cfg(feature = "gui-e2e")]
+    let badge = badge
+        .relative()
+        .child(modal_probe(format!("modal-file-badge-{path}-{letter}")));
     let row = div()
         .flex_shrink_0()
         .h(theme::scaled_px(MODAL_LIST_ROW_H))
@@ -499,15 +785,7 @@ pub(crate) fn modal_file_row(
         .flex_row()
         .items_center()
         .gap_2()
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(theme::scaled_px(10.))
-                .font_family(MONO_FONT)
-                .text_xs()
-                .text_color(rgb(color))
-                .child(SharedString::from(letter.to_string())),
-        )
+        .child(badge)
         .child(modal_path_text(path));
     #[cfg(feature = "gui-e2e")]
     let row = row.relative().child(modal_probe(probe_name));
@@ -540,18 +818,23 @@ pub(crate) fn modal_path_text(path: SharedString) -> gpui::Div {
         .font_family(MONO_FONT)
         .text_xs();
     if !dir.is_empty() {
-        row = row.child(
-            // Shrinks first and loses its head: `…/src/ops/` still tells you
-            // where you are, and the rows stay aligned on the name.
+        #[cfg(feature = "gui-e2e")]
+        let probe_name = format!("modal-path-dir-{path}-{dir}");
+        let directory =
+            // Shrinks first and loses its head while retaining the separator.
             div()
                 .min_w(gpui::px(0.))
                 .overflow_hidden()
                 .text_ellipsis_start()
                 .text_color(rgb(current_theme().text_muted))
-                .child(SharedString::from(dir)),
-        );
+                .child(SharedString::from(dir));
+        #[cfg(feature = "gui-e2e")]
+        let directory = directory.relative().child(modal_probe(probe_name));
+        row = row.child(directory);
     }
-    row.child(
+    #[cfg(feature = "gui-e2e")]
+    let probe_name = format!("modal-path-name-{path}-{name}");
+    let filename =
         // `flex_shrink_0`: the name yields width only after the directory has
         // given up all of its own.
         div()
@@ -559,8 +842,10 @@ pub(crate) fn modal_path_text(path: SharedString) -> gpui::Div {
             .overflow_hidden()
             .text_ellipsis()
             .text_color(rgb(current_theme().text_main))
-            .child(SharedString::from(name)),
-    )
+            .child(SharedString::from(name));
+    #[cfg(feature = "gui-e2e")]
+    let filename = filename.relative().child(modal_probe(probe_name));
+    row.child(filename)
 }
 
 /// Letter + theme colour for a change kind. The letters match

@@ -25,13 +25,14 @@ fn render_section_header(
     section: PrSection,
     count: Option<usize>,
     open: bool,
+    more: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     super::workspace_mode::sidebar_section_header(
         ("pr-mode-section", section.index()),
         pr_section_label(section),
         match count {
-            Some(n) => SectionCount::Known { n, more: false },
+            Some(n) => SectionCount::Known { n, more },
             None => SectionCount::Unknown,
         },
         open,
@@ -140,6 +141,14 @@ pub(super) fn pr_list_order(app: &KagiApp) -> Vec<PullRequest> {
 // is the page on screen or the neighbour a gesture is sliding toward, so it
 // must stay a pure read of `ui().pr_list_rows()`.
 pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    render_list(app, false, cx)
+}
+
+pub(super) fn render_compact_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    render_list(app, true, cx)
+}
+
+fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::List);
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
@@ -152,11 +161,17 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
 
     let mut body = div()
         .id("pr-mode-list-body")
+        .relative()
         .flex_1()
         .min_h(px(0.))
         .overflow_y_scroll()
         .flex()
         .flex_col();
+    let scroll = compact
+        .then(|| app.pr_mode().map(|mode| &mode.navigator_scroll))
+        .flatten();
+    body = body.when_some(scroll, |body, scroll| body.track_scroll(scroll));
+    body = body.child(super::e2e::measure_inside("pr-sidebar-list-viewport"));
     if all.is_empty() {
         body = body.child(
             div()
@@ -172,7 +187,13 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
     let viewer_known = row_viewers(app, all).iter().all(Option::is_some);
     for (section, open, members) in pr_sections(app) {
         let count = viewer_known.then_some(members.len());
-        body = body.child(render_section_header(section, count, open, cx));
+        body = body.child(render_section_header(
+            section,
+            count,
+            open,
+            app.ui().pr_list_has_more(),
+            cx,
+        ));
         if !open {
             continue;
         }
@@ -183,10 +204,20 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
                 row.attention,
                 stacked,
                 active_pr.as_ref(),
+                app.window_active,
+                compact.then_some(section),
                 cx,
             ));
         }
     }
+
+    let body = if let Some(scroll) = scroll {
+        super::with_vertical_scrollbar("compact-pr-list-scrollbar", scroll, body, true)
+            .child(super::e2e::measure_inside("compact-pr-list-scrollbar"))
+            .into_any_element()
+    } else {
+        body.into_any_element()
+    };
 
     focus_border(
         div()
@@ -202,6 +233,7 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
         focused,
     )
     .child(body)
+    .child(super::github_pr_strip::render_pr_page_tail(app, false, cx))
     .into_any_element()
 }
 
@@ -229,9 +261,12 @@ fn render_pr_card(
     bucket: PrAttention,
     stacked: bool,
     active_pr: Option<&kagi_domain::github::PrKey>,
+    window_active: bool,
+    compact: Option<PrSection>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let is_active = active_pr.is_some_and(|key| pr.is(key));
+    let on_accent = theme().selection_uses_on_accent(is_active, window_active);
     let accent = attention_color(bucket);
     let pr_click = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
@@ -296,8 +331,18 @@ fn render_pr_card(
                 .mb(px(3.))
                 .text_sm()
                 .line_height(theme::scaled_px(18.))
-                .text_color(rgb(theme().text_main))
-                .child(safe_text(&pr.title)),
+                .text_color(if on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
+                .child(safe_text(&pr.title))
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.relative().child(super::e2e::measure_inside(format!(
+                        "pr-mode-card-title-{}",
+                        pr.number
+                    )))
+                }),
         )
         // Line 2 - the state at the left, the number hard against the right.
         // The head branch is not here: it repeated what the title says, in the
@@ -311,11 +356,25 @@ fn render_pr_card(
                 .w_full()
                 .text_size(theme::scaled_px(10.))
                 .line_height(theme::scaled_px(13.))
-                .text_color(rgb(theme().text_muted))
+                .text_color(if on_accent {
+                    theme().selection_secondary_foreground(window_active)
+                } else {
+                    rgb(theme().text_muted).into()
+                })
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.relative().child(super::e2e::measure_inside(format!(
+                        "pr-mode-card-secondary-{}",
+                        pr.number
+                    )))
+                })
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_color(rgb(accent))
+                        .text_color(if on_accent {
+                            theme().selection_secondary_foreground(window_active)
+                        } else {
+                            rgb(accent).into()
+                        })
                         .child(SharedString::from(format!("\u{25CF} {}", state))),
                 )
                 .when(stacked, |el| {
@@ -325,18 +384,27 @@ fn render_pr_card(
                     el.child(
                         div()
                             .flex_shrink_0()
-                            .text_color(rgb(if pr.failed_checks() > 0 {
-                                theme().color_blocker
+                            .text_color(if on_accent {
+                                theme().selection_secondary_foreground(window_active)
                             } else {
-                                theme().text_muted
-                            }))
+                                rgb(if pr.failed_checks() > 0 {
+                                    theme().color_blocker
+                                } else {
+                                    theme().text_muted
+                                })
+                                .into()
+                            })
                             .child(SharedString::from(checks.clone())),
                     )
                 })
                 .children(review_mark.map(|(g, c)| {
                     div()
                         .flex_shrink_0()
-                        .text_color(rgb(c))
+                        .text_color(if on_accent {
+                            theme().selection_secondary_foreground(window_active)
+                        } else {
+                            rgb(c).into()
+                        })
                         .child(SharedString::from(g))
                 }))
                 // Issue #337: "agent-created" badge - the glyph only; the agent
@@ -367,7 +435,7 @@ fn render_pr_card(
                         .child(SharedString::from(format!("#{}", pr.number))),
                 ),
         );
-    let row = super::workspace_mode::sidebar_list_row(is_active)
+    let row = super::workspace_mode::sidebar_list_row(is_active, window_active)
         .id(("pr-mode-card", pr.number as usize))
         // The row fits its two lines and its padding - it is not given a fixed
         // height. A fixed 42px did fit two bare line boxes, but not once the
@@ -377,9 +445,26 @@ fn render_pr_card(
         // sync.
         .on_click(click)
         .on_mouse_down(gpui::MouseButton::Right, menu)
-        .when(pr.is_draft, |el| el.opacity(0.7))
+        .when(pr.is_draft && !on_accent, |el| el.opacity(0.7))
         .child(edge)
         .child(card);
+    let row = if let Some(section) = compact {
+        super::compact_sidebar::Leaf {
+            id: format!(
+                "compact-pr-row-{}-{}-{}",
+                section.index(),
+                pr.base_repo,
+                pr.number
+            )
+            .into(),
+            label: format!("#{} {}", pr.number, safe_text(&pr.title)),
+            row,
+            app: cx.weak_entity(),
+        }
+        .into_any_element()
+    } else {
+        row.into_any_element()
+    };
     super::e2e::measure_control(format!("pr-mode-card-{}", pr.number), row)
 }
 

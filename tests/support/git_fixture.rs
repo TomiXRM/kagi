@@ -38,7 +38,10 @@ pub const EMAIL: &str = "test@example.com";
 
 /// Empty directory used as `HOME` and `XDG_CONFIG_HOME` for fixture commands.
 fn empty_home() -> PathBuf {
-    let home = Path::new(env!("CARGO_TARGET_TMPDIR")).join("kagi-git-fixture-home");
+    let target_tmp = option_env!("CARGO_TARGET_TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp"));
+    let home = target_tmp.join("kagi-git-fixture-home");
     std::fs::create_dir_all(&home).expect("create fixture HOME");
     home
 }

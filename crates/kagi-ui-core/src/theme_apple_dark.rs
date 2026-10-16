@@ -4,32 +4,49 @@ use std::borrow::Cow;
 
 use crate::theme::{SyntaxPalette, Theme};
 
+/// macOS standard accent palette in dark appearance, in AppleAccentColor order.
+pub(crate) const SYSTEM_ACCENTS: [u32; 8] = [
+    0x98989d, 0xff453a, 0xff9f0a, 0xffd60a, 0x30d158, 0x0a84ff, 0xbf5af2, 0xff375f,
+];
+
+/// Quiet identifying boundary: at least 3:1 on the dark base and panel.
+pub const INPUT_BORDER: u32 = 0x67676a;
+
+/// Opaque floating layer, informed by Dark AppKit material samples (ADR-0125).
+pub const ELEVATED: u32 = 0x2a2a2c;
+/// Neutral floating boundary: >= 1.3:1 on both chrome and elevated.
+pub const ELEVATED_BORDER: u32 = 0x414144;
+/// Unified frame / tabs / status, between the panel and floating layers.
+pub const CHROME: u32 = 0x1c1c1e;
+
 pub const APPLE_DARK: Theme = Theme {
     slug: Cow::Borrowed("apple-dark"),
     name: Cow::Borrowed("Apple Dark"),
     dark: true,
 
-    // systemGray6-dark ramp: base #1c1c1e, chrome one step below, chips above.
-    bg_base: 0x1c1c1e,
+    // Dark elevation: base < panel < chrome < elevated (ADR-0125, #1274).
+    bg_base: 0x101012,
     bg_row_alt: 0x18181a,
     surface: 0x2c2c2e,  // systemGray5 (dark)
     selected: 0x3a3a3c, // systemGray4 (dark) — neutral selection, Notes-style
+    inactive_selected: 0x3a3a3c,
     panel: 0x161618,
     sidebar: 0x101012,
-    modal: 0x2c2c2e,
+    modal: ELEVATED,
     modal_overlay: 0x000000,
 
-    text_main: 0xffffff,  // label (dark)
+    text_main: 0xffffff, // label (dark)
+    // Readable secondaryLabel approximation; tertiary is not readable metadata.
     text_sub: 0x98989f,   // secondaryLabel composited on #1c1c1e
-    text_muted: 0x636366, // systemGray2 (dark)
-    text_label: 0x7c7c80, // systemGray2 (dark, increased contrast)
+    text_muted: 0x98989f, // >= 4.5:1 on panel and base (ADR-0125, #1239)
+    text_label: 0x98989f,
 
-    // Default (dark) set — tuned for dark backgrounds as-is. `color_branch`
-    // doubles as kagi's UI accent (primary buttons, active tab, links);
-    // Apple's dark-mode apps (Camera, Notes) accent with systemYellow, so
-    // the dark theme adopts it (ADR-0126) — the light theme keeps blue.
+    // Git/ref, status and body-link palette keeps ADR-0126's yellow character.
+    // On macOS the independent chrome role follows the cached system accent;
+    // non-macOS and custom themes retain these explicit values.
     color_head: 0xff375f,   // pink
     color_branch: 0xffd600, // yellow (accent)
+    link: 0xffd600,
     selection_tint: 0xffd600,
     color_remote: 0x30d158, // green
     color_tag: 0xff9230,    // orange

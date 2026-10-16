@@ -13,6 +13,7 @@ pub const TOKYO_NIGHT: Theme = Theme {
     bg_row_alt: 0x16161e,
     surface: 0x292e42,
     selected: 0x283457,
+    inactive_selected: 0x3d3d3d,
     panel: 0x16161e,
     sidebar: 0x13131a,
     modal: 0x24283b,
@@ -25,6 +26,7 @@ pub const TOKYO_NIGHT: Theme = Theme {
 
     color_head: 0xf7768e,
     color_branch: 0x7aa2f7,
+    link: 0x7aa2f7,
     selection_tint: 0x7aa2f7,
     color_remote: 0x9ece6a,
     color_tag: 0xe0af68,

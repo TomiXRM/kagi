@@ -13,6 +13,7 @@ pub const MONOKAI: Theme = Theme {
     bg_row_alt: 0x221e24,
     surface: 0x3a3540,
     selected: 0x4a4454,
+    inactive_selected: 0x484848,
     panel: 0x1f1b21,
     sidebar: 0x1a161c,
     modal: 0x3a3540,
@@ -25,6 +26,7 @@ pub const MONOKAI: Theme = Theme {
 
     color_head: 0xff3d6f,   // vivid pink (ref keyword #ff668c, boosted)
     color_branch: 0x5a9fff, // vivid blue
+    link: 0x5a9fff,
     selection_tint: 0x5a9fff,
     color_remote: 0xa8e05a, // vivid green (ref function #a4d671)
     color_tag: 0xff8c1a,    // punchy warm orange

@@ -88,6 +88,18 @@ macro_rules! advice_template_en {
     (CommonSparseExcludedPath) => {
         "'{}' is excluded by sparse-checkout, so it is absent from the working tree on purpose — not deleted. Staging it would record a deletion you did not make. Git refuses this too; widen the sparse-checkout definition first if you meant to change it."
     };
+    (CommonExternalFilter) => {
+        "'{}' uses an external filter ({}). Kagi cannot preserve its filtered content yet; stage or discard it with git until Kagi supports filters. Nothing was written."
+    };
+    (CommonExternalFilterSync) => {
+        "Kagi cannot force-checkout '{}' because it uses an external filter ({}), which Kagi cannot run. Nothing was written; sync with git until Kagi supports filters."
+    };
+    (CommonSparseCheckoutUnsupported) => {
+        "Kagi cannot safely force-checkout a repository using {}: sparse paths and index flags cannot yet be preserved. Use git to manage this repository. Nothing was written."
+    };
+    (CommonSubmoduleCheckoutUnsupported) => {
+        "Kagi cannot safely force-checkout a repository with {} submodule ('{}'): its nested worktree cannot be preserved. Initialize or save the submodule with git first. Nothing was written."
+    };
     (CommonHunkChanged) => {
         "The hunk in '{}' has changed since the diff was drawn, so nothing was staged or unstaged. Check the refreshed diff and choose the hunk again."
     };
@@ -96,6 +108,9 @@ macro_rules! advice_template_en {
     };
     (CommitNothingStaged) => {
         "Nothing to commit: no files are staged. Use stage_file() to stage changes before committing."
+    };
+    (CommitStagedContentChanged) => {
+        "Staged content changed since confirmation. Nothing was committed. Review the staged changes and confirm a new plan."
     };
     (CommitConflictedFiles) => {
         "Repository has {} conflicted file(s). Resolve all conflicts before committing."
@@ -262,6 +277,12 @@ macro_rules! advice_template_en {
     (ConflictsConflictGone) => {
         "the conflict is no longer present"
     };
+    (ConflictsAbortStartUnavailable) => {
+        "abort refused: pre-sequence HEAD cannot be established from the operation's start record; no repository state was changed. Inspect the sequencer state before recovering manually."
+    };
+    (ConflictsAbortHeadMoved) => {
+        "abort refused: HEAD moved since the sequence started; not rewinding. The current HEAD no longer matches the sequencer's safe rollback tip. No repository state was changed."
+    };
     (ConflictsResolutionMarkers) => {
         "conflict markers remain in the resolution buffer"
     };
@@ -297,6 +318,21 @@ macro_rules! advice_template_en {
     };
     (BranchRenameRemoteNotRenamed) => {
         "Remote branch names are not renamed automatically; only local branch config is carried over."
+    };
+    (BranchRenameConfig) => {
+        "Local branch config keys to move: {}."
+    };
+    (BranchRenameConfigChanged) => {
+        "Local branch config changed after confirmation. Review a new rename plan."
+    };
+    (BranchRenameConfigExternal) => {
+        "Branch config is outside the repository's Git directories. Move these settings into local Git config before renaming.\nConfig: {}"
+    };
+    (BranchRenameConfigConditional) => {
+        "Branch-dependent config may disappear during rename. Remove or update the conditional include before renaming.\nCondition: onbranch:{}"
+    };
+    (BranchRenameConfigHeader) => {
+        "Git cannot safely rename this branch config header. Normalize its section/subsection spelling before renaming.\nConfig: {}"
     };
     (BranchDeleteCurrentBranch) => {
         "Branch '{}' is the currently checked-out branch. Checkout a different branch before deleting this one."
@@ -434,7 +470,7 @@ macro_rules! advice_template_en {
         "Upstream must be a remote branch name like origin/main."
     };
     (PushUpstreamNotPresentLocally) => {
-        "Remote-tracking branch '{}' is not present locally; config can still be set."
+        "Remote-tracking branch '{}' is not present locally; fetch it before setting upstream."
     };
     (PullDirtyPullGuard) => {
         "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths."
@@ -471,6 +507,9 @@ macro_rules! advice_template_en {
     };
     (PullRemotePreviewStale) => {
         "Remote pull preview no longer matches the host's branch, upstream, HEAD commit, or working-tree changes. Refresh the remote view and try again."
+    };
+    (StashHeadRequired) => {
+        "Stash push requires a HEAD commit. Create an initial commit before stashing."
     };
     (StashUntrackedIncluded) => {
         "{} untracked file(s) will be included in the stash (equivalent to `git stash push -u`)."
@@ -595,4 +634,127 @@ macro_rules! advice_template_en {
     (GithubLocalBranchNotDeletedDeletionUnauthorized) => {
         "gh reported an error, so the transport did not authorize deleting the local branch: {}"
     };
+}
+
+/// User-facing English advice; legacy receipt and log templates stay unchanged.
+#[macro_export]
+macro_rules! advice_template_display_en {
+    (UntrackedExcluded) => {
+        "{} untracked file(s) will NOT be included in the stash. They stay in the working tree."
+    };
+    (CommonPartialCloneObjectMissing) => {
+        "This repository is a partial clone and the object this needs has not been fetched yet, so Kagi cannot read it ({}). Run `git fetch` in the repository to download it."
+    };
+    (CommonExternalFilter) => {
+        "'{}' uses an external filter ({}) that Kagi can't handle. Stage or discard it with git. Nothing was changed."
+    };
+    (CommonExternalFilterSync) => {
+        "'{}' uses an external filter ({}) that Kagi can't handle. Sync this branch with git. Nothing was changed."
+    };
+    (CommonSparseCheckoutUnsupported) => {
+        "Kagi can't do this in a repository that uses {}. Use git instead. Nothing was changed."
+    };
+    (CommonSubmoduleCheckoutUnsupported) => {
+        "Kagi can't do this with {} submodule ('{}'). Initialize or save it with git first. Nothing was changed."
+    };
+    (CommitNothingStaged) => {
+        "Nothing to commit: stage some changes first."
+    };
+    (CommitStagedContentChanged) => {
+        "Staged changes changed after you confirmed. Nothing was committed; review them and commit again."
+    };
+    (DiscardUntrackedWillBeDeleted) => {
+        "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any now-empty folders removed). A backup is saved first; find its blob SHA in the Operation Log details and recover with `git cat-file -p <blob-sha>`."
+    };
+    (RulesetConstraintsUnknown) => {
+        "Couldn't read this branch's GitHub rules. GitHub may still reject the push."
+    };
+    (MergeIntoRemoteSource) => {
+        "'{}' at {} is as of your last fetch and may be out of date."
+    };
+    (CherryRevertDirtyMayRefuse) => {
+        "Working tree has {}. Revert may stop if it touches those files."
+    };
+    (HistoryPushedHistoryRewriteAmend) => {
+        "Commit {} has already been pushed and others may be using it, so it can't be amended. Make a new commit instead."
+    };
+    (HistoryEntryStaleBranchMoved) => {
+        "Branch '{}' has moved since this operation (now at {}, expected {}), so this undo step is skipped."
+    };
+    (HistoryEntryStaleUnreachable) => {
+        "Commit {} no longer exists, so this undo step is skipped."
+    };
+    (ConflictsObservationChanged) => {
+        "The conflict changed. Reopen it and try again."
+    };
+    (ConflictsPlanChanged) => {
+        "The conflict changed; no files were modified. Try again."
+    };
+    (ConflictsRepositoryIdentityChanged) => {
+        "A different repository is now open. Reopen it and try again."
+    };
+    (ConflictsAbortStartUnavailable) => {
+        "Abort was refused and nothing was changed: Kagi can't find where this operation started. Check `git status` in a terminal before fixing it by hand."
+    };
+    (ConflictsAbortHeadMoved) => {
+        "Abort was refused: HEAD moved after the operation started, so going back could lose work. Nothing was changed."
+    };
+    (ConflictsResolutionMarkers) => {
+        "Conflict markers remain in the result. Remove them before saving."
+    };
+    (ConflictsIndexUnmerged) => {
+        "Some unmerged files are not shown here: {}. Refresh the repository."
+    };
+    (ConflictsPartialResolutionsPreserved) => {
+        "Your partial resolutions are kept; nothing is discarded."
+    };
+    (ConflictsSkipDiscardsStep) => {
+        "Skip drops this commit's changes. Your partial resolution is kept."
+    };
+    (BranchRenameConfigChanged) => {
+        "Branch settings changed after you confirmed. Rename again to review them."
+    };
+    (CheckoutCheckoutOverlap) => {
+        "Your local changes to {} file(s) would be overwritten: {}. Stash or commit them first."
+    };
+    (CheckoutDirtyMayFail) => {
+        "Working tree is dirty ({}). Checkout may fail; stash or commit first."
+    };
+    (SwitchFfLocalKnowledge) => {
+        "Fast-forward {} commit(s) (checked again after fetching)."
+    };
+    (WorktreeIncludeOverCap) => {
+        ".worktreeinclude matches {} (more than {}). Copying continues but may take a while."
+    };
+    (WorktreeRemoveDirty) => {
+        "Worktree '{}' has uncommitted changes ({}) — commit or stash them first."
+    };
+    (WorktreeRemoveLocked) => {
+        "Worktree '{}' is locked ({}) — unlock it before removing."
+    };
+    (WorktreeRemoveLiveShell) => {
+        "A terminal shell Kagi started in worktree '{}' is still running — `exit` it in that terminal first."
+    };
+    (TagPushRemoteSideEffect) => {
+        "This publishes tag '{}' to '{}', where others will see it."
+    };
+    (TagPushRejectedIfMoved) => {
+        "If '{}' already exists on the remote pointing at a different commit, the remote rejects the push rather than moving it."
+    };
+    (PullMergePrediction) => {
+        "This pull will likely conflict with your branch. If the remote hasn't changed, it stops safely without changing anything."
+    };
+    (PullRestoreConflict) => {
+        "These files will conflict when your stashed changes are restored after this pull:{}\nCommit or stash those files yourself first, or resolve the conflict after the pull — the stash is kept either way."
+    };
+    (StashTargetChanged) => {
+        "stash@{{{}}} is no longer the stash you chose ({}). Nothing was changed; try again."
+    };
+    (StashListChanged) => {
+        "The stash list changed. Nothing was changed; try again."
+    };
+    (GithubLocalBranchNotDeletedDeletionUnauthorized) => {
+        "GitHub CLI reported an error, so the local branch was kept: {}"
+    };
+    ($tag:ident) => { $crate::advice_template_en!($tag) };
 }

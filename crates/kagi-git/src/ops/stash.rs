@@ -11,6 +11,56 @@ use kagi_domain::plan_note::{
 };
 use kagi_domain::remote::shell_quote;
 
+/// Freeze restored paths separately from saved index-only content, which the
+/// non-`--index` executor does not restore but successful Pop will discard.
+fn restoration_manifest(
+    repo: &Repository,
+    entries: &[(usize, String, git2::Oid)],
+    index: usize,
+    warnings: &mut Vec<PlanNote>,
+) -> Result<Vec<FileStatus>, GitError> {
+    let Some((_, _, oid)) = entries.iter().find(|(i, _, _)| *i == index) else {
+        return Ok(Vec::new());
+    };
+    let error =
+        |e: git2::Error| GitError::Other(format!("stash manifest read failed: {}", e.message()));
+    let stash = repo.find_commit(*oid).map_err(error)?;
+    let base = stash.parent(0).map_err(error)?.tree().map_err(error)?;
+    let mut files = std::collections::BTreeMap::new();
+    let tree = stash.tree().map_err(error)?;
+    let mut options = git2::DiffOptions::new();
+    options.include_typechange(true);
+    let mut diff = repo
+        .diff_tree_to_tree(Some(&base), Some(&tree), Some(&mut options))
+        .map_err(error)?;
+    for file in crate::diff::diff_to_file_statuses(&mut diff)? {
+        files.insert(file.path.clone(), file);
+    }
+    if stash.parent_count() > 2 {
+        let tree = stash.parent(2).map_err(error)?.tree().map_err(error)?;
+        let mut diff = repo
+            .diff_tree_to_tree(None, Some(&tree), Some(&mut options))
+            .map_err(error)?;
+        for file in crate::diff::diff_to_file_statuses(&mut diff)? {
+            files.entry(file.path.clone()).or_insert(file);
+        }
+    }
+    let index_tree = stash.parent(1).map_err(error)?.tree().map_err(error)?;
+    let mut diff = repo
+        .diff_tree_to_tree(Some(&base), Some(&index_tree), Some(&mut options))
+        .map_err(error)?;
+    let index_only: Vec<_> = crate::diff::diff_to_file_statuses(&mut diff)?
+        .into_iter()
+        .filter(|file| !files.contains_key(&file.path))
+        .collect();
+    if !index_only.is_empty() {
+        warnings.push(PlanNote::Stash(StashNote::IndexOnlyNotRestored {
+            files: index_only,
+        }));
+    }
+    Ok(files.into_values().collect())
+}
+
 // ────────────────────────────────────────────────────────────
 // plan_stash_apply
 // ────────────────────────────────────────────────────────────
@@ -151,7 +201,17 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         commands: vec!["git stash list".to_string()],
     };
 
+    let preview_files =
+        restoration_manifest(repo, &entries, index, &mut warnings).unwrap_or_else(|error| {
+            warnings.push(PlanNote::Stash(StashNote::ManifestUnavailable {
+                reason: error.to_string(),
+            }));
+            Vec::new()
+        });
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Apply { index }),
         current,
@@ -162,9 +222,10 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
-        preview_files: Vec::new(),
+        preview_files,
         preview_commits: Vec::new(),
         destructive: false,
         equivalent_command: None,
@@ -352,7 +413,17 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         commands: vec!["git stash list".to_string()],
     };
 
+    let preview_files = restoration_manifest(repo, &stashes_with_oid, index, &mut warnings)
+        .unwrap_or_else(|error| {
+            warnings.push(PlanNote::Stash(StashNote::ManifestUnavailable {
+                reason: error.to_string(),
+            }));
+            Vec::new()
+        });
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Pop { index }),
         current,
@@ -363,9 +434,10 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
-        preview_files: Vec::new(),
+        preview_files,
         preview_commits: Vec::new(),
         // issue #280: pop irreversibly deletes the stash entry — Destructive class,
         // so the confirm UI treats it like drop/reset rather than a plain apply.
@@ -519,6 +591,9 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 /// taken from the remote snapshot (e.g. `"branch: master"`) for display only.
 pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> OperationPlan {
     OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Stash(StashTitle::DropRemote {
             label: stash_label.to_string(),
@@ -542,6 +617,7 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -601,6 +677,9 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Drop { index }),
         current,
@@ -611,6 +690,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -781,6 +861,15 @@ pub fn preflight_check_stash(
     plan: &OperationPlan,
     expected_stash_count: usize,
 ) -> Result<(), GitError> {
+    // Push needs an actual HEAD commit, independently of the approved plan.
+    // Check before generic drift so the live missing prerequisite stays typed.
+    if matches!(plan.title, PlanTitle::Stash(StashTitle::Push { .. }))
+        && matches!(resolve_head(repo)?, Head::Unborn { .. })
+    {
+        return Err(GitError::Blocked(Box::new(PlanNote::Stash(
+            StashNote::HeadRequired,
+        ))));
+    }
     // 1. Head check (re-use existing).
     preflight_check(repo, plan)?;
 

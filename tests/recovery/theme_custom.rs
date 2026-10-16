@@ -14,7 +14,7 @@ use gpui_component::select::SelectEvent;
 use gpui_component::ActiveTheme as _;
 use kagi::ui::command_palette::{self, PaletteAction};
 use kagi::ui::settings_view::ThemeOption;
-use kagi::ui::{commands, settings, theme, KagiApp};
+use kagi::ui::{commands, i18n, settings, theme, KagiApp, ToastKind};
 use serde_json::{json, Value};
 
 use crate::macos::{build_fixture, mount, unmount};
@@ -346,12 +346,40 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
         "standalone.json",
         &standalone_theme("tokyo-night", 0x556677),
     );
-    let reloads_before = toasts_naming(cx, &kagi, "Themes reloaded");
+    let toast_ids_before = toast_ids(cx, &kagi);
     run_palette(cx, &kagi, window, "Reload Themes");
     assert_eq!(theme::theme().bg_base, 0x556677);
     assert_eq!(gpui_background(cx), expected_background(0x556677));
-    let reloads_after = toasts_naming(cx, &kagi, "Themes reloaded");
-    assert_eq!(reloads_after, reloads_before + 1);
+    // Persistent parse errors take precedence over older routine cards at the
+    // four-toast cap. Count fresh IDs, not a growing number of identical labels:
+    // the winning reload must still deliver both its success and file error.
+    cx.read(|cx| {
+        let stack = kagi.read(cx).toast_stack.as_ref().expect("toast stack");
+        let toasts = stack.read(cx).toasts();
+        let fresh = || {
+            toasts
+                .iter()
+                .filter(|toast| !toast_ids_before.contains(&toast.id))
+        };
+        assert_eq!(fresh().count(), 2, "one success and one file error arrive");
+        let success = i18n::themes_reloaded_fmt(2);
+        assert_eq!(
+            fresh()
+                .filter(|toast| toast.kind == ToastKind::Success && toast.message == success)
+                .count(),
+            1,
+            "the winning reload delivers fresh success feedback"
+        );
+        assert_eq!(
+            fresh()
+                .filter(|toast| {
+                    toast.kind == ToastKind::Error && toast.message.contains(BROKEN_FILE)
+                })
+                .count(),
+            1,
+            "the winning reload reports the broken file again"
+        );
+    });
     let toast_ids_after = toast_ids(cx, &kagi);
     release.send(());
     cx.run_until_parked();
@@ -359,7 +387,6 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     assert_eq!(gpui_background(cx), expected_background(0x556677));
     assert_eq!(select_shows(cx, &kagi).as_deref(), Some(STANDALONE));
     assert!(menu_lists(STANDALONE));
-    assert_eq!(toasts_naming(cx, &kagi, "Themes reloaded"), reloads_after);
     assert_eq!(toast_ids(cx, &kagi), toast_ids_after, "stale read toasted");
 
     // The folder cannot be listed (permissions, a lost mount): not an empty

@@ -101,6 +101,8 @@ pub enum Operation {
     },
     Pull,
     Push,
+    /// Strict fast-forward: synchronize the current checkout, update an
+    /// unoccupied non-current ref only, and refuse other-worktree checkouts.
     PullBranchFf {
         branch_name: String,
     },

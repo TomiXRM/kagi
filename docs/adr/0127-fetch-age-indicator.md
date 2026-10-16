@@ -38,3 +38,15 @@ auto-fetch(180 秒間隔)はネットワーク断で**静かに**失敗し続け
   (watcher → reload 経由で)正しく更新される。
 - チップは既存 StatusBar チップ同様に非 i18n の記号表記(`⇣ 3m`)。
 - `[kagi] statusbar:` 契約行は不変(チップは表示のみ)。
+
+## Amendment — 2026-10-13: chip semantics (#1377)
+
+The informational fetch chip remains non-focusable text, with an EN/JA
+tooltip and accessibility name expanding the age (`Fetched 12 minutes ago`,
+`Last fetch 3 hours ago — stale`). At the existing 15-minute threshold,
+its compact label adds `!` alongside the warning colour, so freshness is
+not encoded by colour alone. The glyph is included in the footer's existing
+rounded-up shaped-text width budget (#1310/#1321). Other status chips share
+the same explanatory tooltip/name contract; unavailable counts remain
+distinct from an absent upstream. No fetch action or additional Tab stop
+is introduced, and timestamp sourcing, repaint cadence and klog are unchanged.

@@ -118,6 +118,293 @@ pub fn scenario_palette_push_modal_keys(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS palette_push_modal_keys");
 }
 
+/// #1084: measure the actual palette card, not a predicted geometry.
+pub fn scenario_palette_viewport(cx: &mut VisualTestAppContext) {
+    use crate::recovery_layout::{contained, GlobalSettings};
+    use gpui::{point, px, size, Bounds};
+    use kagi_ui_core::{i18n, theme};
+    let _restore = GlobalSettings::capture();
+    let fixture = build_fixture();
+    struct RestoreThemes;
+    impl Drop for RestoreThemes {
+        fn drop(&mut self) {
+            theme::install_custom_themes(Vec::new());
+        }
+    }
+    let _themes = RestoreThemes;
+    let mut long = theme::THEMES[0].clone();
+    long.slug = "palette-long-name".into();
+    long.name = "A very long custom theme name 日本語の長いテーマ名 "
+        .repeat(12)
+        .into();
+    theme::install_custom_themes(vec![long]);
+    for (width, height, zoom) in [(700., 500., 1.67), (700., 500., 1.), (900., 600., 1.67)] {
+        for locale in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            theme::set_zoom(zoom);
+            let state = e2e::app_state(fixture.path()).unwrap();
+            let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let output = captured.clone();
+            let win =
+                crate::macos::open_offscreen(cx, size(px(width), px(height)), move |window, cx| {
+                    e2e::mount_root(state, window, cx, &output)
+                });
+            let window: AnyWindowHandle = win.into();
+            let app = captured.borrow().clone().unwrap();
+            keys(cx, window, "cmd-p");
+            draw(cx, window);
+            let viewport = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
+            let card = e2e::control_bounds(window.window_id(), "palette-card").unwrap();
+            eprintln!("[gui-e2e] palette {locale}/{width}x{height}@{zoom}: card={card:?} window={viewport:?}");
+            contained(viewport, card, "palette card");
+            for name in ["palette-frame", "palette-divider"] {
+                assert_eq!(
+                    e2e::chrome_border(name),
+                    Some(gpui::rgb(theme::theme().surface).into()),
+                    "{name}: unselected palette boundaries must be neutral"
+                );
+            }
+            let input = e2e::control_bounds(window.window_id(), "palette-input").unwrap();
+            contained(card, input, "palette input");
+            let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+            contained(card, scroll.bounds(), "palette results");
+            let rows = cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), ""));
+            assert!(
+                rows.iter().any(|row| row.label.len() > 300),
+                "long theme fixture is drawn"
+            );
+            for (index, row) in rows.iter().enumerate() {
+                if row.keystroke.is_some() {
+                    let shortcut = e2e::control_bounds(
+                        window.window_id(),
+                        &format!("palette-shortcut-{index}"),
+                    )
+                    .unwrap();
+                    assert!(shortcut.size.width > px(0.));
+                    assert!(
+                        shortcut.left() >= card.left() && shortcut.right() <= card.right(),
+                        "shortcut stays in card"
+                    );
+                }
+            }
+            cx.simulate_event(
+                window,
+                gpui::ScrollWheelEvent {
+                    position: scroll.bounds().center(),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-100_000.))),
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            draw(cx, window);
+            assert!(scroll.offset().y < px(0.), "many results must scroll");
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "palette-input").unwrap(),
+                input,
+                "only results scroll"
+            );
+            for query in ["A very long custom theme name", "zzzzzzzzzzzzzzzzzz"] {
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        let input = app.command_palette_input.clone().unwrap();
+                        input.update(cx, |state, cx| state.set_value(query, window, cx));
+                    });
+                })
+                .unwrap();
+                draw(cx, window);
+                let filtered_card =
+                    e2e::control_bounds(window.window_id(), "palette-card").unwrap();
+                contained(viewport, filtered_card, "filtered palette card");
+                contained(
+                    filtered_card,
+                    e2e::control_bounds(window.window_id(), "palette-input").unwrap(),
+                    "filtered input",
+                );
+                contained(filtered_card, scroll.bounds(), "filtered results");
+                let filtered =
+                    cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), query));
+                assert!(filtered.len() <= 1, "few/empty result fixture");
+                if let Some(row) = filtered.first() {
+                    let ax = kagi::ui::list_a11y::recorded_list("command-palette-list").unwrap();
+                    assert_eq!(ax.role, Some(gpui::Role::ListBox));
+                    assert_eq!(
+                        ax.rows.get(&0).unwrap().0,
+                        row.label,
+                        "drawn long option retains its full AX name"
+                    );
+                    let label_bounds =
+                        e2e::control_bounds(window.window_id(), "palette-label-0").unwrap();
+                    contained(filtered_card, label_bounds, "drawn long theme label");
+                    assert!(
+                        label_bounds.size.height <= theme::scaled_px(24.),
+                        "long theme label must occupy one line, not wrap"
+                    );
+                    assert!(
+                        scroll.bounds_for_item(0).unwrap().size.height <= theme::scaled_px(40.),
+                        "long theme option must retain single-line row height"
+                    );
+                }
+            }
+            drop(scroll);
+            unmount(cx, app, window);
+        }
+    }
+    eprintln!("[gui-e2e] PASS palette_viewport");
+}
+
+/// #1069: one-shot, child-bound reveals survive mouse/keyboard interleaving,
+/// filtering and empty results without assuming equal-height command rows.
+pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {
+    use kagi::ui::command_palette::{rows_for, PaletteAction};
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, window) = mount(cx, &repo);
+    keys(cx, window, "cmd-p");
+    draw(cx, window);
+    let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+    let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+    assert!(rows.len() > 20, "fixture must overflow the palette");
+    assert!(rows.iter().any(|row| row.disabled_reason.is_some()));
+    let heights: Vec<_> = (0..rows.len())
+        .map(|i| scroll.bounds_for_item(i).unwrap().size.height)
+        .collect();
+    assert_ne!(
+        heights.iter().min(),
+        heights.iter().max(),
+        "fixture must exercise unequal row heights"
+    );
+
+    let visible = |cx: &mut VisualTestAppContext| {
+        draw(cx, window);
+        let selected = cx.read(|cx| app.read(cx).command_palette_selected);
+        let child = scroll
+            .bounds_for_item(selected)
+            .expect("selected row laid out");
+        let viewport = scroll.bounds();
+        let top = child.top() + scroll.offset().y;
+        let bottom = child.bottom() + scroll.offset().y;
+        assert!(
+            top >= viewport.top() - gpui::px(1.),
+            "row {selected} above viewport"
+        );
+        assert!(
+            bottom <= viewport.bottom() + gpui::px(1.),
+            "row {selected} below viewport"
+        );
+    };
+    let wheel = |cx: &mut VisualTestAppContext, dy| {
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: scroll.bounds().center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        draw(cx, window);
+    };
+    let query = |cx: &mut VisualTestAppContext, text: &str| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let input = app.command_palette_input.clone().unwrap();
+                input.update(cx, |state, cx| state.set_value(text, window, cx));
+            });
+        })
+        .unwrap();
+        draw(cx, window);
+    };
+
+    // Every destination, including tall disabled rows, is fully revealed.
+    for _ in 1..rows.len() {
+        keys(cx, window, "down");
+        visible(cx);
+    }
+    assert_eq!(
+        cx.read(|cx| app.read(cx).command_palette_selected),
+        rows.len() - 1
+    );
+    wheel(cx, 100_000.);
+    assert_eq!(scroll.offset().y, gpui::px(0.));
+    draw(cx, window);
+    assert_eq!(
+        scroll.offset().y,
+        gpui::px(0.),
+        "passive redraw must not reveal"
+    );
+    keys(cx, window, "down");
+    visible(cx); // Last boundary must reveal even though the index did not move.
+
+    for _ in 1..rows.len() {
+        keys(cx, window, "up");
+        visible(cx);
+    }
+    wheel(cx, -100_000.);
+    let mouse_offset = scroll.offset();
+    assert!(mouse_offset.y < gpui::px(0.));
+    draw(cx, window);
+    assert_eq!(
+        scroll.offset(),
+        mouse_offset,
+        "mouse offset must survive repaint"
+    );
+    keys(cx, window, "up");
+    visible(cx); // The corresponding first-boundary case.
+
+    wheel(cx, -100_000.);
+    query(cx, "zzzzzzzzzzzzzzzzzzzz");
+    assert!(cx.read(|cx| rows_for(app.read(cx), "zzzzzzzzzzzzzzzzzzzz").is_empty()));
+    keys(cx, window, "up down enter");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    query(cx, "");
+    assert_eq!(cx.read(|cx| app.read(cx).command_palette_selected), 0);
+    visible(cx);
+    wheel(cx, -100_000.);
+    // A nonempty result set rebuilt after a mouse scroll must reveal its top hit.
+    let toggle = rows
+        .iter()
+        .find(|row| row.action == PaletteAction::Command("view.toggleSidebar"))
+        .unwrap();
+    query(cx, &toggle.label);
+    visible(cx);
+    assert_eq!(
+        cx.read(|cx| rows_for(app.read(cx), &toggle.label)[0].action.clone()),
+        toggle.action
+    );
+    let sidebar = cx.read(|cx| app.read(cx).sidebar.visible);
+    keys(cx, window, "enter");
+    assert_eq!(cx.read(|cx| app.read(cx).sidebar.visible), !sidebar);
+
+    keys(cx, window, "cmd-p");
+    draw(cx, window);
+    let reopened = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+    assert_eq!(cx.read(|cx| app.read(cx).command_palette_selected), 0);
+    assert_eq!(
+        reopened.offset().y,
+        gpui::px(0.),
+        "reopen resets old scroll"
+    );
+    // Disabled Enter remains a no-op after navigating/revealing its subtitle.
+    let disabled = rows.iter().position(|row| !row.enabled).unwrap();
+    for _ in 0..disabled {
+        keys(cx, window, "down");
+    }
+    keys(cx, window, "enter");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before,
+        "palette navigation never writes Git"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS palette_selection_scroll");
+}
+
 pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -165,6 +452,12 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
             "precondition: the picker click moves focus into Settings"
         );
         if close_by == "escape" {
+            keys(cx, window, "escape");
+            assert!(
+                cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+                "the open theme picker consumes Escape before Settings"
+            );
+            // #1479-S4: popup Escape wins over the workspace fallback.
             keys(cx, window, "escape");
         } else {
             // While the picker's list is open, a click outside it only
@@ -696,10 +989,8 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.close_home_tab(cx));
     draw(cx, window);
 
-    // About (or Keyboard Shortcuts) from the native menu replaces Settings:
-    // the focus leaves the unmounted trap for the root — not for Settings'
-    // return target, the terminal, where Escape (bound `!Terminal`) would
-    // not reach the overlay — so Escape closes it.
+    // About owns the named modal slot; Shortcuts replaces Settings' Info slot.
+    // Both must release the old Settings trap and close through Escape.
     for (command, what) in [
         ("app.about", "About"),
         ("help.shortcuts", "Keyboard Shortcuts"),
@@ -717,12 +1008,16 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         .unwrap();
         draw(cx, window);
         assert!(
-            cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+            cx.read(
+                |cx| app.read(cx).menu_overlay.is_some() || app.read(cx).about_modal().is_some()
+            ),
             "{what} replaces Settings"
         );
         keys(cx, window, "escape");
         assert!(
-            cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+            cx.read(
+                |cx| app.read(cx).menu_overlay.is_none() && app.read(cx).about_modal().is_none()
+            ),
             "settings-replaced-overlay-escape: Escape must close {what} opened over Settings"
         );
     }
@@ -952,7 +1247,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     };
 
     let t0 = Instant::now();
-    e2e::set_panel_motion_clock(Some(t0));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0));
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx))
     })
@@ -972,7 +1267,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     );
     // Escape before the 150 ms close animation finishes. The return target
     // still belongs to the drawn workspace at the moment it is restored.
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(50)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(50)));
     draw(cx, window);
     assert!(
         in_workspace(cx, &sidebar_focus),
@@ -993,7 +1288,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     // tree, so it keeps tracking the restored control; the frame after the
     // unmount must come by itself (requested while tracking), not from a
     // second draw issued here or from the next key press (#976 review).
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(300)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(300)));
     draw(cx, window);
     cx.run_until_parked();
     assert!(
@@ -1018,7 +1313,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
         app.select(0);
         cx.notify();
     });
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(600)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(600)));
     draw(cx, window);
     let message = e2e::control_bounds(window.window_id(), "inspector-message-scroll")
         .expect("the inspector's selectable commit message is drawn");
@@ -1046,7 +1341,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
         cx.read(|cx| !app.read(cx).inspector_visible),
         "Cmd+Option+B must hide commit details while Settings remains open"
     );
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(900)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(900)));
     draw(cx, window);
     assert!(
         cx.read(|cx| app.read(cx).menu_overlay.is_some()),
@@ -1058,7 +1353,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     );
     finish(cx, "hidden-commit-details-return");
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_hidden_return_target");
 }

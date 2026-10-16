@@ -75,6 +75,9 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         warnings.push(PlanNote::Clone(CloneNote::ForkAddsUpstream));
     }
     OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Clone(CloneTitle::Clone {
             source: request.source.clone(),
@@ -95,6 +98,7 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         destructive: false,
         equivalent_command: command,

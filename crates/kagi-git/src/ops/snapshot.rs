@@ -76,7 +76,7 @@ pub(crate) fn create_snapshot(repo: &Repository, message: &str) -> Result<Snapsh
         .find_tree(tree_oid)
         .map_err(|e| GitError::Other(format!("snapshot: tree lookup failed: {}", e.message())))?;
 
-    let sig = build_signature(repo)?;
+    let sig = internal_signature()?;
 
     // Parent = current HEAD commit if the branch is born; else a root commit.
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
@@ -259,6 +259,9 @@ pub fn plan_restore_snapshot(repo: &Repository, id: &str) -> Result<OperationPla
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Snapshot(SnapshotTitle::Restore { id: id.to_string() }),
         current,
@@ -272,6 +275,7 @@ pub fn plan_restore_snapshot(repo: &Repository, id: &str) -> Result<OperationPla
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

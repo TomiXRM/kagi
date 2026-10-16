@@ -8,129 +8,90 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context, SharedString, Window};
-use gpui_component::input::Input;
+use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context};
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::avatar::AvatarImages;
 use kagi_ui_core::commit_header::render_commit_header;
 use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLayout};
 use kagi_ui_core::i18n::Msg;
-use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::theme::theme;
+
+use crate::named_button::NamedButton;
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    Sizable,
+};
+
+/// Bound untrusted stderr before sanitizing, then bound the escaped preview.
+/// The complete backend cause remains on the file owner.
+fn history_error_preview(error: &str) -> String {
+    const CHARS: usize = 480;
+    let mut lines = 1;
+    let mut end = error.len();
+    for (count, (offset, ch)) in error.char_indices().enumerate() {
+        if count == CHARS || (ch == '\n' && lines == 3) {
+            end = offset;
+            break;
+        }
+        if ch == '\n' {
+            lines += 1;
+        }
+    }
+    let mut preview = kagi_domain::text_safety::sanitize_control_bytes(&error[..end]);
+    let escaped_end = preview.char_indices().nth(CHARS).map(|(offset, _)| offset);
+    if let Some(offset) = escaped_end {
+        preview.truncate(offset);
+    }
+    if end < error.len() || escaped_end.is_some() {
+        preview.push('…');
+    }
+    preview
+}
+
+#[cfg(feature = "gui-e2e")]
+fn measure_history_error(cx: &mut Context<EditorWorkspaceView>, retry: bool) -> AnyElement {
+    let entity = cx.entity().downgrade();
+    gpui::canvas(
+        move |bounds, _, cx| {
+            let _ = entity.update(cx, |view, _| {
+                if retry {
+                    view.history_retry_bounds = Some(bounds);
+                } else {
+                    view.history_error_bounds = Some(bounds);
+                }
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
 
 /// Fixed top:bottom ratio for the History pane's commit-detail header vs.
 /// the commit list (user request — "3:7"; not a drag-resizable
 /// `InspectorSplit`-style divider, at least not in this v1).
 const HISTORY_HEADER_RATIO: f32 = 0.3;
 
-use crate::{
-    placeholder_text, with_vertical_scrollbar, EditorWorkspaceView, MiddlePaneTab, RightPaneTab,
-};
+use crate::{placeholder_text, with_vertical_scrollbar, EditorWorkspaceView};
 
-/// One tab chip, shared visual style between the right-pane and center-pane
-/// switchers — mirrors `render_source_chip`'s look (see `lib.rs`) with a
-/// generic click callback since each switcher dispatches to a different
-/// setter (`set_right_tab` / `set_middle_tab`).
-fn render_tab_chip(
-    id: (&'static str, usize),
-    label: SharedString,
-    active: bool,
-    on_click: impl Fn(&mut EditorWorkspaceView, &mut Window, &mut Context<EditorWorkspaceView>)
-        + 'static,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> AnyElement {
-    let click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-        on_click(this, window, cx);
-    });
-    div()
-        .id(id)
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .py_px()
-        .rounded_sm()
-        .cursor_pointer()
-        .text_xs()
-        .text_color(rgb(if active {
-            theme().text_main
-        } else {
-            theme().text_muted
-        }))
-        .bg(rgb(if active {
-            theme().selected
-        } else {
-            theme().panel
-        }))
-        .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-        .on_click(click)
-        .child(label)
-        .into_any_element()
-}
-
-/// Right pane's Diff/History tab strip.
+/// Right pane's Diff/History selector, using the host's shared keyboard owner.
 pub(crate) fn render_right_pane_tabs(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    div()
-        .id("ews-right-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(rgb(theme().panel))
-        .child(render_tab_chip(
-            ("ews-right-tab", 0),
-            Msg::EditorRightTabDiff.t().into(),
-            view.right_tab == RightPaneTab::Diff,
-            |this, window, cx| this.set_right_tab(RightPaneTab::Diff, window, cx),
-            cx,
-        ))
-        .child(render_tab_chip(
-            ("ews-right-tab", 1),
-            Msg::EditorRightTabHistory.t().into(),
-            view.right_tab == RightPaneTab::History,
-            |this, window, cx| this.set_right_tab(RightPaneTab::History, window, cx),
-            cx,
-        ))
-        .into_any_element()
+    view.hooks.pane_selectors.render(view, false, cx)
 }
 
-/// Center pane's Diff/Snapshot tab strip (only rendered once a History row
-/// is selected — see the early-return branch in `render_center_pane`).
+/// Center pane's Diff/Snapshot selector for the selected historical commit.
 pub(crate) fn render_middle_pane_tabs(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    div()
-        .id("ews-middle-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(rgb(theme().panel))
-        .child(render_tab_chip(
-            ("ews-middle-tab", 0),
-            Msg::EditorMiddleTabDiff.t().into(),
-            view.middle_tab == MiddlePaneTab::Diff,
-            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Diff, cx),
-            cx,
-        ))
-        .child(render_tab_chip(
-            ("ews-middle-tab", 1),
-            Msg::EditorMiddleTabSnapshot.t().into(),
-            view.middle_tab == MiddlePaneTab::Snapshot,
-            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Snapshot, cx),
-            cx,
-        ))
-        .into_any_element()
+    view.hooks.pane_selectors.render(view, true, cx)
 }
 
 /// Right pane's History tab body: a virtualized, clickable commit list for
@@ -139,16 +100,90 @@ pub(crate) fn render_history_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    view.history_presentation.borrow_mut().clear();
     if view.history_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
     }
-    // Same lesson as `render_snapshot_pane` below (#489): with no load in
-    // flight, "no list" is a settled outcome — a failed or never-started
-    // load — not a spinner that will resolve on its own.
+    if let Some(error) = &view.history_error {
+        let heading = Msg::EditorHistoryFailed.t();
+        let retry = Msg::EditorHistoryRetry.t();
+        let error = history_error_preview(error);
+        #[cfg(feature = "gui-e2e")]
+        {
+            *view.history_presentation.borrow_mut() = format!("{heading}\n{error}\n{retry}");
+        }
+        let button = Button::new("ews-history-retry")
+            .ghost()
+            .small()
+            .label(retry)
+            .on_click(cx.listener(|view, _, window, cx| {
+                view.retry_history(cx);
+                window.focus(&view.root_focus, cx);
+            }));
+        #[cfg(feature = "gui-e2e")]
+        let button = button.on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, _, cx| {
+            if event.keystroke.key == "f19" {
+                view.history_retry_focused = true;
+                cx.stop_propagation();
+            }
+        }));
+        return div()
+            .id("ews-history-error")
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_2()
+            .p_3()
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .child(div().flex_shrink_0().child(heading))
+            .child(
+                div()
+                    .id("ews-history-cause")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .w_full()
+                    .overflow_y_scroll()
+                    .child(div().w_full().child(error)),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .relative()
+                    .child(
+                        NamedButton(button)
+                            .role(gpui::Role::Button)
+                            .aria_label(retry),
+                    )
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        #[cfg(feature = "gui-e2e")]
+                        let el = el.child(measure_history_error(cx, true));
+                        el
+                    }),
+            )
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                #[cfg(feature = "gui-e2e")]
+                let el = el.child(measure_history_error(cx, false));
+                el
+            })
+            .into_any_element();
+    }
     let Some(history) = view.history.as_ref() else {
+        #[cfg(feature = "gui-e2e")]
+        {
+            *view.history_presentation.borrow_mut() = Msg::EditorHistoryEmpty.t().into();
+        }
         return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
     };
     if history.entries.is_empty() {
+        #[cfg(feature = "gui-e2e")]
+        {
+            *view.history_presentation.borrow_mut() = Msg::EditorHistoryEmpty.t().into();
+        }
         return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
     }
 
@@ -159,8 +194,8 @@ pub(crate) fn render_history_pane(
         .and_then(|e| e.commit.as_ref());
     let header = render_history_header(selected_commit, &view.avatars);
 
-    let entries = Arc::new(history.entries.clone());
-    let row_count = entries.len();
+    let history = Arc::clone(history);
+    let row_count = history.entries.len();
     let scroll_handle = view.history_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
     let selected = view.selected_history_commit.clone();
@@ -172,10 +207,18 @@ pub(crate) fn render_history_pane(
         uniform_list(
             "ews-history-list",
             row_count,
-            cx.processor(move |this, range: Range<usize>, _window, cx| {
+            cx.processor(move |this, range: Range<usize>, window, cx| {
                 range
                     .filter_map(|i| {
-                        render_history_row(this, i, entries.get(i)?, &selected, now, cx)
+                        render_history_row(
+                            this,
+                            i,
+                            history.entries.get(i)?,
+                            &selected,
+                            now,
+                            window.is_window_active(),
+                            cx,
+                        )
                     })
                     .collect::<Vec<_>>()
             }),
@@ -255,6 +298,7 @@ fn render_history_row(
     entry: &FileHistoryEntry,
     selected: &Option<String>,
     now: i64,
+    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<AnyElement> {
     debug_assert_ne!(entry.kind, FileHistoryEntryKind::Wip);
@@ -273,24 +317,17 @@ fn render_history_row(
             &model,
             CommitRowLayout::Card,
             is_selected,
+            window_active,
         )
         .on_click(click)
         .into_any_element(),
     )
 }
 
-/// Center pane's Snapshot tab body: the selected commit's full file text via
-/// `view.snapshot_editor` (`sync_snapshot_editor`, `lib.rs`) — the same
-/// `code_editor` `InputState` widget the WIP buffer uses, so Snapshot gets
-/// the same monospace font, line numbers, and text selection/copy for free
-/// (bug report: an earlier hand-rolled `uniform_list` of styled divs had
-/// none of the three). Deliberately a SEPARATE `InputState` from `editor`
-/// (the live, saveable WIP buffer) — typing here is inert, never read back
-/// or persisted (see `snapshot_editor`'s doc comment for why: gpui-component
-/// has no read-only-but-selectable input mode in this version).
+/// Immutable selectable historical text, distinct from the live buffer.
 pub(crate) fn render_snapshot_pane(
     view: &EditorWorkspaceView,
-    _cx: &mut Context<EditorWorkspaceView>,
+    cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
     if view.snapshot_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
@@ -308,22 +345,58 @@ pub(crate) fn render_snapshot_pane(
     if snapshot.content.is_none() {
         return placeholder_text(Msg::EditorWorkspaceDeleted.t()).into_any_element();
     }
-    let Some(editor) = view.snapshot_editor.clone() else {
-        return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
-    };
     div()
         .id("ews-snapshot")
+        .key_context("EditorSnapshot")
         .flex_1()
         .min_h(px(0.))
         .w_full()
-        // Same reason as the WIP editor's container in `lib.rs`: `code_editor()`
-        // inherits its font, and the root sets the proportional `UI_FONT`.
-        .font_family(theme::MONO_FONT)
-        .child(
-            Input::new(&editor)
-                .appearance(false)
-                .bordered(false)
-                .h_full(),
-        )
+        .flex()
+        .flex_col()
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            {
+                let view = cx.entity().downgrade();
+                return el.child(
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            _ = view.update(cx, |view, _| view.snapshot_bounds = Some(bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                );
+            }
+            #[cfg(not(feature = "gui-e2e"))]
+            el
+        })
+        .child(crate::snapshot::text(view, cx))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::history_error_preview;
+
+    #[test]
+    fn history_error_preview_escapes_controls_and_bounds_untrusted_output() {
+        assert_eq!(
+            history_error_preview("cause\x1b\x07日本語"),
+            "cause\\x1B\\x07日本語"
+        );
+        assert_eq!(
+            history_error_preview("one\ntwo\nthree\nfour"),
+            "one\ntwo\nthree…"
+        );
+        let long = history_error_preview(&"日".repeat(1_000));
+        assert_eq!(long.chars().count(), 481);
+        assert!(long.ends_with('…'));
+        let controls = history_error_preview(&"\x1b".repeat(1_000));
+        assert_eq!(controls.chars().count(), 481);
+        assert!(!controls.contains('\x1b'));
+    }
 }

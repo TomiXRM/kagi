@@ -23,7 +23,8 @@ fn apply_suggestion_blocking(
     op: &Operation,
     plan: &kagi_git::OperationPlan,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     Ok(repo.run_recorded(op, plan))
 }
 
@@ -41,10 +42,12 @@ impl KagiApp {
             .map(|tab| tab.head.clone())
             .unwrap_or_else(|| kagi_git::CommitId(String::new()));
         let Some(session) = self.ui().repo_session.as_ref() else {
-            self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(
-                i18n::Op::ApplySuggestion,
-                "repo session unavailable",
-            )));
+            self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                SharedString::from(i18n::op::op_plan_failed_contract(
+                    i18n::Op::ApplySuggestion,
+                    "repo session unavailable",
+                )),
+            ));
             return;
         };
         let backend = session.backend();
@@ -66,11 +69,13 @@ impl KagiApp {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
+                self.focus_root_for_modal();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::ApplySuggestion, e),
-                ));
+                self.status_footer =
+                    FooterStatus::Failed(crate::ui::operations::display_text(SharedString::from(
+                        i18n::op::op_plan_failed_contract(i18n::Op::ApplySuggestion, e),
+                    )));
             }
         }
     }
@@ -132,7 +137,7 @@ impl KagiApp {
 /// blockers, and how to read the old content back from its backup ref.
 pub(crate) fn render_apply_suggestion_modal(
     modal: ApplySuggestionModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &crate::ui::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(

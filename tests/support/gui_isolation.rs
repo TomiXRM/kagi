@@ -91,6 +91,27 @@ impl Drop for SavedKeys {
     }
 }
 
+/// Isolate UI-only fixture phases from avatar, update and LLM network probes.
+/// Do not hold this while testing model selection or avatar transport.
+pub(crate) struct OfflineNetwork(Option<std::ffi::OsString>);
+
+impl OfflineNetwork {
+    pub(crate) fn install() -> Self {
+        let previous = std::env::var_os("KAGI_OFFLINE");
+        std::env::set_var("KAGI_OFFLINE", "1");
+        Self(previous)
+    }
+}
+
+impl Drop for OfflineNetwork {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => std::env::set_var("KAGI_OFFLINE", value),
+            None => std::env::remove_var("KAGI_OFFLINE"),
+        }
+    }
+}
+
 /// A stand-in for the user's `$SHELL` while held (#516). A scenario that
 /// starts a terminal for the session it owns — not to watch what the shell is
 /// handed — runs this instead of the login shell, which would source the
@@ -108,7 +129,7 @@ impl StandInShell {
         let script = dir.path().join("shell.sh");
         std::fs::write(
             &script,
-            "#!/bin/sh\nwhile IFS= read -r line; do\n  [ \"$line\" = exit ] && exit 0\ndone\n",
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    exit) exit 0 ;;\n    'exit '*) exit \"${line#exit }\" ;;\n  esac\ndone\n",
         )
         .expect("write the stand-in shell");
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))

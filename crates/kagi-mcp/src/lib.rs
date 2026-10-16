@@ -291,7 +291,7 @@ mod tests {
         json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
     }
 
-    fn call(server: &mut Server, name: &str, args: Value) -> Value {
+    pub(super) fn call(server: &mut Server, name: &str, args: Value) -> Value {
         let resp = server
             .handle(&req(
                 1,
@@ -733,3 +733,6 @@ mod tests {
 #[cfg(test)]
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
+
+#[cfg(test)]
+mod revision_tests;

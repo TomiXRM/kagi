@@ -38,6 +38,8 @@ pub enum BranchNameError {
     CreateLeadingDash(String),
     /// create-branch: a branch with this name already exists.
     CreateExists(String),
+    /// A parent or descendant ref occupies this branch namespace.
+    CreateNamespaceCollision { name: String, existing: String },
 }
 
 impl std::fmt::Display for BranchNameError {
@@ -65,6 +67,13 @@ impl std::fmt::Display for BranchNameError {
                     f,
                     "A branch named '{}' already exists in this repository.",
                     name
+                )
+            }
+            BranchNameError::CreateNamespaceCollision { name, existing } => {
+                write!(
+                    f,
+                    "Branch '{}' conflicts with existing ref '{}'.",
+                    name, existing
                 )
             }
         }
@@ -242,7 +251,8 @@ pub struct DiscardBackup {
     pub path: String,
     /// ODB blob SHA (40-hex) holding the pre-discard working-tree content.
     pub blob: String,
-    /// GC reachability root; recover bytes with `git cat-file blob <reference>`.
+    /// GC root: new discard refs retain a mode-bearing tree (`<reference>:file`
+    /// reads its bytes); legacy discard and other file-backup refs retain blobs.
     pub reference: String,
 }
 
@@ -392,6 +402,46 @@ pub struct PrMergeLocalBranch {
     pub keep_reason: Option<crate::plan_note::PrMergeLocalReason>,
 }
 
+/// Local branch and upstream mapping approved for a Pull.
+///
+/// Execution may fetch newer commits from this same upstream, but must never
+/// reinterpret the approval as a different branch or upstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullIdentity {
+    pub branch: String,
+    pub local_oid: CommitId,
+    pub remote: String,
+    pub upstream_ref: String,
+}
+
+/// Whether the published ref points at a tag object or directly at its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagKind {
+    Lightweight,
+    Annotated,
+}
+
+/// Frozen transport and object identity approved for publishing one tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagPushIdentity {
+    pub name: String,
+    pub remote: String,
+    pub push_urls: Vec<String>,
+    pub object_oid: String,
+    pub peeled_oid: String,
+    pub kind: TagKind,
+}
+
+/// Frozen ordinary Rebase operands and complete candidate count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebaseScope {
+    pub current_ref: String,
+    pub current_oid: String,
+    pub onto_ref: String,
+    pub onto_oid: String,
+    pub total_commits: usize,
+}
+
 /// A complete plan describing an operation, its blockers and warnings.
 /// If blockers are non-empty the UI must not offer Execute.
 /// ADR-0129: the display layer localizes structured title/notes/recovery;
@@ -425,6 +475,14 @@ pub struct OperationPlan {
     /// For non-stash operations this is always `0`.
     pub stash_count_at_plan: usize,
     pub stash_identity: Option<StashIdentity>,
+    /// Frozen local Pull operand, checked before and after execution's fetch.
+    /// `None` for non-Pull and remote-snapshot plans.
+    pub pull_identity: Option<PullIdentity>,
+    pub tag_push_identity: Option<TagPushIdentity>,
+    pub rebase_scope: Option<RebaseScope>,
+    /// Read-only digest of approved index paths, OIDs, modes and conflict stages.
+    /// Required for commit and staged/both amend; never includes stat-cache data.
+    pub approved_index_digest: Option<String>,
     /// Working-tree classification digest at plan time (#295). `Some` for the
     /// operations whose blockers depend on the working tree (discard, merge,
     /// stash apply/pop); `None` where only HEAD matters. `preflight_check`
@@ -435,9 +493,9 @@ pub struct OperationPlan {
     /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
     /// to render a preview file tree (T016).
     pub preview_files: Vec<FileStatus>,
-    /// Commits that will be pushed, as `"<short>  <summary>"` strings.
-    /// Non-empty only for push plans (T-HT-004).  Shown in the plan modal
-    /// (newest first, capped at 100 entries at plan time).
+    /// Commit previews as `"<short>  <summary>"`, capped at 100 entries.
+    /// Push is newest first; ordinary Rebase is oldest first, with its true
+    /// candidate count and frozen operands in `rebase_scope`.
     pub preview_commits: Vec<String>,
     /// History-rewriting flag (ADR-0023).  `true` for plans that rewrite
     /// history (e.g. amend), which the UI must gate behind a **two-stage

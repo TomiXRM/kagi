@@ -8,21 +8,29 @@
 #[macro_use]
 pub mod klog;
 
+pub mod accessibility;
 mod atomic_file;
 pub mod avatar;
 pub mod change_badge;
 pub mod color_vision;
 pub mod commit_header;
 pub mod commit_row;
+pub mod diff_list;
 pub mod divider;
 pub mod file_tree;
+pub mod find;
 pub mod fonts;
 pub mod header_fit;
 pub mod i18n;
+pub mod input;
+pub mod input_actions;
+pub mod keyboard_nav;
 pub mod markdown;
+pub mod motion;
 pub mod pr_viewed;
 pub mod settings;
 pub mod slow_read;
+mod system_accent;
 pub mod theme;
 pub mod theme_apple_dark;
 pub mod theme_apple_light;
@@ -40,4 +48,6 @@ pub mod theme_pinky_boo;
 pub mod theme_tokyo_night;
 pub mod time;
 pub mod time_parse;
+pub mod tooltip;
 pub mod tree_a11y;
+pub mod variable_list;

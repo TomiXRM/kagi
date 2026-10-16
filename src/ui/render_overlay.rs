@@ -37,8 +37,12 @@ pub(crate) fn sync_spinner(
         .h(theme::scaled_px(size))
         .text_color(rgb(accent));
     if theme::reduce_motion() {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::system_accessibility::record_spinner_animation(false);
         return icon.into_any_element();
     }
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::system_accessibility::record_spinner_animation(true);
     icon.with_animation(
         key,
         gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
@@ -70,71 +74,88 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
 
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut stack = div().flex().flex_col().gap_2();
-        for toast in self.toasts() {
-            let (accent, glyph) = match toast.kind {
-                // A bullet, not ⟳: an Info toast reports something that already
-                // happened ("Copied …"), and a rotating arrow that never turns
-                // reads as an operation that never finished (user report).
-                // In-flight messages use `ToastKind::Sync` and its spinner.
-                ToastKind::Info => (theme().color_branch, "\u{2022}"), // •
-                ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
-                ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
-                ToastKind::Sync => (theme().color_branch, ""),
-            };
-            let id = toast.id;
-            let is_sync = toast.kind == ToastKind::Sync;
-            // Sync toasts reuse the busy snackbar's big spinning icon (user
-            // request: "already up to date" must match an in-flight op); the
-            // others keep the compact text glyph.
-            let icon_el: gpui::AnyElement = if is_sync {
-                big_sync_icon(accent, ("kagi-toast-sync", id))
+        let error_line_height = (_window.rem_size() * 1.4).round();
+        // Keep the foreground workspace usable even at accessibility zoom.
+        // Expansion scrolls within the same budget; durable detail stays in OpLog.
+        let budget = _window.viewport_size().height * 0.3;
+        // Pinned GPUI has no live/priority setter. A stable Status node exposes
+        // arrival text without stealing focus or promoting dismissed old cards.
+        let arrival = self.status();
+        let label = arrival
+            .map(|(_, message)| message.clone())
+            .unwrap_or_default();
+        let role = gpui::Role::Status;
+        let mut stack = div()
+            .id("toast-stack")
+            .role(role)
+            .aria_label(label.clone())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .min_h_0()
+            .max_h(budget)
+            .child(e2e::measure_inside("toast-stack"));
+        #[cfg(feature = "gui-e2e")]
+        toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
+        if self.toasts().len() > 1 {
+            use gpui_component::button::{Button, ButtonVariants as _};
+            let owner = cx.entity().downgrade();
+            use gpui_component::Sizable as _;
+            let count = self.toasts().len() - 1;
+            let caption = if self.expanded {
+                Msg::ToastCollapse.t().to_string()
+            } else if count == 1 {
+                Msg::ToastMoreOne.t().to_string()
             } else {
-                div()
-                    .text_color(rgb(accent))
-                    .child(SharedString::from(glyph))
-                    .into_any_element()
+                Msg::ToastMore.t().replace("{count}", &count.to_string())
             };
+            stack = stack.child(
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .rounded(theme::scaled_px(8.))
+                    .bg(rgb(theme().elevated_surface(theme().panel)))
+                    .child(
+                        toast_stack::ToastButton(
+                            Button::new(("toast-summary", 0u64))
+                                .small()
+                                .ghost()
+                                .w_full()
+                                .label(caption.clone())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.toggle_expanded(cx);
+                                })),
+                            0,
+                            self.summary_focus.clone(),
+                            "toast-summary",
+                        )
+                        .aria_label(SharedString::from(caption))
+                        .aria_expanded(self.expanded)
+                        .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                            let _ = owner.update(cx, |stack, cx| stack.toggle_expanded(cx));
+                        })
+                        .on_key_down(super::keyboard_nav::stop_activation_keys),
+                    ),
+            );
+        }
+        let mut cards = div()
+            .id("toast-cards")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .min_h_0()
+            .max_h(if self.toasts().len() > 1 {
+                (budget - theme::scaled_px(40.)).max(gpui::px(0.))
+            } else {
+                budget
+            })
+            .overflow_y_scroll();
+        for toast in self.toasts().iter().rev().filter(|toast| {
+            self.expanded || self.toasts().last().is_some_and(|last| last.id == toast.id)
+        }) {
+            let id = toast.id;
             let leaving = toast.dismissing.is_some();
-            let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                this.begin_exit(id, cx);
-            });
-            // Explicit width so the animated margin-left slides the whole card
-            // horizontally (a stretched flex child wouldn't translate cleanly).
-            let card = div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .when(is_sync, |d| d.items_center().gap_3())
-                .when(!is_sync, |d| d.items_start().gap_2())
-                .px_4()
-                .py_3()
-                .rounded(theme::scaled_px(8.))
-                .bg(rgb(theme().panel))
-                .border_1()
-                .border_color(rgb(accent))
-                .text_base()
-                .text_color(rgb(theme().text_main))
-                .child(div().flex_shrink_0().child(icon_el))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(toast.message.clone()),
-                )
-                .child(
-                    div()
-                        .id(("toast-dismiss", id))
-                        .flex_shrink_0()
-                        .px_1()
-                        .text_color(rgb(theme().text_muted))
-                        .hover(|s| s.text_color(rgb(theme().text_main)))
-                        .on_click(dismiss)
-                        .child(SharedString::from("\u{00d7}")),
-                );
+            let card = toast_card(toast, error_line_height, cx);
 
             // Slide + fade: in from the left on appear, out to the left on
             // dismiss. Keyed by toast id so the animation plays once and holds.
@@ -165,10 +186,143 @@ impl gpui::Render for toast_stack::ToastStack {
                 )
                 .into_any_element()
             };
-            stack = stack.child(animated);
+            cards = cards.child(animated);
         }
-        stack
+        stack.child(cards)
     }
+}
+
+fn toast_card(
+    toast: &Toast,
+    error_line_height: gpui::Pixels,
+    cx: &mut Context<toast_stack::ToastStack>,
+) -> gpui::Stateful<gpui::Div> {
+    let (accent, glyph) = match toast.kind {
+        // Info reports completed feedback; only Sync promises motion.
+        ToastKind::Info => (theme().ui_accent(), "\u{2022}"),
+        ToastKind::Success => (theme().color_success, "\u{2713}"),
+        ToastKind::Error => (theme().color_blocker, "\u{2715}"),
+        ToastKind::Sync => (theme().ui_accent(), ""),
+    };
+    let id = toast.id;
+    let is_sync = toast.kind == ToastKind::Sync;
+    let icon = if is_sync {
+        big_sync_icon(accent, ("kagi-toast-sync", id))
+    } else {
+        div()
+            .text_color(rgb(accent))
+            .child(SharedString::from(glyph))
+            .into_any_element()
+    };
+    // Explicit width lets the animated margin translate the complete card.
+    div()
+        .w_full()
+        .id(("toast-card", id))
+        .relative()
+        .flex_shrink_0()
+        .child(e2e::measure_inside("toast-card"))
+        .on_hover(cx.listener(move |this, hovered: &bool, _, _| {
+            this.set_hovered(id, *hovered);
+        }))
+        .flex()
+        .flex_row()
+        .when(is_sync, |d| d.items_center().gap_3())
+        .when(!is_sync, |d| d.items_start().gap_2())
+        .px_4()
+        .py_3()
+        .rounded(theme::scaled_px(8.))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
+        .border_1()
+        .border_color(rgb(theme().elevated_border(accent)))
+        .text_base()
+        .text_color(rgb(theme().text_main))
+        .child(div().flex_shrink_0().child(icon))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .when(toast.kind == ToastKind::Error, |d| {
+                    d.line_height(error_line_height)
+                        .max_h(error_line_height * 3.)
+                        .line_clamp(3)
+                        .text_ellipsis()
+                })
+                .when(toast.kind != ToastKind::Error, |d| {
+                    d.whitespace_nowrap().text_ellipsis()
+                })
+                .child(toast.message.clone())
+                .when(cfg!(feature = "gui-e2e"), |d| {
+                    d.child(e2e::measure_inside(format!("toast-message-{id}")))
+                }),
+        )
+        .when_some(toast.action_focus.clone(), |card, focus| {
+            use gpui_component::button::{Button, ButtonVariants as _};
+            use gpui_component::Sizable as _;
+            let owner = cx.entity().downgrade();
+            card.child(e2e::measure_control(
+                "clone-completion-open",
+                toast_stack::ToastButton(
+                    Button::new(("toast-open-repository", id))
+                        .ghost()
+                        .small()
+                        .label(Msg::ToastOpenRepository.t())
+                        .on_click(cx.listener(move |stack, _, _, cx| {
+                            stack.activate_action(id, cx);
+                        })),
+                    id,
+                    focus,
+                    "toast-open-repository",
+                )
+                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                    let _ = owner.update(cx, |stack, cx| stack.activate_action(id, cx));
+                })
+                .on_key_down(super::keyboard_nav::stop_activation_keys),
+            ))
+        })
+        .child(toast_close_control(toast, cx))
+}
+
+fn toast_close_control(
+    toast: &Toast,
+    cx: &mut Context<toast_stack::ToastStack>,
+) -> gpui::AnyElement {
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::Sizable as _;
+    use kagi_ui_core::tooltip::HoverTooltip as _;
+    let id = toast.id;
+    let owner = cx.entity().downgrade();
+    let control = toast_stack::ToastButton(
+        Button::new(("toast-dismiss", id))
+            .ghost()
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
+            .on_click(
+                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.begin_exit(id, cx)),
+            ),
+        id,
+        toast.close_focus.clone(),
+        "toast-dismiss",
+    )
+    .aria_label(SharedString::from(Msg::ToastDismiss.t()))
+    .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+        let _ = owner.update(cx, |stack, cx| stack.begin_exit(id, cx));
+    })
+    .on_key_down(super::keyboard_nav::stop_activation_keys);
+    #[cfg(feature = "gui-e2e")]
+    return e2e::measure_control(
+        format!("toast-dismiss-{id}"),
+        control.hover_tooltip_builder(("toast-dismiss-help", id), |window, cx| {
+            gpui_component::tooltip::Tooltip::element(|_, _| {
+                e2e::measure_control("toast-dismiss-tooltip", Msg::ToastDismiss.t())
+            })
+            .build(window, cx)
+        }),
+    );
+    #[cfg(not(feature = "gui-e2e"))]
+    control
+        .hover_tooltip(("toast-dismiss-help", id), Msg::ToastDismiss.t())
+        .into_any_element()
 }
 
 // The Operation Log panel's `impl Render for OpLogPanel` moved to
@@ -194,9 +348,10 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        self.modal_section_overrides.request_frame(window);
         let (commit_panel_open, commit_panel, file_menu) = if repo_popovers {
             (
-                self.ui().commit_panel_open,
+                self.commit_panel_surface_open(),
                 self.ui().commit_panel.clone(),
                 self.file_menu
                     .as_ref()
@@ -241,7 +396,7 @@ impl KagiApp {
             self.rebase_current_onto_modal().cloned(),
             self.branch_cleanup_modal().cloned(),
             self.discard_modal().cloned(),
-            self.editor_dirty_guard_modal().cloned(),
+            self.editor_dirty_guard_modal().is_some(),
             self.editor_fs_prompt_modal().cloned(),
             self.editor_delete_confirm_modal().cloned(),
             file_menu,
@@ -293,7 +448,7 @@ impl KagiApp {
         mut rebase_current_onto_modal: Option<RebaseCurrentOntoModal>,
         mut branch_cleanup_modal: Option<BranchCleanupModal>,
         mut discard_modal: Option<DiscardModal>,
-        mut editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
+        editor_dirty_guard_open: bool,
         mut editor_fs_prompt_modal: Option<EditorFsPromptModal>,
         mut editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
         mut file_menu: Option<file_menu::FileMenu>,
@@ -311,6 +466,11 @@ impl KagiApp {
         use super::front_layer::{LayerKind, Z_ORDER};
         let mut el = el;
         for kind in Z_ORDER.iter().copied().filter(|kind| kind.in_modal_layer()) {
+            // Keep the workspace out of the trap's subtree. Input cards own
+            // their named frame; alerts reuse that same gpui-kit trap here.
+            let alert_parent = (kind == LayerKind::EarlyModal
+                && self.active_modal_needs_alert_trap())
+            .then(|| std::mem::replace(&mut el, div().size_full().absolute().top_0().left_0()));
             el = match kind {
                 LayerKind::EarlyModal => el
                     .when_some(plan_modal.take(), |el, modal| {
@@ -388,6 +548,9 @@ impl KagiApp {
                     .when_some(self.trust_repo_modal().cloned(), |el, modal| {
                         el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
                     })
+                    .when_some(self.terminal_paste_modal().cloned(), |el, modal| {
+                        el.child(super::terminal::input::render_paste_confirmation(modal, cx))
+                    })
                     // ── Unlock-worktree confirmation ─────────────────
                     .when_some(unlock_worktree_modal.take(), |el, modal| {
                         el.child(render_unlock_worktree_modal(
@@ -445,6 +608,16 @@ impl KagiApp {
                             cx,
                         ))
                     })
+                    .when(self.analyze_help_modal().is_some(), |el| {
+                        el.child(super::analyze_help::render_analyze_help(
+                            modal_focus.clone(),
+                            window,
+                            cx,
+                        ))
+                    })
+                    .when(self.about_modal().is_some(), |el| {
+                        el.child(super::about::render_about(modal_focus.clone(), window, cx))
+                    })
                     .when_some(self.apply_suggestion_modal().cloned(), |el, modal| {
                         el.child(
                             super::operations::apply_suggestion::render_apply_suggestion_modal(
@@ -459,6 +632,7 @@ impl KagiApp {
                             super::operations::oplog_restore::render_oplog_restore_modal(
                                 modal,
                                 &self.modal_section_overrides,
+                                window,
                                 cx,
                             ),
                         )
@@ -477,6 +651,7 @@ impl KagiApp {
                     .when_some(set_upstream_modal.take(), |el, modal| {
                         el.child(render_set_upstream_modal(
                             modal,
+                            modal_focus.as_ref(),
                             &self.modal_section_overrides,
                             cx,
                         ))
@@ -484,6 +659,7 @@ impl KagiApp {
                     .when_some(rename_branch_modal.take(), |el, modal| {
                         el.child(render_rename_branch_modal(
                             modal,
+                            modal_focus.as_ref(),
                             &self.modal_section_overrides,
                             cx,
                         ))
@@ -519,7 +695,7 @@ impl KagiApp {
                     })
                     // ── Remote SSH browse modal overlay (ADR-0089) ───
                     .when_some(remote_browse.take(), |el, modal| {
-                        el.child(render_remote_browse(modal, modal_focus.clone(), cx))
+                        el.child(render_remote_browse(modal, modal_focus.clone(), window, cx))
                     })
                     // ── Clone card (opened from Home, #923) ──────────
                     .when_some(self.clone_modal().cloned(), |el, modal| {
@@ -620,8 +796,23 @@ impl KagiApp {
                         ))
                     })
                     // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
-                    .when_some(editor_dirty_guard_modal.take(), |el, modal| {
-                        el.child(render_editor_dirty_guard_modal(modal, cx))
+                    .when(editor_dirty_guard_open, |el| {
+                        el.child(render_editor_dirty_guard_modal(
+                            self.host_dirty_guard_open(),
+                            self.host_dirty_buffer_count(cx),
+                            self.editor_dirty_guard_modal()
+                                .is_some_and(|modal| modal.saving.is_some()),
+                            self.host_dirty_buffer_count(cx) == 0
+                                && self.editor_dirty_guard_modal().is_some_and(|modal| {
+                                    matches!(modal.intent, EditorPendingIntent::Relaunch)
+                                }),
+                            if self.may_close_host() {
+                                Msg::UpdateRestartReady
+                            } else {
+                                self.host_close_hold_message(true)
+                            },
+                            cx,
+                        ))
                     })
                     // ── Editor Workspace tree fs-prompt (Rename/New File/New Folder) ──
                     .when_some(editor_fs_prompt_modal.take(), |el, modal| {
@@ -640,7 +831,15 @@ impl KagiApp {
                     .when_some(
                         self.ui().pr_menu.clone().filter(|_| self.pr_menu_visible()),
                         |el, (pr, pos)| {
-                            el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
+                            el.child(render_pr_menu_overlay(
+                                pr,
+                                pos,
+                                self.ui().pr_menu_keys.clone(),
+                                self.active_session(),
+                                self.window_active,
+                                window,
+                                cx,
+                            ))
                         },
                     ),
                 LayerKind::FilterMenu => el.when(self.filter_menu_visible(), |el| {
@@ -656,6 +855,7 @@ impl KagiApp {
                                 fi,
                                 pos,
                                 window.viewport_size(),
+                                self.window_active,
                                 cx,
                             ))
                         },
@@ -663,7 +863,13 @@ impl KagiApp {
                 LayerKind::FileMenu => el
                     // ── Unstaged file context menu (right-click → Discard) ──
                     .when_some(file_menu.take(), |el, menu| {
-                        el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
+                        el.child(render_file_menu_overlay(
+                            menu,
+                            self.file_menu_keys.clone(),
+                            self.window_active,
+                            window,
+                            cx,
+                        ))
                     }),
                 LayerKind::CommitPlan => el
                     // ── Commit plan modal overlay (T025) ─────────────
@@ -677,7 +883,7 @@ impl KagiApp {
                 LayerKind::SmartCommit => el
                     // ── Smart Commit modal overlay (single ActiveModal slot) ────
                     .when_some(self.smart_commit_modal().cloned(), |el, modal| {
-                        el.child(render_smart_commit_modal(modal, cx))
+                        el.child(render_smart_commit_modal(modal, self, window, cx))
                     }),
                 LayerKind::Update => el
                     // ── Auto-update modal overlay (ADR-0082) ──────────
@@ -688,6 +894,7 @@ impl KagiApp {
                         el.child(render_update_modal(
                             plan.clone(),
                             self.update_installing,
+                            self.update_pending_relaunch.is_some(),
                             self.update_status.clone(),
                             window,
                             cx,
@@ -700,6 +907,14 @@ impl KagiApp {
                 | LayerKind::MenuOverlay
                 | LayerKind::PlatformMenu => unreachable!("outer render layer"),
             };
+            if let Some(parent) = alert_parent {
+                use gpui_component::FocusTrapElement as _;
+                if let Some(focus) = &self.modal_focus {
+                    el = parent.child(el.focus_trap("alert-modal-frame", focus));
+                } else {
+                    el = parent.child(el);
+                }
+            }
         }
         el
     }

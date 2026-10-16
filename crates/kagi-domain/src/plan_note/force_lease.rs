@@ -45,6 +45,11 @@ impl ForceLeaseNote {
             ),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the force-with-lease-push op.
@@ -62,6 +67,11 @@ impl ForceLeaseTitle {
                 format!("Force-with-lease push '{}' to '{}'", branch, remote)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -91,6 +101,11 @@ impl ForceLeaseRecovery {
                 "The remote's previous tip was '{previous_remote_sha}'. To restore it (itself lease-protected against this push):\n  git push --force-with-lease={branch}:{new_sha} {remote} {previous_remote_sha}:refs/heads/{branch}\nAnyone who pulled the rewritten history will still need to reconcile locally."
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

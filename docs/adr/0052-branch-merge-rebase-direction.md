@@ -37,3 +37,46 @@ hard blocker にする方針を撤回**する(W31-MERGE-INTO-CONFLICT)。上記 
   reset --hard/clean 不使用)に委譲し、pre-merge の clean 状態へ戻す。
 - 本改訂は **merge のみ**。cherry-pick / revert / stash-pop の同等化は別 wave。
 - non-conflict(ff / merge-commit)の意味論は §Merge から変更なし。
+
+## Amendment — 2026-10-12: bounded confirmation captions (#1343/#1344)
+
+The plan heading retains both complete source and destination identities.
+Its Rebase/Replay action names the source (`Rebase <source>` / JA
+`<source> を rebase`), not the destination. Long action captions use a
+zoom-scaled 160px middle-ellipsis region; the full action and directional
+plan title remain available in the action tooltip/accessibility description.
+This relaxes the original requirement to repeat both full names in every
+visible action, not the requirement to disclose operation direction.
+Replay retains its warning caption and existing two-stage approval gate.
+The armed warning has no branch name and uses the ordinary, unellipsized
+button so its complete safety wording remains visible in both languages.
+
+## Amendment — 2026-10-14: Rebase plan scope (#1530)
+
+The current branch remains attached and clean after a successful rebase, but
+that alone does not disclose the operation. Plan time enumerates non-merge
+commits reachable from HEAD but not the target, oldest first, with short OIDs
+and subjects. The shared scrollable list shows the full candidate count and
+supports Copy. EN/JA captions identify replay candidates, not pushes.
+Git may skip equivalent patches or commits that become empty; this is a
+candidate range, not a promise of a particular final SHA or replay count.
+No render-time Git reads or plan-time repository writes are introduced.
+Replay's ref-update script stays separate and is not relabeled as commits.
+Planning runs off the UI thread through the existing session/visit-owned
+planning lifecycle. The preview retains at most 100 subjects; a separate
+typed scope retains the true total and presents a localized remaining count.
+Copy formatting/joining happens only on activation. Linear ancestry with
+no merge commits is already up to date, matching Git's no-op behavior.
+The scope freezes the current ref/full OID and target operand/full OID.
+CURRENT shows the original tip; AFTER identifies the target tip and marks
+the result OID unknown. Mandatory preflight refuses target drift before
+backup/write admission, and execution uses the approved target OID rather
+than resolving the branch name again.
+Rebase planning admission uses the same operation latch as writes, refusing
+repeat selection and other in-flight plans before changing any planning tag.
+Its tag is registered in the shared EN/JA busy-label table. Frozen scope is
+projected only by the UI display/Copy adapter; semantic current/predicted
+summaries remain `branch: X` / `clean`, preserving durable success receipts.
+
+
+

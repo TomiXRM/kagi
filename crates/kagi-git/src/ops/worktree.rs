@@ -369,6 +369,9 @@ fn plan_create_worktree_impl(
             }));
         }
         OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             // `title`/`recovery` are always overwritten below (both branches
             // of this `if`/`else` converge on the same final assignment) —
@@ -393,6 +396,7 @@ fn plan_create_worktree_impl(
             head_at_plan: head,
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -658,6 +662,9 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
     warnings.extend(lock_leftover_note(repo, name));
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Worktree(WorktreeTitle::UnlockWorktree {
             name: name.to_string(),
@@ -684,6 +691,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

@@ -333,27 +333,30 @@ pub(crate) fn render_pr_fields_modal(
         this.confirm_pr_fields(cx);
     });
 
+    let title = match modal.target {
+        FieldTarget::Pr { number, .. } => format!("#{} \u{00b7} {}", number, modal.field.title()),
+        FieldTarget::NewIssue { .. } => format!(
+            "{} \u{00b7} {}",
+            Msg::IssueNewFieldsTitle.t(),
+            modal.field.title()
+        ),
+    };
     let card = modal_card(MODAL_W_SM)
         .child(super::modal_renderers::render_modal_title_row(
-            SharedString::from(match modal.target {
-                FieldTarget::Pr { number, .. } => {
-                    format!("#{} \u{00b7} {}", number, modal.field.title())
-                }
-                FieldTarget::NewIssue { .. } => format!(
-                    "{} \u{00b7} {}",
-                    Msg::IssueNewFieldsTitle.t(),
-                    modal.field.title()
-                ),
-            }),
+            SharedString::from(title.clone()),
             None,
         ))
         .child(
             modal_body()
-                .children(
-                    app.pr_fields_input
-                        .as_ref()
-                        .map(gpui_component::input::Input::new),
-                )
+                .children(app.pr_fields_input.as_ref().map(|input| {
+                    gpui_component::input::Input::new(input)
+                        .context_menu(kagi_ui_core::input::context_menu(input, false))
+                        .aria_label(match modal.field {
+                            PrField::Reviewers => Msg::A11yPrReviewersFilter.t(),
+                            PrField::Assignees => Msg::A11yPrAssigneesFilter.t(),
+                            PrField::Labels => Msg::A11yPrLabelsFilter.t(),
+                        })
+                }))
                 .child(list)
                 // A read that failed says so; it never masquerades as "the
                 // repository offers nothing".
@@ -361,7 +364,7 @@ pub(crate) fn render_pr_fields_modal(
                     div()
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
-                        .child(error)
+                        .child(crate::ui::i18n::op::user_text::diagnostic(&error).into_owned())
                 }))
                 .when(loading, |el| {
                     el.child(
@@ -373,11 +376,7 @@ pub(crate) fn render_pr_fields_modal(
                 }),
         )
         .child(
-            div()
-                .flex()
-                .flex_row()
-                .justify_end()
-                .gap_2()
+            super::button_style::modal_button_row()
                 .child(super::e2e::measure_control(
                     "pr-fields-cancel",
                     modal_button(
@@ -405,5 +404,14 @@ pub(crate) fn render_pr_fields_modal(
                     ),
                 )),
         );
-    super::modal_renderers::modal_overlay(card).into_any_element()
+    super::modal_renderers::modal_overlay(super::modal_renderers::input_dialog_frame(
+        "pr-fields-card",
+        &title,
+        (!loading && changed).then_some(Msg::PrFieldsApply.t()),
+        card,
+        app.modal_focus.as_ref(),
+        |frame| frame,
+        cx,
+    ))
+    .into_any_element()
 }

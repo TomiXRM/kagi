@@ -5,6 +5,7 @@ use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
 use kagi_domain::github::{Issue, IssueListSnapshot, IssueListTab, IssueState};
 use kagi_git::github::PrFetchError;
+use kagi_ui_core::theme;
 
 fn page(numbers: std::ops::Range<u64>, next_cursor: Option<&str>) -> IssueListSnapshot {
     IssueListSnapshot {
@@ -59,9 +60,13 @@ fn scroll_bottom(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
 
 pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["ui_zoom"]);
+    let before_zoom = theme::zoom();
+    theme::set_zoom(1.);
     let repo = fixture.path().canonicalize().unwrap();
     let (app, win) = mount(cx, &repo);
-    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..101, Some("page-2")))));
+    crate::pr_detail_adaptive::resize(cx, win, (1000., 720.));
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..2, None))));
     app.update(cx, |app, cx| {
         app.seed_issue_composer_for_e2e(cx);
         app.show_issues_mode(cx);
@@ -70,6 +75,23 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
     let recent = measure(cx, win, "issue-filter-tab-3");
     cx.simulate_click(win, recent.center(), gpui::Modifiers::none());
     cx.run_until_parked();
+    // Compare the same production row and header before/after overflow rather
+    // than encoding a pixel height: title, metadata and padding own the height.
+    let natural_card = measure(cx, win, "issue-mode-card-1").size;
+    let natural_header = measure(cx, win, "issue-filter-tab-3").size;
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..101, Some("page-2")))));
+    app.update(cx, |app, cx| app.refresh_github_issues(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        measure(cx, win, "issue-mode-card-1").size.height,
+        natural_card.height,
+        "100 Issue cards must scroll without compressing title and metadata"
+    );
+    assert_eq!(
+        measure(cx, win, "issue-filter-tab-3").size.height,
+        natural_header.height,
+        "an expanded Issue section must retain its natural header height"
+    );
     let owner = cx.read(|cx| *app.read(cx).ui.keys().next().expect("fixture owner"));
     let (task, failed_page) = deferred(cx);
     KagiApp::queue_issue_list_fetch_for_e2e(task);
@@ -113,7 +135,7 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
     let before_append = cx.read(|cx| {
         let ui = &app.read(cx).ui[&owner];
         assert!(ui.github_issues_loading_more);
-        ui.github_issues_list.logical_scroll_top().item_ix
+        ui.github_issues_list.logical_scroll_top()
     });
     second_page.send(Ok(page(101..201, Some("page-3"))));
     cx.run_until_parked();
@@ -131,8 +153,15 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
         assert!(ui.github_issues_error.is_none());
         assert_eq!(
             ui.github_issues_list.logical_scroll_top().item_ix,
-            before_append,
+            before_append.item_ix,
             "append must retain the viewport anchor"
+        );
+        assert!(
+            (ui.github_issues_list.logical_scroll_top().offset_in_item
+                - before_append.offset_in_item)
+                .abs()
+                <= gpui::px(1.),
+            "append must preserve the intra-row pixel anchor, not follow the new tail"
         );
     });
     KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(201..202, None))));
@@ -298,6 +327,131 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
         recomputations_before_filter + 1,
         "one filter mutation must recompute once across the sidebar and main feed"
     );
+    app.update(cx, |app, cx| {
+        let ui = app.ui.values_mut().next().unwrap();
+        ui.github_issues_cursor = Some("filtered-must-not-fetch".into());
+        cx.notify();
+    });
+    scroll_bottom(cx, win);
+    cx.read(|cx| {
+        let ui = &app.read(cx).ui[&owner];
+        assert_eq!(ui.github_issues.len(), 300);
+        assert_eq!(
+            ui.github_issues_cursor.as_deref(),
+            Some("filtered-must-not-fetch")
+        );
+        assert!(
+            !ui.github_issues_loading_more,
+            "text-filter tail must not auto-page"
+        );
+        assert!(ui.github_issues_error.is_none());
+    });
+    same_count_feed_geometry(cx, &app, win);
+    theme::set_zoom(before_zoom);
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS issues_pagination");
+}
+
+fn same_count_feed_geometry(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    win: AnyWindowHandle,
+) {
+    app.update(cx, |app, cx| {
+        app.sidebar.width = 220.;
+        let ui = app.ui.values_mut().next().unwrap();
+        ui.github_issues_cursor = None;
+        ui.github_issue_filter.common.text.clear();
+        ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
+        cx.notify();
+    });
+    measure(cx, win, "issue-main-list");
+    let original = measured_feed_row(cx, app, win);
+    app.update(cx, |app, cx| {
+        let ui = app.ui.values_mut().next().unwrap();
+        let issue = &mut ui.github_issues[0];
+        issue.title = "Same identity, newly wrapped metadata 日本語 ".repeat(30);
+        issue.author = "updated-author".into();
+        issue.comment_count = 12345;
+        ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
+        cx.notify();
+    });
+    let expanded = measured_feed_row(cx, app, win);
+    assert!(
+        expanded.size.height > original.size.height,
+        "same-count metadata growth must invalidate the measured feed row"
+    );
+    app.update(cx, |app, cx| {
+        app.sidebar.width = 340.;
+        cx.notify();
+    });
+    let narrowed = measured_feed_row(cx, app, win);
+    assert!(
+        narrowed.size.width < expanded.size.width,
+        "sidebar width must change the actual feed width at 1000x720"
+    );
+    assert!(
+        narrowed.size.height > expanded.size.height,
+        "narrower wrapped metadata must be remeasured"
+    );
+    theme::set_zoom(1.67);
+    app.update(cx, |_, cx| cx.notify());
+    let zoomed = measured_feed_row(cx, app, win);
+    assert!(
+        zoomed.size.height > narrowed.size.height,
+        "zoom must invalidate cached metadata geometry"
+    );
+    theme::set_zoom(1.);
+    app.update(cx, |app, cx| {
+        app.sidebar.width = 220.;
+        let ui = app.ui.values_mut().next().unwrap();
+        ui.github_issues[0].title = "Issue 1".into();
+        ui.github_issues[0].author.clear();
+        ui.github_issues[0].comment_count = 0;
+        ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
+        cx.notify();
+    });
+    let restored = measured_feed_row(cx, app, win);
+    assert_eq!(
+        restored.size, original.size,
+        "same-count shrink must release the old height, not retain a high-water mark"
+    );
+    assert_eq!(cx.read(|cx| app.read(cx).ui().github_issues.len()), 300);
+    scroll_bottom(cx, win);
+    let viewport = measure(cx, win, "issue-main-list");
+    let last = measure(cx, win, "issue-main-row-300");
+    assert!(
+        last.top() >= viewport.top() && last.bottom() <= viewport.bottom() + gpui::px(1.),
+        "the final Issue must remain reachable after geometry invalidation"
+    );
+}
+
+fn measured_feed_row(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    win: AnyWindowHandle,
+) -> gpui::Bounds<gpui::Pixels> {
+    app.update(cx, |app, cx| {
+        app.ui().github_issues_list.scroll_to(gpui::ListOffset {
+            item_ix: 3,
+            offset_in_item: gpui::px(0.),
+        });
+        cx.notify();
+    });
+    measure(cx, win, "issue-main-list");
+    let row = measure(cx, win, "issue-main-row-1");
+    cx.read(|cx| {
+        let list = &app.read(cx).ui().github_issues_list;
+        assert_eq!(
+            list.measured_height(3),
+            Some(row.size.height),
+            "the row cache must contain live layout, never an estimate"
+        );
+        assert_eq!(
+            list.bounds_for_item(3),
+            Some(row),
+            "painted row and list geometry must agree"
+        );
+    });
+    row
 }

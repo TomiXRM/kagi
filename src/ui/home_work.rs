@@ -267,10 +267,17 @@ impl KagiApp {
     pub(super) fn open_work_item_url(&mut self, url: &str, cx: &mut Context<Self>) {
         self.drop_pending_open(cx);
         klog!("home: open on github {}", url);
+        Self::open_link_url(url, cx);
+    }
+
+    /// The shared OS URL boundary; native GUI scenarios record without a browser.
+    pub(super) fn open_link_url(url: &str, cx: &mut gpui::App) {
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_opened_url(url);
         #[cfg(not(feature = "gui-e2e"))]
         cx.open_url(url);
+        #[cfg(feature = "gui-e2e")]
+        let _ = cx;
     }
 
     /// The PR's refs have arrived. Opened only while it is still the PR
@@ -302,7 +309,11 @@ impl KagiApp {
                 let message = Msg::HomeWorkOpenFailed
                     .t()
                     .replacen("{}", &key.1.to_string(), 1)
-                    .replacen("{}", &error.to_string(), 1);
+                    .replacen(
+                        "{}",
+                        &crate::ui::i18n::op::user_text::diagnostic(&error.to_string()),
+                        1,
+                    );
                 self.push_toast(super::ToastKind::Error, message, cx);
             }
         }
@@ -332,6 +343,9 @@ impl KagiApp {
                 app.home_github.work.opening = None;
                 app.home_github.work.version += 1;
                 cx.notify();
+                let display_reason = addressed.as_ref().err().map(|error| {
+                    crate::ui::i18n::op::user_text::diagnostic(&error.to_string()).into_owned()
+                });
                 let error = match addressed {
                     Ok(id) if id.eq_ignore_ascii_case(&key.0) => {
                         if !app.home_in_front() {
@@ -344,7 +358,7 @@ impl KagiApp {
                             // repository again, which may have moved since
                             // `id` was verified (#940 review).
                             app.address_issues_to(&id, cx);
-                            app.show_issues_mode(cx);
+                            app.show_issues_mode_opening(Some(key.1), cx);
                             app.load_github_issue_detail(key.1, window, cx);
                         }
                         return;
@@ -360,7 +374,13 @@ impl KagiApp {
                         .replacen("{}", &error.to_string(), 1),
                 };
                 klog!("home: open issue {}#{} refused: {error}", key.0, key.1);
-                app.push_toast(super::ToastKind::Error, error, cx);
+                let message = display_reason.map_or(error, |reason| {
+                    Msg::HomeWorkOpenFailed
+                        .t()
+                        .replacen("{}", &key.1.to_string(), 1)
+                        .replacen("{}", &reason, 1)
+                });
+                app.push_toast(super::ToastKind::Error, message, cx);
             });
         })
         .detach();
@@ -420,7 +440,7 @@ impl KagiApp {
             PANES.iter().position(|&p| p == active),
             super::keyboard_nav::Activation::Automatic,
             self.root_focus.clone(),
-            move |slot, _, cx| {
+            move |slot, _, _, cx| {
                 let _ = app.update(cx, |app, cx| app.set_home_pane(PANES[slot], cx));
             },
             cx,
@@ -430,20 +450,14 @@ impl KagiApp {
             .flex()
             .flex_row()
             .items_center()
+            .min_w(px(0.))
+            .flex_shrink(1.)
             .gap_1()
             .p(theme::scaled_px(3.))
             .rounded_lg()
             .bg(rgb(theme().panel));
-        for (slot, (pane, label, count, loading)) in cells.into_iter().enumerate() {
-            row = row.child(pane_cell(
-                &tabs,
-                slot,
-                pane,
-                label,
-                count,
-                loading,
-                pane == active,
-            ));
+        for (slot, cell) in cells.into_iter().enumerate() {
+            row = row.child(pane_cell(&tabs, slot, cell, cell.0 == active));
         }
         row.into_any_element()
     }
@@ -457,12 +471,10 @@ const PANES: [HomePane; 3] = [HomePane::Repos, HomePane::Prs, HomePane::Issues];
 fn pane_cell(
     tabs: &super::keyboard_nav::TabList,
     slot: usize,
-    pane: HomePane,
-    label: &'static str,
-    count: Option<usize>,
-    loading: bool,
+    cell: (HomePane, &'static str, Option<usize>, bool),
     active: bool,
 ) -> AnyElement {
+    let (pane, label, count, loading) = cell;
     let id = match pane {
         HomePane::Repos => "home-pane-repos",
         HomePane::Prs => "home-pane-prs",
@@ -472,22 +484,22 @@ fn pane_cell(
         Some(count) => format!("{label} {count}"),
         None => label.to_string(),
     };
-    let fg = if active {
-        theme().accent_text_on(theme().surface)
+    let fg = rgb(if active {
+        theme().text_main
     } else {
         theme().text_muted
-    };
+    });
     let badge = match count {
         Some(count) => Some(
             div()
                 .text_xs()
                 .px(theme::scaled_px(6.))
                 .rounded_md()
-                .bg(rgb(if active {
-                    theme().selected
+                .bg(if active {
+                    theme().segment_selected_bg()
                 } else {
-                    theme().surface
-                }))
+                    rgb(theme().surface).into()
+                })
                 .text_color(rgb(theme().text_sub))
                 .child(SharedString::from(count.to_string()))
                 .into_any_element(),
@@ -496,7 +508,11 @@ fn pane_cell(
             format!("{id}-spinner"),
             super::render_overlay::sync_spinner(
                 12.,
-                theme().text_muted,
+                if active {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                },
                 SharedString::from(format!("{id}-spinner")),
             ),
         )),
@@ -506,6 +522,7 @@ fn pane_cell(
         .cell(slot, &name, div().id(id))
         .flex()
         .flex_row()
+        .flex_shrink(1.)
         .items_center()
         .gap_2()
         .px(super::keyboard_nav::inset(12.))
@@ -513,9 +530,9 @@ fn pane_cell(
         .rounded_md()
         .cursor_pointer()
         .text_sm()
-        .text_color(rgb(fg))
+        .text_color(fg)
         .when(active, |el| {
-            el.bg(rgb(theme().surface))
+            el.bg(theme().segment_selected_bg())
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
@@ -527,7 +544,11 @@ fn pane_cell(
                 HomePane::Prs => "home-pane-prs-label",
                 HomePane::Issues => "home-pane-issues-label",
             },
-            SharedString::from(label),
+            div()
+                .min_w(px(0.))
+                .flex_shrink(1.)
+                .truncate()
+                .child(SharedString::from(label)),
         ))
         .children(badge)
         .min_w(px(0.));

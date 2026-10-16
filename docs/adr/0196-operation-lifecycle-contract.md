@@ -354,11 +354,15 @@ remote branch fetch の `[kagi] fetch-remote-branch: ok` / `failed` 行は
 terminal klog 行を出している。
 離脱後の fetch / remote branch fetch / PR ref fetch の失敗 receipt は、永続化と
 Operation Log panel への追加を同時に行い、panel の自動表示と footer/toast
-のみ current visit に限定する（#992 review 4175461885）。#643 S6 の
-activation は PR mode を破棄するため、新 visit で同じ PR を開き直すと
-その visit の fetch が始まる。旧 visit の完了は新 fetch の loading latch
-と data を触らず、もし新 visit の fetch が走っておらず head が未読なら
-`fetch_pr_for_open` で一度だけ再開する（#992 review 4175505337）。
+のみ current visit に限定する（#992 review 4175461885）。ADR-0200 の
+retention 契約（#1119）では activation は PR mode・predicate・accepted rows・
+opened panes・draft を保持し、旧 visit/request の publication 権だけを失効する。
+新 visit の `enter_tab` → `refresh_github_prs` による GitHub L1 refresh が
+`sync_open_pr_tabs` → `reload_moved_pr_tabs` → `fetch_pr_for_open` を通して
+retained pane の head を再取得する（repository read の pane revalidation ではない）。
+旧 visit の完了は新 fetch の loading latch と data を触らず、もし新 visit の
+fetch が走っておらず head が未読なら `fetch_pr_for_open` で一度だけ再開する
+（#992 review 4175505337）。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
@@ -459,3 +463,59 @@ command、fixture manifest、raw artifact、result、limitation、affected API�
 - `FamilyEvidence` に variant を足さない family は移行できない（Wave 2 の完了条件）
 - `LegacyBusy` と `busy_op` の削除が Wave 3 の完了条件 — **2026-09-13 達成**（#703 の Windows stop proof は #728 の blocking CI 化で完了）
 - 本 ADR の時点で**コードは 1 行も変えていない**。固定したのは型・表・順序だけである
+
+## Amendment — 2026-10-13: actionable notice dismissal (#1366)
+
+Escape or a dismissal/Close route acknowledges the **presentation**, not the
+underlying reconcile requirement. Remove the active AppNotice from the immediate
+presentation queue instead of putting it back for the next render. Dropping its
+payload also drops `release_armed` and the old reconciliation read; it must never
+release a lease, acknowledge the requirement or record an unobservable release.
+The existing #1292 alert-focus lifecycle restores the valid opener (or the root
+if the opener is no longer drawn).
+
+A fresh explicit mutation admission refusal is a recurring condition and may
+offer Inspect again through `blocking_reconcile`. Planless writers (Fetch,
+Editor Save and the other `reserve_write_for` callers) share the existing
+capability-aware refusal presenter rather than enqueueing a plain dead-end
+message. Ordinary renders and reads do not recreate dismissed notices. The
+Operation Log retains the original durable detail; this fix does not add an
+OpLog Inspect action or a new mapping between receipts and in-session operation
+IDs. Reinspection uses the existing refusal route and obtains a fresh read
+before either release step.
+An explicit enqueue into a session already waiting on reconciliation is also a
+recurring write request, even when the queue never retries admission. Its
+`Enqueued` effect offers the blocking Inspect notice unless the same requirement
+already has an active or queued Inspect/Acknowledge notice. Queue ticks and
+renders do not present it again after Escape; the original queue wait and write
+blockade remain unchanged.
+
+Return keeps the existing non-destructive primary action (Inspect, ordinary
+Acknowledge or the first arm step). Handled modal Return is consumed before
+default text input delivery, so it cannot insert a newline into the retained
+Input that opened the notice. Root Return on the armed destructive release
+continues to cancel, now dismissing its presentation rather than reopening an
+unarmed copy. Unread notices already queued may present next; a notice displaced
+by another user-opened dialog is still unread and remains queued under #718.
+
+
+## Amendment — 2026-10-15: Fetch authentication failures (#1561)
+
+Fetch retains a typed authentication failure with the attempted remote name and
+complete CLI diagnostic. Its Failed outcome is a single-line localized EN/JA
+summary identifying the remote and asking the user to check credentials. The
+optional receipt `technical_detail` holds the unchanged full CLI diagnostic,
+rendered in expanded detail and Operation Log Copy, never in the toast or row
+summary. The wire codec omits this field when absent, so ordinary/old receipt
+bytes remain unchanged; old lines read it as `None`. A non-string optional
+detail is ignored as `None` without losing the receipt. Manual, quiet, departed
+and remote-branch menu Fetch attempts retain the same detail and exactly one receipt.
+The existing bounded toast/footer presenter and frozen session/visit ownership
+remain the only delivery path. Other failure and Unknown wording is unchanged.
+
+Non-interactive Git sets `GIT_ASKPASS` and `SSH_ASKPASS` to empty strings, retains
+`core.askPass=` hardening and `GIT_TERMINAL_PROMPT=0`, and launches no synthetic
+helper. Global credential helpers remain available; this does not add credential
+storage, automatic authentication retry or a success fallback. A loopback HTTP
+Basic 401 fixture covers the backend and real native Fetch presentation in both
+languages and Apple themes, with unchanged refs and full diagnostic Copy.

@@ -16,6 +16,68 @@ use super::external_editor::os_opener;
 use super::i18n;
 use super::settings_view::{self, ThemeOption, ThemeSelectState};
 use super::theme::{self, ThemeLoadError};
+
+/// Renderer-fed semantics, not a native VoiceOver snapshot.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct AppearanceAx {
+    pub role: gpui::Role,
+    pub name: String,
+    pub value: String,
+    pub expanded: Option<bool>,
+    pub disabled: bool,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static APPEARANCE_AX: std::cell::RefCell<std::collections::HashMap<String, AppearanceAx>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_ax(
+    id: &str,
+    role: gpui::Role,
+    name: &str,
+    value: &str,
+    expanded: Option<bool>,
+    disabled: bool,
+) {
+    APPEARANCE_AX.with(|ax| {
+        ax.borrow_mut().insert(
+            id.into(),
+            AppearanceAx {
+                role,
+                name: name.into(),
+                value: value.into(),
+                expanded,
+                disabled,
+            },
+        )
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn appearance_ax_for_e2e(id: &str) -> Option<AppearanceAx> {
+    APPEARANCE_AX.with(|ax| ax.borrow().get(id).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_theme_option_ax_for_e2e() -> Vec<AppearanceAx> {
+    APPEARANCE_AX.with(|ax| {
+        let mut ax = ax.borrow_mut();
+        let mut options = Vec::new();
+        ax.retain(|id, value| {
+            if id.starts_with("theme-option:") {
+                options.push(value.clone());
+                false
+            } else {
+                true
+            }
+        });
+        options
+    })
+}
 use super::{commands, KagiApp, ToastKind};
 
 /// A toast is a short preview; the log line keeps the whole reason.
@@ -36,6 +98,9 @@ pub(super) fn install(kagi: &Entity<KagiApp>, window: &mut Window, cx: &mut App)
             window,
             cx,
         )
+    });
+    kagi.update(cx, |_, cx| {
+        cx.observe(&theme_select, |_, _, cx| cx.notify()).detach();
     });
     kagi.update(cx, |app, cx| {
         cx.subscribe(
@@ -132,7 +197,7 @@ impl KagiApp {
                 );
                 theme::sync_gpui_component_theme(cx);
                 app.apply_terminal_config(cx);
-                cx.set_menus(commands::build_menus());
+                commands::publish_menus(cx);
                 if let Some(select) = app.theme_select.clone() {
                     select.update(cx, |state, cx| {
                         state.set_items(settings_view::theme_options(), window, cx);
@@ -152,7 +217,8 @@ impl KagiApp {
         for error in errors {
             let detail = error.to_string();
             klog!("theme: load error {}", detail);
-            let message = i18n::theme_load_failed_fmt(&bounded(&detail));
+            let display = i18n::op::user_text::theme_load_error(&error);
+            let message = i18n::theme_load_failed_fmt(&bounded(&display));
             self.push_toast(ToastKind::Error, message, cx);
         }
     }

@@ -14,3 +14,13 @@
   no-op であることを label で示す(例 `Pull (up to date)` disabled)
 - protected branch 判定は ADR-0040 案C と同じ集合(main / master / develop / release 系)
 - 純粋関数 + `tests`(T-BCM-070〜073)で表を固定する
+
+## Amendment — 2026-10-12: compact menu labels (#1238)
+
+The count/no-op label rule above is partially superseded by
+[ADR-0049's compact-menu amendment](0049-branch-context-menu-architecture.md#amendment--2026-10-12-compact-branch-context-menu-1238).
+Nonzero ahead/behind count suffixes remain; disabled no-op/unavailable reasons
+move to the hover tooltip and accessibility description, with a concise
+command label. A zero cached behind count does not disable Pull: fresh
+operation planning determines whether there is anything to pull. Availability
+guards, protected/dirty/conflict warnings and confirmation policies remain.

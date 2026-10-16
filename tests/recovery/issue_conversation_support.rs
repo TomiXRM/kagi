@@ -1,0 +1,379 @@
+//! Real gh transport, production detail acceptance, and private native events.
+use crate::macos::{build_fixture, mount, repo_fingerprint, unmount};
+use gpui::{point, px, AnyWindowHandle, Bounds, Entity, Pixels, Point, VisualTestAppContext};
+use kagi::ui::{
+    e2e,
+    i18n::{self, Lang},
+    theme, KagiApp,
+};
+use std::{ffi::OsString, os::unix::fs::PermissionsExt, path::Path};
+
+pub const BODY: &str = "issue-thread-body-4-md";
+pub const POISON: &str = "PRIVATE_CLIPBOARD_NOT_COPIED";
+pub const BASE: &str = "github.com/conversation/owner-a";
+pub type NativeApp = Entity<KagiApp>;
+
+pub struct Restore {
+    path: Option<OsString>,
+    lang: Lang,
+    zoom: f32,
+    theme: String,
+    _keys: crate::gui_isolation::SavedKeys,
+}
+impl Restore {
+    pub fn capture() -> Self {
+        Self {
+            path: std::env::var_os("PATH"),
+            lang: i18n::lang(),
+            zoom: theme::zoom(),
+            theme: theme::theme().slug.to_string(),
+            _keys: crate::gui_isolation::SavedKeys::keep(&["lang", "theme", "ui_zoom"]),
+        }
+    }
+}
+impl Drop for Restore {
+    fn drop(&mut self) {
+        match self.path.take() {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        i18n::set_lang(self.lang);
+        theme::set_zoom(self.zoom);
+        theme::set_active(&self.theme);
+    }
+}
+
+pub struct Producer {
+    root: tempfile::TempDir,
+}
+impl Producer {
+    pub fn install() -> Self {
+        // Do not let this test redefine the process-cached capability probe.
+        let _ = kagi_git::github::gh_available();
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("gh");
+        let directory = quote(root.path());
+        std::fs::write(&script, format!(r#"#!/bin/sh
+set -eu
+case "$*" in
+  'issue view 4 -R github.com/conversation/owner-a --json number,title,state,url,author,assignees,labels,body,comments,createdAt,updatedAt') owner=a ;;
+  'issue view 4 -R github.com/conversation/owner-b --json number,title,state,url,author,assignees,labels,body,comments,createdAt,updatedAt') owner=b ;;
+  *) printf 'unexpected gh request: %s\n' "$*" >&2; exit 73 ;;
+esac
+printf '%s\n' "$owner" >> {directory}/requests
+if test -f {directory}/fail-$owner; then
+  printf 'HTTP 503: conversation-refresh-unavailable\n' >&2
+  exit 1
+fi
+cat {directory}/$owner.json
+"#)).unwrap();
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut paths = vec![root.path().to_path_buf()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        Self { root }
+    }
+    pub fn publish(&self, owner: &str, body: &str, comments: &[(&str, &str)]) {
+        // Opaque GraphQL IDs are delivered by JSON, never constructed as domain
+        // comments. Deliberately identical authors/timestamps defeat metadata IDs.
+        let comments: Vec<_> = comments
+            .iter()
+            .map(|(id, body)| {
+                serde_json::json!({
+                    "id": id, "body": body, "author": {"login": "same-author"},
+                    "createdAt": "2026-10-08T00:00:00Z", "updatedAt": "2026-10-08T00:00:00Z"
+                })
+            })
+            .collect();
+        let payload = serde_json::json!({"number":4,"title":"Conversation fixture", "state":"OPEN",
+            "url":format!("https://github.com/conversation/owner-{owner}/issues/4"),
+            "author":{"login":"same-author"}, "assignees":[],"labels":[],
+            "body":body,"comments":comments,"createdAt":"2026-10-08T00:00:00Z",
+            "updatedAt":"2026-10-08T00:00:00Z"});
+        std::fs::write(
+            self.root.path().join(format!("{owner}.json")),
+            payload.to_string(),
+        )
+        .unwrap();
+    }
+    pub fn metadata(&self, owner: &str, title: &str, author: &str) {
+        let path = self.root.path().join(format!("{owner}.json"));
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        payload["title"] = title.into();
+        payload["author"]["login"] = author.into();
+        std::fs::write(path, payload.to_string()).unwrap();
+    }
+    pub fn fail(&self, owner: &str) {
+        std::fs::write(self.root.path().join(format!("fail-{owner}")), b"offline").unwrap();
+    }
+    pub fn requests(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.path().join("requests"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+}
+fn quote(path: &Path) -> String {
+    format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
+}
+
+pub fn fixture(
+    cx: &mut VisualTestAppContext,
+    base: &str,
+) -> (
+    tempfile::TempDir,
+    NativeApp,
+    AnyWindowHandle,
+    (String, String),
+) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, win) = mount(cx, &repo);
+    crate::pr_detail_adaptive::resize(cx, win, (1000., 720.));
+    configure(cx, &app, base);
+    (fixture, app, win, before)
+}
+pub fn configure(cx: &mut VisualTestAppContext, app: &NativeApp, base: &str) {
+    app.update(cx, |app, cx| {
+        app.set_lang(Lang::En, cx);
+        app.seed_issue_composer_for_e2e(cx);
+        app.seed_issue_list_for_e2e(base, Vec::new(), cx);
+        app.show_issues_mode(cx);
+    });
+    cx.run_until_parked();
+}
+pub fn load(cx: &mut VisualTestAppContext, app: &NativeApp, win: AnyWindowHandle) {
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.load_github_issue_detail(4, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let accepted = cx.read(|cx| app.read(cx).ui().github_issue_details.contains_key(&4));
+    assert!(
+        accepted,
+        "the real gh producer must land through the accepted app detail path"
+    );
+}
+pub fn finish(
+    cx: &mut VisualTestAppContext,
+    fixture: tempfile::TempDir,
+    app: NativeApp,
+    win: AnyWindowHandle,
+    before: (String, String),
+) {
+    assert_eq!(
+        before,
+        repo_fingerprint(&fixture.path().canonicalize().unwrap()),
+        "fixture repository changed"
+    );
+    unmount(cx, app, win);
+    drop(fixture);
+}
+/// Observe an actual fresh paint, not a retained entity or an earlier frame's
+/// bounds. Missing bounds witness outer-list unmount; clipped bounds alone do not.
+pub fn measure(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    id: &str,
+) -> Option<Bounds<Pixels>> {
+    e2e::clear_control_bounds(win.window_id(), id);
+    cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    e2e::control_bounds(win.window_id(), id)
+}
+/// Compare actual row layout with independent renderer content bounds. Neither
+/// an estimated extent nor a cached offscreen height is a paint witness.
+pub fn measured_row(
+    cx: &mut VisualTestAppContext,
+    app: &NativeApp,
+    win: AnyWindowHandle,
+    index: usize,
+    id: &str,
+) -> Bounds<Pixels> {
+    let content = measure(cx, win, id).expect("current renderer must paint content");
+    let list = cx.read(|cx| e2e::issue_thread_list(app.read(cx), cx));
+    let row = list.bounds_for_item(index).unwrap_or_else(|| {
+        panic!(
+            "{id}: row {index} not painted; content={content:?}, top={:?}, viewport={:?}",
+            list.logical_scroll_top(),
+            list.viewport_bounds()
+        )
+    });
+    assert_eq!(list.measured_height(index), Some(row.size.height));
+    assert!(row.size.height > px(0.));
+    assert!(
+        content.top() >= row.top() && content.bottom() <= row.bottom(),
+        "{id}: content={content:?} must fit row {index}={row:?}"
+    );
+    let viewport = list.viewport_bounds();
+    assert!(row.bottom() > viewport.top() && row.top() < viewport.bottom());
+    row
+}
+pub fn pane(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Bounds<Pixels> {
+    measure(cx, win, "issue-mode-center-pane").expect("real Issue scroll viewport")
+}
+pub fn visible(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    id: &str,
+) -> Option<Bounds<Pixels>> {
+    let viewport = pane(cx, win);
+    measure(cx, win, id)
+        .filter(|bounds| bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom())
+}
+pub fn wheel(cx: &mut VisualTestAppContext, win: AnyWindowHandle, delta: f32) {
+    let position = pane(cx, win).center();
+    cx.simulate_event(
+        win,
+        gpui::ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(delta))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+}
+pub fn seek(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    id: &str,
+    direction: f32,
+) -> Bounds<Pixels> {
+    for _ in 0..256 {
+        if let Some(bounds) = visible(cx, win, id) {
+            return bounds;
+        }
+        wheel(cx, win, direction * 180.);
+    }
+    panic!("{id} never became fully reachable through the single real scroll viewport");
+}
+pub fn start(bounds: Bounds<Pixels>) -> Point<Pixels> {
+    point(bounds.left() + px(2.), bounds.top() + px(2.))
+}
+pub fn end(bounds: Bounds<Pixels>) -> Point<Pixels> {
+    point(bounds.right() - px(2.), bounds.bottom() - px(2.))
+}
+pub fn down(cx: &mut VisualTestAppContext, win: AnyWindowHandle, at: Point<Pixels>) {
+    cx.simulate_mouse_down(win, at, gpui::MouseButton::Left, gpui::Modifiers::none());
+}
+pub fn move_to(cx: &mut VisualTestAppContext, win: AnyWindowHandle, at: Point<Pixels>) {
+    cx.simulate_mouse_move(win, at, gpui::MouseButton::Left, gpui::Modifiers::none());
+}
+pub fn up(cx: &mut VisualTestAppContext, win: AnyWindowHandle, at: Point<Pixels>) {
+    cx.simulate_mouse_up(win, at, gpui::MouseButton::Left, gpui::Modifiers::none());
+}
+pub fn copy(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> String {
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(POISON.into()));
+    cx.simulate_keystrokes(win, "secondary-c");
+    cx.read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default()
+}
+
+/// Select only a mounted post's first visual line through the existing native
+/// gesture path. Callers supply a multi-paragraph fixture and an exact oracle.
+pub fn select_first_line(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) -> String {
+    let bounds = visible(cx, win, id).expect("partial selection needs a fully visible post");
+    let endpoint = point(bounds.right() - px(2.), bounds.top() + px(2.));
+    down(cx, win, start(bounds));
+    move_to(cx, win, endpoint);
+    up(cx, win, endpoint);
+    copy(cx, win)
+}
+
+/// Deliver a real transition and Copy in one window update using the current
+/// rendered focus route. Key dispatch can repaint a dirty window; direct action
+/// dispatch instead queues the existing capture/bubble action route. Queue the
+/// clipboard observation immediately after that action, before the update's
+/// effect drain is allowed to paint dirty windows.
+pub fn copy_before_paint(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    transition: impl FnOnce(&mut gpui::Window, &mut gpui::App),
+) -> String {
+    let result = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let observed = result.clone();
+    cx.update_window(win, |_, window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(POISON.into()));
+        transition(window, cx);
+        window.dispatch_action(Box::new(gpui_component::input::Copy), cx);
+        cx.defer(move |cx| {
+            *observed.borrow_mut() = Some(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .unwrap_or_default(),
+            );
+        });
+    })
+    .unwrap();
+    let copied = result
+        .borrow_mut()
+        .take()
+        .expect("deferred real Copy must complete before clipboard observation");
+    copied
+}
+
+pub fn move_copy_before_paint(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    at: Point<Pixels>,
+) -> String {
+    copy_before_paint(cx, win, |window, cx| {
+        window.dispatch_event(
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position: at,
+                pressed_button: Some(gpui::MouseButton::Left),
+                modifiers: gpui::Modifiers::none(),
+            }),
+            cx,
+        );
+    })
+}
+
+pub fn click_copy_before_paint(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    at: Point<Pixels>,
+) -> String {
+    copy_before_paint(cx, win, |window, cx| {
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                position: at,
+                button: gpui::MouseButton::Left,
+                modifiers: gpui::Modifiers::none(),
+                click_count: 1,
+                ..Default::default()
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                position: at,
+                button: gpui::MouseButton::Left,
+                modifiers: gpui::Modifiers::none(),
+                click_count: 1,
+                ..Default::default()
+            }),
+            cx,
+        );
+    })
+}
+pub fn select(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) -> String {
+    let bounds = seek(cx, win, id, 1.);
+    down(cx, win, start(bounds));
+    move_to(cx, win, end(bounds));
+    up(cx, win, end(bounds));
+    copy(cx, win)
+}
+pub fn comment(index: usize) -> String {
+    format!("issue-thread-comment-4-{index}-md")
+}

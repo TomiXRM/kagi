@@ -99,6 +99,7 @@ struct PaintGeometry {
 /// | `rows` | 24 |
 /// | `font_family` | "monospace" |
 /// | `font_size` | 14px |
+/// | `font_fallbacks` | None (platform defaults) |
 /// | `scrollback` | 10000 |
 /// | `line_height_multiplier` | 1.2 |
 /// | `padding` | 0px all sides |
@@ -115,6 +116,7 @@ struct PaintGeometry {
 ///     rows: 40,
 ///     font_family: "JetBrains Mono".into(),
 ///     font_size: px(13.0),
+///     font_fallbacks: None,
 ///     scrollback: 50000,
 ///     line_height_multiplier: 1.1,
 ///     padding: Edges::all(px(10.0)),
@@ -151,6 +153,10 @@ pub struct TerminalConfig {
     /// Font size in pixels
     pub font_size: Pixels,
 
+    /// Explicit fallback families for missing primary-font glyphs.
+    /// `None` preserves the platform's default fallback behavior.
+    pub font_fallbacks: Option<gpui::FontFallbacks>,
+
     /// Maximum number of scrollback lines to keep in history
     pub scrollback: usize,
 
@@ -174,6 +180,7 @@ impl Default for TerminalConfig {
             rows: 24,
             font_family: "monospace".into(),
             font_size: px(14.0),
+            font_fallbacks: None,
             scrollback: 10000,
             line_height_multiplier: 1.2,
             padding: Edges::all(px(0.0)),
@@ -505,6 +512,7 @@ impl TerminalView {
         let renderer = TerminalRenderer::new(
             config.font_family.clone(),
             config.font_size,
+            config.font_fallbacks.clone(),
             config.line_height_multiplier,
             config.colors.clone(),
         );
@@ -1140,6 +1148,24 @@ impl TerminalView {
         &self.config
     }
 
+    /// Renderer settings used by the next frame, including its shaping fonts.
+    pub fn renderer(&self) -> &TerminalRenderer {
+        &self.renderer
+    }
+
+    /// Terminal grid state, including parsed cell attributes and cursor position.
+    pub fn state(&self) -> &TerminalState {
+        &self.state
+    }
+
+    /// Measured cell size from the last painted frame, or `None` before first paint.
+    pub fn cell_size(&self) -> Option<Size<Pixels>> {
+        self.geometry.get().map(|geometry| Size {
+            width: geometry.cell_width,
+            height: geometry.cell_height,
+        })
+    }
+
     /// Get the focus handle for this terminal view.
     ///
     /// # Returns
@@ -1147,6 +1173,53 @@ impl TerminalView {
     /// A reference to the focus handle.
     pub fn focus_handle(&self) -> &FocusHandle {
         &self.focus_handle
+    }
+
+    /// kagi: Clipboard control bytes other than Tab and separately warned CR/LF.
+    /// UTF-8 continuation bytes are not controls; Japanese text stays unchanged.
+    pub fn paste_contains_control_characters(text: &str) -> bool {
+        text.bytes()
+            .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\t' | b'\n' | b'\r'))
+    }
+
+    /// kagi: Respect the emulator's parsed DECSET/DECRST ?2004 mode.
+    /// Returns false without writing when plain input needs explicit approval.
+    pub fn paste_text(&self, text: &str, plain_paste_confirmed: bool) -> bool {
+        let bracketed = self
+            .state
+            .mode()
+            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+        if !bracketed
+            && !plain_paste_confirmed
+            && (text.contains(['\n', '\r']) || Self::paste_contains_control_characters(text))
+        {
+            return false;
+        }
+        // Hold one writer lock across both delimiters and the safe payload.
+        // Keystrokes and query replies cannot interleave with paste framing.
+        let mut writer = self.stdin_writer.lock();
+        let bytes = text.as_bytes();
+        if bracketed {
+            let _ = writer.write_all(b"\x1b[200~");
+            // kagi: Match alacritty's paste safety policy: embedded ESC can
+            // terminate bracketed input; ETX can interrupt the receiving shell.
+            // Write retained byte slices without allocating or changing CR/LF.
+            let mut start = 0;
+            for (index, byte) in bytes.iter().enumerate() {
+                if matches!(byte, b'\x1b' | b'\x03') {
+                    if start < index {
+                        let _ = writer.write_all(&bytes[start..index]);
+                    }
+                    start = index + 1;
+                }
+            }
+            let _ = writer.write_all(&bytes[start..]);
+            let _ = writer.write_all(b"\x1b[201~");
+        } else {
+            let _ = writer.write_all(bytes);
+        }
+        let _ = writer.flush();
+        true
     }
 
     /// Update the terminal configuration.
@@ -1162,6 +1235,7 @@ impl TerminalView {
         // Update renderer with new font settings and palette
         self.renderer.font_family = config.font_family.clone();
         self.renderer.font_size = config.font_size;
+        self.renderer.font_fallbacks = config.font_fallbacks.clone();
         self.renderer.line_height_multiplier = config.line_height_multiplier;
         self.renderer.palette = config.colors.clone();
 
@@ -1311,5 +1385,27 @@ impl Render for TerminalView {
     }
 }
 
-// Tests are omitted due to macro expansion issues with the test attribute
-// in this configuration. Integration tests can be added separately.
+#[cfg(test)]
+mod tests {
+    use super::{FontFallbacks, TerminalConfig};
+
+    #[test]
+    fn terminal_config_defaults_to_platform_fallbacks() {
+        let config = TerminalConfig::default();
+        assert!(config.font_fallbacks.is_none());
+        assert!(config.clone().font_fallbacks.is_none());
+    }
+
+    #[test]
+    fn terminal_config_clone_shares_explicit_fallbacks() {
+        let config = TerminalConfig {
+            font_fallbacks: Some(FontFallbacks::from_fonts(vec!["Noto Sans JP".into()])),
+            ..TerminalConfig::default()
+        };
+        let cloned = config.clone();
+        let original = config.font_fallbacks.as_ref().unwrap().fallback_list();
+        let actual = cloned.font_fallbacks.as_ref().unwrap().fallback_list();
+        assert_eq!(actual, &["Noto Sans JP".to_string()]);
+        assert!(std::ptr::eq(original.as_ptr(), actual.as_ptr()));
+    }
+}

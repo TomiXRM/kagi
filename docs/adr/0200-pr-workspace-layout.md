@@ -26,9 +26,12 @@ lane layout are already solved here (`src/ui/diff_split.rs`,
 
 ### 1. The list's data comes from the fetch, not from opening a PR
 
-`FIELDS` gained `assignees,labels,changedFiles,additions,deletions,createdAt,
-updatedAt`. A row can now say how big a PR is and how old it is without opening
-it; the rail can name assignees and labels without a second call.
+The lightweight L1 list carries identity, state, branches, participants,
+labels, comment totals and timestamps. It does not fetch bodies, checks or
+change statistics. Checks/status are lazy L2 reads; body/change statistics
+are L3 for opened PRs only. Rows show retained facts from those levels, not
+details fetched by rendering a row. The bounded list and detail budgets are
+specified in the #1104 amendment below.
 
 Timestamps are kept as `gh` returns them — verbatim RFC-3339, UTC, fixed
 width. In that form **lexicographic order is chronological order**, so
@@ -162,11 +165,8 @@ Reading a PR on github.com is one motion: the properties, the checks, the
 description and the conversation are a single scroll, and only the files are a
 destination of their own. kagi's 概要/レビュー split had no counterpart there.
 
-kagi's 概要 and レビュー tabs drew two separate scroll panes, so reading a
-review meant losing the description. They are now **one feed**
-(`pr_conversation::render_feed`) with exactly two children: the merge card plus
-description, and the conversation. Both tabs draw the same feed; pressing one
-scrolls the feed to its section through `ScrollHandle::scroll_to_top_of_item`.
+kagi's 概要 and レビュー tabs now draw **one feed**
+(`pr_conversation::render_feed`). Both tabs draw the same list; pressing one scrolls the tab's `ListState` so its section sits at the top (`ListState::scroll_to` with a one-shot `feed_anchor`, not `scroll_to_reveal_item`, whose minimal scroll left the reviews off-screen).
 The lit chip is therefore "where you jumped", not "which body is mounted".
 
 The feed is a **virtualized list** (`gpui::list`, the same element the diff
@@ -190,6 +190,53 @@ Three consequences worth stating:
 - The animated loading row stays **above** the feed: `with_animation` does not
   tick inside a scroll pane. The description is readable while the
   conversation is still in flight, which is the point of merging them.
+
+#### Parent render ownership (#1108)
+
+Virtualizing the feed does not justify copying its backing conversation to
+draw a header. `render_center` borrows the active tab's PR facts and commit
+source; the Review badge counts raw reviews + issue comments + line comments
+(including empty-body reviews, excluding the description). It does not copy
+those collections or the complete PR before choosing the view. Commits builds
+its own elements only when selected; Files and Conflicts take only their own
+diff snapshots and scroll handles, with conflict files borrowed from the tab.
+
+The headline, properties, checks and description cards also borrow that PR.
+The description passes the original body slice to the existing Markdown path;
+only the empty-description fallback needs a new string. This is not Markdown
+preparation reuse, truncation, a new owning DTO, or another renderer cache.
+The flattened `Rc` entries, per-tab `ListState`, one-shot section anchors,
+selection/Copy and pinned composer's parked drafts keep their existing owners.
+
+Header GitHub/merge listeners retain the session owner and full `PrKey`
+(base repository + number), refuse a different active session, and look up
+that owner's matching tab on click. Only then do they acquire the owned PR
+needed by the existing browser/merge action; render does not freeze its body
+into every listener. Refresh can therefore supply the current matching facts
+without retargeting another repository's same-number PR. The existing merge
+planning/admission pipeline and klog contract are unchanged.
+
+Acceptance evidence is scoped: the filtered native lane
+`pr_same_number,workspace_mode_toolbar,pr_threads_via_gh` passed, including the
+toolbar's explicit PR-section-exercised marker. An isolated default app in
+EN / Apple Light / 100% displayed actual PR12 description section 0001 through
+0140, Review 66, review threads and large comment paragraphs, whole-PR files
+and a selected-commit file, then PR280's empty conversation and exactly
+restored unsent ASCII draft. These are content/ownership witnesses, not a
+before/after speedup measurement. Final Review tail, terminal large-diff row,
+split mode, JA / 167% and same-key two-session default smoke were not accepted
+by that run. A -50000 wheel returned to the diff's top, not its tail; neither
+a tail-reachability nor a product-cause claim follows from it.
+
+The subsequent PM-owned final gate lane passed all seven stages (exit 0):
+timed build, the same filtered native lane, workspace tests, workspace Clippy,
+format check, CI invariant checks and the final default build. Its recorded
+wall time was 429.369851 s; this is verification duration, not runtime
+performance. Production remained unchanged. Formatting alone changed the
+native test file's hash without changing its consumer assertions. These local
+gates do not establish public CI status or remove the default-smoke and
+matched-performance limits above.
+
 
 ### 8. The PR's properties are the first rows of its page
 
@@ -230,10 +277,14 @@ CDN, disk-cached, once per process per login: no API call and no token.
   exemption staging has. An empty body is a plan **blocker**, not a plan that
   posts nothing.
 - One composer exists per window, pinned under the feed where github.com keeps
-  it. Its text belongs to the PR it was typed for: switching PRs parks the
-  draft on the tab it came from (`PrTab::comment_draft`) and loads the new
-  tab's. A posted comment clears that draft and re-reads the thread through the
-  existing owner-frozen conversation load.
+  it. The bound `InputState` is the live text authority; `PrTab::comment_draft`
+  parks that text while another PR owns the box. The binding is
+  `(SessionId, PrKey)`, not PR number or repository identity alone: two local
+  sessions can show the same GitHub PR without sharing drafts. Rebinding parks
+  through the recorded owner, then loads the destination owner's draft. A
+  posted comment clears only its owner's draft and re-reads the thread through
+  the existing owner-frozen conversation load; it resets the live input only
+  when that input is bound to the same owner and PR.
 
 ### 10. The checks card and the review verdicts (mock 7a/7b)
 
@@ -423,13 +474,15 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   render it; Issues places it below Composer. Candidate labels/authors come
   from loaded rows; selection uses the existing `menu_overlay`. Clear restores
   defaults and filter/sort changes reset the corresponding viewport.
-- `list_prs(workdir, state)` replaces the open-only API. Its bounded L1 GraphQL
-  page requests real state and `comments { totalCount }`, not comment bodies,
-  check rollups or mergeability. It resolves gh's repository identity first,
-  preserving default-repository/enterprise behavior at the cost of one extra
-  gh invocation per refresh. Closed requests CLOSED and MERGED; both become
-  `IssueState::Closed`. Unknown state remains unknown. Gateway retry policy
-  stays confined to the existing single L1 retry.
+- `list_prs(workdir, frozen_base_repo, cursor, state)` returns a bounded
+  `PrListSnapshot`, not an all-pages collection. Its L1 GraphQL page requests
+  real state and `comments { totalCount }`, not comment bodies, check rollups
+  or mergeability. The first read resolves gh's repository identity, preserving
+  default-repository/enterprise behavior; continuation uses the returned
+  host/repository and opaque cursor without resolving the destination again.
+  Closed requests CLOSED and MERGED; both become `IssueState::Closed`.
+  Unknown state remains unknown. Gateway retry stays confined to the existing
+  single L1 retry.
 - `workspace_mode_toolbar` clicks the actual shared label and sort menus in
   both homes, proves row membership changes, then proves created-desc changes
   the first row. The PR half remains mandatory when gh is available.
@@ -442,8 +495,12 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
 - Closed/All responses live in the session-owned `github_prs_strip` read, with
   separate rows, loading, error and generation. Only PR workspace projections
   use `pr_list_rows`; Open uses the shared collection without copying it.
-  Every PR-mode departure restores state Open, drops the strip rows and
-  invalidates pending strip completions, including departure by tab activation.
+  Leaving PR mode explicitly restores Open and drops strip membership. A
+  repository-tab round trip instead retains the chosen predicate, accepted
+  rows, opened panes and drafts while revoking old visit/request publication
+  rights. An interrupted selected first read keeps pending intent and is
+  reauthorized through the ordinary selected-state read on activation; no
+  unobserved empty collection becomes a completed zero.
 - Closed PRs are `(Dormant, None)` regardless of CI, reviews, draft or status
   availability. L2 admission and queued-read reconciliation reject closed
   status work; opening a closed conversation may still request its L3 body.
@@ -458,3 +515,310 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   accepts Closed/All rows without changing shared Open rows, applies the
   ticker's shared refresh while Closed remains visible, and rejects a response
   completed after departure. New PR/menu measurement names allocate only in gui-e2e.
+
+## #1104: bounded cursor pages and retained owner authority
+
+- **One bounded L1 answer.** `PrListSnapshot` carries lightweight `prs`, the
+  resolved `base_repo` and `next_cursor` from GraphQL `pageInfo`. A read asks
+  for at most 100 nodes in server `UPDATED_AT DESC` order. The existing
+  first100 → 120 fixture needs only one cursor-authorized continuation for its
+  final 20 new rows; overlapping nodes are deduplicated by `PrKey` without
+  replacing accepted rows. There is no increased first-page limit, eager
+  all-pages drain, renderer I/O or second collection cache.
+- **Shared Open is not selected membership.** Graph badges, inspector chips
+  and the periodic/owner-targeted evidence refresh still consume the existing
+  shared Open collection. The PR workspace selects Open from that owner and
+  Closed/All from its existing session-owned strip. Loaded counts are not a
+  remote total: a remaining cursor marks them as incomplete, and filtered
+  matches are reported separately.
+- **Demand is bounded and visible.** An unfiltered home-table tail can demand
+  one page only when it intersects the actual clipped viewport, not virtual
+  overdraw. Client membership predicates, including a zero-match filter,
+  retain explicit Load more. The navigator retains all loaded rows and a
+  reachable continuation control rather than silently truncating at 100.
+  Append keeps the scroll anchor, opened panes and composing text. A preserved
+  context menu must be dismissed normally before it permits workspace scroll.
+- **One append authority.** A request freezes session, repository path,
+  resolved host/repository, selected state, cursor, generation, visit and
+  attempt. Only the matching current receiver can publish; repeated tail
+  paints cannot overlap its append slot. State change, refresh, departure or
+  detach revokes obsolete publication rights. Returned metadata must describe
+  the frozen repository and make cursor progress; malformed, partial or
+  nonadvancing unfinished pages are errors, not successful empty results.
+- **Failure is not exhaustion.** Failed append retains accepted rows and its
+  cursor with an explicit retry of that page. Failed first-page refresh keeps
+  last-known rows but revokes the previous continuation and resets the accepted
+  page count, permitting the next automatic first-page read to recover. Success
+  replaces the first page or appends only the authorized next page; only an
+  exhausted `pageInfo` removes continuation. Branch Cleanup's reduced
+  `list_merged_prs` and Vec evidence/settlement remain independent of this
+  paging contract.
+- **#1107 automatic admission, not newest membership.** The ordinary 60-second
+  ticker defers only its shared Open L1 first-page replacement while the active
+  workspace is PRs, no explicit Closed/All strip is installed, and shared Open
+  has accepted more than one page or has an append pending. This includes an
+  opened PR's paged sidebar. The deferred tick still refreshes visible/opened
+  volatile details; it does not freeze checks. Manual Refresh and owner-targeted
+  refresh keep their existing first-page cutover and revoke old continuation
+  authority. Closed/All (even with a pending strip append), background/Graph
+  consumers and departure from PRs retain ordinary shared Open ticker reads.
+  An automatic first-page read does not reset the dashboard scroll position;
+  filter/sort changes retain their explicit viewport reset.
+  The deliberate tradeoff is retained last-accepted membership while paging:
+  newly opened, closed or deleted PRs require manual Refresh for an authoritative
+  new membership read. Retention must never be described as the newest list.
+- **Fresh means retained same-head payload.** L2/L3 values remain in the
+  existing shared rows, strip rows and actually opened `PrTab`s; the detail
+  controller owns scheduling metadata, not another payload cache. Those
+  receivers inherit real details only for matching repository, number and
+  head. Fresh authority is invalidated when the last matching payload owner
+  disappears, while generations continue rejecting old in-flight answers.
+  Successful empty details are still payload; a different or stale head is
+  not. Selected membership governs visibility and pending demand even when
+  another collection retains Fresh data. Checks predicates therefore neither
+  lose retained passing rows nor bless dehydrated reappended rows as Fresh.
+- **Detail budgets do not grow with pages.** L2 observes only visible rows
+  with the existing two-row overscan, 200 ms debounce, 500 ms maximum wait
+  and concurrency limit of two. Closed rows do not acquire status, and L3 is
+  for actually opened PRs only. Keeping another collection's payload does not
+  authorize off-screen status reads. Composer ownership remains the
+  `(SessionId, PrKey)` binding described in §9.
+- **Actual prepaint is visibility authority.** GPUI `uniform_list` invokes
+  `render_items(0..1)` for layout measurement; that invocation must neither
+  publish visible demand nor prune the tail's queued details. A non-layout-
+  affecting absolute canvas on the first actually rendered table row reports
+  once from clipped prepaint, deferred behind active-session, full list-revision
+  and PR-workspace/home guards. Measurement never prepaints that canvas.
+  The existing two-row overdraw and detail budgets remain unchanged; this adds
+  no payload cache, controller or independent state.
+- **Exhaustion removes the terminal slot.** The virtual table's item count is
+  `rowcount + usize::from(has_more)`: only a selected collection with a cursor
+  reserves a continuation row. Loading/retry and pending demand are unchanged.
+  Keeping a blank full-height slot after `cursor=None` displaced the last real
+  PR completely above its paint clip in the 940×660, 167% one-row viewport.
+  The existing `pr_dashboard_responsive` consumer failed before this count fix
+  and passed afterward across its eight width/locale/zoom cells; paging consumer
+  assertions and the responsive matrix were not repinned or weakened.
+  PM's local post-repair gate recorded seven passing stages (build, scoped
+  native, workspace, clippy, format check, invariants and default build) in
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-row-final-gates/manifest.json`.
+  Its native selection covered PR list roles, dashboard responsiveness, Issues
+  pagination, the six paging cases and both periodic cases. This records local
+  acceptance of that source, not hosted CI, merge or subsequent documentation.
+- **Consumer evidence.** Domain/transport/receiver/detail tests cover page
+  metadata, frozen cursors, races, retry, dedupe and payload ownership. The ten
+  scoped native scenarios are the six `pr_pagination` cases, `pr_same_number`,
+  `pr_paging_survives_periodic_tick`,
+  `pr_periodic_pending_sidebar_and_other_collections`, and
+  `pr_single_page_periodic_scroll_retention` (single-page Open list, real wheel to mid-table, 61-s ticker, anchor/offset unchanged). They exercise actual
+  table/sidebar demand, clipped retry, filters, retained Closed/All visits,
+  interrupted first reads and live composing inputs. The periodic cases start
+  the real producer/ticker and assert retained 120-row membership/anchor and
+  opened owner/input while server-produced checks change SUCCESS → FAILURE;
+  pending sidebar append, manual reset/stale rejection, Closed/All independence
+  and departure are positive controls. Measurement must not steal demand from
+  the actually prepainted tail. These fixture assertions are not screenshots,
+  live GitHub evidence, FPS or timing improvements.
+- **Historical Tier B retention evidence and limits.** The earlier default-build
+  run recorded in
+  `/tmp/kagi-hig-audit-20261008/pr-periodic-after-native/proof.json` used genuine
+  first100 → explicit Load more → 120 membership and the server-ordered tail
+  PR #28. An actual 65.26914-second no-input interval retained that membership,
+  tail and viewport with zero L1 GraphQL replacements, 22 L2 status queries
+  (including #28), and one opened-PR #265 body refresh. Viewed before/after
+  photographs showed determining/ready aggregates 75/45 → 107/13 while the
+  anchor remained. This proves this interval's automatic retention and ongoing
+  volatile refresh, not newest authoritative membership or FPS/latency/CPU
+  improvement. The earlier CPU sample did not overlap input. The proof records
+  the source after the true-prepaint fix and nine-scenario run; temporary
+  diagnostic reads were subsequently removed. It predates the terminal-slot
+  repair and is not fresh evidence for that repair.
+- **Fresh narrow default-build terminal evidence.**
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/narrow/observed.json`
+  records source hashes and exact owned PID 61715/window 6182. Startup at logical
+  940×660, zoom 1667, Apple Light/English produced 1880×1320 window-only
+  photographs (capture-to-bounds ratio 2, not an independently queried backing
+  scale). Explicit visible Load more accepted 100 → 120 with `has_more=false`;
+  eight wheel inputs reached the actual last PR #28 fully painted in the tiny
+  table body, without an empty reserved continuation slot. A fresh periodic
+  photograph still showed 120 and #28, with readiness changing 5 → 6 and no new
+  list GraphQL after extension in the observed timeline. Its 176.033609 seconds
+  is page-request-to-capture, not response-acceptance retention duration.
+  An initial tick before explicit append added a third list GraphQL call;
+  this run does not establish two total list calls. The #28 opening showed
+  one commit, one file and conversation counts 0/0/0, but its photograph was
+  swimlane-only and does not accept narrow Overview visibility. Original
+  Cmd-Q/Popen exit was 0, with no remaining exact executable PID or owned app.
+  This is narrow-startup and terminal-paint evidence only: no dynamic resize,
+  wide-window, Copy/Paste/clipboard, CPU, FPS or latency claim is made.
+- **Fresh wide default-build paging and ownership evidence.**
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/wide/observed.json`
+  records the same frozen source hashes, exact owned PID 69326/window 6200 and
+  logical 1392×883/100%, Apple Light/English window-only captures (ratio 2).
+  Eight table wheels caused natural clipped-tail/prepaint demand, without
+  explicit Load more, accepting 100 → 120; four further wheels reached last
+  PR #28. The settled 120-row tail photograph and a photograph 155.08867 seconds
+  later retained the same #80..#28 viewport while Ready changed 15 → 13. Actual
+  `pr view` receipts continued at roughly 60-second cadence; no list GraphQL
+  occurred after extension through that periodic capture. There were four list
+  GraphQL calls through extension: initial, two legitimate pre-extension ticks
+  and one non-null cursor request. The 229.741505 seconds from cursor request
+  to periodic capture is not exact response-acceptance timing.
+  Real PR #12 Overview displayed its 48,002-byte body, with accepted transport
+  data of 24 comments/288,048 comment-body bytes, two reviews/268 review-body
+  bytes and 40 line comments (visible Review count 66), three commits and two
+  files. Visible additions were 22,010; this does not accept full body/comment
+  tails, diff/thread interaction or performance. Settled All PRs returned to
+  the same 120-row tail; immediate capture preceded settlement and navigation
+  latency was not measured. PR #28's 102-byte Overview was visible with no
+  comments/reviews, one commit and one file. Physically typed unsent ASCII
+  `PM_PR28_DRAFT` did not appear after switching to PR #12; six independent
+  sidebar wheels reached #28 while #12 Overview remained, and clicking #28
+  restored the exact draft. This is one session/two PrKeys, not the same PrKey
+  across two sessions. No Submit, Copy/Paste, clipboard or foreground action
+  was exercised. Cmd-Q/original Popen exited 0 with no exact executable PID or
+  owned apps left.
+  Matched same-PR #28 narrow/wide photographs and source triage identify a
+  separate detail-geometry issue [#1118](https://github.com/TomiXRM/kagi/issues/1118):
+  the narrow Overview body is missing while wide shows it. This does not accept
+  narrow-detail #1095 behavior; independent baseline-dev reproduction is unrun.
+  Same-PrKey/two-session default-click acceptance remains dependent on the
+  separate overlay-baseline fix/integration. No dynamic resize, matched CPU/FPS
+  sample, full diff/thread acceptance, hosted review/CI or merge is claimed.
+
+## #1118: width-aware detail companions
+
+The dense navigator and swimlane remain companions, not the reader's minimum
+width. Reserve `scaled_px(420)` for the center; first remove the swimlane
+when the center plus the navigator and bounded graph rail cannot fit, then
+remove the navigator if the center plus its persisted width cannot fit.
+The rail bound comes from `MAX_RAIL_LANES` and `LANE_W`, not a second graph
+layout or a render-time traversal. Header facts and view tabs wrap as needed.
+
+The center's toolbar uses existing small `KagiButton` controls, with selected
+state and localized names/tooltips. Navigator uses View → Toggle Sidebar /
+⌘B; Swimlane / Files uses View → Toggle PR Swimlane / ⌘⌥L. Both commands
+remain in the shared palette/shortcut registry (Ctrl replaces ⌘ off macOS).
+In compact mode one companion reveals over the center, without shrinking
+or reconstructing it; Escape dismisses the revealed pane before leaving the
+PR. The global sidebar preference remains authoritative: revealing a compact
+navigator enables it and hiding it disables it. Automatic width adaptation
+never changes that preference.
+
+Presentation flags belong to the existing session-owned `PrModeState`.
+Transitions do not request data, rebuild a PR tab, recreate its composer
+input, change the selected file, reset its thread expansion, or reset a list.
+The native regression measures Overview/Review/Files, All PRs, body and
+composer at 940×660 and 1392×883 in EN/JA at 100% and 167%, and compares
+selection, typed draft/input identity, opened threads and nonzero logical
+scroll before and after toolbar/keyboard reveal and native resize round trips.
+The reference remains GitHub's PR reader; the role is a dense companion
+beside an open reading/composer surface. Loading/error/empty read states and
+all write safety paths are unchanged. Tier B is PM-owned: real 940×660 @167%
+JA window with a real PR, including pointer, keyboard, focus and screenshots.
+
+Native evidence: the unchanged reader-minimum oracle failed before the layout
+fix at 940×660 @100% EN (center width 158.5px, scaled minimum 378px).
+`pr_detail_adaptive` now passes all eight width/zoom/locale cells, including
+native resize delivery via the runner's existing `drain_native_events`.
+The scoped neighboring run also passed `pr_dashboard_responsive`,
+`pr_same_number`, `github_evidence_background_owner`, and all six
+`pr_pagination*` scenarios. No full workspace/Clippy or Tier B run is claimed.
+
+Review follow-up: width collapse is detail-only; the dashboard keeps its
+ordinary navigator and Sidebar keyboard preference. A revealed companion is
+anchored inside the reader, above neither the navigator nor the bottom panel.
+Inline/undrawn reveals are normalized away, and Escape consumes only a
+currently drawn drawer. The regression additionally checks dashboard Sidebar
+toggle, desktop inline panes before any toggle, Swimlane-specific keyboard
+reveal, Escape-only dismissal, and widening/narrowing without stale reveal.
+The command's unavailable reason is localized; new gap-bearing bounds probes
+are GUI-E2E-only and add no release-build spacer.
+
+The dashboard Sidebar and disabled-reason checks stay in the fixed-window
+`pr_dashboard_responsive` fixture. Combining dashboard input creation, detail
+reads, native width/zoom transitions and Escape/Home leaks eight `InputState`
+handles on unchanged `origin/dev` too. That independent lifecycle defect is
+excluded from this layout regression; its leak assertion was not suppressed.
+
+
+## Amendment — 2026-10-12: readable draft dashboard rows (#1352)
+
+The open-row table retains GitHub's explicit Draft state rather than treating
+drafts as disabled actions. Draft titles keep `text_main`; number, author,
+branch pair and age use `text_muted`. STATE uses the muted override only for
+`PrReason::Draft`; all other reasons retain `attention_color(bucket)`.
+Draft identity must not erase the Needs You colour for conflicts,
+changes-requested reviews or failed checks. The localized state label remains
+unchanged. The native regression includes a draft with fresh conflicting
+status and verifies the production Needs You STATE colour in both themes.
+Remove the 75% whole-row opacity, which also attenuated required small text.
+The existing List/ListItem name, pointer-open route and surface hover remain
+unchanged. This dashboard has no selected-row presentation; inactive windows
+retain the same metadata rather than adding an artificial selection state.
+
+Apple Light/Dark unit coverage reuses the WCAG contrast helper for both
+base and hover fills. Tier A `pr_dashboard_draft_contrast` compares native
+Metal glyph-interior and background pixels, including ancestor compositing,
+on draft and ready rows at 940×660 / 1392×883, EN/JA, 100%/167%, rest/hover
+and active/inactive presentation. Theme-token assertions alone do not prove
+composited text contrast. Keyboard/VoiceOver delivery remains separate Tier B
+evidence, not a claim from the ListItem recorder.
+
+## Amendment — 2026-10-13: dashboard keyboard ownership (#1408, #1413, #1414)
+
+The dense dashboard uses the existing RowFocus/RowList rather than a second
+keyboard abstraction. PR numbers are stable keys within the session-owned
+repository list; a single roving Tab stop supports arrows, Home/End and
+viewport-sized PageUp/PageDown. The uniform list reveals the destination,
+including a retained focused identity after refresh/reorder. Enter/Space reuse
+the exact existing PR-open listener; paging remains outside the row owner.
+
+This supersedes the prior amendment's action-only List/ListItem semantics:
+ListBox/options now expose the keyboard-focused PR as selected, with a quiet
+selection fill and the shared keyboard-only ring. Pointer opening is unchanged.
+Filter/sort/direction/Clear/Refresh and detail All PRs/Refresh keep their dense
+geometry and existing EN/JA labels, adding Button role, retained focus and
+Space/Enter activation. Filter popovers use the existing MenuKeys lifecycle:
+choices take focus, arrows/Home/End navigate, activation applies the choice,
+and dismissal restores trigger focus; the label chooser retains multi-select.
+No new design system or Git mutation path is introduced. Empty/failed Refresh
+starts one read and yields focus when its button disappears on successful load.
+
+Tier A `pr_dashboard_keyboard` and `pr_filter_strip_keyboard` cover both
+940×660 and 1392×883, EN/JA and 100%/167%. Native VoiceOver delivery and
+Full Keyboard Access remain real-window checks, not renderer-record evidence.
+
+## Amendment — 2026-10-13: dashboard selection survives hover (#1451)
+
+The dense dashboard retains its existing RowFocus owner and PR-number identity.
+The selected option uses the same `selected_for_window` fill at rest and under
+the pointer, including the neutral inactive-window selection. Only unselected
+rows receive the shared timeline `surface` hover wash. This corrects the shared
+clickable row's hover style overriding the selected base fill; it does not change
+row geometry, focus ownership, accessibility selection or the PR-open listener.
+
+Tier A `pr_dashboard_hover_selected` enters the production list with Tab and
+selects PR N with Down, comparing native Metal fill pixels before/after same-row
+hover in active/inactive/reactivated presentation. It checks an unselected row's
+surface hover, unchanged AX selected N and focused key N, and exactly one
+activation of N for each Enter/Space down/up sequence while hovered. Its matrix
+covers EN/JA, 100%/167%, Apple Light/Dark and 940×660 / 1392×883. Renderer AX
+metadata and simulated keys are not native VoiceOver or Full Keyboard Access
+evidence; those remain real-window checks.
+
+
+## Amendment — 2026-10-13: PR lane keyboard, selection and count (#1409, #1410, #1412)
+
+The dense companion lane retains its graph geometry and uses shared
+`RowFocus`/`RowList` navigation. Only PR-owned commits participate in its one
+roving Tab stop: arrows and Home/End reveal those rows, and Enter/Space select
+the same immutable commit key as a pointer click. Row names include the full
+sanitized commit subject, SHA and owning PR; context rows expose read-only
+identity without activation. Selection is independent of keyboard focus and
+uses `selected_for_window`, with the selected fill retained on hover.
+
+The heading must not present loaded-history intersections as a PR total.
+An explicit total supplied by PR data is authoritative; absent that data, the
+heading says `N loaded` / `N 読み込み済み`. No additional request is made just
+to count commits, and a potentially capped commit array is not a total.

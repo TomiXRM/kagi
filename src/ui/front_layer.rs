@@ -81,6 +81,7 @@ impl LayerKind {
                     || app.stash_menu_visible()
                     || app.tag_menu_visible()
                     || app.worktree_menu_visible()
+                    || (app.home_in_front() && app.home_github.recent.menu.is_some())
             }
             Self::MenuOverlay => app.menu_overlay.is_some(),
             Self::EarlyModal => app.early_modal_visible(),
@@ -194,14 +195,20 @@ impl KagiApp {
 
     pub(crate) fn coauthor_menu_visible(&self, cx: &App) -> bool {
         self.workspace_body_drawn()
-            && self.ui().commit_panel_open
+            && self.commit_panel_surface_open()
             && self
                 .ui()
                 .commit_panel
                 .as_ref()
                 .is_some_and(|panel| panel.read(cx).coauthor_menu_visible())
-            && super::workspace::resolve_workspace(&self.workspace_inputs(true, true, false)).right
-                == super::workspace::RightPane::CommitPanel
+            && if self.compact.enabled {
+                self.compact.popup_owner == self.active_session()
+                    && self.compact.popup_owner.is_some()
+                    && !self.compact.suspended
+            } else {
+                super::workspace::resolve_workspace(&self.workspace_inputs(true, true, false)).right
+                    == super::workspace::RightPane::CommitPanel
+            }
     }
 
     pub(crate) fn visible_platform_menu_section(
@@ -211,10 +218,10 @@ impl KagiApp {
         Some((ix, super::commands::linux_menu_sections().nth(ix)?))
     }
     /// The Commit Panel's plan confirmation, only where it is drawn: not with
-    /// Home in front, and only while the panel is open.
+    /// Home in front, and only while a desktop panel or pinned composer is open.
     pub(crate) fn commit_plan_visible(&self, cx: &App) -> bool {
         !self.home_in_front()
-            && self.ui().commit_panel_open
+            && self.commit_panel_surface_open()
             && self
                 .ui()
                 .commit_panel
@@ -273,11 +280,11 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Is a layer drawn above the workspace context menus that leaves the
-    /// keyboard focus where it was — a modal, a notice, a commit plan,
-    /// another menu, an Info panel or the branch picker? Settings and the
-    /// command palette are not: they move the focus into themselves (a trap,
-    /// the search input) and give it back when they close (#991 review).
+    /// Does a higher layer retire the workspace context menus? Settings and
+    /// the command palette retain their existing temporary-cover policy.
+    /// Other higher layers close the covered menus; a focus-owning Info body
+    /// or branch picker keeps its own focus when the hidden menu releases it
+    /// (#991 review).
     pub(crate) fn workspace_menus_covered(&self, cx: &App) -> bool {
         let Some(at) = Z_ORDER
             .iter()
@@ -321,6 +328,7 @@ impl KagiApp {
                 self.stash_menu = None;
                 self.tag_menu = None;
                 self.worktree_menu = None;
+                self.home_github.recent.menu = None;
             }
             LayerKind::MenuOverlay => self.menu_overlay = None,
             LayerKind::PrMenu => self.with_ui(|ui| ui.pr_menu = None),

@@ -9,7 +9,7 @@
 //! - [`FhDiffPane`], the diff-viewer slot the pane embeds as an `AnyView` —
 //!   it reuses the bin's shared `MainDiffView` / `render_diff_list` pipeline,
 //!   which is why the diff body stays out of the pane crate;
-//! - the [`FileHistoryEvent`] subscription mapping close / jump-to-commit onto
+//! - the [`FileHistoryEvent`] subscription mapping close / open / jump-to-commit onto
 //!   `KagiApp`.
 
 pub use kagi_ui_file_history::*;
@@ -17,6 +17,7 @@ pub use kagi_ui_file_history::*;
 use super::*;
 
 use kagi_git::{FileDiff, FileHistoryEntry, FileHistoryEntryKind};
+use kagi_ui_core::variable_list::VariableListState;
 
 /// Host-side diff viewer slot for the File History pane (ADR-0121 C3).
 ///
@@ -27,17 +28,23 @@ use kagi_git::{FileDiff, FileHistoryEntry, FileHistoryEntryKind};
 /// diff loads (rapid arrowing — including A→B→A on a WIP entry whose
 /// working-tree contents can change between reads).
 pub struct FhDiffPane {
+    owner: crate::app::SessionId,
     /// Diff of the selected entry, reusing the existing diff renderer.
     pub diff: Option<MainDiffView>,
-    /// T-DIFF-WRAP-001: `ListState` (variable-height) for the diff viewer
-    /// list — see `render_helpers::render_diff_list` for the item-count
-    /// sync/reset lifecycle.
-    pub scroll: gpui::ListState,
+    /// Kagi-owned variable-height measurements for this selected diff.
+    pub scroll: VariableListState,
+    pub list_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Monotonic per-diff request token, bumped on every diff load.
     pub req: u64,
     /// #809: the embedded diff's toggle falls back to its icon when the
     /// File History column is too narrow for its label.
     pub fit: render_helpers::HeaderFit,
+}
+
+impl Drop for FhDiffPane {
+    fn drop(&mut self) {
+        super::diff_selection::retire_surface(self.list_layout.selection_owner());
+    }
 }
 
 impl super::diff_view::highlight::DiffHighlightHost for FhDiffPane {
@@ -60,19 +67,25 @@ impl Render for FhDiffPane {
                     ..Default::default()
                 },
                 self.scroll.clone(),
+                &self.list_layout,
                 None,
+                super::diff_selection::SelectionOwner::History(self.owner),
                 cx,
             )
             .into_any_element(),
-            None => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("No diff available for this entry."))
-                .into_any_element(),
+            None => {
+                super::diff_selection::retire_surface(self.list_layout.selection_owner());
+                self.list_layout.clear(&self.scroll);
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from("No diff available for this entry."))
+                    .into_any_element()
+            }
         }
     }
 }
@@ -132,7 +145,7 @@ impl KagiApp {
     /// builds the `Entity<FileHistoryView>` (in Loading state) and kicks off its
     /// own async history load (read-only — no write-latch gate). ADR-0121 C3: the
     /// pane crate is Git-free, so the app owns the loads — the subscription
-    /// below answers the pane's load requests and maps close / jump-to-commit
+    /// below answers the pane's load requests and maps close / open / jump-to-commit
     /// onto `KagiApp`. Callers: the inspector / main-diff "History" entry
     /// points.
     pub fn open_file_history(
@@ -157,8 +170,10 @@ impl KagiApp {
         let geom = self.file_history_geom.clone();
         let panel_width = self.panel_width;
         let diff_pane = cx.new(|_| FhDiffPane {
+            owner,
             diff: None,
             scroll: render_helpers::new_diff_list_state(),
+            list_layout: Default::default(),
             req: 0,
             fit: render_helpers::HeaderFit::default(),
         });
@@ -170,7 +185,7 @@ impl KagiApp {
         // handle, so they must run even after the owner goes to the background
         // (ADR-0197 決定 3): a switch between the request and its delivery would
         // otherwise strand the pane in Loading forever. The outward interactions
-        // (close, jump) touch root / the active display and are admitted only
+        // (close, open, jump) touch root / the active display and are admitted only
         // while this pane's frozen owner is active and still on screen.
         cx.subscribe(&view, move |app, view, event, cx| {
             let is_read = matches!(
@@ -190,6 +205,9 @@ impl KagiApp {
                 FileHistoryEvent::CloseRequested => {
                     app.close_file_history();
                     cx.notify();
+                }
+                FileHistoryEvent::OpenFileRequested(path) => {
+                    app.fh_open_file(owner, pane_id, repo_path.clone(), path.clone(), cx);
                 }
                 FileHistoryEvent::JumpToCommit(id) => {
                     app.close_file_history();
@@ -221,9 +239,89 @@ impl KagiApp {
         // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
         let head = self.view().head_oid.clone();
         if let Some(ui) = self.ui_mut() {
+            ui.retire_issue_conversation_scope();
             ui.file_history = Some(view);
             ui.file_history_head = head;
         }
+    }
+
+    /// Probe off-thread before changing the visible workspace. A missing historical
+    /// name never falls back to the current path, and failed opens retain History.
+    fn fh_open_file(
+        &mut self,
+        owner: crate::app::SessionId,
+        pane_id: gpui::EntityId,
+        repo_path: PathBuf,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.ui().file_history.as_ref() else {
+            return;
+        };
+        let renamed_to = {
+            let pane = pane.read(cx);
+            (pane.data.rel_path != path).then(|| pane.data.rel_path.clone())
+        };
+        let full_path = repo_path.join(&path);
+        let task = cx.background_spawn(async move {
+            use std::io::Read;
+            let mut file =
+                std::fs::File::open(full_path).map_err(|_| Msg::EditorWorkspaceDeleted)?;
+            // Match the Editor's leading 8 KiB NUL probe without reading the
+            // entire file or allocating a second content buffer.
+            let mut bytes = [0; 8 * 1024];
+            let mut count = 0;
+            while count < bytes.len() {
+                let read = file
+                    .read(&mut bytes[count..])
+                    .map_err(|_| Msg::EditorWorkspaceDeleted)?;
+                if read == 0 {
+                    break;
+                }
+                count += read;
+            }
+            let prefix = &bytes[..count];
+            if kagi_domain::checklist::content_looks_binary(prefix)
+                && super::avatar_fetch::detect_format(prefix).is_none()
+            {
+                Err(Msg::EditorWorkspaceBinary)
+            } else {
+                Ok(())
+            }
+        });
+        cx.spawn(async move |app, acx| {
+            let result = task.await;
+            let _ = app.update(acx, |app, cx| {
+                if app.active_session() != Some(owner)
+                    || app
+                        .ui()
+                        .file_history
+                        .as_ref()
+                        .is_none_or(|pane| pane.entity_id() != pane_id)
+                {
+                    return;
+                }
+                if let Err(reason) = result {
+                    let message = match (reason, renamed_to) {
+                        (Msg::EditorWorkspaceDeleted, Some(current_path)) => SharedString::from(
+                            i18n::file_history_renamed_fmt(&current_path.to_string_lossy()),
+                        ),
+                        (reason, _) => SharedString::from(reason.t()),
+                    };
+                    app.push_toast(ToastKind::Error, message, cx);
+                    cx.notify();
+                    return;
+                }
+                // Reveal retained Editors too: PRs/Issues outrank an Editor
+                // entity in the workspace resolver. Never rebuild dirty tabs.
+                app.show_editor_mode(cx);
+                if let Some(editor) = app.ui().editor_workspace.clone() {
+                    editor.update(cx, |editor, cx| editor.open_tab(path, cx));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Run the async history load the pane requested and marshal the result
@@ -243,7 +341,7 @@ impl KagiApp {
         // (pre-extraction this was `data.diff = None` + the generation guard).
         if let Some(pane) = fh_diff_pane(view, cx) {
             pane.update(cx, |p, cx| {
-                p.diff = None;
+                super::diff_view::highlight::install(&mut p.diff, None);
                 p.req = p.req.wrapping_add(1);
                 cx.notify();
             });
@@ -301,7 +399,7 @@ impl KagiApp {
         };
         let Some(entry) = entry else {
             pane.update(cx, |p, cx| {
-                p.diff = None;
+                super::diff_view::highlight::install(&mut p.diff, None);
                 cx.notify();
             });
             return;

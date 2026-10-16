@@ -16,20 +16,149 @@ use std::time::{Duration, Instant};
 use gpui::{Context, SharedString};
 
 use crate::ui::types::{Toast, ToastKind};
-use crate::ui::view_models::status_bar::footer_line;
+use crate::ui::view_models::status_bar::{footer_line, FOOTER_LINE_CHARS};
 
-/// Maximum simultaneous toasts; oldest is dropped beyond this.
+/// Maximum simultaneous toasts; discard the oldest non-error first.
 pub const TOASTS_MAX: usize = 4;
 /// Slide-out animation duration before final removal (ms).
 pub const TOAST_REMOVE_MS: u64 = 300;
+/// Short routine feedback remains for four seconds, excluding hover pauses.
+/// Errors have no expiry; explicit dismissal provides unlimited reading time.
+pub const TOAST_ROUTINE_LIFETIME: Duration = Duration::from_secs(4);
+
+/// A card was removed, including cap eviction; the parent repairs lost focus.
+pub(super) struct ToastRemoved(Vec<(gpui::WindowId, gpui::FocusHandle)>);
+impl ToastRemoved {
+    pub fn was_focused(&self, window: &gpui::Window) -> bool {
+        let id = window.window_handle().window_id();
+        self.0
+            .iter()
+            .any(|(host, focus)| *host == id && focus.is_focused(window))
+    }
+}
+impl gpui::EventEmitter<ToastRemoved> for ToastStack {}
+impl gpui::EventEmitter<super::types::ToastAction> for ToastStack {}
+
+fn error_preview(message: &str) -> String {
+    let mut preview = String::new();
+    let mut lines = 1;
+    for (count, ch) in message.chars().enumerate() {
+        if count == FOOTER_LINE_CHARS * 3 || (ch == '\n' && lines == 3) {
+            preview.push('…');
+            break;
+        }
+        if ch == '\n' {
+            lines += 1;
+        }
+        preview.push(ch);
+    }
+    preview
+}
+
+/// The pinned Button has keyboard focus and a Button role, but exposes its AX
+/// name only through a visible label. This adapter adds GPUI's stateful naming
+/// API to the existing Button's interactivity; it does not build another control.
+#[derive(gpui::IntoElement)]
+pub(super) struct ToastButton(
+    pub gpui_component::button::Button,
+    pub u64,
+    pub super::types::ToastCloseFocus,
+    pub &'static str,
+);
+
+impl gpui::InteractiveElement for ToastButton {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.0.interactivity()
+    }
+}
+
+impl gpui::StatefulInteractiveElement for ToastButton {}
+
+impl gpui::RenderOnce for ToastButton {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+        let focus = window
+            .use_keyed_state((self.3, self.1), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        #[cfg(feature = "gui-e2e")]
+        if self.3 == "toast-dismiss" {
+            CLOSE_FOCUS.with(|slot| *slot.borrow_mut() = Some(focus.clone()));
+        }
+        let id = window.window_handle().window_id();
+        let mut hosts = self.2.borrow_mut();
+        if let Some((_, previous)) = hosts.iter_mut().find(|(host, _)| *host == id) {
+            *previous = focus;
+        } else {
+            hosts.push((id, focus));
+        }
+        drop(hosts);
+        self.0.render(window, cx)
+    }
+}
+
+fn take_toast_focus(toast: &Toast) -> Vec<(gpui::WindowId, gpui::FocusHandle)> {
+    let mut focus = std::mem::take(&mut *toast.close_focus.borrow_mut());
+    if let Some(action) = &toast.action_focus {
+        focus.extend(std::mem::take(&mut *action.borrow_mut()));
+    }
+    focus
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CLOSE_FOCUS: std::cell::RefCell<Option<gpui::FocusHandle>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_close_focus_for_e2e() -> Option<gpui::FocusHandle> {
+    CLOSE_FOCUS.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToastStatusPresentation {
+    pub role: Option<gpui::Role>,
+    pub label: Option<SharedString>,
+    pub newest_id: Option<u64>,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static STATUS: std::cell::RefCell<Option<ToastStatusPresentation>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status(
+    role: Option<gpui::Role>,
+    label: Option<SharedString>,
+    newest_id: Option<u64>,
+) {
+    STATUS.with(|slot| {
+        *slot.borrow_mut() = Some(ToastStatusPresentation {
+            role,
+            label,
+            newest_id,
+        })
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_for_e2e() -> Option<ToastStatusPresentation> {
+    STATUS.with(|slot| slot.borrow().clone())
+}
 
 /// Self-contained toast stack. All toast lifecycle logic lives here.
 pub struct ToastStack {
     toasts: Vec<Toast>,
     next_id: u64,
+    /// Latest arrival, not the newest remaining card: removing it must not
+    /// present an older persistent error as new feedback.
+    arrival: Option<(u64, SharedString)>,
     /// True while the auto-dismiss ticker task is running (so we never spawn a
     /// second one). Reset when the stack drains.
     ticker_alive: bool,
+    removed_focus: Vec<(gpui::WindowId, gpui::FocusHandle)>,
+    pub(super) expanded: bool,
+    pub(super) summary_focus: super::types::ToastCloseFocus,
 }
 
 impl ToastStack {
@@ -38,6 +167,10 @@ impl ToastStack {
             toasts: Vec::new(),
             next_id: 1,
             ticker_alive: false,
+            removed_focus: Vec::new(),
+            arrival: None,
+            expanded: false,
+            summary_focus: Default::default(),
         }
     }
 
@@ -45,28 +178,57 @@ impl ToastStack {
         &self.toasts
     }
 
+    pub(super) fn status(&self) -> Option<(u64, &SharedString)> {
+        self.arrival.as_ref().map(|(id, message)| (*id, message))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.toasts.is_empty()
     }
 
-    /// Push a new toast. If over `TOASTS_MAX`, the oldest is dropped.
+    #[cfg(feature = "gui-e2e")]
+    pub fn advance_age_for_e2e(&mut self, duration: Duration) {
+        for toast in &mut self.toasts {
+            toast.born -= duration;
+            if let Some(paused) = toast.paused_at.as_mut() {
+                *paused -= duration;
+            }
+        }
+    }
+
+    /// Push a new toast; cap eviction considers existing cards, not the new one.
     pub fn push(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
         // A toast is only the transient summary. The complete operation result
         // lives in Operation Log, so never let raw multi-line stderr turn the
         // overlay into a screen-sized card.
         let message = message.into();
-        let message = SharedString::from(footer_line(message.as_ref()));
+        let message = if kind == ToastKind::Error {
+            SharedString::from(error_preview(message.as_ref()))
+        } else {
+            SharedString::from(footer_line(message.as_ref()))
+        };
         let id = self.next_id;
         self.next_id += 1;
+        self.arrival = Some((id, message.clone()));
         self.toasts.push(Toast {
             id,
             kind,
             message,
+            action: None,
             born: Instant::now(),
+            paused_at: None,
+            close_focus: Default::default(),
+            action_focus: None,
             dismissing: None,
         });
         if self.toasts.len() > TOASTS_MAX {
-            self.toasts.remove(0);
+            let oldest = self
+                .toasts
+                .iter()
+                .position(|t| t.kind != ToastKind::Error && t.action.is_none() && t.id != id)
+                .unwrap_or(0);
+            let removed = self.toasts.remove(oldest);
+            self.removed_focus = take_toast_focus(&removed);
         }
     }
 
@@ -82,9 +244,36 @@ impl ToastStack {
         toast.dismissing = Some(Instant::now());
     }
 
+    /// Release a retired host's controls without dismissing its shared feedback.
+    pub(super) fn forget_window(&mut self, id: gpui::WindowId) {
+        self.summary_focus
+            .borrow_mut()
+            .retain(|(host, _)| *host != id);
+        for toast in &self.toasts {
+            toast
+                .close_focus
+                .borrow_mut()
+                .retain(|(host, _)| *host != id);
+            if let Some(action) = &toast.action_focus {
+                action.borrow_mut().retain(|(host, _)| *host != id);
+            }
+        }
+    }
+
     /// Remove a toast by id (after the exit animation has played).
     pub fn remove(&mut self, id: u64) {
+        if let Some(toast) = self.toasts.iter().find(|t| t.id == id) {
+            self.removed_focus = take_toast_focus(toast);
+        }
         self.toasts.retain(|t| t.id != id);
+        if self.toasts.len() <= 1 {
+            self.expanded = false;
+            self.removed_focus
+                .extend(std::mem::take(&mut *self.summary_focus.borrow_mut()));
+        }
+        if self.toasts.is_empty() {
+            self.arrival = None;
+        }
     }
 
     /// Return ids of toasts that have hit their lifetime and should start exiting.
@@ -99,10 +288,54 @@ impl ToastStack {
     /// True if at least one toast is still counting down (not yet sliding out).
     /// The ticker uses this to decide when to stop.
     pub fn has_pending(&self) -> bool {
-        self.toasts.iter().any(|t| t.dismissing.is_none())
+        self.toasts
+            .iter()
+            .any(|t| t.kind != ToastKind::Error && t.action.is_none() && t.dismissing.is_none())
+    }
+
+    /// Pause the short preview timer while the pointer is reading the card.
+    pub fn set_hovered(&mut self, id: u64, hovered: bool) {
+        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        if hovered {
+            toast.paused_at.get_or_insert_with(Instant::now);
+        } else if let Some(start) = toast.paused_at.take() {
+            toast.born += start.elapsed();
+        }
+    }
+
+    /// Escape dismisses only the newest still-visible notification.
+    pub fn dismiss_newest(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self
+            .toasts
+            .iter()
+            .rev()
+            .find(|t| t.dismissing.is_none())
+            .map(|t| t.id)
+        else {
+            return false;
+        };
+        self.begin_exit(id, cx);
+        true
     }
 
     // ── Entity orchestration (cx-driven) ─────────────────────────────────────
+    pub(super) fn toggle_expanded(&mut self, cx: &mut Context<Self>) {
+        self.expanded = !self.expanded;
+        if !self.expanded {
+            let mut hidden_focus = Vec::new();
+            let hidden_count = self.toasts.len().saturating_sub(1);
+            for toast in self.toasts.iter_mut().take(hidden_count) {
+                if let Some(start) = toast.paused_at.take() {
+                    toast.born += start.elapsed();
+                }
+                hidden_focus.extend(take_toast_focus(toast));
+            }
+            cx.emit(ToastRemoved(hidden_focus));
+        }
+        cx.notify();
+    }
     // These wrap the pure data methods with `cx.notify()` + timer tasks so the
     // overlay re-renders in isolation (ADR-0110 Phase 5).
 
@@ -114,9 +347,48 @@ impl ToastStack {
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
+        let evicts = self.toasts.len() == TOASTS_MAX;
+        if !self.expanded {
+            let mut hidden_focus = Vec::new();
+            for toast in &mut self.toasts {
+                if let Some(start) = toast.paused_at.take() {
+                    toast.born += start.elapsed();
+                }
+                hidden_focus.extend(take_toast_focus(toast));
+            }
+            cx.emit(ToastRemoved(hidden_focus));
+        }
         self.push(kind, message);
+        if evicts {
+            cx.emit(ToastRemoved(std::mem::take(&mut self.removed_focus)));
+        }
         self.ensure_ticker(cx);
         cx.notify();
+    }
+
+    /// Add an action to the receipt's existing toast, without a second arrival.
+    pub(super) fn set_latest_action(
+        &mut self,
+        action: super::types::ToastAction,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(toast) = self.toasts.last_mut() {
+            toast.action = Some(action);
+            toast.action_focus = Some(Default::default());
+            cx.notify();
+        }
+    }
+
+    pub(super) fn activate_action(&mut self, id: u64, cx: &mut Context<Self>) {
+        let action = self
+            .toasts
+            .iter_mut()
+            .find(|toast| toast.id == id && toast.dismissing.is_none())
+            .and_then(|toast| toast.action.take());
+        if let Some(action) = action {
+            cx.emit(action);
+            self.begin_exit(id, cx);
+        }
     }
 
     /// Begin sliding a toast out (× button or auto-expiry), then remove it once
@@ -130,6 +402,7 @@ impl ToastStack {
                 .await;
             let _ = this.update(acx, |stack, cx| {
                 stack.remove(id);
+                cx.emit(ToastRemoved(std::mem::take(&mut stack.removed_focus)));
                 cx.notify();
             });
         })
@@ -177,6 +450,30 @@ impl Default for ToastStack {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "gui-e2e")]
+    #[gpui::test]
+    fn closed_window_releases_persistent_error_close_handles(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| {
+            let handles = cx.new(|cx| (cx.focus_handle(), cx.focus_handle()));
+            let (closed_focus, live_focus) = handles.read(cx);
+            let closed = gpui::WindowId::from(1);
+            let live = gpui::WindowId::from(2);
+            let mut stack = ToastStack::new();
+            stack.push(ToastKind::Error, "persistent error");
+            stack.toasts()[0]
+                .close_focus
+                .borrow_mut()
+                .extend([(closed, closed_focus.clone()), (live, live_focus.clone())]);
+            stack.forget_window(closed);
+            stack.forget_window(closed);
+            assert_eq!(stack.toasts().len(), 1, "closing a host keeps the error");
+            let remaining = stack.toasts()[0].close_focus.borrow();
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(remaining[0].0, live, "the surviving host keeps its handle");
+        });
+    }
+
     #[test]
     fn push_and_cap() {
         let mut stack = ToastStack::new();
@@ -189,13 +486,40 @@ mod tests {
     }
 
     #[test]
-    fn push_keeps_only_a_bounded_single_line_preview() {
+    fn actionable_completion_waits_for_explicit_dismissal() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Success, "clone finished");
+        let toast = stack.toasts.last_mut().unwrap();
+        toast.action = Some(super::super::types::ToastAction::OpenRepository(
+            "clone".into(),
+        ));
+        toast.born -= Duration::from_secs(60);
+        assert!(stack.expiring_ids().is_empty());
+        assert!(
+            !stack.has_pending(),
+            "actionable completion must stop the expiry ticker"
+        );
+        let id = stack.toasts[0].id;
+        stack.start_exit(id);
+        assert!(stack.toasts[0].dismissing.is_some());
+    }
+
+    #[test]
+    fn error_preview_is_bounded_by_lines_and_characters() {
         let mut stack = ToastStack::new();
         let long = format!("first line\n{}", "x".repeat(1_000));
         stack.push(ToastKind::Error, long);
         let message = stack.toasts()[0].message.as_ref();
-        assert_eq!(message, "first line…");
-        assert!(!message.contains('\n'));
+        assert_eq!(message.chars().count(), FOOTER_LINE_CHARS * 3 + 1);
+        assert!(message.ends_with('…'));
+        assert_eq!(
+            error_preview("one\ntwo\nthree\nfour\nfive\nsix"),
+            "one\ntwo\nthree…"
+        );
+        assert_eq!(
+            error_preview("一行目\n二行目\n三行目"),
+            "一行目\n二行目\n三行目"
+        );
     }
 
     #[test]
@@ -219,5 +543,93 @@ mod tests {
         assert_eq!(stack.toasts().len(), 1);
         stack.remove(id);
         assert!(stack.is_empty());
+    }
+
+    #[test]
+    fn cap_preserves_errors_before_routine_notifications() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Error, "important");
+        for _ in 0..TOASTS_MAX {
+            stack.push(ToastKind::Info, "routine");
+        }
+        assert_eq!(stack.toasts.len(), TOASTS_MAX);
+        assert_eq!(stack.toasts[0].message, "important");
+    }
+
+    #[test]
+    fn cap_preserves_clone_action_before_routine_notifications() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Success, "clone finished");
+        stack.toasts.last_mut().unwrap().action = Some(
+            super::super::types::ToastAction::OpenRepository("clone".into()),
+        );
+        stack.push(ToastKind::Error, "important");
+        for _ in 0..TOASTS_MAX {
+            stack.push(ToastKind::Info, "routine");
+        }
+        assert_eq!(stack.toasts.len(), TOASTS_MAX);
+        assert!(
+            stack.toasts.iter().any(|toast| toast.action.is_some()),
+            "routine arrivals must not evict the clone's Open Repository action"
+        );
+        assert!(stack
+            .toasts
+            .iter()
+            .any(|toast| toast.kind == ToastKind::Error));
+    }
+
+    #[test]
+    fn errors_never_expire_and_hover_pauses_routine_timer() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Error, "important");
+        stack.push(ToastKind::Success, "done");
+        for toast in &mut stack.toasts {
+            toast.born -= Duration::from_secs(60);
+        }
+        let id = stack.toasts[1].id;
+        stack.set_hovered(id, true);
+        assert!(stack.expiring_ids().is_empty());
+        stack.set_hovered(id, false);
+        assert_eq!(stack.expiring_ids(), vec![id]);
+    }
+
+    #[test]
+    fn new_info_survives_a_full_error_stack() {
+        let mut stack = ToastStack::new();
+        for _ in 0..TOASTS_MAX {
+            stack.push(ToastKind::Error, "error");
+        }
+        let oldest = stack.toasts[0].id;
+        stack.push(ToastKind::Info, "new info");
+        assert_eq!(
+            stack.toasts.last().map(|t| t.message.as_ref()),
+            Some("new info")
+        );
+        assert!(!stack.toasts.iter().any(|t| t.id == oldest));
+    }
+
+    #[test]
+    fn status_changes_only_on_arrival_or_empty_stack() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Error, "old error");
+        stack.push(ToastKind::Info, "latest arrival");
+        let (id, message) = stack.status().unwrap();
+        let message = message.clone();
+        stack.set_hovered(id, true);
+        stack.start_exit(id);
+        assert_eq!(stack.status(), Some((id, &message)));
+        stack.remove(id);
+        assert_eq!(stack.status(), Some((id, &message)));
+        stack.push(ToastKind::Info, message.clone());
+        assert_ne!(stack.status().unwrap().0, id);
+        for id in stack
+            .toasts()
+            .iter()
+            .map(|toast| toast.id)
+            .collect::<Vec<_>>()
+        {
+            stack.remove(id);
+        }
+        assert!(stack.status().is_none());
     }
 }

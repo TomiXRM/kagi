@@ -13,9 +13,10 @@ pub const CATPPUCCIN_LATTE: Theme = Theme {
     bg_row_alt: 0xe6e9ef, // mantle
     surface: 0xccd0da,    // surface0
     selected: 0xbcc0cc,   // surface1
-    panel: 0xe6e9ef,      // mantle
-    sidebar: 0xdce0e8,    // crust
-    modal: 0xccd0da,      // surface0
+    inactive_selected: 0xc3c3c3,
+    panel: 0xe6e9ef,   // mantle
+    sidebar: 0xdce0e8, // crust
+    modal: 0xccd0da,   // surface0
     modal_overlay: 0x4c4f69,
 
     text_main: 0x4c4f69,  // text
@@ -25,6 +26,7 @@ pub const CATPPUCCIN_LATTE: Theme = Theme {
 
     color_head: 0xd20f39,   // red
     color_branch: 0x1e66f5, // blue
+    link: 0x1b60e7,         // body foreground needs more contrast than the filled accent
     selection_tint: 0x1e66f5,
     color_remote: 0x40a02b, // green
     color_tag: 0xfe640b,    // peach

@@ -6,7 +6,10 @@
 //! completion snackbar, and the [`EcosystemEvent`] subscription that maps the
 //! pane's requests (close, toast) onto `KagiApp`.
 
-pub use kagi_ui_ecosystem::*;
+pub use kagi_ui_ecosystem::{
+    CachedMine, CouplingView, EcosystemData, EcosystemEvent, EcosystemView, ExportFormat,
+    ECOSYSTEM_COMMIT_LIMIT,
+};
 
 use super::*;
 
@@ -65,6 +68,7 @@ impl KagiApp {
             match event {
                 EcosystemEvent::CloseRequested => {
                     app.close_ecosystem_view();
+                    app.focus_root_for_modal();
                     cx.notify();
                 }
                 EcosystemEvent::DiagnosticCopied => {
@@ -75,10 +79,15 @@ impl KagiApp {
                     app.open_repo_health_modal(*fix);
                     cx.notify();
                 }
+                EcosystemEvent::HelpRequested(opener) => {
+                    app.open_analyze_help_from_control(opener.clone(), cx);
+                    cx.notify();
+                }
             }
         })
         .detach();
         if let Some(ui) = self.ui_mut() {
+            ui.retire_issue_conversation_scope();
             ui.ecosystem = Some(entity);
         }
         klog!("ecosystem: opened");

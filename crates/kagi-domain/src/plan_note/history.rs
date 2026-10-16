@@ -198,6 +198,35 @@ impl HistoryNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            HistoryNote::PushedHistoryRewrite { sha, op } => match op {
+                HistoryOp::Undo => format!(
+                    crate::advice_template_display_en!(HistoryPushedHistoryRewriteUndo),
+                    sha
+                ),
+                HistoryOp::Amend => format!(
+                    crate::advice_template_display_en!(HistoryPushedHistoryRewriteAmend),
+                    sha
+                ),
+            },
+            HistoryNote::EntryStaleBranchMoved {
+                branch,
+                now,
+                expected,
+            } => format!(
+                crate::advice_template_display_en!(HistoryEntryStaleBranchMoved),
+                branch, now, expected
+            ),
+            HistoryNote::EntryStaleUnreachable { sha } => format!(
+                crate::advice_template_display_en!(HistoryEntryStaleUnreachable),
+                sha
+            ),
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the history op family.
@@ -277,6 +306,11 @@ impl HistoryTitle {
             ),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the history op family.
@@ -342,6 +376,11 @@ impl HistoryRecovery {
                 from_full
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

@@ -9,6 +9,7 @@
 
 pub mod highlight;
 pub(crate) mod hunk_action;
+pub(crate) mod markers;
 
 use std::path::PathBuf;
 
@@ -19,7 +20,6 @@ use kagi_git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 use super::theme;
 use super::{commit_panel, KagiApp, Msg};
 use gpui::Context;
-use gpui_component::tooltip::Tooltip;
 
 /// Per-row syntax-highlight spans: `(row_index, [(byte_range, style), …])`.
 /// Named to keep the diff-highlight signatures readable (clippy::type_complexity).
@@ -42,6 +42,10 @@ pub enum DiffRow {
         old_lineno: Option<u32>,
         /// New-side line number (None for Removed lines).
         new_lineno: Option<u32>,
+        /// Original source terminator, before display normalization.
+        line_ending: kagi_domain::diff::LineEnding,
+        /// Equal-body replacement with a different terminator on its paired side.
+        line_ending_changed: bool,
         /// T-UI-004: Pre-computed syntax highlight spans (byte ranges + styles).
         /// Empty when the file type is unknown or highlighting failed.
         highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
@@ -98,9 +102,9 @@ impl FileDiffView {
                 let header = SharedString::from(format!("@@ -{},{} +{},{} @@", os, oc, ns, nc));
                 rows.push(DiffRow::HunkHeader(header));
 
-                for line in &hunk.lines {
-                    // Strip the trailing newline for display (keep content clean).
-                    let raw = line.content.trim_end_matches('\n').trim_end_matches('\r');
+                let ending_changes = kagi_domain::diff::line_ending_changes(&hunk.lines);
+                for (line_index, line) in hunk.lines.iter().enumerate() {
+                    let raw = line.display_content();
                     // Add leading sigil for clarity.
                     let text = match line.kind {
                         DiffLineKind::Added => SharedString::from(format!("+{}", raw)),
@@ -112,6 +116,8 @@ impl FileDiffView {
                         text,
                         old_lineno: line.old_lineno,
                         new_lineno: line.new_lineno,
+                        line_ending: line.line_ending(),
+                        line_ending_changed: ending_changes[line_index],
                         highlights: vec![],
                     });
                 }
@@ -202,12 +208,16 @@ pub struct MainDiffView {
     /// frame for the length of a reading session. `render_diff_list` wrapped
     /// this in an `Arc` immediately anyway, so the deep copy bought nothing.
     pub rows: std::sync::Arc<Vec<DiffRow>>,
+    /// Content approvals captured by the backend read, never by a click.
+    pub(crate) hunk_approvals: std::sync::Arc<Vec<kagi_domain::diff::HunkApproval>>,
+    /// Preserved across highlight-only row allocation changes.
+    pub(crate) height_source: kagi_ui_core::diff_list::DiffListSource,
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
-    /// W-IMG: decoded before/after images for binary image files
-    /// (png/jpeg/webp/gif, sniffed from the blob bytes). When set, the diff
-    /// pane renders the image panel instead of the "Binary file" placeholder.
+    /// W-IMG: before/after GPUI images wrapping supported binary image bytes.
+    /// When set, the pane renders the image panel instead of the "Binary file"
+    /// placeholder. Pixel decoding remains GPUI's responsibility.
     pub images: Option<DiffImagePair>,
     /// #495: grammar for the rows (from the file path); `None` = plain text.
     pub lang: Option<&'static str>,
@@ -220,13 +230,11 @@ pub struct MainDiffView {
 /// added or deleted files have only one).
 #[derive(Clone)]
 pub struct DiffImagePair {
+    /// Blob existence is independent of whether its encoding is previewable.
+    pub old_exists: bool,
+    pub new_exists: bool,
     pub old: Option<std::sync::Arc<gpui::Image>>,
     pub new: Option<std::sync::Arc<gpui::Image>>,
-}
-
-/// Decode blob bytes into a gpui image if they sniff as a supported format.
-fn image_side(bytes: Option<Vec<u8>>) -> Option<std::sync::Arc<gpui::Image>> {
-    bytes.and_then(super::avatar_fetch::image_from_bytes)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -457,6 +465,14 @@ pub(crate) fn build_main_diff_view(
         title: fdv.file_name,
         stats: SharedString::from(format!("+{} \u{2212}{}", added, removed)),
         rows: std::sync::Arc::new(fdv.rows),
+        hunk_approvals: std::sync::Arc::new(
+            file_diff
+                .hunks
+                .iter()
+                .filter_map(|h| h.approval())
+                .collect(),
+        ),
+        height_source: Default::default(),
         source,
         images: None,
         lang: lang_for_path(path),
@@ -483,9 +499,11 @@ pub(crate) fn attach_selection_handlers(
     el: gpui::Stateful<gpui::Div>,
     rows: &std::sync::Arc<Vec<DiffRow>>,
     i: usize,
-    sel_key: u64,
+    sel_key: super::diff_selection::SelectionKey,
 ) -> gpui::Stateful<gpui::Div> {
     let rows_up = rows.clone();
+    #[cfg(feature = "gui-e2e")]
+    let el = super::e2e::diff_controls::row(sel_key.token(), i, el);
     el.on_mouse_down(
         gpui::MouseButton::Left,
         move |_e: &gpui::MouseDownEvent, window, _cx| {
@@ -517,7 +535,7 @@ pub(crate) fn attach_selection_handlers(
 pub(crate) fn render_main_diff_row(
     rows: &std::sync::Arc<Vec<DiffRow>>,
     i: usize,
-    sel_key: u64,
+    sel_key: super::diff_selection::SelectionKey,
     hunk: Option<&hunk_action::HunkAction>,
 ) -> gpui::AnyElement {
     let Some(row) = rows.get(i) else {
@@ -526,14 +544,18 @@ pub(crate) fn render_main_diff_row(
     match row {
         DiffRow::HunkHeader(header) => div()
             .id(("main-diff-hunk", i))
-            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .w_full()
             .flex()
             .items_center()
             .gap_2()
             .px_2()
             .py_px()
-            .bg(rgb(theme::theme().surface))
+            .bg(if super::diff_selection::is_keyboard_caret(sel_key, i) {
+                theme::selection_overlay()
+            } else {
+                rgb(theme::theme().surface).into()
+            })
+            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .text_sm()
             .text_color(rgb(theme::theme().diff_hunk))
             // Hunk headers stay single-line (never wrap): overflow_hidden +
@@ -547,12 +569,19 @@ pub(crate) fn render_main_diff_row(
             )
             // #842: a Commit Panel side moves this hunk to the other side.
             .children(hunk.and_then(|h| h.button(i, header)))
+            .map(|el| {
+                #[cfg(feature = "gui-e2e")]
+                let el = super::e2e::measure_control(format!("main-diff-hunk-row-{i}"), el);
+                el
+            })
             .into_any(),
         DiffRow::Line {
             kind,
             text,
             old_lineno,
             new_lineno,
+            line_ending,
+            line_ending_changed,
             highlights,
         } => {
             let bg = match kind {
@@ -663,118 +692,21 @@ pub(crate) fn render_main_diff_row(
                 )
                 // Content (sigil + highlighted text)
                 .child(content_el)
-                // issue #356: line-level badge when the row carries bidi-control
-                // or zero-width codepoints (Trojan Source / invisible chars).
                 .when(
                     kagi_domain::text_safety::has_unsafe_unicode(text.as_ref()),
-                    |el| {
-                        // Same tinted-fill grammar as the provenance badge: a soft
-                        // warning-hue fill + border with theme-aware readable text,
-                        // so it stays legible in both light and dark themes.
-                        let (bg, border, text) = theme::badge_style(theme::theme().color_warning);
-                        el.child(
-                            div()
-                                .id(("diff-unsafe-badge", i))
-                                .flex_shrink_0()
-                                .ml_2()
-                                .px_1()
-                                .rounded_sm()
-                                .text_xs()
-                                .bg(gpui::rgba(bg))
-                                .border_1()
-                                .border_color(gpui::rgba(border))
-                                .text_color(rgb(text))
-                                .tooltip(|window, cx| {
-                                    Tooltip::new(SharedString::from(Msg::UnsafeUnicodeTooltip.t()))
-                                        .build(window, cx)
-                                })
-                                .child(SharedString::from(Msg::UnsafeUnicodeBadge.t())),
-                        )
-                    },
+                    |el| el.child(markers::unsafe_unicode("unified", i)),
                 )
+                .when(*line_ending_changed, |el| {
+                    el.child(markers::line_ending("unified", i, *line_ending))
+                })
                 .into_any()
         }
-        DiffRow::Binary => div()
+        DiffRow::Binary => super::render_helpers::diff_state::caption(Msg::DiffBinaryNoText)
             .id(("main-diff-binary", i))
             .w_full()
             .px_2()
             .py_1()
-            .text_sm()
-            .text_color(rgb(theme::theme().text_muted))
-            .child(SharedString::from("Binary file (no diff)"))
             .into_any(),
-    }
-}
-
-impl KagiApp {
-    /// W-IMG: decode before/after images for a binary image file diff.
-    ///
-    /// Returns `None` for non-binary diffs, unsupported formats, or when
-    /// neither side decodes (keeps the "Binary file" placeholder). Blob reads
-    /// go through the Backend; the working-tree side reads the file directly.
-    pub(crate) fn diff_images_for(
-        &self,
-        file_diff: &FileDiff,
-        source: &MainDiffSource,
-        path: &std::path::Path,
-    ) -> Option<DiffImagePair> {
-        if !file_diff.is_binary {
-            return None;
-        }
-        let repo = self.ui().repo_session.as_ref()?.backend();
-        let workdir_bytes = || {
-            self.repo_path
-                .as_ref()
-                .and_then(|rp| std::fs::read(rp.join(path)).ok())
-        };
-        let (old_bytes, new_bytes) = match source {
-            // Nothing on disk behind it, so no image pair to load.
-            MainDiffSource::Synthetic => return None,
-            MainDiffSource::Commit { row_index, .. } => {
-                let id = CommitId(self.view().details.get(*row_index)?.full_sha.to_string());
-                let parent = repo.first_parent(&id).ok().flatten();
-                let old = parent.and_then(|p| repo.blob_bytes_at(&p, path).ok().flatten());
-                let new = repo.blob_bytes_at(&id, path).ok().flatten();
-                (old, new)
-            }
-            MainDiffSource::Compare { base, target, .. } => {
-                let old = repo.blob_bytes_at(base, path).ok().flatten();
-                let new = match target {
-                    CompareTarget::Head => repo.blob_bytes_head(path).ok().flatten(),
-                    CompareTarget::WorkingTree => workdir_bytes(),
-                    CompareTarget::Commit(id) => repo.blob_bytes_at(id, path).ok().flatten(),
-                };
-                (old, new)
-            }
-            MainDiffSource::Unstaged { .. } => {
-                // Working tree vs index (fallback HEAD for files never staged).
-                let old = repo
-                    .blob_bytes_index(path)
-                    .ok()
-                    .flatten()
-                    .or_else(|| repo.blob_bytes_head(path).ok().flatten());
-                (old, workdir_bytes())
-            }
-            MainDiffSource::Staged { .. } => {
-                let old = repo.blob_bytes_head(path).ok().flatten();
-                let new = repo.blob_bytes_index(path).ok().flatten();
-                (old, new)
-            }
-        };
-        let pair = DiffImagePair {
-            old: image_side(old_bytes),
-            new: image_side(new_bytes),
-        };
-        if pair.old.is_none() && pair.new.is_none() {
-            return None;
-        }
-        klog!(
-            "diff-image: {} old={} new={}",
-            path.display(),
-            pair.old.is_some(),
-            pair.new.is_some()
-        );
-        Some(pair)
     }
 }
 
@@ -889,10 +821,8 @@ impl KagiApp {
         }
     }
 
-    /// Show a commit's file diff in the full-width pane. Shared by the local
-    /// (`git2`) path and the remote (SSH) path so both render identically.
-    /// The text goes up now; the pane's render requests the highlight
-    /// (#495, [`highlight::ensure_highlight`]).
+    /// Install cached non-binary text or stage a headless commit diff.
+    /// Binary UI opens use the complete background preparation instead.
     pub(crate) fn set_commit_main_diff(
         &mut self,
         file_diff: &FileDiff,
@@ -902,8 +832,8 @@ impl KagiApp {
         cx: Option<&mut Context<Self>>,
     ) {
         let (added, removed) = diff_line_counts(file_diff);
-        eprintln!(
-            "[kagi] diff: {} hunks={} (+{} -{})",
+        klog!(
+            "diff: {} hunks={} (+{} -{})",
             path.display(),
             file_diff.hunks.len(),
             added,
@@ -914,18 +844,17 @@ impl KagiApp {
             file_index,
             commit: self.commit_id_for_row(selected),
         };
-        let mut view = build_main_diff_view(file_diff, path, file_index, source);
+        let view = build_main_diff_view(file_diff, path, file_index, source);
         match cx {
             Some(cx) => {
-                view.images = self.diff_images_for(file_diff, &view.source, path);
                 self.show_main_diff(view, cx);
             }
             // Headless (pre-window) hook: no gpui context yet, so stage the
             // view; `render` promotes it into the pane entity on the first
             // frame (ADR-0121 B2), and that frame requests the highlight.
             None => {
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
+                klog!(
+                    "main-diff: open {} rows={} highlight={}",
                     path.display(),
                     view.rows.len(),
                     view.lang.unwrap_or("none")
@@ -992,6 +921,14 @@ impl KagiApp {
         let Some(path) = file.map(|f| f.path.clone()) else {
             return;
         };
+        // Compact files outlive the main-diff presentation and move into the
+        // desktop panel on resize; retain their existing owner-local selection.
+        if self.compact.enabled {
+            entity.update(cx, |panel, pcx| {
+                panel.state.selected_file = Some(file_ref);
+                pcx.notify();
+            });
+        }
         let read = super::main_diff_pane::MainDiffRead::Wip {
             staged,
             refresh: false,
@@ -1016,16 +953,14 @@ impl KagiApp {
     }
 
     /// Open the first changed file's diff in the main pane (headless path).
-    /// Calls the synchronous highlight variant since headless has no cx and is
-    /// test-only (no UI latency concern).
+    /// Without an executor it reads text synchronously and stages the view;
+    /// the first render promotes it and requests syntax highlighting.
     pub fn open_main_diff_commit_headless(&mut self, file_index: usize) {
-        // Delegate to the shared open path with a dummy sync-highlight by
-        // calling set_commit_main_diff_sync directly after acquiring the diff.
         self.open_main_diff_commit_inner(file_index, None);
     }
 
-    /// Open the main diff (UI path): a cached file installs now, a cache miss
-    /// is read off the UI thread (#829); the highlight follows asynchronously.
+    /// Open the main diff (UI path): cached text installs now; a cache miss or
+    /// cached binary prepares its complete view off-thread before publication.
     pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
         self.open_main_diff_commit_inner(file_index, Some(cx));
     }
@@ -1076,6 +1011,18 @@ impl KagiApp {
             .get(&(selected, file_index))
             .cloned()
         {
+            if cached.is_binary {
+                if let Some(cx) = cx.as_deref_mut() {
+                    let read = super::main_diff_pane::MainDiffRead::Commit {
+                        commit: id,
+                        row: selected,
+                        file_index,
+                        epoch: self.ui().cache_epoch,
+                        cached: Some(cached),
+                    };
+                    return self.read_main_diff(repo_path, path, read, cx);
+                }
+            }
             self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
             return;
         }
@@ -1090,6 +1037,7 @@ impl KagiApp {
                 row: selected,
                 file_index,
                 epoch: self.ui().cache_epoch,
+                cached: None,
             };
             return self.read_main_diff(repo_path, path, read, cx);
         }
@@ -1140,17 +1088,67 @@ impl KagiApp {
             None => return,
         };
         let path_str = path.to_string_lossy().into_owned();
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+        else {
+            return;
+        };
+        let req = self.bump_main_diff_req();
+        let commit = CommitId(sha.clone());
+        let bg_path = path.clone();
+        let bg_commit = commit.clone();
 
         let task = cx.background_spawn(async move {
             crate::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
+                .map(|file_diff| {
+                    let source = MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                        commit: Some(bg_commit),
+                    };
+                    let view = build_main_diff_view(&file_diff, &bg_path, file_index, source);
+                    (file_diff, view)
+                })
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                if !current.is_some_and(|current| {
+                    current.session == owner.session && current.visit == owner.visit
+                }) || app.ui().main_diff_req != req
+                    || app
+                        .ui()
+                        .selected
+                        .and_then(|row| app.commit_id_for_row(row))
+                        .as_ref()
+                        != Some(&commit)
+                {
+                    return;
+                }
                 match result {
-                    Ok(file_diff) => {
-                        app.set_commit_main_diff(&file_diff, &path, selected, file_index, Some(cx))
+                    Ok((file_diff, mut view)) => {
+                        let Some(row_index) = app.row_for_commit_id(&commit) else {
+                            return;
+                        };
+                        view.source = MainDiffSource::Commit {
+                            row_index,
+                            file_index,
+                            commit: Some(commit),
+                        };
+                        let (added, removed) = diff_line_counts(&file_diff);
+                        klog!(
+                            "diff: {} hunks={} (+{} -{})",
+                            path.display(),
+                            file_diff.hunks.len(),
+                            added,
+                            removed
+                        );
+                        app.show_main_diff(view, cx);
                     }
                     Err(e) => klog!("remote diff error: {e}"),
                 }
@@ -1185,6 +1183,7 @@ mod unsafe_unicode_tests {
                 old_range: (1, lines.len() as u32),
                 new_range: (1, lines.len() as u32),
                 lines,
+                content_identity: None,
             }],
             is_binary: false,
         }

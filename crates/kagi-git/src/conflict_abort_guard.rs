@@ -154,8 +154,8 @@ fn commit_tree<'r>(repo: &'r Repository, oid: git2::Oid) -> Result<git2::Tree<'r
 /// from a user's mid-conflict edit to a non-conflicted file. Extended in #369
 /// to the sequencer ops (rebase / cherry-pick / revert), not just merge.
 ///
-/// Rebase replays onto current HEAD (onto + applied commits), not ORIG_HEAD,
-/// which is only the abort restoration target. Other ops retain their pre-op tree.
+/// Replay operations apply onto current HEAD (including earlier successful
+/// steps), not the abort target. Merge retains its pre-op tree.
 /// - **merge**: base = merge-base(HEAD, MERGE_HEAD), theirs = MERGE_HEAD tree.
 /// - **cherry-pick / rebase** (replay commit `C`): base = `C^` tree, theirs = `C` tree.
 /// - **revert** (undo commit `C`): base = `C` tree, theirs = `C^` tree.
@@ -204,12 +204,15 @@ fn reconstruct_op_result<'r>(
         // StashConflict has no commit-producing output to reconstruct.
         ConflictOp::StashConflict => return Ok(None),
     };
-    let rebase_ours = if matches!(session.op, ConflictOp::Rebase { .. }) {
+    let replay_ours = if matches!(
+        session.op,
+        ConflictOp::Rebase { .. } | ConflictOp::CherryPick { .. } | ConflictOp::Revert { .. }
+    ) {
         Some(
             repo.head()
                 .and_then(|head| head.peel_to_tree())
                 .map_err(|e| {
-                    GitError::Other(format!("rebase HEAD tree lookup failed: {}", e.message()))
+                    GitError::Other(format!("replay HEAD tree lookup failed: {}", e.message()))
                 })?,
         )
     } else {
@@ -218,7 +221,7 @@ fn reconstruct_op_result<'r>(
     let index = repo
         .merge_trees(
             base_tree.as_ref().unwrap_or(orig_tree),
-            rebase_ours.as_ref().unwrap_or(orig_tree),
+            replay_ours.as_ref().unwrap_or(orig_tree),
             &theirs_tree,
             None,
         )

@@ -65,9 +65,130 @@ fn confirm(
         cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
         cx.run_until_parked();
         cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    } else if cx.read(|cx| {
+        matches!(
+            app.read(cx).active_modal,
+            Some(ActiveModal::Pop(_) | ActiveModal::StashDrop(_))
+        )
+    }) {
+        // #1270: root Return cancels danger cards. Tab to their real Confirm
+        // button and send its Enter down/up rather than bypassing approval.
+        crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     } else {
         cx.simulate_keystrokes(window, "enter");
     }
+}
+
+pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_lang = i18n::lang();
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        i18n::set_lang(lang);
+        let fixture = tempfile::tempdir().unwrap();
+        let repo = fixture.path().canonicalize().unwrap();
+        git_fixture::init_repo(&repo, "main");
+        std::fs::write(repo.join("new"), "keep\n").unwrap();
+        let before_head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+        wait(cx, &app, |app| {
+            app.stash_push_modal().is_some_and(|m| m.plan.is_some())
+        });
+        let reason = match lang {
+            i18n::Lang::En => "Stash push requires a HEAD commit. Create an initial commit before stashing.",
+            i18n::Lang::Ja => "stash push には HEAD commit が必要です。最初の commit を作成してから stash してください。",
+        };
+        cx.read(|cx| {
+            let plan = app
+                .read(cx)
+                .stash_push_modal()
+                .unwrap()
+                .plan
+                .as_ref()
+                .unwrap();
+            assert!(plan
+                .blockers
+                .iter()
+                .any(|note| i18n::plan_note_text(note) == reason));
+            assert_eq!(plan.predicted, plan.current);
+        });
+        kagi::ui::button_style::clear_recorded_modal_buttons();
+        app.update(cx, |_, cx| cx.notify());
+        crate::recovery_operations::paint(cx, window);
+        let button = kagi::ui::button_style::recorded_modal_button("stash-push-confirm").unwrap();
+        assert!(button.disabled);
+        assert_eq!(button.description.as_deref(), Some(reason));
+        // The reason is passed to the actual rendered disabled action, not
+        // merely present in the backend plan. Clicking cannot execute it.
+        let bounds = e2e::confirm_bounds(window.window_id()).unwrap();
+        cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_some()));
+        confirm(cx, &app, window, false);
+        wait(cx, &app, |app| {
+            !app.app_sessions.has_leases() && app.stash_push_modal().is_none()
+        });
+        assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
+            FooterStatus::Failed(text) if text.contains(reason))));
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
+            if blockers.iter().any(|b| b.contains("HEAD commit")))
+        );
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), before_head);
+        assert_eq!(std::fs::read_to_string(repo.join("new")).unwrap(), "keep\n");
+        assert!(!repo.join(".git/index").exists());
+        assert!(!repo.join(".git/refs/stash").exists());
+        unmount(cx, app, window);
+        stash_retained_preview(cx, lang);
+    }
+    i18n::set_lang(original_lang);
+    eprintln!("[gui-e2e] PASS stash_push_plan_accuracy EN/JA");
+}
+
+fn stash_retained_preview(cx: &mut VisualTestAppContext, lang: i18n::Lang) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "stash this\n").unwrap();
+    std::fs::write(repo.join("new"), "retain this\n").unwrap();
+    let mut backend = kagi_git::Backend::open(&repo).unwrap();
+    let op = kagi_git::Operation::StashPush {
+        message: None,
+        include_untracked: false,
+    };
+    let plan = std::sync::Arc::new(backend.plan(&op).unwrap());
+    let expected = match lang {
+        i18n::Lang::En => "1 untracked retained",
+        i18n::Lang::Ja => "未追跡ファイル 1 件を保持",
+    };
+    let (app, window) = mount(cx, &repo);
+    // The toolbar currently always includes untracked. Render the public
+    // backend's real exclusion plan in the same production modal, without
+    // inventing a frontend toggle or a fake plan/executor.
+    app.update(cx, |app, cx| {
+        app.set_stash_push_modal(kagi::ui::modals::StashPushModal {
+            input: String::new(),
+            input_state: None,
+            plan: Some(plan.clone()),
+            error: None,
+        });
+        cx.notify();
+    });
+    crate::recovery_operations::paint(cx, window);
+    assert_eq!(e2e::last_plan_status_chip().as_deref(), Some(expected));
+    let (_, after) = kagi::ui::dialog_a11y::recorded_note("plan-state-after").unwrap();
+    assert!(after.contains(expected), "{lang:?} AFTER: {after}");
+    backend.run(&op, &plan).unwrap();
+    assert_eq!(git_output(&repo, &["status", "--porcelain"]), "?? new");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("new")).unwrap(),
+        "retain this\n"
+    );
+    let entries = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    unmount(cx, app, window);
 }
 pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {
@@ -135,7 +256,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
             eprintln!(
                 "[gui-e2e] PASS app-stash {} {} → executor → one receipt",
                 action.name(),
-                if button { "button" } else { "raw Enter" }
+                if button { "button" } else { "keyboard" }
             );
         }
     }
@@ -196,7 +317,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         set_remote_stash_e2e_mode(None);
         eprintln!(
             "[gui-e2e] PASS remote stash-drop {} → typed transport → refresh + one receipt",
-            if button { "button" } else { "raw Enter" }
+            if button { "button" } else { "focused Enter" }
         );
     }
 
@@ -226,9 +347,16 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         });
         if mode == RemoteStashE2eMode::Unknown {
             assert!(cx.read(|cx| matches!(
-                &app.read(cx).status_footer,
-                FooterStatus::Failed(message)
-                    if message.contains(i18n::Msg::RemoteOpAwaitingCompletion.t())
+                app.read(cx)
+                    .op_log
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .entries()
+                    .front()
+                    .unwrap()
+                    .outcome,
+                OpOutcome::Unknown { .. }
             )));
         }
         unmount(cx, app, window);
@@ -268,7 +396,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
-    for duplicate in [false, true] {
+    for (duplicate, cancel_followup) in [(false, false), (false, true), (true, false)] {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         stash_three(&repo);
@@ -376,19 +504,42 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         if duplicate {
             cx.simulate_keystrokes(window, "escape");
             assert_eq!(ids(&repo), kept);
+        } else if cancel_followup {
+            let fingerprint = crate::macos::repo_fingerprint(&repo);
+            crate::recovery_operations::press_key(cx, &app, window, "enter");
+            wait(cx, &app, |app| app.stash_drop_modal().is_none());
+            assert_eq!(ids(&repo), kept, "root Return keeps the retained stash");
+            assert_eq!(crate::macos::repo_fingerprint(&repo), fingerprint);
+            assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
+            assert!(!read_oplog_tail_for_repo(&repo, 100)
+                .iter()
+                .any(|entry| entry.op == "stash-drop"));
         } else {
             // Cancelling is not the only thing this prompt must support: the
             // point of the follow-up is that it can be *confirmed*, and that it
             // drops the entry its OID resolved to — not the placeholder index
             // it reserved the modal slot with.
+            crate::recovery_operations::paint(cx, window);
+            assert_eq!(
+                ids(&repo),
+                kept,
+                "the follow-up must await explicit approval"
+            );
+            assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
             confirm(cx, &app, window, false);
             wait(cx, &app, |app| {
                 app.write_busy_op.is_none() && app.stash_drop_modal().is_none()
             });
             assert_eq!(ids(&repo), vec![kept[0].clone(), kept[2].clone()]);
+            let drops: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "stash-drop")
+                .collect();
+            assert_eq!(drops.len(), 1);
+            assert!(matches!(drops[0].outcome, OpOutcome::Success { .. }));
         }
         unmount(cx, app, window);
-        eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID prompt/cancel (duplicate={duplicate})");
+        eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID explicit confirm/Return cancel (duplicate={duplicate}, cancel={cancel_followup})");
     }
 }
 
@@ -622,6 +773,20 @@ pub fn scenario_stash_apply_conflict_preview(cx: &mut VisualTestAppContext) {
             plan.warnings
         );
     });
+    e2e::clear_control_bounds(window.window_id(), "stash-apply-warning");
+    kagi::ui::take_stash_warning_glyph_for_e2e();
+    crate::recovery_operations::paint(cx, window);
+    assert!(
+        e2e::control_paint(window.window_id(), "stash-apply-warning").is_some(),
+        "Apply's warning must render outside the collapsed recovery disclosure (#652)"
+    );
+    let (role, name) = kagi::ui::dialog_a11y::recorded_note("stash-apply-warning-0").unwrap();
+    assert_eq!(role, gpui::Role::Note);
+    assert!(!name.is_empty());
+    assert_eq!(
+        kagi::ui::take_stash_warning_glyph_for_e2e(),
+        Some("\u{26a0}")
+    );
 
     unmount(cx, app, window);
 }

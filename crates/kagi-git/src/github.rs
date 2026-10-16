@@ -13,6 +13,7 @@ pub use crate::github_issue_write::{
 use std::path::Path;
 use std::sync::OnceLock;
 
+pub use kagi_domain::github::PrListSnapshot;
 use kagi_domain::github::{
     fold_ci, Check, Comment, IssueLabel, Mergeable, PrBodyDetail, PrStatusDetail, PullRequest,
     Review,
@@ -106,7 +107,21 @@ pub fn parse_pr_body_detail(json: &str) -> Result<PrBodyDetail, GitError> {
         changed_files: count_at(&value, "changedFiles"),
         additions: count_at(&value, "additions"),
         deletions: count_at(&value, "deletions"),
+        commit_total: explicit_commit_total(&value),
     })
+}
+
+/// Only explicit totals are authoritative. `gh` commit arrays can be capped.
+pub(crate) fn explicit_commit_total(value: &serde_json::Value) -> Option<usize> {
+    value
+        .get("commitCount")
+        .or_else(|| {
+            value
+                .get("commits")
+                .and_then(|commits| commits.get("totalCount"))
+        })
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
 }
 
 fn required_number(value: &serde_json::Value) -> Result<u64, GitError> {
@@ -414,6 +429,11 @@ pub(crate) fn plan_pr_merge(
 
     let mut blockers: Vec<PlanNote> = Vec::new();
     let mut warnings: Vec<PlanNote> = Vec::new();
+    warnings.push(PlanNote::Github(GithubNote::MergeScope {
+        branch: pr.head.clone(),
+        head_sha: pr.head_sha.clone(),
+        totals: None,
+    }));
     if pr.head_sha.trim().is_empty() {
         blockers.push(PlanNote::Github(GithubNote::HeadUnavailable {
             number: pr.number,
@@ -469,7 +489,15 @@ pub(crate) fn plan_pr_merge(
     } else {
         warnings.push(PlanNote::Github(GithubNote::RemoteSideEffect));
     }
+    let destructive = delete_branch
+        && (!pr.cross_repository
+            || local_branch
+                .as_ref()
+                .is_some_and(|branch| branch.tip.is_some() && branch.keep_reason.is_none()));
     OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {
@@ -480,11 +508,11 @@ pub(crate) fn plan_pr_merge(
             method: method.label().to_string(),
         }),
         current: StateSummary {
-            head: head_summary.clone(),
+            head: head_summary,
             dirty: format!("#{} open ({} → {})", pr.number, pr.head, pr.base),
         },
         predicted: StateSummary {
-            head: head_summary,
+            head: format!("{}:{}", pr.base_repo, pr.base),
             dirty: format!("#{} merged into {}", pr.number, pr.base),
         },
         warnings,
@@ -506,10 +534,11 @@ pub(crate) fn plan_pr_merge(
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
-        // Local cleanup uses its own guarded ref-only deletion and mandatory
-        // backup root, and only follows server confirmation of the PR merge.
-        destructive: false,
+        // Danger is an interaction role, independent of guarded cleanup and
+        // its recovery root. The shared button/default/trap consume this bit.
+        destructive,
         equivalent_command: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -608,6 +637,21 @@ mod tests {
     }
 
     #[test]
+    fn commit_totals_require_explicit_count_not_array_length() {
+        for (json, expected) in [
+            (r#"{"commitCount":10}"#, Some(10)),
+            (r#"{"commits":{"totalCount":10}}"#, Some(10)),
+            (r#"{"commits":{"totalCount":0}}"#, Some(0)),
+            (r#"{"commits":[{}, {}, {}]}"#, None),
+            (r#"{"commits":null}"#, None),
+            (r#"{}"#, None),
+        ] {
+            let value = serde_json::from_str(json).unwrap();
+            assert_eq!(explicit_commit_total(&value), expected, "{json}");
+        }
+    }
+
+    #[test]
     fn parses_reviews_and_comments_dropping_empty_ones() {
         let json = r#"{
           "reviews":[
@@ -675,5 +719,26 @@ mod tests {
             note,
             PlanNote::Github(kagi_domain::plan_note::GithubNote::HeadUnavailable { number: 42 })
         )));
+    }
+    #[test]
+    fn merge_danger_tracks_remote_deletion_not_merge_method() {
+        for method in [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase] {
+            for cross_repository in [false, true] {
+                for delete in [false, true] {
+                    let pr = PullRequest {
+                        number: 42,
+                        head: "feature".into(),
+                        head_sha: "a".repeat(40),
+                        base: "release".into(),
+                        base_repo: "github.example/acme/widgets".into(),
+                        cross_repository,
+                        ..Default::default()
+                    };
+                    let plan = plan_pr_merge(&pr, method, delete, "local-only".into(), None);
+                    assert_eq!(plan.destructive, delete && !cross_repository);
+                    assert_eq!(plan.predicted.head, "github.example/acme/widgets:release");
+                }
+            }
+        }
     }
 }

@@ -11,6 +11,7 @@ impl KagiApp {
     /// and (for conflict) by the re-armed detection below.
     pub(crate) fn begin_session_revalidation(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
+            ui.graph_motion.reset = true;
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
@@ -21,16 +22,9 @@ impl KagiApp {
             // Re-arm detection: its outcome decides whether the retained
             // conflict pane is updated in place or replaced.
             ui.conflict_detected = false;
-            // PR mode is dropped rather than re-checked. A `PrTab` is a snapshot
-            // of the refs *and* of GitHub (reviews, merge status, conflict
-            // preview) taken when it was opened, and nothing refreshes it while
-            // the tab is away; rebuilding it on activation needs the PR list
-            // that the activation is still fetching, races the loads started
-            // before departure, and loses the user's position anyway. Carrying
-            // PR mode across a switch is out of scope for #643 Wave 4 S6 — the
-            // tab reopens the PR. The *ownership* stays session-scoped, so B
-            // never sees A's PRs.
-            ui.leave_pr_mode();
+            // PR collections and pane entities remain owned by this session.
+            // Departure revoked list requests; activation's list/detail reads
+            // revalidate the retained heads without discarding user intent.
         }
     }
 
@@ -156,11 +150,12 @@ impl KagiApp {
     /// and all repository-bound resources it owns. Removing the read or UI
     /// anywhere else would violate `dom(ui) = attached sessions`.
     pub(crate) fn release_session(&mut self, session: crate::app::SessionId) {
+        crate::ui::diff_selection::retire_session(session);
         self.app_sessions.detach(session);
         self.reads.forget(session);
         self.ui.remove(&session);
         if let Some(flight) = &mut self.fetch_in_flight {
-            flight.waiters.retain(|(waiter, _)| *waiter != session);
+            flight.waiters.retain(|(waiter, _, _)| *waiter != session);
         }
     }
 
@@ -209,7 +204,6 @@ impl KagiApp {
             name: name.to_string(),
             remote: None,
             is_worktree,
-            wt_color_idx: None,
         });
         self.active_tab = self.tabs.len() - 1;
         self.publish_tab_view(session, view);
@@ -260,6 +254,7 @@ impl KagiApp {
         let anchor = self.selected_commit(session);
         self.reads.amend(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
+            ui.graph_motion.reset = true;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }
@@ -273,6 +268,7 @@ impl KagiApp {
         let anchor = self.selected_commit(session);
         self.reads.publish(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
+            ui.graph_motion.reset = true;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }
@@ -285,10 +281,19 @@ impl KagiApp {
     /// and the caller must drop the result without any display side effect.
     pub fn accept_tab_view(&mut self, key: crate::app::ReadKey, view: TabViewState) -> bool {
         let anchor = self.selected_commit(key.session());
+        let animate_graph = self.active_session() == Some(key.session())
+            && self.ui.get(&key.session()).is_some_and(|ui| {
+                !matches!(
+                    ui.pane_revalidation,
+                    crate::ui::tab_ui_state_ops::PaneRevalidation::AwaitingRead
+                )
+            });
         if !self.reads.accept(key, view) {
             return false;
         }
         if let Some(ui) = self.ui.get_mut(&key.session()) {
+            ui.graph_motion.full_read = animate_graph;
+            ui.graph_motion.reset |= !animate_graph;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }
@@ -343,15 +348,6 @@ impl KagiApp {
         // `scans_stale` live here — so no apply site can forget it. Callers still
         // re-resolve `selected` by CommitId (there is no `cx` here).
         self.invalidate_caches_for_row_renumber(session);
-
-        // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
-        // lane_color(rank-in-worktrees-list), so record the same rank on the tab.
-        let wt_idx = self.view().worktrees.iter().position(|w| w.is_current);
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
-            if tab.is_worktree {
-                tab.wt_color_idx = wt_idx;
-            }
-        }
     }
 
     /// The read model on screen changed owner (a tab switch). Same UI reaction

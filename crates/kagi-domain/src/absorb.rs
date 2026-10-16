@@ -82,6 +82,9 @@ impl HunkAssignment {
 /// A condition that refuses the whole absorb (rendered red in the modal).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AbsorbBlocker {
+    /// Effective identity is unavailable; presentation uses
+    /// `CommonNote::GitIdentityUnavailable` and its EN/JA renderer.
+    GitIdentityUnavailable,
     /// HEAD is detached — no branch ref to rewrite.
     DetachedHead,
     /// HEAD is unborn — no history to absorb into.

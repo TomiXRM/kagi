@@ -256,7 +256,10 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
+                    SharedString::from(i18n::op::op_failed_contract(
+                        i18n::Op::RepoOpen,
+                        "session unavailable",
+                    )),
                     cx,
                 );
                 return;
@@ -368,7 +371,7 @@ impl KagiApp {
                             && app.app_sessions.visit(owner) == visit;
                         if let Err(e) = &result {
                             klog!("refused: {} stage failed: {}", op_name, e);
-                            app.record_conflict_completion(
+                            app.record_operation_completion(
                                 &op_name,
                                 StateSummary {
                                     head: format!("op={}", session_op),
@@ -497,7 +500,7 @@ impl KagiApp {
                         match result {
                             Ok(result) => {
                                 klog!("executed: {}", op_name);
-                                app.record_conflict_completion(
+                                app.record_operation_completion(
                                     &op_name,
                                     before,
                                     OpOutcome::Success {
@@ -517,7 +520,7 @@ impl KagiApp {
                                 let err_msg = format!("{}", e);
                                 let is_unknown = unknown.is_some();
                                 klog!("{} failed: {}", op_name, err_msg);
-                                app.record_conflict_completion(
+                                app.record_operation_completion(
                                     &op_name,
                                     before,
                                     unknown.unwrap_or_else(|| OpOutcome::Failed {
@@ -569,7 +572,10 @@ impl KagiApp {
         if self.ui().repo_session.is_none() {
             self.push_toast(
                 ToastKind::Error,
-                SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
+                SharedString::from(i18n::op::op_failed_contract(
+                    i18n::Op::RepoOpen,
+                    "session unavailable",
+                )),
                 cx,
             );
             return;
@@ -627,7 +633,7 @@ impl KagiApp {
                 match result {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
-                        app.record_conflict_completion(
+                        app.record_operation_completion(
                             &op_name,
                             before,
                             OpOutcome::Success {
@@ -656,7 +662,7 @@ impl KagiApp {
                             _ => None,
                         });
                         klog!("{} failed: {}", op_name, err_msg);
-                        app.record_conflict_completion(
+                        app.record_operation_completion(
                             &op_name,
                             before,
                             unknown.unwrap_or_else(|| OpOutcome::Failed {
@@ -746,7 +752,7 @@ impl KagiApp {
             ),
             Err(e) => self.push_toast(
                 ToastKind::Error,
-                SharedString::from(i18n::op_failed(i18n::Op::ExternalTool, e)),
+                SharedString::from(i18n::op::op_failed_contract(i18n::Op::ExternalTool, e)),
                 cx,
             ),
         }
@@ -757,7 +763,7 @@ impl KagiApp {
         self.close_settings_for_command(window, cx);
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
-        self.ensure_terminal(window, cx);
+        self.activate_terminal(window, cx);
     }
 
     /// Copy the selected conflict file's absolute path to the clipboard

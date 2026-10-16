@@ -18,6 +18,8 @@ pub enum TagNameError {
     LeadingDash(String),
     /// A tag with this name already exists.
     Exists(String),
+    /// A parent or descendant ref occupies this tag namespace.
+    NamespaceCollision { name: String, existing: String },
 }
 
 impl TagNameError {
@@ -32,7 +34,15 @@ impl TagNameError {
                 format!(crate::advice_template_en!(TagNameErrorLeadingDash), name)
             }
             TagNameError::Exists(name) => format!("A tag named '{}' already exists.", name),
+            TagNameError::NamespaceCollision { name, existing } => {
+                format!("Tag '{}' conflicts with existing ref '{}'.", name, existing)
+            }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -47,6 +57,8 @@ pub enum TagNote {
     NotFound { name: String },
     /// blocker (`plan_push_tag`) — the repository has no remote to push to.
     NoRemote,
+    /// Approval no longer matches the transport or local tag object.
+    PushIdentityChanged,
     /// warning (`plan_push_tag`) — this leaves the machine. Said out loud
     /// because every other tag operation is purely local.
     PushRemoteSideEffect { remote: String, name: String },
@@ -60,6 +72,10 @@ impl TagNote {
     pub fn message_en(&self) -> String {
         match self {
             TagNote::NameError(e) => e.message_en(),
+            TagNote::PushIdentityChanged => {
+                "The approved tag or push destination changed. Refresh the plan before pushing."
+                    .to_string()
+            }
             TagNote::CommitMissing { sha } => {
                 format!("Commit '{}' does not exist in this repository.", sha)
             }
@@ -77,6 +93,24 @@ impl TagNote {
             TagNote::PushRejectedIfMoved { name } => {
                 format!(crate::advice_template_en!(TagPushRejectedIfMoved), name)
             }
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            TagNote::NameError(e) => e.message_display_en(),
+            TagNote::PushRemoteSideEffect { remote, name } => format!(
+                crate::advice_template_display_en!(TagPushRemoteSideEffect),
+                name, remote
+            ),
+            TagNote::PushRejectedIfMoved { name } => {
+                format!(
+                    crate::advice_template_display_en!(TagPushRejectedIfMoved),
+                    name
+                )
+            }
+            _ => self.message_en(),
         }
     }
 }
@@ -99,6 +133,11 @@ impl TagTitle {
                 format!("Push tag '{}' to '{}'", name, remote)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -125,6 +164,11 @@ impl TagRecovery {
                 remote, name
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

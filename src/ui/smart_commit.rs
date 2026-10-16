@@ -28,6 +28,7 @@ use super::{i18n::Msg, settings};
 // ──────────────────────────────────────────────────────────────────────────
 
 const KEY_ENABLED: &str = "smart_commit_llm_enabled";
+const KEY_CONSENT: &str = "smart_commit_consent_accepted";
 const KEY_MODEL: &str = "smart_commit_model";
 const KEY_LANG: &str = "smart_commit_lang";
 /// Which generation backend is selected: `"ollama"` (default) | `"claude-code"`
@@ -53,6 +54,13 @@ pub enum SmartProvider {
 }
 
 impl SmartProvider {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Ollama => "Ollama",
+            Self::Cli(provider) => provider.display_name(),
+        }
+    }
+
     /// Stable slug for `settings.json` (`"ollama"` / `"claude-code"` / `"codex"`).
     pub fn slug(self) -> &'static str {
         match self {
@@ -68,6 +76,16 @@ impl SmartProvider {
             None => SmartProvider::Ollama,
         }
     }
+}
+
+/// Identity frozen when generation dispatches; model storage is shared with the renderer.
+#[derive(Clone, Debug)]
+pub struct SmartGeneration {
+    /// Dispatch identity, retained by the session without retaining the panel.
+    /// EntityId distinguishes replacement panels whose local gen starts at zero.
+    pub request: (gpui::EntityId, u64),
+    pub provider: SmartProvider,
+    pub model: Option<gpui::SharedString>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -99,10 +117,46 @@ pub enum SmartCommitModal {
     },
 }
 
+/// Transient keyboard state for the modal's dense model target list.
+pub(crate) struct ModelPickerFocus {
+    pub(crate) owner: Option<crate::app::SessionId>,
+    pub(crate) keys: super::keyboard_nav::RowKeys,
+    pub(crate) focus: std::cell::RefCell<super::keyboard_nav::RowFocus>,
+    pub(crate) scroll: gpui::ListState,
+    pub(crate) focus_first: std::cell::Cell<bool>,
+}
+
+impl Default for ModelPickerFocus {
+    fn default() -> Self {
+        Self {
+            owner: None,
+            keys: std::rc::Rc::from([]),
+            focus: Default::default(),
+            scroll: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(0.)),
+            focus_first: std::cell::Cell::new(false),
+        }
+    }
+}
+
+impl ModelPickerFocus {
+    pub(crate) fn reset(&mut self, models: &[String]) {
+        self.keys = models
+            .iter()
+            .enumerate()
+            .map(|(i, model)| (model.clone(), i))
+            .collect();
+        self.focus = Default::default();
+        self.scroll.reset(models.len());
+        self.focus_first.set(true);
+    }
+}
+
 /// Process/window-global Smart Commit capabilities plus persisted settings.
 /// The modal lives in `ActiveModal`; generation status lives in `TabUiState`.
 #[derive(Clone, Debug)]
 pub struct SmartCommitState {
+    /// The current capability probe has not published its result yet.
+    pub detecting: bool,
     /// Whether an Ollama server was detected at startup (`Local LLM available`).
     pub ollama_available: bool,
     /// Models installed on the detected Ollama server (`/api/tags`).
@@ -113,8 +167,10 @@ pub struct SmartCommitState {
     pub codex_available: bool,
     /// Selected generation backend (persisted; ADR-0099). Default `Ollama`.
     pub provider: SmartProvider,
-    /// User has opted in to LLM generation (persisted).
+    /// Whether LLM generation is enabled (persisted independently of consent).
     pub llm_enabled: bool,
+    /// The user explicitly confirmed the four first-use privacy statements.
+    pub consent_accepted: bool,
     /// Selected model name (persisted); `None` until chosen.
     pub model: Option<String>,
     /// Output language (persisted; remembered like the draft per ADR-0042).
@@ -124,12 +180,14 @@ pub struct SmartCommitState {
 impl Default for SmartCommitState {
     fn default() -> Self {
         SmartCommitState {
+            detecting: false,
             ollama_available: false,
             detected_models: Vec::new(),
             claude_available: false,
             codex_available: false,
             provider: SmartProvider::Ollama,
             llm_enabled: false,
+            consent_accepted: false,
             model: None,
             lang: Lang::En,
         }
@@ -137,12 +195,13 @@ impl Default for SmartCommitState {
 }
 
 impl SmartCommitState {
-    /// Load persisted settings (enabled / model / lang / style).  Detection of
+    /// Load persisted settings (enabled / consent / model / lang / provider). Detection of
     /// the running Ollama server is done separately in the background so the UI
     /// thread never blocks on a probe.
     pub fn load() -> Self {
         SmartCommitState {
             llm_enabled: settings::read_setting(KEY_ENABLED).as_deref() == Some("1"),
+            consent_accepted: settings::read_setting(KEY_CONSENT).as_deref() == Some("1"),
             model: settings::read_setting(KEY_MODEL).filter(|m| !m.is_empty()),
             // ADR-0134: the Lang pill in the commit footer is gone, so an
             // unset `smart_commit_lang` follows the UI language rather than
@@ -161,10 +220,17 @@ impl SmartCommitState {
         }
     }
 
-    /// Persist the opt-in flag.
+    /// Persist the enabled preference without asserting first-use consent.
     pub fn set_enabled(&mut self, on: bool) {
         self.llm_enabled = on;
         settings::write_setting(KEY_ENABLED, Some(if on { "1" } else { "0" }));
+    }
+
+    /// Record explicit privacy consent before enabling generation.
+    pub fn accept_consent(&mut self) {
+        settings::write_setting(KEY_CONSENT, Some("1"));
+        self.consent_accepted = true;
+        self.set_enabled(true);
     }
 
     /// Persist the selected model.

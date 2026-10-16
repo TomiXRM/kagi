@@ -85,13 +85,13 @@ pub fn build_worktree_menu(
             title: None,
             items: vec![
                 MenuItem {
-                    action: WorktreeAction::OpenInNewTab,
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::OpenInNewTab),
                     label: SharedString::from(Msg::MenuOpenWorktreeInNewTab.t()),
                     state: ItemState::Enabled,
                     dangerous: false,
                 },
                 MenuItem {
-                    action: WorktreeAction::Reveal,
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Reveal),
                     label: SharedString::from(if cfg!(target_os = "macos") {
                         Msg::EditorTreeRevealFinder.t()
                     } else {
@@ -101,7 +101,7 @@ pub fn build_worktree_menu(
                     dangerous: false,
                 },
                 MenuItem {
-                    action: WorktreeAction::CopyPath,
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::CopyPath),
                     label: SharedString::from(Msg::EditorTreeCopyPath.t()),
                     state: ItemState::Enabled,
                     dangerous: false,
@@ -114,13 +114,13 @@ pub fn build_worktree_menu(
             title: None,
             items: vec![
                 MenuItem {
-                    action: WorktreeAction::Lock,
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Lock),
                     label: SharedString::from(Msg::MenuLockWorktree.t()),
                     state: lock_state,
                     dangerous: false,
                 },
                 MenuItem {
-                    action: WorktreeAction::Unlock,
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Unlock),
                     label: SharedString::from(Msg::MenuUnlockWorktree.t()),
                     state: unlock_state,
                     dangerous: false,
@@ -132,13 +132,13 @@ pub fn build_worktree_menu(
         title: None,
         items: vec![
             MenuItem {
-                action: WorktreeAction::Prune,
+                kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Prune),
                 label: SharedString::from(Msg::MenuPruneWorktrees.t()),
                 state: ItemState::Enabled,
                 dangerous: false,
             },
             MenuItem {
-                action: WorktreeAction::Repair,
+                kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Repair),
                 label: SharedString::from(Msg::MenuRepairWorktrees.t()),
                 state: ItemState::Enabled,
                 dangerous: false,
@@ -151,17 +151,17 @@ pub fn build_worktree_menu(
             title: None,
             items: vec![
                 MenuItem {
-                    action: WorktreeAction::Remove {
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Remove {
                         delete_branch: false,
-                    },
+                    }),
                     label: SharedString::from(Msg::MenuRemoveWorktreeKeepBranch.t()),
                     state: ItemState::Enabled,
                     dangerous: true,
                 },
                 MenuItem {
-                    action: WorktreeAction::Remove {
+                    kind: super::context_menu::MenuItemKind::Command(WorktreeAction::Remove {
                         delete_branch: true,
-                    },
+                    }),
                     label: SharedString::from(Msg::MenuRemoveWorktreeAndBranch.t()),
                     state: ItemState::Enabled,
                     dangerous: true,
@@ -177,6 +177,7 @@ pub fn render_worktree_menu_overlay(
     header: SharedString,
     groups: Vec<MenuGroup<WorktreeAction>>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -202,6 +203,7 @@ pub fn render_worktree_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )

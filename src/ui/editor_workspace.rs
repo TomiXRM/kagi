@@ -25,10 +25,13 @@ pub use kagi_ui_editor::*;
 
 use super::i18n::{self, Msg};
 use super::render_helpers::{render_diff_list, DiffHeader};
+use super::workspace_mode::WorkspaceMode;
 use super::{
     build_main_diff_view, EditorDirtyGuardModal, EditorPendingIntent, FooterStatus, KagiApp,
     MainDiffSource, MainDiffView, ToastKind,
 };
+
+mod host_close;
 
 #[cfg(feature = "gui-e2e")]
 static PANIC_NEXT_EDITOR_SAVE: std::sync::atomic::AtomicBool =
@@ -43,11 +46,12 @@ impl KagiApp {
 
 /// The host hooks injected at construction (ADR-0121 C4): the bin-owned
 /// helpers the crate renders/loads with but must not own.
-fn editor_hooks() -> EditorHooks {
+fn editor_hooks(owner: crate::app::SessionId) -> EditorHooks {
     EditorHooks {
         lang_for_path: super::diff_view::lang_for_path,
         image_from_bytes: super::avatar_fetch::image_from_bytes,
-        render_hunks: Box::new(|view, cx| {
+        pane_selectors: Box::<super::editor_pane_selectors::PaneSelectors>::default(),
+        render_hunks: Box::new(move |view, cx| {
             // `view.diff` is seeded below as a boxed `MainDiffView` (a bin
             // type the crate can't name) — downcast and hand it to the
             // shared diff-list renderer, exactly as the pre-C4 in-crate arm
@@ -57,13 +61,17 @@ fn editor_hooks() -> EditorHooks {
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                super::diff_selection::retire_surface(view.diff_layout.selection_owner());
+                view.diff_layout.clear(&view.diff_scroll);
                 return gpui::div().into_any_element();
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
                 DiffHeader::default(),
                 view.diff_scroll.clone(),
+                &view.diff_layout,
                 None,
+                super::diff_selection::SelectionOwner::Editor(owner),
                 cx,
             )
             .into_any_element()
@@ -71,19 +79,23 @@ fn editor_hooks() -> EditorHooks {
         // T-WS-EDITOR-008: same downcast shape as `render_hunks`, over the
         // independent `history_diff` field so selecting a History commit
         // never touches the WIP hunks pane's diff.
-        render_history_diff: Box::new(|view, cx| {
+        render_history_diff: Box::new(move |view, cx| {
             let Some(diff) = view
                 .history_diff
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                super::diff_selection::retire_surface(view.history_diff_layout.selection_owner());
+                view.history_diff_layout.clear(&view.history_diff_scroll);
                 return gpui::div().into_any_element();
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
                 DiffHeader::default(),
                 view.history_diff_scroll.clone(),
+                &view.history_diff_layout,
                 None,
+                super::diff_selection::SelectionOwner::Editor(owner),
                 cx,
             )
             .into_any_element()
@@ -137,7 +149,7 @@ impl KagiApp {
         // open would hide the editor we are about to create (same reasoning
         // as the two closes above). PR mode holds no unsaved state.
         self.with_ui(|ui| ui.leave_pr_mode());
-        let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(), root_focus));
+        let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(owner), root_focus));
         let pane_id = view.entity_id();
         // The pane's own background reads (file list, diff, history, blame,
         // snapshot) are frozen to this owner's repository at open time and land
@@ -162,8 +174,30 @@ impl KagiApp {
                     .editor_workspace
                     .as_ref()
                     .is_some_and(|current| current.entity_id() == pane_id);
-            if is_read || is_current {
-                app.on_editor_workspace_event(view, event, cx);
+            let guarded_save = app
+                .editor_dirty_guard_modal()
+                .is_some_and(|modal| modal.saving == Some(pane_id))
+                && app
+                    .ui
+                    .get(&owner)
+                    .and_then(|ui| ui.editor_workspace.as_ref())
+                    .is_some_and(|current| current.entity_id() == pane_id);
+            if is_read || is_current || guarded_save {
+                app.on_editor_workspace_event(owner, view, event, cx);
+            }
+        })
+        .detach();
+        // Native Save and history availability belong to the parent dispatch
+        // tree. Child edits/selection changes must invalidate it too.
+        cx.observe(&view, move |app, view, cx| {
+            if app.active_session() == Some(owner)
+                && app
+                    .ui()
+                    .editor_workspace
+                    .as_ref()
+                    .is_some_and(|current| current == &view)
+            {
+                cx.notify();
             }
         })
         .detach();
@@ -178,6 +212,7 @@ impl KagiApp {
     /// Map the crate's outward events onto app state (ADR-0121 C4).
     fn on_editor_workspace_event(
         &mut self,
+        owner: crate::app::SessionId,
         view: Entity<EditorWorkspaceView>,
         event: &EditorWorkspaceEvent,
         cx: &mut Context<Self>,
@@ -185,7 +220,10 @@ impl KagiApp {
         match event {
             EditorWorkspaceEvent::SaveRequested(request) => {
                 let repo_path = view.read(cx).repo_path.clone();
-                let Some(guard) = self.reserve_write("editor-save", &repo_path, cx) else {
+                let Some(guard) =
+                    self.reserve_write_for("editor-save", &repo_path, Some(owner), cx)
+                else {
+                    self.stop_editor_guard_save();
                     return;
                 };
                 let record_path = repo_path.clone();
@@ -225,6 +263,7 @@ impl KagiApp {
                                 _ => None,
                             };
                             let _ = host.update(acx, |app, cx| {
+                                app.stop_editor_guard_save();
                                 let entry =
                                     super::oplog_panel::OpLogPanel::entry_for_recording(&recording);
                                 if let Some(panel) = app.op_log.clone() {
@@ -244,12 +283,7 @@ impl KagiApp {
                                         .push_back(i18n::oplog_write_failed(error).into());
                                 }
                                 app.present_app_notice();
-                                let detail = if recording_error.is_some() {
-                                    "save task unwound; recording failed — inspect the operation notice"
-                                } else {
-                                    "save task unwound; outcome unknown — inspect the operation notice"
-                                };
-                                let msg = i18n::op_failed(i18n::Op::Save, detail);
+                                let msg = Msg::EditorWorkspaceSaveInterrupted.t().to_string();
                                 app.push_toast(ToastKind::Error, msg.clone(), cx);
                                 app.status_footer = FooterStatus::Failed(SharedString::from(msg));
                                 cx.notify();
@@ -286,10 +320,12 @@ impl KagiApp {
                 self.open_editor_dirty_guard(intent, cx);
             }
             EditorWorkspaceEvent::SaveBlocked => {
+                self.stop_editor_guard_save();
                 self.push_toast(ToastKind::Error, Msg::EditorWorkspaceSaveBlocked.t(), cx);
                 cx.notify();
             }
             EditorWorkspaceEvent::SaveFailed { path, error } => {
+                self.stop_editor_guard_save();
                 // Non-git file error: surface via toast + footer (the
                 // established precedent for a background op outside the
                 // plan pipeline — e.g. `repo.fetch`'s failure path,
@@ -302,6 +338,15 @@ impl KagiApp {
                 self.push_toast(ToastKind::Error, msg.clone(), cx);
                 self.status_footer = FooterStatus::Failed(SharedString::from(msg));
                 cx.notify();
+            }
+            EditorWorkspaceEvent::Saved => {
+                if self
+                    .editor_dirty_guard_modal()
+                    .is_some_and(|modal| modal.saving == Some(view.entity_id()))
+                {
+                    self.stop_editor_guard_save();
+                    self.save_host_dirty_guard(cx);
+                }
             }
             EditorWorkspaceEvent::FilesRequested { generation, source } => {
                 self.start_editor_files_load(view, *generation, *source, cx);
@@ -339,14 +384,20 @@ impl KagiApp {
         let repo_path = view.read(cx).repo_path.clone();
         let bg_path = path.clone();
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path)
-                .ok()
-                .and_then(|repo| repo.blame_file(&bg_path).ok())
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            let head = repo.blob_bytes_head(&bg_path).ok().flatten()?;
+            let head = String::from_utf8(head).ok()?;
+            let blame = repo.blame_file(&bg_path).ok()?;
+            Some((blame, head))
         });
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let result = task.await;
-            let _ = view.update(acx, |v, cx| v.seed_blame(req, &path, result, cx));
+            let (result, head) = match result {
+                Some((blame, head)) => (Some(blame), Some(head)),
+                None => (None, None),
+            };
+            let _ = view.update(acx, |v, cx| v.seed_blame(req, &path, result, head, cx));
         })
         .detach();
     }
@@ -413,12 +464,36 @@ impl KagiApp {
                 build_main_diff_view(&d, &bg_path, 0, source)
             })
         });
+        #[cfg(feature = "gui-e2e")]
+        let editor_id = view.entity_id();
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let built = task.await;
             let _ = view.update(acx, |v, cx| {
-                let diff = built.map(|d| Box::new(d) as Box<dyn std::any::Any>);
-                v.seed_diff(req, &path, diff, cx);
+                v.seed_diff(
+                    req,
+                    &path,
+                    built,
+                    |slot, next| {
+                        match (
+                            slot.as_mut()
+                                .and_then(|stored| stored.downcast_mut::<MainDiffView>()),
+                            next,
+                        ) {
+                            (Some(current), Some(next)) => current.adopt(next),
+                            (Some(current), None) => {
+                                super::diff_selection::retire_revision(current.height_source);
+                                *slot = None;
+                            }
+                            (_, next) => {
+                                *slot = next.map(|next| Box::new(next) as Box<dyn std::any::Any>);
+                            }
+                        }
+                        #[cfg(feature = "gui-e2e")]
+                        super::e2e::record_editor_diff_seed_request(editor_id, req);
+                    },
+                    cx,
+                );
             });
         })
         .detach();
@@ -438,7 +513,13 @@ impl KagiApp {
     ) {
         let repo_path = view.read(cx).repo_path.clone();
         let bg_path = path.clone();
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_editor_history();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(task) = injected {
+                return task.await;
+            }
             let req = kagi_git::FileHistoryRequest {
                 repo_dir: repo_path,
                 file_path: bg_path,
@@ -547,6 +628,11 @@ impl KagiApp {
     /// Close the Editor workspace (drops the entity; Graph mode is derived
     /// from `editor_workspace.is_none()`).
     pub fn close_editor_workspace(&mut self) {
+        if let Some(owner) = self.active_session() {
+            super::diff_selection::retire_owner(super::diff_selection::SelectionOwner::Editor(
+                owner,
+            ));
+        }
         if let Some(ui) = self.ui_mut() {
             ui.editor_workspace = None;
         }
@@ -619,16 +705,39 @@ impl KagiApp {
         }
     }
 
+    pub(super) fn editor_save_available(&self, cx: &gpui::App) -> bool {
+        !self.has_active_modal() && !self.op_latched() && self.editor_save_target_available(cx)
+    }
+
+    pub(super) fn editor_save_dispatch_available(&self, cx: &gpui::App) -> bool {
+        self.editor_save_target_available(cx) && (!self.has_active_modal() || self.op_latched())
+    }
+
+    fn editor_save_target_available(&self, cx: &gpui::App) -> bool {
+        self.workspace_mode() == WorkspaceMode::Editor
+            && !self.home_in_front()
+            && self.ui().editor_workspace.as_ref().is_some_and(|editor| {
+                let view = editor.read(cx);
+                view.dirty
+                    && !view.showing_history_commit()
+                    && !view.external_changed
+                    && view.open_path.is_some()
+                    && view.editor.is_some()
+            })
+    }
+
     /// Cmd-S root handler (T-WS-EDITOR-002 §3): save the Editor Workspace's
     /// buffer if it's open and dirty; no-op otherwise (closed workspace,
     /// clean buffer, or the "Save" keystroke firing on the wrong tab).
     pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
+        // Availability disables native menus, but a dispatched request must
+        // still reach writer admission and explain a competing lease.
+        if !self.editor_save_dispatch_available(cx) {
+            return;
+        }
         let Some(ev) = self.ui().editor_workspace.clone() else {
             return;
         };
-        if !ev.read(cx).dirty {
-            return;
-        }
         ev.update(cx, |v, cx| v.save(cx));
     }
 
@@ -637,7 +746,10 @@ impl KagiApp {
     /// `KagiApp` per the CLAUDE.md state-update rules; `intent` is what to do
     /// once the user confirms Discard.
     pub fn open_editor_dirty_guard(&mut self, intent: EditorPendingIntent, cx: &mut Context<Self>) {
-        self.set_editor_dirty_guard_modal(EditorDirtyGuardModal { intent });
+        self.set_editor_dirty_guard_modal(EditorDirtyGuardModal {
+            intent,
+            saving: None,
+        });
         klog!("editor-ws: dirty-guard");
         cx.notify();
     }
@@ -652,11 +764,25 @@ impl KagiApp {
     /// reset `dirty` as part of navigating/reloading, so no separate
     /// "discard" step is needed here.
     pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
-        let Some(modal) = self.editor_dirty_guard_modal().cloned() else {
+        if self
+            .editor_dirty_guard_modal()
+            .is_some_and(|modal| modal.saving.is_some())
+        {
+            return;
+        }
+        if self.host_dirty_guard_open() && !self.may_close_host() {
+            self.explain_host_save_wait(cx);
+            return;
+        }
+        let Some(modal) = self.take_editor_dirty_guard_modal() else {
             return;
         };
-        self.clear_editor_dirty_guard_modal();
         match modal.intent {
+            intent @ (EditorPendingIntent::Quit
+            | EditorPendingIntent::CloseWindow(_)
+            | EditorPendingIntent::Relaunch) => {
+                self.finish_host_close(intent, cx);
+            }
             EditorPendingIntent::Reload => {
                 if let Some(ev) = self.ui().editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.reload_from_disk(cx));
@@ -677,6 +803,25 @@ impl KagiApp {
                     ui.editor_workspace = None;
                 }
                 self.close_tab_by_session(session, cx);
+            }
+            EditorPendingIntent::PrPeek {
+                owner,
+                editor,
+                input,
+                path,
+                view,
+            } => {
+                let current = self.active_session() == Some(owner.session)
+                    && self.app_sessions.attachment(owner.session).as_ref() == Some(&owner)
+                    && self.ui().editor_workspace.as_ref().is_some_and(|pane| {
+                        pane.entity_id() == editor
+                            && pane.read(cx).editor.as_ref().map(|input| input.entity_id()) == input
+                            && pane.read(cx).open_path == path
+                    });
+                if current {
+                    self.close_editor_workspace();
+                    self.finish_pr_peek(owner, view, cx);
+                }
             }
         }
         cx.notify();

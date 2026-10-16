@@ -447,8 +447,9 @@ fn render_mermaid_block(
                 SharedString::from(Msg::EditorWorkspaceMermaidNeedsCli.t())
             } else {
                 SharedString::from(format!(
-                    "{}: {detail}",
-                    Msg::EditorWorkspaceMermaidFailed.t()
+                    "{}: {}",
+                    Msg::EditorWorkspaceMermaidFailed.t(),
+                    kagi_ui_core::i18n::op::user_text::diagnostic(detail)
                 ))
             };
             mermaid_code_block(ix, code, Some(hint))

@@ -7,7 +7,10 @@
 //! you would land in (user report).
 
 use super::{theme, EditorPendingIntent, KagiApp};
-use gpui::{div, prelude::*, px, relative, rgb, Context, SharedString};
+use gpui::{
+    div, prelude::*, px, relative, rgb, App, Context, Div, IntoElement, Role, SharedString,
+    Stateful, Window,
+};
 
 use super::i18n::Msg;
 use super::workspace::WorkspaceItem;
@@ -44,8 +47,8 @@ fn sidebar_mode_nav_cell(
         .rounded(theme::scaled_px(4.))
         .cursor_pointer()
         .when(active, |el| {
-            el.bg(rgb(theme::theme().surface))
-                .text_color(rgb(theme::theme().accent_text_on(theme::theme().surface)))
+            el.bg(theme::theme().segment_selected_bg())
+                .text_color(rgb(theme::theme().text_main))
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
@@ -59,6 +62,9 @@ fn sidebar_mode_nav_cell(
             },
             SharedString::from(label),
         ))
+        .when(cfg!(feature = "gui-e2e"), |cell| {
+            cell.relative().child(super::e2e::measure_inside(id))
+        })
         .into_any_element()
 }
 
@@ -70,6 +76,42 @@ pub(super) enum SectionCount {
     /// The section is "yours" (Mine, Assigned, …) and who you are on the
     /// repository's host is not known yet, so no count is claimed (#906).
     Unknown,
+}
+
+/// The shared header keeps its actual focus handle when its rows change.
+/// Unlike a compact leaf, activating it never dismisses the navigator.
+#[derive(IntoElement)]
+struct SidebarSectionHeader {
+    id: (&'static str, usize),
+    label: &'static str,
+    open: bool,
+    header: Stateful<Div>,
+}
+
+impl RenderOnce for SidebarSectionHeader {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let focus = window
+            .use_keyed_state(self.id, cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::commit_panel_labels::focus(&format!("{}-{}", self.id.0, self.id.1), &focus);
+        super::keyboard_nav::focusable(self.header)
+            .track_focus(&focus.clone().tab_index(0).tab_stop(true))
+            .role(Role::Button)
+            .aria_label(self.label)
+            .aria_expanded(self.open)
+            // Issue headers select one category; PR headers independently
+            // disclose buckets and therefore do not claim a selection.
+            .when(self.id.0 == "issue-filter-tab", |header| {
+                header.aria_selected(self.open)
+            })
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                focus.focus(window, cx);
+                // Do not let the navigator's pane-focus handler steal it.
+                cx.stop_propagation();
+            })
+    }
 }
 
 /// Shared PR/Issue navigator section chrome: disclosure state, label, count,
@@ -86,13 +128,14 @@ pub(super) fn sidebar_section_header(
 ) -> gpui::AnyElement {
     let header = div()
         .id(id)
+        .flex_shrink_0()
         .flex()
         .flex_row()
         .items_center()
         .gap_1()
-        .px_3()
-        .pt_2()
-        .pb_1()
+        .px(super::keyboard_nav::inset(12.))
+        .pt(super::keyboard_nav::inset(8.))
+        .pb(super::keyboard_nav::inset(4.))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme::theme().surface)))
         .on_click(cx.listener(on_click))
@@ -146,22 +189,41 @@ pub(super) fn sidebar_section_header(
             id.0, id.1
         )))
     });
-    header.into_any_element()
+    #[cfg(feature = "gui-e2e")]
+    let header = header
+        .relative()
+        .child(super::e2e::measure_inside(format!("{}-{}", id.0, id.1)));
+    SidebarSectionHeader {
+        id,
+        label,
+        open,
+        header,
+    }
+    .into_any_element()
 }
 
 /// Shared selectable row shell for GitHub sidebar lists. Feature renderers
 /// provide only their content and handlers; spacing and selection colors are
 /// intentionally owned here once.
-pub(super) fn sidebar_list_row(active: bool) -> gpui::Div {
+pub(super) fn sidebar_list_row(active: bool, window_active: bool) -> gpui::Div {
     div()
         .flex()
         .flex_row()
+        .flex_shrink_0()
         .overflow_hidden()
         .cursor_pointer()
         .border_b_1()
         .border_color(rgb(theme::theme().surface))
-        .when(active, |el| el.bg(rgb(theme::theme().selected)))
-        .hover(|s| s.bg(rgb(theme::theme().surface)))
+        .when(active, |el| {
+            el.bg(theme::theme().selected_for_window(window_active))
+        })
+        .when(
+            theme::theme().selection_uses_on_accent(active, window_active),
+            |el| el.text_color(theme::theme().selection_foreground(window_active)),
+        )
+        .when(!active, |el| {
+            el.hover(|s| s.bg(rgb(theme::theme().surface)))
+        })
 }
 
 /// Graph / PRs / Issues navigation, rendered in the sidebar but owned by
@@ -195,7 +257,7 @@ pub(super) fn render_sidebar_mode_nav(
         MODES.iter().position(|&m| m == mode),
         super::keyboard_nav::Activation::Manual,
         app.root_focus.clone(),
-        move |slot, _, cx| {
+        move |slot, _, _, cx| {
             let _ = entity.update(cx, |app, cx| match MODES[slot] {
                 WorkspaceMode::Prs => app.show_pr_mode(cx),
                 WorkspaceMode::Issues => app.show_issues_mode(cx),
@@ -337,7 +399,7 @@ pub(super) fn render_sidebar_pages(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let offset = app.sidebar.swipe.offset();
-    let width = f32::from(theme::scaled_px(app.sidebar.width));
+    let width = f32::from(theme::scaled_px(app.pane_fit.sidebar));
     let viewport = div()
         .id("sidebar-mode-panel")
         .relative()
@@ -413,10 +475,9 @@ pub(super) fn render_sidebar_pages(
     }
 
     div()
-        // `sidebar.width` is the unscaled, persisted width; scale at render so
-        // it tracks zoom uniformly with the text. The resize/drag math in
-        // `render_divider` interprets cursor deltas in the same scaled space.
-        .w(theme::scaled_px(app.sidebar.width))
+        .relative()
+        // Fitting is presentation-only; keep preference and rendered width apart.
+        .w(theme::scaled_px(app.pane_fit.sidebar))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -425,6 +486,9 @@ pub(super) fn render_sidebar_pages(
         .on_scroll_wheel(cx.listener(KagiApp::sidebar_scroll))
         .child(render_sidebar_mode_nav(app, mode, cx))
         .child(viewport)
+        .when(mode == WorkspaceMode::Prs, |pane| {
+            pane.child(super::e2e::measure_inside("pr-mode-left-pane"))
+        })
         .into_any_element()
 }
 
@@ -455,7 +519,7 @@ impl KagiApp {
                 // The commit boundary is a fraction of the sidebar the user can
                 // see, so it is measured in the same rendered pixels the
                 // viewport is laid out in.
-                let width = f32::from(theme::scaled_px(self.sidebar.width));
+                let width = f32::from(theme::scaled_px(self.pane_fit.sidebar));
                 self.sidebar.swipe.start(origin, nav_pages().len(), width);
             }
             TouchPhase::Cancelled => {
@@ -566,6 +630,9 @@ impl KagiApp {
             // Invalidate completions as well as hiding the mode: a request that
             // lands after Graph was selected must not reopen the workspace.
             self.with_ui(|ui| {
+                // Selection and its list belong to the session, not this visit.
+                // Retire only the activation so returning can show the cache.
+                ui.retire_issue_conversation_scope();
                 ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
                 ui.github_issue_detail_gen = ui.github_issue_detail_gen.wrapping_add(1);
                 ui.github_issues_loading = false;
@@ -575,8 +642,45 @@ impl KagiApp {
                 ui.github_issues_error = None;
                 ui.github_issue_detail_loading = None;
                 ui.github_issue_detail_error = None;
-                ui.selected_github_issue = None;
             });
+        }
+    }
+
+    /// Retire only the presentation that just left the actual resolved body.
+    /// Unchanged animation frames neither scan owners nor touch child entities.
+    pub(super) fn sync_workspace_motion_visibility(
+        &mut self,
+        center: Option<super::workspace::CenterPane>,
+        cx: &mut Context<Self>,
+    ) {
+        use super::workspace::CenterPane::{CommitList, Diff};
+        let visible = self.active_session().zip(center);
+        if self.workspace_motion_visible == visible {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.workspace_motion_visible, visible);
+        if let Some((owner, super::workspace::CenterPane::Editor)) = previous {
+            if let Some(editor) = self
+                .ui
+                .get(&owner)
+                .and_then(|ui| ui.editor_workspace.as_ref())
+            {
+                editor.update(cx, |editor, _| editor.settle_tree_motion());
+            }
+        }
+        if let Some((owner, super::workspace::CenterPane::CommitList)) = previous {
+            if let Some(ui) = self.ui.get_mut(&owner) {
+                // Hidden reads must leave this pending until Graph is visible.
+                ui.graph_motion.reset = true;
+            }
+        }
+        if let Some((owner, prior_center)) = previous {
+            // A file click opens Diff without hiding its existing file pane.
+            let continuous = matches!(prior_center, CommitList | Diff)
+                && matches!(visible, Some((next_owner, CommitList | Diff)) if next_owner == owner);
+            if !continuous {
+                self.settle_file_list_motion(owner, cx);
+            }
         }
     }
 
@@ -589,7 +693,7 @@ impl KagiApp {
             || self.ui().branch_cleanup_open
         {
             WorkspaceMode::Takeover
-        } else if self.pr_mode().is_some() {
+        } else if self.pr_mode_visible() {
             WorkspaceMode::Prs
         } else if self.issues_mode_open() {
             WorkspaceMode::Issues
@@ -605,6 +709,20 @@ impl KagiApp {
     pub fn show_graph_mode(&mut self, cx: &mut Context<Self>) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Graph);
+        self.finish_show_graph_mode(cx);
+    }
+
+    /// Read-only Peek borrows Graph; PRs restores the retained workspace.
+    pub(crate) fn show_graph_for_pr_peek(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
+        self.leave_takeovers(WorkspaceMode::Prs);
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.visible = false;
+        }
+        self.finish_show_graph_mode(cx);
+    }
+
+    fn finish_show_graph_mode(&mut self, cx: &mut Context<Self>) {
         if let Some(ev) = self.ui().editor_workspace.clone() {
             if ev.read(cx).any_dirty() {
                 self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
@@ -625,7 +743,7 @@ impl KagiApp {
     pub fn show_pr_mode(&mut self, cx: &mut Context<Self>) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Prs);
-        if self.pr_mode().is_none() {
+        if !self.pr_mode_visible() {
             self.toggle_pr_mode(cx);
         }
         klog!("mode: prs");
@@ -634,11 +752,35 @@ impl KagiApp {
 
     /// Issues: open the session-owned read-only list and refresh it once.
     pub fn show_issues_mode(&mut self, cx: &mut Context<Self>) {
+        self.show_issues_mode_opening(None, cx);
+    }
+
+    /// Home supplies its destination and owns the following detail read.
+    pub(super) fn show_issues_mode_opening(
+        &mut self,
+        opening_issue: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Issues);
         if !self.issues_mode_open() {
             self.refresh_github_issues(cx);
+            // Departure invalidates pending detail reads but retains selection.
+            // A cache miss must resume through the owner/generation boundary,
+            // rather than expose an empty conversation with only its composer.
+            let ui = self.ui();
+            let unaccepted = ui.selected_github_issue.filter(|number| {
+                opening_issue.is_none()
+                    && !ui.github_issue_details.contains_key(number)
+                    && ui.github_issue_detail_loading != Some(*number)
+            });
+            if let Some(number) = unaccepted {
+                if let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) {
+                    self.load_github_issue_detail_for(owner, repo, number, cx);
+                }
+            }
         }
+        self.activate_issue_conversation(cx);
         klog!("mode: issues");
         cx.notify();
     }

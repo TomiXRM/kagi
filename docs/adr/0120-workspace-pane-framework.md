@@ -134,6 +134,33 @@ resolver の**最上流の入力**として足す。mode は per-repo の transi
 エディタからの **stage/discard 等の Git 操作は本 ADR のスコープ外**(必要になれば
 既存の pipeline + modal を経由する。invariant 4 を迂回する導線は作らない)。
 
+### Editor file-tree read projection (#1073)
+
+`EditorWorkspaceView` owns one revision-keyed projection of its accepted tree:
+visible base indices, accessibility levels and sibling positions, and file/row
+indices for keyboard selection. Accepted file reads invalidate the tree revision
+even when the replacement has the same length; folder disclosure invalidates
+the collapse revision. An unchanged repaint reuses those derived arrays.
+Theme, zoom and selection do not change tree membership and do not invalidate
+this projection. `uniform_list` still virtualizes the displayed rows; collapsed
+folders retain the selected editor buffer while their descendants leave the
+visible and accessibility projections.
+
+### Blame toggle interaction amendment (2026-10-14, #1524)
+
+The dense Editor Blame chip uses the pinned small compact ghost Button and
+the existing named Button adapter. Rest, hover, pressed and keyboard focus
+are owned by that component; `show_blame` supplies its selected visual fill
+and explicit `aria_toggled` (pressed) state. Unlike `aria_selected` on a Button,
+this state survives the macOS accessibility adapter. `EditorWorkspaceBlame`
+supplies the EN/JA accessible and visible name.
+Tab traversal, Enter, Space and pointer activation share `toggle_blame`;
+activation retains chip focus rather than transferring it to the editor.
+The chip is present only for a loaded editable text buffer. Disabled, empty
+and error states are not separate chip states: existing buffer placeholders
+omit it, while blame read failures retain their existing presentation.
+No new read, settings owner, Git operation or modal is introduced.
+
 ## Consequences
 
 - ペイン内容の追加が「enum variant + render arm + open/close」の定型作業になり、

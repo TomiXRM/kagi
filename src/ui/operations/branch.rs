@@ -104,9 +104,9 @@ impl KagiApp {
         }
     }
 
-    /// Confirm the create-branch plan: run preflight, execute, then reload.
+    /// Confirm the create-branch plan: run preflight, execute, verify, then reload.
     ///
-    /// On failure the modal remains open and shows the error text.
+    /// Only verified success dismisses the form; failures retain its input.
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
@@ -142,7 +142,7 @@ impl KagiApp {
         let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "create-branch",
                     plan.current.clone(),
@@ -169,7 +169,7 @@ impl KagiApp {
         };
         let report = repo.run_recorded(&op, &plan);
         if let Err(e) = &report.result {
-            let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
+            let err_msg = i18n::op::op_failed_contract(i18n::Op::CreateBranch, e);
             self.present_report("create-branch", &report, &repo_path, cx);
             if let Some(m) = self.create_branch_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
@@ -188,6 +188,10 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
+                self.present_report("create-branch", &report, &repo_path, cx);
+                if let Some(m) = self.create_branch_modal_mut() {
+                    m.error = Some(i18n::op::op_failed_contract(i18n::Op::RepoOpen, e).into());
+                }
                 self.reload(cx);
                 return;
             }
@@ -201,6 +205,21 @@ impl KagiApp {
                 modal.input
             );
         }
+        if branch_exists {
+            self.clear_create_branch_modal();
+            // The input-confirm and root Enter paths have no Window. Reuse
+            // the existing next-render handoff so an undrawn input cannot
+            // swallow subsequent root actions.
+            self.focus_root_for_modal();
+        } else if let Some(m) = self.create_branch_modal_mut() {
+            m.error = Some(
+                i18n::op::op_failed_contract(
+                    i18n::Op::CreateBranch,
+                    format!("branch '{}' not found after create", modal.input),
+                )
+                .into(),
+            );
+        }
 
         // The combined Backend operation already performed optional checkout and
         // persisted one receipt; present that receipt (ADR-0196 Wave 2).
@@ -211,6 +230,63 @@ impl KagiApp {
 
         // Reload display data (new branch badge should appear).
         self.reload(cx);
+    }
+
+    /// Resolve the selected branch's live upstream before constructing its preview.
+    pub(crate) fn open_branch_pull_modal(&mut self, branch: String, cx: &mut Context<Self>) {
+        if self.remote_view.is_some()
+            || !self.fetch_async_for(
+                false,
+                Some(super::super::commands::PullTarget::BranchFfOnly(branch)),
+                cx,
+            )
+        {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        }
+    }
+
+    pub(crate) fn offer_fetched_branch_pull(&mut self, branch: String, remote: &str) {
+        self.open_branch_plan_modal(branch, BranchPlanKind::PullFfOnly);
+        let Some(modal) = self.branch_plan_modal() else {
+            return;
+        };
+        // The title's upstream shorthand is display-only; admission uses the
+        // exact configured remote. Blocked plans have no executable identity.
+        let matches_remote = matches!(
+            &modal.plan.title,
+            kagi_domain::plan_note::PlanTitle::Pull(
+                kagi_domain::plan_note::PullTitle::PullBranchFf { branch: planned, .. }
+            ) if planned == &modal.branch_name
+        ) && (!modal.plan.blockers.is_empty()
+            || modal.plan.pull_identity.as_ref().is_some_and(|identity| {
+                identity.branch == modal.branch_name && identity.remote == remote
+            }));
+        if !matches_remote {
+            self.clear_branch_plan_modal();
+            self.report_plan_failure(i18n::Op::Pull, Msg::PullUpstreamChangedDuringFetch.t());
+            return;
+        }
+        let Some(repo) = self.ui().repo_session.as_ref() else {
+            self.clear_branch_plan_modal();
+            return;
+        };
+        let refs = match repo.backend().pull_branch_ref_state(&modal.branch_name) {
+            Ok(refs) => refs,
+            Err(error) => {
+                self.clear_branch_plan_modal();
+                self.report_plan_failure(i18n::Op::Pull, error);
+                return;
+            }
+        };
+        let fetch_owner = self.active_session().and_then(|session| {
+            self.app_sessions
+                .visit(session)
+                .map(|visit| (session, visit))
+        });
+        if let Some(modal) = self.branch_plan_modal_mut() {
+            modal.fetch_owner = fetch_owner;
+            modal.fetched_refs = Some(refs);
+        }
     }
 
     pub fn open_branch_plan_modal(&mut self, branch_name: String, kind: BranchPlanKind) {
@@ -226,17 +302,24 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "branch operation: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("branch operation: repo session unavailable"),
                 ));
                 return;
             }
         };
+        let mut dirty_digest = None;
         let plan_result = match kind {
             BranchPlanKind::SyncToRemote => repo.plan(&kagi_git::Operation::SyncToRemote {
                 branch: branch_name.clone(),
             }),
-            BranchPlanKind::PullFfOnly => repo.plan_pull_branch_ff(&branch_name),
+            BranchPlanKind::PullFfOnly => {
+                repo.plan_pull_branch_ff_preview(&branch_name)
+                    .map(|(plan, digest)| {
+                        dirty_digest = Some(digest);
+                        plan
+                    })
+            }
             BranchPlanKind::Push => repo.plan_push_branch(&branch_name, false),
             BranchPlanKind::PushSetUpstream => repo.plan_push_branch(&branch_name, true),
         };
@@ -256,14 +339,16 @@ impl KagiApp {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     confirm_armed: false,
+                    fetch_owner: None,
+                    dirty_digest,
+                    fetched_refs: None,
                 });
                 self.focus_root_for_modal(); // #817: Enter / Escape via the root
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "branch operation plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("branch operation plan error: {}", e)),
+                ));
             }
         }
     }
@@ -316,7 +401,7 @@ impl KagiApp {
 
         self.clear_branch_plan_modal();
         self.status_footer =
-            FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
+            FooterStatus::Busy(i18n::op::user_text::operations::progress(op_name).into());
         if modal.kind == BranchPlanKind::SyncToRemote {
             klog!("async: sync-to-remote started");
         }
@@ -337,11 +422,22 @@ impl KagiApp {
             |_| None,
             move |done| match done {
                 Ok(outcome) => {
-                    RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
-                        "{}: {}",
-                        op_name,
-                        branch_plan_summary(&modal.branch_name, outcome)
-                    ))))
+                    let text =
+                        i18n::op::user_text::operations::branch_result(&modal.branch_name, outcome)
+                            .into();
+                    let confirmed = matches!(
+                        outcome,
+                        kagi_git::OperationOutcome::Pull(
+                            kagi_git::PullOutcome::UpToDate
+                                | kagi_git::PullOutcome::FastForward { .. }
+                        ) | kagi_git::OperationOutcome::Push(_)
+                            | kagi_git::OperationOutcome::SyncToRemote { .. }
+                    );
+                    RunPresentation::status(if confirmed {
+                        FooterStatus::Success(text)
+                    } else {
+                        FooterStatus::Failed(text)
+                    })
                 }
                 Err(_) => RunPresentation::none(),
             },
@@ -481,6 +577,16 @@ impl KagiApp {
             .map(|(name, _)| name.clone())
             .collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
+        // The prefilled current name is neutral, not a failed operation.
+        // Retire any previous Ready plan so unchanged Return remains inert.
+        if input.trim() == old_name {
+            if let Some(m) = self.rename_branch_modal_mut() {
+                m.validation = validation;
+                m.plan = ModalPlan::Pending;
+                m.error = None;
+            }
+            return;
+        }
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -564,8 +670,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "checkout tracking: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("checkout tracking: repo session unavailable"),
                 ));
                 return;
             }
@@ -588,10 +694,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "checkout tracking plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("checkout tracking plan error: {}", e)),
+                ));
             }
         }
     }
@@ -628,7 +733,9 @@ impl KagiApp {
         }
 
         self.clear_tracking_checkout_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyCheckout.t()),
+        ));
         klog!("async: checkout-tracking started");
 
         let plan = modal.plan.clone();
@@ -662,8 +769,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "switch-to-latest: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("switch-to-latest: repo session unavailable"),
                 ));
                 return;
             }
@@ -685,10 +792,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "switch-to-latest plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("switch-to-latest plan error: {}", e)),
+                ));
             }
         }
     }
@@ -725,7 +831,9 @@ impl KagiApp {
         }
 
         self.clear_switch_to_latest_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusySwitchToLatest.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusySwitchToLatest.t()),
+        ));
         klog!("async: switch-to-latest started");
 
         let plan = modal.plan.clone();
@@ -809,7 +917,9 @@ impl KagiApp {
         };
         let repo_path = owner.path.clone();
         self.planning = Some("delete-branch-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyDeleteBranchPlan.t()),
+        ));
         klog!("async: delete-branch plan started for {}", branch_name);
 
         let bg_path = repo_path.clone();
@@ -925,7 +1035,9 @@ impl KagiApp {
         }
 
         self.clear_delete_branch_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyDeleteBranch.t()),
+        ));
         klog!("async: delete-branch started");
 
         let plan = modal.plan.clone();
@@ -951,14 +1063,13 @@ impl KagiApp {
             move || delete_branch_blocking(&bg_owner, &bg_plan, &bg_branch),
             |_| None,
             move |done| match done {
-                Ok(kagi_git::OperationOutcome::DeleteBranch { reference, .. }) => {
+                Ok(kagi_git::OperationOutcome::DeleteBranch { .. }) => {
                     if removes_pinning_worktree {
                         klog!("executed: delete-branch removed pinning worktree");
                     }
-                    RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
-                        "delete-branch: '{}' deleted (restore: git branch {} {reference})",
-                        branch_name, branch_name
-                    ))))
+                    RunPresentation::status(FooterStatus::Success(
+                        i18n::op::user_text::operations::deleted_branch(&branch_name, false).into(),
+                    ))
                 }
                 Ok(_) | Err(_) => RunPresentation::none(),
             },
@@ -1048,7 +1159,7 @@ impl KagiApp {
                     if is_current {
                         self.open_pull_modal(cx);
                     } else {
-                        self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                        self.open_branch_pull_modal(state.name, cx);
                     }
                 }
             }
@@ -1114,14 +1225,14 @@ impl KagiApp {
                 self.open_merge_modal(state.name, None, cx);
             }
             BranchAction::CreateWorktreeFromHere => {
-                self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
+                self.open_create_worktree_modal(state.target, cx);
             }
             BranchAction::CreateTagHere => {
                 self.open_create_tag_modal(state.target, cx);
             }
             BranchAction::PullFfOnly => {
                 if matches!(state.kind, BranchKind::Local) {
-                    self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                    self.open_branch_pull_modal(state.name, cx);
                 }
             }
             BranchAction::SyncToRemote => {
@@ -1138,6 +1249,9 @@ impl KagiApp {
                 if matches!(state.kind, BranchKind::Remote) {
                     self.fetch_remote_branch_async(state.name, cx);
                 }
+            }
+            BranchAction::Fetch => {
+                self.fetch_async(false, cx);
             }
             BranchAction::CreatePr => {
                 self.open_create_pr(state.name, state.kind, cx);

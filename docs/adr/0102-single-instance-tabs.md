@@ -28,13 +28,15 @@ A per-user **Unix domain socket** at `${TMPDIR}/kagi-instance-<user>.sock`
   socket file, `bind`, and run a background `std::thread` that `accept()`s
   connections, reads the first line, and sends `Some(path)` / `None` over an
   `mpsc` channel. The `Receiver` is stashed in a module `OnceLock<Mutex<Option<…>>>`.
-- **UI drain loop** (`KagiApp::arm_single_instance_listener`, the only UI-side
-  code): armed once from `open_main_window`, it `take()`s the receiver and mirrors
-  `arm_watcher` — a `cx.spawn` loop that polls `try_recv` every ~200 ms, calls
-  `open_repository(path, cx)` (Backend-backed, **no git2 in UI**) for a path, and
-  `cx.activate(true)` (the same window-raise call the Dock `on_reopen` handler
-  uses) plus `cx.notify()`. A `None` message activates the window only. New
-  contract lines: `single-instance: open tab <path>` and `single-instance: focus`.
+- **Application drain** (`ui::arm_open_requests`): armed once from `run_app`,
+  after component initialization and the initial repository window. It takes
+  the socket receiver and polls every ~200 ms alongside native URL delivery.
+  Each request resolves a typed `KagiApp` repository host (never Settings or
+  another utility window), recreates one with saved-session restore if none
+  remains, calls `open_repository(path, cx)` (Backend-backed, **no git2 in UI**),
+  then activates/notifies it. A `None` message only raises/recreates the host.
+  Contract lines remain `single-instance: open tab <path>` and
+  `single-instance: focus`.
 
 ### Headless gating (critical)
 
@@ -53,6 +55,34 @@ contract and the read-a-line-then-kill flow. Real GUI launches set none of these
   the primary runs normally **without** single-instance.
 - Stale-socket recovery relies on `bind_listener` unlinking the file at startup,
   so a previous crash never permanently blocks. No exit-time cleanup is needed.
+
+### Amendment: Finder and Dock folder delivery (#1605, 2026-10-15)
+
+- Register pinned GPUI's public `Application::on_open_urls` **before**
+  `Application::run`. It has no app context, so decode local `file:` URLs and
+  enqueue their paths; do not open a window or initialize widgets there.
+  Queued launch-time deliveries are consumed only after normal UI setup.
+- Decode percent escapes as filesystem bytes on Unix, preserving spaces,
+  Unicode, literal `+`, and non-UTF-8 filenames. Accept an empty authority or
+  `localhost`; ignore other schemes, remote authorities, malformed escapes,
+  NULs, and unescaped query/fragment components. No dependency changes.
+- The application owns both native and Unix-socket receivers for its entire
+  lifetime. Closing the last repository window must not destroy the receivers
+  or strand later requests; Settings-only and zero-window states recreate the
+  repository host using the same dispatch path.
+- Native URL paths use `KagiApp::open_external_paths`, the same directory-only
+  entry as window folder drops. Directories reach existing `open_repository`
+  for canonicalization, tab deduplication, repository validation, and existing
+  error footer/toast presentation. Files are rejected through that same failure
+  presentation, rather than discovering their enclosing repository.
+- Native delivery joins the existing primary-instance dispatch locally; it does
+  not forward to its own socket. CLI forwarding and headless single-instance
+  gating are unchanged. Existing `single-instance:` klog messages are preserved.
+- Decoder/startup-queue unit coverage lives in `src/single_instance.rs`;
+  `folder_urls_existing_root`, `folder_urls_without_root`, and
+  `folder_urls_settings_only` native GUI scenarios exercise URL batches through
+  the actual enqueue/drain/opener path, including encoded aliases, duplicate
+  delivery, file rejection, and root recreation with/without utility windows.
 
 ## Consequences
 

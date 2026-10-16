@@ -32,6 +32,18 @@ impl TransportHolds {
     }
 }
 impl KagiApp {
+    #[cfg(feature = "gui-e2e")]
+    pub fn set_pr_merge_held_for_e2e(&mut self, number: u64, held: bool) {
+        let Some(repo) = self.repo_path.as_ref() else {
+            return;
+        };
+        let key = (repo.clone(), format!("pr-merge #{number}"));
+        if held {
+            self.transport_holds.0.insert(key);
+        } else {
+            self.transport_holds.0.remove(&key);
+        }
+    }
     /// Settlement for one run-family receipt, before the stale-tab guard: what
     /// the execution boundary made durable is delivered whatever the tab is
     /// doing now (#501, ADR-0196 Wave 3).
@@ -77,8 +89,11 @@ impl KagiApp {
             self.report_unknown_notice(
                 repo,
                 format!(
-                    "{operation}: {}. {}",
-                    message.as_deref().unwrap_or(detail),
+                    "{} #{number}: {}. {}",
+                    crate::ui::i18n::op::user_text::operation_label(op),
+                    crate::ui::i18n::op::user_text::diagnostic(
+                        message.as_deref().unwrap_or(detail)
+                    ),
                     crate::ui::i18n::Msg::TransportRetryHeld.t()
                 ),
             );
@@ -94,7 +109,8 @@ impl KagiApp {
         self.report_unknown_notice(
             owner,
             format!(
-                "{operation}: {}",
+                "{}: {}",
+                crate::ui::i18n::op::user_text::operation_label(operation),
                 crate::ui::i18n::Msg::TransportRetryHeld.t()
             ),
         );

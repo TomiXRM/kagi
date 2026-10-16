@@ -59,3 +59,14 @@ diff 行の背景は deutan で ΔE 4.3 — 見分けられない。
 
 - **既存全テーマに色覚モードを掛け算する**（token 変換を実行時に適用）: theme 数 × モードの組合せで見た目の確認が爆発し、各テーマの意図した配色を壊す。
 - **単純 RGB 距離**: 暗い背景色同士で知覚差と大きくずれる（Mocha の diff 背景は RGB 距離では十分に見えるが deutan ΔE 4.3）。CIEDE2000 を使う。
+
+## Amendment — 2026-10-11: preserve operation hierarchy (#1079)
+
+The shared branch/success blue and remote/blocker orange are palette choices,
+not instructions to use status-tinted conflict side buttons. Callers choose an
+explicit `ButtonRole`: Color Vision's Keep Current changes from tinted to filled
+Primary (like Create Branch), and Take Incoming / Keep File change from tinted
+to filled Info. In 11 of the other 12 built-ins, Incoming was also tinted due to
+remote=success and now becomes filled Info; Color Vision's collision is
+remote=blocker. Success and destructive actions retain their tint. All palette
+colours and colour-difference assertions in this ADR remain unchanged.

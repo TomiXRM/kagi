@@ -92,6 +92,9 @@ class Rule:
     # or YAML, where the words being banned also appear in prose explaining
     # why they are banned (this file's own workflow comment did exactly that).
     skip_comments: bool = False
+    # A source selector may mask non-candidates while preserving offsets, so
+    # diagnostics and selftest still use the same pattern and original lines.
+    select_source: Callable[[str], str] | None = None
 
     def compiled(self) -> re.Pattern[str]:
         return re.compile(self.pattern, self.flags)
@@ -101,7 +104,8 @@ class Rule:
         rx = self.compiled()
         lines = text.splitlines()
         out: list[tuple[int, str]] = []
-        for match in rx.finditer(text):
+        source = self.select_source(text) if self.select_source is not None else text
+        for match in rx.finditer(source):
             line_no = text.count("\n", 0, match.start()) + 1
             line = lines[line_no - 1].strip() if lines else ""
             if self.skip_comments and line.startswith("#"):
@@ -137,7 +141,502 @@ RUST_SOURCES = (
     "xtask/**/*.rs",
 )
 
+
+def _rust_literal_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """Mask strings/comments for structural scanning; retain string spans.
+
+    Rust block comments nest; raw strings can contain quotes, comment markers
+    and braces. Neither may accidentally create a locale arm or end its body.
+    Character literals are masked too, but lifetimes such as `'static` are not.
+    """
+    code = list(text)
+    literals: list[tuple[int, int]] = []
+    token = re.compile(r'//|/\*|\br(#+)?"|"(?:\\[\s\S]|[^"\\])*"|\'(?:\\.|[^\'\\])\'')
+    comment = re.compile(r"/\*|\*/")
+    cursor = 0
+    while match := token.search(text, cursor):
+        start, end = match.span()
+        value = match.group()
+        if value == "//":
+            end = text.find("\n", end)
+            if end < 0:
+                end = len(text)
+        elif value == "/*":
+            depth = 1
+            while depth and (marker := comment.search(text, end)):
+                depth += 1 if marker.group() == "/*" else -1
+                end = marker.end()
+            if depth:
+                end = len(text)
+        elif value.startswith("r"):
+            closing = '"' + (match.group(1) or "")
+            close = text.find(closing, end)
+            end = len(text) if close < 0 else close + len(closing)
+            literals.append((start, end))
+        elif value.startswith('"'):
+            literals.append((start, end))
+        code[start:end] = ["\n" if c == "\n" else " " for c in text[start:end]]
+        cursor = end
+    return "".join(code), literals
+
+
+def _rust_expression_end(code: str, start: int, *, delimited: bool = False) -> int:
+    """End an arm/initializer without crossing its balanced delimiters."""
+    stack: list[str] = []
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    first = start
+    while first < len(code) and code[first].isspace():
+        first += 1
+    for pos in range(start, len(code)):
+        char = code[pos]
+        if char in pairs:
+            stack.append(pairs[char])
+        elif char in ")]}":
+            if not stack:
+                return pos
+            if char == stack[-1]:
+                stack.pop()
+                # Blocks may omit the arm comma; tuple patterns end here too
+                # when the caller explicitly requests a delimited region.
+                if not stack and (delimited or code[first : first + 1] == "{"):
+                    return pos + 1
+        elif char in ",;" and not stack:
+            return pos
+    return len(code)
+
+
+def _translation_tuple_members(
+    code: str, literals: list[tuple[int, int]], start: int, end: int, arity: int, locale: str
+) -> list[tuple[int, int]]:
+    """Select EN/JA members of an explicitly bilingual tuple owner."""
+    regions: list[tuple[int, int]] = []
+    cursor = start
+    while (opening := code.find("(", cursor, end)) >= 0:
+        closing = _rust_expression_end(code, opening, delimited=True)
+        if closing > end:
+            break
+        # Consume the whole tuple so nested tuples/calls in its EN member
+        # cannot become independent JA candidates.
+        cursor = closing
+        members: list[tuple[int, int]] = []
+        member_start = opening + 1
+        depth = 0
+        for pos in range(member_start, closing - 1):
+            char = code[pos]
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            elif char == "," and depth == 0:
+                members.append((member_start, pos))
+                member_start = pos + 1
+        tail_end = closing - 1
+        # String contents were masked; a whitespace-only member can still
+        # contain a literal. An actual trailing comma contributes no member.
+        if code[member_start:tail_end].strip() or any(
+            member_start <= left < tail_end for left, _ in literals
+        ):
+            members.append((member_start, tail_end))
+        if len(members) == arity:
+            regions.append(members[-1 if locale == "Ja" else -2])
+    return regions
+
+
+def _translation_literals(text: str, locale: str, *, display_only: bool = False) -> str:
+    """Select explicit translation owners, excluding comments and test data.
+
+    Locale arms, bilingual label tuples and named language renderers share the
+    same structural scanner so raw strings cannot manufacture translation arms.
+    """
+    code, literals = _rust_literal_spans(text)
+    regions: list[tuple[int, int]] = []
+    ignored: list[tuple[int, int]] = []
+    arrow = re.compile(r"\s*(?:if\b[^;]*?)?=>")
+    other_locale = "En" if locale == "Ja" else "Ja"
+    for language, destinations in ((locale, regions), (other_locale, ignored)):
+        locale_token = re.compile(rf"\b(?:Lang\s*::\s*)?{language}\b")
+        arms = re.compile(rf"\(|{locale_token.pattern}")
+        for arm in arms.finditer(code):
+            pattern_end = arm.end()
+            if code[arm.start()] == "(":
+                pattern_end = _rust_expression_end(code, arm.start(), delimited=True)
+                if not locale_token.search(code, arm.start(), pattern_end):
+                    continue
+            if body := arrow.match(code, pattern_end):
+                destinations.append((body.end(), _rust_expression_end(code, body.end())))
+    constant_names = (
+        r"(?:ADVICE_(?!EN_|\w*_EN\b)\w+|JA_\w+|\w+_JA)" if locale == "Ja" else r"(?:EN_\w+|\w+_EN)"
+    )
+    # Domain message_en/advice_template_en feed persisted receipts. The UI
+    # jargon gate selects their display-only counterparts, never stored prose.
+    suffix = "display_en" if display_only and locale == "En" else locale.lower()
+    owners = re.compile(
+        rf"\bfn\s+\w+_{suffix}(?:_\w+)?\s*\([^;{{}}]*\)[^;{{}}]*\{{"
+        rf"|\bconst\s+{constant_names}\s*:[^;=]*="
+        rf"|\bmacro_rules!\s+\w+_{suffix}\s*\{{"
+    )
+    for owner in owners.finditer(code):
+        start = owner.end() - 1 if owner.group().endswith("{") else owner.end()
+        regions.append((start, _rust_expression_end(code, start)))
+    # A two-language helper may return EN before its JA-only body.
+    early_en = re.compile(
+        r"\bfn\s+\w+\s*\([^;{}]*\b(?P<locale>\w+)\s*:\s*Lang\b[^;{}]*\)"
+        r"[^;{}]*\{\s*if\s+(?P=locale)\s*==\s*Lang\s*::\s*En\s*\{"
+        r"\s*return\b[^;{}]*;\s*\}"
+    )
+    for owner in early_en.finditer(code):
+        body_start = code.index("{", owner.start())
+        destination = regions if locale == "Ja" else ignored
+        destination.append((owner.end(), _rust_expression_end(code, body_start)))
+        if locale == "En":
+            regions.append((body_start, owner.end()))
+    # Label tables contain (EN, JA) or (internal tag, EN, JA). Internal tags
+    # are never translation candidates.
+    table_owners = re.compile(
+        r"\bconst\s+(?:LABELS|TRANSLATIONS|\w+_(?:LABELS|TRANSLATIONS))\s*:"
+        r"\s*&\s*\[\s*\((?P<types>[^()]*)\)\s*\]\s*=\s*&\s*\["
+    )
+    for table in table_owners.finditer(code):
+        types = [item.strip() for item in table.group("types").split(",") if item.strip()]
+        if len(types) not in (2, 3) or not all(
+            re.fullmatch(r"&(?:'\w+\s+)?str", item) for item in types
+        ):
+            continue
+        start = table.end() - 1
+        end = _rust_expression_end(code, start, delimited=True)
+        regions.extend(_translation_tuple_members(code, literals, start, end, len(types), locale))
+    pair_owners = re.compile(
+        r"\bfn\s+(?:label|\w+_label)\s*\([^;{}]*\)\s*->\s*\("
+        r"\s*&(?:'\w+\s+)?str\s*,\s*&(?:'\w+\s+)?str\s*,?\s*\)\s*\{"
+    )
+    for pair in pair_owners.finditer(code):
+        start = pair.end() - 1
+        regions.extend(
+            _translation_tuple_members(
+                code, literals, start, _rust_expression_end(code, start), 2, locale
+            )
+        )
+    # Test fixtures and assertions may deliberately quote the banned words.
+    # Mask only test bodies, never the containing production file.
+    test_bodies = re.compile(r"#\[\s*(?:test|cfg\s*\(\s*test\s*\))\s*\][^{;]*\{")
+    for test in test_bodies.finditer(code):
+        start = test.end() - 1
+        ignored.append((start, _rust_expression_end(code, start)))
+    if display_only:
+        # Explicit contract helpers retain logging/persistence wording even
+        # when their implementation has locale arms.
+        contracts = re.compile(r"\bfn\s+\w+_contract\s*\([^;{}]*\)[^;{}]*\{")
+        for contract in contracts.finditer(code):
+            start = contract.end() - 1
+            ignored.append((start, _rust_expression_end(code, start)))
+        # Match inputs identify legacy messages; only their replacement
+        # expressions are displayed. Strings/comments are already masked.
+        for start, end in literals:
+            if re.match(r"\s*(?:\|\s*)*=>", code[end:]):
+                ignored.append((start, end))
+    # Contract logging is not UI copy, even inside a translation owner.
+    for log in re.finditer(r"\bklog\s*!\s*[(\[{]", code):
+        start = log.end() - 1
+        ignored.append((start, _rust_expression_end(code, start, delimited=True)))
+    selected = ["\n" if c == "\n" else " " for c in text]
+    for start, end in literals:
+        if not any(left <= start < right for left, right in regions):
+            continue
+        if any(left <= start < right for left, right in ignored):
+            continue
+        literal = text[start:end]
+        if locale == "Ja":
+            # Only the name-collision occurrence is exempt, not every conflict
+            # in a string that happens to mention refs or a namespace.
+            literal = re.sub(
+                r"(?:名前空間|ref\s+namespace)\s*(?:が|の|で|と)?\s*競合",
+                lambda match: match.group().replace("競合", "  "),
+                literal,
+            )
+        selected[start:end] = literal
+    return "".join(selected)
+
+
+def _ja_git_literals(text: str) -> str:
+    return _translation_literals(text, "Ja")
+
+
+def _ui_display_literals(text: str) -> str:
+    en = _translation_literals(text, "En", display_only=True)
+    ja = _translation_literals(text, "Ja", display_only=True)
+    return "".join(left if left != " " else right for left, right in zip(en, ja, strict=True))
+
+
+JA_GIT_TERMS = (
+    "退避",
+    "作業ツリー",
+    "コミット",
+    "コミッター",
+    "サブモジュール",
+    "ブランチ",
+    "リモート",
+    "マージ",
+    "取り込み",
+    "ステージ",
+    "チェックアウト",
+    "フェッチ",
+    "プッシュ",
+    "タグ",
+    "リベース",
+    "チェリーピック",
+    "リバート",
+    "アメンド",
+    "スカッシュ",
+    "インデックス",
+    "ヘッド",
+    "アップストリーム",
+    "衝突",
+    "コンフリクト",
+    "競合",
+)
+
+
 RULES: tuple[Rule, ...] = (
+    Rule(
+        name="ui-internal-jargon",
+        summary="EN/JA UI copy describes user actions, not implementation details (#1588)",
+        pattern=(
+            r"(?<![A-Za-z0-9_])ADR-\d"
+            r"|(?<![A-Za-z0-9_])MVP(?![A-Za-z0-9_])|\[kagi\]"
+            r"|(?i:(?<![A-Za-z0-9_])preflight(?![A-Za-z0-9_])"
+            r"|(?<![A-Za-z0-9_])session\s+unavailable(?![A-Za-z0-9_]))"
+            r"|(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*"
+            r"(?:::[A-Za-z_][A-Za-z0-9_]*)*\s*\(\s*\)"
+        ),
+        globs=(
+            "crates/kagi-ui-core/src/i18n/**/*.rs",
+            "crates/kagi-domain/src/plan_note/**/*.rs",
+        ),
+        select_source=_ui_display_literals,
+        message=(
+            "User-facing EN/JA must describe the action or next step, not ADRs, "
+            "development scope, log prefixes, pipeline stages, sessions or Rust calls (#1588)."
+        ),
+        samples=(
+            *(
+                sample
+                for phrase in (
+                    "See ADR-0024",
+                    "Outside MVP scope",
+                    "[kagi] operation failed",
+                    "Preflight failed",
+                    "repository session unavailable",
+                    "Use stage_file() first",
+                    "Call Repository::open()",
+                    "Call refresh()",
+                )
+                for sample in (
+                    f'(En, Action) => "{phrase}",',
+                    f'Lang::En => format!(r##"{phrase}: {{err}}"##),',
+                    f'Lang::Ja => "{phrase}",',
+                    f'fn message_display_en(&self) -> String {{ "{phrase}".into() }}',
+                    f'macro_rules! advice_template_display_en {{ (Action) => {{ "{phrase}" }}; }}',
+                )
+            ),
+            'const ACTION_EN: &str = "MVP";',
+            'const EN_ACTION: &str = "ADR-1";',
+            'const LABELS: &[(&str, &str, &str)] = &[("tag", "Preflight", "確認")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("MVP", "確認")];',
+            "fn label(self) -> (&'static str, &'static str) { "
+            'match self { Action => ("session unavailable", "確認"), } }',
+            "fn heading(language: Lang) -> &str { "
+            'if language == Lang::En { return "MVP"; } "確認" }',
+            '/* outer /* nested */ Lang::Ja => "safe" */ Lang::En => "MVP",',
+            '#[cfg(test)] mod tests { const ACTION_EN: &str = "safe"; }\nLang::En => "preflight",',
+            'const ADVICE_ACTION: &str = "MVP";',
+            'fn message_ja(&self) -> String { "ADR-0024".into() }',
+            'const LABELS: &[(&str, &str, &str)] = &[("tag", "Checking", "MVP")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Checking", "preflight")];',
+            "fn label(self) -> (&'static str, &'static str) { "
+            'match self { Action => ("Checking", "MVP"), } }',
+            "fn heading(language: Lang) -> &str { "
+            'if language == Lang::En { return "Checking"; } "MVP" }',
+            'Lang::Ja => "MVP対象外です。ADR-0024を参照",',
+            'Lang::Ja => "preflightに失敗しました",',
+            'Lang::Ja => "先にstage_file()を呼んでください",',
+            "fn op_failed_contract() -> String { match lang() { "
+            'Lang::En => "Preflight failed", Lang::Ja => "preflight失敗", } }\n'
+            "fn op_failed() -> String { match lang() { "
+            'Lang::En => "MVP", Lang::Ja => "確認", } }',
+            "fn message_display_en(&self) -> String { match self { "
+            '"safe" => "MVP", _ => "Ready" } }',
+        ),
+        samples_ok=(
+            *(
+                sample
+                for phrase in (
+                    "ADR-0024",
+                    "MVP",
+                    "[kagi]",
+                    "preflight",
+                    "session unavailable",
+                    "stage_file()",
+                    "Repository::open()",
+                    "refresh()",
+                )
+                for sample in (
+                    f'// Lang::En => "{phrase}",\nLang::En => "Try again",',
+                    f'/* outer /* nested */ Lang::En => "{phrase}", */',
+                    f'Lang::En => {{ /* {phrase} */ "Try again" }},',
+                    f'fn message_en(&self) -> String {{ "{phrase}".into() }}',
+                    f'macro_rules! advice_template_en {{ (Action) => {{ "{phrase}" }}; }}',
+                    f'// Lang::Ja => "{phrase}",\nLang::Ja => "確認",',
+                    f'#[cfg(test)] mod tests {{ Lang::Ja => "{phrase}", }}',
+                    f'Lang::Ja => {{ klog!("{phrase}"); "確認" }},',
+                    f'#[cfg(test)] mod tests {{ Lang::En => "{phrase}", }}',
+                    f'#[test] fn sample() {{ assert_eq!(render(), "{phrase}"); }}',
+                    f'Lang::En => {{ klog!("{phrase}"); "Try again" }},',
+                    f"fn op_failed_contract() -> String {{ match lang() {{ "
+                    f'Lang::En => "{phrase}", Lang::Ja => "{phrase}", }} }}',
+                    f"fn message_display_en(&self) -> String {{ match self {{ "
+                    f'"{phrase}" => "Ready", _ => "Try again" }} }}',
+                    f'Lang::En => match legacy {{ "{phrase}" => "Ready", _ => "Try again" }},',
+                )
+            ),
+            "enum Internal { MVP, Preflight, SessionUnavailable }\nLang::En => stage_file(),",
+            'const INTERNAL_TAG: &str = "[kagi]";',
+            'const LABELS: &[(&str, &str, &str)] = &[("[kagi]", "Checking", "確認")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Checking", "確認")];',
+            "fn label(self) -> (&'static str, &'static str) { "
+            'match self { Preflight => ("Checking", "確認"), } }',
+            "fn heading(language: Lang) -> &str { "
+            'if language == Lang::En { return "Checking"; } "確認" }',
+            'let quoted_source = r#"Lang::En => "MVP""#;',
+            'Lang::En => "Stage changes, then commit. Check Git status and try again.",',
+            'Lang::En => "ADR notes, MVPlayer, preflighted, session is unavailable, file(s)",',
+        ),
+    ),
+    Rule(
+        name="ja-git-terms",
+        summary="JA localization keeps Git domain terms in English (ADR-0048 / #1465)",
+        pattern="|".join(
+            {
+                "マージ": r"マージ(?!ン)",
+                "ステージ": r"ステージ(?!マネージャ)",
+                "リモート": r"リモート(?!デスクトップ)",
+            }.get(term, re.escape(term))
+            for term in JA_GIT_TERMS
+        )
+        + r"|(?<![ァ-ヶー])プル(?!ダウン)",
+        globs=("src/**/*.rs", "crates/**/src/**/*.rs"),
+        select_source=_ja_git_literals,
+        message=(
+            "JA Git domain terms must stay English (ADR-0048 / #1465); "
+            "keep Japanese grammar, not translated Git vocabulary."
+        ),
+        samples=(
+            *(
+                sample
+                for term in (*JA_GIT_TERMS, "プル", "プルリクエスト")
+                for sample in (
+                    f'(Ja, GitAction) => "{term} する",',
+                    f'(Lang::Ja,\n GitAction) => format!(\n "{term}: {{name}}"\n),',
+                    f'pub(crate) const ADVICE_ACTION: &str =\n "{term} してください";',
+                )
+            ),
+            'Lang::Ja => {\n let label = "commit";\n format!("{} をコミット", label)\n}',
+            'Lang::Ja => match state { Some(_) => "ブランチ", None => "なし" },',
+            'fn note_ja(note: &Note) -> String {\n format!("未コミット: {}", note)\n}',
+            'fn note_ja_any(note: &Note) -> String { format!("作業ツリー: {}", note) }',
+            'const ACTION_JA: &str = r##"リモート "origin" の\nブランチ"##;',
+            'const JA_ACTION: &str = concat!("未",\n "コミット");',
+            '(Ja, Action { state: Some((left, right)) }) => "コミット",',
+            '(HealthFinding::Missing, Lang::Ja) => "コミット",',
+            '(Action { state: Some((left, right)) }, Ja) => "ブランチ",',
+            '(Ja, Action) if count > 0 => "ブランチ",',
+            'const ADVICE_ACTION: &str = "コミット";',
+            'Lang::Ja /* wrapped */ =>\n format!("コミット\\n\\\nしてください"),',
+            'Lang::Ja => "名前空間が競合。ファイルの競合を解決してください",',
+            'Lang::Ja => "ref を変更する前に競合を解決してください",',
+            'Lang::Ja => { "commit" }\n Lang::En => "コミット",\nLang::Ja => "ブランチ",',
+            'Lang::Ja => format!("{}", Msg::Title.t_for(Lang::En)),\nLang::Ja => "コミット",',
+            '/* outer /* nested */ Lang::En => "safe" */ Lang::Ja => "コミット",',
+            '#[cfg(test)] mod tests { const ADVICE_ACTION: &str = "コミット"; }\n'
+            'const ADVICE_ACTION: &str = "ブランチ";',
+            'const LABELS: &[(&str, &str, &str)] = &[("merge", "Merging", "マージ")];',
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
+            '("merge",\n "Merging",\n r#"競合を解決"#,\n),\n];',
+            'const ACTION_LABELS: &[(&str, &str)] = &[("Commit", "コミット")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Branch",\n "ブランチ",)];',
+            "fn label(self) -> (&'static str, &'static str) {\n"
+            'match self { Commit => ("Commit", "コミット"), }\n}',
+            "fn action_label(self) -> (&'static str, &'static str) {\n"
+            'match self { Merge => (\n "Merge",\n r##"競合 "file""##,\n), }\n}',
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
+            '("commit", /* EN */ "Commit", /* JA */ "コミット"),\n];',
+            *(
+                "fn menu_heading(section: &str, language: Lang) -> &str {\n"
+                "if language == Lang::En { return section; }\n"
+                f'match section {{ "Git" => "{term}", _ => section }}\n}}'
+                for term in ("ブランチ", "コミット")
+            ),
+        ),
+        samples_ok=(
+            "fn menu_heading(section: &str, language: Lang) -> &str {\n"
+            'if language == Lang::En { return "Quoted コミット"; }\n'
+            'match section { "Branch" => "Branch", "File" => "ファイル", _ => section }\n}',
+            '(Ja, Action) => "stash / working tree / commit / branch / conflict",',
+            'Lang::En => "User branch name: コミット",',
+            '(En,\n Action) => format!(\n "User message: マージ\\nブランチ"\n),',
+            '(HealthFinding::Missing, Lang::En) => "Quoted コミット",',
+            'const ADVICE_ACTION_EN: &str = "Quoted コミット";',
+            'const USER_BRANCH_NAME: &str = "ブランチ";',
+            'let user_message = "マージ"; render(user_message);',
+            'Lang::Ja => format!("{user_message}: {branch}"),',
+            '// (Ja, Action) => "コミット",\nLang::Ja => "commit",',
+            '/* Lang::Ja => "ブランチ" */ Lang::Ja => "branch",',
+            '/* outer /* nested */ const ADVICE_ACTION: &str = "マージ"; */',
+            'Lang::Ja => {\n // コミット\n /* ブランチ */ "commit"\n}',
+            'Lang::Ja => r##"comment syntax /* and */ is data, not code"##,',
+            'let quoted_source = r#"Lang::Ja => "コミット""#;',
+            'Lang::Ja => "パープル",',
+            'Lang::Ja => "サンプル",',
+            'Lang::Ja => "マージン",',
+            'Lang::Ja => "ステージマネージャ",',
+            'Lang::Ja => "プルダウン",',
+            'Lang::Ja => "リモートデスクトップ",',
+            'Lang::Ja => "既存の ref `{}` と名前空間が競合しています。",',
+            'fn name_error_ja() -> String { "ref namespace が競合しています".into() }',
+            'const ADVICE_NAME: &str = "ref の名前空間が競合しています";',
+            'assert!(!Msg::Merge.t_for(Lang::Ja).contains("マージ"));',
+            "assert!(!m.t().contains('衝'), \"{:?} still contains 衝突\", m);",
+            'assert_eq!(render(Lang::Ja, "コミット"), "commit");',
+            'Lang::En => format!("{}", Msg::Title.t_for(Lang::Ja)),\n'
+            '(En, Action) => "Quoted コミット",',
+            'const ADVICE_EN_ACTION: &str = "Quoted コミット";',
+            '// Lang::Ja => "競合"\n(En, Action) => r##"Quoted リモート "origin" のブランチ"##,',
+            'Lang::Ja => { "commit" }\nLang::En => "コミット",',
+            '(Ja, Action) => format!("commit: {value}"), (En, Action) => "コミット",',
+            'const ADVICE_ACTION: &str = "commit";\nfn note_en() -> String { "コミット".into() }',
+            "fn note_ja() -> String { match lang() {\n"
+            'Lang::En => "コミット".into(), Lang::Ja => "commit".into(),\n} }',
+            "#[test]\n fn terms_ja_are_english() {\n"
+            'assert!(!m.t().contains("コミット"));\n'
+            'let expected = match lang() { Ja => "マージ", En => "merge" };\n}',
+            '#[cfg(test)] mod tests { const ADVICE_ACTION: &str = "ブランチ"; }',
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
+            '("コミット", "Quoted マージ", "commit"),\n];',
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
+            '("colour", "Purple", "パープル"),\n'
+            '("name", "Name", "ref の名前空間が競合しています"),\n];',
+            'const ACTION_LABELS: &[(&str, &str)] = &[("Quoted コミット", "commit")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Quoted ブランチ", "branch")];',
+            "fn label(self) -> (&'static str, &'static str) {\n"
+            'match self { Commit => (r##"User wrote "コミット""##, "commit"), }\n}',
+            "fn label(self) -> (&'static str, &'static str) {\n"
+            'match self { Commit => (choose(("コミット", "ブランチ")), "commit"), }\n}',
+            'const USER_DATA: &[(&str, &str, &str)] = &[("a", "b", "コミット")];',
+            'const LABELS: &[(&str, Msg)] = &[("コミット", Msg::Commit)];',
+            '// const LABELS: &[(&str, &str, &str)] = &[("a", "b", "コミット")];',
+            "#[cfg(test)] mod tests {\n"
+            'const LABELS: &[(&str, &str, &str)] = &[("merge", "Merge", "マージ")];\n}',
+        ),
+    ),
     Rule(
         name="app-layering",
         summary="application layer has no UI or direct I/O dependencies (#484)",
@@ -229,6 +728,32 @@ RULES: tuple[Rule, ...] = (
         message="crates/kagi-mcp must not depend on gpui (ADR-0163 / #331).",
         samples=("use gpui::App;",),
         samples_ok=("// headless by construction: no gpui in this crate\n",),
+    ),
+    Rule(
+        name="hover-tooltip",
+        summary="Kagi explanatory tooltips use the live-trigger boundary (#1591)",
+        pattern=r"\.\s*tooltip(?:_with_action|_builder)?\s*\(",
+        globs=("src/**/*.rs", "crates/kagi-ui-*/src/**/*.rs"),
+        excludes=("crates/kagi-ui-core/src/tooltip.rs",),
+        message=(
+            "use HoverTooltip::hover_tooltip / hover_tooltip_builder after configuring the control"
+        ),
+        samples=(
+            'button.tooltip("Help")',
+            "button.tooltip_builder(build)",
+            "button.tooltip_with_action(build, action)",
+            "button.\n    tooltip_builder\n    (build)",
+        ),
+        samples_ok=(
+            "button.hover_tooltip(id, text)",
+            "button.hover_tooltip_builder(id, build)",
+            "button.hoverable_tooltip(build)",
+        ),
+        path_samples=(
+            ("crates/kagi-ui-core/src/tooltip.rs", True),
+            ("src/ui/render_header.rs", False),
+            ("crates/kagi-ui-editor/src/tabs.rs", False),
+        ),
     ),
     Rule(
         name="static-spinner",
@@ -387,6 +912,9 @@ RULES: tuple[Rule, ...] = (
             r"\.\s*take\("
         ),
         globs=("src/ui/**/*.rs",),
+        # #1381 / ADR-0105: this shared helper intentionally shows 25 rows
+        # plus a visible overflow line. Other modal lists still render every row.
+        excludes=("src/ui/modal_preview_files.rs",),
         message=(
             "a modal preview list is truncated with .take(N) — render every row "
             "(list panel + scroll), see #454."

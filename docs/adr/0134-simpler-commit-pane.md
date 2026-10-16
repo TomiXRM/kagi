@@ -116,6 +116,35 @@ The generation-counter guard stays: a result whose `gen` no longer matches has
 been superseded by a newer click and is still dropped. Only the
 "is it still empty?" check is gone.
 
+#### Undo and the consumed-message boundary (#1434/#1436, 2026-10-13)
+
+Explicit generation replaces both fields through the pinned Input's
+Undo-preserving `replace_all` API. Full replacement starts its own history
+group and ends it before subsequent typing, even when the preceding edit was
+less than one second ago. Rule generation, LLM completion and rule fallback
+share this path and retain the loaded template comment block. Title and body
+are separate Inputs: Undo restores each handwritten field in one step (two
+steps for the pair), Redo restores its generated text, and earlier edit groups
+remain traversable. Initial draft load and successful commit clear still use
+`set_value`: those are lifecycle changes, not Smart edits.
+
+The same panel generation guard advances on explicit generation/suggestion
+and on successful commit/amend message consumption; consumption also drops any
+queued result. A generation for the consumed message cannot land in the next
+draft, even if unstaged work retains the same panel entity. Failure, cancellation
+or abort does not consume the message and does not invalidate generation.
+Changes to the staged set (including unstage/restage or replacing staged files)
+also do not invalidate it: the result is still the user's explicit generation
+request. There is no second staged-set invalidation key.
+
+The session's in-flight descriptor also retains the dispatch token
+`(panel EntityId, panel generation)`. Completions settle spinner/provider/status
+only when that token still matches. This preserves weak panel ownership: if the
+initiating panel disappeared, its matching completion clears the generating
+status without resurrecting it; an older panel's completion cannot settle a
+new panel's request. The token does not introduce a staged-set invalidation key.
+
+
 ### The Template toggle
 
 A `commit.template` is opt-out per user, not per repo: the toggle at the bottom
@@ -166,3 +195,57 @@ now follows `i18n::lang()`; an explicitly saved value still wins.
   right-aligned icon group it pushed the icons sideways as the text appeared.
 - `parse_coauthors` gains a second caller in spirit (the picker writes what the
   inspector reads), so the trailer format is now load-bearing in both directions.
+
+## Amendment — 2026-10-11: adaptive composer (#1167)
+
+The dense composer retains GitHub Desktop's subject/body/action hierarchy and
+the existing Input, KagiButton and icon controls. At 940×660 and 167% zoom,
+the non-shrinking footer plus AutoGrow's twelve-line inner minimum displaced
+both file lists and the actions below the viewport. The panel now shares
+remaining height through flex: the lists retain their section headers, while
+the body uses the cached soft-wrapped visual row count (clamped to 3–12) and
+shrinks into a plain multiline Input's internally scrolling viewport. The
+stacked action row does not shrink, following modal_shell's fixed-action-row
+pattern; no panel-wide scrolling or new control is introduced.
+
+Rest/hover/pressed/focus/disabled/loading/error behavior and owner-bound
+generation, drafts, staging, plan confirmation and klog are unchanged. The
+native `commit_panel_viewport` scenario records the pre-fix 1392×883@100%
+heights of the files, body, Generate and Commit and asserts their preservation
+with relative containment/ordering in EN/JA. Three- and eleven-line bodies
+retain 95px/239px heights; three 72-column lines wrap to six visual rows and
+retain 149px. It also measures containment, real wheel scrolling and text
+input at 940×660 and 940×560@167%. The fork adds only a public cached
+`InputState::wrap_row_count()` accessor, which does no shaping or allocation:
+`TomiXRM/gpui-kit` revision `f7e696f6b057b2b091d9b95b5c12cc0f7dfc4f91`.
+The body's minimum reserves action-row chrome, and the message/footer clip
+shrinking content so it cannot overpaint Commit. Real-window IME/AX and the
+JA Tier B comparison remain checks owned by the integrating agent.
+
+## Amendment — 2026-10-14: file identity at narrow widths (#1533)
+
+The shared staged/unstaged List/Tree file renderer uses GPUI native middle
+ellipsis, preserving the distinguishing filename suffix as well as its prefix.
+No kagi-ui-core middle-ellipsis helper exists; no custom string slicing or
+second row renderer is introduced. The dense 13-reference-pixel file role,
+22-reference-pixel slot, selection foregrounds, Stage/Unstage controls and
+file/diff ownership remain unchanged.
+
+Full-path hover uses the existing viewport-bounded wrapping subject tooltip.
+The accessible label and row description remain the complete repository path,
+independently of visual truncation. EN/JA use the same unmodified Git filenames.
+The native regression `commit_panel_file_middle_ellipsis` covers both sections
+and both presentations at 100%/167%; real-window narrow alpha/beta and tooltip
+comparisons remain Tier B evidence, not claims inferred from style probes.
+
+## Amendment — 2026-10-14: unified Changes focus and selection (#1536)
+
+The dense Changes list follows Finder's selection contract: keyboard row
+movement automatically selects the destination file, rather than leaving the
+active diff on a previously clicked file. Reuse RowList::selecting_row and
+CommitPanelView::defer_select_file; no second focus owner, diff loader, debounce
+or selection state is introduced. Both sections and their List/Tree projections
+retain path identity and existing lazy loading, with selected fill and AX state
+derived from the active diff. Desktop and compact Changes share this behavior;
+the compact composer must not reconcile file focus (#1546). Existing
+Shift+F10/Menu shortcuts and destructive approval semantics are unchanged.

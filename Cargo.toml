@@ -9,7 +9,7 @@ resolver = "2"
 
 [package]
 name = "kagi"
-version = "0.44.0"
+version = "0.45.0"
 license = "MIT"
 description = "Safety-first, commit-graph Git GUI client built with GPUI"
 edition = "2021"
@@ -20,7 +20,7 @@ rust-version = "1.92"
 
 [features]
 # Compile the native visual runner only when explicitly requested (ADR-0166).
-gui-e2e = ["gpui/test-support", "kagi-ui-core/gui-e2e"]
+gui-e2e = ["gpui/test-support", "gpui_platform/test-support", "gpui-component/test-support", "kagi-ui-core/gui-e2e", "kagi-ui-editor/gui-e2e", "kagi-ui-ecosystem/gui-e2e", "kagi-ui-file-history/gui-e2e"]
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it
@@ -48,7 +48,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 # through the app's AssetSource, so kagi must be able to serve them — see
 # `src/ui/assets.rs`.
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
-gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream
+gpui-terminal = { path = "vendor/gpui-terminal" }  # Kagi-owned terminal; upstream origin/notices: ADR-0035
 portable-pty = "0.9"
 git2 = { version = "0.21", default-features = false }
 notify = "7"
@@ -74,6 +74,14 @@ serde_json = "1"
 # Already in the tree transitively; `clock` pulls iana-time-zone for a
 # soundness-safe local UTC offset (no localtime_r footgun in this MT app).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# Shell-only macOS accessibility notifications; already pinned transitively by GPUI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+# Settings fits its native frame via the exact window's AppKit handle.
+raw-window-handle = "0.6"
+objc2-foundation = "0.3"
 
 # Windows-only: embeds assets/icon/icon.ico into kagi.exe's resources via
 # build.rs. No-op (unused) on other targets.
@@ -160,12 +168,53 @@ assets = [
 ]
 
 # ── Dependency patches ─────────────────────────────────────────────────────
-# cosmic-text Han-unification locale fix (Ubuntu ja-JP kanji rendered with SC
-# glyph forms). Same one-commit patch as before, rebased 0.14 → 0.19 for the
-# zed-main migration. Drop once upstream PR pop-os/cosmic-text#522 ships in a
-# release that gpui pulls in.
-[patch.crates-io]
-cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.19" }
-# Cosmetic gpui / gpui-component fork patches (rounded text-run highlight
-# backgrounds; heading_top_gap on TextViewStyle) were dropped in the zed-main
-# migration; re-add by rebasing the forks if the polish is missed.
+# Slice definitions: docs/rearch/upstream-migration-1479.md (#1479 namespace).
+# #1479-S1b removed the cosmic-text patch after the Linux JA/EN ×
+# minimal/system-Noto × X11/Wayland native matrix passed on registry 0.19.0.
+# Explicit bundled JP fallback covers native shaping and detached tooltip/drag roots (ADR-0130).
+# Retired cosmetic highlight/heading-gap patches must not be reintroduced.
+#
+# Transitional list fix: retain estimates across layout/reset/splice, preserve
+# measured nodes on equal estimates, and resolve downward wheel/scroll_by End
+# intent. Upstream already has estimated-height APIs, but not these fixes;
+# no TomiXRM Zed PR existed at the #1479 review. Remove in #1479-S6 after #1479-S5 moves
+# geometry to official uniform lists / Kagi-owned variable lists and preserves
+# the real geometry oracles. The other 21 siblings below have no independent
+# fixes: keep one GPUI source identity only until the official family cutover.
+[patch."https://github.com/zed-industries/zed"]
+collections = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35", version = "=0.2.2" }
+gpui_linux = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_macos = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_platform = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_shared_string = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35", version = "=0.1.0" }
+gpui_util = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_web = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_wgpu = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_windows = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+http_client = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+media = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+perf = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+scheduler = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+sum_tree = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+util_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+#
+# Transitional Kit patch: managed/offscreen conversation selection, presentation
+# retention, cached composer rows, Input/Select/Find accessibility, IME, Radio
+# painting and atomic replacement Undo; b50a0796 fixes next-frame retention leaks
+# through weak capture, and f5f68275 includes Find keyboard containment.
+# Official main includes some but not all equivalents; longbridge/gpui-kit#3421
+# merged presentation retention only.
+# Remove both entries together in #1479-S6: official component/assets at one revision,
+# public-API compositions and typed inputs, owner-approved default TextView scope,
+# and the official cached Textarea row accessor (U1) with consumer gates.
+# Assets has no independent fix; it shares the component fork source/revision.
+[patch."https://github.com/longbridge/gpui-component"]
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }

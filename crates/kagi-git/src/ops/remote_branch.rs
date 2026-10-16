@@ -109,6 +109,9 @@ pub fn plan_delete_remote_branch(
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::RemoteBranch(RemoteBranchTitle::DeleteRemoteBranch {
             remote: remote.to_string(),
@@ -122,6 +125,7 @@ pub fn plan_delete_remote_branch(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

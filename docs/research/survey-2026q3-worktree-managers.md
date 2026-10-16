@@ -24,7 +24,7 @@ ADR-0025 / 0054 / 0103 / 0128 / 0147。
 | unlock | `plan_unlock_worktree` / `execute_unlock_worktree` + `worktree_menu.rs` | サイドバー右クリック。lock 理由を warning として提示 |
 | WORKTREES サイドバーセクション | `collect_worktrees`(snapshot.rs) | main worktree は ✓ |
 | worktree ごとの WIP 行(グラフ内) | `WorktreeWip { staged, unstaged, untracked }` + `render_wip_row` | ADR-0103。**全 worktree の未 commit 状態を 1 グラフに同時表示**(業界的にこれは Kagi 固有) |
-| worktree タブ + レーン色一致 | `RepoTab.is_worktree` / `wt_color_idx` | 🌲 マーカー。WIP 行と同じ色 |
+| worktree タブ | `RepoTab.is_worktree` | 🌲 マーカー。2026-10-11 ADR-0125 amendment で tab のレーン色／保存 rank を削除。グラフ WIP 行のレーン色は維持 |
 | multi-HEAD バッジ | `build_badge_map` | 他 worktree で checkout 中の branch tip に 🌲 |
 | worktree digest を preflight で再検証 | `WorkingTreeStatus::digest()` / ADR-0147 | 分類(staged/unstaged/untracked/conflicted)のハッシュ |
 | branch 削除時の worktree 巻き取り | `branch.rs:775` `prune(Some(&mut opts))` + `WorktreeCheckout` | locked worktree / dirty worktree を blocker、clean なら worktree を消してから branch 削除 |

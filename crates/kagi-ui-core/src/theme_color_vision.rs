@@ -26,6 +26,7 @@ pub const COLOR_VISION: Theme = Theme {
     color_head: CVD_ORANGE,
     // Conflict editor: ours = branch, theirs = remote.
     color_branch: CVD_BLUE,
+    link: CVD_BLUE,
     selection_tint: CVD_BLUE,
     color_remote: CVD_ORANGE,
 

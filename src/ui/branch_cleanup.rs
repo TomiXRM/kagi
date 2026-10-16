@@ -12,6 +12,7 @@
 
 use gpui::prelude::*;
 use gpui::ClipboardItem;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use kagi_git::ops::{copy_all_text, BranchCleanupRow, CleanupDeleteTarget, MergedBranchStatus};
 
@@ -45,7 +46,10 @@ impl KagiApp {
         self.close_file_history();
         self.close_ecosystem_view();
         self.with_ui(|ui| ui.leave_pr_mode());
-        self.with_ui(|ui| ui.branch_cleanup_open = true);
+        self.with_ui(|ui| {
+            ui.retire_issue_conversation_scope();
+            ui.branch_cleanup_open = true;
+        });
         klog!("branch-cleanup: opened");
         cx.notify();
     }
@@ -227,8 +231,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "branch-cleanup: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("branch-cleanup: repo session unavailable"),
                 ));
                 return;
             }
@@ -248,10 +252,9 @@ impl KagiApp {
                 cx.notify();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "branch-cleanup plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("branch-cleanup plan error: {}", e)),
+                ));
             }
         }
     }
@@ -298,7 +301,7 @@ impl KagiApp {
             move || {
                 // An open failure is the job's own to record (`RunJob::run`).
                 let backend = kagi_git::Backend::open(&bg_path)
-                    .map_err(|e| i18n::op_failed(i18n::Op::Cleanup, e))?;
+                    .map_err(|e| i18n::op::op_failed_contract(i18n::Op::Cleanup, e))?;
                 Ok(backend.execute_delete_merged_branches(&bg_plan, &bg_targets))
             },
             |_| None,
@@ -310,11 +313,9 @@ impl KagiApp {
                         outcome.failed.len()
                     );
                     if outcome.failed.is_empty() {
-                        RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
-                            "branch-cleanup: {} deleted, {} failed",
-                            outcome.deleted.len(),
-                            outcome.failed.len()
-                        ))))
+                        RunPresentation::status(FooterStatus::Success(
+                            i18n::op::user_text::operations::cleanup(outcome.deleted.len()).into(),
+                        ))
                     } else {
                         // Some refs may already be deleted. The durable row is
                         // the only safe presentation; never offer a raw retry.
@@ -430,20 +431,16 @@ impl KagiApp {
 // Render
 // ────────────────────────────────────────────────────────────
 
-/// `1_768_003_200 → "2026-01-10"` — UTC civil date without a chrono dep
-/// (Howard Hinnant's `civil_from_days`).
+/// Local calendar date, using the same per-instant/DST offset as Detail.
 fn format_date(secs: i64) -> String {
-    let z = secs.div_euclid(86_400) + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02}", y, m, d)
+    let mut date = super::detail_panel::format_local(secs);
+    date.truncate(date.find(' ').unwrap_or(date.len()));
+    date
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn format_date_for_e2e(secs: i64) -> String {
+    format_date(secs)
 }
 
 /// A tick box for one table row.
@@ -637,7 +634,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             .flex()
             .justify_center()
             .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
-            .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {
@@ -778,17 +775,17 @@ fn build_cleanup_row(
         .text_sm()
         .text_color(rgb(theme().text_main))
         .cursor_pointer()
-        .hover(|s| s.text_color(rgb(theme().color_branch)))
-        .tooltip({
-            let full = full_name.clone();
-            move |window, cx| Tooltip::new(full.clone()).build(window, cx)
-        })
+        .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().surface))))
         .on_click(
             cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                 super::branch_menu::copy_branch_name(this, name_for_copy.clone(), cx);
             }),
         )
-        .child(div().truncate().child(full_name));
+        .child(div().truncate().child(full_name.clone()))
+        .hover_tooltip_builder(("cleanup-name-help", i), {
+            let full = full_name;
+            move |window, cx| Tooltip::new(full.clone()).build(window, cx)
+        });
 
     // PR: `#248 chore: bump to 0.22.0`. A merged branch nearly always has one,
     // and its title explains the branch better than the branch name does
@@ -807,8 +804,7 @@ fn build_cleanup_row(
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .cursor_pointer()
-                .hover(|s| s.text_color(rgb(theme().color_branch)))
-                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().surface))))
                 .on_click(
                     cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                         this.open_pr_in_browser(&pr_open);
@@ -816,6 +812,9 @@ fn build_cleanup_row(
                     }),
                 )
                 .child(div().truncate().child(label))
+                .hover_tooltip_builder(("cleanup-pr-help", i), move |window, cx| {
+                    Tooltip::new(tip.clone()).build(window, cx)
+                })
                 .into_any_element()
         }
         None => div()
@@ -917,10 +916,15 @@ fn build_cleanup_row(
                 .child(SharedString::from(Msg::CleanupBadgeStale.t())),
         );
     }
-    if let Some(tip) = grown_tooltip {
-        status_cell =
-            status_cell.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
-    }
+    let status_cell = if let Some(tip) = grown_tooltip {
+        status_cell
+            .hover_tooltip_builder(("cleanup-status-help", i), move |window, cx| {
+                Tooltip::new(tip.clone()).build(window, cx)
+            })
+            .into_any_element()
+    } else {
+        status_cell.into_any_element()
+    };
 
     // Actions: trash only, and only when the row can build a target.
     let trash_btn: Option<gpui::AnyElement> = row.delete_target().map(|target| {
@@ -994,20 +998,20 @@ fn build_cleanup_row(
 mod format_date_tests {
     use super::format_date;
 
-    /// Same ground as `detail_panel`'s `format_civil` tests (the other
-    /// civil-date formatter in the tree): the epoch, a known timestamp, the
-    /// 2000 leap day, a pre-1970 (negative) epoch, and the 1900 non-leap-year
-    /// boundary. The two formatters agree on the date part for all of them.
+    /// Cleanup and Detail use the same local calendar, including pre-epoch dates.
     #[test]
     fn civil_dates_match_the_other_formatter() {
-        assert_eq!(format_date(0), "1970-01-01");
-        assert_eq!(format_date(1_705_311_000), "2024-01-15");
-        assert_eq!(format_date(951_782_400), "2000-02-29");
-        assert_eq!(format_date(-60), "1969-12-31");
-        // 1900 is not a leap year: 1900-02-28 + 1 day is 1900-03-01.
-        assert_eq!(format_date(-25_509 * 86_400), "1900-02-28");
-        assert_eq!(format_date(-25_508 * 86_400), "1900-03-01");
-        // The doc-comment's own example.
-        assert_eq!(format_date(1_768_003_200), "2026-01-10");
+        for epoch in [
+            0,
+            1_705_311_000,
+            951_782_400,
+            -60,
+            -25_509 * 86_400,
+            -25_508 * 86_400,
+            1_768_003_200,
+        ] {
+            let detail = crate::ui::detail_panel::format_local(epoch);
+            assert_eq!(format_date(epoch), detail.split_once(' ').unwrap().0);
+        }
     }
 }

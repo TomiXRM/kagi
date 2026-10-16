@@ -34,10 +34,38 @@ fn partition_discard_rows(
 }
 
 impl KagiApp {
+    /// Refuse the whole selection before converting path bytes lossily.
+    fn refuse_discard_path(
+        &mut self,
+        path: &Path,
+        origin: worktree_wip::WriteOrigin,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_discard_modal();
+        let note = kagi_domain::plan_note::PlanNote::Discard(
+            kagi_domain::plan_note::DiscardNote::UnsafePath {
+                path: path.display().to_string(),
+            },
+        );
+        if let (Some(repo_path), Some(Ok(current))) = (
+            self.write_repo_path(origin, cx),
+            self.with_write_repo(origin, cx, |repo| repo.current_state()),
+        ) {
+            self.record_refused("discard", current, &[note], &repo_path, cx);
+        }
+        let message = Msg::DiscardUnsafePath
+            .t()
+            .replace("{}", &path.display().to_string());
+        self.status_footer =
+            FooterStatus::Failed(crate::ui::operations::display_text(message.clone().into()));
+        self.push_toast(ToastKind::Error, message, cx);
+        cx.notify();
+    }
+
     /// Collect the eligible unstaged paths (excluding untracked / conflicted /
     /// submodule) plus the skipped set, from the current commit-panel status.
-    /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
-    fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
+    /// Returns exact repo-relative strings, or the path that cannot be expressed.
+    fn discard_partition(&self, cx: &Context<Self>) -> Result<(Vec<String>, Vec<String>), PathBuf> {
         let rows: Vec<(String, bool)> = self
             .ui()
             .commit_panel
@@ -49,12 +77,12 @@ impl KagiApp {
                     .unstaged
                     .iter()
                     .map(|f| {
-                        let rel = f.path.to_string_lossy().replace('\\', "/");
-                        (rel, panel.is_conflicted(&f.path))
+                        let rel = f.path.to_str().ok_or_else(|| f.path.clone())?.to_owned();
+                        Ok((rel, panel.is_conflicted(&f.path)))
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<Result<_, PathBuf>>>()
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         // #476 slice 3: the gitlink check must ask the PANEL's repository — a
         // linked worktree's submodules are its own. (The check lives in the
         // backend: no git2 in the UI, #326.)
@@ -69,7 +97,7 @@ impl KagiApp {
                     .map(|(rel, conflicted)| (rel.clone(), *conflicted, false))
                     .collect()
             });
-        partition_discard_rows(rows)
+        Ok(partition_discard_rows(rows))
     }
 
     /// Per-path change kinds for the discard card's A/M/D badges, from the
@@ -90,10 +118,9 @@ impl KagiApp {
         if let Some(entity) = self.ui().commit_panel.as_ref() {
             let panel = &entity.read(cx).state;
             for f in &panel.unstaged {
-                out.insert(
-                    f.path.to_string_lossy().replace('\\', "/"),
-                    f.change.clone(),
-                );
+                if let Some(path) = f.path.to_str() {
+                    out.insert(path.to_owned(), f.change.clone());
+                }
             }
         }
         out
@@ -124,12 +151,17 @@ impl KagiApp {
         if !self.pane_mutation_admitted(owner) {
             return;
         }
-        let paths = vec![path.to_string_lossy().replace('\\', "/")];
+        let Some(path_str) = path.to_str() else {
+            self.refuse_discard_path(&path, origin, cx);
+            return;
+        };
+        let paths = vec![path_str.to_owned()];
         let planned = match self.with_write_repo(origin, cx, |repo| repo.plan_discard(&paths)) {
             Some(p) => p,
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("discard: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -150,8 +182,8 @@ impl KagiApp {
                 cx.notify();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Discard, e)),
                 ));
             }
         }
@@ -167,12 +199,19 @@ impl KagiApp {
         if !self.pane_mutation_admitted(owner) {
             return;
         }
-        let (eligible, skipped) = self.discard_partition(cx);
+        let (eligible, skipped) = match self.discard_partition(cx) {
+            Ok(paths) => paths,
+            Err(path) => {
+                self.refuse_discard_path(&path, worktree_wip::WriteOrigin::CommitPanel, cx);
+                return;
+            }
+        };
         let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&eligible)) {
             Some(p) => p,
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("discard: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -197,8 +236,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Discard, e)),
                 ));
             }
         }
@@ -206,6 +245,9 @@ impl KagiApp {
 
     /// Dismiss the discard modal without acting.
     pub fn cancel_discard_modal(&mut self) {
+        if self.discard_modal().is_some() {
+            klog!("discard: cancelled");
+        }
         self.clear_discard_modal();
     }
 
@@ -305,10 +347,9 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("refused: discard preflight — repo open failed: {}", e);
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("discard: repo open error: {}", e)),
+                ));
                 cx.notify();
                 return;
             }
@@ -319,7 +360,9 @@ impl KagiApp {
         // recovery handle is the oplog entry's backup blob list (ADR-0083), and
         // `Backend::run` writes that entry against `repo_path` above.
         self.clear_discard_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyDiscard.t()),
+        ));
         klog!("async: discard started");
 
         let plan = modal.plan.clone();
@@ -346,18 +389,19 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::Discard(d)) => {
                     let status = if d.is_partial() {
-                        FooterStatus::Failed(SharedString::from(format!(
-                            "{}: {}",
-                            Msg::DiscardPartial.t(),
-                            d.error.clone().unwrap_or_default()
-                        )))
+                        FooterStatus::Failed(
+                            i18n::op::user_text::operations::partial(
+                                "discard",
+                                d.error.as_deref().unwrap_or_default(),
+                            )
+                            .into(),
+                        )
                     } else {
-                        let human = if d.backups.len() == 1 {
-                            format!("{} discarded", d.backups[0].path)
-                        } else {
-                            format!("{} files discarded", d.backups.len())
-                        };
-                        FooterStatus::Success(SharedString::from(format!("discard: {}", human)))
+                        let only_path = (d.backups.len() == 1).then(|| d.backups[0].path.as_str());
+                        FooterStatus::Success(
+                            i18n::op::user_text::operations::discarded(d.backups.len(), only_path)
+                                .into(),
+                        )
                     };
                     RunPresentation::status(status).refresh_worktree_wip(wip_path.clone())
                 }

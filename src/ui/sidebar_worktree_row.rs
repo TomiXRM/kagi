@@ -14,10 +14,16 @@ use std::{
 
 use gpui::{div, prelude::*, px, rgb, svg, Context, SharedString};
 use kagi_git::worktree_inspection::WorktreeInspection;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::sidebar::{name_tooltip, SIDEBAR_AUX_TEXT, SIDEBAR_WORKTREE_ROW_H};
 use super::theme::{self, theme};
 use super::{KagiApp, Msg};
+
+#[path = "sidebar_worktree_inspection_card.rs"]
+mod inspection_card;
+pub(super) use inspection_card::keyboard_card;
+use inspection_card::WorktreeHoverCard;
 
 pub(super) struct InspectionEntry {
     report: WorktreeInspection,
@@ -297,360 +303,6 @@ fn inspection_badge(app: &KagiApp, path: &Path, name: &str) -> gpui::AnyElement 
         .into_any_element()
 }
 
-/// Stable bounds keep Refresh in place as measurements arrive.
-const CARD_W: f32 = 288.;
-const CARD_H: f32 = 132.;
-
-/// A local WORKTREES row's compact inspection, owned by the existing tooltip.
-/// Remove remains in the guarded worktree menu; this card never mutates Git.
-struct WorktreeHoverCard {
-    app: gpui::WeakEntity<KagiApp>,
-    path: PathBuf,
-    name: SharedString,
-    branch: Option<SharedString>,
-    port: Option<u16>,
-    /// An observation landing is a `KagiApp` notify; the card repaints with it.
-    _app_changed: Option<gpui::Subscription>,
-}
-
-impl WorktreeHoverCard {
-    fn build(
-        app: gpui::WeakEntity<KagiApp>,
-        path: PathBuf,
-        name: SharedString,
-        branch: Option<SharedString>,
-        port: Option<u16>,
-        cx: &mut gpui::App,
-    ) -> gpui::AnyView {
-        cx.new(|cx: &mut Context<Self>| {
-            let _app_changed = app
-                .upgrade()
-                .map(|entity| cx.observe(&entity, |_, _, cx| cx.notify()));
-            Self {
-                app,
-                path,
-                name,
-                branch,
-                port,
-                _app_changed,
-            }
-        })
-        .into()
-    }
-}
-
-impl gpui::Render for WorktreeHoverCard {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(entity) = self.app.upgrade() else {
-            return div().into_any_element();
-        };
-        // GPUI lays tooltips out without available space and flips at the edge.
-        let viewport = f32::from(window.viewport_size().height);
-        let height = px((viewport - 16.)
-            .min(f32::from(theme::scaled_px(CARD_H)))
-            .max(0.));
-        inspection_card(entity.read(cx), self, height)
-    }
-}
-
-/// The inspection card the keyboard opened on a WORKTREES row (#981): the
-/// hover card's contents, drawn by the row instead of a tooltip (a tooltip
-/// opens only on hover). Pressing inside it keeps the focus on the row, so
-/// its pointer controls still work.
-pub(super) fn keyboard_card(
-    app: &KagiApp,
-    path: PathBuf,
-    name: &str,
-    branch: Option<&str>,
-    port: Option<u16>,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let card = WorktreeHoverCard {
-        app: cx.weak_entity(),
-        path,
-        name: SharedString::from(
-            kagi_domain::text_safety::sanitize_control_bytes(name).to_string(),
-        ),
-        branch: branch
-            .map(kagi_domain::text_safety::sanitize_control_bytes)
-            .map(|branch| SharedString::from(branch.to_string())),
-        port,
-        _app_changed: None,
-    };
-    div()
-        .id("sidebar-worktree-keyboard-card")
-        .relative()
-        .occlude()
-        .child(super::e2e::measure_inside("sidebar-worktree-keyboard-card"))
-        .child(inspection_card(app, &card, theme::scaled_px(CARD_H)))
-        .into_any_element()
-}
-
-fn state_chip(label: &'static str, color: u32) -> gpui::Div {
-    div()
-        .h(theme::scaled_px(20.))
-        .flex()
-        .items_center()
-        .gap_0p5()
-        .px_1()
-        .rounded_sm()
-        .bg(rgb(theme().surface))
-        .text_color(rgb(color))
-        .child(label)
-}
-
-fn inspection_card(
-    app: &KagiApp,
-    card: &WorktreeHoverCard,
-    height: gpui::Pixels,
-) -> gpui::AnyElement {
-    let path = card.path.as_path();
-    // A tab switch or reload can leave the tooltip alive for a frame; never
-    // show another tab's read or paint over the root-owned context menu.
-    if app.remote_view.is_some()
-        || app.worktree_menu.is_some()
-        || !app.view().worktrees.iter().any(|w| w.path == path)
-    {
-        return div().into_any_element();
-    }
-    let state = &app.ui().worktree_inspections;
-    let entry = state.entries.get(path);
-    let pending = state.pending.contains(path);
-    let stale = entry.is_some_and(|e| !app.reads.is_fresh(e.read) || app.op_latched());
-    let dirty = app
-        .view()
-        .worktrees
-        .iter()
-        .any(|w| w.path == path && w.wip.is_some_and(|wip| wip.is_dirty()))
-        || entry
-            .is_some_and(|e| e.report.removal.clean == kagi_domain::remove::WorktreeEvidence::No);
-    let locked = app
-        .view()
-        .worktrees
-        .iter()
-        .any(|w| w.path == path && w.locked);
-    let error = entry.is_some_and(|e| e.report.disk_usage.is_err());
-    // Pending and stale observations retain their last capacity; only the
-    // advisory verdict is suppressed while its read cannot be trusted.
-    let size = entry
-        .and_then(|e| e.report.disk_usage.as_ref().ok())
-        .map(|usage| size_text(usage.allocated_bytes));
-    let path_label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
-        &path.to_string_lossy(),
-    ));
-    let branch = card
-        .branch
-        .clone()
-        .unwrap_or_else(|| SharedString::from(Msg::WorktreeDetachedShort.t()));
-    let refresh_app = card.app.clone();
-    let target = card.path.clone();
-
-    let heading = div()
-        .id("worktree-inspection-heading")
-        .relative()
-        .child(super::e2e::measure_inside("worktree-inspection-heading"))
-        .flex()
-        .flex_col()
-        .gap_0p5()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    svg()
-                        .path("icons/tree-pine.svg")
-                        .w(theme::scaled_px(14.))
-                        .h(theme::scaled_px(14.))
-                        .text_color(rgb(theme().color_branch)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(theme().text_main))
-                        .child(card.name.clone()),
-                )
-                .child(
-                    div()
-                        .id("worktree-inspection-refresh")
-                        .relative()
-                        .child(super::e2e::measure_inside("worktree-inspection-refresh"))
-                        .role(gpui::Role::Button)
-                        .aria_label(Msg::WorktreeInspectionRefresh.t())
-                        .cursor_pointer()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .w(theme::scaled_px(24.))
-                        .h(theme::scaled_px(24.))
-                        .rounded_sm()
-                        .bg(rgb(theme().surface))
-                        .border_1()
-                        .border_color(rgb(theme().selected))
-                        .hover(|style| style.bg(rgb(theme().selected)))
-                        .child(
-                            svg()
-                                .path("icons/refresh-cw.svg")
-                                .w(theme::scaled_px(14.))
-                                .h(theme::scaled_px(14.))
-                                .text_color(rgb(theme().text_sub)),
-                        )
-                        .on_click(move |_, _, cx| {
-                            let _ = refresh_app.update(cx, |app, cx| {
-                                app.refresh_worktree_inspections(
-                                    Some(std::slice::from_ref(&target)),
-                                    cx,
-                                );
-                            });
-                        }),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    svg()
-                        .path("icons/git-branch.svg")
-                        .w(theme::scaled_px(14.))
-                        .h(theme::scaled_px(14.))
-                        .text_color(rgb(theme().text_muted)),
-                )
-                .child(
-                    div()
-                        .id("worktree-inspection-branch")
-                        .relative()
-                        .child(super::e2e::measure_inside("worktree-inspection-branch"))
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .child(branch),
-                ),
-        );
-    let mut chips = div()
-        .id("worktree-inspection-body")
-        .relative()
-        .child(super::e2e::measure_inside("worktree-inspection-body"))
-        .flex()
-        .items_center()
-        .gap_1()
-        .min_w(px(0.));
-    if pending {
-        chips = chips.child(super::e2e::measure_control(
-            "worktree-inspection-measuring",
-            state_chip(Msg::WorktreeMeasuring.t(), theme().text_sub),
-        ));
-    } else if error {
-        chips = chips.child(super::e2e::measure_control(
-            "worktree-inspection-error",
-            state_chip(Msg::WorktreeErrorShort.t(), theme().color_blocker),
-        ));
-    } else if stale {
-        chips = chips.child(super::e2e::measure_control(
-            "worktree-inspection-stale",
-            state_chip(Msg::WorktreeStaleShort.t(), theme().color_warning),
-        ));
-    } else if entry.is_none() {
-        chips = chips.child(state_chip(Msg::WorktreeNotMeasured.t(), theme().text_muted));
-    }
-    if dirty {
-        chips = chips.child(super::e2e::measure_control(
-            "worktree-inspection-dirty",
-            state_chip(Msg::WorktreeDirtyShort.t(), theme().color_blocker),
-        ));
-    }
-    if locked {
-        chips = chips.child(super::e2e::measure_control(
-            "worktree-inspection-locked",
-            state_chip(Msg::WorktreeLockedShort.t(), theme().color_warning).child(
-                svg()
-                    .path("icons/lock-keyhole.svg")
-                    .w(theme::scaled_px(12.))
-                    .h(theme::scaled_px(12.)),
-            ),
-        ));
-    }
-    if let Some(port) = card.port {
-        let url = format!("http://localhost:{port}");
-        chips = chips.child(
-            div()
-                .id("worktree-inspection-port")
-                .role(gpui::Role::Button)
-                .aria_label(SharedString::from(format!("localhost:{port}")))
-                .cursor_pointer()
-                .flex()
-                .items_center()
-                .gap_0p5()
-                .h(theme::scaled_px(20.))
-                .px_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_color(rgb(theme().color_branch))
-                .child(
-                    svg()
-                        .path("icons/square-terminal.svg")
-                        .w(theme::scaled_px(12.))
-                        .h(theme::scaled_px(12.)),
-                )
-                .child(format!(":{port}"))
-                .on_click(move |_, _, cx| cx.open_url(&url)),
-        );
-    }
-    div()
-        .id("worktree-inspection")
-        .relative()
-        .child(super::e2e::measure_inside("worktree-inspection"))
-        .occlude()
-        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-        .w(theme::scaled_px(CARD_W))
-        .h(height)
-        .flex()
-        .flex_col()
-        .p_2()
-        .gap_1()
-        .overflow_hidden()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .bg(rgb(theme().panel))
-        .shadow_md()
-        .text_xs()
-        .text_color(rgb(theme().text_sub))
-        .child(heading)
-        .child(chips)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    div()
-                        .id("worktree-inspection-path")
-                        .relative()
-                        .child(super::e2e::measure_inside("worktree-inspection-path"))
-                        .role(gpui::Role::Label)
-                        .aria_label(path_label.clone())
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(theme().text_muted))
-                        .child(path_label),
-                )
-                .children(size.map(|size| {
-                    div()
-                        .flex_shrink_0()
-                        .text_color(rgb(theme().text_sub))
-                        .child(size)
-                })),
-        )
-        .into_any_element()
-}
-
 /// What one WORKTREES row shows (the `SidebarRow::Worktree` fields).
 pub(super) struct WorktreeRowFacts<'a> {
     pub(super) name: &'a str,
@@ -672,6 +324,7 @@ pub(super) struct WorktreeRowFacts<'a> {
 pub(super) fn build_worktree_row(
     facts: WorktreeRowFacts<'_>,
     app: &KagiApp,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let WorktreeRowFacts {
@@ -718,7 +371,8 @@ pub(super) fn build_worktree_row(
         .flex_row()
         .items_center()
         .px_3()
-        .text_xs()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(gpui::relative(1.2))
         .text_color(rgb(text_color))
         .overflow_hidden()
         // #855: the name identifies the row and does not shrink. The tree
@@ -778,7 +432,7 @@ pub(super) fn build_worktree_row(
                 )
                 .children(
                     port.filter(|_| !is_remote)
-                        .map(|port| port_link(name, port, cx)),
+                        .map(|port| port_link(name, port, interactive, cx)),
                 ),
         );
     if locked {
@@ -791,13 +445,29 @@ pub(super) fn build_worktree_row(
                 .text_color(rgb(theme().color_warning)),
         );
     }
+    if !interactive {
+        return row
+            .when(!is_remote, |row| {
+                row.gap_1().child(inspection_badge(app, path, name))
+            })
+            .relative()
+            .child(super::e2e::measure_inside(format!(
+                "sidebar-worktree-{name}"
+            )))
+            .into_any_element();
+    }
     // An SSH tab's worktree is fabricated by `remote::` with the path as it
     // exists **on the remote host** (ADR-0089), while every menu action —
     // open, reveal, copy, prune, repair — runs locally. A local directory that
     // happens to share that absolute path would be opened instead of erroring,
     // so a remote view gets no worktree menu at all.
     if let Some(tooltip) = remote_tooltip {
-        return row.tooltip(name_tooltip(tooltip)).into_any();
+        return row
+            .hover_tooltip_builder(
+                SharedString::from(format!("sidebar-worktree-{name}-hover-help")),
+                name_tooltip(tooltip),
+            )
+            .into_any_element();
     }
     // Hovering the row is what selects its inspection, and the card is its
     // only presentation: moving to another row retires this row's request
@@ -857,18 +527,28 @@ pub(super) fn build_worktree_row(
 /// `localhost:<port>` for a worktree's stored port block (#855): the first port
 /// of the block its terminal receives as `KAGI_PORT`. A click opens it in the
 /// browser.
-fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn port_link(
+    name: &str,
+    port: u16,
+    interactive: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let url = format!("http://localhost:{port}");
     let open = cx.listener(move |_app: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_opened_url(&url);
+        #[cfg(not(feature = "gui-e2e"))]
         cx.open_url(&url);
     });
     // Always whole: when it does not fit, the wrapping box around it moves it
     // to a clipped second line rather than cutting the text.
     div()
         .id(SharedString::from(format!("sidebar-worktree-port-{name}")))
-        .role(gpui::Role::Button)
-        .aria_label(SharedString::from(format!("localhost:{port}")))
+        .when(interactive, |el| {
+            el.role(gpui::Role::Button)
+                .aria_label(SharedString::from(format!("localhost:{port}")))
+        })
         .relative()
         .flex_shrink_0()
         .h(theme::scaled_px(SIDEBAR_WORKTREE_ROW_H))
@@ -880,9 +560,11 @@ fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .rounded_sm()
         .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
         .text_color(rgb(theme().color_branch))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(open)
+        .when(interactive, |el| {
+            el.cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().selected)))
+                .on_click(open)
+        })
         .child(
             svg()
                 .path("icons/square-terminal.svg")

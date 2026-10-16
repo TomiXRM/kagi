@@ -8,15 +8,117 @@
 //! Plain helpers may compile in normal builds, but must not require
 //! `gpui/test-support`; the native runner opts into that dependency explicitly.
 
+#[cfg(feature = "gui-e2e")]
+pub use super::home_clone_card::{
+    clone_destination_presentation, take_clone_copy_activations, CloneDestinationPresentation,
+};
+
 use std::cell::RefCell;
 use std::path::Path;
+pub mod commit_panel_labels;
+pub mod palette;
+pub mod sidebar_labels;
+#[cfg(feature = "gui-e2e")]
+pub mod system_accessibility;
+
+#[cfg(feature = "gui-e2e")]
+pub mod activity;
+#[cfg(feature = "gui-e2e")]
+pub mod inspector_metadata;
+#[cfg(feature = "gui-e2e")]
+pub mod tab_strip;
+
+#[cfg(feature = "gui-e2e")]
+pub mod compact_rail;
+
+#[cfg(feature = "gui-e2e")]
+pub mod text_caps;
+
+#[cfg(feature = "gui-e2e")]
+pub mod plan_subjects;
 
 #[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]
+pub mod diff_presentation;
+
+#[cfg(feature = "gui-e2e")]
+pub mod diff_controls;
+
+#[cfg(feature = "gui-e2e")]
+pub mod diff_content;
+
+#[cfg(feature = "gui-e2e")]
+pub mod pr_detail;
+
+#[cfg(feature = "gui-e2e")]
+pub fn issue_thread_list(
+    app: &super::KagiApp,
+    cx: &gpui::App,
+) -> kagi_ui_core::variable_list::VariableListState {
+    app.selected_issue_conversation()
+        .map(|owner| owner.read(cx).list.clone())
+        .unwrap_or_else(|| app.ui().issue_thread_pending_list.clone())
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
     super::modal_command::recorded_disclosure(id)
+}
+
+#[cfg(feature = "gui-e2e")]
+pub mod unborn;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
+    static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
+    static STATUS_CHIPS: RefCell<Vec<(String, Option<String>, Option<String>)>> = const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_control(
+    id: &'static str,
+    role: gpui::Role,
+    label: &'static str,
+    toggled: gpui::Toggled,
+) {
+    STATUS_CONTROLS.with(|map| map.borrow_mut().insert(id, (role, label, toggled)));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_control(id: &str) -> Option<(gpui::Role, &'static str, gpui::Toggled)> {
+    STATUS_CONTROLS.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_branch_identity(
+    label: gpui::SharedString,
+    tooltip: gpui::SharedString,
+) {
+    STATUS_BRANCH_IDENTITY.with(|identity| *identity.borrow_mut() = Some((label, tooltip)));
+}
+
+/// Renderer-fed full AX name and tooltip for the status bar's branch.
+#[cfg(feature = "gui-e2e")]
+pub fn status_branch_identity() -> Option<(gpui::SharedString, gpui::SharedString)> {
+    STATUS_BRANCH_IDENTITY.with(|identity| identity.borrow().clone())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_chips(chips: Vec<(String, Option<String>, Option<String>)>) {
+    STATUS_CHIPS.with(|value| *value.borrow_mut() = chips);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_chip(text: String, label: String, tooltip: String) {
+    STATUS_CHIPS.with(|value| value.borrow_mut().push((text, Some(label), Some(tooltip))));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_chips() -> Vec<(String, Option<String>, Option<String>)> {
+    STATUS_CHIPS.with(|value| value.borrow().clone())
 }
 
 /// #707 review: the revision-laundering and cross-session regressions need to
@@ -46,14 +148,61 @@ use std::sync::Arc;
 thread_local! {
     static CONFIRM_BOUNDS: RefCell<std::collections::HashMap<gpui::WindowId, gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
     static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, String), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+    static CONTROL_PAINTS: RefCell<std::collections::HashMap<(gpui::WindowId, String), ControlPaint>> = RefCell::new(Default::default());
+    static CONTROL_PAINT_ORDER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
+    static EDITOR_DIFF_SEEDS: RefCell<std::collections::HashMap<gpui::EntityId, u64>> = RefCell::new(Default::default());
     static BUSY_ADVICE: RefCell<Option<String>> = const { RefCell::new(None) };
     static SETTINGS_ZOOM_LABEL: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CHROME_BORDERS: RefCell<std::collections::HashMap<&'static str, gpui::Hsla>> = RefCell::new(Default::default());
+}
+
+/// Read the actual rendered element's explicit boundary role, not a theme prediction.
+#[cfg(feature = "gui-e2e")]
+pub fn chrome_border(name: &'static str) -> Option<gpui::Hsla> {
+    CHROME_BORDERS.with(|map| map.borrow().get(name).copied())
+}
+
+pub(crate) fn probe_chrome_border<E: gpui::Styled>(name: &'static str, mut element: E) -> E {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(color) = element.style().border_color {
+        CHROME_BORDERS.with(|map| map.borrow_mut().insert(name, color));
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = (name, &mut element);
+    element
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static PR_MENU_COPY_HOVERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn pr_menu_copy_hovered() -> bool {
+    PR_MENU_COPY_HOVERED.with(std::cell::Cell::get)
+}
+
+pub(crate) fn probe_pr_menu_copy(control: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
+    #[cfg(feature = "gui-e2e")]
+    {
+        use gpui::StatefulInteractiveElement as _;
+        control.on_hover(|hovered, _, _| {
+            PR_MENU_COPY_HOVERED.with(|value| value.set(*hovered));
+        })
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    control
 }
 /// #354: the toolbar's AccessKit-disabled inputs, for the GUI E2E oracle.
 #[cfg(feature = "gui-e2e")]
 pub use super::render_header::toolbar_a11y::{
-    clear_toolbar_unavailable, take_focus_probe, toolbar_description, toolbar_unavailable,
+    clear_toolbar_unavailable, take_focus_probe, toolbar_caption_and_tooltip, toolbar_description,
+    toolbar_label, toolbar_unavailable,
 };
 #[cfg(feature = "gui-e2e")]
 pub fn last_plan_status_chip() -> Option<String> {
@@ -98,10 +247,72 @@ pub fn home_item_builds() -> usize {
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
 }
+
+/// Actual paint-stage coverage and traversal order, independent of layout bounds.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct ControlPaint {
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+    pub mask: gpui::Bounds<gpui::Pixels>,
+    pub order: u64,
+    /// Resolved inherited text size at the actual paint stage.
+    pub font_size: gpui::Pixels,
+    pub font_weight: gpui::FontWeight,
+    pub text_color: gpui::Hsla,
+    pub ellipsis: bool,
+    pub middle_ellipsis: bool,
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn control_paint(id: gpui::WindowId, name: &str) -> Option<ControlPaint> {
+    CONTROL_PAINTS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: &Window) {
+    let order = CONTROL_PAINT_ORDER.with(|value| {
+        let next = value.get() + 1;
+        value.set(next);
+        next
+    });
+    let paint = ControlPaint {
+        bounds,
+        mask: window.content_mask().bounds,
+        order,
+        font_size: window.text_style().font_size.to_pixels(window.rem_size()),
+        font_weight: window.text_style().font_weight,
+        text_color: window.text_style().color,
+        ellipsis: matches!(
+            window.text_style().text_overflow.as_ref(),
+            Some(gpui::TextOverflow::Truncate(affix)) if affix.as_ref() == "…"
+        ),
+        middle_ellipsis: matches!(
+            window.text_style().text_overflow.as_ref(),
+            Some(gpui::TextOverflow::TruncateMiddle(affix)) if affix.as_ref() == "…"
+        ),
+    };
+    CONTROL_PAINTS.with(|map| {
+        map.borrow_mut()
+            .insert((window.window_handle().window_id(), name.to_owned()), paint);
+    });
+}
 /// Clear a bound so the next draw proves presence rather than reusing the previous frame.
 #[cfg(feature = "gui-e2e")]
 pub fn clear_control_bounds(id: gpui::WindowId, name: &str) {
     CONTROL_BOUNDS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
+    CONTROL_PAINTS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
+}
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static GRAPH_AGE_TEXT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_graph_age_text(text: &str) {
+    GRAPH_AGE_TEXT.with(|slot| *slot.borrow_mut() = Some(text.to_owned()));
+}
+#[cfg(feature = "gui-e2e")]
+pub fn take_graph_age_text() -> Option<String> {
+    GRAPH_AGE_TEXT.with(|slot| slot.borrow_mut().take())
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_busy_advice(text: &str) {
@@ -129,7 +340,20 @@ pub(crate) fn record_tab_load_commit_limit(session: crate::app::SessionId, limit
 pub fn tab_load_commit_limit(session: crate::app::SessionId) -> Option<usize> {
     TAB_LOAD_LIMITS.with(|limits| limits.borrow().get(&session).copied())
 }
-pub(crate) fn measure_control(
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_editor_diff_seed_request(editor: gpui::EntityId, req: u64) {
+    EDITOR_DIFF_SEEDS.with(|seeds| {
+        seeds.borrow_mut().insert(editor, req);
+    });
+}
+/// Last accepted WIP-diff request, recorded only after the Editor's admission
+/// checks and typed installation. A previously loaded diff is not a receipt.
+#[cfg(feature = "gui-e2e")]
+pub fn editor_diff_seed_request(editor: gpui::EntityId) -> Option<u64> {
+    EDITOR_DIFF_SEEDS.with(|seeds| seeds.borrow().get(&editor).copied())
+}
+/// Measure a rendered control, including component probes in the native runner.
+pub fn measure_control(
     name: impl Into<String>,
     control: impl gpui::IntoElement,
 ) -> gpui::AnyElement {
@@ -138,6 +362,7 @@ pub(crate) fn measure_control(
     #[cfg(feature = "gui-e2e")]
     {
         let name = name.into();
+        let paint_name = name.clone();
         gpui::div()
             .relative()
             .child(
@@ -145,7 +370,7 @@ pub(crate) fn measure_control(
                     move |bounds, window, _| {
                         record_control_bounds(window.window_handle().window_id(), &name, bounds);
                     },
-                    |_, _, _, _| {},
+                    move |bounds, _, window, _| record_control_paint(&paint_name, bounds, window),
                 )
                 .absolute()
                 .top_0()
@@ -154,6 +379,30 @@ pub(crate) fn measure_control(
             )
             .child(control)
             .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = name;
+        control.into_any_element()
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+mod measured_leaf;
+
+/// Record the leaf's outer bounds without introducing a layout/AX wrapper.
+pub(crate) fn measure_leaf(
+    name: impl Into<String>,
+    control: impl gpui::IntoElement,
+) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    {
+        use gpui::IntoElement as _;
+        measured_leaf::MeasuredLeaf {
+            name: name.into(),
+            control: control.into_any_element(),
+        }
+        .into_any_element()
     }
     #[cfg(not(feature = "gui-e2e"))]
     {
@@ -175,6 +424,7 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
     #[cfg(feature = "gui-e2e")]
     {
         let name = name.into();
+        let paint_name = name.clone();
         gpui::canvas(
             move |bounds, window, _| {
                 CONTROL_BOUNDS.with(|map| {
@@ -182,7 +432,7 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
                         .insert((window.window_handle().window_id(), name.clone()), bounds);
                 });
             },
-            |_, _, _, _| {},
+            move |bounds, _, window, _| record_control_paint(&paint_name, bounds, window),
         )
         .absolute()
         .top_0()
@@ -194,7 +444,26 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
     {
         let _ = name;
         use gpui::IntoElement as _;
-        gpui::div().into_any_element()
+        measure_inside_placeholder().into_any_element()
+    }
+}
+
+#[cfg(any(test, not(feature = "gui-e2e")))]
+/// Production probes must not become flex items or introduce gaps.
+fn measure_inside_placeholder() -> gpui::Div {
+    use gpui::Styled as _;
+    gpui::div().absolute().size_0()
+}
+
+#[cfg(test)]
+mod measure_inside_tests {
+    #[test]
+    fn measure_inside_placeholder_is_out_of_flow() {
+        use gpui::Styled as _;
+        let mut placeholder = super::measure_inside_placeholder();
+        assert_eq!(placeholder.style().position, Some(gpui::Position::Absolute));
+        let mut zero = gpui::div().size_0();
+        assert_eq!(placeholder.style().size, zero.style().size);
     }
 }
 
@@ -294,6 +563,14 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn enqueue_checkout(app: &mut KagiApp, branch: &str, cx: &mut gpui::Context<KagiApp>) -> bool {
+    app.enqueue_checkout(
+        &super::modals::CheckoutPlanTarget::Branch(branch.into()),
+        cx,
+    )
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
     app.app_notice()
         .is_some_and(|notice| notice.acknowledge.is_some())
@@ -301,13 +578,18 @@ pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
 
 #[cfg(feature = "gui-e2e")]
 pub fn seed_diff_selection() {
-    super::diff_selection::begin(u64::MAX, 0);
-    super::diff_selection::set_text(u64::MAX, "selected".to_string());
+    let key = super::diff_selection::SelectionKey::new(
+        super::diff_selection::SelectionOwner::Test,
+        Default::default(),
+        Default::default(),
+    );
+    super::diff_selection::begin(key, 0);
+    super::diff_selection::set_text(key, "selected".to_string());
 }
 
 #[cfg(feature = "gui-e2e")]
 pub fn diff_selection_present() -> bool {
-    super::diff_selection::selected_text().is_some()
+    super::diff_selection::has_selection()
 }
 #[cfg(feature = "gui-e2e")]
 pub fn begin_update_install_for_test(app: &mut KagiApp) -> bool {
@@ -317,6 +599,31 @@ pub fn begin_update_install_for_test(app: &mut KagiApp) -> bool {
 #[cfg(feature = "gui-e2e")]
 pub fn fail_update_install_for_test(app: &mut KagiApp, error: &str) {
     app.finish_update_install_failure(error);
+}
+
+/// Queued installer completion keeps native tests off the network and away
+/// from the running application's installation directory.
+#[cfg(feature = "gui-e2e")]
+type UpdateInstallTask = gpui::Task<Result<crate::update::Relaunch, String>>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static UPDATE_INSTALL: RefCell<Option<UpdateInstallTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_update_install(task: UpdateInstallTask) {
+    UPDATE_INSTALL.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_update_install() -> Option<UpdateInstallTask> {
+    UPDATE_INSTALL.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn update_install_queued() -> bool {
+    UPDATE_INSTALL.with(|slot| slot.borrow().is_some())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn discard_queued_update_install() {
+    drop(take_update_install());
 }
 
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
@@ -343,6 +650,53 @@ pub fn init_app(cx: &mut App) {
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
     super::commands::setup_app(cx);
+    #[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+    cx.set_global(super::settings_view::SettingsHostForE2e::default());
+}
+
+/// Run the production Dock-reopen decision/session restore without activating
+/// a visible window; callers mount the returned state through the normal root.
+pub fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
+    super::dock_reopen_state(cx)
+}
+
+/// Explicit opt-in interception of Quit for native restart regressions. The
+/// normal key/action dispatch and quit-time settings flush still execute.
+#[cfg(feature = "gui-e2e")]
+#[derive(Default)]
+pub struct QuitForE2e {
+    pub requested: bool,
+}
+#[cfg(feature = "gui-e2e")]
+impl gpui::Global for QuitForE2e {}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn capture_app_quit(cx: &mut App) -> bool {
+    if cx.try_global::<QuitForE2e>().is_none() {
+        return false;
+    }
+    // Mirrors the unconditional final on_app_quit preference observer.
+    super::settings::flush();
+    cx.global_mut::<QuitForE2e>().requested = true;
+    true
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Default)]
+pub struct RelaunchForE2e {
+    pub requested: bool,
+}
+#[cfg(feature = "gui-e2e")]
+impl gpui::Global for RelaunchForE2e {}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn capture_update_relaunch(cx: &mut App) -> bool {
+    if cx.try_global::<RelaunchForE2e>().is_none() {
+        return false;
+    }
+    super::settings::flush();
+    cx.global_mut::<RelaunchForE2e>().requested = true;
+    true
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
@@ -372,17 +726,72 @@ pub fn build_kagi_entity(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<KagiApp> {
-    let kagi: Entity<KagiApp> = cx.new(|cx| {
+    super::window_menu::register_main_window(window, cx);
+    let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
+        app_state.sidebar.filter = Some(cx.new(|cx| {
+            gpui_component::input::InputState::new(window, cx)
+                .placeholder(super::i18n::Msg::HomeGithubFilter.t())
+        }));
+        if let Some(input) = &app_state.sidebar.filter {
+            cx.observe(input, |_, _, cx| cx.notify()).detach();
+        }
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
+        if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.subscribe_in(
+                stack,
+                window,
+                |app: &mut KagiApp, _, removed: &toast_stack::ToastRemoved, window, cx| {
+                    if let Some(root) = app.root_focus.as_ref() {
+                        let closed_focused = removed.was_focused(window);
+                        if closed_focused
+                            || window.focused(cx).is_none()
+                            || !root.contains_focused(window, cx)
+                        {
+                            root.focus(window, cx);
+                        }
+                    }
+                },
+            )
+            .detach();
+        }
+        if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.subscribe(
+                stack,
+                |app, _, action: &super::types::ToastAction, cx| match action {
+                    super::types::ToastAction::OpenRepository(path) => {
+                        app.open_repository(path.clone(), cx);
+                    }
+                },
+            )
+            .detach();
+        }
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
+        #[cfg(target_os = "macos")]
+        cx.observe_window_activation(window, |app, window, cx| {
+            if window.is_window_active() {
+                app.publish_window_menu_state(window, cx);
+                cx.notify();
+            }
+            if window.is_window_active() && theme::refresh_system_accent() {
+                theme::sync_gpui_component_theme(cx);
+                cx.refresh_windows();
+                cx.notify();
+            }
+        })
+        .detach();
         app_state
     });
     let close_owner = kagi.downgrade();
-    window.on_window_should_close(cx, move |_, cx| {
+    window.on_window_should_close(cx, move |window, cx| {
         close_owner
-            .update(cx, |app, cx| !app.hold_host_close(cx))
+            .update(cx, |app, cx| {
+                !app.hold_host_close(
+                    super::EditorPendingIntent::CloseWindow(window.window_handle()),
+                    cx,
+                )
+            })
             .unwrap_or(true)
     });
     super::theme_select::install(&kagi, window, cx);
@@ -542,7 +951,7 @@ pub fn mount_root(
     cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
 }
 
-/// Exact text consumed by the real busy snackbar renderer (#607).
+/// Static write/planning snackbar label (#607); clone's source-named label has its own renderer probe.
 #[cfg(feature = "gui-e2e")]
 pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
@@ -645,6 +1054,21 @@ pub(crate) fn pr_merge_terminal_fault(
     })
 }
 
+#[cfg(feature = "gui-e2e")]
+type EditorHistoryTask = gpui::Task<Result<kagi_domain::file_history::FileHistory, String>>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static EDITOR_HISTORY: RefCell<Option<EditorHistoryTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_editor_history(task: EditorHistoryTask) {
+    EDITOR_HISTORY.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_editor_history() -> Option<EditorHistoryTask> {
+    EDITOR_HISTORY.with(|slot| slot.borrow_mut().take())
+}
+
 /// Supply only the transport task; dispatch, owner capture and settlement stay real.
 #[cfg(feature = "gui-e2e")]
 type RemoteRefreshTask = gpui::Task<Result<kagi_git::RepoSnapshot, String>>;
@@ -686,6 +1110,26 @@ pub fn smart_generation_queued() -> bool {
 #[cfg(feature = "gui-e2e")]
 pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
     app.ensure_smart_commit_detection(cx);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn smart_model_row(
+    app: &KagiApp,
+    window: &gpui::Window,
+) -> Option<(
+    usize,
+    gpui::Bounds<gpui::Pixels>,
+    gpui::Bounds<gpui::Pixels>,
+)> {
+    let state = &app.smart_model_focus;
+    let focus = state.focus.borrow();
+    let key = focus.focused(window)?;
+    let (_, ix) = state.keys.iter().find(|(k, _)| k == key)?;
+    Some((
+        *ix,
+        state.scroll.bounds_for_item(*ix)?,
+        state.scroll.viewport_bounds(),
+    ))
 }
 
 /// What the last drawn frame named the switch `id` (`keyboard_nav::switch`)
@@ -737,6 +1181,12 @@ pub(crate) fn clone_ticker_ended() {
 pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
     app.modal_list_scroll
         .scroll_to_item(item, gpui::ScrollStrategy::Center);
+}
+
+/// #1069: the actual palette list handle, for native geometry/scroll assertions.
+#[cfg(feature = "gui-e2e")]
+pub fn command_palette_scroll(app: &KagiApp) -> Option<super::palette_scroll::PaletteScroll> {
+    app.command_palette_scroll.clone()
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -802,12 +1252,12 @@ pub fn dispatch_file_menu_discard(
 }
 
 #[cfg(feature = "gui-e2e")]
-type PrFetchResult = Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>;
+type PrFetchResult = Result<kagi_domain::github::PrListSnapshot, kagi_git::github::PrFetchError>;
 #[cfg(feature = "gui-e2e")]
 type CleanupScanResult = Result<
     (
         Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
-        PrFetchResult,
+        Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>,
     ),
     String,
 >;
@@ -866,6 +1316,69 @@ pub(crate) fn take_github_pr_fetch() -> Option<gpui::Task<PrFetchResult>> {
     GITHUB_PR_FETCH.with(|slot| slot.borrow_mut().take())
 }
 
+/// Inspect the collection the production PR consumers currently read.
+#[cfg(feature = "gui-e2e")]
+pub fn pr_page_info(
+    app: &KagiApp,
+) -> (
+    Vec<kagi_domain::github::PrKey>,
+    Option<String>,
+    Option<String>,
+    bool,
+) {
+    let ui = app.ui();
+    let paging = if ui.github_prs_strip.rows.is_some() {
+        &ui.github_prs_strip.paging
+    } else {
+        &ui.github_prs_paging
+    };
+    (
+        ui.pr_list_rows().iter().map(|pr| pr.key()).collect(),
+        paging.base_repo.clone(),
+        paging.cursor.clone(),
+        ui.pr_list_loading_more(),
+    )
+}
+
+/// First-page authority/error shown by the actual selected-list consumer.
+/// This is inspection only; it neither delivers nor schedules a transport.
+#[cfg(feature = "gui-e2e")]
+pub fn pr_list_read_status(app: &KagiApp) -> (bool, Option<String>) {
+    let ui = app.ui();
+    (ui.pr_list_loading(), ui.pr_list_error().map(str::to_owned))
+}
+
+/// Use the same owner-targeted continuation boundary as the tail and buttons.
+#[cfg(feature = "gui-e2e")]
+pub fn load_more_prs(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    if let (Some(owner), Some(repo)) = (app.active_session(), app.repo_path.clone()) {
+        app.load_more_github_prs_for(owner, repo, cx);
+    }
+}
+
+/// Actual lazy-controller targets, not an echo of a fixture or rendered rows.
+/// The pending tuple's boolean distinguishes opened-body work from status work.
+#[cfg(feature = "gui-e2e")]
+pub fn pr_detail_demand(
+    app: &KagiApp,
+) -> (
+    std::collections::BTreeSet<kagi_domain::github::PrKey>,
+    std::collections::BTreeSet<kagi_domain::github::PrKey>,
+    Vec<(kagi_domain::github::PrKey, bool)>,
+    usize,
+) {
+    let (visible, opened, pending, active) = app.ui().pr_details.paging_demand_for_e2e();
+    (
+        visible,
+        opened,
+        pending
+            .into_iter()
+            .map(|(key, stage)| (key, stage == super::github_pr_detail::PrDetailStage::Body))
+            .collect(),
+        active,
+    )
+}
+
 #[cfg(feature = "gui-e2e")]
 pub fn queue_cleanup_scan(task: gpui::Task<CleanupScanResult>) {
     CLEANUP_SCAN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
@@ -905,26 +1418,86 @@ pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
-        const { std::cell::Cell::new(None) };
     static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static FOLDER_ANSWER: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+    static FOLDER_ANSWER: RefCell<Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>>> = const { RefCell::new(None) };
+    static CLONE_RUN: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
+    static CLONE_DISPATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CLONE_BUSY_STATUS: RefCell<Option<(gpui::Role, String)>> = const { RefCell::new(None) };
+    static CLONE_BUSY_FOCUS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// #1043: the system folder dialog cannot be driven from the GUI runner. A
-/// request is recorded under its prompt and answered with the folder set by
-/// [`answer_folder_prompt`]; with none set it is cancelled.
+/// #1043 / #1383: record the native folder request and await its answer through
+/// the same completion task as production. An unqueued request is cancelled.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn take_folder_prompt(prompt: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn take_folder_prompt(
+    prompt: &str,
+) -> Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>> {
     FOLDER_PROMPTS.with(|prompts| prompts.borrow_mut().push(prompt.to_string()));
     FOLDER_ANSWER.with(|answer| answer.borrow_mut().take())
 }
 
-/// The folder the next dialog request chooses (`None`: it is cancelled).
+/// Queue the next dialog answer using the shared deferred-task transport.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_folder_answer(task: gpui::Task<Result<Option<std::path::PathBuf>, String>>) {
+    FOLDER_ANSWER.with(|answer| assert!(answer.borrow_mut().replace(task).is_none()));
+}
 #[cfg(feature = "gui-e2e")]
 pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
-    FOLDER_ANSWER.with(|answer| *answer.borrow_mut() = folder);
+    queue_folder_answer(gpui::Task::ready(Ok(folder)));
+}
+
+/// Hold dispatch only: the real clone still executes, verifies and records.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_clone_run(task: gpui::Task<()>) {
+    CLONE_RUN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_clone_run() -> Option<gpui::Task<()>> {
+    CLONE_DISPATCHES.with(|count| count.set(count.get() + 1));
+    CLONE_RUN.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_dispatches() -> usize {
+    CLONE_DISPATCHES.with(|count| count.replace(0))
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_clone_busy_status(role: gpui::Role, name: &str) {
+    CLONE_BUSY_STATUS.with(|status| *status.borrow_mut() = Some((role, name.to_owned())));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_busy_status() -> Option<(gpui::Role, String)> {
+    CLONE_BUSY_STATUS.with(|status| status.borrow_mut().take())
+}
+
+/// Observe the pinned Button's existing keyed focus owner, not a second handle.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn probe_clone_busy_button(button: gpui_component::button::Button) -> gpui::AnyElement {
+    use gpui::IntoElement as _;
+    #[derive(gpui::IntoElement)]
+    struct Probe(gpui_component::button::Button);
+    impl gpui::RenderOnce for Probe {
+        fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+            let focus = window
+                .use_keyed_state("clone-busy-show", cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone();
+            if focus.is_focused(window) {
+                CLONE_BUSY_FOCUS.with(|slot| slot.set(true));
+            }
+            self.0.render(window, cx)
+        }
+    }
+    Probe(button).into_any_element()
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_busy_focus() -> bool {
+    CLONE_BUSY_FOCUS.with(|focus| focus.replace(false))
 }
 
 /// The prompts of the folder dialogs requested since the last call.
@@ -944,18 +1517,6 @@ pub(crate) fn record_opened_url(url: &str) {
 #[cfg(feature = "gui-e2e")]
 pub fn take_opened_urls() -> Vec<String> {
     OPENED_URLS.with(|urls| std::mem::take(&mut *urls.borrow_mut()))
-}
-
-/// Drive the bottom panel's motion from a stand-in clock (#950); `None`
-/// returns to the runner's default, where the panel jumps to its end.
-#[cfg(feature = "gui-e2e")]
-pub fn set_panel_motion_clock(now: Option<std::time::Instant>) {
-    PANEL_MOTION_CLOCK.with(|clock| clock.set(now));
-}
-
-#[cfg(feature = "gui-e2e")]
-pub(crate) fn panel_motion_clock() -> Option<std::time::Instant> {
-    PANEL_MOTION_CLOCK.with(|clock| clock.get())
 }
 
 /// Draw the PRs / Issues cells of the workspace-mode nav whether or not this
@@ -987,4 +1548,106 @@ pub(crate) fn mark_fetch_completion_returned() {
 #[cfg(feature = "gui-e2e")]
 pub fn fetch_completions_returned() -> u64 {
     FETCH_COMPLETIONS_RETURNED.with(std::cell::Cell::get)
+}
+
+/// Transport-only hold for the real Issue detail loader. The loader still
+/// freezes session/base repository/generation and owns acceptance/rejection.
+#[cfg(feature = "gui-e2e")]
+pub type IssueDetailResult = Result<kagi_domain::github::Issue, kagi_git::github::PrFetchError>;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static ISSUE_DETAIL_READ: RefCell<Option<(u64, gpui::Task<IssueDetailResult>)>> =
+        const { RefCell::new(None) };
+    static ISSUE_DETAIL_READ_SERIAL: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Clears an unconsumed task on unwind without disturbing a later request.
+#[cfg(feature = "gui-e2e")]
+pub struct IssueDetailReadGuard(u64);
+
+#[cfg(feature = "gui-e2e")]
+impl Drop for IssueDetailReadGuard {
+    fn drop(&mut self) {
+        ISSUE_DETAIL_READ.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.as_ref().is_some_and(|(serial, _)| *serial == self.0) {
+                slot.take();
+            }
+        });
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_github_issue_detail(task: gpui::Task<IssueDetailResult>) -> IssueDetailReadGuard {
+    let serial = ISSUE_DETAIL_READ_SERIAL.with(|serial| {
+        let next = serial.get().wrapping_add(1);
+        serial.set(next);
+        next
+    });
+    ISSUE_DETAIL_READ.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        assert!(slot.is_none(), "unconsumed Issue detail task");
+        *slot = Some((serial, task));
+    });
+    IssueDetailReadGuard(serial)
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn take_github_issue_detail() -> Option<gpui::Task<IssueDetailResult>> {
+    ISSUE_DETAIL_READ.with(|slot| slot.borrow_mut().take().map(|(_, task)| task))
+}
+
+/// Enter the existing accepted repository-address transition, not a test owner.
+#[cfg(feature = "gui-e2e")]
+pub fn retarget_github_issues(app: &mut KagiApp, identity: &str, cx: &mut gpui::Context<KagiApp>) {
+    app.address_issues_to(identity, cx);
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static HOME_REPOSITORY_DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(Default::default());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_home_repository_description(name: &str, description: &str) {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(name.to_owned(), description.to_owned());
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_home_repository_description(name: &str) -> Option<String> {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow_mut().remove(name))
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static HOME_REPOSITORY_ACTIONS: std::cell::RefCell<std::collections::HashMap<String, (gpui::Role, String)>> =
+        std::cell::RefCell::new(Default::default());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_home_repository_action(name: &str, label: &str) {
+    HOME_REPOSITORY_ACTIONS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(name.to_owned(), (gpui::Role::Button, label.to_owned()));
+    });
+}
+
+/// Attributes supplied by the named gpui-kit Button constructor, not live AX delivery.
+#[cfg(feature = "gui-e2e")]
+pub fn home_repository_action(name: &str) -> Option<(gpui::Role, String)> {
+    HOME_REPOSITORY_ACTIONS.with(|values| values.borrow().get(name).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn clear_home_repository_probes() {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow_mut().clear());
+    HOME_REPOSITORY_ACTIONS.with(|values| values.borrow_mut().clear());
 }

@@ -17,7 +17,7 @@ use super::button_style::{modal_button, ModalButtonKind};
 use super::dialog_a11y::{apply_dialog, apply_group, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_command::{render_equivalent_command, render_recovery_commands};
-use super::modal_copy::{modal_copy_button, plan_clipboard_text};
+use super::modal_copy::plan_clipboard_text;
 use super::modal_shell::{
     modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, note_path_list,
     note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
@@ -26,12 +26,13 @@ use super::plan_card_rows::{render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
-use gpui_component::{Icon, IconName, Sizable as _};
+use gpui_component::{FocusTrapElement as _, Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{
     plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with
 /// Pull/Push per user request 2026-07-22, extended to every plan-confirmation
@@ -128,6 +129,53 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
         )
 }
 
+/// Named task boundary for input cards; existing plan/alert cards keep their
+/// own richer boundary rather than being nested inside another dialog.
+pub(crate) fn input_dialog_frame(
+    id: &'static str,
+    title: &str,
+    confirm: Option<&'static str>,
+    card: impl IntoElement,
+    focus: Option<&gpui::FocusHandle>,
+    configure: impl FnOnce(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let entity = cx.entity();
+    let on_confirm: DialogHandler = std::rc::Rc::new(move |window, cx| {
+        entity.update(cx, |this, cx| {
+            this.confirm_active_modal(window, cx);
+            cx.notify();
+        });
+    });
+    let entity = cx.entity();
+    let on_cancel: DialogHandler = std::rc::Rc::new(move |window, cx| {
+        entity.update(cx, |this, cx| {
+            this.cancel_active_modal(cx);
+            if let Some(focus) = &this.root_focus {
+                window.focus(focus, cx);
+            }
+            cx.notify();
+        });
+    });
+    let mut spec = dialog_a11y(title, confirm, false, ConfirmStage::Single);
+    // Navigation-only tasks have no default action; that does not mean the
+    // whole task is blocked. Unavailable input actions explain their reason
+    // on the actual button, rather than a generic dialog-wide instruction.
+    spec.description = None;
+    let frame = apply_dialog(
+        id,
+        div().id(id),
+        spec,
+        confirm.map(|_| on_confirm),
+        on_cancel,
+    );
+    let frame = configure(frame).child(card);
+    match focus {
+        Some(focus) => frame.focus_trap(id, focus).into_any_element(),
+        None => frame.into_any_element(),
+    }
+}
+
 #[cfg(feature = "gui-e2e")]
 pub mod status_chip_probe {
     thread_local! {
@@ -145,8 +193,9 @@ pub mod status_chip_probe {
 
 /// The same quiet status pill used by Stash Push and every other plan card.
 fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
+    let text = kagi_ui_core::i18n::op::user_text::state_text(text);
     #[cfg(feature = "gui-e2e")]
-    status_chip_probe::record(text);
+    status_chip_probe::record(&text);
     let t = current_theme();
     let (color, fill_alpha, text_alpha) = match kind {
         "staged" | "clean" => (t.color_success, 0x33, 0xff),
@@ -165,7 +214,7 @@ fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
         .font_family(MONO_FONT)
         .text_xs()
         .text_color(gpui::rgba((color << 8) | text_alpha))
-        .child(SharedString::from(text.to_owned()))
+        .child(SharedString::from(text.into_owned()))
         .into_any_element()
 }
 
@@ -191,7 +240,7 @@ fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
 }
 
 fn plan_state(
-    head: &str,
+    head: SharedString,
     dirty: &str,
     label: &'static str,
     id: &'static str,
@@ -199,14 +248,15 @@ fn plan_state(
     head_id: &'static str,
     display_dirty: Option<(&str, &str)>,
 ) -> gpui::AnyElement {
-    let full = SharedString::from(format!(
-        "{label}: {head} [{}]",
-        display_dirty.map_or(dirty, |(_, detail)| detail)
-    ));
+    let head = match kagi_ui_core::i18n::op::user_text::state_text(&head) {
+        std::borrow::Cow::Owned(text) => SharedString::from(text),
+        std::borrow::Cow::Borrowed(_) => head,
+    };
+    let detail = kagi_ui_core::i18n::op::user_text::state_text(
+        display_dirty.map_or(dirty, |(_, detail)| detail),
+    );
+    let full = SharedString::from(format!("{label}: {head} [{detail}]"));
     apply_group(id, div().id(id), full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
-        })
         .relative()
         .flex_shrink_0()
         .flex()
@@ -246,7 +296,7 @@ fn plan_state(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(SharedString::from(head.to_owned()))
+                        .child(head)
                         .when(cfg!(feature = "gui-e2e"), |head| {
                             head.child(super::e2e::measure_inside(head_id))
                         }),
@@ -274,10 +324,24 @@ fn plan_state(
         .when(cfg!(feature = "gui-e2e"), |row| {
             row.child(super::e2e::measure_inside(id))
         })
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+        })
         .into_any_element()
 }
 
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
+    if let Some(identity) = &plan.tag_push_identity {
+        return super::modal_renderers_plan::render_tag_push_scope(identity);
+    }
+    let (current_head, predicted_head) = super::modal_copy::plan_display_heads(plan);
+    let predicted_detail =
+        kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
+    let predicted_detail = if plan.rebase_scope.is_some() {
+        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
+    } else {
+        predicted_detail
+    };
     div()
         .id("plan-state-comparison")
         .relative()
@@ -291,7 +355,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
         .flex()
         .flex_col()
         .child(plan_state(
-            &plan.current.head,
+            SharedString::from(current_head.into_owned()),
             &plan.current.dirty,
             Msg::InputStashCurrent.t(),
             "plan-state-current",
@@ -304,8 +368,8 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                 .border_t_1()
                 .border_color(rgb(current_theme().surface))
                 .child(plan_state(
-                    &plan.predicted.head,
-                    &plan.predicted.dirty,
+                    SharedString::from(predicted_head.into_owned()),
+                    &predicted_detail,
                     Msg::InputStashAfter.t(),
                     "plan-state-after",
                     "plan-state-after-label",
@@ -315,19 +379,12 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                             .predicted
                             .dirty
                             .strip_suffix(" file(s) (resolve in Conflict Mode)")
-                            .map(|short| (short, plan.predicted.dirty.as_str())),
+                            .map(|short| (short, predicted_detail.as_ref())),
                         // A blocked plan can retain CURRENT as its prediction;
                         // do not claim an operation happened in that case.
                         _ if plan.predicted.dirty == plan.current.dirty => None,
-                        title => kagi_ui_core::i18n::plan::after_state_label(title).map(|short| {
-                            (
-                                short,
-                                kagi_ui_core::i18n::plan::after_state_detail(
-                                    title,
-                                    &plan.predicted.dirty,
-                                ),
-                            )
-                        }),
+                        title => kagi_ui_core::i18n::plan::after_state_label(title)
+                            .map(|short| (short, predicted_detail.as_ref())),
                     },
                 )),
         )
@@ -356,7 +413,7 @@ pub(crate) fn render_plan_modal_wrapper_styled(
     // #462: the user's section open/closed choices, borrowed from `KagiApp`
     // for this frame. Borrowed rather than read back through `cx`: the app is
     // already mutably borrowed while it renders.
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let stage = ConfirmStage::Single;
@@ -386,7 +443,7 @@ pub(crate) fn render_plan_modal_wrapper_staged(
     stage: ConfirmStage,
     cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_extra(
@@ -423,7 +480,7 @@ pub(crate) fn render_plan_modal_wrapper_extra(
     extra: Option<PlanCardExtra>,
     cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel = cx.listener(move |this, _: &(), window, cx| {
@@ -659,13 +716,19 @@ fn render_plan_modal_card_styled(
     // #334: a card-specific element after the warnings (display only).
     extra: Option<PlanCardExtra>,
     // #462: see [`render_plan_modal_wrapper_styled`].
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Accept either a `&'static str` (most modals) or a dynamic `String`/
     // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
     let confirm_label: SharedString = confirm_label.into();
     let has_blockers = !plan.blockers.is_empty();
+    let error = error.map(
+        |error| match kagi_ui_core::i18n::op::user_text::diagnostic(&error) {
+            std::borrow::Cow::Owned(text) => SharedString::from(text),
+            std::borrow::Cow::Borrowed(_) => error,
+        },
+    );
     let confirm_kind = plan_confirm_kind(
         plan.destructive,
         &plan.title,
@@ -682,11 +745,9 @@ fn render_plan_modal_card_styled(
     // caps the height and the body takes the overflow, so the buttons stay on
     // screen no matter how long the plan is.
     //
-    // The body does not scroll: each list/prose panel inside carries its own
-    // capped scroll region instead (`modal_shell`'s rule — one scroller per
-    // panel, never one inside another). A user asked for the commit list to be
-    // "boxed and scrollable in the box" like the discard target list
-    // (2026-09-06), which is the same shape the destructive cards use.
+    // Merge/revert file previews use the body scroller without an independent
+    // list scroller (#1381). Other plan cards retain their existing boxed,
+    // individually capped panels: never nest a preview list scroller.
     // The whole dialog as text (title, current→predicted, notes, commits,
     // recovery): popup content had no way to be copied at all.
     let title_text = plan_title_text(&plan.title);
@@ -698,6 +759,9 @@ fn render_plan_modal_card_styled(
     )
     .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let on_confirm = (!has_blockers).then(|| confirm_handler.clone());
+    let copy_plan = plan.clone();
+    let copy_extra = extra.as_ref().map(|extra| extra.clipboard.clone());
+    let copy_error = error.clone();
     let card = apply_dialog(
         "plan-card",
         modal_card(MODAL_W_MD).id("plan-card"),
@@ -713,16 +777,23 @@ fn render_plan_modal_card_styled(
             current_theme().color_success,
         )),
         Some(
-            modal_copy_button(
+            super::modal_copy::modal_copy_button_lazy(
                 "plan-card-copy",
                 Msg::ModalCopyAll.t(),
-                match &extra {
-                    Some(extra) => format!(
-                        "{}\n{}",
-                        plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
-                        extra.clipboard
-                    ),
-                    None => plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
+                move || {
+                    let mut text = plan_clipboard_text(
+                        &copy_plan,
+                        &copy_plan.preview_commits,
+                        ShellKind::current(),
+                    );
+                    if let Some(error) = &copy_error {
+                        text.push('\n');
+                        text.push_str(error);
+                    }
+                    match &copy_extra {
+                        Some(extra) => format!("{text}\n{extra}"),
+                        None => text,
+                    }
                 },
                 cx,
             )
@@ -733,7 +804,30 @@ fn render_plan_modal_card_styled(
     // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
     // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
-    let mut body = modal_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+    let show_files = !plan.preview_files.is_empty()
+        && matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Merge(_)
+                | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
+                | kagi_domain::plan_note::PlanTitle::Stash(
+                    kagi_domain::plan_note::StashTitle::Pop { .. }
+                )
+                | kagi_domain::plan_note::PlanTitle::Github(
+                    kagi_domain::plan_note::GithubTitle::MergePr { .. }
+                )
+        );
+    let mut body = if show_files {
+        super::modal_shell::modal_scroll_body()
+    } else {
+        modal_body().id("plan-body")
+    }
+    .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+    if let Some(entry) = super::modal_renderers_stash::stash_entry_label(&plan) {
+        body = body.child(entry);
+    }
+    if show_files {
+        body = body.child(super::modal_preview_files::render(&plan));
+    }
 
     // ── Warnings ─────────────────────────────────────────
     // #625: a warning carrying a path list renders as sentence + list, the
@@ -773,20 +867,14 @@ fn render_plan_modal_card_styled(
         body = body.child(div().flex_shrink_0().child(extra.element));
     }
 
-    // ── Commits to push (T-HT-004) ────────────────────────
-    // Shown only when preview_commits is non-empty (push plans).
-    //
-    // #454: was `take(total.min(10))` + an "… and N more" line — the count was
-    // honest but the remaining commits were unreachable. Every row is rendered
-    // now, inside the shared list panel with its own capped scroll box, so the
-    // list reads as a box and scrolls in place (user request 2026-09-06)
-    // instead of stretching the card.
-    //
-    // Plain rows, not a `uniform_list`: the producer caps the preview at 100
-    // (`build_push_preview_for_oid`, `MAX_PREVIEW`), so the row count is
-    // bounded and virtualization would buy nothing here.
+    // Producers cap previews at 100 rows. Rebase retains its true total
+    // separately, and shows a localized remainder without rendering it.
     if !plan.preview_commits.is_empty() {
-        let total = plan.preview_commits.len();
+        let visible = plan.preview_commits.len();
+        let total = plan
+            .rebase_scope
+            .as_ref()
+            .map_or(visible, |scope| scope.total_commits);
         // No row gap: the row pitch must equal MODAL_LIST_ROW_H exactly or the
         // height ceiling (rows x ROW_H) would cut a row short.
         let mut list = div()
@@ -794,16 +882,25 @@ fn render_plan_modal_card_styled(
             .flex()
             .flex_col()
             .min_h(gpui::px(0.))
-            .max_h(modal_list_max_h(total))
+            .max_h(modal_list_max_h(visible))
             .overflow_y_scroll();
+        if matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Rebase(
+                kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
+            )
+        ) {
+            list = list
+                .role(gpui::Role::Group)
+                .aria_label(format!("{}: {total}", Msg::PlanRebaseCandidates.t()));
+        }
         #[cfg(feature = "gui-e2e")]
         {
             list = list
                 .relative()
                 .child(super::modal_shell::modal_probe("modal-target-list"));
         }
-        for entry in &plan.preview_commits {
-            let line: String = entry.chars().take(72).collect();
+        for (index, entry) in plan.preview_commits.iter().enumerate() {
             let row = div()
                 .flex_shrink_0()
                 .h(theme::scaled_px(MODAL_LIST_ROW_H))
@@ -814,7 +911,7 @@ fn render_plan_modal_card_styled(
                 // overrun this fixed-height row into the next one.
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .child(render_commit_row(&line, accent.clone()));
+                .child(render_commit_row(index, entry, accent.clone()));
             #[cfg(feature = "gui-e2e")]
             let row = row
                 .relative()
@@ -824,10 +921,51 @@ fn render_plan_modal_card_styled(
             list = list.child(row);
         }
         body = body.child(modal_list_panel(
-            SharedString::from("Commits to push"),
+            SharedString::from(
+                if matches!(
+                    &plan.title,
+                    kagi_domain::plan_note::PlanTitle::Rebase(
+                        kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
+                    )
+                ) {
+                    Msg::PlanRebaseCandidates.t()
+                } else {
+                    "Commits to push"
+                },
+            ),
             total,
-            Some(("plan-commits-copy", plan.preview_commits.join("\n"))),
-            None,
+            Some({
+                let plan = plan.clone();
+                super::modal_copy::modal_copy_button_lazy(
+                    "plan-commits-copy",
+                    Msg::ModalCopyList.t(),
+                    move || {
+                        let mut text = plan.preview_commits.join("\n");
+                        if let Some(scope) = &plan.rebase_scope {
+                            let remaining = scope
+                                .total_commits
+                                .saturating_sub(plan.preview_commits.len());
+                            if remaining > 0 {
+                                text.push('\n');
+                                text.push_str(
+                                    &Msg::PlanRebaseMore
+                                        .t()
+                                        .replace("{}", &remaining.to_string()),
+                                );
+                            }
+                        }
+                        text
+                    },
+                    cx,
+                )
+            }),
+            (total > visible).then(|| {
+                div().child(
+                    Msg::PlanRebaseMore
+                        .t()
+                        .replace("{}", &(total - visible).to_string()),
+                )
+            }),
             list.into_any_element(),
             cx,
         ));
@@ -899,6 +1037,9 @@ fn render_plan_modal_card_styled(
     if let Some(err) = &error {
         body = body.child(
             div()
+                .id("plan-error")
+                .role(gpui::Role::Alert)
+                .aria_label(err.clone())
                 .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
@@ -908,11 +1049,7 @@ fn render_plan_modal_card_styled(
     }
 
     // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let mut button_row = super::button_style::modal_button_row()
         // Cancel button (always present — safe default). #462: measured, so a
         // scenario can assert the footer's own controls are on screen rather
         // than inferring it from the card.
@@ -953,14 +1090,30 @@ fn render_plan_modal_card_styled(
         .blockers
         .first()
         .map(|blocker| SharedString::from(plan_note_text(blocker)));
-    let button = modal_button(
-        "plan-confirm",
-        confirm_label,
-        confirm_kind,
-        reason,
-        move |_, w, a| confirm_handler(w, a),
-        cx,
-    );
+    let button = if matches!(plan.title, kagi_domain::plan_note::PlanTitle::Rebase(_))
+        && stage != ConfirmStage::Armed
+    {
+        let detail = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+            &format!("{confirm_label}\n{title_text}"),
+        ));
+        super::button_style::bounded_modal_button(
+            "plan-confirm",
+            (confirm_label, detail),
+            confirm_kind,
+            reason,
+            move |_, w, a| confirm_handler(w, a),
+            cx,
+        )
+    } else {
+        modal_button(
+            "plan-confirm",
+            confirm_label,
+            confirm_kind,
+            reason,
+            move |_, w, a| confirm_handler(w, a),
+            cx,
+        )
+    };
     #[cfg(feature = "gui-e2e")]
     let button = div()
         .relative()

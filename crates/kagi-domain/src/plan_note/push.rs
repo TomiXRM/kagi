@@ -42,8 +42,8 @@ pub enum PushNote {
     /// blocker (`plan_set_upstream`) — the given upstream string is not a
     /// `remote/branch`-shaped name.
     UpstreamFormatInvalid,
-    /// warning (`plan_set_upstream`) — the named remote-tracking branch has
-    /// no local ref yet; the config can still be set.
+    /// blocker (`plan_set_upstream`) — the named remote-tracking branch has
+    /// no local ref; setting upstream requires fetching it first.
     UpstreamNotPresentLocally { upstream: String },
 }
 
@@ -81,6 +81,11 @@ impl PushNote {
                 upstream
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -135,6 +140,11 @@ impl PushTitle {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the push op family.
@@ -175,6 +185,11 @@ impl PushRecovery {
                 branch, branch
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -265,7 +280,7 @@ mod tests {
             }
             .message_en(),
             "Remote-tracking branch 'origin/feat/x' is not present locally; \
-             config can still be set."
+             fetch it before setting upstream."
         );
     }
 

@@ -91,6 +91,10 @@ jobs:
           - ui-lateral
           # the ADR-0129 Verbatim escape hatch stays deleted
           - plan-verbatim
+          # Japanese prose keeps Git vocabulary in English (ADR-0048 / #1465)
+          - ja-git-terms
+          # EN/JA UI copy does not expose implementation jargon (#1588)
+          - ui-internal-jargon
           # recovery guidance must never recommend a hard reset (#456)
           - recovery-safe-advice
           # modal file lists are not silently truncated (#454)
@@ -105,6 +109,8 @@ jobs:
           # an in-flight indicator is an animated element, never a ⟳ glyph
           # that cannot turn (user report)
           - static-spinner
+          # explanatory help must follow its live trigger (#1591)
+          - hover-tooltip
           # a `\` continuation never glues two words in a string literal —
           # it broke both PR GraphQL queries (#837, #843)
           - string-continuation

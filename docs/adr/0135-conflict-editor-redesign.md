@@ -83,3 +83,43 @@ means: the order the two blocks land in the result when both sides are taken.
   on the commit-pane screen (`conflict_merge_pending`) — is now covered only by
   the seeded "Merge branch …" commit message. Acceptable; revisit if users
   commit-then-wonder.
+
+## Amendment — 2026-10-12: keyboard and accessibility adoption (#1311)
+
+The accent-band header and code-line presentation remains, but each adoption
+target is a named Button, not a click-only row. A hunk RowList is one Tab stop;
+Up/Down moves between hunks, Left/Right traverses that hunk's side, both-order
+and line controls, and Enter/Space uses the same activation listener as a click.
+File-side Use all controls are separate named Buttons. Focus-visible uses the
+shared fixed-width ring, without changing the syntax highlighting or dimming.
+
+Visual captions and accessibility names use the operation-dependent side roles
+and actual sanitized identities from `mode.labels()` (ADR-0058), not raw
+ours/theirs. EN/JA names include the relevant hunk or line number. Adoption
+describes None/Partial/All and exposes toggled state for All. Order controls
+instead name the requested first side and describe the currently selected
+output order; they change only the existing LineOrder setter and do not
+implicitly adopt any unselected line.
+
+Roving ownership is rebuilt when the selected path or its context/hunk/line
+structure changes, including consecutive rebase/cherry-pick steps on the same
+path. Domain selection, undo/redo and the Save/Continue/Commit separation
+(ADR-0068/0106) are unchanged.
+
+## Amendment — 2026-10-14: file-bound Reset and Result segments (#1511/#1512)
+
+Reset all keeps the existing two-stage interaction, but approval belongs to the
+currently edited path. File navigation, selection changes and leaving the reset
+control's focus scope retire the armed stage; a busy writer cannot arm or reset.
+Returning to a file never restores an earlier approval. This is buffer/draft
+editing only, not a new Git operation or confirmation manager.
+Keyboard activation retains focus on the actual Reset Button inside that scope,
+so the second Return/Space reaches the same final-confirm listener and the
+focus ring remains visible. Only activation from outside enters the scope.
+
+Result Preview/Edit uses the shared `TabList`, as the historical Inspector does
+(#1495), with explicit Preview=false and Edit=true activation. Re-activating the
+selected segment is a no-op: it does not resynchronize inputs or alter manual
+text. The surrounding nonbutton area has no activation. The same existing mode
+owner drives selected fill, accessibility state and the rendered Result body,
+and writer-busy refusal remains in the mode setter.

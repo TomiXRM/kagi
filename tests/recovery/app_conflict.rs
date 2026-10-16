@@ -78,7 +78,7 @@ pub(crate) fn click_control(
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
 }
 
-fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {
+pub(crate) fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();
@@ -91,6 +91,7 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp
 }
 
 pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
+    crate::recovery_diff_presentation::assert_conflict_binary_states(cx);
     refusal::save_and_abort(cx);
 
     let fixture = content_fixture();
@@ -1271,7 +1272,9 @@ pub fn scenario_conflict_merge_failure_contract(cx: &mut VisualTestAppContext) {
                 assert!(matches!(state.status_footer, kagi::ui::FooterStatus::Failed(_)));
                 assert!(state.bottom_panel_open);
                 assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts()
-                    .iter().any(|toast| toast.message.as_ref().contains("merge-continue")));
+                    .iter().any(|toast| toast.kind == kagi::ui::ToastKind::Error
+                        && !toast.message.is_empty()
+                        && !toast.message.contains("merge-continue")));
             }
         });
         assert_eq!(

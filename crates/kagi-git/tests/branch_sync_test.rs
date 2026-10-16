@@ -118,6 +118,337 @@ fn non_current_pull_ff_updates_ref_only() {
     );
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct Checkout {
+    head: String,
+    index: String,
+    files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
+}
+
+impl Checkout {
+    fn read(path: &Path) -> Self {
+        fn files(
+            root: &Path,
+            dir: &Path,
+            result: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        ) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path == root.join(".git") {
+                    continue;
+                }
+                if path.is_dir() {
+                    files(root, &path, result);
+                } else {
+                    result.insert(
+                        path.strip_prefix(root).unwrap().into(),
+                        std::fs::read(path).unwrap(),
+                    );
+                }
+            }
+        }
+        let mut worktree = std::collections::BTreeMap::new();
+        files(path, path, &mut worktree);
+        Self {
+            head: rev_parse(path, "HEAD"),
+            index: git_output(path, &["ls-files", "--stage", "-z"]),
+            files: worktree,
+        }
+    }
+}
+
+fn advance_feature(r: &Repos) -> String {
+    git(&r.other, &["checkout", "-q", "feature/x"]);
+    write_file(&r.other, "feature.txt", "updated tracked content\n");
+    std::fs::remove_file(r.other.join("base.txt")).unwrap();
+    write_file(&r.other, "incoming.txt", "added tracked path\n");
+    commit_all(&r.other, "modify add and remove");
+    git(&r.other, &["push", "-q", "origin", "feature/x"]);
+    rev_parse(&r.other, "HEAD")
+}
+
+#[test]
+fn current_pull_ff_synchronizes_head_index_and_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.local, &["checkout", "-q", "feature/x"]);
+    let target = advance_feature(&r);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    assert!(plan.blockers.is_empty());
+    let outcome = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x").unwrap();
+    assert!(matches!(outcome, PullOutcome::FastForward { .. }));
+    assert_eq!(rev_parse(&r.local, "HEAD"), target);
+    assert_eq!(Checkout::read(&r.local), Checkout::read(&r.other));
+    assert!(git_output(&r.local, &["diff", "--cached", "--name-status"]).is_empty());
+    assert!(git_output(&r.local, &["status", "--porcelain"]).is_empty());
+}
+
+#[test]
+fn current_pull_ff_keeps_dirty_paths_safe_and_accepts_newer_approved_upstream() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for overlapping in [false, true] {
+        let r = setup();
+        git(&r.local, &["checkout", "-q", "feature/x"]);
+        advance_feature(&r);
+        git(&r.local, &["fetch", "-q", "origin"]);
+        let dirty = if overlapping {
+            "feature.txt"
+        } else {
+            "unrelated.txt"
+        };
+        write_file(&r.local, dirty, "approved staged local content\n");
+        git(&r.local, &["add", dirty]);
+        write_file(&r.local, dirty, "approved unstaged local content\n");
+        write_file(&r.local, "untracked.txt", "preserve untracked content\n");
+        let repo = Repository::open(&r.local).unwrap();
+        let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+        assert!(plan.blockers.is_empty());
+        let before = Checkout::read(&r.local);
+        let staged = git_output(&r.local, &["ls-files", "--stage", "--", dirty]);
+        // The same approved tracking ref may discover a newer tip at execution.
+        write_file(&r.other, "incoming.txt", "newer content after approval\n");
+        commit_all(&r.other, "newer approved upstream");
+        git(&r.other, &["push", "-q", "origin", "feature/x"]);
+        let outcome = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x");
+        if overlapping {
+            assert!(
+                outcome.is_err(),
+                "strict FF must never overwrite dirty paths"
+            );
+            assert_eq!(Checkout::read(&r.local), before);
+        } else {
+            assert!(matches!(outcome.unwrap(), PullOutcome::FastForward { .. }));
+            assert_eq!(rev_parse(&r.local, "HEAD"), rev_parse(&r.other, "HEAD"));
+            assert_eq!(
+                std::fs::read(r.local.join("feature.txt")).unwrap(),
+                b"updated tracked content\n"
+            );
+            assert_eq!(
+                std::fs::read(r.local.join("incoming.txt")).unwrap(),
+                b"newer content after approval\n"
+            );
+            assert!(!r.local.join("base.txt").exists());
+            assert_eq!(
+                git_output(&r.local, &["ls-files", "--stage", "--", dirty]),
+                staged
+            );
+            assert_eq!(
+                std::fs::read(r.local.join(dirty)).unwrap(),
+                b"approved unstaged local content\n"
+            );
+            assert_eq!(
+                std::fs::read(r.local.join("untracked.txt")).unwrap(),
+                b"preserve untracked content\n"
+            );
+        }
+        assert!(
+            git_output(&r.local, &["stash", "list"]).is_empty(),
+            "strict FF is not auto-stash or merge-capable Pull"
+        );
+    }
+}
+
+#[test]
+fn pull_ff_refuses_branch_checked_out_in_another_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    advance_feature(&r);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let linked = r._tmp.path().join("linked");
+    git(
+        &r.local,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "feature/x",
+        ],
+    );
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    let main_before = Checkout::read(&r.local);
+    let linked_before = Checkout::read(&linked);
+    let refs_before = git_output(&r.local, &["show-ref"]);
+    let refused = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x");
+    assert!(
+        refused.is_err(),
+        "an occupied branch must never be advanced ref-only"
+    );
+    assert!(
+        !plan.blockers.is_empty(),
+        "occupation must be explained in the plan"
+    );
+    assert_eq!(Checkout::read(&r.local), main_before);
+    assert_eq!(Checkout::read(&linked), linked_before);
+    assert_eq!(git_output(&r.local, &["show-ref"]), refs_before);
+}
+
+#[test]
+fn pull_ff_refuses_worktree_occupation_after_approval_before_fetch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    advance_feature(&r);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    assert!(plan.blockers.is_empty());
+    let linked = r._tmp.path().join("linked");
+    git(
+        &r.local,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "feature/x",
+        ],
+    );
+    // A newer remote tip makes an unintended fetch observable, not just ref movement.
+    write_file(
+        &r.other,
+        "newer.txt",
+        "not approved to touch the linked checkout\n",
+    );
+    commit_all(&r.other, "advance again after approval");
+    git(&r.other, &["push", "-q", "origin", "feature/x"]);
+    let main_before = Checkout::read(&r.local);
+    let linked_before = Checkout::read(&linked);
+    let refs_before = git_output(&r.local, &["show-ref"]);
+    let fetch_before = std::fs::read(repo.path().join("FETCH_HEAD")).unwrap();
+    assert!(execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x").is_err());
+    assert_eq!(Checkout::read(&r.local), main_before);
+    assert_eq!(Checkout::read(&linked), linked_before);
+    assert_eq!(git_output(&r.local, &["show-ref"]), refs_before);
+    assert_eq!(
+        std::fs::read(repo.path().join("FETCH_HEAD")).unwrap(),
+        fetch_before
+    );
+}
+
+#[test]
+fn current_pull_ff_refuses_divergence_discovered_after_approval() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.local, &["checkout", "-q", "feature/x"]);
+    advance_feature(&r);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    assert!(plan.blockers.is_empty());
+    let before = Checkout::read(&r.local);
+    git(&r.other, &["checkout", "-q", "-b", "divergent", "main"]);
+    write_file(&r.other, "divergent.txt", "a sibling history\n");
+    commit_all(&r.other, "diverge after approval");
+    let divergent = rev_parse(&r.other, "HEAD");
+    // Publish the real objects under a new ref before simulating upstream drift.
+    git(&r.other, &["push", "-q", "origin", "divergent"]);
+    git(
+        &r.remote,
+        &["update-ref", "refs/heads/feature/x", &divergent],
+    );
+    assert!(execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x").is_err());
+    assert_eq!(rev_parse(&r.local, "origin/feature/x"), divergent);
+    assert_eq!(Checkout::read(&r.local), before, "strict FF must not merge");
+    assert!(!repo.path().join("MERGE_HEAD").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn pull_ff_refuses_worktree_occupation_during_fetch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.local, &["checkout", "-q", "feature/x"]);
+    let feature_before = Checkout::read(&r.local);
+    git(&r.local, &["checkout", "-q", "main"]);
+    advance_feature(&r);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    assert!(plan.blockers.is_empty());
+    write_file(&r.other, "newer.txt", "advance while approved\n");
+    commit_all(&r.other, "trigger a real fetch before occupation");
+    git(&r.other, &["push", "-q", "origin", "feature/x"]);
+    let fetched = rev_parse(&r.other, "HEAD");
+    let linked = r._tmp.path().join("linked-during-fetch");
+    let marker = r._tmp.path().join("fetched-before-occupation");
+    // Kagi intentionally disables repository hooks. Use the existing
+    // stash_push_cli fixture convention instead: a PATH wrapper delegates to
+    // the actual Git binary, then changes occupation before the fetch job
+    // returns to the backend. No Git result or transport is synthesized.
+    let real_git = std::process::Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout).unwrap();
+    let bin = r._tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let wrapper = bin.join("git");
+    let quote = kagi_domain::remote::shell_quote;
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nreal={}\n\"$real\" \"$@\" || exit $?\n\
+             for arg in \"$@\"; do\n\
+               if [ \"$arg\" = fetch ]; then\n\
+                 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE\n\
+                 \"$real\" -C {} rev-parse refs/remotes/origin/feature/x > {} || exit 1\n\
+                 \"$real\" -C {} worktree add -q -- {} feature/x || exit 1\n\
+                 break\n\
+               fi\n\
+             done\n",
+            quote(real_git.trim()),
+            quote(r.local.to_str().unwrap()),
+            quote(marker.to_str().unwrap()),
+            quote(r.local.to_str().unwrap()),
+            quote(linked.to_str().unwrap()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let before = Checkout::read(&r.local);
+    let old_path = std::env::var_os("PATH").unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&old_path));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    let result = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x");
+    std::env::set_var("PATH", old_path);
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap().trim(),
+        fetched,
+        "the real fetch completed before occupation changed"
+    );
+    assert_eq!(rev_parse(&r.local, "origin/feature/x"), fetched);
+    assert!(
+        linked.exists(),
+        "the real fetch job must create the occupancy race before returning"
+    );
+    assert!(
+        result.is_err(),
+        "occupation must be checked again after fetch"
+    );
+    assert_eq!(Checkout::read(&r.local), before);
+    assert_eq!(Checkout::read(&linked), feature_before);
+    assert_eq!(rev_parse(&r.local, "feature/x"), feature_before.head);
+}
+
 #[test]
 fn non_current_push_uses_branch_upstream() {
     if !crate::test_support::run_isolated() {

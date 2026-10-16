@@ -2,22 +2,19 @@
 //!
 //! Provides:
 //! - [`stage_file`]           — stage a single file (index-only, WT unchanged)
-//! - [`unstage_file`]         — unstage a single file (index-only, WT unchanged)
+//! - [`crate::Backend::unstage_file`] — unstage a single file (index-only, WT unchanged)
 //! - [`unstaged_file_diff`]   — diff between index and working tree for a file
 //! - [`staged_file_diff`]     — diff between HEAD tree and index for a file
-//! - [`plan_commit`]          — plan a commit (plan pipeline)
-//! - [`execute_commit`]       — create a commit from the current index
 //!
 //! # Design notes
 //!
-//! * **Index-only operations** — `stage_file` and `unstage_file` only modify
+//! * **Index-only operations** — stage and unstage only modify
 //!   the git index (`.git/index`).  The working tree file content is **never**
 //!   changed by either function.  Tests assert this invariant.
 //!
-//! * **`unstage_file` implementation** — uses `repo.reset_default(target, [path])`,
-//!   which is the libgit2 equivalent of `git reset HEAD -- <path>`.  When HEAD
-//!   is unborn (no commits), the path is simply removed from the index via
-//!   `index.remove_path`.
+//! * **`unstage_file` implementation** — restores exact index entries from HEAD
+//!   without pathspec matching. When HEAD is unborn (no commits), the selected
+//!   paths are removed from the index via `index.remove_path`.
 //!
 //! * **`stage_file` for deleted files** — if the file no longer exists in the
 //!   working tree, `index.add_path` would fail; we call `index.remove_path`
@@ -34,24 +31,16 @@
 //! * **Conflicts** — `plan_commit` blocks on conflicted files; staging a
 //!   conflicted file is not supported in MVP.
 
-use kagi_domain::plan_note::commit::{
-    CommitLeftoverParts, CommitNote, CommitRecovery, CommitTitle,
-};
-use kagi_domain::plan_note::CommonNote;
-use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
 use std::path::Path;
 
 use git2::{DiffOptions, Repository};
+use kagi_domain::plan_note::{CommonNote, PlanNote};
 
 use super::{
-    checklist::checklist,
     diff::{patch_hunks, patch_to_file_diff, FileDiff},
-    log::CommitId,
-    ops::{build_signature, OperationPlan, StateSummary},
     resolve_head,
     status::working_tree_status,
     status::ChangeKind,
-    status::FileStatus,
     status::WorkingTreeStatus,
     GitError, Head,
 };
@@ -88,6 +77,26 @@ fn is_sparse_excluded(index: &git2::Index, path: &Path) -> bool {
     })
 }
 
+/// Test the directory entry itself, not a symlink's destination. Only a
+/// genuinely missing entry may be staged as a deletion; other I/O errors abort.
+fn worktree_entry_present(path: &Path) -> Result<bool, GitError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(GitError::Other(format!(
+            "cannot inspect working tree entry '{}': {error}",
+            path.display()
+        ))),
+    }
+}
+
 pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
     let workdir = repo
         .workdir()
@@ -98,8 +107,10 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
-    if abs_path.exists() {
-        // File exists in working tree — stage it.
+    if worktree_entry_present(&abs_path)? {
+        crate::special_repo::FilterCheck::new(repo)?.require_supported(path)?;
+        // libgit2 stages symlinks as mode 120000 with raw read_link bytes,
+        // without following the target (even when it is missing).
         index
             .add_path(path)
             .map_err(|e| GitError::Other(format!("index.add_path failed: {}", e.message())))?;
@@ -126,73 +137,6 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-
-    Ok(())
-}
-
-// ────────────────────────────────────────────────────────────
-// unstage_file
-// ────────────────────────────────────────────────────────────
-
-/// Unstage a single file at `path` (relative to the repository root).
-///
-/// This function modifies **only the git index**.  The working tree file
-/// content is never changed.
-///
-/// # Behaviour
-///
-/// * **Normal repo** (HEAD exists): calls
-///   `repo.reset_default(Some(&head_object), [path])`, which is the libgit2
-///   equivalent of `git reset HEAD -- <path>`.  This restores the index entry
-///   for `path` to the HEAD tree content (effectively unstaging the change).
-///   If `path` does not exist in HEAD (new file), the path is removed from the
-///   index so it becomes untracked.
-///
-/// * **Unborn HEAD** (no commits yet): there is no HEAD tree to reset to, so
-///   the path is simply removed from the index via `index.remove_path`.
-///
-/// # Errors
-///
-/// Returns [`GitError::Other`] on any libgit2 failure.
-pub(crate) fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
-    let head = resolve_head(repo)?;
-
-    match head {
-        Head::Unborn { .. } => {
-            // No HEAD tree — just remove from index.
-            let mut index = repo
-                .index()
-                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-            // remove_path returns an error if the path isn't in the index.
-            // Ignore "not found" errors gracefully.
-            let _ = index.remove_path(path);
-            index
-                .write()
-                .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-        }
-        _ => {
-            // HEAD exists — use reset_default to restore the index entry.
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_obj = repo.find_object(head_oid, None).map_err(|e| {
-                GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
-            })?;
-
-            // reset_default(Some(&head_obj), [path]) is equivalent to
-            // `git reset HEAD -- <path>`:
-            // - If path exists in HEAD tree: restores index entry to HEAD content.
-            // - If path does NOT exist in HEAD tree: removes it from index.
-            // #293: a lossy pathspec would make reset_default a silent no-op
-            // (U+FFFD matches nothing) — bail on a non-UTF-8 path instead.
-            let path_str = super::path_to_pathspec(path)?;
-            repo.reset_default(Some(&head_obj), [path_str])
-                .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
-        }
-    }
 
     Ok(())
 }
@@ -467,245 +411,6 @@ pub fn commit_preview_from_status(
 }
 
 // ────────────────────────────────────────────────────────────
-// plan_commit
-// ────────────────────────────────────────────────────────────
-
-/// Analyse whether creating a commit is safe and return an [`OperationPlan`].
-///
-/// # Blocker conditions
-///
-/// - `message` is empty after trimming whitespace.
-/// - No files are staged in the index.
-/// - The repository has conflicted files.
-///
-/// # Warning conditions
-///
-/// - Unstaged or untracked changes exist that will **not** be included in
-///   this commit.
-///
-/// # Predicted state
-///
-/// - HEAD branch advances by one commit.
-/// - Staged files become empty (committed).
-/// - Unstaged / untracked changes remain.
-///
-/// # Errors
-///
-/// Returns [`GitError::Other`] if the repository cannot be queried.
-pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, GitError> {
-    // ── 1. Current HEAD and status ───────────────────────────
-    let head = resolve_head(repo)?;
-    let status = working_tree_status(repo)?;
-
-    // ── 2. Build current StateSummary ────────────────────────
-    let head_display = head.display();
-
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
-
-    let current = StateSummary {
-        head: head_display.clone(),
-        dirty: dirty_display,
-    };
-
-    // ── 3. Check blockers ────────────────────────────────────
-    // ADR-0129: plan_commit is a structured producer — notes are typed
-    // (`CommitNote`), not English prose. `message_en()` renders the exact
-    // legacy strings for oplog/klog/EN display (golden-tested in kagi-domain).
-    let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = Vec::new();
-
-    // Empty message.
-    if message.trim().is_empty() {
-        blockers.push(PlanNote::Commit(CommitNote::EmptyMessage));
-    }
-
-    // Nothing staged.
-    if status.staged.is_empty() {
-        blockers.push(PlanNote::Commit(CommitNote::NothingStaged));
-    }
-
-    // Conflict state.
-    if !status.conflicted.is_empty() {
-        blockers.push(PlanNote::Commit(CommitNote::ConflictedFiles {
-            count: status.conflicted.len(),
-        }));
-    }
-
-    // Unstaged / untracked changes remain (warning, not blocker).
-    let leftover_count = status.unstaged.len() + status.untracked.len();
-    if leftover_count > 0 {
-        warnings.push(PlanNote::Commit(CommitNote::LeftoverNotIncluded {
-            count: leftover_count,
-            parts: CommitLeftoverParts {
-                modified: status.unstaged.len(),
-                untracked: status.untracked.len(),
-            },
-        }));
-    }
-
-    // Staged-content checklist (ADR-0043 rules 4/5/6): conflict markers (block),
-    // secret/.env (warn), large binary (warn).  Inspects index BLOBs, not WT.
-    // Rules 1–3 (staged empty / message empty / repo conflicted) are handled
-    // above; the checklist adds the content-level rules, already typed as
-    // `PlanNote::Checklist(ChecklistNote)` (ADR-0129 Phase 3).
-    let (check_blockers, check_warnings) = checklist(repo, &status)?;
-    blockers.extend(check_blockers);
-    warnings.extend(check_warnings);
-
-    // ── 4. Predicted StateSummary ─────────────────────────────
-    // After commit: staged becomes empty; unstaged/untracked remain.
-    let msg_summary: String = message.trim().chars().take(72).collect();
-
-    let remaining_parts: Vec<String> = [
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let predicted_dirty = if remaining_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        remaining_parts.join(", ")
-    };
-
-    let branch_name = match &head {
-        Head::Attached { branch, .. } => branch.clone(),
-        Head::Unborn { branch } => branch.clone(),
-        Head::Detached { target } => target.get(..8).unwrap_or(target).to_string(),
-    };
-
-    let predicted = StateSummary {
-        head: format!("branch: {} (+1 commit: \"{}\")", branch_name, msg_summary),
-        dirty: predicted_dirty,
-    };
-
-    // ── 5. Recovery guidance ──────────────────────────────────
-    let staged_files: Vec<String> = status
-        .staged
-        .iter()
-        .map(|f| f.path.display().to_string())
-        .collect();
-    let recovery = PlanRecovery {
-        kind: RecoveryKind::Commit(CommitRecovery::AfterCommit { staged_files }),
-        commands: vec![
-            "git commit --amend".to_string(),
-            "git revert HEAD".to_string(),
-        ],
-    };
-
-    // Use staged file list as preview_files.
-    let preview_files: Vec<FileStatus> = status.staged.clone();
-
-    let mut plan = OperationPlan {
-        disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::Commit(CommitTitle::Commit {
-            summary: msg_summary,
-        }),
-        current,
-        predicted,
-        warnings,
-        blockers,
-        recovery: Some(recovery),
-        head_at_plan: head,
-        stash_count_at_plan: 0,
-        stash_identity: None,
-        worktree_digest: None,
-        preview_files,
-        preview_commits: Vec::new(),
-        destructive: false,
-        equivalent_command: None,
-    };
-
-    // GitHub ruleset pre-verification (#346, ADR-0150): fold in any local
-    // findings from the cached branch ruleset. Cache-only — never a network
-    // call at plan time; a no-op when nothing is cached / `gh` is unavailable.
-    crate::ruleset::augment_commit_plan(&mut plan, repo, &status, &branch_name, message);
-
-    Ok(plan)
-}
-
-// ────────────────────────────────────────────────────────────
-// execute_commit
-// ────────────────────────────────────────────────────────────
-
-/// Create a commit from the current index state.
-///
-/// # Behaviour
-///
-/// 1. Reads the current index and writes it as a tree object in the ODB.
-/// 2. Resolves the committer/author signature from repo config (falls back to
-///    `"kagi <kagi@local>"`).
-/// 3. Creates the commit:
-///    - **Normal repo** (HEAD exists): one parent — the current HEAD commit.
-///    - **Unborn HEAD** (initial commit): no parents.
-/// 4. The working tree is **not** modified; unstaged changes remain intact.
-///
-/// Returns the new commit's [`CommitId`].
-///
-/// # Errors
-///
-/// Returns [`GitError::Other`] on any libgit2 failure.
-pub(crate) fn execute_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
-    // ── 1. Write the current index as a tree ─────────────────
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-    let tree_oid = index
-        .write_tree()
-        .map_err(|e| GitError::Other(format!("index.write_tree() failed: {}", e.message())))?;
-    let tree = repo
-        .find_tree(tree_oid)
-        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-
-    // ── 2. Build signature ────────────────────────────────────
-    let sig = build_signature(repo)?;
-
-    // ── 3. Resolve parents ────────────────────────────────────
-    let head = resolve_head(repo)?;
-
-    let new_oid = match head {
-        Head::Unborn { .. } => {
-            // Initial commit — no parents.
-            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
-                .map_err(|e| GitError::Other(format!("commit (initial) failed: {}", e.message())))?
-        }
-        _ => {
-            // Normal commit — one parent (HEAD).
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_commit = repo.find_commit(head_oid).map_err(|e| {
-                GitError::Other(format!("find_commit(HEAD) failed: {}", e.message()))
-            })?;
-
-            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head_commit])
-                .map_err(|e| GitError::Other(format!("commit failed: {}", e.message())))?
-        }
-    };
-
-    Ok(CommitId(new_oid.to_string()))
-}
-
-// ────────────────────────────────────────────────────────────
 // Batch stage / unstage (T-UI-002: stage all / unstage all)
 // ────────────────────────────────────────────────────────────
 
@@ -728,90 +433,60 @@ pub(crate) fn stage_files(
     let mut index = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-
-    for path in paths {
-        // Same rule as `stage_file`: absent from the working tree is not the
-        // same as deleted. This is the path "stage everything" takes, so it is
-        // the one a user in a sparse-checkout repository actually reaches
-        // (#675). Refuse the whole batch rather than skipping the offending
-        // paths — a partially applied stage is harder to reason about than one
-        // that did not happen.
-        if !workdir.join(path).exists() && is_sparse_excluded(&index, path) {
+    let present: Vec<bool> = paths
+        .iter()
+        .map(|path| worktree_entry_present(&workdir.join(path)))
+        .collect::<Result<_, _>>()?;
+    let filters = crate::special_repo::FilterCheck::new(repo)?;
+    // Validate the whole add-set before libgit2 creates any blob or index edit.
+    // Removing an absent tracked path never imports filtered worktree content.
+    for (path, present) in paths.iter().zip(&present) {
+        if *present {
+            filters.require_supported(path)?;
+        } else if is_sparse_excluded(&index, path) {
             return Err(GitError::Blocked(Box::new(PlanNote::Common(
                 CommonNote::SparseExcludedPath {
                     path: path.display().to_string(),
                 },
             ))));
         }
-        if workdir.join(path).exists() {
-            index.add_path(path).map_err(|e| {
-                GitError::Other(format!(
-                    "index.add_path({}) failed: {}",
-                    path.display(),
-                    e.message()
-                ))
-            })?;
-        } else {
-            index.remove_path(path).map_err(|e| {
-                GitError::Other(format!(
-                    "index.remove_path({}) failed: {}",
-                    path.display(),
-                    e.message()
-                ))
-            })?;
-        }
     }
 
-    index
-        .write()
-        .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-    Ok(paths.len())
-}
-
-/// Unstage every path in `paths`.
-///
-/// Same semantics as [`unstage_file`] (`git reset HEAD -- <paths>`), done in
-/// a single `reset_default` call when HEAD exists.  Returns the number of
-/// paths processed.
-pub(crate) fn unstage_files(
-    repo: &Repository,
-    paths: &[std::path::PathBuf],
-) -> Result<usize, GitError> {
-    if paths.is_empty() {
-        return Ok(0);
-    }
-    let head = resolve_head(repo)?;
-    match head {
-        Head::Unborn { .. } => {
-            let mut index = repo
-                .index()
-                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-            for path in paths {
-                let _ = index.remove_path(path);
+    let result = (|| {
+        for (path, present) in paths.iter().zip(present) {
+            if present {
+                index.add_path(path).map_err(|e| {
+                    GitError::Other(format!(
+                        "index.add_path({}) failed: {}",
+                        path.display(),
+                        e.message()
+                    ))
+                })?;
+            } else {
+                index.remove_path(path).map_err(|e| {
+                    GitError::Other(format!(
+                        "index.remove_path({}) failed: {}",
+                        path.display(),
+                        e.message()
+                    ))
+                })?;
             }
-            index
-                .write()
-                .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
         }
-        _ => {
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_obj = repo.find_object(head_oid, None).map_err(|e| {
-                GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
-            })?;
-            // #293: same silent-no-op hazard as unstage_file — a lossy pathspec
-            // matches nothing. Bail on any non-UTF-8 path rather than skipping it.
-            let path_strs: Vec<&str> = paths
-                .iter()
-                .map(|p| super::path_to_pathspec(p))
-                .collect::<Result<_, _>>()?;
-            repo.reset_default(Some(&head_obj), path_strs.iter().copied())
-                .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
-        }
+
+        index
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+        Ok(paths.len())
+    })();
+    if result.is_err() {
+        // Repository::index shares libgit2's cached index. Discard every
+        // uncommitted batch edit so a later stage cannot accidentally write it.
+        index.read(true).map_err(|error| {
+            GitError::Other(format!(
+                "cannot reload index after aborted stage: {}",
+                error.message()
+            ))
+        })?;
     }
-    Ok(paths.len())
+    result
 }

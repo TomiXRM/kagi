@@ -35,16 +35,17 @@ skimming, so they are stated here as well as where they apply:
 | A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` (tab-strip scenarios take the foreground — see its pitfalls) |
 | Git states for safety-sensitive flows | Tier C fixtures |
 
-Published mise recipe (only after v0.44.0 is published; run on each named host):
-- macOS arm64: `mise install github:TomiXRM/kagi@0.44.0 && mise exec github:TomiXRM/kagi@0.44.0 -- kagi --version && codesign --verify --strict "$(mise where github:TomiXRM/kagi@0.44.0)/Kagi.app"`
-- Linux x86_64 and aarch64 (run separately on each): `mise install github:TomiXRM/kagi@0.44.0 && mise exec github:TomiXRM/kagi@0.44.0 -- kagi --version`
+Published mise recipe (only after v0.45.0 is published; run on each named host):
+- macOS arm64: `mise install github:TomiXRM/kagi@0.45.0 && mise exec github:TomiXRM/kagi@0.45.0 -- kagi --version && codesign --verify --strict "$(mise where github:TomiXRM/kagi@0.45.0)/Kagi.app"`
+- Linux x86_64 and aarch64 (run separately on each): `mise install github:TomiXRM/kagi@0.45.0 && mise exec github:TomiXRM/kagi@0.45.0 -- kagi --version`
 
 The macOS release tar must be named `kagi-<version>-arm64-macos.tar.gz`, never
 `aarch64-macos`: Linux aarch64 updaters through v0.43 could match the latter
-as a legacy Linux tar. For the first release shipping this change, check that
-Linux has both `kagi-<version>-<arch>-linux.tar.gz` and the old
-`kagi-<version>-<arch>.tar.gz`; the release workflow opts in to the old name
-with `--legacy-linux-name`. Remove that flag after publishing that release.
+as a legacy Linux tar. v0.44.0 published both the platform-qualified Linux tar
+and its transitional alias. From v0.45.0, require
+`kagi-<version>-<arch>-linux.tar.gz` and no platform-less alias. The workflow no
+longer opts into `--legacy-linux-name`. Inspect all 13 release assets and verify
+checksum coverage as described in `docs/RELEASING.md`.
 
 ## Tier A — native GUI E2E runner
 
@@ -55,6 +56,571 @@ with `--legacy-linux-name`. Remove that flag after publishing that release.
 wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
+
+For #1479-S4 use
+`KAGI_GUI_E2E_ONLY='sidebar_,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_'`
+with KEEP_GOING and a 300-second scenario timeout. Activate the native adapter
+with `native_ax::activate`, then refresh and draw before inspecting its tree.
+Naming assertions inspect `nodes[gpui_focus].aria.role/label`, not wrapper Groups
+or the fork's rendered-Input recorder. The sidebar Clear tests cover localized
+AppKit Press and pointer activation, empty absence and retained field focus.
+IME coverage calls the public marked-text handler in Sidebar, Commit body,
+Issue body and independent Settings, then dispatches Escape. This is native
+action-routing evidence, not physical macOS input-method or VoiceOver evidence.
+The old pin's Input action consumes IME Escape, but Kagi's negation-only global
+binding intercepted Commit/Issue body keys first. Preserve the regression's
+physical simulated Escape, rather than replacing it with direct action dispatch.
+The same scenario opens the real toolbar PopupMenu and checks one Escape closes
+only that menu (#1554), plus button-focused editing-action isolation. Both
+TextInput and MultilineTextInput are real AX input roles; unrelated root focus
+stops need not have a semantic AX node.
+The `compact_` gate includes `compact_layout_state` and
+`compact_layout_state_tall`: Escape in the co-author ListBox must retire its
+owner and restore `cp-coauthor`, not dismiss the containing composer.
+`compact_rail_nested_escape`, `compact_pr_menu_escape` and
+`compact_group_reveal_escape` check child-menu/reveal dismissal before the
+navigator, preserving opener focus. The complete Popover ancestry audit is in
+ADR-0014's #1479-S4 amendment.
+For #1479-S1 use `KAGI_GUI_E2E_ONLY='terminal_,status_bar_,relative_time_ja,cleanup_local_date,oplog_row_typography,issues_row_secondary_text,finder_scale_rest,home_heading,inspector_scale'`
+with KEEP_GOING. `terminal_font_fallback` checks real terminal configuration,
+font/zoom updates, session changes and restart, with Regular/Bold Japanese face
+references and terminal two-cell/cursor state. The native measurement probes
+carry the same explicit fallback as production shaping.
+
+Linux is an independent required lane, not a macOS substitute. Run
+`cargo test -p kagi-ui-core linux_cosmic_text_uses_bundled_fallback_for_regular_and_bold -- --nocapture`
+on Linux; it uses real CosmicTextSystem with system fonts disabled and compares
+each Han glyph's selected face to explicit Noto Sans JP. For a real Nerd primary,
+set `KAGI_TEST_NERD_FONT_REGULAR` and `KAGI_TEST_NERD_FONT_BOLD` to readable
+JetBrainsMono Nerd Font Mono static files, then run
+`cargo test -p kagi-ui-core linux_cosmic_text_nerd_primary_preserves_icons_and_japanese_fallback -- --ignored --nocapture`.
+That explicit lane fails if the font files are absent. Retain the actual Linux
+logs, architecture and tested commit; do not count the ignored default as PASS.
+In an isolated container with Noto CJK SC/JP installed, run
+`cargo test -p kagi-ui-core linux_cosmic_text_system_fonts_preserve_explicit_japanese_fallback -- --ignored --nocapture`
+in separate `LANG=ja_JP.UTF-8` and `LANG=en_US.UTF-8` processes. This test
+requires both competing families to be present and compares selected faces
+against the same bundled JP reference; it is shaping evidence, not a capture.
+The separate native acceptance in `docs/rearch/upstream-migration-1479.md`
+requires fresh JA/EN processes, private minimal/system-Noto fontconfig,
+X11/Wayland, terminal/reference images and the production diff/code, Inputs,
+TextView, UI and status surfaces. Include the independently prepainted
+`HoverHelp` tooltip, interactive `WorktreeHoverCard`, and `BranchDragGhost`:
+they do not inherit Kit Root's font. `hoverable_tooltip` bypasses `HoverHelp`;
+the explanatory-tooltip CI rule intentionally permits this interactive API.
+Read their effective inherited font in a child prepaint probe and compare Han
+FontIds with an explicit native Noto Sans JP reference; checking another freshly
+constructed `ui_font()` would miss this regression. Capture detached overlays
+separately (GPUI does not show them together). The system-Noto × JA negative
+control must fail if the tested root's explicit
+`.font(ui_font())` is removed. Never delete a user's fonts or change host
+fontconfig. #1479-S1b removed the patch on registry cosmic-text 0.19.0, with a
+review correction adding these independent-root cases; repeat the expanded
+matrix for the later #1479-S6 GPUI cutover.
+The detached-tooltip TestWindow regression runs with
+`cargo test -p kagi-ui-core --features gui-e2e,gpui/test-support tooltip::tests`.
+Retain native `toast_tooltip_lifetime`, `branch_drag_`, and `worktree_inspection`
+regressions as well; drag and interactive-card cases read the actual inherited
+font during prepaint. The worktree-card review correction observed a targeted
+X11 × JA × system-Noto FAIL → PASS; it did not rerun that card across all eight
+Linux combinations. Include it in the full matrix for the later GPUI cutover.
+
+For isolated Xvfb/Weston software rendering, install `mesa-vulkan-drivers`,
+`libgl1-mesa-dri`, `mesa-utils`, `vulkan-tools`, `x11-apps` and ImageMagick
+inside the container only. Check `glxinfo -B` and `vulkaninfo --summary`.
+Mesa lavapipe can initialize successfully yet present black X11 frames.
+The current pinned GPUI does not consume `WGPU_BACKEND` when constructing its
+backend mask: `WGPU_BACKEND=gl` alone is not sufficient. In that isolated
+environment, `LIBGL_ALWAYS_SOFTWARE=1` and `VK_ICD_FILENAMES` naming a
+nonexistent private ICD file force discovery to the working OpenGL fallback.
+Capture X11 with `import -window <PID-resolved-window-id> <png>` or xwd.
+For native Wayland, unset `DISPLAY`, set the private `WAYLAND_DISPLAY`, and
+run Weston with a rendering backend (`--use-pixman`, not the headless
+no-render default). A nested X11-backend Weston capture is compositor output,
+not an Xwayland application capture; record the native app PID and isolate
+the compositor to that app. Inspect actual glyph pixels and retain the
+face-identity assertions; merely counting non-black pixels is not acceptance.
+
+For #1514 use `KAGI_GUI_E2E_ONLY='update_,notice_'` with KEEP_GOING.
+`update_notice_in_flight` queues an installer completion with
+`e2e::queue_update_install` before clicking the real Update now button; it
+disables startup checking before mounting, so that scenario never contacts the
+update service. The held failure checks EN/JA × Apple Light/Dark × 100%/167%,
+inert pointer/keyboard Skip, explicit continuing Hide, retained offer/status,
+duplicate-start suppression and restored Skip/Later after failure. The seam
+is compile-gated; it does not install or relaunch the working app. Plain builds
+have no deterministic update fixture, so Tier B for this ticket is waived.
+
+For #1498/#1499, `KAGI_GUI_E2E_ONLY='oplog_,issues_'` retains the existing
+expansion/copy/keyboard oracles and adds `oplog_row_typography` and
+`issues_row_secondary_text` (`tests/recovery/density_rest.rs`). Their paint-stage
+font and vertical glyph-mask assertions cover EN/JA, Apple Light/Dark and
+100%/167%. Tier B compares the live Operation Log and Issues navigator.
+
+For #1225 compact layout integration, use
+`KAGI_GUI_E2E_ONLY='compact_layout_,commit_panel_,home_,toolbar_overflow,bottom_panel,analyze_a11y_,pr_detail_a11y_'`
+with KEEP_GOING and the unchanged 120s per-scenario deadline.
+The geometry matrix is partitioned across `compact_layout_geometry` (660px,
+100%), `_zoom167` (660px, 167%), `_tall` (1000px, 100%) and `_tall_zoom167`
+(1000px, 167%). Each runs all EN/JA × Apple Light/Dark cells through the
+same assertions and real rail interactions; the broad filter selects every
+partition. This bounds process runtime without dropping matrix cells.
+
+For #1491–#1494/#1502 use `KAGI_GUI_E2E_ONLY='compact_'` with KEEP_GOING.
+The seven-trigger AX matrix is a heavy scenario: use the permitted 300s native
+deadline rather than dropping EN/JA × 100%/167% × Apple Light/Dark cells.
+`compact_rail_cmd_f` retires the harness-provisioned filter for its first-shortcut
+leg, then checks the same rendered Input entity/value on reopen and at 1000px.
+`compact_rail_short_window` uses real 940×400@167% / 400×300@100% windows,
+wheel/pointer and Tab/Shift-Tab reveal plus the production legacy-size restore.
+With Local retaining keyboard focus, wheel input must still reach Issues and
+preserve the resulting offset across subsequent frames; focus reveal is one-shot.
+`compact_popover_sections` checks shared PR disclosure and Issue category
+callbacks, native focus-ring pixels and actual AccessKit role/name/state nodes.
+`compact_rail_ax` reads those nodes after keyboard toggle, Escape, outside click
+and owner/width/modal transitions. The native NSView accessibility entry point
+activates the real adapter; this is not a claim of VoiceOver speech.
+`compact_pr_popover_scroll` uses 33 natural-height PR cards, actual thumb drag to
+the track end, policy hide/reveal pixels, filter/disclosure extents and a fresh
+session-owned handle after repository switching. Observe inside flexible
+containers: wrapping them in an auto-sized measurement div changes the layout.
+The PR dashboard and Issue feed must not simultaneously mount the navigator's
+shared filter Input/chip focus slots. Tier B: compare the provided plain baseline
+with an isolated plain build at 900×500 in Apple Light/Dark, including high zoom,
+scroll to Issues, and open Cmd-F; capture only the launched PID's window.
+
+For #1513 use `KAGI_GUI_E2E_ONLY='palette_'` with KEEP_GOING.
+`palette_rows_ax_action` shares the native NSView activation and AccessKit node
+inspection helper with the rail. It checks result-owned Click actions and sends
+AppKit Press through the production adapter, with exact dispatch identities and
+counts for commands, themes and languages. Mouse down/up and Input Enter share
+the oracle; disabled results dispatch nothing. This proves native adapter
+delivery, not VoiceOver speech or IME behavior.
+
+For #1417/#1418 use
+`KAGI_GUI_E2E_ONLY='system_reduce_motion,system_reduce_transparency'` with KEEP_GOING.
+The in-memory system-display injection never writes macOS preferences. Both
+scenarios cover 940×660 / 1392×883, EN/JA and 100%/167%. Motion counts the actual
+loading/spinner animation-construction branches and freezes the panel clock to
+require immediate native pane geometry after system/app opt-ins. Transparency
+checks the production tile token's alpha/restoration, label contrast and Metal
+padding pixels of an actual PR tile. These injections do not prove native
+NSWorkspace notification delivery. Tier B: toggle Reduce Motion/Transparency in
+System Settings with an isolated running Kagi, compare pane/spinner and PR tile
+before/after without restarting, and restore both OS preferences afterward.
+
+For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
+`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
+role/name/value/expanded/disabled properties on Appearance controls in the native
+Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
+to the kit's actual focused Select root; confirmation and Escape preserve its
+identity and focus owner. Zoom retains kit activation and discrete caps, hands
+focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
+These probes are not native VoiceOver or Full Keyboard Access evidence.
+Tier B inspects the live ComboBox and option names and both zoom button/value
+nodes at 100%, 70% and 167%, including disabled announcements.
+
+For #1591 use `KAGI_GUI_E2E_ONLY='toast_,toolbar_overflow,settings_groups'`
+with KEEP_GOING and `KAGI_GUI_E2E_TIMEOUT_SECS=300`.
+`toast_tooltip_lifetime` measures the actual dismiss-tooltip content, requiring
+a visible hover positive control before leave, re-render, live trigger movement
+on resize, removal, preview replacement and timed exit; removal during the show
+delay must not create an orphan. `toast_tooltip_scroll` sends a real wheel event
+inside the 30%-height stack and collapses an older hovered card through its
+rendered accessibility action. Both cover EN/JA and clear old measurements before
+asserting absence. Lifetime first checks that the real inactive native window
+shows no help without any override. Positive/lifecycle cases then use the
+window-scoped `gui-e2e` active-input seam, not an alternate visibility branch.
+Pair with
+`cargo test -p kagi-ui-core --features gui-e2e,gpui/test-support tooltip::`:
+TestWindow checks cover no-input movement, deactivation before/after the show
+delay and fresh-hover recovery without that seam. Ordinary workspace tests
+also cover the pure cancellation predicate. Run
+`uv run --project ci check-all --selftest` and `check-hover-tooltip` to guard
+registration. These are not macOS foreground-activation evidence. Tier B remains own-PID hover/leave and
+deactivation screenshots in the isolated application; a locked screen cannot
+supply that evidence. The shared boundary must not add children to Kit Buttons,
+whose icon-only sizing depends on their child list.
+
+For #1336/#1337/#1338/#1341 use
+`KAGI_GUI_E2E_ONLY='diff_header_identity,toast_live_status,worktree_inspection_actions,clone_progress_status'`
+with KEEP_GOING. Diff identity observes the invoked full-path Tooltip and
+renderer-applied sanitized AX description while preserving header/hunk bounds.
+Its fixture uses supported 160px sidebar/240px Inspector widths so the high-zoom
+940px leg has a usable center slot; it does not claim to repair workspace
+overcommit with two default-wide side panes.
+Toast coverage checks four kinds and six consecutive arrivals per kind, stable
+newest-arrival role/name/identity through hover/ticks/animation and no focus
+stealing. The pinned GPUI API has no live-region/priority setter; these are
+Status metadata assertions, not native speech or exactly-once announcements.
+Clone checks operation-named elapsed Status across Reduce Motion and running
+ticks, keyboard Hide owner retention, and real success/error settlement.
+Inspection checks row Enter, Tab to named Refresh/local URL Buttons,
+Enter/Space once-only activation, inner-focus retention, Escape row return,
+owner departure, no-port absence, painted extra-small URL chip text and native
+Tab-map exclusion of pointer-only hover actions. All cover 940×660/1392×883, EN/JA,
+100%/167% and Apple Light/Dark. Neighbor filter:
+`KAGI_GUI_E2E_ONLY='diff_,toast_,clone_,worktree_inspection'`.
+Native VoiceOver, Full Keyboard Access and real-window focus remain Tier B.
+
+For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
+`status_bar_fit` mounts the production footer at 700×500 and 940×660 with
+1/120-character branch identity, status chips, refresh timer and Busy/Failed
+feedback. It checks full branch Tooltip/AX metadata, positive feedback width
+and nonoverlapping in-window panel controls across EN/JA, 100%/167%, both
+toolbar presentations and Apple themes. Probes are flow-neutral; renderer-fed
+metadata is not native VoiceOver delivery. Real hover/Tab and before/after
+screenshots remain Tier B.
+Review legs `status_bar_feedback_min` and `status_bar_short_branch` use the same
+matrix to preserve short Failed/Busy feedback beside a 25-character branch and
+the natural `main`-to-dirty-chip gap, unellipsized rounded text width and right
+footer padding with every chip (including at 700×500/167%). They fail before the
+feedback-first/natural-width/rounding policies. The original fit scenario also
+checks sanitized C1-control branch identity through the label/Tooltip/AX path.
+
+For #1321, `status_bar_busy_height` uses the same matrix and requires Busy
+feedback height not to exceed the actual footer height, with all feedback
+bounds contained inside the footer. The pre-fix spinner/text block stack was
+26.5px high inside a 20px footer at 100%. `status_bar_feedback_min` measures the
+text child's actual bounds, not its spinner-inclusive container; Busy reserves
+the unchanged scaled 10px spinner plus 4px gap in addition to its text budget,
+capped by actual remaining room. Run `KAGI_GUI_E2E_ONLY='status_'` with KEEP_GOING.
+
+`primary_button_states` (#1076) sends real hover / mouse-down events to a
+modal Primary and compares native Metal fill pixels for every built-in theme.
+The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
+without the platform feature `Window::render_to_image` returns the default
+not-implemented error. Default application builds keep capture disabled.
+
+For #1515 use `KAGI_GUI_E2E_ONLY='editor_history,editor_'` with KEEP_GOING.
+`editor_history_fetch_error` queues an `Err` through `e2e::queue_editor_history`
+at production `start_editor_history_load`; it does not seed the view directly.
+EN/JA × Apple Light/Dark × 100%/167% checks cause/empty separation, real Tab
+and Enter/Space Retry dispatch, successful commits, successful zero entries,
+stale A-after-B rejection and mode/commit ownership. The cause includes ESC/BEL
+and 500 long lines: raw state remains complete, renderer-fed text contains visible
+escapes and a bounded preview, and native Retry bounds remain inside the History
+viewport throughout the matrix. The seam replaces only the transport Task and is
+compile-time GUI-only. Tier B uses a disposable
+repository copy and a real Git read failure, restores it, then retries in the
+same pane; screenshots and native AX are separate from renderer-fed text.
+
+`inactive_selection` (#1176) measures selected repository-tab and conflict-row native
+Metal fills across key/non-key/reactivated presentation, with unchanged bounds,
+selected session and selected file. `KagiApp::set_window_active_for_e2e` overrides only the
+activation input under `gui-e2e`; it never activates an OS window or takes the
+user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
+for all-preset primary-label contrast.
+
+For #1468 use
+`KAGI_GUI_E2E_ONLY='selection_on_accent,inactive_selection,sidebar_rows,pr_lane_selected,commit_panel_selection_hover,graph_'`
+with KEEP_GOING. After #1485, `selection_on_accent` checks the native 30%
+system-blue Graph wash over ordinary stripes, normal summary/ref-chip/secondary
+label paint, non-key grey, retained identity/geometry and native primary-button
+labels across all presets. Sidebar and Commit Panel selected segments must
+instead paint neutral grey and retain ordinary foregrounds in both activation states.
+See [ADR-0125 amendment](../../../docs/adr/0125-apple-hig-themes.md#amendment--2026-10-13-finder-style-on-accent-labels-1468).
+Pair with UI-core `selection_on_accent` / `finder_accent` and system-accent
+injection tests. The scenario also exercises selected PR sidebar cards and
+enabled menu hover/keyboard highlights, including explicit child-label paint.
+Tier B uses the plain build, isolated profile and a copy of the stress fixture:
+Apple Light/Dark selected Graph/file/PR sidebar rows, neutral segments,
+accent-filled primary buttons and menu-hover PNGs,
+plus one owned Finder list window/file selection captured by window ID and
+closed afterward. Active-window screenshots require owner-authorized brief
+activation of only the launched PID, with the prior foreground app restored.
+For #1485 run `KAGI_GUI_E2E_ONLY='selection_on_accent,graph_,inactive_selection,system_accent'`.
+`graph_selection_wash` covers Apple Light blue / Dark yellow × 100%/167%,
+both zebra stripes, lane-band tint beneath the wash, normal semantic chip and
+label colours, ≥4.5:1 primary-ink contrast, retained geometry/selection and
+inactive grey for commit/WIP rows. Updated pixel oracles: the Graph legs in
+`selection_on_accent` and `system_accent_chrome`; the latter's left selection
+bar remains opaque accent. Non-Graph #1468 fill/foreground oracles are unchanged.
+Tier B compares selected Graph rows before/after in both themes and zooms.
+
+For #1348 use `KAGI_GUI_E2E_ONLY='editor_find_controls_a11y,editor_'`
+with KEEP_GOING. The regression opens the actual pinned code-editor SearchPanel,
+compares its Button role/name/toggled assignments, measures real button bounds,
+and hovers each control to observe invoked Tooltip builders in EN/JA,
+940×660 / 1392×883, 100%/167% and Apple Light/Dark. `Window::focus_next`
+traverses rendered stops; F19 records the control receiving the simulated key.
+Enter/Space exercise navigation, case matching, replacement disclosure,
+Replace/Replace all and Close. Escape returns to the owning code buffer,
+replacement stays unsaved/undoable, and a live locale switch retains the query.
+The ownership leg focuses the replacement-disclosure Button, then sends
+Select All / Backspace / Delete / word deletion / Paste / Cut / Undo / Redo /
+movement keys and asserts that the hidden code buffer never changes. It also
+checks that the case Button cannot edit its containing query and that a native
+padding click directs editing to Find. Actual Issue-body and Conflict-Result
+hosts check initial and retained EN/JA names/help, without replacing their inputs.
+The fork's `test-support` feature is enabled only by the Editor's `gui-e2e`
+feature; normal builds retain no probes. This is renderer/tooltip/simulated-input
+evidence, not physical Tab, Full Keyboard Access, VoiceOver or live IME.
+Tier B: in the real EN/JA Editor window open Cmd+F, Tab through the controls,
+inspect names/help/toggle states in Accessibility Inspector, activate them,
+and check Escape focus return, composition, replacement undo and guarded Save.
+
+For #1301 / #1302 use `KAGI_GUI_E2E_ONLY='activity_,bottom_panel'` with
+KEEP_GOING. `activity_granularity_keys` checks the five existing periods'
+Tab roles, localized names, selected state, one Tab stop, actual focus
+handles, Left/Right/Home/End/Enter/Space dispatch and native selected-fill
+pixels on hover in active/inactive windows. `activity_bucket_a11y` checks
+0/1/24 buckets' Status names against UTC date/time + commits/merges/authors,
+one roving stop, arrow/Home/End boundary inspection and identical immediate
+hover/keyboard readouts. The actual chart/legend painter records successful
+solid/dash/gap/knockout segment counts and the single-point fallback branch.
+`activity_equal_series_encoding` compares native merge-gap pixels with nearby
+unpainted pixels over equal commit/merge values and 0/0 baseline segments,
+including the legend; do not derive the expected background from the painter's
+theme token. `activity_single_bucket_encoding` requires a genuine two-dash merge
+mark and knockout gap, not the former solid fallback or a clamped counter.
+All four scenarios cover 940×660 / 1392×883, 100%/167%, EN/JA and
+Apple Light/Dark; axes and legend must fit.
+Pair with `cargo test -p kagi-domain activity` for per-bucket distinct raw
+email aggregation, and `cargo test -p kagi-ui-core activity_bucket` for
+localized 0/1/plural units. Renderer metadata is not native VoiceOver or
+real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
+both ends with the keyboard, verify the selected fill on hover and the
+dashed merge legend/line, then read each bucket in Accessibility Inspector.
+
+For #1510 use `KAGI_GUI_E2E_ONLY='activity_'` with KEEP_GOING.
+`activity_bucket_hit` and its Light-100/Dark-100/Dark-167 partitions deliver
+pointer events to the actual painter-recorded coordinates of both series for
+48/42/30/52 buckets. Each covers the ordinary 940×660 layout and exact
+260/400/600 logical-pixel plots at its theme/zoom. The RAII `PlotWidth` probe
+changes layout only: the production canvas and overlay receive identical bounds.
+Bucket index, UTC Status date/count and immediate keyboard/pointer readouts
+must agree; Home/Right inspection and End/Left/Right retain the matching mark
+inside the focus region. The existing four activity scenarios retain empty,
+single-point and coincident-stroke coverage. Use the heavy 300s native deadline
+when running this matrix. Tier B: hover an actual chart mark at 167% in Apple
+Light/Dark and capture the isolated app's own window ID; painter metadata is
+not native VoiceOver evidence.
+
+For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
+`conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
+Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,
+and compares Enter adoption with the measured pointer control. It exercises
+Space, both orders, line-level Partial state, file-side Use all, Result
+undo/redo, viewport containment and zero repository writes/receipts at
+940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
+The F19 probe observes only the actual focused owner; AX metadata records
+renderer-supplied role/name/state, not native VoiceOver delivery.
+`conflict_resolver_rebuild` replaces a retained path's model with changed hunk
+and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
+checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
+operation, and order selection is announced independently of adoption.
+Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
+the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
+and read live EN/JA adoption names in Accessibility Inspector. Do not Save
+while comparing buffer-only adoption with pointer behavior.
+For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
+`graph_columns_fit` covers both the exact 1000×660/167% desktop breakpoint and
+the 940×660/167% compact rail, requiring a scaled 120px subject minimum, contained author/time,
+native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
+It pins the before x positions at 1392×883/100%, preserves saved width keys
+and preferred widths through resize/zoom, and leaves existing divider-drag,
+subject-tooltip, copy, selection and worktree scenarios in the neighbor selection.
+The pre-compact 940px reproduction had subject x=886.5 width=0, author ending at
+1031 and time starting there; these historical positions are not compact pins.
+`graph_columns_compressed_drag` delivers positive native drags to both capped
+dividers at 1000px/167%, requires preferred widths/settings to stay unchanged, then widens and
+pins the original x positions. `graph_columns_inspector_fit` covers 1440px/167%
+with sidebar 240px and Inspector 360px in EN/JA: subject floor yields below 120px
+while author/time remain contained. Before review: GRAPH preference fell from
+176 to 47.900204 after a capped expansion; the Inspector leg retained the full
+subject floor instead of yielding. Both review regressions pass after correction.
+Tier B: compare the two real viewports with a long author in EN/JA, resize/zoom
+back and forth, drag both column dividers, relaunch to check saved preferences,
+and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
+
+For #1355 use `KAGI_GUI_E2E_ONLY='pane_budget_'` with KEEP_GOING.
+The desktop fit and sidebar-anchor scenarios use the exact 1000px breakpoint
+at 167% after compact integration; the 700px leg requires a contained rail and
+no desktop side-pane clips, with preferred widths unchanged. Pure unit tests
+retain the sub-minimum non-collapsed fit cases.
+
+For #1550 use `KAGI_GUI_E2E_ONLY='window_,restore_'` with KEEP_GOING.
+`window_min_size` checks restore clamping and reads the actual `NSWindow`
+`contentMinSize` (940×660) with objc2. Its renderer resize leg must first
+observe 1000×720, then change to the inspected native minimum; beginning at
+the expected minimum would permit an undelivered request to pass.
+The hidden runner cannot prove AXSize delivery: same-process AX requests
+returned -25208 and an external runner child returned -25204, including an
+offscreen-visible attempt. The legacy NSWindow accessibility setter was a
+no-op. Do not treat any of those as successful runtime resize evidence.
+Tier B must use external Swift `AXUIElementSetAttributeValue(AXSize)` against
+the isolated plain app's PID, request 200×150, and confirm 940×660 with both
+AX readback and the PID-owned CGWindow bounds. Capture EN/JA at 100%/167%,
+the compact rail and toolbar overflow; attach `evidence.json` with images.
+
+For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
+with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
+across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and
+requires Pull/Push below the old selected-only 100px-floor fit threshold.
+`toolbar_no_overlap` includes 700×500 with long repository/branch names in both
+toolbar presentations, alongside the existing 940/1000/1392 widths. It checks
+every visible control's outer focus-border bounds and the real Git-group bounds
+against workspace controls. Repository-group recording uses `measure_inside`,
+not a feature-only wrapper that changes flex sizing. Absolute natural-width
+canvases exclude the fixed 2px border on each side: icon-only fitting must add
+those 4px just as caption fitting does, and hidden natural probes carry the same
+border. The 500px-tall leg is geometry-only; existing 660px legs retain overflow
+activation, shortcut, unavailable-reason and PTY-focus coverage.
+Before the tiny-window correction, the native 700×500 / EN / Icon Only / 100%
+leg recorded Terminal x=483.5..512 intersecting Graph x=495.5..524. Tier B should
+compare the real 700×500 JA toolbar with a long repository/branch identity at
+100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
+
+For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
+`conflict_file_selection` finds the actual dashboard Next button through real
+Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard
+owns the window's last Tab stop (#1222 added status-bar stops). Space and Enter
+must paint the same inactive `#d3d3d3` selection and selected AX option; pointer,
+hover, editor navigation, binary cleanup and draft-resolution assertions remain.
+The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
+for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
+checks that the retained stash has no write lease before explicit approval,
+confirmed Drop records exactly one successful receipt, and root Return leaves
+the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
+and close/reopen owner lifetime remain covered. These are native Tier A oracles,
+not a change to product safety or Tier B evidence.
+
+For #1298 / #1299 use
+`KAGI_GUI_E2E_ONLY='settings_provider_keys,settings_analyze_ignore_feedback'`
+with KEEP_GOING; run `settings_` for the neighboring baseline. These two
+scenarios explicitly select the production 715px macOS Settings host in
+EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
+renderer's named selected Tab recorder and real Enter/Space down/up after
+focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+values and no generation modal. Analyze clicks actual visible/scroll-reachable
+Save/Reset controls against a directory at the target path and a mode-000
+settings directory: errors retain the draft/dirty marker and original bytes;
+removing the obstacle permits Save/Reset and quiet confirmation. Toast dismissal
+uses the real named close control, not direct stack mutation; keyboard dismissal
+also Tabs to the close control while both hosts render the shared stack, then
+checks pane Left/Right and native Cmd+W after removal. Tier B still owns
+provider/model Tab traversal, focus-visible rings, VoiceOver names,
+selected/unavailable state and native toast appearance.
+The persistent-error host-handle unit uses opt-in GPUI test support, without
+launching the native runner:
+`cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
+
+For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
+six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
+cleanup. Owner-release coverage starts a real fetch ticker, closes its repository
+root and asserts the entity is released and Settings closes while another
+repository stays usable. Position coverage reopens three times and exercises
+repository Cmd-Q with Settings still open, quit-time flush and root recreation
+without a Settings-close save. Dock coverage uses the production typed-root
+decision and saved-session restore with only Settings remaining.
+Existing `settings_*`, `platform_menu_*` and
+`filter_menu_then_settings` scenarios deliberately select the portable overlay
+host; none of their assertions are removed. An RAII host guard restores the
+selection even on panic; ordinary launches always use the native macOS host.
+Pair native geometry coverage with `cargo test -p kagi-ui-core settings_window_`.
+The existing isolated-child store harness checks 100 production frame writes
+cost at most two successful commits, preserve the final "x,y,height" value, and
+migrate/remove the obsolete position/height pair exactly once.
+Tier B must list **both** CGWindow IDs for the PID it launched and capture the
+Settings ID with `screencapture -l<id> <path>`; PID-first capture selects the
+repository rather than Settings. Check Cmd-comma raise, Cmd-W independent
+closure, native traffic lights, restored position/pane/height (also after app
+quit while Settings remains open) and live preferences.
+Escape is deliberately not a window-dismiss command; check editing-field/IME
+behavior separately. Native hidden-window assertions do not prove OS activation.
+For #1227 use `KAGI_GUI_E2E_ONLY='commit_panel_i18n,commit_panel_viewport,commit_row_layout'`.
+`commit_panel_i18n` draws Apple Light/Dark at 1392×883/100% and 940×660/167%,
+changes JA→EN→JA→EN on the same panel, compares renderer-fed captions plus AX
+name/role assignments with Msg, checks selector selection state, measures containment
+and ≥20 logical-pixel hit heights, clicks Tree, and preserves Template data verbatim.
+The feature name Commit Panel and operation-button names intentionally stay English.
+The AX recorder proves the renderer assignment, not native VoiceOver delivery.
+Tier B remains a real-window comparison of Japanese headers, batch actions and
+unchanged user Template text; `commit_panel_viewport` retains composer geometry.
+
+For #1306/#1307 use
+`KAGI_GUI_E2E_ONLY='graph_subject_identity,inspector_full_message'` and retain
+`graph_,inspector_,detail_` as the neighboring filter. The subject scenario
+compares complete sanitized 71/72/73/300-character and CJK/emoji identities,
+drawn AX names, 29-reference-px row density, author/time geometry, and real
+row-hover Tooltip content and viewport-contained bounds in EN/JA, Apple
+Light/Dark, 100/167%, at 940×660 and 1392×883. The 300-character subject
+must wrap rather than overflow the narrow viewport. The row-wide Tooltip
+also works when existing narrow, high-zoom column widths leave the visible
+subject no space; this does not claim to fix that pre-existing column layout.
+
+The Inspector scenario keeps 1,999/2,000/2,001/10,000-character messages plus
+an 85-paragraph sanitized CJK/emoji message. Its renderer-fed source/HTML,
+complete co-author/trailer counts and full-message clipboard assertions run
+over the same matrix. A real wheel reaches the last trailer inside the
+bounded message frame while the changed-files frame stays fixed; warm draws
+leave SHA-keyed derivation counters unchanged. Native VoiceOver and real
+selectable-text keyboard behavior remain Tier B.
+
+For an opt-in stress measurement, set
+`KAGI_TEXT_CAPS_STRESS_REPO=<read-only 121-local-branch fixture>` and select
+only `KAGI_GUI_E2E_ONLY=text_caps_warm_render`. The native runner mounts that
+real repository, selects its top commit, settles 20 draws, then prints the
+median of 31 batches of ten forced warm draws (milliseconds per frame).
+Compare the same fixture, harness, build profile and presentation state;
+alternate frozen before/after binaries three times each after gates finish
+to mitigate concurrent-compilation noise. This is warm render evidence,
+not application FPS or a cold-load benchmark.
+Without `KAGI_TEXT_CAPS_STRESS_REPO`, the stress scenario prints
+`[gui-e2e] SKIP text_caps_warm_render` and returns before opening a window;
+broader substring filters such as `caps` or `warm` do not require that fixture.
+
+For #1229–#1231 use
+`KAGI_GUI_E2E_ONLY='commit_panel_segment_keys,commit_panel_footer_tab_order,commit_panel_coauthor_keys'`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. The regressions deliver simulated keys to
+production focus handles: one roving List/Tree stop; body → Template → Generate
+→ co-author → Amend → available Commit; inert unavailable actions; Template
+pressed state; and twenty long-name/email co-author candidates with tail
+scrolling, duplicate-safe trailer insertion, empty candidates and Escape focus
+return. AX assertions compare both role and localized name assignments. Pair
+with `commit_panel_,commit_row_layout,smart_` for the existing neighbors.
+These renderer/simulated-input assertions do not prove Full Keyboard Access,
+VoiceOver or IME behavior; Tier B compares those in the real EN/JA window.
+
+For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
+`settings_quiet` measures inherited heading colour/size/weight and Metal pixels
+for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes
+and injected blue/purple accents; adjacent pixels enforce literal 1px width.
+`settings_radio_dot` renders the actual pinned Radio component and checks a
+symmetric contrast-preserving primary-foreground centre, surrounding accent
+and empty unchecked input fill in both themes at both zooms, with explicit
+Theme accent and blue/purple System accent (Dark Theme requires a dark dot).
+Public `e2e::measure_control` permits native component probes to reuse the app's
+bounds recorder; default builds retain its pass-through. Shared non-E2E
+`measure_inside` placeholders are absolute and zero-sized: the unit
+`measure_inside_placeholder_is_out_of_flow` prevents flex/gap layout changes.
+These renderer assertions are not real keyboard, VoiceOver or Tier B evidence.
+
+For #1200 use `KAGI_GUI_E2E_ONLY=settings` for the complete Settings matrix.
+`settings_groups` checks semantic card bounds, native base-fill pixels and page
+wheel ownership at 1392×883, EN/JA, 100%/167%; ordinary controls fit when
+reached and the unchanged oversized Analyze editor has separately reachable
+edges. It measures Analyze's vertical padding/gaps and ordinary descriptions
+of at most two lines at 100%. Real mouse-move events plus the Tooltip delay
+exercise avatar/custom-theme/Analyze help builders in both languages.
+`settings_view::take_settings_help_for_e2e` consumes only text actually passed
+to an invoked Tooltip builder; each hover clears old observations first.
+This is renderer/tooltip-construction evidence, not native VoiceOver delivery.
+
+For #1271/#1272 use `KAGI_GUI_E2E_ONLY=palette_` with KEEP_GOING. The
+`palette_highlight` scenario compares native row-fill pixels with the one AX
+selected result, moves the pointer to a different real row, scrolls beneath the
+resting pointer (including same-coordinate move replay), and presses Enter;
+unavailable rows stay inert. `palette_shortcut_glyphs` reads renderer-fed
+captions and measures non-overlapping, right-aligned trailing-column bounds
+at 940×660 / 1392×883, 100% / 167%, EN / JA, Apple Light / Dark.
+Only the exact KEEP_GOING child for this scenario installs its saved remaps/
+unassignment **before** `init_app`, because `effective_keystroke` caches settings
+during production startup; changing settings after keymap registration would
+not test remapping. Other same-process scenarios retain their normal bindings.
+The guard restores those isolated startup keys after the run. Native pointer
+delivery, IME and VoiceOver remain Tier B, not claims from TestDispatcher.
 
 ```bash
 # One scenario: the substring the scenario name contains.
@@ -72,6 +638,38 @@ KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='modal_compact,modal_sections' \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
+
+For #1175/#1182 use `KAGI_GUI_E2E_ONLY='pr_dashboard_responsive,palette_viewport'`.
+The dashboard measures Apple Light table/viewport bounds at two widths, EN/JA,
+100/167% and Scrolling/Hover/Always policies: Scrolling overlays with zero lane;
+non-auto-hide Hover/Always reserve 16 logical px and pin the table bar to Always.
+The 940px compact dashboard retains its rail while Cmd-B changes the shared
+Sidebar preference; the 1440px desktop dashboard toggles its inline Sidebar.
+Both zooms use the same 1000-logical-pixel breakpoint (ADR-0224), and neither
+viewport is substituted to satisfy the old inline-only oracle.
+X/Y routing and trailing-column reachability stay intact. `e2e::chrome_border`
+records explicit rendered border styles for table
+rows/header and palette frame/divider; it is not a screenshot-pixel sample.
+Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
+and toolbar scenarios. Real fading, macOS preference changes and JA IME are
+Tier B comparisons, not TestDispatcher assertions.
+
+For #1352 use `KAGI_GUI_E2E_ONLY='pr_dashboard_'` with KEEP_GOING and a
+120-second child timeout. The draft-contrast matrix is split into four
+Light/Dark × narrow/wide children so every native capture fits the timeout,
+without dropping EN/JA, 100%/167% or rest/hover × active/inactive coverage.
+Production cell bounds select actual Metal glyph-interior and blank-background
+pixels for titles, number, author, age and the localized Draft state; inherited
+row opacity is included in the captured pixel, not replaced with theme RGB.
+Draft/ready rows retain identical title/author/age facts and the ListItem name.
+The same children also draw a local draft with Conflicting status: a GUI-only
+fixture seam seeds L2 freshness, while production classification must retain
+Needs You's blocker-coloured STATE. The plain Draft reason alone is muted.
+There is no selected dashboard row state. Pair with the ui-core
+`apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds` unit test.
+Tier B remains a real-window comparison of draft/ready rows and opening a draft
+in Apple Light/Dark; native VoiceOver and Full Keyboard Access are not proven
+by the recorder or image contrast.
 
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three
@@ -100,6 +698,17 @@ exits nonzero after reporting each scenario as filtered out.
 the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
+
+For Graph motion (#1617), scope `graph_selection_crossfade,graph_commit_insert_motion,graph_wip_insert_motion,graph_target_crossfade,graph_unborn_wip_motion,graph_activation_motion_reset,graph_mode_motion_reset,graph_insert_motion_hit_targets`.
+These opt into the frozen motion clock; ordinary GUI scenarios remain instant.
+Also run `graph_over_row_folder_drop,graph_stash_pointer_focus`: clicks must not suppress ancestor external drops or focus-on-mouse-down.
+`graph_insert_motion_hit_targets` also right-clicks genuinely visible current-WIP/closing-ghost strips, checks real commit/stash/linked-worktree menus in compressed geometry, and drops a real external folder through the ghost at 100% and 167% zoom.
+`graph_mode_motion_reset` hides genuinely mid-flight Graph behind PRs/Issues/Editor, accepts a hidden commit read, and returns at the same frozen time; the first visible frame must already be settled, while subsequent live WIP changes still animate.
+The existing `KagiApp::hold_next_snapshot_for_e2e` seam holds the next reload
+or tab activation/initial snapshot before backend work, only under `gui-e2e`.
+`graph_activation_motion_reset` draws the cached/empty view while that real
+read is held, then releases it and requires immediate final WIP presentation;
+subsequent cheap live status changes must still animate.
 
 The runner stops at the first failing scenario (exit 101). To collect every failure of a selection in one run, add `KAGI_GUI_E2E_KEEP_GOING=1` (it refuses to start without `KAGI_GUI_E2E_ONLY`): each scenario runs alone in a re-executed runner process with its own process group, one at a time; the whole group is killed after `KAGI_GUI_E2E_TIMEOUT_SECS` (default 600) and whatever it left running is killed when it ends.
 The run ends with `[gui-e2e] KEEP_GOING summary: …` and one `PASS <name>` or `FAIL <name>: <exit status | timeout> — evidence <dir>` line per scenario (the dir also holds `exit.txt`), then exits 1 if any failed.
@@ -158,8 +767,24 @@ Restoring state:
 - A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`,
   and `gui_isolation::StandInShell::install()` unless it sets its own seam shell
   (`KagiApp::set_terminal_shell_for_e2e`). The stand-in is a `/bin/sh` script
-  that reads lines until `exit` or EOF; its PID and cwd are real, so the
+  that reads lines until `exit`, `exit N` (returning code N) or EOF; its PID and cwd are real, so the
   auto-lock cwd probe and exit delivery behave as with a login shell.
+
+For #1273 use `KAGI_GUI_E2E_ONLY='terminal_states,terminal_auto_lock'`.
+`terminal_states` measures NotStarted / Exited(3) / Failed(reason) icon, title,
+hint and Primary Restart bounds in EN/JA at 100%/167%; Enter/Space and pointer
+activation use the existing spawn seam. Failed starts target a nonexistent
+fixture binary, never `$SHELL`; the OS reason and unchanged failed-start
+Operation Log path are retained. Real tab round-trips preserve Exited/Failed
+without another spawn; Restart alone retries. Native log-tail assertions require the
+unchanged shell-exited line once, before the shell-wait status line. The
+recorder proves renderer state, not real VoiceOver or Tier B focus delivery.
+The wait-error leg uses `KagiApp::set_next_terminal_wait_error_for_e2e`:
+the next spawned StandInShell is really waited/reaped before its result is
+replaced by an I/O error. The presentation must become Failed with its reason
+and recover through Restart; provenance stays Unknown, with no unlock offer
+and no shell-exited log line. JA asserts localized `（終了コード N）` and
+the existing `shell` spelling. The one-shot seam compiles only with gui-e2e.
 
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`
@@ -186,6 +811,18 @@ The current suite covers:
   selection, or toast IDs. A themes folder that cannot be listed (mode 000)
   keeps the loaded themes and the selection and names the folder in a toast.
   Startup loads before the window exists.
+- system chrome accent (`KAGI_GUI_E2E_ONLY=system_accent_chrome`,
+  `tests/recovery/system_accent.rs`): #1181 uses a scoped thread-local
+  `theme::AccentInjection` to draw five detected colours under Apple Light/Dark
+  without reading/writing the person's defaults. Dark with an unspecified
+  source must keep yellow chrome; Light defaults to System. Explicit System
+  primary/Input/custom keyboard-ring/graph-bar pixels match the detected colour;
+  Theme accent restores the preset's fixed Blue/Yellow. Source changes keep
+  control and label bounds fixed. Unit coverage includes all chromatic accents,
+  graphite, label contrast, selection derivation and isolated settings migration.
+  Tier B: Settings → Appearance shows the detected Mac name in EN/JA; compare
+  System/Theme accent and return to Kagi after changing Appearance. No test
+  command may write AppleAccentColor.
 - file tree accessibility (`KAGI_GUI_E2E_ONLY=file_tree_roles`,
   `tests/recovery/file_tree_a11y.rs`): #354 Editor Workspace and Commit Panel
   render named EN/JA Trees with TreeItems carrying file status, selection,
@@ -204,6 +841,42 @@ The current suite covers:
   remain unchanged, and admission releases. Existing successful Enter/button
   removal legs still run. Tier B: right-click a locked linked worktree, open
   Remove, press Enter on the blocked plan, and inspect the notice in EN/JA.
+- diff estimated extent (`KAGI_GUI_E2E_ONLY='pr_diff_extent,editor_diff_extent_unchanged_reload'`,
+  #1122 / [ADR-0222](../../../docs/adr/0222-diff-list-estimated-height.md)):
+  seven native scenarios use production reads and real wheel events, not installed
+  test rows, hints or scroll offsets. `pr_diff_extent_unified` / `_split` assert
+  initial global extent, one huge wheel reaching the true tail and return to the
+  first row; `_reflow` asserts a fractional reading anchor across width changes;
+  `_threads` asserts measured-node splicing, expansion geometry and collapse
+  retiring expansion height; `_source_recolor` asserts equal-count source replacement
+  invalidates heights while recoloring preserves identity and position;
+  `_same_selection` asserts same-file re-click / reload retains the reading position;
+  `editor_diff_extent_unchanged_reload` asserts one huge wheel reaches the actual
+  Editor tail and unchanged reload retains source identity and position.
+  Fork: `https://github.com/TomiXRM/zed`, rev
+  `caf5007618c309a8ea66002d44a9c9ab629a2d35` (pending upstream).
+  Rows that fit must be fully inside the viewport. An oversized tail must
+  bottom-align within 1px, with its top above the viewport; an oversized first
+  content row must return to native item 0 / offset 0, its hunk header top-aligned
+  within 1px and its own top at header.bottom within 1px, extending below the viewport.
+  A thread card taller than viewport.height − badge.height requires a fully visible
+  badge, card.top ≥ badge.bottom − 1px, body.top inside the viewport and body inside
+  the card; otherwise both card and badge must fully fit. Collapse removes one item,
+  restores item 9 to code-row height (row 8 ±1px), and decreases extent by a positive
+  amount at least expansion.height − viewport.height.
+  Before for `_same_selection`: save a toggle patch reverting only the three
+  `src/ui/pr_mode.rs` logic hunks (same-file / commit short-circuits and reload's
+  `highlight::install` / adopt), **keep the recorders**, apply it with `git apply`,
+  and run the exact same filtered oracle. The recorded Before fails at
+  `tests/recovery/pr_diff_extent_same_selection.rs:260` on reading-position reset;
+  restore with `git apply -R` and rerun unchanged (recorded PASS).
+  The recorded patch was `/tmp/kagi-hig-audit-20261008/before-same-selection.patch`;
+  recreate it from the named logic hunks if that local artifact is unavailable.
+  Genuine Before failures also cover GPUI
+  `test_estimated_end_resolves_taller_tail_without_following` and the Editor
+  tail remaining outside the viewport after one huge wheel. Acceptance records
+  GPUI unit 30/30 and all seven native oracles PASS; no FPS / CPU claim.
+  Tier B real-app comparison is pending.
 - refusal reasons (`KAGI_GUI_E2E_ONLY=refusal_reasons`,
   `tests/recovery/refusal_reasons.rs`): #353. For delete-branch (current
   branch, two blockers), push (no remote), pull (no upstream, the core's
@@ -226,6 +899,8 @@ The current suite covers:
   `tests/recovery/reconcile_unobservable.rs`): measured native clicks exercise
   Inspect → arm → final confirmation in EN/JA. The armed warning is drawn;
   Escape and modal displacement discard the arm without releasing the requirement.
+  Escape now dismisses the presentation until a fresh explicit write request
+  (#1366); the scenario re-enters through a real Fetch admission refusal.
   A real append-lock failure preserves the requirement and writer exclusion,
   leaves no durable release row, and renders a Partial receipt rather than raw
   Unknown in the panel. Restoring persistence and confirming again records exactly
@@ -235,6 +910,16 @@ The current suite covers:
   its controls outside the window.
   App-level tests in `app_unobservable_release_test` additionally reject live writers,
   mismatches, failed transports, unknown families, and failed audit persistence.
+- actionable-notice dismissal (`KAGI_GUI_E2E_ONLY='app_notice_,alert_focus_notice,modal_,reconcile_unobservable_release'`,
+  KEEP_GOING): `app_notice_escape_dismiss` and `app_notice_acknowledge_dismiss`
+  exercise EN/JA Escape, five renders, opener focus, non-editing Return and fresh
+  refusal recurrence. `app_notice_queue_recurrence` parks a real panicked checkout
+  in a reconciling queue, dismisses its notice and explicitly enqueues Checkout
+  through `e2e::enqueue_checkout`, which forwards to the unchanged production
+  enqueue boundary (no manufactured queue state or mutation result). It checks
+  active/queued Inspect/Acknowledge deduplication and five subsequent queue ticks
+  without re-presentation. The native dispatcher assertions do not establish
+  live VoiceOver or IME behavior; Tier B checks those and the restored opener.
 - conflict Continue cache (`KAGI_GUI_E2E_ONLY=conflict_continue_cache`,
   `tests/recovery/conflict_continue_cache.rs`): real Result InputState changes
   cover omitted final LF, empty text versus a blank line, marker addition/removal,
@@ -257,6 +942,20 @@ The current suite covers:
   Tier B: open Analyze → Health on a repository without a commit-graph and
   with `core.fsmonitor` unset, check the EN/JA texts, open each fix, read
   the plan card (equivalent command, recovery) and Cancel, then confirm one.
+- Analyze accessibility (`KAGI_GUI_E2E_ONLY=analyze_a11y`, KEEP_GOING recommended,
+  `tests/recovery/analyze_a11y.rs`): #1265–#1268 uses synthetic FileMetric data
+  with the production bounded renderer, not a real Git mine. EN/JA, 100/167%,
+  Apple Light/Dark, 940×660 and 1392×883 assert named selected Tab controls,
+  actual arrow/Enter/Space dispatch, coupling expanded state, inert disabled Copy,
+  model-matching risk text/AX descriptions, exact 150/300 render caps and a
+  localized Status notice only above the cap. Help uses the single ActiveModal
+  slot, named dialog, Tab/Shift+Tab trap, Escape and exact opener focus return.
+  Attribute probes record where renderer semantics are installed; these are
+  not native VoiceOver assertions. Keep `repo_health_proposal` and
+  `ecosystem_evidence_` alongside it. The behavior-preserving shared TabList
+  extraction additionally runs `commit_panel_segment_keys,editor_toggle_keys,home_,tabs_,workspace_mode`.
+  Tier B: compare toolbar focus/disabled Copy, List/Map numeric risk and capped
+  notices, coupling disclosure, and Help scroll/Escape/opener focus in EN/JA.
 - text-first diff highlight (`KAGI_GUI_E2E_ONLY=diff_highlight`,
   `tests/recovery/diff_highlight.rs`): #495. WIP, Compare and File History
   diffs are read off the UI thread and first appear as unhighlighted text
@@ -368,6 +1067,30 @@ The current suite covers:
   Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
   on 2026-10-01 that the terminal-focus case is what left Escape unmatched
   (`key: "escape"` printed, modal open) while Enter still reached the slot.
+- Command Palette selection scroll (`KAGI_GUI_E2E_ONLY=palette_selection_scroll`,
+  `tests/recovery/overlay_focus.rs`): #1069. Real arrow and wheel input checks
+  the selected row's drawn bounds and preserves manual scroll until the next
+  selection input. The gui-e2e-only scroll accessor observes the existing
+  production `ScrollHandle`; it does not drive selection or replace the list.
+  Pair with `palette_push_modal_keys,settings_close_returns_focus` for overlay
+  ownership. Tier B: open Cmd+P, move beyond the first viewport, wheel away,
+  then press Down and inspect the visible selection. Filter a custom-theme
+  list with 100 entries in JA at 70% and 167%, inspect its last result, and
+  check empty-result Enter and Escape/reopen. Use only safe View commands
+  for live Enter verification; do not execute Pull/Push to test list scrolling.
+- PR Peek visibility (`KAGI_GUI_E2E_ONLY=pr_peek_`,
+  `tests/recovery/pr_peek_visible.rs`, #1102): four scenarios use actual table /
+  sidebar menu actions, then the existing Compare file consumer and Main Diff.
+  EN/JA at 100/167% cover hidden Inspector, an unloaded Graph head and an open
+  Commit Panel whose entity/draft must survive. Dirty Editor Cancel, approval,
+  tab departure, superseded intent and editor/input replacement preserve the
+  correct owner and never discard through an obsolete approval. Missing fetched
+  refs and a real object-database read failure keep the original PR context.
+  Repository HEAD, staged index, working bytes, refs, stash and receipt counts
+  remain unchanged; no fetch/checkout or replacement preview renderer is used.
+  Tier B: Peek a fetched live PR from its actual menu, inspect visible Compare,
+  open a changed file and use Back. Capture only the launched PID's window;
+  a large fixture or sample is not proof of FPS/input latency.
 - Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
   `tests/recovery/settings_switches.rs`, #970): every switch is a
   `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,
@@ -623,6 +1346,22 @@ The current suite covers:
   blocked Create measure 32px in `create_branch_input_confirm_ime`, and
   mapping Prune to Repair in `plan_confirm_kind` failed the destructive
   variant unit test. Each source was restored byte-for-byte from a backup.
+- Create Branch の成功後終了（#1092）は
+  `KAGI_GUI_E2E_ONLY=create_branch_presents_backend_receipt,create_branch_input_confirm_ime,create_branch_execution_failure_keeps_input`
+  （`tests/recovery/operations.rs`）。未送信の `feat` と同じ InputState が
+  accepted reload 後も残り、unchecked の作成は HEAD を変えず、checked の作成は
+  新 branch を checkout する。成功後は modal が消え、保持した旧 InputState から
+  root へ focus が戻り、再 Enter は 2 件目の作成を記録しない。続く実キー
+  Cmd+P / Escape が palette を開閉する（test 側で focus を戻さない）。
+  実 ref `collision` を先に作り、blocker のない `collision/child` を Create
+  ボタンで実行すると Failed 1 件となる。名前・同じ input・exact error は
+  accepted reload 後も保持され、再読込は再実行せず、Escape で閉じる。
+  receipt と Operation Log 行の ID 同一性は成功・失敗の両方で確認する。
+  marked-text Enter は ref も receipt も作らず、unmark 後の input Enter だけが
+  作成する。これは deterministic dispatch / 状態の検証であり、実 macOS IME と
+  ウィンドウの focus の証拠は Tier B で別途取得する。Tier B は成功前後を同じ
+  viewport / theme / language / zoom で撮影し、続く root shortcut、失敗時の
+  名前・エラー保持、未送信 reload、IME 1 回目 / 2 回目の Enter を実入力で確認する。
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,
@@ -700,15 +1439,27 @@ The current suite covers:
   `tests/recovery/header_fit.rs`): #809. A real `KagiApp` at 1000x720, zoom
   1.25, EN and JA opens a commit's long-path file diff, then File History for
   it. Each Main Diff header control (`main-diff-back`, `-ext-editor`,
-  `-history`, `diff-mode-toggle`, `main-diff-stats`), each File History header
+  `-history`, `diff-mode-unified`, `diff-mode-split`, `main-diff-stats`), each File History header
   button (`fh-back`, `fh-refresh`, `fh-copy-path`, `fh-open-file`,
-  `fh-follow`) and the embedded diff's toggle/stats must lie inside its header
+  `fh-follow`) and the embedded diff's mode segments/stats must lie inside its header
   row, and each row inside the window — bounds recorded by the production
   `HeaderFit`, which is what the pane crate can reach. The narrow case must be
   icon-only; 1920x1080 at zoom 1 must keep the labels. Tier B: 1000px wide at
   125% in JA, open a file diff and File History; every button is visible and
   clickable, icon-only buttons name themselves in a hover tooltip, and a wide
   window shows the labels again.
+- diff presentation (`KAGI_GUI_E2E_ONLY=diff_mode_segment,diff_binary_states`,
+  `tests/recovery/diff_presentation.rs`): #1235/#1236. The first scenario clicks
+  measured Unified/Split segments and checks Button role/name/current selection;
+  pair it with `header_fit` for narrow icon-only collapse. The second renders
+  binary, added, modified and deleted images in EN/JA using production reads.
+  `conflict_save_boundary` also renders binary conflict sides in both languages
+  and checks the shared no-text-diff explanation. A partially previewable
+  modified image retains both versions and shows a preview-unavailable side,
+  rather than incorrectly claiming it was added/deleted; preparation unit
+  coverage includes BMP on either side. Tier B: compare selected paint, focus
+  and icon tooltips in narrow/wide diff and File History panes, then inspect
+  each binary/image state and the existing external-editor action.
 - worktree port in the shell and the sidebar (`KAGI_GUI_E2E_ONLY=worktree_port_env`,
   `tests/recovery/worktree_ports.rs`): #855 / ADR-0171. The shell is swapped for a
   script through `KagiApp::set_terminal_shell_for_e2e` (`gui-e2e` only) that
@@ -977,6 +1728,87 @@ The current suite covers:
   (drafts are keyed by the repository written to; `drafts_test` covers the
   hand-over of pre-#940 drafts). For Tier B use a real `gh`
   login, click each switch cell and one PR / issue row of a local clone.
+- Home search over incomplete or stale lists (`KAGI_GUI_E2E_ONLY=home_search_incomplete`,
+  `tests/recovery/home_search_incomplete.rs`, #1070 / ADR-0219 decisions 2 and 8;
+  the filter selects three scenarios: `home_search_incomplete_repos`,
+  `home_search_incomplete_refreshing`, `home_search_incomplete_work`): a
+  strict offline `gh` answers only the command lines Home's producers build
+  (`repo_list_args`, `org_list_args`, `search_args`, `config get user -h
+  github.com`) and, with `[]`, Branch Cleanup's `pr list --state merged …`
+  read of the PR-less fixture; every other line exits 1. The stub's call
+  counts prove each Refresh read again.
+  - `home_search_incomplete_repos`: with the organizations unlisted
+    (`home-github-orgs-failed`), the user's list cut at `REPO_LIST_LIMIT`
+    (`home-github-truncated`) and an organization refusing
+    (`home-github-owner-failed`), a search matching nothing keeps those rows
+    and draws no `home-list-no-match`; a matching row (`home-gh-acme/needle`)
+    stays beside them. Then, over a complete list, the next own-list read
+    fails: the list read before stays with its matching row, and
+    `home-github-refresh-failed` (the existing `HomeGithubRefreshFailed`
+    text, measured directly, not through `note_probe`) is drawn instead of
+    no match — also after the search text changes and after a round trip
+    through the PRs pane. The next accepted read clears it, and the same
+    search is then a plain no match. (A `gh` account change also clears it,
+    in `show_saved_list`; this scenario does not exercise that.)
+  - `home_search_incomplete_refreshing` and the last step of
+    `home_search_incomplete_work`: while a Refresh is still reading
+    (Repositories `refreshing`, PRs / Issues `work.reading`), the list on
+    screen keeps its matching rows (`home-gh-acme/needle`,
+    `home-work-acme/local-4`) beside `home-github-updating` and draws no
+    `home-list-no-match`; once the read lands, the complete search says no
+    match again.
+  - `home_search_incomplete_work`: a failed review / assignee search keeps
+    `home-work-failed` and the matching row read before; a list cut at
+    `WORK_LIST_LIMIT` keeps `home-work-truncated`. Once every list is read
+    in full, Refresh keeps the search text and the complete search draws
+    `home-list-no-match` — per pane: the PRs, read in full, say no match
+    while the Issues are still cut.
+
+  Two ways of refreshing, on purpose. Every Refresh that must *finish* is a
+  real click on `home-github-refresh`. The "still reading" frames instead
+  call the button's handler, `reload_home_github`, and draw before
+  `run_until_parked`: a simulated click parks the executor, which runs the
+  `gh` reads to their end, while the test dispatcher only runs them inside
+  its pump — so the frame drawn first is deterministically the one with the
+  read running. No sleeps and no hold seam. The note names
+  (`home-list-no-match`, `home-github-truncated`, `home-github-owner-failed`,
+  `home-work-truncated`) come from a `gui-e2e`-only seam (`note_row` /
+  `note_probe` in `src/ui/home_github_list.rs`) that names a `Note` row by
+  the `Msg` it shows; default builds draw the same `muted` row without the
+  wrapper.
+
+  Two barriers, recorded separately. First: `home_search_incomplete_repos`
+  and `home_search_incomplete_work` failed before the fix (the
+  organizations row and the review-search failure hidden while searching);
+  after it, `home_tab,home_github,home_work,keyboard_nav,home_rows,home_list_place`
+  plus the two passed 8 of 8 (KEEP_GOING). Review follow-up: the
+  own-refresh-failure step, the refreshing scenario and the work reading
+  step failed 3 of 3 before the second fix; after it the same six plus the
+  three passed 9 of 9. The final source (with the `SharedString` ownership
+  correction of the refresh-failure row and `cargo fmt`) passed the same 9
+  and all seven final gates again.
+
+  Tier B (done for #1070, default build, two separate launches, no UI test
+  seam): a private strict offline `gh` — synthetic account, rows and
+  deliberate failures, not a real GitHub outage, SAML enforcement or
+  account switch — and the app's own cache. In the first launch, all three
+  panes showed failed reads, filtering, matching cached rows, the "Updating"
+  read and accepted recovery; Repositories and Issues also showed cut lists.
+  Each pane decided "no match" on its own lists (PRs said no match beside a Repositories
+  failure and beside cut Issues); a second own-list failure replaced the
+  reason's detail on screen (502 → 503). Holding the own-list read there
+  ran into the existing 60 s read timeout, so its frame is a timeout with
+  the reason kept, not a recovery; the recovery was the explicit Refresh
+  after it. The second launch started on the complete list the first had
+  saved, held only the own-list read, and showed the saved rows with
+  "Updating" and no "no match" for a query typed meanwhile; after the
+  release (about 40 s after launch, driver time, not latency) the accepted
+  read turned the same query into a plain no match. Both quit with ⌘Q
+  (exit 0, no process left). Not exercised anywhere: clearing the reason on
+  a `gh` account change (reviewed in source only). To repeat it, drive the
+  same states with a stand-in `gh` on `PATH` in an isolated launch (`USER`,
+  `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR`); images go to the PR through
+  `gh --attach`, never into the branch.
 - Home's display leftovers of #960 (`KAGI_GUI_E2E_ONLY=home_review_avatar_host,clone_card_ticker`,
   `tests/recovery/home_p2.rs`, #968): a review request whose Enterprise host
   is spelt `GHE.example.com` gets its author's avatar from the fetcher's disk
@@ -1164,6 +1996,470 @@ The current suite covers:
   update cannot replace the visible Closed collection, and a late response after
   leaving PR mode cannot restore that collection. Pair with
   `KAGI_GUI_E2E_ONLY=github_evidence_` for session restore/background/detach.
+- PR bounded cursor paging
+  (`KAGI_GUI_E2E_ONLY='pr_pagination,pr_same_number,pr_paging_survives_periodic_tick,pr_periodic_pending_sidebar_and_other_collections,pr_single_page_periodic_scroll_retention'`
+  with `KAGI_GUI_E2E_KEEP_GOING=1`, `tests/recovery/pr_pagination.rs`,
+  `tests/recovery/pr_pagination_periodic.rs` and
+  `tests/recovery/pr_same_number.rs`): run all ten scenarios — `pr_pagination`,
+  `pr_pagination_races`, `pr_pagination_closed_tab_retention`,
+  `pr_pagination_all_tab_retention`, `pr_pagination_pending_closed_tab_return`,
+  `pr_pagination_pending_all_tab_return`, `pr_same_number`,
+  `pr_paging_survives_periodic_tick`,
+  `pr_periodic_pending_sidebar_and_other_collections`, and
+  `pr_single_page_periodic_scroll_retention` (single-page Open list, real wheel to mid-table, 61-s ticker, anchor/offset unchanged). The six original paging
+  cases cover first100 → final120 unique fixture rows, real clipped-tail demand, a failed append's
+  native retry click, dedupe, stable anchor and context-menu identity. After
+  proving the menu survived append, dismiss it through an actual outside click
+  before scrolling to row120: its full-window occlusion correctly blocks the
+  underlying wheel route. Filtered-zero and client-filtered lists keep an
+  explicit continuation; the real sidebar viewport must reach its control.
+  Closed/All actual menu choices survive A→B→A with their rows, selected pane
+  and real composing text, reject old-visit appends, and do not turn an
+  interrupted initial read into authoritative zero.
+  `e2e::queue_github_pr_fetch` substitutes only a page-shaped transport future;
+  parser/receiver state, owner/generation/visit/cursor admission and UI
+  scroll/click handlers are production consumers. Shared evidence stays Open;
+  selected Closed/All belongs to the existing strip. Failed refresh revokes
+  continuation, while failed append retains rows/cursor for retry. Do not
+  replace cleanup's reduced Vec evidence with a PR list page.
+  Opening a fixture PR can legitimately trigger the existing owner-bound L1
+  refresh from real local-ref fetch callbacks. The sidebar leg therefore uses
+  its strict `OfflineGh` script: explicit `repo view --json url` plus the
+  frozen-host/repository Open GraphQL `first: 100` request return a real
+  pageInfo-bearing first page; unsupported calls fail. Do not suppress a
+  production ref-refresh callback to keep a test cursor. Sidebar measurements
+  instrument the existing viewport with gui-e2e-only `measure_inside`, not a
+  layout-changing default-build wrapper.
+  The detail unit consumers (`cargo test -p kagi --lib github_pr_detail`) and
+  receiver consumers (`cargo test -p kagi --lib github_pr_state`) cover
+  shared/strip/opened same-head payload ownership, successful empty payloads,
+  stale heads, lost owners and old answers. Retention must not demand
+  off-screen L2: visibility stays selected-state-only, with concurrency two,
+  200 ms debounce, 500 ms maximum wait and two-row overscan; L3 remains
+  opened-only. Checks filters must retain real Fresh passing payloads without
+  treating dehydrated reappended rows as Fresh.
+  True table visibility comes from clipped prepaint, not `uniform_list`'s
+  layout-only `render_items(0..1)` call. The first actually rendered row's
+  non-layout-affecting canvas defers one visible report guarded by active owner,
+  full list revision and PR-workspace/home; measurement must not publish demand
+  or prune the tail queue. Require page-two tail detail demand after scrolling,
+  as well as the unchanged two-row overdraw and maximum two L2 requests.
+  The two periodic scenarios start `ensure_startup_repo_io` and its real ticker:
+  a strict private gh producer answers real bounded GraphQL/parser and status
+  requests, and receipts distinguish first-page reads from detail refreshes.
+  `pr_paging_survives_periodic_tick` checks the 59-second negative control,
+  advances across the ordinary 60-second tick, and retains all 120 identities,
+  generation, actual tail bounds/scroll anchor, typed filter, parked PR owner
+  and the live composer entity/value. Change only the producer's server status
+  from SUCCESS to FAILURE and assert actual shared/opened/visible-tail `ci` and
+  check payloads transition; an unchanged Fresh flag or query count is not
+  proof of refresh. Manual Refresh must then reset to the authoritative first
+  page, revoke continuation/generation and reject a held old append.
+  `pr_periodic_pending_sidebar_and_other_collections` clicks the sidebar's
+  actually painted Load more, holds its append across a tick, proves no shared
+  L1 replacement while the opened PR's checks change, then accepts 120 rows
+  and retains the reachable sidebar tail across another tick. Real Closed and
+  All menu choices with pending strip appends must allow ordinary shared Open
+  ticker reads without replacing selected strip membership or revoking its
+  append; departure to Graph must resume normal first-page replacement.
+  Retention admission is only active PR workspace + no explicit Closed/All
+  strip + (shared Open pages > 1 or append pending). It preserves last-accepted
+  membership, not the newest authoritative list: use manual Refresh to discover
+  new/closed/deleted PRs. Owner/manual refresh and background consumers retain
+  their ordinary cutover; deferred ticks still refresh visible/opened details.
+  `pr_same_number` binds the live composer by `(SessionId, PrKey)`, parks through
+  the recorded owner, and proves real `InputState::replace`/drawn drafts stay
+  isolated across same-key sessions and close/reopen. The Closed/All producer
+  also edits the live input and verifies the parked value before departure;
+  writing `PrTab::comment_draft` while the input is bound is not an edit.
+  These native fixtures do not prove key/paste delivery, real GitHub default
+  paging, FPS or screenshots. Tier B must separately use the default build,
+  its genuine first100/pageInfo, actual tail/retry/filter controls and the
+  actual server-ordered remainder; compare unique loaded identities and
+  `[kagi] github: prs page=N loaded=M has_more=true|false`. Do not infer which
+  PR is absent from its number or alter the limit to make the check pass.
+  Exhausted-table regression: item count must be
+  `rowcount + usize::from(has_more)`, not an unconditional full-height terminal
+  slot. With `cursor=None`, the final real row must actually paint inside the
+  tiny body at 940×660/167%; loading/retry and pending continuation remain.
+  Pair with `pr_dashboard_responsive`'s eight width/locale/zoom cells and
+  `pr_list_roles,issues_pagination` without repinning assertions. PM's local
+  seven-stage post-repair gate passed; its scoped native selection included
+  these three consumers, all six original paging cases and both periodic cases.
+  The gate manifest is
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-row-final-gates/manifest.json`;
+  this is local source acceptance, not hosted CI or merge acceptance.
+  Historical Tier B #1107 evidence (before the terminal-slot repair):
+  `/tmp/kagi-hig-audit-20261008/pr-periodic-after-native/proof.json` records the
+  default app PID 45189/window 4156 and source after the true-prepaint fix and
+  nine native PASS scenarios. Genuine first100 → explicit Load more → 120
+  reached the actual server-ordered tail PR #28. The actual 65.26914-second
+  no-input interval retained 120 membership and exact tail/viewport, with 23 gh
+  receipts: zero L1 GraphQL replacements, 22 L2 status queries including #28,
+  and one opened #265 body refresh. Viewed before/after photographs showed
+  determining/ready aggregates 75/45 → 107/13 with the anchor retained; no manual
+  refresh or state switch occurred during the interval. This is evidence of
+  automatic retention with volatile refresh, not newest membership, all future
+  tick behavior, FPS, latency or CPU improvement. The earlier CPU sample did
+  not overlap input. Temporary diagnostic reads were removed after that build;
+  this historical evidence does not accept the later terminal-slot repair.
+  Fresh narrow default-build evidence is separately recorded in
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/narrow/observed.json`,
+  with frozen-source SHA-256s and exact owned PID 61715/window 6182. Logical
+  940×660, zoom 1667, Apple Light/English window-only captures are 1880×1320
+  (ratio 2 from capture/bounds, not a backingScaleFactor query). A real visible
+  Load more accepted 100 → 120, `has_more=false`; eight wheel events reached
+  actual last PR #28 fully visible in the tiny body with no empty terminal slot.
+  The fresh periodic photograph retained 120 and #28, while readiness changed
+  5 → 6; the observed timeline had no new list GraphQL after extension.
+  The recorded 176.033609 seconds is page-request-to-capture, not exact
+  response-acceptance-to-capture. An initial tick before append added a third
+  list GraphQL call, so do not report two total list calls for this run.
+  Real #28 opening showed commits1/files1 and conversation counts0/0/0, but its
+  photograph is swimlane-only, not acceptance of the narrow Overview body.
+  Cmd-Q/original Popen exited 0, exact executable PID path and owned apps were
+  absent afterward. This establishes narrow startup/terminal paint only:
+  wide-window, dynamic resize, Copy/Paste/host clipboard, CPU, FPS and latency
+  were not accepted by these observations; driver delivery time is not FPS.
+  Fresh wide default-build evidence:
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/wide/observed.json`
+  records unchanged frozen-source hashes, exact owned PID 69326/window 6200,
+  logical 1392×883/100%, Apple Light/English and window-only captures, ratio 2.
+  Eight table wheels caused natural clipped-prepaint continuation (no explicit
+  Load more), 100 → 120; four further wheels reached last PR #28. A settled-tail
+  photograph and the periodic photograph 155.08867 seconds later retained
+  Loaded120 and the same #80..#28 viewport, while Ready15 → 13 and real
+  `pr view` receipts at roughly 60-second cadence witnessed ongoing checks.
+  No list GraphQL occurred after extension through the periodic photograph,
+  but four occurred through extension: initial + two legitimate pre-extension
+  ticks + one non-null cursor read. Do not report two total list calls.
+  Cursor-request-to-periodic-capture 229.741505 seconds is not exact acceptance
+  timing. Actual large PR #12 Overview displayed a 48,002-byte body with real
+  transport 24 comments/288,048 body bytes, two reviews/268 body bytes and
+  accepted 40 line comments (visible Review66), commits3/files2, additions22,010.
+  This does not prove complete body/comment-tail, diff or thread interaction,
+  or performance. Settled All PRs returned to the same120/tail28; the immediate
+  capture preceded that state and supplies no navigation latency.
+  Small #28 Overview body102 bytes was visible, comments/reviews0, commits1/files1.
+  Physical unsent ASCII `PM_PR28_DRAFT` stayed out of #12's composer; six sidebar
+  wheels reached #28 independently while #12 Overview remained, and clicking
+  #28 restored the exact draft. This accepts one-session/two-PrKeys only;
+  same-PrKey/two-session default clicks remain dependent on separate overlay
+  baseline repair/integration, not proven by this run. No Submit/Copy/Paste,
+  host clipboard or foreground action occurred; original Cmd-Q/Popen exit0,
+  exact executable PID path absent and owned apps0 establish cleanup.
+  The matched same-PR narrow/wide photographs corroborate separate
+  [#1118](https://github.com/TomiXRM/kagi/issues/1118) detail geometry: narrow
+  #28 Overview body missing, wide present. Do not call this narrow-detail #1095
+  acceptance or independent baseline-dev reproduction. Dynamic resize,
+  matched CPU/FPS sampling, full diff/thread acceptance and external review/CI
+  remain unobserved; no future post-doc gate or merge is implied.
+- PR parent render borrowing (#1108 / ADR-0200 §7):
+  scope Tier A to
+  `KAGI_GUI_E2E_ONLY=pr_same_number,workspace_mode_toolbar,pr_threads_via_gh`
+  with `KAGI_GUI_E2E=1`, `--features gui-e2e --test gui_e2e_runner` and an
+  isolated log/target directory; PM owns execution when assigned.
+  `pr_same_number` uses two private bare Git remotes with genuine PR refs and
+  the existing repository-qualified fixture `gh` subprocess/parser. Its held
+  list refresh is admitted before switching B#7 → A#7; release must accept
+  the same generation and draw B's distinct refreshed title in the real
+  dashboard row while retaining A's exact multiline UTF-8 composer text and
+  both parked drafts. Input uses the real `InputState::replace`, not keyboard
+  typing or IME. Existing body/count/feed geometry, reload and normal unmount
+  assertions remain. This is not an authenticated GitHub or allocation-counter
+  oracle. Require `workspace_mode_toolbar: PR section exercised`; overall
+  PASS with its PR section skipped is insufficient. `pr_threads_via_gh`
+  supplies the independent real-ref/production-parser badge witness.
+  Do not invent a separate scenario PASS marker or case count from a final
+  `PASS filtered scenarios`.
+  The subsequent PM final lane passed all seven stages: build, this scoped
+  native selection, workspace tests, Clippy, fmt check, invariant checks and
+  default build (all exit 0; total wall 429.369851 s, native 23.138066 s).
+  Production hashes remained unchanged; the formatting-only final
+  `tests/recovery/pr_same_number.rs` SHA-256 is
+  `098376339bb864ee7f69fcaf041fc15ef6e4d945157160ebb6e0170d45906f01`.
+  This records local gate completion, not public CI/external review or a
+  runtime performance result; the Tier B limits below remain.
+  Tier B: use the exact default binary, source hashes, one named owned window,
+  unique USER, `KAGI_NO_ACTIVATE=1`, `KAGI_NO_RESTORE=1` and a retained private
+  log directory. Read actual PR12 / small PR280 producer counts first; Review
+  counts raw reviews + issue comments + line comments, not description or
+  only nonempty posts. Witness description first/terminal sections, review
+  first/middle/final posts, anchored thread open/close, whole-PR versus selected
+  commit files, return navigation and exact unsent draft restoration without
+  Submit. Ordinary commit element IDs are not measured-control selectors.
+  For the 2026-10-10 PM run, accepted evidence is EN / Apple Light / 100% at
+  1392×883: PR12 description 0001 → 0140, Review 66 and large-comment
+  paragraphs 26–28, a real line-2 thread, the 20005-line file's rows 72–102,
+  selected-commit Files 1 / +1980, and PR280's empty conversation / ASCII
+  draft return. Final Review tail, large-diff terminal row, split, JA / 167%
+  and same-key two-session default smoke remain unaccepted. A -50000 wheel
+  returned to the top, so it proves neither the tail nor a product cause.
+  No matched input-overlapping before/after sample was accepted: compile/run
+  duration, driver duration and source copy removal are not FPS/CPU/latency
+  or smoothness evidence. Measure performance separately with the same
+  warmed workload and monotonic sample-ready/input overlap. Preserve historical
+  compile-contamination and fixture-generation/readiness failures as failed
+  attempts, never relabel them as a production performance Before.
+- GitHub Markdown preparation reuse (#1091 bounded slice, ADR-0142 amendment 3):
+  `KAGI_GUI_E2E_ONLY=markdown_preparation_edges`
+  (`tests/recovery/markdown_preparation_edges.rs`, a child of
+  `tests/recovery/workspace_mode_toolbar.rs`) keeps one production Issue Thread
+  body/window/owner/Markdown ID across frame replacements. It reuses the
+  existing measured-body physical drag (down/move/up) and ⌘C helper, poisoning
+  only `VisualTestPlatform`'s private clipboard before every copy; do not replace
+  that platform with the default real-app clipboard or access the OS clipboard.
+  Equal-byte-length different GFM raw bodies must copy exactly the new rendered
+  text, excluding the old sentinel. The raw body then stays empty while EN → JA
+  → EN must copy the current typed `Msg::IssueNoDescription` placeholder and
+  exclude the prior locale. Bounds must fit inside the viewport; settings and
+  process-global language are restored, the repository fingerprint is unchanged,
+  and the shared `unmount` closes the window. This is painted-text consumer
+  evidence, not a cache-counter, source-text, mock-copy or nonempty assertion.
+  The preparation payload is existing window-keyed state under the body ID in a
+  separate namespace: one raw snapshot + format + prepared `SharedString`, replaced
+  on exact raw-byte or format changes. Current style, literal font features and
+  the existing privacy preparation path are supplied to the same renderer.
+  At the 2026-10-09 checkpoint, `conversation_markdown_test` passed 10 semantic
+  tests; one native run separately passed the four existing consumers
+  `pr_same_number`, `pr_threads`, `pr_threads_via_gh`, `workspace_mode_toolbar`;
+  a later native run passed `markdown_preparation_edges` alone (4 PASS and
+  1 PASS from separate runs, not one five-scenario run). The default build also
+  completed. The default app's real warm PR #12 After sample had 6,021 main-thread
+  stack observations and none for `prepare_github_markdown`, `images_as_links`,
+  `flatten_html_blocks`, `pad_inline_code`, `sanitize_github_markdown` or `to_mdast`;
+  baseline had 549 preparation observations
+  under 5,893 main-thread observations. Corpus and Apple Light/EN/100% v2/1392×883
+  logical viewport matched; baseline `adf3ade12d9786b198d4821f30dd4f629c12cca4`
+  differs from implementation base `94cf1849dc7af265995a58ee1d2c2c546aa7fc06`
+  by a Pull-label change outside this UI surface. All eight requested −80 wheel
+  events landed within each eight-second sample; After PR #12 delivery completed
+  1.709031 seconds after readiness. Screenshots show section 001 → 49/50/51,
+  not full-conversation traversal. The short real PR #280 control showed its
+  complete one-line body, no reviews, one commit and one file (+2), with eight
+  events delivered in 1.733571 seconds at the same settings. The owned original
+  app exited normally through ⌘Q (exit 0, process gone).
+  Zero observations in this one After sample are not proof of zero calls.
+  Raw sample observations/input delivery do not establish CPU%, FPS, latency,
+  speedup or actual scroll distance. At that preparation-only checkpoint, cold
+  huge-post preparation/layout, PR clones and Issue conversation ownership/
+  virtualization/offscreen Copy still required separate implementation and proof.
+  The subsequent Issue Thread cutover is documented immediately below and in
+  ADR-0198; do not reuse the preparation-only gate as its latest-source acceptance.
+  The later final required gate passed build, native, workspace tests, Clippy,
+  format check, invariants and default build, all exit 0. Its single native
+  run passed the four consumers above plus `markdown_preparation_edges`,
+  five of five. Whole gate wall was 406.020904 s; workspace process wall was
+  351.394085 s, including compilation/process overhead, not isolated test-body
+  timing or speedup. This does not complete the full issue or imply hosted
+  CI, exact-head review or dev merge. Publish as `Refs #1091`, not `Closes`.
+- Issue Thread managed virtual conversation (#1091, ADR-0198 amendment):
+  `KAGI_GUI_E2E_ONLY=issue_conversation_` selects all **eleven registered** native
+  scenarios in `issue_conversation_selection.rs`, `issue_conversation_lifecycle.rs`,
+  `issue_enabled_input_copy.rs` and `issue_offscreen_select_all.rs`.
+  Keep the runner's offscreen AppKit windows,
+  `VisualTestPlatform` private clipboard, per-scenario unmount and fixture
+  isolation; never use the OS clipboard, suppress a native hook panic, change
+  original assertions/coordinates/producers, or substitute a mock selection.
+  With source frozen and execution reserved to PM, the bounded native recipe is:
+
+  ```bash
+  KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 \
+    KAGI_GUI_E2E_ONLY=issue_conversation_ KAGI_GUI_E2E_KEEP_GOING=1 \
+    KAGI_GUI_E2E_TIMEOUT_SECS=90 CARGO_TARGET_DIR="$PWD/target" \
+    cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+  ```
+
+  The consumer oracles are:
+  - `offscreen_copy`: exact forward/reverse A→Z including unpainted middle,
+    with mousemove→Copy in the same update before paint.
+  - `giant_copy`: all 180 rendered paragraphs through the actual last
+    continuation and visible end Reply composer, not a truncated preview.
+  - `accepted_identity`: actual opaque-ID true B survives equal-author/time
+    reorder and prepend; same-length source mutation/deletion poison old Copy,
+    while a fresh physical drag copies the new/surviving post.
+  - `refresh_anchor`: unchanged refresh, prepend and earlier removal retain
+    the true post/intra-post pixel anchor; a real producer failure preserves
+    accepted selection/anchor and draws error chrome.
+  - `geometry`/`edge_drag`: width/zoom/theme reflow preserves unchanged source
+    endpoints, fresh drags use current geometry, stationary edge ticks reach
+    never-painted posts, and mouse-up/departure cancels scrolling.
+  - `delayed_rejected`/`two_owners`/`copy_priority`: held refresh keeps accepted
+    content; superseded generations, repository retarget, session switch/drop,
+    modal displacement, mode departure and home return cannot leak Copy before
+    paint or revive an old range on reentry.
+  - `enabled_input_copy`: actual production **enabled** Reply SelectAll/Copy
+    returns exact `draft🙂`; physical Backspace empties it, empty Copy leaves
+    poison, and physical Tab then Copy returns the **original** conversation
+    selection without reselect/refocus/reload/activation. This recovery oracle
+    rules out “empty Copy passed because conversation was already retired.”
+    Departure stops Copy; draft, HEAD, staged paths/OIDs/modes, working bytes,
+    refs, stash and oplog invariants are checked.
+  - `offscreen_select_all`: physical first-paragraph drag copies `PARTIAL`;
+    bounded wheel events remove that focused post's control witness with another
+    post still visible, and offscreen Copy still returns `PARTIAL`. Physical
+    Cmd-A/C must expand to exactly `PARTIAL\n日本語🙂 café code🧭`, the full
+    focused post, not raw GFM or the conversation. No direct SelectAll dispatch,
+    focus/reselection after unmount or model injection. Complete draft/repository
+    invariants and normal cleanup precede the final byte oracle. Strong/emphasis
+    fixture avoids incidental existing code-span padding, without changing it.
+
+  The managed ancestor now delegates SelectAll to the actual focused member's
+  existing state handler. Mounted/Input consumers retain priority; current
+  focus/lease/scope/weak-member/source checks fail closed. No focus steal,
+  whole-conversation SelectAll, new global binding/cache/scan or retired geometry
+  revival. SDK disabled Input coverage is not enabled native proof.
+
+  SDK coverage is separate. From the matching SDK checkout with its own target,
+  PM runs `cargo test -p gpui-component --lib text::` for logical, canonical
+  parser and legacy `window_selection`/`text_view` paths, then
+  `cargo test -p gpui-component --lib` for the complete lib suite. Its manifest
+  has `doctest = false`; a lib/package pass is not documentation-test evidence.
+  **No `--skip`, ignored case, caught panic or fake native handle.** The SDK's
+  `disabled_input_copy_does_not_fall_back_to_conversation` honestly uses
+  `Input::disabled(true)` and retains exact draft/empty clipboard assertions.
+  It is disabled/read-only boundary coverage, not enabled Input proof:
+  GPUI TestWindow lacks the native input-handler hooks. Enabled editing/focus
+  belongs to the real AppKit scenario above, not a headless workaround.
+  The focused `stable_selected_post_moves_without_transferring_native_authority_or_old_lease`
+  specifies same-group stable interval preservation, fresh lease, retired
+  geometry/viewport/edge task, old-lease isolation and selected-source failure.
+  `RenderedDocument` is the single rendered UTF-8 extraction path; obsolete
+  `ParsedDocument::text`/`BlockNode::text` wrappers are removed without removing
+  real paragraph/parser consumers or canonical plugin-text assertions.
+
+  Actual PM checkpoint: `bg_600` (raw artifact 2153) was **9 PASS / 1 FAIL of
+  10**, including the complete enabled Input recovery oracle. Only true-B
+  equal-metadata reorder failed. After the stable-interval SDK setter fix,
+  `bg_605` ran `accepted_identity` alone: **1 PASS / 1**, 37.67 s process wall
+  including build/runner overhead, with original native assertions/coordinates/
+  producers unchanged. Do not combine those separate runs into an all-ten PASS.
+  The subsequent frozen-source `bg_607` (raw artifact 2173) ran the complete
+  SDK lib suite: **334 PASS / 0 FAIL, 0 ignored, 0 filtered**, without skips;
+  test bodies 0.06 s, process 12.75 s. It included logical/legacy/parser/custom
+  plugin consumers after extraction cleanup and disabled fixture migration.
+  PM inspected the compile output: both obsolete text warnings were absent,
+  with existing dependency future-compatibility warnings remaining.
+  `bg_608` (raw artifact 2175) then ran **all ten together: 10 PASS / 0 FAIL,
+  exit 0**, process 64.80 s including 28.35 s compilation. Original nine
+  assertions/coordinates/producers and the full enabled counterpart remained.
+  These passes precede the authorized formatting-only phase, not an execution
+  of a subsequently published SDK revision. They supersede the older skipped
+  SDK run's incomplete coverage, not unrelated gates.
+  SDK workspace fmt check `bg_609` (raw artifact 2177) failed, exit 1/2.63 s,
+  with untouched assets/macros/stories baseline and changed-code diffs.
+  Config explicitly selects Rust/style edition 2024. Format only changed Rust
+  scope with `skip_children=true`; do not hide the baseline failure by
+  blanket formatting or a 2021 override, or claim full-repository format green.
+  The authorized 13-target scoped rustfmt and same-target `--check` then both
+  exited 0 (0.15/0.16 s) using the unchanged config and `skip_children=true`:
+  `root.rs`; text's `document.rs`, `format/markdown.rs`, `inline.rs`,
+  `inline_flow.rs`, `mod.rs`, `node.rs`, `state.rs`, `window_selection.rs`,
+  `logical_selection.rs`, its two test files and `rendered.rs`.
+  `text_view.rs`'s changed Copy line already matched formatting; its unchanged
+  line-463 trailing whitespace was deliberately preserved. No semantic split
+  or Root refactor was introduced. Scope success is not workspace fmt success.
+  PM's later post-format `bg_615` (raw artifact 2195) reran full SDK lib:
+  **334 PASS / 0 FAIL**, bodies 0.07 s, followed by UI-lib Clippy exit 0;
+  combined process wall 42.52 s. Both obsolete text warnings remained absent.
+  One new Clippy `too_many_arguments` diagnostic at the private nine-field
+  `register_logical_inline` paint boundary was resolved afterward by a
+  localized documented allowance: source identity/range and native
+  layout/lines/hitbox stay independent; Geometry's owner/scope/weak presence
+  is constructed only after registration guards. No API/geometry/allocation
+  change or extra argument-bundling payload was introduced.
+  Exact-annotation UI-lib Clippy then passed in PM `bg_619`, exit 0,
+  process4.19 s including check/compile3.99 s, against logical-selection SHA-256
+  `f1b028c23b42d14cafced1e8ca75d1819a6d47dca5ea80fdf24a9ef829a2b8ab`.
+  No new argument-count/dead-code warning remained; only pre-existing
+  dependency future-compatibility notices (`block`, `proc-macro-error2`).
+  PM `bg_620` (raw artifact 2207) then passed the exact-source complete SDK lib
+  suite, **334 PASS / 0 FAIL, 0 ignored, 0 filtered**, bodies 0.07 s, and the same
+  13-target configured-2024 `rustfmt --check` with `skip_children=true`, exit 0;
+  combined process wall7.33 s.
+  That SDK-run checkpoint alone did not establish a public revision or
+  post-format native rerun, and scoped fmt is not whole-workspace fmt green.
+
+  PM subsequently published the original-b004-compatible fix on the existing
+  [TomiXRM/gpui-kit fork](https://github.com/TomiXRM/gpui-kit), normal branch
+  `fix/kagi-logical-selection-b004-20261010`, commit
+  [`941f20e6c374ea80d2bab9cd08fc96021280db13`](https://github.com/TomiXRM/gpui-kit/commit/941f20e6c374ea80d2bab9cd08fc96021280db13).
+  `bg_627` push exited0; PM's exact-head `ls-remote` matched. At that first
+  cutover both temporary UI/assets paths were replaced with the same Git/full
+  `941f20e6` revision, without latest-family upgrade, macros patch, alias or
+  path shim. This is historical, not the final public revision below.
+  SDK code at publication retains exact-source lib334/Clippy/scoped13 evidence.
+
+  PM then resolved the actual consumer lockfile: targeted `cargo update`
+  `bg_632` first failed to match the path-to-Git package specification
+  (0.09 s, no compile); `cargo metadata --format-version 1` subsequently
+  succeeded, 6.523 s (artifact 2230). Only UI0.5.2/assets0.5.1/macros0.5.1
+  were added at the exact public commit, each name selected once in metadata.
+  GPUI0.2.2/platform0.1.0 retained Zed
+  `90b3aa0b3bd3b453775b11a386907c7ac9acd997`; no duplicate macros source,
+  latest-family upgrade, lock hand edit or path shim. Those initial resolution
+  receipts are not final-ae37 gate acceptance.
+
+  A review-discovered offscreen focused-member SelectAll regression has fresh
+  paired evidence on the same corrected GFM/emphasis/Unicode fixture:
+  public941 `bg_650` **0 PASS/1 FAIL**, left `PARTIAL`, right unchanged full
+  rendered literal, process17.40 s/compile8.97 s; local integration `bg_651`
+  **all11 together 11 PASS/0 FAIL**, process52.63 s/compile8.48 s (artifact2322).
+  Original-ten oracles/events/coordinates/producers remain unchanged. Earlier
+  inline-code fixtures `bg_647`/`bg_648` remain separate historical failures.
+  Do not strip U+2009, repin an observed After string or combine changed oracles.
+
+  Native651 preceded the final SDK three-file formatting pass. PM configured
+  edition/style edition2024 + `skip_children=true` format/check exited0/0.27 s.
+  Post-format SDK `bg_653`: lib334 PASS/0 failed/ignored/filtered, body0.06 s/
+  process11.19 s; UI-lib Clippy0/process4.11 s, combined15.40 s, no new warnings,
+  only existing `block`/`proc-macro-error2` future-compatibility notices.
+  Whole SDK baseline fmt FAIL was not rerun/declared green; doctests disabled.
+
+  Final public SDK is
+  [`ae37bfd433781abe44e15edd40867fac1b7b3b2c`](https://github.com/TomiXRM/gpui-kit/commit/ae37bfd433781abe44e15edd40867fac1b7b3b2c):
+  PM `bg_657` explicitly pushed GitHub normally/FF941→ae37 and exact public
+  head matched. `bg_656` first mistakenly pushed clone-origin/local Cargo-cache
+  branch;657 conditionally deleted only that mistaken new ref at the exact
+  expected revision, without deleting checkout/files/objects. Do not claim the
+  cache was entirely untouched or internal review equals external approval.
+  Both final UI/assets patches are the same Git/full ae37 rev, no TEMP paths/
+  comments. Actual metadata exited0/1.526879 s: UI0.5.2/assets0.5.1/macros0.5.1
+  each once on publicae37; original GPUI0.2.2/platform0.1.0/Zed90b3aa0 unchanged.
+
+  Final Root `bg_658` after PM format passed **all7**, total557.496848 s:
+  build25.170750/native52.765071/workspace458.066894/Clippy15.626914/
+  fmt2.794284/UV2.494605/default-build0.575039. Receipts:
+  `issue-select-all-public-ae37-final-gates/manifest.json` and stage raw logs.
+  Public native argv was `cargo test --timings -p kagi --features gui-e2e
+  --test gui_e2e_runner -- --nocapture`, under `/usr/bin/time -l`, overrides
+  `KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY=issue_conversation_`.
+  It reports **PASS filtered scenarios**, not an explicit KEEP_GOING11 count;
+  local651's explicit11/11 remains separate. Workspace uses the real target
+  runner on the same monotonic epoch. These are process walls, not UI latency
+  or causal performance comparisons.
+
+  Final public default Tier B:
+  `issue-select-all-public-ae37-tierb/observed-public-ae37.json`, original owned
+  Popen42755/exactexe/largest layer0 WID6126. Explicit `USER`,
+  `KAGI_NO_ACTIVATE=1`, `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR` isolation;
+  capture2784×1766/logical1392×883 gives ratio2, not a queried NS backing scale.
+  Real Issue281 has two80-paragraph GFM/Japanese/emoji/café posts. Mounted
+  physical Cmd-A selected body, ten−120 wheel events reached distinct comment
+  071–080 and Reply with body outside, offscreen Cmd-A did not select the other
+  post, ten+120 events returned original body selection without re-click.
+  It began fully selected: partial→full exact bytes are native-private-clipboard
+  proof, not default screenshots. Actual unmount is the native control witness.
+  No default Copy/Paste/host clipboard. Zoom100→110→100 and AppleLight→
+  CatppuccinMocha form/content observed; Settings changes focus and prior text
+  selection was not shown on return, not modal selection-retention proof.
+  No new width/perf/FPS/CPU/matched timing. Historical941 photos/8s samples
+  remain historical. Cmd-Q0/Popen-wait0/proc_pidpath0/persistent owned0 cleanup.
+
+  No private SDK absolute patch path is a final install recipe. Native event
+  simulation is not hardware/IME proof. Broader#1091 performance/width/
+  comparison and PR-conversation scope, hosted CI, independent exact-head review,
+  Kagi PR publication/merge remain pending. Keep `Refs #1091`, not `Closes`.
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline
@@ -1227,6 +2523,35 @@ The current suite covers:
   carries its `owner`; Apply only touches that session;
 - dirty Pull auto-stash success and Pull-failure restoration, including a durable
   Operation Log result without a dismiss-only error modal.
+- Pull freshness (`tests/recovery/pull_freshness.rs`):
+  `KAGI_GUI_E2E_ONLY=pull_freshness_` exercises a real held fetch before a clean
+  confirmation, an advanced upstream unknown to the consumer, true synchronization,
+  fetch failure, and same-owner joining. Native toolbar activation follows
+  `keyboard_nav::keys` (keydown **and keyup**); toolbar ids are not bounds-registry
+  controls.
+  `pull_freshness_clean_updates` runs both that toolbar gesture and the actual
+  current-branch context menu: right-click the measured `sidebar-local-main`
+  row, then click its Pull item. Start each with cached zero and a separately
+  advanced real origin; neither gesture may claim latest or change checkout
+  before its held fetch succeeds and the user confirms. Local row measurements
+  cover HEAD and non-HEAD rows only under `gui-e2e`, with no normal-build probe
+  identifier allocation. Cached zero/unknown never disables healthy upstream
+  Pull; busy/detached/remote/no-upstream guardrails remain intact.
+  Compare staged content with `git ls-files --stage -z`, not raw index bytes:
+  opt-in status refresh may repair stat metadata without staging a change
+  (ADR-0193). Tier B uses two isolated clones and normal pushes to a dedicated
+  remote: advance the producer without fetching in the consumer, click Pull in
+  the owned app window, photograph stale `↓0` → fresh confirmation → confirmed
+  new HEAD. Also photograph a genuine no-op only after fetch success and an
+  unreachable-remote fetch error; restore the fixture URL afterward. Before
+  confirmation and on fetch failure, HEAD / staged content / working files must
+  be unchanged. A failed fetch must never produce an up-to-date toast.
+  The external HEAD / working-tree and opened-then-closed modal scenarios exercise
+  confirmation invalidation and displacement. `pull_freshness_captured_reload_drift`
+  drains the existing GPUI test dispatcher in background-only mode (`tick(true)`)
+  to capture a real snapshot before mutating the checkout, then accepts that old
+  read on the foreground dispatcher. Both HEAD-only and working-tree-only drift
+  must invalidate the original clean approval; no new production seam is needed.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a
   Commit Panel file diff re-read (closed once nothing is left to show), and the
@@ -1263,9 +2588,10 @@ The current suite covers:
   fetch) keep their frozen repository receipt visible in the shared Operation
   Log panel without changing the current tab's footer/toast or opening the
   panel. The remote branch success and failure legs inspect `klog::tail()` for
-  the unchanged terminal lines after departure. After PR mode is cleared by
-  activation, reopening that PR admits one current-visit fetch; the old
-  completion cannot clear its loading latch or replace its head/files.
+  the unchanged terminal lines after departure. PR activation retains its
+  owned panes and intent while revoking obsolete visit publication rights;
+  a current-visit ref fetch must reject the old answer without clearing its
+  replacement's loading latch or replacing its head/files.
   `TestDispatcher`
   propagates an uncaught task panic before `Task::fallible()` can deliver `None`;
   the GUI-only seam catches the injected panic inside the worker and returns an
@@ -1413,8 +2739,10 @@ The locked GPUI revision does not expose the complete, last-rendered hitbox
 collection to `VisualTestAppContext`. Do not treat a scenario-specific recorded
 bound (for example, a measured button or footer) as a generic hitbox dump. A
 complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
-API or a deliberately maintained dependency fork; until then, use Tier A's
-state assertions and Tier B's live-window inspection together.
+API. Propose missing APIs upstream and record the proposal in `docs/decisions.md`;
+do not introduce a dependency fork for inspection (AGENTS.md / #1479).
+Until an official API exists, use Tier A's state assertions and Tier B's
+live-window inspection together.
 
 ### What reaches a real `InputState` and what goes around it (#516)
 
@@ -1428,8 +2756,8 @@ paste actions, not marked text (use Tier B for IME).
 |---|---|---|
 | Typed keystrokes into the focused real `InputState` (`simulate_keystrokes` with characters) | `conflict_save_boundary`, `editor_save_admission`, `editor_save_buffer_identity`, `editor_external_change_banner`, `editor_banner_rename_and_save`, `remote_connect_keeps_dirty_editor`, `cross_worktree_merge` (Editor buffer); `create_branch_presents_backend_receipt`, `create_branch_replan_error` (branch name); `issues_pagination` (list filter); `palette_push_modal_keys` (command palette); `workspace_mode_toolbar` (Issue title) | The key path: focus, the input's key handling, its change event and the product's sync from it. |
 | Paste into the focused real `InputState` (`write_to_clipboard`, then `cmd-v` or `input::Paste`) | `remote_browse_escape_focus` (host), `worktree_lock_reason` (lock reason, after `cmd-a backspace`), `pr_fields_escape_focus` (picker filter), `workspace_mode_toolbar` (Issue title / body) | The paste path into the field the product focused, and the sync from it. |
-| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github` (Home search), `theme_custom` (palette query) | The input's change event and the product's handling of the value; not focus or key handling. |
-| `InputState::replace` / `replace_all` on the real input (no key or paste event) | `issue_create_fields` (Issue body, via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`), `home_work` (Reply body, via `insert_issue_reply_body_for_e2e`), `pr_same_number`, `workspace_mode_toolbar` (PR composer; Issue body via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`; Reply body via `insert_issue_reply_body_for_e2e`) | The input's change event and the product's handling of the replaced text (the Composer / Reply draft subscription included); not focus, key or paste handling. |
+| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github`, `home_search_incomplete_repos`, `home_search_incomplete_refreshing`, `home_search_incomplete_work` (Home search), `theme_custom` (palette query), `pr_pagination` (sidebar composing text) | The input's change event and the product's handling of the value; not focus or key handling. |
+| `InputState::replace` / `replace_all` on the real input (no key or paste event) | `issue_create_fields` (Issue body, via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`), `home_work` (Reply body, via `insert_issue_reply_body_for_e2e`), `pr_same_number`, `pr_pagination_closed_tab_retention`, `pr_pagination_all_tab_retention`, `workspace_mode_toolbar` (PR composer; Issue body via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`; Reply body via `insert_issue_reply_body_for_e2e`) | The input's change event and the product's handling of the replaced text (the Composer / Reply draft subscription included); not focus, key or paste handling. |
 | `e2e::set_remote_browse_host_input`: `set_value` on the host input **and** a direct write of `host_input` | `merge_plan_latch`, `delete_branch_plan_latch`, `remote_browse_modal_routing`, `push_failure_keeps_modal` | Remote Browse holding its slot and input; not the form's own sync from the field (that is `remote_browse_escape_focus`). |
 | No `InputState` at all: `e2e::open_local_panel_no_inputs` / `open_worktree_panel_no_inputs`, message from the `commit_msg` fallback (`e2e::set_commit_message`, as headless `KAGI_COMMIT_MSG`) | `wip_diff_survives_reload`, `commit_panel_survives_reload`, `worktree_wip_inline`, `worktree_panel_commit`, `worktree_panel_amend_discard`, `worktree_panel_discard_recording_failure`, `diff_highlight_once`, `diff_highlight_stale`, `file_menu_freezes_path`, `file_menu_rejects_stale_owner`, `file_tree_roles`, `hunk_staging`, `modal_compact`, `smart_commit_generation_owner`, `smart_commit_modal_and_probe`, `stage_failure_notice`, `dialog_a11y_roles`, `commit_stage_deferred_owner`, `commit_panel_revalidates_on_activation`, `smart_generation_close_drops_panel`, `commit_panel_refuses_during_activation`, `commit_close_drops_panel`, `manual_reload_releases_revalidation`, `commit_row_layout_wip` | The commit panel's ownership, staging and write paths. Nothing about the message or description inputs: these were built without them because each `InputState` registers an App-level observer that keeps it alive past its window (see `open_worktree_panel_no_inputs`). |
 
@@ -1446,11 +2774,29 @@ real read produces it. Used by `remote_refresh_departed_owner`,
 `pr_fields_escape_focus`, `field_picker_owner`, `ghe_viewer_login`,
 `ghe_viewer_login_closed_only`, `github_evidence_restores`,
 `github_evidence_background_owner`, `github_evidence_detached_owner`,
+`pr_pagination`, `pr_pagination_races`, `pr_pagination_closed_tab_retention`,
+`pr_pagination_all_tab_retention`, `pr_pagination_pending_closed_tab_return`,
+`pr_pagination_pending_all_tab_return`,
 `cleanup_evidence_background_owner`, `cleanup_evidence_superseded`,
 `cleanup_evidence_read_revision`, `cleanup_evidence_publish_generation`,
 `squash_evidence_read_revision`, `squash_evidence_publish_generation`,
 `ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`,
 `ecosystem_evidence_detached_samepath` and `workspace_mode_toolbar`.
+
+`clone_picker_owner` (#1402, Clone side of #1420) uses
+`e2e::queue_folder_answer` with `evidence_support::deferred` to substitute a
+native folder dialog's `Result<Option<PathBuf>, String>`: late answers cannot
+replan a replacement/reopened card; cancellation is silent; failures preserve
+the card, report a localized error and record a failed receipt only when a
+repository owns the screen. It does not validate an actual OS dialog.
+`clone_completion_navigation` (#1405) uses `e2e::queue_clone_run` only to hold
+dispatch: release runs the real local clone, verification and successful oplog
+receipt. It proves background completion preserves the active session,
+selection, focus and tab count until the drawn Open Repository action is
+clicked (EN) or reached by Tab and activated with Enter (JA). Current-card
+completion opens normally. Its matrix covers 940×660/1392×883, 100%/167% and
+Apple Light/Dark. Use `KAGI_GUI_E2E_ONLY='clone_,home_,toast_'` for neighbors.
+Actual folder sheets, occlusion and native focus remain Tier B.
 
 The same kind of stand-in, outside `e2e::queue_*`:
 
@@ -1749,6 +3095,108 @@ KAGI_LOG_DIR="$(mktemp -d)" CARGO_TARGET_DIR="$PWD/target" cargo test -j 8 --wor
 `-j 8` controls Cargo build jobs; it does not serialize Rust test threads. Do
 not use `RUST_TEST_THREADS=1` to mask a race. GUI runner execution is a separate
 lane and is not part of this fixture check.
+
+### Process fixture ownership
+
+Test cleanup must target only processes created by that fixture. Never use
+name-based or command-line-pattern cleanup such as `pkill -f 'sleep …'`: a
+matching process may belong to the user or another concurrent test. Keep real
+deadline, group-stop and incomplete-I/O assertions; replacing the subprocess
+with a mock or dropping those oracles does not prove the production boundary.
+
+Own each fixture's privately published descendant PID and kernel start identity
+for RAII cleanup. On macOS reuse `tests/support/proc_identity.rs`; Linux start
+identity comes from `/proc/<pid>/stat`. The identity helper and helper-backed
+cases retain their Unix guard and are explicitly restricted to macOS / Linux;
+there is no always-failing other-Unix or PID-only cleanup fallback. Existing
+broader Unix group-leadership, direct deadline and input / output tests remain.
+The parent owns its root group only while its Child is unreaped; panic cleanup
+can signal that group then, but after reap only a recorded descendant identity
+may be signaled. Recheck kernel identity immediately before descendant cleanup.
+
+Retain these real `proc::tests` oracles in `crates/kagi-git/src/proc.rs`:
+
+- `wait_or_kill_stops_the_group_before_it_reaps_the_leader`;
+- `run_child_deadline_is_not_an_exit_and_reaps_the_child`;
+- `run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes`;
+- `run_child_clean_exit_with_unfinished_output_is_not_a_clean_capture`;
+- `run_child_clean_exit_with_undelivered_input_is_not_a_clean_capture`.
+
+A clean exit while a held-pipe descendant is alive must not claim group-stopped
+proof. `proc::tests::fixture_cleanup_does_not_stop_another_same_marker_child`
+uses two privately owned real `sleep 300` descendants: cleaning and reaping the
+first leaves the second identity alive, then the second is cleaned and reaped.
+The fixture publishes its PID + kernel start record atomically in a private
+directory while the parent still owns its Child.
+On Linux the regression first exits and reaps both direct fixture parents,
+leaving two live descendants adopted by its private supervisor. Each cleanup
+must reap only its own descendant, and the direct parents must remain available
+to their owning Child handles. macOS keeps the original parent-owned child reap.
+
+`proc::tests::owned_descendant_fixture_process` is an ignored, subprocess-only
+helper requiring the private fixture environment; never select it manually or
+run it with `--ignored`. Run the parent regression instead.
+On Linux these four helper-backed cases re-execute individually in a dedicated
+exact-test subprocess. Only that private subprocess enables
+`PR_SET_CHILD_SUBREAPER`; the shared root harness is never made a subreaper.
+Each fixture's reaper thread is outside the group being stopped and collects
+only its privately published descendant PID with `waitpid(WNOHANG)`, after
+checking the recorded start identity. It never uses `waitpid(-1)` or reaps the
+direct Child owned by `run_child` / `wait_or_kill`. Linux identity probes retain
+zombies until actual reap. Cleanup joins the reaper before deleting its private
+directory. macOS keeps its existing inline fixture behavior.
+
+The fixture's cleanup and reaper share one ownership mutex. Hold it across
+kernel identity recheck + `SIGKILL`, and across kernel identity recheck +
+exact-PID `waitpid`, so the reaper cannot release the old PID between a successful
+identity check and the signal. Release it before `wait_until_gone`, poll sleeps,
+finish or join. Panic/Drop cleanup must use the same guarded signal path.
+
+Run `cargo test -p kagi-git --lib -- proc::tests::` for the scoped production
+runner oracles and ownership regression. Linux runtime proof must additionally
+run the same compiled test binary under a private Docker PID namespace with a
+deliberately non-reaping PID 1: PID 1 waits only for its direct test-binary child,
+not adopted descendants, and the container must not use `--init`. Compare the
+original review head `8853fcff4e1b5e7e4653ce779a2f0f479c6d412a` with the fix,
+recording test exit/assertions and exact adopted PID leftovers. The fixture
+must reap its own descendants; do not skip Linux, accept a false failure, ignore
+zombies in group proof, or weaken production `group_alive` / `group_stopped`.
+Use private disposable containers, not a host service or global process match.
+
+macOS evidence alone is not Linux runtime evidence. Record checks only after
+execution; fixture isolation and clipboard deletion establish no measured speedup.
+
+### Host clipboard safety
+
+Never run the legacy `gpui-terminal` clipboard smoke tests on the host, including
+from an older checkout to reproduce timings. Their creation / copy-paste / clear
+tests connected to the shared OS clipboard, could overwrite or clear the user's
+contents, and accepted failures or mismatches as success. All three tests and their
+module are removed, not skipped or replaced with mocks; the production `Clipboard`
+API and event proxy are unchanged. The two clipboard event-forwarding echo tests
+are also removed: repeating an injected payload / event is not consumer selection
+or Copy coverage. The default package lib suite is expected to contain 82 tests
+instead of 87. It no longer attempts those host clipboard operations; this is not
+a claim that every workspace test has been audited for host non-interference.
+
+For app selection / Copy assertions, reuse GPUI's existing private
+`TestAppContext` clipboard. The locked GPUI `VisualTestPlatform` used by Tier A
+also stores clipboard items privately rather than forwarding them to the OS.
+Existing consumer-visible coverage remains:
+
+- `vendor/gpui-terminal/src/terminal.rs`:
+  `test_bounds_to_string_extracts_selection` asserts selected grid text.
+- `tests/gui_e2e_runner.rs`: `scenario_graph_copy` asserts the full commit SHA
+  and local branch name through the app's Copy action.
+- `tests/recovery/oplog_select.rs`: `scenario_oplog_detail_select_copy` drives
+  a rendered text drag and ⌘C, then asserts before / after, the recovery command
+  and recorded ref in the private clipboard; the expanded row must stay open.
+
+The GPUI scenarios remain opt-in Tier A coverage, not default package tests.
+None of these assertions prove arboard / OS clipboard integration. Exercise actual
+system integration only in an isolated VM with no host clipboard bridge, using
+assertions on the real outcome; do not introduce another fake clipboard or a new
+GUI runner feature for this deletion.
 
 ## Other runtime seams
 
@@ -2062,6 +3510,50 @@ index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
 Unstage hunk in unified and split view (EN/JA labels), and check the panel and
 diff update.
 
+For #1233 / #1234 use
+`KAGI_GUI_E2E_ONLY='diff_hunk_buttons,diff_keyboard_selection'` with
+`KAGI_GUI_E2E_KEEP_GOING=1`. The first checks the pinned named ghost Button's
+role/name inputs, Tab/F19 routing, Enter Stage / Space Unstage in EN/JA and
+unchanged header bounds (original and new: 893×22.5 logical px at the fixture
+viewport). The second enters the body by Tab before moving a caret, checks
+header fill after final styling, and compares content-row selection fills after
+Shift+Down ×3, retraction, collapsed caret, boundary extension, Cmd+A and
+code-only Cmd+C. EN/JA unified/split use real backend rows; changing the row
+count must preserve body focus without another Tab or click. Both ends of a
+201-row diff remain inside the measured native viewport after keyboard
+movement. Neither recorder is native VoiceOver evidence.
+Tab shows the body ring, a measured header click keeps body focus without the
+ring, and subsequent arrow input restores the keyboard-only ring.
+Neighbor filter: `KAGI_GUI_E2E_ONLY='diff_,hunk_,peek_,copy_'`.
+Tier B: Tab into the body and hunk actions; inspect focus, Enter/Space, tooltip
+and live AX role/name, then Shift-arrow / Shift-Cmd-arrow / Cmd+A / Cmd+C /
+Escape in unified and split. Compare identical EN/JA data, viewport and zoom;
+selection Escape must leave the diff and copied notification visible.
+
+
+### Nonblocking WIP opening (#1570)
+
+Tier A: `KAGI_GUI_E2E_ONLY=compact_wip_` includes `compact_wip_first_frame`, holding the real opening
+read before publication in compact and desktop windows. The placeholder and
+compact composer must paint while held; releasing it publishes all 200 files.
+A warm reopen retains the panel/title input and draft, and a newer status refresh
+invalidates the held older result. A separately held Smart Commit capability
+result exposes the localized detecting reason without falling back to rule-based
+generation while an enabled provider is still unknown.
+Global read invalidation without a following reload must automatically reread
+and fill the pane. `compact_wip_probe_superseded` publishes synchronous status
+before releasing the opening read and still requires provider discovery.
+`compact_wip_amend_loading` checks compact EN / desktop JA unavailable help,
+inert pointer and direct Amend dispatch while held, then an authoritative Both
+plan after the staged payload arrives, with the repository unchanged.
+Neighbors: `compact_select_changes,compact_layout_changes,compact_layout_state,compact_layout_lifecycle,smart_commit_modal_and_probe,smart_commit_footer_provider,worktree_panel`.
+Use KEEP_GOING and the normal scoped native-run timeout.
+Tier B click dispatch and sample evidence can identify synchronous work, but
+an unchanged capture under shared-screen frame-delivery stalls is not paint
+latency evidence. Use a native Tier A pane paint callback for first-frame timing;
+`simulate_click` can drain later background work before returning, so timing its
+whole return overstates the first frame. Temporary timing probes do not ship.
+
 ### WIP diffstat after staging (#996)
 
 Tier A: `KAGI_GUI_E2E_ONLY=wip_diffstat_stage_order` in
@@ -2090,6 +3582,29 @@ starts a local fetch through `fetch_async`, checks the renderer's snackbar text
 before completion in both languages, and checks release after completion.
 Build only when PM owns execution. For M, verify Fetch, Commit, Stash, Discard,
 branch deletion and editor Save show an operation label, never `app-writer`.
+
+### Selection, hidden clone and scoped Home empty wording (#1451–#1453)
+
+Tier A filter:
+`KAGI_GUI_E2E_ONLY='pr_dashboard_hover_selected,clone_hidden_status,home_empty_section_wording,pr_dashboard_keyboard,clone_,home_'`
+with KEEP_GOING. Dashboard coverage samples native selected-row fills before
+and during hover in active/inactive windows, retains PR-number focus/AX identity
+and checks one Enter/Space activation. Apple Dark's active and inactive tokens
+can legitimately match; each state must still match its own resolved token.
+The high-zoom setup sends a native wheel event inside the focused row to expose
+the sampled neighbor without moving focus; distinct live bounds reject retired
+virtualized-row probe coordinates.
+The hidden-clone scenario holds production dispatch before a real fixture clone,
+hides its card and opens repository B. The rendered Status names the frozen
+source; Tab reaches the pinned Button's existing keyed focus owner and
+Enter/Space restores the same request without another dispatch or lease.
+Home pane/query changes cannot hide this entrance; only terminal-report delivery
+removes it and releases the latch. Successful empty sections name owner/host in
+EN/JA, including Enterprise and all-zero fixtures; failed owners retain failure
+notes. Renderer AX/probe assertions do not claim native VoiceOver delivery.
+Tier B remains PM-owned: compare selected-row hover and inactive fills, hidden
+clone Show Progress on another repository and filtered Home, and mixed owner
+empty/failure wording in real EN/JA windows. No percent or Cancel is introduced.
 
 ### Slow-read advice (#355, ADR-0206)
 

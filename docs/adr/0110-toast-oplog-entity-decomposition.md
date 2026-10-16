@@ -73,3 +73,120 @@ One PR touching `src/ui/toast_stack.rs` (entity methods), `src/ui/render.rs`
 `cargo build` / `cargo test` / `cargo fmt --check` green. UI-affecting:
 verify in the running app that toasts slide in/out, auto-dismiss, cap at 4, the
 `×` dismiss works, and the busy/sync-spinner snackbars are unchanged.
+
+## Reading and dismissal amendment (#1240, 2026-10-12)
+
+The dense notification overlay is transient feedback, not a second durable log.
+Error cards do not auto-expire (unlimited lifetime, exceeding the ten-second
+minimum), including while hovered or keyboard-focused. Explicit dismissal and
+cap eviction can still remove a card being read. Info/Success/Sync keep a
+four-second timer counting only unhovered time. The four-card cap always admits
+the new notification and evicts the oldest existing non-error first. If all
+four existing cards are errors, the new notification replaces the oldest error,
+regardless of hover/focus; the Operation Log retains complete detail.
+Stored error previews preserve at most three newline-separated lines and 768
+characters plus an ellipsis. They wrap to at most three painted lines; visual
+overflow also shows an ellipsis. Neither storage nor paint retains/shapes the
+unbounded durable operation record.
+The close control reuses the pinned gpui-kit ghost icon Button with its native
+keyboard Tab/Enter/Space handling, focus ring, localized AX name and Tooltip.
+Escape first cancels the existing modal/menu front layer, then clears diff-line
+selection or closes the PR drawer, then dismisses the newest visible toast,
+then performs the main-diff/Graph fallback. Terminal's existing Escape exclusion
+and the single active-modal slot are unchanged. Removal and eviction notify the
+parent with the removed control's retained FocusHandle, returning orphaned focus
+to root like `release_closed`; a still-rendered Input/modal focus is not stolen.
+The pinned Button does not implement GPUI's stateful accessibility setters;
+a thin adapter delegates its interactivity/rendering unchanged and supplies
+the icon-only AX name without painting a redundant visible label.
+This remains a dense in-app feedback surface, not a Notification Center
+replacement: reuse the existing card colours, spacing and enter/exit motion.
+The error body uses a 1.4-rem line height and a three-line maximum height as
+well as text clamping, so explicit newline paragraphs cannot bypass the cap.
+Rest/hover/pressed/focus-visible close states are owned by gpui-kit; empty
+stack has no cards or ticker, and no close action is disabled. Tier A
+`toast_dismiss` uses an actual failed local fetch for the lifetime oracle and
+measures a three-line component preview at 940×660/167% in EN and JA.
+Review coverage also uses actual pointer hover on Info for ten seconds, verifies
+the remaining timer after leaving, traverses to the real close Button with Tab
+and activates it with Enter, and checks focus repair after keyboard dismissal
+and focused Info expiry. Six-line/long-single-line inputs exercise truncation;
+JA uses Japanese preview text. Button measurement wraps the component without
+adding children that would change its production icon geometry.
+
+## Status metadata amendment (#1337, 2026-10-12)
+
+The retained toast entity owns a single stable `toast-stack` Status node.
+Push records the newest preview's ID and text; that text names the node.
+Timer, hover, enter/exit animation, cap eviction and dismissal never promote
+an older notification into a new arrival. The latest arrival metadata drains
+when the stack becomes empty. No focus changes accompany arrival.
+
+The pinned GPUI fork (`caf5007`) has no `aria_live`, live-region priority or
+announcement setter in its stateful accessibility API. Therefore the node
+exposes Status and its updated label, but neither polite/assertive delivery
+nor exactly-once native VoiceOver speech is guaranteed. Tier A observes
+renderer-applied role/name and stable arrival identity, not announcements.
+The bounded previews, persistent errors, hover pause, keyboard dismissal and
+durable Operation Log ownership above are unchanged.
+
+## Viewport budget amendment (#1551, 2026-10-14)
+
+This dense in-app feedback surface follows the HIG Notifications principle of
+concise, non-invasive foreground presentation, not Notification Center styling.
+Show the newest existing preview and an EN/JA named counted disclosure for the
+remaining cards. Do not deduplicate by truncated preview: distinct failures can
+share a prefix, and every operation still owns its full durable receipt/cause.
+The pinned ghost Button owns Tab/Enter/Space and its focus ring; its localized
+name changes to Collapse when expanded. Expanded cards scroll inside the same
+30%-of-viewport height budget, independent of UI zoom. The empty/single-card,
+error lifetime, explicit dismissal and four-card eviction policies remain.
+The existing card role colours, typography, hover pause and motion are reused;
+there is no new global settings or notification owner.
+The shared out-of-flow host originally moved to the trailing side, below toolbar
+chrome, to leave Sidebar/search and the leading Graph hit lane available and
+avoid covering the bottom Operation Log. Its placement is superseded by #1590
+below; the cap of at most 45% of the viewport width remains.
+Disclosure stays above the card scroller so Collapse cannot scroll out of reach.
+Native Click actions share the disclosure/dismiss listeners, and hiding controls
+repairs their retained focus through the existing ToastRemoved contract.
+Review: hidden cards resume their hover-paused timers both on newest-card
+replacement and on Collapse; the old subtree cannot be relied on to deliver
+hover-leave after it is removed. Open Repository also owns an explicit native
+Click action, so activation of a scroll-clipped action does not depend on
+synthetic pointer hit-testing. The English one-older-card caption is singular.
+
+## Bottom-left anchor amendment (#1590, 2026-10-15)
+
+Restore a fixed bottom-left anchor for the shared notification host in both
+repository and Settings windows, above the status bar rather than below the
+toolbar on the trailing side. Adding notifications or expanding the stack grows
+the overlay upward; its bottom-left origin does not move with its content.
+This supersedes #1551's host-placement decision while retaining its bounded
+disclosure policy. Settings uses the same busy-snackbar/toast renderer.
+
+Keep the newest preview and localized EN/JA counted disclosure for older cards.
+Expanded cards still scroll under the same zoom-independent 30%-of-viewport
+height upper bound, with the disclosure outside the scroller so Collapse stays
+reachable. In compact repository windows (under 1000 logical px) with the bottom
+panel open, further cap the notification container to the bottom-panel body
+height minus the toast inset. Reuse the panel's `bottom_panel_body_height`
+calculation with the same resolved Editor-center flag (including its body cap)
+so the compact tab strip's primary controls remain exposed, without
+moving the exact bottom-left anchor. Retain the 45%-of-viewport width cap,
+bounded previews, persistent
+errors, hover-paused routine timers, explicit dismissal, four-card eviction,
+keyboard/accessibility actions and focus repair. Complete operation details
+remain in the durable Operation Log; this is a placement correction, not a new
+notification owner, setting or lifetime policy.
+
+The shared position does not share host-specific navigation actions. Settings
+shows clone busy feedback but not the action that reveals a clone card in its
+owning repository/Home window; opening that card must not steal Settings focus.
+
+Acceptance geometry uses repository widths of 1000/1400 logical px plus 940px
+compact coverage. The owner accepted Settings' actual native 715px width in
+EN/JA at 100%/167% zoom instead of imposing repository-sized 1000/1400px frames:
+production `fit_content` restores that width, and the E2E must not bypass it.
+Tier B visual review remains pending while the screen is locked; this amendment
+does not claim completed screenshots or native visual acceptance.

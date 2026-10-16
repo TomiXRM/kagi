@@ -90,3 +90,14 @@ git2 でどう実装するか(in-memory 主義・ref-order 規則に整合)を�
 - `commit.amend` を避け new commit + ref 移動にすることで、cherry-pick / revert と同じ規則に乗る
 - T-COMMIT-010/011(amend 実装)は **unblocked**: MVP スコープ = 未 push のみ、pushed は blocker
 - 案 C の実装チケットは v0.2 設計時に起票(T-COMMIT-019 として予約)
+
+## Amendment — 2026-10-10 (#1132, #1133)
+
+The constructor in §「git2 実装方式」is superseded by the
+[ADR-0039 commit CLI policy](0039-commit-operation-safety-policy.md#amendment--2026-10-10-users-commit-hooks-and-signing-1132-1133):
+`git commit --amend` receives a private index for the approved tree and runs
+the user's hooks/signing. MessageOnly still excludes the real staged changes;
+Staged/Both still recheck the approved index digest. The old author and parent,
+root/merge/detached/pushed guards, savepoint and confirmation rules remain.
+Read-back verification requires the expected tree and old parent; no unsigned
+or hook-skipping fallback remains in this executor.

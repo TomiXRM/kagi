@@ -22,9 +22,8 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 
-use kagi_git::{is_url, parse_coauthors, parse_trailers, sanitize_trailer_value, CommitId};
-
-use kagi_ui_core::file_tree::status_badge;
+use kagi_git::{is_url, sanitize_trailer_value, CommitId};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 // Badge sort order is shared with the graph column — one definition only
 // (a second copy silently drifts and the two views disagree).
@@ -37,9 +36,7 @@ use super::{
     commit_list::{BadgeKind, RefBadge},
     context_menu::CommitAction,
     detail_panel::CommitDetail,
-    diffstat_bar::diffstat_unit,
-    file_tree,
-    inspector_model::{InspectorFile, InspectorModel},
+    inspector_model::InspectorModel,
     DividerDrag, DividerGhost, DividerKind, KagiApp,
 };
 
@@ -69,8 +66,7 @@ pub(super) const INSPECTOR_SPLIT_DIVIDER_H: f32 = 4.0;
 /// paths. `inspector_split` — message:files height ratio (0.5 = 1:1).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_inspector(
-    d: CommitDetail,
-    at: CommitId,
+    detail: Option<(CommitDetail, CommitId)>,
     badges: Vec<RefBadge>,
     // GitHub Phase 1: open PRs whose head branch tip is this commit.
     prs_here: Vec<kagi_domain::github::PullRequest>,
@@ -81,277 +77,94 @@ pub(super) fn render_inspector(
     // Compare mode (ADR-0026): the banner title; `None` for a plain commit.
     compare_title: Option<SharedString>,
     active_file: Option<usize>,
+    window_active: bool,
     tree_view: bool,
     inspector_split: f32,
     // Measured (top, bottom) of the message+files region, written at paint
     // time and read by the InspectorSplit drag handler in mod.rs.
     split_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     panel_width: f32,
+    compact: bool,
     // W11-AVATAR: resolved GitHub avatar images keyed by author email.
     avatar_images: &std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
+    fallback: Option<&gpui::FocusHandle>,
+    message_handle: &gpui::ScrollHandle,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let files = model.files();
 
-    // ── Short SHA (first 8 hex chars) ────────────────────────────────────
-    let short_sha: SharedString =
-        SharedString::from(d.full_sha.chars().take(8).collect::<String>());
-
-    // ── Copy SHA handler (full raw SHA — no ZWSP) ─────────────────────────
-    let copy_target1 = at.clone();
-    let copy_sha_click1 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(CommitAction::CopySha, copy_target1.clone(), _window, cx);
-    });
-
-    // ── Author name + email (parsed from `author_line`) ───────────────────
-    // `author_line` format: "name  <email>  YYYY-MM-DD HH:MM" (detail_panel).
-    // We only need the display name (meta row) and email (avatar colour).
-    let (author_name, author_email) = parse_author(d.author_line.as_ref());
-
-    // ── Message (single wrapped text element) ─────────────────────────────
-    // One text run, not per-line divs: gpui's text layout handles '\n' and
-    // soft-wrapping itself. Rendered as escaped HTML through a selectable
-    // `TextView`, not as a plain text run: GPUI has no text selection for a
-    // plain run, and `TextView` — the one element that does — parses only
-    // Markdown or HTML. The reflow + escape is derived per commit in the model.
-    let message_html = model.message_html();
-
-    // ── Changed-file rows (generated files folded separately below) ───────
-    let mut tree_element_rows: Vec<gpui::AnyElement> = match files {
-        None => vec![],
-        Some(files) if tree_view => files
-            .tree
-            .iter()
-            .map(|row| match row {
-                file_tree::TreeRow::Dir { depth, name } => {
-                    let indent = (*depth as f32) * 12.0;
-                    div()
-                        .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .pl(theme::scaled_px(indent))
-                        .mb_px()
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(theme().change_dir))
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .into_any()
-                }
-                file_tree::TreeRow::File {
-                    depth,
-                    name,
-                    file_index,
-                    change,
-                } => {
-                    let indent = (*depth as f32) * 12.0;
-                    let (badge_char, badge_color, _) = status_badge(change.as_ref(), false);
-                    let fi = *file_index;
-                    let stat = files.files.get(fi).and_then(|f| f.stat.as_ref());
-                    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_main_diff_inspector_file(fi, cx);
-                        cx.notify();
-                    });
-                    // Right-click → context menu (History / Edit / Copy
-                    // Path); used to jump straight to File History.
-                    let menu_click =
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                            this.inspector_file_menu = Some((fi, e.position));
-                            cx.stop_propagation();
-                            cx.notify();
-                        });
-                    let row = div()
-                        .id(("file-row", fi))
-                        .on_mouse_down(MouseButton::Right, menu_click)
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .pl(theme::scaled_px(indent))
-                        .mb_px()
-                        .flex_shrink_0()
-                        .when(active_file == Some(fi), |el| {
-                            el.bg(rgb(theme().selected)).rounded_sm()
-                        })
-                        .on_click(click)
-                        .child(
-                            div()
-                                .w(theme::scaled_px(14.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge_char)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .child(diffstat_unit(fi, stat));
-                    super::e2e::measure_control(format!("inspector-file-{fi}"), row)
-                }
-            })
-            .collect(),
-        // ── Flat path list ──────────────────────────────────────────────────
-        Some(files) => files
-            .files
-            .iter()
-            .enumerate()
-            .filter(|(_, file)| !file.generated)
-            .map(|(fi, file)| flat_file_row(fi, file, active_file, cx))
-            .collect(),
-    };
-
-    // ── Generated / lockfile fold (issue #348) ────────────────────────────
-    // Collapsed by default: a "Generated (N)" disclosure row; expanded, it
-    // lists the folded files (flat, whatever the view mode).
-    if let Some(files) = files.filter(|f| f.generated_count > 0) {
-        let expanded = generated_expanded;
-        let arrow = if expanded { "▾" } else { "▸" };
-        let label = format!(
-            "{arrow} {} ({})",
-            i18n::Msg::GeneratedFilesSection.t(),
-            files.generated_count
-        );
-        let toggle = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-            this.inspector_generated_expanded = !this.inspector_generated_expanded;
-            cx.notify();
-        });
-        tree_element_rows.push(super::e2e::measure_control(
-            "generated-fold-header",
+    // Share one session-owned roving selector between wide and compact Inspector.
+    // Activation explicitly sets the mode: reactivating a selected tab is inert.
+    let weak = cx.entity().downgrade();
+    let tabs = super::keyboard_nav::TabList::new(
+        &model.view_focus,
+        super::keyboard_nav::slot_keys(2),
+        vec![0, 1],
+        Some(usize::from(tree_view)),
+        super::keyboard_nav::Activation::Automatic,
+        fallback.cloned(),
+        move |slot, _, _, cx| {
+            let _ = weak.update(cx, |app, cx| {
+                app.inspector_tree_view = slot == 1;
+                cx.notify();
+            });
+        },
+        cx,
+    );
+    let cell = |slot, id: &'static str, label: &'static str| {
+        let selected = tree_view == (slot == 1);
+        super::e2e::commit_panel_labels::focus(id, tabs.focus_handle(slot));
+        tabs.cell(
+            slot,
+            label,
             div()
-                .id("generated-fold-header")
+                .id(id)
+                .m(px(-super::keyboard_nav::RING))
+                .relative()
+                .role(super::e2e::commit_panel_labels::role(id, gpui::Role::Tab))
+                .aria_label(super::e2e::commit_panel_labels::name(id, label))
+                .aria_selected(super::e2e::commit_panel_labels::selected(id, selected))
+                .child(super::e2e::measure_inside(id))
+                .child(
+                    div()
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .bg(if selected {
+                            theme().segment_selected_bg()
+                        } else {
+                            rgb(theme().surface).into()
+                        })
+                        .text_xs()
+                        .text_color(rgb(if selected {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .child(SharedString::from(label)),
+                ),
+        )
+    };
+    let toggle_row = tabs
+        .list(
+            div()
+                .id("files-toggle-row")
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_1()
-                .mt_1()
-                .mb_px()
-                .flex_shrink_0()
-                .on_click(toggle)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .truncate()
-                        .child(SharedString::from(label)),
-                ),
-        ));
-        if expanded {
-            for (fi, file) in files.files.iter().enumerate() {
-                if file.generated {
-                    tree_element_rows.push(flat_file_row(fi, file, active_file, cx));
-                }
-            }
-        }
-    }
-
-    // ── "Create branch here" button ──────────────────────────────────────
-    let at_for_create = at.clone();
-    let at_for_cherry = at.clone();
-    let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(
-            CommitAction::CreateBranchHere,
-            at_for_create.clone(),
-            _window,
-            cx,
-        );
-        cx.notify();
-    });
-    let create_branch_button = action_button(
-        "create-branch-btn",
-        "+ Branch here",
-        theme().color_branch,
-        create_branch_click,
-    );
-
-    // ── "Cherry-pick onto HEAD" button (T016) ────────────────────────────
-    let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(CommitAction::CherryPick, at_for_cherry.clone(), _window, cx);
-        cx.notify();
-    });
-    let cherry_pick_button = action_button(
-        "cherry-pick-btn",
-        "\u{1f352} Cherry-pick",
-        theme::theme().accent, // accent (cherry-pick)
-        cherry_click,
-    );
-
-    // ── Path⇄Tree toggle ─────────────────────────────────────────────────
-    // Each button sets its mode explicitly (a shared toggle would make the
-    // active button flip the view to the other mode on click).
-    let toggle_click_a = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.inspector_tree_view = false;
-        cx.notify();
-    });
-    let toggle_click_b = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.inspector_tree_view = true;
-        cx.notify();
-    });
-    let path_active = !tree_view;
-    let tree_active = tree_view;
-    let path_bg = if path_active {
-        theme().selected
-    } else {
-        theme().surface
-    };
-    let tree_bg = if tree_active {
-        theme().selected
-    } else {
-        theme().surface
-    };
-    let path_col = if path_active {
-        theme().text_main
-    } else {
-        theme().text_sub
-    };
-    let tree_col = if tree_active {
-        theme().text_main
-    } else {
-        theme().text_sub
-    };
-
-    let toggle_row = div()
-        .id("files-toggle-row")
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .child(
-            div()
-                .id("toggle-path")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .bg(rgb(path_bg))
-                .text_xs()
-                .text_color(rgb(path_col))
-                .on_click(toggle_click_a)
-                .child(SharedString::from("Path")),
+                .gap_1(),
         )
-        .child(
-            div()
-                .id("toggle-tree")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .bg(rgb(tree_bg))
-                .text_xs()
-                .text_color(rgb(tree_col))
-                .on_click(toggle_click_b)
-                .child(SharedString::from("Tree")),
-        );
+        .role(super::e2e::commit_panel_labels::role(
+            "files-toggle-row",
+            gpui::Role::TabList,
+        ))
+        .aria_label(super::e2e::commit_panel_labels::name(
+            "files-toggle-row",
+            Msg::A11yInspectorFiles.t(),
+        ))
+        .child(cell(0, "toggle-path", "Path"))
+        .child(cell(1, "toggle-tree", "Tree"));
 
     // ── Counts row (ChangeKind tally; 0-count kinds omitted) ──────────────
     let counts_row = files.map(|files| {
@@ -392,13 +205,19 @@ pub(super) fn render_inspector(
         div()
             .id("compare-banner")
             .flex()
+            .when(cfg!(feature = "gui-e2e"), |banner| {
+                banner.relative().child(super::e2e::measure_inside(format!(
+                    "compare-banner-{}",
+                    title.as_ref()
+                )))
+            })
             .flex_row()
             .items_center()
             .justify_between()
             .gap_2()
-            .mb_2()
+            .mb_1()
             .px_2()
-            .py_1()
+            .py_px()
             .rounded_sm()
             .bg(rgb(theme().surface))
             .child(
@@ -427,39 +246,16 @@ pub(super) fn render_inspector(
         .mb_1()
         .child(toggle_row);
 
-    // ── Scrolling file list (own scroll, independent of message box) ──────
-    let mut files_list = div()
-        .id("inspector-files-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
-
-    match files {
-        None => {
-            files_list = files_list.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::DiffUnavailable.t())),
-            );
-        }
-        Some(files) => {
-            for row in tree_element_rows {
-                files_list = files_list.child(row);
-            }
-            if files.hidden > 0 {
-                files_list = files_list.child(super::e2e::measure_control(
-                    "inspector-files-more",
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(i18n::and_n_more(files.hidden))),
-                ));
-            }
-        }
-    }
+    let files_list = model.keyboard.render(
+        model.files_snapshot(),
+        tree_view,
+        generated_expanded,
+        active_file,
+        window_active,
+        fallback,
+        window,
+        cx,
+    );
 
     // ── Bottom box: compare banner / counts / toggle / files list ─────────
     let files_box = div()
@@ -471,10 +267,90 @@ pub(super) fn render_inspector(
         ))
         .flex_shrink(1.)
         .px_3()
+        .when(cfg!(feature = "gui-e2e"), |frame| {
+            frame
+                .relative()
+                .child(super::e2e::measure_inside("inspector-files-frame"))
+        })
         .children(compare_banner)
         .children(counts_row)
         .child(files_header)
         .child(files_list);
+
+    // Compare files are meaningful without a selected/loaded Graph commit.
+    let panel = div()
+        // The persisted width is unscaled; render it at the active zoom.
+        .w(theme::scaled_px(panel_width))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(theme().panel))
+        .when(compact, |panel| {
+            panel
+                .w_full()
+                .flex_1()
+                .min_h(px(0.))
+                .min_w(px(0.))
+                .flex_row()
+        });
+    let Some((d, at)) = detail else {
+        return panel.child(files_box.flex_1().flex_basis(relative(1.)).pt_1());
+    };
+
+    // ── Short SHA (first 8 hex chars) ────────────────────────────────────
+    let short_sha: SharedString =
+        SharedString::from(d.full_sha.chars().take(8).collect::<String>());
+
+    // ── Copy SHA handler (full raw SHA — no ZWSP) ─────────────────────────
+    let copy_target1 = at.clone();
+    let copy_sha_click1 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(CommitAction::CopySha, copy_target1.clone(), _window, cx);
+    });
+
+    // ── Author name + email (parsed from `author_line`) ───────────────────
+    // `author_line` format: "name  <email>  YYYY-MM-DD HH:MM" (detail_panel).
+    // We only need the display name (meta row) and email (avatar colour).
+    let (author_name, author_email) = parse_author(d.author_line.as_ref());
+
+    // ── Message (single wrapped text element) ─────────────────────────────
+    // One text run, not per-line divs: gpui's text layout handles '\n' and
+    // soft-wrapping itself. Rendered as escaped HTML through a selectable
+    // `TextView`, not as a plain text run: GPUI has no text selection for a
+    // plain run, and `TextView` — the one element that does — parses only
+    // Markdown or HTML. The reflow + escape is derived per commit in the model.
+    let message_html = model.message_html();
+
+    // ── "Create branch here" button ──────────────────────────────────────
+    let at_for_create = at.clone();
+    let at_for_cherry = at.clone();
+    let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(
+            CommitAction::CreateBranchHere,
+            at_for_create.clone(),
+            _window,
+            cx,
+        );
+        cx.notify();
+    });
+    let create_branch_button = action_button(
+        "create-branch-btn",
+        "+ Branch here",
+        theme().ui_accent(),
+        create_branch_click,
+    );
+
+    // ── "Cherry-pick onto HEAD" button (T016) ────────────────────────────
+    let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(CommitAction::CherryPick, at_for_cherry.clone(), _window, cx);
+        cx.notify();
+    });
+    let cherry_pick_button = action_button(
+        "cherry-pick-btn",
+        "\u{1f352} Cherry-pick",
+        theme::theme().accent, // accent (cherry-pick)
+        cherry_click,
+    );
 
     // ── Title (commit summary, up to 2 wrapped lines + truncate) ──────────
     let title_text: SharedString = SharedString::from(
@@ -530,12 +406,17 @@ pub(super) fn render_inspector(
         }
     };
 
-    let author_name_short: SharedString = if author_name.chars().count() > 24 {
-        let s: String = author_name.chars().take(23).collect();
-        SharedString::from(format!("{}\u{2026}", s))
-    } else {
-        SharedString::from(author_name.clone())
-    };
+    let author_display = SharedString::from(author_name.clone());
+    let author_identity = super::inspector_metadata::identity(&author_name, &author_email);
+    let hash_name = SharedString::from(i18n::inspector_copy_hash(&short_sha));
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::inspector_metadata::record(super::e2e::inspector_metadata::Metadata {
+        author: author_display.clone(),
+        identity: Some(author_identity.clone()),
+        tooltip: None,
+        hash_role: None,
+        hash_name: None,
+    });
 
     // Short-hash chip: tooltip = full SHA (+ committer when it differs from the
     // author), click = Copy SHA (dispatch).  This replaces the old always-on
@@ -548,34 +429,30 @@ pub(super) fn render_inspector(
         )),
         None => d.full_sha.clone(),
     };
-    let hash_chip = div()
-        .id("inspector-hash-chip")
-        .flex_shrink_0()
+    let hash_chip = Button::new("inspector-hash-chip")
+        .ghost()
+        .xsmall()
+        .compact()
+        .h(theme::scaled_px(18.))
         .px_1()
-        .rounded_sm()
-        .bg(rgb(theme().surface))
-        .text_xs()
+        .font_family(super::MONO_FONT)
         .text_color(rgb(theme().text_sub))
-        .hover(|s| {
-            s.bg(rgb(theme().selected))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
-        })
         .on_click(copy_sha_click1)
-        .tooltip(move |_window, cx| {
-            cx.new(|_| HashTooltip {
-                sha: tooltip_text.clone(),
-            })
-            .into()
-        })
-        .child(short_sha);
+        .child(
+            div()
+                .child(short_sha)
+                .child(super::e2e::measure_inside("inspector-hash-label")),
+        );
+    let hash_chip =
+        super::inspector_metadata::named_hash_button(hash_chip, hash_name, tooltip_text.clone())
+            .hover_tooltip("inspector-hash-hover-help", tooltip_text);
 
     let meta_row = div()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .mb_2()
+        .mb_1()
         .child(avatar_el)
         .child(
             div()
@@ -587,12 +464,25 @@ pub(super) fn render_inspector(
                 .gap_2()
                 .child(
                     div()
+                        .id("inspector-author")
+                        .role(gpui::Role::Label)
+                        .aria_label(author_identity.clone())
                         .flex_shrink(1.)
+                        .when(compact, |author| author.flex_1())
                         .min_w(px(0.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
                         .truncate()
-                        .child(author_name_short),
+                        .child(author_display)
+                        .child(super::e2e::measure_inside("inspector-author"))
+                        .hover_tooltip_builder("inspector-author-help", move |_window, cx| {
+                            #[cfg(feature = "gui-e2e")]
+                            super::e2e::inspector_metadata::record_tooltip(author_identity.clone());
+                            cx.new(|_| HashTooltip {
+                                sha: author_identity.clone(),
+                            })
+                            .into()
+                        }),
                 )
                 .child(
                     div()
@@ -602,14 +492,13 @@ pub(super) fn render_inspector(
                         .child(d.committed_date),
                 ),
         )
-        .child(hash_chip);
+        .child(super::e2e::measure_control(
+            "inspector-hash-chip",
+            hash_chip,
+        ));
 
-    // ── Co-author rows (W18-COAUTHOR-COPY) ────────────────────────────────
-    // Parse `Co-authored-by:` trailers from the full message.  Each co-author
-    // gets a muted text_xs row with a 16px avatar (resolved GitHub image when
-    // available, else the initial-on-colour circle) and the email in a
-    // tooltip.  Nothing is rendered when there are no co-authors.
-    let coauthors = parse_coauthors(d.full_message.as_ref());
+    // #1307: complete co-authors/trailers are prepared once per immutable SHA.
+    let coauthors = model.coauthors();
     let coauthor_rows: Vec<gpui::AnyElement> = coauthors
         .iter()
         .enumerate()
@@ -619,12 +508,7 @@ pub(super) fn render_inspector(
             } else {
                 ca.name.clone()
             };
-            let name_short: SharedString = if display_name.chars().count() > 28 {
-                let s: String = display_name.chars().take(27).collect();
-                SharedString::from(format!("{}\u{2026}", s))
-            } else {
-                SharedString::from(display_name.clone())
-            };
+            let name_full = SharedString::from(display_name.clone());
 
             // 16px avatar reusing the author avatar machinery.
             let ca_initial = SharedString::from(avatar_initial(&display_name));
@@ -652,15 +536,12 @@ pub(super) fn render_inspector(
                 }
             };
 
-            // Email tooltip (only when an email is present).
-            let email_tooltip: Option<SharedString> = if ca.email.is_empty() {
-                None
-            } else {
-                Some(SharedString::from(ca.email.clone()))
-            };
+            let identity = super::inspector_metadata::identity(&ca.name, &ca.email);
 
-            let mut row = div()
+            let row = div()
                 .id(("inspector-coauthor", i))
+                .role(gpui::Role::Label)
+                .aria_label(identity.clone())
                 .flex()
                 .flex_row()
                 .items_center()
@@ -673,14 +554,15 @@ pub(super) fn render_inspector(
                         .text_xs()
                         .text_color(rgb(theme().text_muted))
                         .truncate()
-                        .child(name_short),
-                );
-            if let Some(email) = email_tooltip {
-                row = row.tooltip(move |_window, cx| {
-                    cx.new(|_| HashTooltip { sha: email.clone() }).into()
+                        .child(name_full),
+                )
+                .hover_tooltip_builder(("inspector-coauthor-help", i), move |_window, cx| {
+                    cx.new(|_| HashTooltip {
+                        sha: identity.clone(),
+                    })
+                    .into()
                 });
-            }
-            row.into_any()
+            row.into_any_element()
         })
         .collect();
 
@@ -688,7 +570,7 @@ pub(super) fn render_inspector(
     let coauthors_block: Option<gpui::AnyElement> = if coauthor_rows.is_empty() {
         None
     } else {
-        let mut block = div().flex().flex_col().gap_px().mb_2().child(
+        let mut block = div().flex().flex_col().gap_px().mb_1().child(
             div()
                 .text_xs()
                 .text_color(rgb(theme().text_muted))
@@ -700,11 +582,15 @@ pub(super) fn render_inspector(
         Some(block.into_any())
     };
 
-    // ── Trailer table (issue #336) ────────────────────────────────────────
-    // All `git interpret-trailers`-detected trailers as a key/value table
-    // below the body. URL values open in the external browser; every value is
-    // run through the control/ANSI sanitizer before display (#356 guard).
-    let trailers = parse_trailers(d.full_message.as_ref());
+    // Trailer metadata uses the same complete sanitized source as Copy.
+    let trailers = model.trailers();
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::text_caps::record_message(super::e2e::text_caps::Message {
+        source: d.full_message.clone(),
+        html: message_html.clone(),
+        coauthors: coauthors.len(),
+        trailers: trailers.len(),
+    });
     let trailer_rows: Vec<gpui::AnyElement> = trailers
         .iter()
         .enumerate()
@@ -744,13 +630,20 @@ pub(super) fn render_inspector(
                         .child(key),
                 )
                 .child(div().flex_1().min_w(px(0.)).child(value_el))
+                .when(
+                    i + 1 == trailers.len() && cfg!(feature = "gui-e2e"),
+                    |row| {
+                        row.relative()
+                            .child(super::e2e::measure_inside("inspector-trailer-tail"))
+                    },
+                )
                 .into_any()
         })
         .collect();
     let trailers_block: Option<gpui::AnyElement> = if trailer_rows.is_empty() {
         None
     } else {
-        let mut block = div().flex().flex_col().gap_px().mb_2().child(
+        let mut block = div().flex().flex_col().gap_px().mb_1().child(
             div()
                 .text_xs()
                 .text_color(rgb(theme().text_muted))
@@ -813,9 +706,6 @@ pub(super) fn render_inspector(
                     .text_color(rgb(badge_text))
                     .text_xs()
                     .flex_shrink_0()
-                    .tooltip(move |w, cx| {
-                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
-                    })
                     .flex()
                     .flex_row()
                     .items_center()
@@ -829,7 +719,10 @@ pub(super) fn render_inspector(
                             .h(theme::scaled_px(10.))
                             .text_color(rgb(badge_text))
                     }))
-                    .child(label),
+                    .child(label)
+                    .hover_tooltip_builder(("inspector-ref-help", row_ix), move |w, cx| {
+                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                    }),
             );
             row_ix += 1;
         }
@@ -862,13 +755,16 @@ pub(super) fn render_inspector(
                     .flex_shrink_0()
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.8))
-                    .tooltip(move |w, cx| {
-                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
-                    })
                     .on_click(open)
                     .child(SharedString::from(
                         format!("#{} {}", pr.number, glyph).trim().to_string(),
-                    )),
+                    ))
+                    .hover_tooltip_builder(
+                        ("inspector-pr-help", pr.number as usize),
+                        move |w, cx| {
+                            gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                        },
+                    ),
             );
         }
         row
@@ -881,7 +777,7 @@ pub(super) fn render_inspector(
         .items_center()
         .gap_1()
         .flex_wrap()
-        .mb_2()
+        .mb_1()
         .child(create_branch_button)
         .child(cherry_pick_button);
 
@@ -900,18 +796,173 @@ pub(super) fn render_inspector(
                 message_html,
             )
             .selectable(true),
-        );
+        )
+        // TextView supplies literal selection and inline URL styling, but the
+        // pinned kit has no per-link keyboard/AX interface. Keep its explicit
+        // link actions in the same independently scrolling message region.
+        .children(
+            model
+                .message_links()
+                .iter()
+                .enumerate()
+                .map(|(index, url)| {
+                    let open_id = SharedString::from(format!("inspector-message-link-{index}"));
+                    let copy_id =
+                        SharedString::from(format!("inspector-message-copy-link-{index}"));
+                    let open_url = url.clone();
+                    let copy_url = url.clone();
+                    let open_name: SharedString =
+                        format!("{}: {url}", Msg::InspectorOpenLink.t()).into();
+                    let copy_name: SharedString =
+                        format!("{}: {url}", Msg::InspectorCopyLink.t()).into();
+                    let open = Button::new(open_id.clone())
+                        .link()
+                        .xsmall()
+                        .compact()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .h(theme::scaled_px(24.))
+                        .on_click(move |_, _, cx| KagiApp::open_link_url(&open_url, cx))
+                        .child(
+                            div()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_decoration_1()
+                                .child(url.clone()),
+                        );
+                    let copy = Button::new(copy_id.clone())
+                        .ghost()
+                        .xsmall()
+                        .compact()
+                        .flex_shrink_0()
+                        .h(theme::scaled_px(24.))
+                        .child(Msg::InspectorCopyLink.t())
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                copy_url.to_string(),
+                            ));
+                        });
+                    #[cfg(feature = "gui-e2e")]
+                    let open = {
+                        let window_id = window.window_handle().window_id();
+                        let name = open_id.clone();
+                        open.bounds_probe(move |bounds| {
+                            super::e2e::record_control_bounds(window_id, &name, bounds)
+                        })
+                    };
+                    #[cfg(feature = "gui-e2e")]
+                    let copy = {
+                        let window_id = window.window_handle().window_id();
+                        let name = copy_id.clone();
+                        copy.bounds_probe(move |bounds| {
+                            super::e2e::record_control_bounds(window_id, &name, bounds)
+                        })
+                    };
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .w_full()
+                        .min_w(px(0.))
+                        .child(
+                            super::inspector_metadata::named_button(
+                                open,
+                                gpui::Role::Link,
+                                open_name,
+                                url.clone(),
+                                false,
+                            )
+                            .reveal_on_focus(open_id, message_handle.clone())
+                            .hover_tooltip(
+                                ("inspector-message-link-hover-help", index),
+                                url.clone(),
+                            ),
+                        )
+                        .child(
+                            super::inspector_metadata::named_button(
+                                copy,
+                                gpui::Role::Button,
+                                copy_name,
+                                url.clone(),
+                                false,
+                            )
+                            .reveal_on_focus(copy_id, message_handle.clone()),
+                        )
+                }),
+        )
+        .children(coauthors_block)
+        .children(trailers_block);
     // The scroll lives on an inner size_full child, NOT on the flex-sized box:
     // with overflow_y_scroll directly on the flex_basis box, the wrapped-text
     // content size feeds back into the flex solve and the layout flip-flops
     // between two states on every pane-width change (blank-line jitter while
     // dragging). overflow_hidden on the outer box cuts that feedback; the
     // inner scroller gets its definite bounds from the solved box.
+    // ── Fixed header region (title, meta, badges, actions) — not scrolled ──
+    let header_region = div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .px_3()
+        .pt_1()
+        .pb_1()
+        .relative()
+        .child(super::e2e::measure_inside("inspector-header"))
+        .child(title_el)
+        .child(meta_row)
+        .child(badges_row)
+        .child(actions_row);
+    if compact {
+        // Metadata and message share one scroll viewport in the short bottom
+        // projection. The desktop header remains fixed in the ordinary pane.
+        let details_scroll = div()
+            .id("inspector-message-scroll")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(message_handle)
+            .child(header_region)
+            .child(message_inner.px_3());
+        let details = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .flex_basis(px(0.))
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .h_full()
+            .overflow_hidden()
+            .relative()
+            .child(super::e2e::measure_inside("compact-inspector-details"))
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "inspector-message-scrollbar",
+                message_handle,
+                details_scroll,
+                cx,
+            ));
+        let files = div()
+            .flex_1()
+            .flex_basis(px(0.))
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .h_full()
+            .relative()
+            .child(super::e2e::measure_inside("compact-inspector-files"))
+            .child(
+                files_box
+                    .size_full()
+                    .flex_basis(relative(1.))
+                    .pt_1()
+                    .border_l_1()
+                    .border_color(rgb(theme().surface)),
+            );
+        return panel.child(details).child(files);
+    }
     let message_scroll = div()
         .id("inspector-message-scroll")
         .size_full()
         .min_h(px(0.))
         .overflow_y_scroll()
+        .track_scroll(message_handle)
         .child(message_inner)
         .when(cfg!(feature = "gui-e2e"), |scroll| {
             scroll.child(super::e2e::measure_inside("inspector-message-scroll"))
@@ -926,16 +977,50 @@ pub(super) fn render_inspector(
         .flex_shrink(1.)
         .overflow_hidden()
         .px_3()
-        .child(message_scroll);
+        .when(cfg!(feature = "gui-e2e"), |frame| {
+            frame
+                .relative()
+                .child(super::e2e::measure_inside("inspector-message-frame"))
+        })
+        .child(super::render_helpers::with_system_vertical_scrollbar(
+            "inspector-message-scrollbar",
+            message_handle,
+            message_scroll,
+            cx,
+        ));
 
     // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
     let split_divider = div()
         .id("inspector-split-divider")
+        .group("inspector-split-divider")
         .h(theme::scaled_px(INSPECTOR_SPLIT_DIVIDER_H))
         .flex_shrink_0()
         .w_full()
-        .bg(rgb(theme().surface))
-        .hover(|s| s.bg(rgb(theme().color_branch)).cursor_row_resize())
+        .bg(rgb(theme().panel))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("inspector-split-divider", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                })
+                .group_drag_over::<DividerDrag>("inspector-split-divider", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
+        .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_row_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::InspectorSplit {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_row_resize()
         .on_drag(
             DividerDrag {
@@ -943,21 +1028,6 @@ pub(super) fn render_inspector(
             },
             |_drag, _pos, _window, cx| cx.new(|_| DividerGhost),
         );
-
-    // ── Fixed header region (title, meta, badges, actions) — not scrolled ──
-    let header_region = div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .px_3()
-        .pt_2()
-        .pb_1()
-        .child(title_el)
-        .child(meta_row)
-        .children(coauthors_block)
-        .children(trailers_block)
-        .child(badges_row)
-        .child(actions_row);
 
     // ── Split region: message │ divider │ files ───────────────────────────
     // Grouped under one flex_1 column so the split ratio is relative to the
@@ -992,18 +1062,7 @@ pub(super) fn render_inspector(
         .child(files_box);
 
     // ── Outer panel: header │ split region ────────────────────────────────
-    div()
-        // `panel_width` is the unscaled, persisted inspector width; scale at
-        // render so it tracks zoom. The drag/resize math in mod.rs works in the
-        // same scaled space (see render_body resize handler).
-        .w(theme::scaled_px(panel_width))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(theme().panel))
-        .child(header_region)
-        .child(split_region)
+    panel.child(header_region).child(split_region)
 }
 
 /// Parse `name  <email>  date` (detail_panel format) into `(name, email)`.
@@ -1038,7 +1097,12 @@ impl gpui::Render for HashTooltip {
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(rgb(theme().surface))
+            .bg(rgb(theme().elevated_surface(theme().surface)))
+            .when(theme().slug == "apple-dark", |tooltip| {
+                tooltip
+                    .border_1()
+                    .border_color(rgb(theme().elevated_border(theme().surface)))
+            })
             .text_xs()
             .text_color(rgb(theme().text_main));
         for line in self.sha.as_ref().split('\n') {
@@ -1063,66 +1127,13 @@ fn action_button(
         .label(SharedString::from(label))
         .small()
         .on_click(click);
-    // `color_branch` is the only "primary" action here; the cherry-pick accent
-    // keeps the default (neutral) Button look.
-    if color == theme().color_branch {
+    // The chrome accent marks this primary action; cherry-pick remains neutral.
+    let btn = if color == theme().ui_accent() {
         btn.primary()
     } else {
         btn
-    }
-}
-
-/// One flat changed-file row (badge + path + diffstat), clickable to open the
-/// diff and right-clickable for the file context menu. Shared by the flat file
-/// list and the folded "Generated (N)" section (issue #348).
-fn flat_file_row(
-    fi: usize,
-    file: &InspectorFile,
-    active_file: Option<usize>,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let (badge_char, badge_color, _) = status_badge(Some(&file.change), false);
-    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_main_diff_inspector_file(fi, cx);
-        cx.notify();
-    });
-    let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-        this.inspector_file_menu = Some((fi, e.position));
-        cx.stop_propagation();
-        cx.notify();
-    });
-    let row = div()
-        .id(("file-flat", fi))
-        .on_mouse_down(MouseButton::Right, menu_click)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .mb_px()
-        .flex_shrink_0()
-        .when(active_file == Some(fi), |el| {
-            el.bg(rgb(theme().selected)).rounded_sm()
-        })
-        .on_click(click)
-        .child(
-            div()
-                .w(theme::scaled_px(14.))
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(badge_color))
-                .child(SharedString::from(badge_char)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(file.path.clone()),
-        )
-        .child(diffstat_unit(fi, file.stat.as_ref()));
-    super::e2e::measure_control(format!("inspector-file-{fi}"), row)
+    };
+    super::e2e::measure_control(id, btn)
 }
 
 #[cfg(test)]

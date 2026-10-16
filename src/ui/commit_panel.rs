@@ -30,6 +30,9 @@ use crate::ui::file_tree::{self, TreeRow};
 use crate::ui::smart_commit::SmartCommitState;
 use crate::ui::KagiApp;
 
+#[path = "commit_panel_composer.rs"]
+pub(crate) mod composer;
+
 // ──────────────────────────────────────────────────────────────
 // CommitPanelFileRef — which file is selected in the panel
 // ──────────────────────────────────────────────────────────────
@@ -150,9 +153,9 @@ fn fold_extra_rows(count: usize, expanded: bool) -> usize {
 }
 
 impl CommitPanelState {
-    /// Create a new CommitPanelState from the current repo status.
-    pub fn from_repo(repo_path: &Path) -> Self {
-        let mut state = CommitPanelState {
+    /// Empty presentation while the first repository read is in flight.
+    pub(crate) fn empty() -> Self {
+        Self {
             unstaged: Vec::new(),
             staged: Vec::new(),
             unstaged_stats: Vec::new(),
@@ -175,7 +178,12 @@ impl CommitPanelState {
             unstaged_artifact_files: Vec::new(),
             staged_artifact_files: Vec::new(),
             agent_expanded: false,
-        };
+        }
+    }
+
+    /// Create a new CommitPanelState from the current repo status.
+    pub fn from_repo(repo_path: &Path) -> Self {
+        let mut state = Self::empty();
         state.reload_status(repo_path);
         state
     }
@@ -195,57 +203,60 @@ impl CommitPanelState {
             }
         };
         match backend.working_tree_status() {
-            Ok(status) => {
-                // Track conflicted paths for UI (these cannot be staged).
-                self.conflicted_paths = status.conflicted.iter().cloned().collect();
-
-                // Whether there are tracked modifications (the only thing
-                // unstaged_diffstat covers) — captured before `status` is moved.
-                let has_tracked_modifications = !status.unstaged.is_empty();
-
-                // Unstaged = modified + untracked combined
-                let mut unstaged = status.unstaged;
-                // Append untracked as Added entries
-                for p in &status.untracked {
-                    unstaged.push(FileStatus {
-                        path: p.clone(),
-                        change: ChangeKind::Added,
-                    });
-                }
-                // Append conflicted as non-stageable entries (shown in unstaged section)
-                for p in &status.conflicted {
-                    unstaged.push(FileStatus {
-                        path: p.clone(),
-                        change: ChangeKind::Modified, // displayed with "C" badge via is_conflicted()
-                    });
-                }
-                self.unstaged = unstaged;
-                self.staged = status.staged;
-                // W16-DIFFSTAT: aggregate additions/deletions for both sides.
-                // Best-effort: on error leave the lists empty (bar omitted).
-                // unstaged_diffstat covers tracked modifications only — skip the
-                // (working-tree-walking) call entirely when there are none, so a
-                // dir full of untracked files costs nothing here.
-                self.unstaged_stats = if has_tracked_modifications {
-                    backend.unstaged_diffstat().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                self.staged_stats = backend.staged_diffstat().unwrap_or_default();
-                // issue #348: classify each side's files as generated / lockfile
-                // (reads blob heads + .gitattributes) so the panel can fold them.
-                let unstaged_gen = backend.wip_generated_flags(&self.unstaged, false);
-                let staged_gen = backend.wip_generated_flags(&self.staged, true);
-                // Clear selection on status change.
-                self.selected_file = None;
-                // PERF: recompute the cached tree rows and diffstat indices once
-                // per status change (NOT per frame).
-                self.rebuild_derived(&unstaged_gen, &staged_gen);
-            }
+            Ok(status) => self.apply_status(&backend, status),
             Err(e) => {
                 klog!("commit_panel: working_tree_status error: {}", e);
             }
         }
+    }
+
+    /// Apply a read already owned by the caller, without another status walk.
+    pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+        // Track conflicted paths for UI (these cannot be staged).
+        self.conflicted_paths = status.conflicted.iter().cloned().collect();
+
+        // Whether there are tracked modifications (the only thing
+        // unstaged_diffstat covers) — captured before `status` is moved.
+        let has_tracked_modifications = !status.unstaged.is_empty();
+
+        // Unstaged = modified + untracked combined
+        let mut unstaged = status.unstaged;
+        // Append untracked as Added entries
+        for p in &status.untracked {
+            unstaged.push(FileStatus {
+                path: p.clone(),
+                change: ChangeKind::Added,
+            });
+        }
+        // Append conflicted as non-stageable entries (shown in unstaged section)
+        for p in &status.conflicted {
+            unstaged.push(FileStatus {
+                path: p.clone(),
+                change: ChangeKind::Modified, // displayed with "C" badge via is_conflicted()
+            });
+        }
+        self.unstaged = unstaged;
+        self.staged = status.staged;
+        // W16-DIFFSTAT: aggregate additions/deletions for both sides.
+        // Best-effort: on error leave the lists empty (bar omitted).
+        // unstaged_diffstat covers tracked modifications only — skip the
+        // (working-tree-walking) call entirely when there are none, so a
+        // dir full of untracked files costs nothing here.
+        self.unstaged_stats = if has_tracked_modifications {
+            backend.unstaged_diffstat().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        self.staged_stats = backend.staged_diffstat().unwrap_or_default();
+        // issue #348: classify each side's files as generated / lockfile
+        // (reads blob heads + .gitattributes) so the panel can fold them.
+        let unstaged_gen = backend.wip_generated_flags(&self.unstaged, false);
+        let staged_gen = backend.wip_generated_flags(&self.staged, true);
+        // Clear selection on status change.
+        self.selected_file = None;
+        // PERF: recompute the cached tree rows and diffstat indices once
+        // per status change (NOT per frame).
+        self.rebuild_derived(&unstaged_gen, &staged_gen);
     }
 
     /// PERF: rebuild the cached tree rows and diffstat path→index maps from the
@@ -408,6 +419,18 @@ impl CommitPanelState {
 pub struct CommitPanelView {
     /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
+    pub(crate) status_request: kagi_domain::load_request::RequestSlot<u64>,
+    pub(crate) status_revision: u64,
+    pub(crate) view_focus: super::keyboard_nav::TabFocus,
+    pub(crate) staged_view_focus: super::keyboard_nav::TabFocus,
+    pub(crate) controls_focus: super::keyboard_nav::FocusSlots,
+    pub(crate) unstaged_navigation: super::commit_panel_navigation::ChangesNavigation,
+    pub(crate) staged_navigation: super::commit_panel_navigation::ChangesNavigation,
+    pub(super) file_motion: [super::commit_panel_files::FileListMotion; 2],
+    pub(crate) window_active: bool,
+    pub(crate) window_activation_subscription: Option<gpui::Subscription>,
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) window_active_override: Option<bool>,
     /// gpui-component `InputState` for the commit subject line (IME/focus).
     /// Created lazily in a `Window` context; kept STABLE across status reloads.
     pub title_input: Option<Entity<InputState>>,
@@ -418,15 +441,21 @@ pub struct CommitPanelView {
     /// Co-author picker: `Some(candidates)` while the popover is open. Loaded
     /// on click rather than per-frame — it walks recent history.
     pub coauthor_menu: Option<Vec<kagi_git::AuthorCandidate>>,
+    pub(crate) coauthor_navigation: Option<super::commit_panel_coauthor::CoauthorNavigation>,
     /// The user's `commit.template`, verbatim, or `None` when unset. Kept so the
     /// footer's Template toggle can put it back after it has been removed.
     pub commit_template: Option<String>,
     /// A smart-commit message generated on a background thread, queued for the
     /// next render to push into the input (which needs `&mut Window`).
     pub pending_smart_msg: Option<String>,
-    /// Last commit-message value mirrored to the per-branch draft file
-    /// (T-COMMIT-007). Compared each render to detect edits cheaply.
+    /// Successful consumption clears Inputs without recording a Smart edit.
+    pub pending_message_clear: bool,
+    /// Last successfully persisted commit message; differs from edits while dirty.
     pub last_draft_value: String,
+    /// Last observed edit, separate from the successful persistence baseline.
+    pub draft_edit_value: String,
+    /// Failed persistence detail; kept until a successful save or consumption.
+    pub draft_save_error: Option<String>,
     /// Debounce generation for the draft autosave writer.
     pub draft_save_gen: u64,
     /// T-ENTITY-COMMITPANEL-001 (correction #5): smart-commit generation guard.
@@ -463,10 +492,13 @@ pub struct CommitPanelView {
     pub smart_snapshot: SmartCommitState,
     /// Session-owned generation presentation, pushed alongside capabilities.
     pub smart_generating: bool,
+    pub smart_generation: Option<super::smart_commit::SmartGeneration>,
     pub smart_status: Option<String>,
     /// Weak back-reference to the parent. Used ONLY from deferred listener
     /// closures — NEVER read in a `Render` path.
     pub(crate) app: WeakEntity<KagiApp>,
+    /// Root pointer return target, supplied by the parent when mounting the panel.
+    pub(crate) pointer_root_focus: Option<gpui::FocusHandle>,
     /// Session that created this panel. A linked-worktree panel is still owned
     /// by its host tab; [`Self::repo_path`] remains the linked worktree target.
     pub owner: crate::app::SessionId,
@@ -496,12 +528,29 @@ impl CommitPanelView {
     ) -> Self {
         Self {
             state,
+            status_request: Default::default(),
+            status_revision: 0,
+            view_focus: super::keyboard_nav::TabFocus::default(),
+            staged_view_focus: super::keyboard_nav::TabFocus::default(),
+            controls_focus: super::keyboard_nav::FocusSlots::default(),
+            unstaged_navigation: Default::default(),
+            staged_navigation: Default::default(),
+            file_motion: Default::default(),
+            pointer_root_focus: None,
+            window_active: true,
+            window_activation_subscription: None,
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             title_input: None,
             body_input: None,
             coauthor_menu: None,
+            coauthor_navigation: None,
             commit_template: None,
             pending_smart_msg: None,
             last_draft_value: String::new(),
+            pending_message_clear: false,
+            draft_edit_value: String::new(),
+            draft_save_error: None,
             draft_save_gen: 0,
             gen: 0,
             input_lang: kagi_ui_core::i18n::lang(),
@@ -514,6 +563,7 @@ impl CommitPanelView {
             panel_render_width: 0.0,
             smart_snapshot: SmartCommitState::default(),
             smart_generating: false,
+            smart_generation: None,
             smart_status: None,
             app,
             owner,
@@ -522,12 +572,38 @@ impl CommitPanelView {
         }
     }
 
-    /// A freshly read state restarts `tree_revision` at 1. Invalidate the
-    /// view-owned layout key before replacing it, or equal revision/fold flags
-    /// would reuse positions from the previous file set.
-    pub(crate) fn replace_state(&mut self, state: CommitPanelState) {
+    /// Keep the visible owner's derived-row generation monotonic even when a
+    /// background read constructed its state with a fresh revision counter.
+    pub(crate) fn replace_state(&mut self, mut state: CommitPanelState) {
+        self.invalidate_status_read();
+        if state.tree_revision == 0 {
+            // Reopening reuses this entity with an empty loading placeholder.
+            // Neither it nor its first completed status read is a list edit.
+            self.settle_file_motion();
+        } else {
+            state.tree_revision = self.state.tree_revision.wrapping_add(1);
+        }
         self.state = state;
+    }
+
+    /// A synchronous post-write refresh supersedes any older opening read.
+    pub fn reload_status(&mut self, repo_path: &Path) {
+        self.invalidate_status_read();
+        self.state.reload_status(repo_path);
+    }
+
+    /// Publish an already-read status, superseding any pending opening payload.
+    pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+        self.invalidate_status_read();
+        self.state.apply_status(backend, status);
+    }
+
+    /// Invalidate an opening read before a newer in-place status publication.
+    pub(crate) fn invalidate_status_read(&mut self) {
+        self.status_request.clear();
         self.tree_layout_for = None;
+        self.unstaged_navigation.invalidate();
+        self.staged_navigation.invalidate();
     }
 
     /// Whether a body line is a git trailer (`Key: value` with a hyphenated,
@@ -565,50 +641,6 @@ impl CommitPanelView {
         kagi_git::join_title_body(&read(&self.title_input), &body)
     }
 
-    /// Whether the body currently carries the template's comment block.
-    ///
-    /// Derived from the text rather than tracked in a flag, so the toggle can
-    /// never disagree with what is actually in the box (the user can delete the
-    /// comments by hand).
-    pub fn template_active(&self, cx: &gpui::App) -> bool {
-        self.body_input
-            .as_ref()
-            .map(|i| {
-                i.read(cx)
-                    .value()
-                    .lines()
-                    .any(kagi_domain::message::is_comment_line)
-            })
-            .unwrap_or(false)
-    }
-
-    /// Add or remove the `commit.template` block in the body, and remember the
-    /// choice for the next open.
-    pub fn toggle_template(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
-        let Some(body) = self.body_input.clone() else {
-            return;
-        };
-        let current = body.read(cx).value().to_string();
-        let on = !self.template_active(cx);
-        let next = if on {
-            let Some(tpl) = self.commit_template.clone() else {
-                return;
-            };
-            let written = kagi_domain::message::strip_template_comments(&current);
-            if written.trim().is_empty() {
-                tpl
-            } else {
-                format!("{}\n\n{}", written.trim_end(), tpl)
-            }
-        } else {
-            kagi_domain::message::strip_template_comments(&current)
-        };
-        body.update(cx, |s, cx| s.set_value(next, window, cx));
-        crate::ui::settings::write_setting(KEY_COMMIT_TEMPLATE, Some(if on { "1" } else { "0" }));
-        klog!("commit template: {}", if on { "on" } else { "off" });
-        cx.notify();
-    }
-
     pub(crate) fn coauthor_menu_visible(&self) -> bool {
         self.coauthor_menu.is_some()
     }
@@ -618,7 +650,11 @@ impl CommitPanelView {
     /// Candidates are walked on open, not per frame — the walk touches recent
     /// history and the panel re-renders at 60fps. Entity-internal (no parent
     /// read), so it stays synchronous.
-    pub fn toggle_coauthor_menu(&mut self, cx: &mut gpui::Context<Self>) {
+    pub fn toggle_coauthor_menu(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.coauthor_menu = match self.coauthor_menu {
             Some(_) => None,
             None => Some(
@@ -627,6 +663,11 @@ impl CommitPanelView {
                     .unwrap_or_default(),
             ),
         };
+        // Building RowFocus requests a render frame and must run during render,
+        // not from this click listener. Closing only returns the existing focus.
+        if self.coauthor_menu.is_none() {
+            self.reconcile_coauthor_menu(window, cx);
+        }
         cx.notify();
     }
 
@@ -662,96 +703,6 @@ impl CommitPanelView {
         body.update(cx, |s, cx| s.set_value(next, window, cx));
         cx.notify();
     }
-
-    /// Render-time input sync: push a queued smart-commit message into the Input
-    /// (correction #2 — was the parent `render.rs:196` block), then run the
-    /// per-branch draft autosave (correction #1 — was the parent
-    /// `sync_modal_inputs` half). Runs on this entity's own render path with
-    /// `&mut Window`, so the parent never reads the child's input each frame.
-    pub fn sync_inputs(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
-        // ── Language switch → rebuild the inputs for their placeholders. ──
-        // `InputState` has no placeholder setter, so the text is carried across
-        // a fresh pair. Rare (a menu action), and it only costs the caret.
-        let lang = kagi_ui_core::i18n::lang();
-        if lang != self.input_lang {
-            self.input_lang = lang;
-            if let Some(old) = self.title_input.clone() {
-                let text = old.read(cx).value().to_string();
-                let fresh =
-                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t()));
-                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
-                self.title_input = Some(fresh);
-            }
-            if let Some(old) = self.body_input.clone() {
-                let text = old.read(cx).value().to_string();
-                let fresh = cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .multi_line(true)
-                        .auto_grow(3, 12)
-                        .placeholder(Msg::CommitBody.t())
-                });
-                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
-                self.body_input = Some(fresh);
-            }
-        }
-
-        // ── Queued smart-commit message → Input (needs `&mut Window`). ──
-        if let Some(msg) = self.pending_smart_msg.take() {
-            let (title, body) = kagi_git::split_title_body(&msg);
-            if let Some(input) = self.title_input.clone() {
-                input.update(cx, |state, cx| state.set_value(title, window, cx));
-            }
-            if let Some(input) = self.body_input.clone() {
-                input.update(cx, |state, cx| state.set_value(body, window, cx));
-            }
-        }
-
-        // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
-        if self.title_input.is_some() || self.body_input.is_some() {
-            let v = self.effective_commit_message(cx);
-            if v != self.last_draft_value {
-                self.last_draft_value = v;
-                self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
-                let gen = self.draft_save_gen;
-                let mode = "plain".to_string();
-                let repo_path = self.repo_path.clone();
-                let tab_branch = self
-                    .app
-                    .read_with(cx, |app, _| {
-                        app.reads
-                            .get(Some(self.owner))
-                            .status_summary
-                            .branch
-                            .clone()
-                    })
-                    .unwrap_or_default();
-                // A queued checkout can switch HEAD during the debounce. The
-                // draft still belongs to the branch on which editing occurred.
-                let branch = crate::ui::worktree_wip::draft_branch(
-                    self.foreign.as_ref().map(|(label, _)| label.as_ref()),
-                    &tab_branch,
-                );
-                cx.spawn(async move |this, acx| {
-                    acx.background_executor()
-                        .timer(std::time::Duration::from_millis(250))
-                        .await;
-                    let _ = this.update(acx, |view, _cx| {
-                        if view.draft_save_gen != gen {
-                            return;
-                        }
-                        let msg = view.last_draft_value.clone();
-                        if msg.trim().is_empty() {
-                            let _ = kagi_git::clear_draft(&repo_path, &branch);
-                        } else {
-                            let _ = kagi_git::save_draft(&repo_path, &branch, &msg, &mode);
-                            klog!("draft: saved {}", branch);
-                        }
-                    });
-                })
-                .detach();
-            }
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -765,130 +716,3 @@ pub use kagi_ui_core::file_tree::status_badge;
 #[cfg(test)]
 #[path = "commit_panel_tests.rs"]
 mod generated_fold_tests;
-
-/// Consume only the draft belonging to the enqueued commit. A newer autosave,
-/// or an unsaved edit still in the same branch's panel, owns that key now.
-pub(crate) fn clear_committed_draft(
-    repo_path: &std::path::Path,
-    branch: &str,
-    frozen_message: &str,
-    newer_panel_draft: bool,
-) -> bool {
-    if newer_panel_draft {
-        return false;
-    }
-    match kagi_git::load_draft(repo_path, branch) {
-        Some(draft) if draft.message != frozen_message => false,
-        Some(_) => {
-            if kagi_git::clear_draft(repo_path, branch).is_ok() {
-                klog!("draft: cleared {}", branch);
-                true
-            } else {
-                false
-            }
-        }
-        None => {
-            let cleared = kagi_git::clear_draft(repo_path, branch).is_ok();
-            if cleared {
-                klog!("draft: cleared {}", branch);
-            }
-            cleared
-        }
-    }
-}
-
-impl KagiApp {
-    /// The message has reached a commit (or an amend): clear the branch draft
-    /// (T-COMMIT-007) **and** the panel's own copy of it.
-    ///
-    /// Clearing the entity used to be free — the reload at the tail of the op
-    /// dropped the whole panel. It no longer does (it closes the panel only
-    /// when the repository has nothing left to list), so a *partial* commit now
-    /// leaves the panel up with the remaining files, and the message it just
-    /// committed has to go explicitly or the next commit reuses it.
-    ///
-    /// #476: the draft key is the PANEL's repo path AND branch.
-    pub(crate) fn consume_commit_panel_message(
-        &mut self,
-        repo_path: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) {
-        let branch = self.panel_draft_branch(cx);
-        let _ = kagi_git::clear_draft(repo_path, &branch);
-        klog!("draft: cleared {}", branch);
-        self.clear_commit_panel_message(cx);
-    }
-
-    /// Clear the in-memory message without choosing another branch's draft key.
-    pub(crate) fn clear_commit_panel_message(&mut self, cx: &mut Context<Self>) {
-        if let Some(entity) = self.ui().commit_panel.clone() {
-            entity.update(cx, |v, _| {
-                v.last_draft_value = String::new();
-                // Supersede an in-flight debounced save of the consumed text;
-                // it must not restore the draft after clear_draft succeeded.
-                v.draft_save_gen = v.draft_save_gen.wrapping_add(1);
-                // The `InputState`s need a `Window`; the panel's own
-                // window-bearing pass applies this on the next frame (the same
-                // hand-off smart-commit uses).
-                v.pending_smart_msg = Some(String::new());
-                v.state.commit_msg.clear();
-            });
-        }
-    }
-}
-
-#[cfg(test)]
-mod draft_clear_tests {
-    use super::clear_committed_draft;
-    use std::ffi::OsString;
-
-    struct LogDirRestore(Option<OsString>);
-
-    impl Drop for LogDirRestore {
-        fn drop(&mut self) {
-            if let Some(previous) = self.0.take() {
-                std::env::set_var("KAGI_LOG_DIR", previous);
-            } else {
-                std::env::remove_var("KAGI_LOG_DIR");
-            }
-        }
-    }
-
-    #[test]
-    fn queued_commit_consumes_only_its_frozen_branch_and_message() {
-        let _lock = crate::ui::ENV_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let root = tempfile::tempdir().expect("isolated drafts");
-        let _restore = LogDirRestore(std::env::var_os("KAGI_LOG_DIR"));
-        std::env::set_var("KAGI_LOG_DIR", root.path());
-        let repo = root.path().join("repo");
-
-        kagi_git::save_draft(&repo, "main", "already committed", "plain").unwrap();
-        kagi_git::save_draft(&repo, "feat", "new branch's draft", "plain").unwrap();
-        assert!(clear_committed_draft(
-            &repo,
-            "main",
-            "already committed",
-            false
-        ));
-        assert!(kagi_git::load_draft(&repo, "main").is_none());
-        assert_eq!(
-            kagi_git::load_draft(&repo, "feat").unwrap().message,
-            "new branch's draft"
-        );
-
-        kagi_git::save_draft(&repo, "main", "newer edit", "plain").unwrap();
-        assert!(!clear_committed_draft(
-            &repo,
-            "main",
-            "already committed",
-            false
-        ));
-        assert!(!clear_committed_draft(&repo, "main", "newer edit", true));
-        assert_eq!(
-            kagi_git::load_draft(&repo, "main").unwrap().message,
-            "newer edit"
-        );
-    }
-}

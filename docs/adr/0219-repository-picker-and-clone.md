@@ -2,7 +2,7 @@
 
 - Status: **Accepted**
 - Date: 2026-10-02
-- Related: #923、#924(organization のリポジトリ)、#928(自分の PR / Issue)、ADR-0028(ディレクトリ選択と Welcome)、ADR-0188(subprocess runner)、ADR-0177(Unknown の扱い)。
+- Related: #923、#924(organization のリポジトリ)、#928(自分の PR / Issue)、#1070(絞り込み中の不完全な一覧)、ADR-0028(ディレクトリ選択と Welcome)、ADR-0188(subprocess runner)、ADR-0177(Unknown の扱い)。
 
 ## 文脈
 
@@ -17,6 +17,7 @@
    読み込みはユーザー報告(一覧が出るまで約 1 分)を受けて次のようにする。保存済みの一覧・自分の一覧・organization の一覧(最大 6 並列)・手元の clone の照合をすべて UI thread の外で同時に読む。反映は保存済みの一覧 → 自分の一覧 → organization の順で、それぞれ届いた時点で行い、手元の照合は独立に後から反映する(照合が遅いボリュームを含んでも一覧を待たせない)。前回読み終えた一覧を `settings.json` と同じフォルダーの `github_repos_cache.json` に保存し、次に一覧を読むときはそれを表示して見出しに「更新中…」を出し、読み終えた一覧で丸ごと差し替える(保存がない初回は自分の一覧を先に出し、organization を後から足す)。保存は `gh` から作れる派生データなので、壊れたファイルは無視して次の読み込みで上書きする(`settings.json` のような退避はしない)。読み直しで自分の一覧が読めなければ前回の一覧を残し、toast で知らせる。`gh api user/orgs` が失敗したときは organization 0 件として扱わず、一覧に理由の行を出し、organization の欠けた一覧は保存しない。読み込み中は Refresh を無効にし、呼ばれても進行中の読み込みに合流する(古い読み込みは結果を捨てるだけで `gh` は止まらないため)。手元の clone は最近開いたリポジトリと開いているタブの `origin` で照合し、一覧を読んだ後に開いた(clone した)タブも Home の描画時に照合する。`origin` の host は `resolve_repo_identity` で解決するので、`ssh_config` の別名も実際の host で照合される(#930 review)。
    保存した一覧には読んだときの `gh` のアカウント(`<host>/<login>`、`GH_HOST` か `github.com` について `gh config get user` で読む。ネットワークを待たない)を記録し、今のアカウントと一致するときだけ表示する。`gh auth switch` の後に別アカウントの private repository 名を出さないため。環境変数の token(`GH_TOKEN` / `GITHUB_TOKEN` / `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)が設定値を上書きしている間はアカウントを名指せないので、保存も表示もしない。表示中の一覧も、読み直したときにアカウントが変わっていれば残さない。private repository 名を含むので、unix ではファイルを最初の保存から所有者のみ読み書き可(`0600`)で作り、更新でも同じ mode の一時ファイルを rename して保つ(#930 review)。
    自分の一覧の読み込みが失敗しても、同時に起動した organization の読み込み(`gh` は止まらない)が終わるまでは読み込み中のまま(Refresh 無効・合流)にし、Refresh の連打で `gh` が積み上がらないようにする(#930 review)。
+   絞り込み中も、一覧が不完全なこと・現在の読み込みの結果でないことを隠さない(#1070)。読めなかった organization の見出しと理由、`gh api user/orgs` が失敗した行、上限に達した owner の見出しと「さらにあり」は、一致する行が無くても表示し、organization を読み込み中ならその行も残す。一覧の表示中に自分の一覧の読み直しが失敗したときは、toast に加えて、前回の一覧を表示している理由(既存の `HomeGithubRefreshFailed`)を一覧の先頭に出す。読み直しが再び失敗すれば、その新しい理由に置き換える。この理由は絞り込みや切り替え先の変更では消えず、その後の読み込みが成功して一覧が受け入れられたとき、または `gh` のアカウントが変わったときだけ消える。前回の一覧のうち一致する行は、どの場合もそのまま表示する。「一致するリポジトリはありません」は現在の読み込みが完了しているときだけ出す。すなわち、すべての owner を上限内で読み終え、organization の一覧も読め、organization の読み込みも Refresh(保存済みの一覧を表示しての読み込みを含む)も実行中でなく、自分の一覧の読み直しの失敗が残っていないとき。読めていない範囲や古い一覧の 0 件を「無い」と言わないため。絞り込みの文字列は Refresh の後も残り、すべて読めれば同じ絞り込みのまま通常の「一致なし」になる。一致判定・取得の上限・保存・合流・generation・アカウントの扱いは変えない。検証は Tier A と、合成した offline `gh`(実際の GitHub の障害・SAML ではない)による default build の Tier B。アカウントが変わったときに理由が消えることは、コードの確認のみで実行していない。
 3. **clone は `gh repo clone <host>/<owner>/<repo> <dest>`。** 一覧を取った `gh` の認証と protocol 設定で clone するので、`git` に credential が無くても private / Enterprise のリポジトリを clone できる。source の host は必須で、host の無い `owner/repo` は plan で拒否する(`SourceWithoutHost`)。host が無いと `gh` は `GH_HOST` の host から clone し、card も verify もその host を名指せないため(#926 review)。一覧は `gh` から host 付きで来るので、呼び出し側は常に host を渡す。fork なら `gh` が `upstream` remote を足すことを card に書く。
 4. **triple は `crates/kagi-git/src/ops/clone.rs`。** `plan_clone`(source と clone 先、拒否理由)→ confirm → `preflight_clone(request, plan)`(実行する request が承認した plan と同じ source・clone 先・fork 表示であること、plan に blocker が無かったこと、同じ検査をやり直す。違えば `PlanMismatch` で Refused、`gh` は呼ばない)→ `execute_clone` → `verify_clone`(clone 先が repository として開け、`origin` が読める host なら source と一致)→ oplog。receipt は `op = "clone"`、repo は clone 先のパス。Success / Refused / Failed / Unknown / Partial(開けるが origin が別)。
 5. **上書きしない、消さない。** clone 先が既にあり空のフォルダーでなければ(ファイル・symlink・中身のあるフォルダー)拒否する。clone 先のパスが UTF-8 でなければ plan で拒否する(以降、card・command・receipt・plan の照合に出る文字列とパスが一対一になる)。clone が失敗・中断して何かが残っても Kagi は消さず、そのパスを card と receipt に出す。消すかどうかはユーザーが決める。
@@ -24,6 +25,7 @@
 7. **admission は共通の write latch。clone 先はユーザーが選ぶ。** clone にはタブの session もリポジトリも無いが、開いている worktree の配下に書くこともあるので、repository の write と同じ latch(`op_latched`)に参加する。write や plan が実行中なら clone を始めず、clone の実行中は repository タブに戻っても write を始められない。同時に動く clone は 1 件だけ。成功したら新しいタブで開き、recent に加える。clone 先は Kagi が決めない(当初案の「前回の親フォルダー → 最近開いたリポジトリの親 → HOME」という既定はユーザー確認で却下):card は保存先が空の状態で開き、「選択…」(システムのフォルダー選択)で選んだフォルダーの中の `<repo>` を plan する。選ぶまで clone ボタンは無効。clone の実行中は、その window の close と ⌘Q を他の書き込みと同じ close guard(`hold_host_close`、「処理中」の通知)で保留し、結果が確定して verify と oplog が済んでから閉じられるようにする。途中で閉じると `gh` / `git` が clone 先へ書き続けたまま、verify も receipt も残らないため(#930 review)。
 8. **自分の PR / Issue は Home の切り替えで見る(#928)。** Home の見出しに「リポジトリ / Pull Request / Issue」の切り替え(GitHub の Dashboard と同じく件数付き)を置き、Pull Request には自分が作った open な PR と自分にレビュー依頼された open な PR、Issue には自分に assign された open な Issue を出す。どれも全リポジトリ横断で `gh search prs --author=@me` / `--review-requested=@me`、`gh search issues --assignee=@me`(`--state=open --limit 100`)で読む(読み取りのみ)。検索は件数の上限で黙って止まるので、上限に達した一覧には「100 件以上」を出す。件数はまだ読んでいない間は 0 ではなく spinner にする。絞り込みは表示中の切り替え先に効く。
    3 つの検索はリポジトリ一覧と同じ Refresh で同時に読み、同じ合流・アカウントの扱い・保存方式(`github_work_cache.json`、`0600`、読んだ `<host>/<login>` と一致するときだけ表示、token の環境変数が上書き中は保存も表示もしない)に従う。1 つの検索が失敗したら、その一覧の上に理由を出して前回の一覧を残し、他の一覧は差し替える。欠けた組は保存しない。レビュー依頼の行だけに依頼者の avatar を出す(既存の login 単位の avatar cache)。avatar は項目の host ごとに、その host から取得する(#944、PR / Issues mode と同じ `avatar_url_for_login` / `login_key`、#906): github.com の login は avatars CDN、Enterprise の login はそのサーバーの `https://<host>/<login>.png?size=64` を認証なしの GET で読み、cache の key も `<host>/<login>` にする。Enterprise の login を github.com に送らない、github.com の同名の別人の顔を出さない(#940 review の懸念はこの 2 つで、Enterprise への通信は意図したもの)。認証が要るサーバーなどで GET が失敗したら画像は出さず、イニシャルの円のままにする(github.com の CDN に fallback しない)。失敗した key は試行済みの集合に残るので、同じ repository を表示している間は取り直さない(集合は表示中の repository が変わると空になる)。`KAGI_OFFLINE=1` ならどの host にも通信しない。
+   絞り込み中も同じく(#1070)、最後の検索が失敗した一覧はその理由と前回の一覧のうち一致する行を、上限に達した一覧は「100 件以上」を、一致する行が無くても見出しの下に残す。失敗の理由は次の検索が成功するまで残る。「一致なし」は、表示中の切り替え先のすべての一覧を上限内で読めていて、Refresh の検索が実行中でないときだけ出す。判定は切り替え先ごとで、他の切り替え先の失敗や上限は影響しない。検索の実行中も、前回の一覧のうち一致する行は表示する。
    行をクリックすると、手元に clone があるリポジトリならそのタブで開く。PR は `gh search` が head / base の ref を返さず、リポジトリの PR 一覧(1 ページ 100 件)に入っているとも限らないので、`gh pr view -R <host>/<owner>/<repo> <N>` で読んでから PR モードで開く。読んでいる間はその行に spinner を出し、同じ行のクリックは無視する。読み終えたときに Home が前面に無ければ開かない(別のタブへ移ったユーザーを引き戻さない)。Issue は Issues モードで選択して開く。ただし Issues モードは clone について `gh` が解決する repository(`gh repo set-default`、無ければ `origin`)を読み書きするので、それが Issue の repository と一致するときだけ開き、違えば理由を toast で出して開かない(同じ番号の別 Issue を表示し、返信をそこへ書き込まないため。#940 review)。手元に clone が無ければ、`gh search` が返した URL を OS の opener で開き、GitHub で見る(clone の card はリポジトリ一覧のもの。#940 review)。行の右端のボタンは clone の有無にかかわらずどの行も「Open」で、押すと同じ URL を GitHub で開く(行のクリックとは別で、手元の clone では開かない)。
    一致して開くとき、その clone の Issues モードがすでに別の repository(以前の `gh repo set-default`)で読み込まれていれば、一覧と Composer の宛先を検証した repository に切り替えて読み直してから選択する(古い宛先のまま、別 repository の同じ番号の Issue へ返信しないため。#940 review)。開いている途中の PR / Issue は、後からの選択(GitHub で開く行のクリック、Open ボタン、切り替え先の変更)で取り消し、後から届いた結果でユーザーをその repository へ移さない(#940 review)。
    Issue の下書き(新しい Issue と返信)は、clone・番号に加えて書き込み先の repository(`<host>/<owner>/<repo>`)ごとに保存する。宛先を切り替えると Composer を作り直し、新しい宛先の下書きを読む。前の宛先の下書きは消さずにその宛先のキーに残る。投稿は、Composer の宛先が Issues モードの宛先と一致するときだけ行う(前の宛先の下書きを、同じ番号の別 Issue へ投稿しないため。#940 review)。宛先を持たない以前の版の下書きは、clone の remote がすべて同じ 1 つの repository を指していて(`gh repo set-default` は remote の中から選ぶ)、それが宛先と一致するときだけ、その宛先へ 1 回だけ引き継ぐ。それ以外は引き継がず、元のキーのまま残して `[kagi] issues: draft … kept` を 1 行出す(宛先が確かでない下書きを投稿しないことを、表示されなくなることより優先する)。
@@ -33,3 +35,130 @@
 PR を 3 つに分ける。PR1 = 本 ADR、triple、`gh repo list` の読み取り、integration test。PR2 = Home タブ(最近 / フォルダーを開く / Remote Browse、Welcome の置き換え)。PR3 = Home の GitHub 一覧(自分と organization)と clone の card / 実行の配線、Tier A(fake `gh` とローカル bare repository)。キャンセル、clone の進捗表示(% 表示)は範囲外。自分の PR / Issue の一覧は #928。
 
 限界: `preflight_clone` の検査から `gh` が clone 先を作るまでの間に、別のプロセスが clone 先を symlink などへ差し替える並行置換は防がない(TOCTOU)。ユーザー自身の並行操作は前提外とし、#900 と同じ扱いにする(#926 review)。
+
+## Amendment (2026-10-12): clone card viewport and destination identity (#1296/#1297)
+
+Clone confirmation shares `modal_card`'s viewport cap and `modal_scroll_body`'s
+single scrolling region. Cancel / Clone (or Hide during execution) is a pinned,
+nonshrinking footer. Note count and UI zoom must not push confirmation outside
+the window. The existing single modal slot, picker, plan and running lifecycle
+are unchanged.
+
+Once selected, the location field names the full `request.dest` (`parent/repo`),
+not just its parent. Native middle ellipsis preserves both ends visually;
+tooltip and AX carry the sanitized full destination, and the plan summary
+names that same destination. EN/JA Change opens the existing parent picker;
+Copy Location is keyboard-reachable and copies the original destination without
+starting clone. While running, Change remains disabled and Copy stays read-only.
+
+## Amendment — 2026-10-12: recent repository keyboard list (#1347)
+
+Home's Recent sidebar uses the same single-stop `RowFocus` / `RowList`
+contract as its GitHub list, with full paths as stable keys. Its own
+variable-height list reveals focused rows; equal basenames retain distinct
+full-path accessibility descriptions and tooltips. Enter/Space reuse
+`open_repository`; list replacement and Home departure reconcile or release
+focus without opening an obsolete captured position.
+
+## Amendment (2026-10-12): running clone status (#1341)
+
+The existing elapsed-time label exposes `Role::Status` and an EN/JA name
+containing the clone operation and elapsed seconds. Visible mm:ss is retained;
+Reduce Motion does not hide the operation state. Its stable element identity
+makes every-second elapsed changes queryable without an explicit announcement
+request. Completion/error still uses the existing toast path and receipt.
+GPUI's pinned accessibility API has no live-region setter, so native start/
+terminal speech is not claimed. Hide dismisses the card without stopping or
+releasing its running owner, and no determinate percentage is fabricated.
+
+## Amendment (2026-10-13): clone task ownership and quiet completion (#1402/#1405; #1420 Clone side)
+
+The native destination picker captures the existing task FocusHandle (a fresh
+card incarnation, retained during replanning), Home/workspace presentation and
+the initiating repository attachment's session/visit where one exists. This is
+the same form-identity plus attachment pattern as Create Worktree (#1383), not
+a source-name comparison or a second modal owner. Dismissal/replacement,
+same-source reopen and repository departure retire the answer. Only the same
+unstarted card accepts it. Cancel is silent; platform/channel errors preserve
+the form and use the shared bounded toast failure path. The failure receipt owner
+is frozen at launch only when a repository screen is in front. Home (including
+Home over a parked repository) keeps diagnostics in the process log instead of
+inventing or misattributing a repository receipt.
+
+This supersedes decision 7's unconditional success navigation: only a user
+still waiting on the initiating running card and attachment gets automatic
+opening. Hidden or departed clones finish normally, retain their existing
+receipt/notification and offer a localized Open Repository Button. That Button
+alone opens/activates the destination. No background tab is added and the
+current session, selected commit and focus are not changed by arrival. The
+single-clone admission, preflight, execution, verification and recording are
+unchanged. Native Tier A uses deferred folder answers and a dispatch-only hold
+before a real fixture clone; it does not manufacture successful clone reports.
+Reopening the same running clone's card in the same visit is an explicit return
+to that task and retains automatic opening. Its original request identifies the
+running operation; folder-picker answers still require the original card focus
+identity. Actionable completion feedback remains until activation or dismissal
+(subject to the existing notification cap), instead of disappearing after four
+seconds before the user can act.
+The expiry ticker stops when only actionable completions or errors remain.
+At the existing four-toast cap, routine arrivals evict older routine feedback
+before actionable completions or errors; activation still starts the normal
+exit/removal path.
+
+## Amendment (2026-10-13): owner-scoped Home empty wording (#1453)
+
+A successfully read zero-repository organization section names its owner and
+the host that the displayed list was read from in EN and JA. The user's section
+uses a separate host-only sentence: Yours/自分 is a heading label, not an owner
+name to interpolate into prose. Japanese organization wording uses「には」.
+Each sentence says there
+are no repositories **to display for that section**, not that the account or
+GitHub as a whole has no repositories. Saved lists retain their account's host;
+token-authenticated reads use the same `GH_HOST` / `github.com` selection as gh.
+Unreadable owner lists keep their existing failure reason and never receive
+the genuine-empty sentence. Search completeness and no-match rules are unchanged.
+
+The `home_empty_section_wording` Tier A scenario observes the production
+renderer’s cached entries for self=1 / orgA=0 / orgB=1, all successful owners
+empty, and a failed organization, on github.com and an Enterprise host in both
+languages. This is a wording-only change; no controls, density or layout policy
+are changed, and the scenario is not native VoiceOver or screenshot evidence.
+
+## Amendment (2026-10-14): File Clone Repository entry (#1522)
+
+`file.cloneRepository` and its existing Cmd/Ctrl+Shift+O binding open the
+existing Home Repositories picker, focusing its filter. They are navigation,
+not a clone write: selecting a repository still opens the existing clone
+confirmation card, with no default destination or implicit execution.
+Repository tabs are retained, Home remains a singleton, and ordinary Home
+departure retires repository-owned plans. Repeated invocation reuses the same
+picker. The command registry supplies the same enabled entry to native File,
+the portable menu, shortcut and palette; no alternate clone lifecycle is added.
+An existing non-clone modal or visible Commit plan blocks this navigation:
+the command cannot change the underlying screen or steal its focus trap.
+The registry disables Clone while another modal is open, and direct dispatch
+also checks the existing modal/visible-plan guard. An already-open clone card
+is refocused without replacing it. Explicit picker/card focus consumes the
+portable menu's pending opener restoration, so the next frame cannot move
+focus back to the covered workspace.
+
+## Amendment (2026-10-15): history-only Recent removal (#1567)
+
+Recent rows provide “Remove from Recently Opened” /「最近使った項目から取り除く」
+through right-click and the focused row's Shift+F10/Menu key. The existing
+shared context-menu renderer owns keyboard navigation, named MenuItem
+accessibility and dismissal/focus return. The full path is captured at opening
+and checked against the still-visible Home row before dispatch, never a
+recycled row position.
+
+`tabs` removes only that exact path from the existing `recent_repos` key via
+the settings store. It does not open Git, mutate a repository/worktree, close
+or switch tabs, or record a repository receipt. Dispatch remembers the removed
+row's index and prevents menu dismissal from restoring its obsolete handle.
+After list reconciliation, focus moves to the same index (the new row in that
+position), or to the predecessor if the removed row was last. When no recent
+row survives, the pinned Open Folder Button's own keyed handle receives focus
+and draws its normal focus ring; the window root is only a transient handoff.
+Open Folder remains available with the normal empty Recent message. Opening
+that repository explicitly again may record it normally.
+

@@ -31,3 +31,28 @@
 ## 検証
 
 継承あり・なし、永続 slug 復元、壊れた JSON の隔離と競合、再読込の置換・削除時 fallback、全トークンの文書網羅を unit で確認する。Tier A は Settings / palette / メニューへの一覧追加と実際の切替に加え、Settings のボタンで空フォルダーの作成・再読込・作成失敗 toast を確認する。Tier B は実際に自作テーマが Settings の一覧とフォルダー操作に出ている画面を撮影し、画像は PR のコード履歴とは別の `pr-assets/<topic>` に保存する。
+
+## Amendment — 2026-10-11: independent `link` token (#1077)
+
+The flat RGB schema now includes `link` for body-link foreground. `extends`
+inherits it independently of `color_branch`; overriding the filled accent does
+not change body links. For backward compatibility, a standalone file without
+`extends` may omit `link`; it defaults to that file's own `color_branch`, retaining
+the pre-link foreground rather than rejecting a previously valid file. An
+explicit `link` overrides that default. Explicit custom colours remain
+authoritative; the 4.5:1 body-background regression applies to built-in palettes,
+not a new custom-file contrast rejection policy.
+
+## Verification amendment — 2026-10-14: capped reload feedback (#1487)
+
+The native `theme_custom` oracle compares newly admitted toast IDs for the
+winning reload: exactly one localized success summary and one error per rejected
+fixture file. It must not require the number of identical success labels to grow.
+ADR-0110's intentional four-card cap retains errors ahead of older routine
+notifications, so the second reload's file error can evict the first reload's
+success while the second success remains visible. Bisection found this oracle
+became stale at `87f2d954` (#1240, merged in #1245), before #1433 and #1475;
+there is no identical-toast deduplication or lost current-reload feedback.
+Releasing a superseded read must still leave all toast IDs, active colours,
+selection and menu contents unchanged. Production reload and toast policy are
+unchanged.

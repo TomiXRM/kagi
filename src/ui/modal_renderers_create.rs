@@ -110,19 +110,27 @@ pub(crate) fn render_create_branch_modal(
                 })
                 .map(|b| SharedString::from(plan_note_text(b))),
         ))
-        .child(
+        .child(super::e2e::measure_control(
+            "create-branch-checkout-after",
             div().flex_shrink_0().px_2().py_1().child(
                 Checkbox::new("create-branch-checkout-after")
                     .label(Msg::InputCheckoutAfterCreate.t())
                     .checked(modal.checkout_after)
                     .on_click(toggle_checkout),
             ),
-        );
+        ));
 
     if let Some(ref p) = plan {
         // Branch creation leaves HEAD and the working tree unchanged; show
         // both states using the same stacked comparison as every plan card.
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
+
+        if !p.warnings.is_empty() {
+            body = body.child(super::plan_card_rows::render_warnings_list(
+                "create-branch-warning",
+                &p.warnings,
+            ));
+        }
 
         // Field validation belongs beside the input; every other safety
         // blocker remains in the plan area and still blocks confirmation.
@@ -175,11 +183,7 @@ pub(crate) fn render_create_branch_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(crate::ui::e2e::measure_control(
             "create-branch-cancel",
             modal_button(
@@ -216,14 +220,15 @@ pub(crate) fn render_create_branch_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "create-branch-card",
+        Msg::InputBranchTitle.t(),
+        (!has_blockers).then_some(Msg::InputCreate.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(focusable_card)
@@ -271,9 +276,16 @@ pub(crate) fn render_create_worktree_modal(
     ));
     let mut body = modal_scroll_body()
         .child(render_input_modal_field(
-            Msg::InputBranchName.t(),
+            if modal.allow_existing_branch {
+                Msg::InputBranchName.t()
+            } else {
+                Msg::InputNewBranchName.t()
+            },
             modal.branch_state.as_ref(),
             plan.as_ref()
+                // Empty is an input request, not a user-generated name error.
+                // The plan's blocker still keeps Create disabled.
+                .filter(|_| !modal.branch_input.trim().is_empty())
                 .and_then(|p| {
                     p.blockers.iter().find(|b| {
                         matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
@@ -306,17 +318,10 @@ pub(crate) fn render_create_worktree_modal(
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         if !p.warnings.is_empty() {
-            let mut warn_col = div().flex().flex_col().gap_1();
-            for w in &p.warnings {
-                warn_col = warn_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_warning))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("! {}", plan_note_text(w)))),
-                );
-            }
-            body = body.child(warn_col.flex_shrink_0());
+            body = body.child(super::plan_card_rows::render_warnings_list(
+                "create-worktree-warning",
+                &p.warnings,
+            ));
         }
 
         let mut block_col = div().flex().flex_col().gap_1();
@@ -384,11 +389,7 @@ pub(crate) fn render_create_worktree_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "create-worktree-cancel",
             Msg::PlanCancel.t(),
@@ -419,14 +420,15 @@ pub(crate) fn render_create_worktree_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "create-worktree-card",
+        Msg::InputWorktreeTitle.t(),
+        (!has_blockers).then_some(Msg::InputCreate.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(focusable_card)
@@ -548,11 +550,7 @@ pub(crate) fn render_create_tag_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "create-tag-cancel",
             Msg::PlanCancel.t(),
@@ -584,14 +582,15 @@ pub(crate) fn render_create_tag_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "create-tag-card",
+        Msg::InputTagTitle.t(),
+        (!has_blockers).then_some(Msg::InputCreate.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     modal_overlay(focusable_card)
 }

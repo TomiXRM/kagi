@@ -14,7 +14,8 @@ fn oplog_restore_blocking(
     op: &Operation,
     plan: &kagi_git::OperationPlan,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     Ok(repo.run_recorded(op, plan))
 }
 
@@ -54,17 +55,20 @@ impl KagiApp {
             _ => i18n::Op::RestoreToPoint,
         };
         let Some(session) = self.ui().repo_session.as_ref() else {
-            self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(
-                i18n_op,
-                Msg::RestoreRepoSessionUnavailable.t(),
-            )));
+            self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                SharedString::from(i18n::op::op_plan_failed_contract(
+                    i18n_op,
+                    Msg::RestoreRepoSessionUnavailable.t(),
+                )),
+            ));
             return;
         };
         match session.backend().plan(&op) {
             Ok(plan) => self.admit_oplog_restore_plan(op, plan, cx),
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(i18n_op, e)));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n_op, e)),
+                ));
             }
         }
     }
@@ -119,13 +123,16 @@ impl KagiApp {
                 super::oplog_restore_preview::build(self.view(), &restores, &plan.head_at_plan)
             })
             .flatten();
+        let inspection =
+            std::rc::Rc::new(super::oplog_restore_inspection::RestoreInspection::new(cx));
         self.set_oplog_restore_modal(OplogRestoreModal {
             op,
             plan: std::sync::Arc::new(plan),
-            restores,
+            restores: restores.into(),
             error: None,
             confirm_armed: false,
             preview,
+            inspection,
         });
         self.focus_root_for_modal();
         cx.notify();
@@ -207,8 +214,9 @@ impl KagiApp {
 /// REFS-first restore card; render from canonical typed ref moves.
 pub(crate) fn render_oplog_restore_modal(
     modal: OplogRestoreModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &crate::ui::modal_shell::ModalSections,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    super::oplog_restore_card::render(modal, overrides, cx)
+    super::oplog_restore_card::render(modal, overrides, window, cx)
 }

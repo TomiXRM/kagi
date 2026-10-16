@@ -53,6 +53,7 @@ pub(crate) fn render_editor_fs_prompt_modal(
     let disabled_reason = editor_fs_ops::validate_fs_name(modal.input.trim())
         .err()
         .map(|reason| SharedString::from(reason.t()));
+    let available = disabled_reason.is_none();
 
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_fs_prompt();
@@ -86,7 +87,11 @@ pub(crate) fn render_editor_fs_prompt_modal(
                         .text_color(rgb(current_theme().text_label))
                         .child(SharedString::from(Msg::EditorFsPromptNameLabel.t())),
                 )
-                .children(modal.input_state.as_ref().map(Input::new)),
+                .children(modal.input_state.as_ref().map(|input| {
+                    Input::new(input)
+                        .context_menu(kagi_ui_core::input::context_menu(input, false))
+                        .aria_label(Msg::EditorFsPromptNameLabel.t())
+                })),
         );
 
     if let Some(err) = &modal.error {
@@ -100,12 +105,8 @@ pub(crate) fn render_editor_fs_prompt_modal(
         );
     }
 
-    let button_row = div()
+    let button_row = super::button_style::modal_button_row()
         .flex_shrink_0()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
         .child(super::e2e::measure_control(
             "editor-fs-prompt-cancel",
             modal_button(
@@ -142,14 +143,15 @@ pub(crate) fn render_editor_fs_prompt_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "editor-fs-input-card",
+        title,
+        available.then_some(confirm_label),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     modal_overlay(focusable_card)
 }
@@ -265,12 +267,8 @@ pub(crate) fn render_editor_delete_confirm_modal(
         );
     }
 
-    let button_row = div()
+    let button_row = super::button_style::modal_button_row()
         .flex_shrink_0()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
         .child(super::e2e::measure_control(
             "editor-delete-cancel",
             modal_button(

@@ -3,6 +3,7 @@
 //! and "commits to push" preview rows.
 
 use gpui::{div, prelude::*, rgb, SharedString};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::modal_renderers::PlanCardAccent;
 use super::theme::{self, theme as current_theme};
@@ -58,18 +59,64 @@ pub(crate) fn render_note_row(
         .into_any_element()
 }
 
+/// Advisory form-plan warnings: wrap full localized text with shared Note semantics.
+pub(crate) fn render_warnings_list(
+    prefix: &'static str,
+    warnings: &[kagi_domain::plan_note::PlanNote],
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_shrink_0()
+        .children(warnings.iter().enumerate().map(|(index, warning)| {
+            let id: SharedString = format!("{prefix}-{index}").into();
+            let text = kagi_ui_core::i18n::plan_note_text(warning);
+            super::e2e::measure_control(
+                id.clone(),
+                render_note_row(
+                    id,
+                    false,
+                    "\u{26a0}",
+                    current_theme().color_warning,
+                    &text,
+                    true,
+                ),
+            )
+        }))
+}
+
 /// One "commits to push" preview row (T-HT-004). Plain (`accent: None`):
 /// unchanged single truncated line. Chip style: the sha gets its own small
 /// badge, the summary follows in regular text — same visual family as
 /// [`render_note_row`]'s chips.
-pub(crate) fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyElement {
+pub(crate) fn render_commit_row(
+    index: usize,
+    line: &str,
+    accent: Option<PlanCardAccent>,
+) -> gpui::AnyElement {
+    let label = SharedString::from(line.to_string());
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::plan_subjects::record(index, label.clone());
+    let tooltip = label.clone();
+    let row = div()
+        .id(("plan-commit-row", index))
+        .role(gpui::Role::Label)
+        .aria_label(label.clone());
     let Some((_, color)) = accent else {
-        return div()
+        return row
+            .w_full()
+            .min_w(gpui::px(0.))
             .font_family(MONO_FONT)
             .text_xs()
             .text_color(rgb(current_theme().text_sub))
             .overflow_hidden()
-            .child(SharedString::from(line.to_string()))
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .child(label)
+            .hover_tooltip_builder(("plan-commit-help", index), move |window, cx| {
+                super::render_helpers::subject_tooltip(tooltip.clone(), window, cx)
+            })
             .into_any_element();
     };
     // Producer format is "<8-char-sha>  <summary>" (ops/push.rs). Fall back to
@@ -82,8 +129,9 @@ pub(crate) fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> g
         _ => (line, ""),
     };
     let (bg, border, _) = theme::badge_style(color);
-    div()
-        .flex()
+    row.flex()
+        .w_full()
+        .min_w(gpui::px(0.))
         .flex_row()
         .items_center()
         .gap_2()
@@ -110,7 +158,12 @@ pub(crate) fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> g
                 .text_xs()
                 .text_color(rgb(current_theme().text_sub))
                 .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
                 .child(SharedString::from(summary.to_string())),
         )
+        .hover_tooltip_builder(("plan-commit-help", index), move |window, cx| {
+            super::render_helpers::subject_tooltip(tooltip.clone(), window, cx)
+        })
         .into_any_element()
 }

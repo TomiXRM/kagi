@@ -364,7 +364,7 @@ pub fn build_sidebar_rows(
         let section_collapsed = collapsed.contains(SECTION_LOCAL);
         rows.push(SidebarRow::SectionHeader {
             section: SECTION_LOCAL,
-            title: "LOCAL BRANCHES",
+            title: super::Msg::A11ySidebarLocal,
             count: branches.len(),
             collapsed: section_collapsed,
         });
@@ -423,7 +423,7 @@ pub fn build_sidebar_rows(
         let section_collapsed = collapsed.contains(SECTION_REMOTE);
         rows.push(SidebarRow::SectionHeader {
             section: SECTION_REMOTE,
-            title: "REMOTE BRANCHES",
+            title: super::Msg::A11ySidebarRemote,
             count: remote_branches.len(),
             collapsed: section_collapsed,
         });
@@ -470,6 +470,7 @@ pub fn build_sidebar_rows(
                         let collapsed_now = !has_filter && groups_collapsed.contains(&key);
                         rows.push(SidebarRow::RemoteSubGroup {
                             key,
+                            remote: remote.clone(),
                             prefix: prefix.clone(),
                             count: *count,
                             collapsed: collapsed_now,
@@ -524,7 +525,7 @@ pub fn build_sidebar_rows(
         let section_collapsed = collapsed.contains(SECTION_WORKTREES);
         rows.push(SidebarRow::SectionHeader {
             section: SECTION_WORKTREES,
-            title: "WORKTREES",
+            title: super::Msg::A11ySidebarWorktrees,
             count: worktrees.iter().filter(|w| !w.is_main).count(),
             collapsed: section_collapsed,
         });
@@ -559,7 +560,7 @@ pub fn build_sidebar_rows(
         let section_collapsed = collapsed.contains(SECTION_TAGS);
         rows.push(SidebarRow::SectionHeader {
             section: SECTION_TAGS,
-            title: "TAGS",
+            title: super::Msg::A11ySidebarTags,
             count: tags.len(),
             collapsed: section_collapsed,
         });
@@ -578,7 +579,7 @@ pub fn build_sidebar_rows(
         let section_collapsed = collapsed.contains(SECTION_STASHES);
         rows.push(SidebarRow::SectionHeader {
             section: SECTION_STASHES,
-            title: "STASHES",
+            title: super::Msg::A11ySidebarStashes,
             count: stashes.len(),
             collapsed: section_collapsed,
         });

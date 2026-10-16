@@ -61,6 +61,7 @@ pub fn plan_sync_to_remote(repo: &Repository, branch: &str) -> Result<OperationP
     let work_backup = format!("{}{}/1", super::backup::PREFIX, operation_id);
 
     let mut blockers = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings = Vec::new();
 
     let from = repo
@@ -114,6 +115,19 @@ pub fn plan_sync_to_remote(repo: &Repository, branch: &str) -> Result<OperationP
                 path: path.display().to_string(),
             }));
         }
+    }
+    if is_head {
+        let target_tree = repo
+            .find_commit(target)
+            .and_then(|commit| commit.tree())
+            .map_err(|e| {
+                GitError::Other(format!("cannot read sync target tree: {}", e.message()))
+            })?;
+        blockers.extend(crate::special_repo::force_checkout_blockers(
+            repo,
+            &target_tree,
+            &status,
+        )?);
     }
     let work_dirty = is_head && status.is_dirty();
     if from == target && !work_dirty && blockers.is_empty() {
@@ -192,6 +206,9 @@ fn finish(
         }
     });
     OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Sync(SyncTitle::SyncToRemote {
             branch: branch.to_string(),
@@ -216,6 +233,7 @@ fn finish(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         // No digest: everything in the working tree is retained whatever its
         // state at execute time; a plan made on a clean tree refuses at
         // preflight if the tree became dirty (no work backup was planned).
@@ -301,6 +319,7 @@ pub(crate) fn preflight_sync_to_remote(
         ));
     }
     preflight_check(repo, plan)?;
+    super::check_git_identity(repo)?;
     if let Some(op) = super::in_progress_op(repo) {
         return Err(GitError::Other(format!(
             "sync-to-remote refused at preflight: {} is in progress",
@@ -315,6 +334,21 @@ pub(crate) fn preflight_sync_to_remote(
         ));
     }
     let is_head = matches!(resolve_head(repo)?, Head::Attached { branch: b, .. } if b == branch);
+    if is_head {
+        let target_tree = repo
+            .find_commit(resolved.0.target)
+            .and_then(|commit| commit.tree())
+            .map_err(|e| {
+                GitError::Other(format!("cannot read sync target tree: {}", e.message()))
+            })?;
+        if let Some(note) =
+            crate::special_repo::force_checkout_blockers(repo, &target_tree, &status)?
+                .into_iter()
+                .next()
+        {
+            return Err(GitError::Blocked(Box::new(note)));
+        }
+    }
     if is_head && resolved.2.is_none() && status.is_dirty() {
         return Err(GitError::Other(
             "sync-to-remote refused at preflight: the working tree changed since planning; please re-plan"
@@ -333,7 +367,7 @@ fn retain_work(
     head: &git2::Commit<'_>,
     operation_id: &str,
 ) -> Result<SyncWorkBackup, GitError> {
-    let sig = super::build_signature(repo)?;
+    let sig = super::internal_signature()?;
     let index_tree = repo
         .index()
         .and_then(|mut i| i.write_tree())
@@ -431,6 +465,7 @@ pub(crate) fn execute_sync_to_remote(
 ) -> Result<crate::OperationOutcome, GitError> {
     let (resolved, tip_backup_name, work_backup_name) =
         preflight_sync_to_remote(repo, plan, branch)?;
+    let sig = super::build_signature(repo)?;
     let operation_id = tip_backup_name
         .strip_prefix(super::backup::PREFIX)
         .and_then(|rest| rest.strip_suffix("/0"))
@@ -526,7 +561,6 @@ pub(crate) fn execute_sync_to_remote(
             "'{branch}' moved during execution; branch not updated"
         )));
     }
-    let sig = super::build_signature(repo)?;
     transaction
         .set_target(
             &refname,

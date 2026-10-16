@@ -23,10 +23,10 @@ fn head_ja(head: &HeadAt) -> String {
 pub fn note_ja(note: &OplogRestoreNote) -> String {
     match note {
         OplogRestoreNote::EntryNotLoaded { id } => {
-            format!("操作 #{id} はこの repository の読み込まれた操作にありません(別の repository の操作かもしれません)。")
+            format!("操作 #{id} はこの repository の操作ではありません。")
         }
         OplogRestoreNote::EntryOutsideWindow { id, window } => format!(
-            "操作 #{id} は直近 {window} 件より古い操作です。restore が読むのは直近 {window} 件までなので、ここでは戻せません。"
+            "操作 #{id} は古すぎるため戻せません(戻せるのは直近 {window} 件まで)。"
         ),
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"
@@ -43,7 +43,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
                 .map(|p| format!("{p} の worktree で"))
                 .unwrap_or_default();
             format!(
-                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は local branch と tag だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
+                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は local branch と tag だけを動かし、HEAD は動かしません(working tree が変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
                 head_ja(from),
                 head_ja(to),
                 head_ja(from)
@@ -58,7 +58,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             expected,
             current,
         } => format!(
-            "{refname} は {} にあり、Operation Log の記録({})と違います。記録された操作の外で動いています。",
+            "{refname} は {} にあり、操作ログの記録({})と違います。記録された操作の外で動いています。",
             short(current),
             short(expected)
         ),
@@ -67,7 +67,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             op.label_ja()
         ),
         OplogRestoreNote::HistoryGap { after, next } => format!(
-            "Operation Log が操作 #{after} の後で途切れています(次の記録は #{next})。間の操作が消えているか読めないため、この範囲は正確に戻せません。"
+            "操作ログが操作 #{after} の後で途切れています(次の記録は #{next})。間の操作が消えているか読めないため、この範囲は正確に戻せません。"
         ),
         OplogRestoreNote::UnknownRepository { id, op, path } => format!(
             "操作 #{id}({op})を実行した {path} はもう開けないため、この repository の branch を動かした可能性があります。この範囲は正確に戻せません。"
@@ -76,7 +76,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             "{refname} はその時点の後に、記録された操作の外で作られたか動いています。復元してもそのまま残ります。"
         ),
         OplogRestoreNote::CheckedOutDirty { branch, path } => format!(
-            "`{branch}` は {path} で checkout 中で、未コミットの変更があります。変更はそのまま残り、移動後は戻した先端との差分と一緒に表示されます。"
+            "`{branch}` は {path} で checkout 中で、未 commit の変更があります。変更はそのまま残り、移動後は戻した先端との差分と一緒に表示されます。"
         ),
         OplogRestoreNote::DeletesCheckedOutBranch { branch, path } => {
             format!("`{branch}` を削除することになりますが、{path} で checkout 中です。")
@@ -94,7 +94,32 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::MovesCheckedOutBranch { branch, path } => format!(
             "`{branch}` は {path} で checkout 中です。動くのは branch だけで、その worktree の index とファイルはそのままです。"
         ),
-        OplogRestoreNote::RefsOnly => "変更なし: 作業ツリー・index・untracked・stash・remote branch・Kagi 外での tag の変更".to_string(),
+        OplogRestoreNote::RefsOnly => "変更なし: working tree・index・untracked・stash・remote branch・Kagi 外での tag の変更".to_string(),
+    }
+}
+
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &OplogRestoreNote) -> String {
+    match note {
+        OplogRestoreNote::EntryNotLoaded { id } => {
+            format!("操作 #{id} はこの repository の読み込まれた操作にありません(別の repository の操作かもしれません)。")
+        }
+        OplogRestoreNote::EntryOutsideWindow { id, window } => format!(
+            "操作 #{id} は直近 {window} 件より古い操作です。restore が読むのは直近 {window} 件までなので、ここでは戻せません。"
+        ),
+        OplogRestoreNote::RefMovedSince {
+            refname,
+            expected,
+            current,
+        } => format!(
+            "{refname} は {} にあり、Operation Log の記録({})と違います。記録された操作の外で動いています。",
+            short(current),
+            short(expected)
+        ),
+        OplogRestoreNote::HistoryGap { after, next } => format!(
+            "Operation Log が操作 #{after} の後で途切れています(次の記録は #{next})。間の操作が消えているか読めないため、この範囲は正確に戻せません。"
+        ),
+        _ => note_ja(note),
     }
 }
 
@@ -111,13 +136,41 @@ pub fn title_ja(title: &OplogRestoreTitle) -> String {
 /// Japanese rendering of one recovery block.
 pub fn recovery_ja(recovery: &OplogRestoreRecovery) -> String {
     match recovery {
-        OplogRestoreRecovery::Restore => "この操作も ref の移動つきで記録されます。Operation Log から取り消すか、git update-ref <ref> <backup-ref> で local ref を戻せます(backup は entry に記載)。".to_string(),
+        OplogRestoreRecovery::Restore => "この操作も ref の移動つきで記録されます。操作ログから取り消すか、git update-ref <ref> <backup-ref> で local ref を戻せます(backup は entry に記載)。".to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_refname() {
+        for (note, expected) in [
+            (
+                OplogRestoreNote::EntryNotLoaded { id: 42 },
+                "操作 #42 はこの repository の読み込まれた操作にありません(別の repository の操作かもしれません)。",
+            ),
+            (
+                OplogRestoreNote::EntryOutsideWindow { id: 7, window: 100 },
+                "操作 #7 は直近 100 件より古い操作です。restore が読むのは直近 100 件までなので、ここでは戻せません。",
+            ),
+            (
+                OplogRestoreNote::RefMovedSince {
+                    refname: "refs/heads/raw{}\n\u{1b}".into(),
+                    expected: Some("0123456789abcdef".into()),
+                    current: None,
+                },
+                "refs/heads/raw{}\n\u{1b} は (なし) にあり、Operation Log の記録(0123456)と違います。記録された操作の外で動いています。",
+            ),
+            (
+                OplogRestoreNote::HistoryGap { after: 4, next: 9 },
+                "Operation Log が操作 #4 の後で途切れています(次の記録は #9)。間の操作が消えているか読めないため、この範囲は正確に戻せません。",
+            ),
+        ] {
+            assert_eq!(note_ja_contract(&note), expected);
+        }
+    }
 
     /// #886: the HEAD blocker names the entry, both sides of the switch, and
     /// what to check out by hand before restoring to that entry or later —

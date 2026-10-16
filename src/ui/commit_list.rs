@@ -334,19 +334,16 @@ pub struct CommitRow {
     /// Short (8-hex) commit id. Retained for Detail Panel / oplog (T021: not rendered in row).
     #[allow(dead_code)]
     pub short_id: SharedString,
-    /// First line of the commit message (truncated to 72 chars at build time).
+    /// Sanitized first message line, bounded to 4 KiB on a UTF-8 boundary.
+    /// Ordinary subjects remain complete; one-line layout supplies ellipsis.
     pub summary: SharedString,
     /// Author name (display only).
     pub author: SharedString,
     /// Author email — used by the avatar helper to derive a stable colour.
     pub author_email: String,
-    /// Verbose relative author time for the Graph accessibility label.
-    pub date: SharedString,
-    /// Compact relative author time for the visible Graph column.
-    pub date_short: SharedString,
-    /// Committer time (Unix seconds) of this commit. The sidebar renders a
-    /// ref tip's age from it; the Graph's author-time strings above can differ
-    /// from this clock after a rebase or a cherry-pick.
+    /// Author timestamp; relative display/AX wording resolves at render time.
+    pub author_secs: i64,
+    /// Committer time (Unix seconds), used for sidebar ref-tip ages.
     pub committed_secs: i64,
     /// Ref badges for this commit, if any.
     pub badges: Vec<RefBadge>,
@@ -382,8 +379,7 @@ impl CommitRow {
             summary: SharedString::default(),
             author: SharedString::default(),
             author_email: String::new(),
-            date: SharedString::default(),
-            date_short: SharedString::default(),
+            author_secs: 0,
             committed_secs: 0,
             badges: Vec::new(),
             provenance: None,
@@ -405,7 +401,6 @@ impl CommitRow {
 /// Also runs [`layout`] once to compute graph lane / edge data (T009).
 pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     let badge_map = build_badge_map(snap);
-    let now_secs = now_unix_secs();
 
     // Resolve HEAD commit id (W2-GRAPH).
     let head_sha: Option<&str> = head_target(&snap.head);
@@ -438,7 +433,6 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
             commit_to_row(
                 c,
                 &badge_map,
-                now_secs,
                 lane,
                 node_color,
                 edges,
@@ -580,7 +574,6 @@ pub fn build_commit_rows_with_stashes(
 fn commit_to_row(
     c: &Commit,
     badge_map: &HashMap<CommitId, Vec<RefBadge>>,
-    now_secs: i64,
     lane: usize,
     node_color: usize,
     edges: Vec<GraphEdge>,
@@ -591,29 +584,13 @@ fn commit_to_row(
 ) -> CommitRow {
     let short_id = SharedString::from(c.id.short().to_string());
 
-    // issue #414: commit summary + author are remote-origin text shown on every
-    // graph row (the list the user looks at continuously). Neutralize terminal
-    // control bytes before truncation/display, matching the detail panel.
-    let safe_summary = kagi_domain::text_safety::sanitize_control_bytes(&c.summary);
-    // Truncate summary at 72 chars to keep rows manageable.
-    // Count chars (not bytes): byte slicing would panic on multi-byte
-    // summaries (e.g. Japanese commit messages).
-    let summary = if safe_summary.chars().count() > 72 {
-        let truncated: String = safe_summary.chars().take(71).collect();
-        SharedString::from(format!("{truncated}…"))
-    } else {
-        SharedString::from(safe_summary)
-    };
+    // #1306: retain subject identity; the one-line element owns visual ellipsis.
+    let summary = display_subject(&c.summary);
 
     let author = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
         &c.author.name,
     ));
     let author_email = c.author.email.clone();
-    let date = SharedString::from(relative_time(c.author.time, now_secs));
-    let date_short = SharedString::from(kagi_ui_core::time::relative_time_short(
-        c.author.time,
-        now_secs,
-    ));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
     // Issue #337: classify agent provenance from trailers + author/committer +
@@ -637,8 +614,7 @@ fn commit_to_row(
         summary,
         author,
         author_email,
-        date,
-        date_short,
+        author_secs: c.author.time,
         committed_secs: c.committer.time,
         badges,
         provenance,
@@ -649,6 +625,37 @@ fn commit_to_row(
         parents: c.parents.clone(),
         is_head,
         is_merge,
+    }
+}
+
+/// Graph identity has a defensive 4 KiB bound *after* control-byte sanitization.
+/// Ordinary long subjects remain complete for AX and Tooltip; only pathological
+/// subjects get a model ellipsis. The Inspector retains the entire message.
+fn display_subject(subject: &str) -> SharedString {
+    SharedString::from(kagi_domain::text_safety::display_subject(subject))
+}
+
+#[cfg(test)]
+mod subject_tests {
+    #[test]
+    fn subjects_preserve_identity_until_sanitized_utf8_bound() {
+        for subject in [
+            "x".repeat(300),
+            "日本語😀".repeat(300),
+            "safe\x1b[31m".repeat(300),
+        ] {
+            assert_eq!(
+                super::display_subject(&subject).as_ref(),
+                kagi_domain::text_safety::sanitize_control_bytes(&subject)
+            );
+        }
+        assert_eq!(super::display_subject(&"x".repeat(4096)).len(), 4096);
+        for subject in ["😀".repeat(2000), "\x1b".repeat(2000)] {
+            let displayed = super::display_subject(&subject);
+            assert!(displayed.len() <= 4096);
+            assert!(displayed.ends_with('…'));
+            assert!(!displayed.contains('\x1b'));
+        }
     }
 }
 

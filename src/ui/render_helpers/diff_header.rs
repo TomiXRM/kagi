@@ -1,14 +1,16 @@
 //! The diff header row every diff embedding shares: `[leading] file name
-//! [trailing] view-mode toggle +N −M` (ADR-0124, #809).
+//! [trailing] Unified | Split +N −M` (ADR-0124, #809, #1235).
 
 use gpui::prelude::*;
 use gpui::{div, rgb, Context, SharedString};
+use gpui_component::Selectable as _;
 use kagi_ui_core::header_fit::{header_button, HeaderFit};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
 
 /// What a diff embedding puts in the diff header besides the file name, the
-/// view-mode toggle and the +N −M stats.
+/// view-mode segments and the +N −M stats.
 #[derive(Default)]
 pub(crate) struct DiffHeader {
     /// #809: measures the row so its buttons fall back to icons rather than
@@ -17,7 +19,7 @@ pub(crate) struct DiffHeader {
     pub(crate) leading: Option<gpui::AnyElement>,
     pub(crate) trailing: Option<gpui::AnyElement>,
     /// Labels of the `leading` / `trailing` buttons, for the fit's labelled
-    /// copy (the header adds its own toggle).
+    /// copy (the header adds both mode labels).
     pub(crate) labels: Vec<SharedString>,
     /// #351: per-row gutter markers and expansions the embedding adds to the
     /// list below the header (the PR diff's review threads).
@@ -47,38 +49,14 @@ impl DiffHeader {
             mut labels,
             ..
         } = self;
-        // ADR-0124: unified ⇄ side-by-side toggle. The label names the mode
-        // the click switches TO; the flag is global (kagi-ui-core atomic) and
-        // persisted, so every diff embedding follows the same mode.
-        let (mode_label, mode_icon) = if super::theme::diff_split() {
-            (
-                super::i18n::Msg::DiffViewUnified.t(),
-                "icons/square-menu.svg",
-            )
-        } else {
-            (super::i18n::Msg::DiffViewSplit.t(), "icons/columns-2.svg")
-        };
         // #809: without a fit (the editor / PR embeddings) the labels always
         // show.
         let compact = fit.as_ref().is_some_and(HeaderFit::compact);
-        // Small outline, matching the Back/History buttons it sits beside
-        // (see `header_button` — ghost buttons vanish against the header bar).
-        let mode_toggle = header_button("diff-mode-toggle", mode_label, mode_icon, compact)
-            .on_click(cx.listener(|_this, _ev, _window, cx| {
-                let on = !super::theme::diff_split();
-                super::theme::set_diff_split(on);
-                klog!("diff-mode: {}", if on { "split" } else { "unified" });
-                cx.notify();
-            }));
-        labels.push(SharedString::from(mode_label));
+        let modes = mode_segments(fit.as_ref(), compact, &mut labels, cx);
         let stats_el = div()
             .text_sm()
             .text_color(rgb(theme().text_sub))
             .child(stats.clone());
-        let mode_toggle = match &fit {
-            Some(fit) => fit.control("diff-mode-toggle", mode_toggle),
-            None => mode_toggle.into_any_element(),
-        };
         // The stats give way last: once the buttons are icons, they truncate.
         let stats_el = match &fit {
             Some(fit) => fit.text_control("main-diff-stats", stats_el.truncate()),
@@ -109,19 +87,94 @@ impl DiffHeader {
             .when_some(leading, |el, btn| el.child(btn))
             // File name: gives up its width before any button does
             // (`truncate` clips, so its flex min width is 0).
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .truncate()
-                    .child(title),
-            )
+            .child(title_identity(title))
             // History button (导线 #3)
             .when_some(trailing, |el, btn| el.child(btn))
-            .child(mode_toggle)
+            .child(modes)
             .child(stats_el)
             .children(probes.into_iter().flatten())
             .into_any_element()
     }
+}
+
+/// Layout shortens paint only; hover and AX retain the same complete identity.
+fn title_identity(title: SharedString) -> impl IntoElement {
+    // Most paths are clean. Keep their SharedString instead of allocating a
+    // second copy on every render; use the shared sanitizer for control bytes.
+    let title = if title
+        .chars()
+        .any(|ch| ch.is_control() && ch != '\t' && ch != '\n')
+    {
+        super::safe_text(&title)
+    } else {
+        title
+    };
+    let role = gpui::Role::Label;
+    let tooltip = title.clone();
+    #[cfg(feature = "gui-e2e")]
+    super::super::e2e::diff_presentation::record_header(&title, Some(role), Some(&title));
+    div()
+        .id("main-diff-title")
+        .role(role)
+        .aria_label(title.clone())
+        .aria_description(title.clone())
+        .flex_1()
+        .text_sm()
+        .text_color(rgb(theme().text_main))
+        .truncate()
+        .relative()
+        .child(super::super::e2e::measure_inside("main-diff-title"))
+        .child(title)
+        .hover_tooltip_builder("main-diff-title-hover-help", move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::super::e2e::diff_presentation::record_header_tooltip(&tooltip);
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+}
+
+fn mode_segments<V: 'static>(
+    fit: Option<&HeaderFit>,
+    compact: bool,
+    labels: &mut Vec<SharedString>,
+    cx: &mut Context<V>,
+) -> gpui::AnyElement {
+    let split = super::theme::diff_split();
+    let mut modes = div().flex().flex_row().flex_shrink_0().gap_1();
+    for (id, label, icon, target) in [
+        (
+            "diff-mode-unified",
+            super::i18n::Msg::DiffViewUnified.t(),
+            "icons/square-menu.svg",
+            false,
+        ),
+        (
+            "diff-mode-split",
+            super::i18n::Msg::DiffViewSplit.t(),
+            "icons/columns-2.svg",
+            true,
+        ),
+    ] {
+        let selected = split == target;
+        let button = header_button(id, label, icon, compact, |button| {
+            button
+                .selected(selected)
+                .on_click(cx.listener(move |_this, _ev, _window, cx| {
+                    if super::theme::diff_split() != target {
+                        super::theme::set_diff_split(target);
+                        klog!("diff-mode: {}", if target { "split" } else { "unified" });
+                        cx.notify();
+                    }
+                }))
+        });
+        #[cfg(feature = "gui-e2e")]
+        super::super::e2e::diff_presentation::record_mode(id, gpui::Role::Button, label, selected);
+        modes = modes.child(match fit {
+            Some(fit) => fit.control(id, button),
+            None => button.into_any_element(),
+        });
+        // Measuring both labels keeps the existing title → icons → stats
+        // priority. The probe's gap_2 is conservative for this gap_1 group.
+        labels.push(SharedString::from(label));
+    }
+    modes.into_any_element()
 }

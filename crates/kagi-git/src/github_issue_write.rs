@@ -127,6 +127,9 @@ fn issue_plan(
         blockers.push(PlanNote::Github(GithubNote::CommentBodyEmpty));
     }
     OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {
@@ -143,6 +146,7 @@ fn issue_plan(
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         destructive: false,
         equivalent_command: None,

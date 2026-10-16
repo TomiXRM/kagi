@@ -20,6 +20,7 @@ use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::header_fit::header_button;
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::time::now_unix_secs;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use crate::detail::{render_fh_detail_pane, render_fh_row_menu};
 use crate::{fh_row_height, FileHistoryEvent, FileHistoryState, FileHistoryView};
@@ -27,7 +28,11 @@ use kagi_domain::file_history::{FileChangeType, FileHistoryEntry};
 
 impl Render for FileHistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        render_file_history_view(self, window.viewport_size(), cx)
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
+        render_file_history_view(self, window, cx)
     }
 }
 
@@ -61,9 +66,22 @@ pub(crate) fn fh_header_button(
 /// in place of the normal center+right area.
 pub fn render_file_history_view(
     view: &FileHistoryView,
-    viewport: gpui::Size<gpui::Pixels>,
+    window: &mut Window,
     cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
+    let viewport = window.viewport_size();
+    view.keyboard.prepare(
+        view.data
+            .history
+            .as_ref()
+            .is_some_and(|history| !history.entries.is_empty()),
+        kagi_ui_core::keyboard_nav::RowScroll::Uniform(
+            view.list_scroll.clone(),
+            view.last_built_range.clone(),
+        ),
+        window,
+        cx,
+    );
     // ADR-0117: the entity renders itself. Read only `self`'s data here; every
     // parent interaction is an event emission (ADR-0121 C3). The owned bindings
     // below come straight from `view.data`.
@@ -115,42 +133,76 @@ pub fn render_file_history_view(
         &[fh_branch.clone(), count_text.clone()],
     );
 
-    let back = header_button("fh-back", back_label, "icons/arrow-left.svg", compact).on_click(
-        cx.listener(|_this, _e, _w, cx| {
-            cx.emit(FileHistoryEvent::CloseRequested);
-        }),
+    let back = header_button(
+        "fh-back",
+        back_label,
+        "icons/arrow-left.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(|_this, _e, _w, cx| {
+                cx.emit(FileHistoryEvent::CloseRequested);
+            }))
+        },
     );
 
     let path_for_copy = rel_path.clone();
-    let copy_path = header_button("fh-copy-path", copy_label, "icons/copy.svg", compact).on_click(
-        cx.listener(move |_this, _e, _w, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                path_for_copy.to_string_lossy().into_owned(),
-            ));
-        }),
+    let copy_path = header_button(
+        "fh-copy-path",
+        copy_label,
+        "icons/copy.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(move |_this, _e, _w, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(
+                    path_for_copy.to_string_lossy().into_owned(),
+                ));
+            }))
+        },
     );
 
-    let refresh = header_button("fh-refresh", refresh_label, "icons/refresh-cw.svg", compact)
-        .on_click(cx.listener(|this, _e, _w, cx| {
-            this.reload(true, cx);
-        }));
+    let refresh = header_button(
+        "fh-refresh",
+        refresh_label,
+        "icons/refresh-cw.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(|this, _e, _w, cx| {
+                this.reload(true, cx);
+            }))
+        },
+    );
 
-    let path_for_open = rel_path.clone();
-    let open_file = header_button("fh-open-file", open_label, "icons/file-text.svg", compact)
-        .on_click(cx.listener(move |_this, _e, _w, cx| {
-            // v1: return to the normal body; the file's diff is reachable via
-            // the commit panel / inspector.  Keep it simple per the spec.
-            let _ = &path_for_open;
-            cx.emit(FileHistoryEvent::CloseRequested);
-        }));
+    let path_for_open = state
+        .selected_entry()
+        .map(|entry| entry.change.path_after.clone())
+        .unwrap_or_else(|| rel_path.clone());
+    let open_file = header_button(
+        "fh-open-file",
+        open_label,
+        "icons/file-text.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(move |_this, _e, _w, cx| {
+                cx.emit(FileHistoryEvent::OpenFileRequested(path_for_open.clone()));
+            }))
+        },
+    );
 
     // Icon-only, the On state is the button's selected look.
-    let follow_btn = header_button("fh-follow", follow_label, "icons/route.svg", compact)
-        .selected(compact && follow)
-        .on_click(cx.listener(|this, _e, _w, cx| {
-            this.data.follow_renames = !this.data.follow_renames;
-            this.reload(false, cx);
-        }));
+    let follow_btn = header_button(
+        "fh-follow",
+        follow_label,
+        "icons/route.svg",
+        compact,
+        |button| {
+            button
+                .selected(compact && follow)
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    this.data.follow_renames = !this.data.follow_renames;
+                    this.reload(false, cx);
+                }))
+        },
+    );
 
     let title_tip = if compact {
         SharedString::from(format!("{rel_path_str}\n{fh_branch} · {count_text}"))
@@ -173,7 +225,10 @@ pub fn render_file_history_view(
         // Darker than the `surface` this used to be, matching the main diff
         // header, so the outlined buttons read as raised controls.
         .bg(rgb(theme().bg_base))
-        .child(fit.control("fh-back", back))
+        .child(fit.control(
+            "fh-back",
+            crate::keyboard::header_boundary(0, back, view, cx),
+        ))
         .child(
             div()
                 .id("fh-title")
@@ -186,7 +241,9 @@ pub fn render_file_history_view(
                     "File History: {}",
                     rel_path_str
                 )))
-                .tooltip(move |window, cx| Tooltip::new(title_tip.clone()).build(window, cx)),
+                .hover_tooltip_builder("fh-title-help", move |window, cx| {
+                    Tooltip::new(title_tip.clone()).build(window, cx)
+                }),
         )
         .when(!compact, |el| {
             el.child(
@@ -204,10 +261,22 @@ pub fn render_file_history_view(
                     .child(count_text),
             )
         })
-        .child(fit.control("fh-refresh", refresh))
-        .child(fit.control("fh-copy-path", copy_path))
-        .child(fit.control("fh-open-file", open_file))
-        .child(fit.control("fh-follow", follow_btn))
+        .child(fit.control(
+            "fh-refresh",
+            crate::keyboard::header_boundary(1, refresh, view, cx),
+        ))
+        .child(fit.control(
+            "fh-copy-path",
+            crate::keyboard::header_boundary(2, copy_path, view, cx),
+        ))
+        .child(fit.control(
+            "fh-open-file",
+            crate::keyboard::header_boundary(3, open_file, view, cx),
+        ))
+        .child(fit.control(
+            "fh-follow",
+            crate::keyboard::header_boundary(4, follow_btn, view, cx),
+        ))
         .children(probes);
 
     // ── Center column (list + diff) selection of the body content ──
@@ -247,11 +316,32 @@ pub fn render_file_history_view(
     // ── Right detail pane ──────────────────────────────────────────
     let detail_divider = div()
         .id("fh-detail-divider")
+        .group("fh-detail-divider")
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("fh-detail-divider", |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>("fh-detail-divider", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::Panel {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(
             DividerDrag {
@@ -380,8 +470,30 @@ pub(crate) fn render_fh_list_and_diff(
         .w_full()
         .h(theme::scaled_px(4.))
         .flex_shrink_0()
-        .bg(rgb(theme().surface))
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+        .bg(rgb(theme().panel))
+        .flex()
+        .group("fh-rows-divider")
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("fh-rows-divider", |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>("fh-rows-divider", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_row_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::FileHistoryRows {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_row_resize()
         .on_drag(
             DividerDrag {
@@ -492,25 +604,55 @@ pub(crate) fn render_fh_commit_list(
     let now = now_unix_secs();
     let scroll_handle = list_scroll.clone();
 
-    uniform_list(
+    let list = uniform_list(
         "fh-commit-list",
         row_count,
-        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+        cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
             this.last_built_range = range.clone();
             let Some(history) = this.data.history.as_ref() else {
                 return Vec::new();
             };
+            let Some(rows) = this
+                .keyboard
+                .rows
+                .borrow()
+                .as_ref()
+                .map(|rows| rows.as_drawn(&range))
+            else {
+                return Vec::new();
+            };
             range
                 .filter_map(|ix| history.entries.get(ix).map(|e| (ix, e)))
-                .map(|(ix, entry)| render_fh_row(ix, entry, ix == selected, now, cx))
+                .map(|(ix, entry)| {
+                    render_fh_row(
+                        ix,
+                        entry,
+                        ix == selected,
+                        now,
+                        window.is_window_active(),
+                        &rows,
+                        cx,
+                    )
+                })
                 .collect()
         }),
     )
     .track_scroll(&scroll_handle)
     .flex_1()
     .h_full()
-    .min_h(px(0.))
-    .into_any_element()
+    .min_h(px(0.));
+    div()
+        .id("fh-list-keyboard")
+        .key_context("KagiRowList")
+        .role(gpui::Role::ListBox)
+        .aria_label(SharedString::from(
+            kagi_ui_core::i18n::Msg::A11yFileHistory.t(),
+        ))
+        .flex_1()
+        .h_full()
+        .min_h(px(0.))
+        .child(list)
+        .into_any_element()
 }
 
 /// One row in the File History commit list.
@@ -519,14 +661,19 @@ pub(crate) fn render_fh_row(
     entry: &FileHistoryEntry,
     is_selected: bool,
     now: i64,
+    window_active: bool,
+    rows: &kagi_ui_core::keyboard_nav::RowList,
     cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
     // Row shape + display data are shared with the Editor Workspace's
     // History tab (`kagi_ui_core::commit_row`); only the interactions below
     // are File-History-specific.
     let model = commit_row_model(entry, now);
+    let entity = cx.entity().downgrade();
+    let label = crate::keyboard::row_name(entry, &model);
+    let row_focus = rows.focus_handle(ix).clone();
 
-    let click = cx.listener(move |this, e: &gpui::ClickEvent, _w, cx| {
+    let click = cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
         this.menu = None;
         if e.click_count() >= 2 {
             // Double-click: jump to the commit in the graph (commits only).
@@ -542,6 +689,7 @@ pub(crate) fn render_fh_row(
                 return;
             }
         }
+        row_focus.focus(window, cx);
         this.select(ix, cx);
     });
     let ctx = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -550,15 +698,29 @@ pub(crate) fn render_fh_row(
         cx.notify();
     });
 
-    render_commit_row(
-        "fh-row",
+    rows.selecting_row(
         ix,
-        &model,
-        CommitRowLayout::Table {
-            row_height: fh_row_height(),
+        render_commit_row(
+            "fh-row",
+            ix,
+            &model,
+            CommitRowLayout::Table {
+                row_height: fh_row_height(),
+            },
+            is_selected,
+            window_active,
+        ),
+        move |index, _, cx| {
+            if let Some(entity) = entity.upgrade() {
+                entity.update(cx, |view, cx| view.select(index, cx));
+            }
         },
-        is_selected,
     )
+    .role(gpui::Role::ListBoxOption)
+    .aria_label(label)
+    .aria_selected(is_selected)
+    .aria_position_in_set(ix + 1)
+    .aria_size_of_set(rows.len())
     .on_click(click)
     .on_mouse_down(MouseButton::Right, ctx)
 }

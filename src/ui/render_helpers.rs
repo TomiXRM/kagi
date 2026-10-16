@@ -10,6 +10,10 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
+use kagi_ui_core::{
+    tooltip::HoverTooltip as _,
+    variable_list::{variable_list, VariableListState},
+};
 use std::rc::Rc;
 
 // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, badge, and file-menu
@@ -25,7 +29,11 @@ pub(crate) use diff_header::DiffHeader;
 pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 
 mod diff_header;
+mod empty_state;
+pub(crate) use empty_state::empty_state;
+pub(crate) mod diff_state;
 mod metadata;
+pub(crate) use metadata::subject_tooltip;
 pub(crate) mod row_overlay;
 
 /// issue #414: chokepoint that neutralizes terminal control bytes in remote-origin
@@ -56,9 +64,10 @@ pub(crate) fn render_rows(
     rows: &[CommitRow],
     avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
     range: std::ops::Range<usize>,
-    selected: Option<usize>,
+    window_active: bool,
     badge_col_w: f32,
     graph_col_w: f32,
+    subject_min: f32,
     graph_compact: bool,
     graph_scroll_x: f32,
     stash_lanes: &[usize],
@@ -67,9 +76,12 @@ pub(crate) fn render_rows(
     a11y_offset_size: (usize, usize),
     // #985: where the selected row is drawn, for the context-menu key.
     anchor: &super::menu_keys::RowAnchor,
+    motion: &super::render_body::motion::GraphMotion,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
+    // One reference instant for visible ages and their accessibility descriptions.
+    let now = kagi_ui_core::time::now_unix_secs();
 
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
@@ -79,35 +91,50 @@ pub(crate) fn render_rows(
             // (not the row), and every field read either copies a `Copy` value
             // or bumps an Arc (`SharedString`) / clones a small Vec, so the
             // whole-row clone per visible row is unnecessary.
-            let is_selected = selected == Some(ix);
+            let key = motion.key(a11y_offset_size.0 + ix);
+            let is_selected = key.is_some_and(|key| motion.selected(key));
+            let selection = key.map_or(0., |key| motion.selection(key));
             let is_dimmed = solo_visible.is_some_and(|visible| !visible.contains(&row.id));
 
-            // Selected row gets a prominent surface highlight;
-            // even/odd stripes apply otherwise.
-            let row_bg = if is_selected {
-                theme().selected
-            } else if ix % 2 == 0 {
+            // Graph keeps its normal stripe beneath the accent wash (#1485).
+            let default_bg: gpui::Hsla = rgb(if ix % 2 == 0 {
                 theme().bg_base
             } else {
                 theme().bg_row_alt
-            };
+            })
+            .into();
+            let wash = theme().selection_wash(window_active);
+            let row_bg = default_bg.blend(wash.alpha(wash.a * selection));
+            let foreground = rgb(theme().text_main).into();
+            let secondary_foreground = rgb(theme().text_sub).into();
+            let muted_foreground = rgb(theme().text_muted).into();
             // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
             // BEHIND the graph column only and tinted by this row's lane colour.
             // It is a separate absolute layer — NOT the row background — with
             // vertical inset so adjacent bands don't touch and the row stays a
             // neutral list. The message column is intentionally left neutral so
-            // text stays readable. Gated on lane-compaction; skipped on the
-            // selected row so the selection highlight always wins. Tuple =
-            // (normal, hover) wash colours.
+            // text stays readable. Selected active rows retain the lane band
+            // under their wash; inactive rows keep the existing grey fill.
+            // Tuple = (normal, hover) wash colours.
             let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
-                if theme::graph_lane_compact() && !is_selected {
+                if theme::graph_lane_compact() && (selection < 1. || window_active) {
                     let c = theme().lane_color(row.node_color);
                     let (na, ha) = if theme().dark {
                         (0.18, 0.24)
                     } else {
                         (0.11, 0.15)
                     };
-                    Some((gpui::hsla(c.h, c.s, c.l, na), gpui::hsla(c.h, c.s, c.l, ha)))
+                    let normal = gpui::hsla(c.h, c.s, c.l, na);
+                    let hover = gpui::hsla(c.h, c.s, c.l, ha);
+                    if selection > 0. {
+                        // Both incoming and outgoing lane bands retain their tint.
+                        let selected = default_bg
+                            .blend(normal)
+                            .blend(wash.alpha(wash.a * selection));
+                        Some((selected, selected))
+                    } else {
+                        Some((normal, hover))
+                    }
                 } else {
                     None
                 };
@@ -121,12 +148,17 @@ pub(crate) fn render_rows(
             // ── Graph lane area (T030) ────────────────────────
             // visible_lanes = how many lanes fit in the current graph column width.
             // This replaces the old MAX_LANES-based clipping.
-            let visible_lanes = graph_view::lanes_for_width(graph_col_w);
+            let visible_lanes = graph_view::lanes_for_width(theme::scaled(graph_col_w));
 
-            // on_click handler: update the session's selection via cx.listener.
-            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+            // Pointer selection hands keyboard ownership to the Graph, never
+            // during rendering or while the user is typing in another field.
+            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
+                if let Some(root) = &this.root_focus {
+                    root.focus(window, cx);
+                }
                 this.commit_menu = None;
                 this.select(ix);
+                cx.stop_propagation();
                 // ADR-0089 Phase 2c: kick off the remote changed-files load now
                 // that we have `cx` (the render trigger is a fallback for
                 // keyboard navigation). Idempotent.
@@ -136,7 +168,11 @@ pub(crate) fn render_rows(
                 cx.notify();
             });
             let context_click_handler =
-                cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    // MenuKeys captures Graph as its Escape return target.
+                    if let Some(root) = &this.root_focus {
+                        root.focus(window, cx);
+                    }
                     this.open_commit_menu(ix, event.position);
                     cx.stop_propagation();
                     cx.notify();
@@ -192,7 +228,7 @@ pub(crate) fn render_rows(
                 div().id(ix),
                 a11y_offset_size.0 + ix,
                 a11y_offset_size.1,
-                super::list_a11y::commit_label(row),
+                super::list_a11y::commit_label(row, now),
                 is_selected,
             )
             .relative()
@@ -215,7 +251,7 @@ pub(crate) fn render_rows(
             // zoom > 100% the selected row's graph lane drifted right, at
             // zoom < 100% it drifted left, off the unselected rows' lanes.
             .px_3()
-            .when(is_selected, |el| {
+            .when(selection > 0., |el| {
                 el.child(
                     div()
                         .absolute()
@@ -223,15 +259,27 @@ pub(crate) fn render_rows(
                         .top_0()
                         .bottom_0()
                         .w(px(2.))
-                        .bg(rgb(theme().color_branch)),
+                        .bg(rgb(if window_active {
+                            theme().ui_accent()
+                        } else {
+                            theme().text_muted
+                        }))
+                        .opacity(selection)
+                        .when(cfg!(feature = "gui-e2e"), |bar| {
+                            bar.child(super::e2e::measure_inside("graph-selection-bar"))
+                        }),
                 )
-                .child(anchor.probe())
+                .when(is_selected, |el| el.child(anchor.probe()))
             })
             .h(px(rh))
             .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
                 el.child(super::e2e::measure_inside("graph-commit-row"))
             })
-            .bg(rgb(row_bg))
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside(format!("graph-row-{ix}")))
+            })
+            .bg(row_bg)
+            .text_color(foreground)
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
             .when(is_dimmed, |el| el.opacity(0.32))
@@ -246,6 +294,7 @@ pub(crate) fn render_rows(
                 badge_col_w,
                 connector_color,
                 pill_lane,
+                is_selected,
                 &mut *cx,
             ))
             // ── Inner divider spacer (badge|graph handle width) ──
@@ -301,7 +350,12 @@ pub(crate) fn render_rows(
                                 .bottom(theme::scaled_px(3.))
                                 .rounded(theme::scaled_px(3.))
                                 .bg(band)
-                                .hover(|s| s.bg(band_hover)),
+                                .hover(|s| s.bg(band_hover))
+                                .when(cfg!(feature = "gui-e2e"), |el| {
+                                    el.child(super::e2e::measure_inside(format!(
+                                        "graph-lane-band-{ix}"
+                                    )))
+                                }),
                         )
                     })
                     // Clip to the column so nothing reaches the BRANCH/TAG or
@@ -312,7 +366,7 @@ pub(crate) fn render_rows(
                     // commit list keeps scrolling normally.
                     .on_scroll_wheel(cx.listener(
                         move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                            this.scroll_graph_by(&e.delta, cx);
+                            this.scroll_graph_by(&e.delta, graph_col_w, cx);
                         },
                     ))
                     .when(visible_lanes > 0, |el| {
@@ -425,22 +479,20 @@ pub(crate) fn render_rows(
                     }
                 })
             })
-            .child(
-                div()
-                    .flex_1()
-                    .text_color(rgb(theme().text_main))
-                    // Single line, no wrapping: long summaries ellipsize
-                    // (truncate = overflow_hidden + nowrap + ellipsis).
-                    .truncate()
-                    .child(row.summary.clone()),
-            )
+            .child(metadata::subject(row, ix, subject_min, foreground))
             // Issue #337: AI-agent provenance badge (nothing when the
             // commit is unclassifiable — prefer no badge to a false one).
             .when_some(row.provenance.as_ref(), |el, prov| {
                 el.child(badges::render_provenance_badge(prov, ix))
             })
-            .child(metadata::author(row, ix))
-            .child(metadata::age(row, ix))
+            .child(metadata::author(row, ix, secondary_foreground))
+            .child(metadata::age(row, ix, now, muted_foreground))
+            // Row-wide help preserves complete subjects; child ref/author
+            // tooltips retain priority.
+            .hover_tooltip_builder(("graph-row-hover-help", ix), {
+                let subject = row.summary.clone();
+                move |window, cx| metadata::subject_tooltip(subject.clone(), window, cx)
+            })
         })
         .collect()
 }
@@ -467,8 +519,11 @@ pub(crate) fn render_load_more_row(
                 .justify_center()
                 .cursor_pointer()
                 .text_xs()
-                .text_color(rgb(theme().color_branch))
-                .hover(|s| s.bg(rgb(theme().selected)))
+                .text_color(rgb(theme().accent_text_on(theme().bg_base)))
+                .hover(|s| {
+                    s.bg(rgb(theme().selected))
+                        .text_color(rgb(theme().accent_text_on(theme().selected)))
+                })
                 .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
                     this.load_more_commits(cx);
                 }))
@@ -483,15 +538,14 @@ pub(crate) fn render_load_more_row(
 // Note: render_loading_placeholder lives in render_body.rs (its only caller;
 // moved there under the ADR-0165 change to keep this file under 800 LOC).
 
-/// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item count
-/// 0 — the caller syncs it to the real row count via `render_diff_list`'s
-/// count check, see its doc comment for the lifecycle). Shared by the three
-/// owners (`MainDiffPane.scroll`, `FileHistoryState.diff_scroll`,
-/// `EditorWorkspaceView.diff_scroll`) so the overdraw tuning lives in one
-/// place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
+/// Construct an owner-retained diff list (item count 0 — the caller syncs
+/// source/layout identity and count in `render_diff_list`).
+/// Each embedding retains its own geometry and invalidation memo, so no
+/// measurements or scroll positions cross owner boundaries. The overdraw tuning
+/// lives in one place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
 /// line-oriented variable-height list).
-pub(crate) fn new_diff_list_state() -> gpui::ListState {
-    gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.))
+pub(crate) fn new_diff_list_state() -> VariableListState {
+    VariableListState::new(0, px(1000.))
 }
 
 /// ADR-0117 / T-DIFF-WRAP-001: the diff "list body" (header line + virtualized
@@ -503,21 +557,14 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// `cx` here — this runs during render (the rendering entity is already
 /// borrowed → panic).
 ///
-/// T-DIFF-WRAP-001: renders via `gpui::list` (variable row height) instead of
-/// `uniform_list` so a soft-wrapped diff line grows its row instead of being
-/// clipped to a fixed row height (user report). `scroll_handle` is a
-/// `gpui::ListState` — construct one per owner via [`new_diff_list_state`].
+/// Renders through Kagi's variable-height list so a soft-wrapped diff line
+/// grows its row instead of being clipped to a fixed row height.
+/// Construct one retained `VariableListState` per owner via [`new_diff_list_state`].
 ///
-/// ListState lifecycle: the item count is synced here, once per render, by
-/// comparing `scroll_handle.item_count()` against `row_count` and calling
-/// `.reset(row_count)` on mismatch. This is centralized instead of resetting
-/// at every `MainDiffView`-assignment call site (there are ~10 across
-/// `diff_view.rs` / `file_history_render.rs` / `editor_workspace.rs`) because
-/// every one of them calls `cx.notify()`, so the next render through here sees
-/// the new count. `reset` also drops the scroll offset back to the top, which
-/// only fires on an actual count change — matching (and slightly improving)
-/// the pre-existing behaviour, where the scroll position was never explicitly
-/// reset on file switch either.
+/// Source/layout changes invalidate measurements, including a different
+/// same-sized source. Highlight-only changes preserve the height-source identity.
+/// Offscreen heights are estimates; visible wrapped rows and expansions replace
+/// them with their actual sizes. Unchanged renders do not rebuild the height tree.
 ///
 /// #495: every embedding's highlight is requested here, off the UI thread,
 /// once per (rows, theme) — see `diff_view::highlight`.
@@ -527,8 +574,10 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost>(
     view: MainDiffView,
     mut header: DiffHeader,
-    scroll_handle: gpui::ListState,
+    scroll_handle: VariableListState,
+    list_layout: &kagi_ui_core::diff_list::DiffListLayout,
     hunk: Option<super::diff_view::hunk_action::HunkAction>,
+    owner: super::diff_selection::SelectionOwner,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     super::diff_view::highlight::ensure_highlight(&view, cx);
@@ -536,9 +585,14 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     // reuses both pairing and move detection across frames and embeddings.
     let split = super::theme::diff_split();
     let projection = split.then(|| super::diff_split::split_projection(&view.rows));
-    // R1: selection-surface semantics stay title+count based, independently of
-    // the derived-layout cache's immutable row identity.
-    let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
+    let sel_key = super::diff_selection::SelectionKey::new(
+        owner,
+        list_layout.selection_owner(),
+        view.height_source,
+    );
+    super::diff_selection::sync(sel_key);
+    // Focus belongs to the retained list, not its replaceable content.
+    let focus_key = list_layout.selection_owner().token();
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
     let layout = overlay
@@ -555,9 +609,13 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             .map(|projection| projection.rows.len())
             .unwrap_or_else(|| view.rows.len()),
     };
-    if scroll_handle.item_count() != row_count {
-        scroll_handle.reset(row_count);
-    }
+    list_layout.sync(
+        &scroll_handle,
+        view.height_source,
+        split,
+        overlay.is_some(),
+        row_count,
+    );
     let title = view.title.clone();
     let stats = view.stats.clone();
     let images = view.images.clone();
@@ -566,45 +624,6 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     let rows_for_list = rows.clone();
 
     let header = header.render(title, stats, cx);
-
-    // W-IMG: one labelled image column ("Before"/"After"); either side of the
-    // pair may be missing for added/deleted files.
-    let image_col = |label: &'static str, img: std::sync::Arc<gpui::Image>| {
-        // The column stretches to the panel height and the image fills what the
-        // label leaves, contained. `max_h_full` on the img had no definite
-        // height to resolve against, so a portrait image overflowed and the
-        // centred panel clipped its top and bottom (user report). The img is
-        // absolutely placed: percent sizes on in-flow children of a
-        // flex_basis(0) column can resolve to 0 (#362).
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .self_stretch()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(label)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .self_stretch()
-                    .child(
-                        gpui::img(gpui::ImageSource::Image(img))
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    ),
-            )
-    };
 
     div()
         .flex_1()
@@ -625,28 +644,14 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         .child(header)
         // ── Diff body: full remaining space ──────────────────────────────
         .child(if let Some(pair) = images {
-            // W-IMG: binary image file — render before/after panels instead of
-            // the (empty) text-diff list.
-            div()
-                .id("main-diff-image-panel")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_hidden()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap_4()
-                .p_4()
-                .children(pair.old.map(|img| image_col("Before", img)))
-                .children(pair.new.map(|img| image_col("After", img)))
-                .into_any_element()
+            diff_state::image_panel(pair)
         } else {
-            // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
-            // gpui-component 0.5.1 implements `ScrollbarHandle` directly for
-            // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
-            // needed, unlike `UniformListScrollHandle`'s wrapper elsewhere.
+            // The owned geometry handle implements the public ScrollbarHandle
+            // contract used by the same scrollbar as the other list panes.
             let scrollbar_handle = scroll_handle.clone();
+            let selection_scroll = scroll_handle.clone();
+            let selection_projection = projection.clone();
+            let selection_items = items.clone();
             // User report: diff text rendered in the UI font (the root div's
             // `UI_FONT`), which is proportional — wrong for code, and it also
             // broke the `format!("{:5}", n)` line-number gutters, which only
@@ -664,6 +669,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             // gpui-component's `mono_font_family` — i.e. `MONO_FONT`. Matching
             // the neighbour matters more than the Nerd Font preference here.
             div()
+                .id(("diff-selection-body", focus_key))
                 .flex_1()
                 .min_h(px(0.))
                 .flex()
@@ -672,13 +678,13 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 .child(with_vertical_scrollbar(
                     "main-diff-list-scroll",
                     &scrollbar_handle,
-                    gpui::list(scroll_handle, move |ix, _window, cx| {
+                    variable_list(scroll_handle, move |ix, window, cx| {
                         let base = match (&items, &overlay, &layout) {
                             (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
                                 Some(row_overlay::Item::Row(b)) => *b,
                                 Some(row_overlay::Item::Expansion(b)) => {
                                     let rows = row_overlay::expansion_rows(layout, *b, overlay);
-                                    return overlay.expansion(&rows, cx);
+                                    return overlay.expansion(&rows, window, cx);
                                 }
                                 None => return div().into_any_element(),
                             },
@@ -719,6 +725,29 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     .min_h(px(0.)),
                     true,
                 ))
+                .map(|element| super::diff_selection::keyboard::Pane {
+                    element,
+                    key: sel_key,
+                    focus_key,
+                    rows,
+                    scroll: selection_scroll,
+                    projection: selection_projection.clone(),
+                    items: selection_items.clone(),
+                    item_index: move |row| {
+                        let base = selection_projection
+                            .as_ref()
+                            .and_then(|p| super::diff_split::split_index_of(&p.rows, row))
+                            .unwrap_or(row);
+                        selection_items
+                            .as_ref()
+                            .and_then(|items| {
+                                items
+                                    .iter()
+                                    .position(|item| *item == row_overlay::Item::Row(base))
+                            })
+                            .unwrap_or(base)
+                    },
+                })
                 .into_any_element()
         })
 }
@@ -758,11 +787,8 @@ fn split_gutters(
 /// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
 /// honours the macOS "show scroll bars" setting).
 ///
-/// T-DIFF-WRAP-001: generic over `H: ScrollbarHandle` (not just
-/// `UniformListScrollHandle`) so the same wrapper serves the diff panes'
-/// `gpui::ListState`-backed `list()` — gpui-component 0.5.1 implements
-/// `ScrollbarHandle` for both `UniformListScrollHandle` and `ListState`
-/// (`src/scroll/scrollbar.rs`), so no local newtype was needed.
+/// Generic over the public `ScrollbarHandle` contract so native lists and
+/// Kagi-owned variable-height diff lists use the same scrollbar chrome.
 pub(crate) fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
     id: &'static str,
     handle: &H,
@@ -781,4 +807,32 @@ pub(crate) fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle
         container = container.child(Scrollbar::vertical(handle));
     }
     container
+}
+
+/// macOS policy used by the PR table: auto-hide overlays content; persistent
+/// bars have a dedicated lane, including the kit's Hover system mapping.
+pub(crate) fn with_system_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
+    id: &'static str,
+    handle: &H,
+    content: impl IntoElement,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
+    let persistent = gpui_component::Theme::global(cx).scrollbar_show
+        != gpui_component::scroll::ScrollbarShow::Scrolling;
+    div()
+        .id(id)
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.))
+        .min_w(px(0.))
+        .when(persistent, |area| area.pr(px(16.)))
+        .when(cfg!(feature = "gui-e2e"), |area| {
+            area.child(super::e2e::measure_inside(id))
+        })
+        .child(content)
+        .child(Scrollbar::vertical(handle).id(id).when(persistent, |bar| {
+            bar.scrollbar_show(gpui_component::scroll::ScrollbarShow::Always)
+        }))
 }

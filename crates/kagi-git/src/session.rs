@@ -52,6 +52,14 @@ impl RepoSession {
         &self.backend
     }
 
+    /// Inject owner trust without requiring privileged fixture ownership changes.
+    #[doc(hidden)]
+    pub fn set_trust_for_test(&mut self, trust: crate::trust::RepoTrust) {
+        Rc::get_mut(&mut self.backend)
+            .expect("test trust must be set before cloning the session")
+            .set_trust_for_test(trust);
+    }
+
     /// Submit a mutating operation to the worker thread (ADR-0073). Returns a
     /// receiver for the `OperationOutcome`. The caller typically awaits this
     /// inside a `cx.background_spawn` task.

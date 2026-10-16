@@ -20,9 +20,10 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
-use kagi_domain::plan_note::{PlanNote, PushNote};
+use kagi_domain::plan_note::{CommonNote, PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// The input-confirm cards share form density, but keep their own plan and
 /// confirmation handlers. A field error is one line here; the full reason
@@ -34,7 +35,14 @@ pub(crate) fn render_input_modal_field(
 ) -> gpui::Div {
     input_modal_field(
         label,
-        state.map(|s| Input::new(s).into_any_element()),
+        state.map(|s| {
+            super::e2e::measure_control(
+                "input-modal-field",
+                Input::new(s)
+                    .context_menu(kagi_ui_core::input::context_menu(s, false))
+                    .aria_label(label),
+            )
+        }),
         reason,
     )
 }
@@ -72,7 +80,9 @@ pub(crate) fn render_input_modal_path_field(
                     .min_w_0()
                     .child(crate::ui::e2e::measure_control(
                         format!("{button_id}-input"),
-                        Input::new(state),
+                        Input::new(state)
+                            .context_menu(kagi_ui_core::input::context_menu(state, false))
+                            .aria_label(label),
                     )),
             )
             .into_any_element()
@@ -107,11 +117,10 @@ fn input_modal_field(
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .truncate()
-                .tooltip({
-                    let reason = reason.clone();
-                    move |window, cx| Tooltip::new(reason.clone()).build(window, cx)
-                })
-                .child(reason),
+                .child(reason.clone())
+                .hover_tooltip_builder((label, 0usize), move |window, cx| {
+                    Tooltip::new(reason.clone()).build(window, cx)
+                }),
         )),
         None => field,
     }
@@ -139,11 +148,10 @@ pub(crate) fn render_input_modal_heading(
                     .text_color(rgb(current_theme().text_sub))
                     .truncate()
                     .aria_label(target.clone())
-                    .tooltip({
-                        let target = target.clone();
-                        move |window, cx| Tooltip::new(target.clone()).build(window, cx)
-                    })
-                    .child(target),
+                    .child(target.clone())
+                    .hover_tooltip_builder("input-modal-target-help", move |window, cx| {
+                        Tooltip::new(target.clone()).build(window, cx)
+                    }),
             )
         }
         None => heading,
@@ -151,6 +159,12 @@ pub(crate) fn render_input_modal_heading(
 }
 
 // Existing input-plan renderer contract shared by Rename and Set Upstream.
+/// Field presentation is distinct from backend rename validation.
+pub(crate) enum InputPlanValidation {
+    Unchanged,
+    Rename(BranchRenameValidation),
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_input_plan_modal(
     short_title: &'static str,
@@ -159,19 +173,20 @@ pub(crate) fn render_input_plan_modal(
     label: &'static str,
     input_state: Option<Entity<InputState>>,
     plan: Option<std::sync::Arc<OperationPlan>>,
-    validation: Option<BranchRenameValidation>,
+    validation: Option<InputPlanValidation>,
     error: Option<SharedString>,
     confirm_label: &'static str,
     accent: PlanCardAccent,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
+    focus: Option<&FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let field_reason = match validation.as_ref() {
-        Some(BranchRenameValidation::Invalid(reason)) => Some(SharedString::from(
-            crate::ui::i18n::branch_name_error(reason),
-        )),
+        Some(InputPlanValidation::Rename(BranchRenameValidation::Invalid(reason))) => Some(
+            SharedString::from(crate::ui::i18n::branch_name_error(reason)),
+        ),
         _ => plan.as_ref().and_then(|p| {
             p.blockers
                 .iter()
@@ -181,7 +196,9 @@ pub(crate) fn render_input_plan_modal(
     };
     let has_blockers =
         field_reason.is_some() || plan.as_ref().is_none_or(|p| !p.blockers.is_empty());
-    let disabled_reason = if has_blockers {
+    let disabled_reason = if matches!(validation, Some(InputPlanValidation::Unchanged)) {
+        Some(Msg::InputRenameEnterNewName.t().into())
+    } else if has_blockers {
         error.clone().or_else(|| field_reason.clone()).or_else(|| {
             plan.as_ref()
                 .and_then(|p| p.blockers.first())
@@ -200,11 +217,12 @@ pub(crate) fn render_input_plan_modal(
     if chips[0].is_none() {
         chips[0] = Some(std::borrow::Cow::Borrowed(heading_target));
     }
+    let title = SharedString::from(title);
     let card = modal_card(MODAL_W_MD).child(
         render_plan_heading(heading_title, chips, (icon, color), None)
             .id("input-plan-heading")
             .role(Role::Heading)
-            .aria_label(SharedString::from(title)),
+            .aria_label(title.clone()),
     );
     let mut body = modal_scroll_body().child(render_input_modal_field(
         label,
@@ -240,6 +258,16 @@ pub(crate) fn render_input_plan_modal(
             for blocker in &plan.blockers {
                 // The upstream format blocker is already the field's error.
                 if matches!(blocker, PlanNote::Push(PushNote::UpstreamFormatInvalid)) {
+                    continue;
+                }
+                // Rename validation already explains this exact cause at the field.
+                if matches!(
+                    (validation.as_ref(), blocker),
+                    (
+                        Some(InputPlanValidation::Rename(BranchRenameValidation::Invalid(reason))),
+                        PlanNote::Common(CommonNote::BranchNameErrorKeyed(plan_reason))
+                    ) if reason == plan_reason
+                ) {
                     continue;
                 }
                 displayed = true;
@@ -286,11 +314,7 @@ pub(crate) fn render_input_plan_modal(
         );
     }
 
-    let buttons = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let buttons = super::button_style::modal_button_row()
         .child(modal_button(
             "branch-input-cancel",
             Msg::PlanCancel.t(),
@@ -309,7 +333,16 @@ pub(crate) fn render_input_plan_modal(
         )));
     let card = card.child(body).child(div().flex_shrink_0().child(buttons));
 
-    modal_overlay(card).into_any_element()
+    modal_overlay(super::modal_renderers::input_dialog_frame(
+        "branch-input-card",
+        title.as_ref(),
+        (!has_blockers).then_some(confirm_label),
+        card,
+        focus,
+        |frame| frame,
+        cx,
+    ))
+    .into_any_element()
 }
 
 /// Input-only lock step; the existing plan card owns the final confirmation.
@@ -338,12 +371,14 @@ pub(crate) fn render_worktree_lock_reason_modal(
     let mut body = modal_scroll_body()
         .child(div().flex_shrink_0().child(SharedString::from(modal.name)))
         .child(div().flex_shrink_0().child(Msg::WorktreeLockReason.t()))
-        .children(
-            modal
-                .input_state
-                .as_ref()
-                .map(|input| measure_control("worktree-lock-reason-input", Input::new(input))),
-        );
+        .children(modal.input_state.as_ref().map(|input| {
+            measure_control(
+                "worktree-lock-reason-input",
+                Input::new(input)
+                    .context_menu(kagi_ui_core::input::context_menu(input, false))
+                    .aria_label(Msg::WorktreeLockReason.t()),
+            )
+        }));
     if let Some(error) = modal.error {
         body = body.child(
             div()
@@ -352,11 +387,8 @@ pub(crate) fn render_worktree_lock_reason_modal(
                 .child(error),
         );
     }
-    let buttons = div()
+    let buttons = super::button_style::modal_button_row()
         .flex_shrink_0()
-        .flex()
-        .gap_2()
-        .justify_end()
         .child(measure_control(
             "worktree-lock-reason-cancel",
             modal_button(
@@ -413,10 +445,14 @@ pub(crate) fn render_worktree_lock_reason_modal(
         cx.stop_propagation();
         cx.notify();
     });
-    let wrapper = div().on_key_down(keys);
-    let wrapper = match focus_handle {
-        Some(focus) => wrapper.track_focus(&focus),
-        None => wrapper,
-    };
-    modal_overlay(wrapper.child(card)).into_any_element()
+    modal_overlay(super::modal_renderers::input_dialog_frame(
+        "worktree-lock-reason-card",
+        Msg::MenuLockWorktree.t(),
+        Some(Msg::WorktreeLockReview.t()),
+        div().on_key_down(keys).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    ))
+    .into_any_element()
 }

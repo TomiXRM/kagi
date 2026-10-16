@@ -306,3 +306,142 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - #953 記録外と記録済みの交錯: 実 reflog を有効にした tag と branch の両方で、対象の A→外部 B→記録済み C を作る。記録に残る B→C が実際に観測されたことを確かめ、それでも計画と preflight が RefChangedOutsideRecord で拒否し、ref が C に留まる。ref 名だけに戻す変異では両 fixture が落ちる。
   - kagi-git integration: absorb は作業 branch の移動を、merged branch の一括削除は削除(new = 無し)を `ref_moves` に記録する。
 - 変異確認: Solo の全行を使わない → 消える数 0、PR head を根にしない → 3、上限を外す → 箱が 957px、Copy all の clipboard を空にする → Tier A が落ちる。NotLoaded の見出しを `preview_heading(0)` に戻す・entry コピーから移動を外す → unit、absorb / 一括削除の記録を `None` にする → integration が落ちる。focus の変更は現状の入口では観測できないためテストなし(実ボタンのクリックで root が focus を得ることを確認した)。
+
+## Amendment (2026-10-12): entry-keyed keyboard disclosure (#1300)
+
+Operation Log keeps the variable-height list and the selectable-detail threshold.
+The existing `RowFocus` / `RowList` owner provides one roving summary Tab stop,
+arrow/Home/End movement and an inset focus-visible ring. Each summary is a named
+EN/JA Button with expanded state and absolute set position; Enter/Space uses the
+same single-entry expansion/reflog path as a click. The quiet Copy Button becomes
+a Tab stop on the expanded row and copies the entire original entry text.
+Disclosure and Copy callbacks resolve the rendered entry's identity (including
+repository/worktree), never a captured list index. A newly pushed receipt shifts
+the expanded identity and retained focus rather than displaying or copying its
+neighbour. Existing callers that deliberately collapse on a receipt still do so.
+Tier A records installed attributes and dispatches keys; native Tab/VoiceOver
+delivery remains a separate Tier B observation.
+
+Review: the constructor seeds `ListState` with its actual count; receipt insertion
+and retention trimming splice those measured items, preserving a scrolled reading
+anchor instead of resetting it when the count changes. At `{0, 0}`, insertion
+explicitly follows the newest receipt: prior wheel/keyboard navigation must not
+hide a failure receipt above the viewport when T-BP-004 auto-opens the panel.
+Away from that exact top, the entry anchor and summary/Copy focus remain stable.
+Native wheel-away/return-to-top and scrolled-tail legs cover both policies.
+Copy reuses the existing
+`keyboard_nav::focusable` quiet-copy pattern: transparent inset border at rest,
+fully opaque accent border/glyph on keyboard focus, and full glyph opacity on
+hover. The pinned kit Button's low-alpha outer ring and built-in hover style do
+not fit this dense quiet-copy contract. The list container uses `RowList::list`
+rather than duplicating its key context.
+
+
+## Amendment — 2026-10-13: keyboard inspection (#1382)
+
+The dense, read-only restore targets and AFTER graph use retained, stable-keyed
+RowFocus/RowList navigation with independent uniform-list scrolling (as amended
+by #1479-S5B below) and the existing system scrollbar. Each list has one Tab stop and a localized accessibility name;
+Up/Down, Home/End and PageUp/PageDown reveal the focused row. The card traverses
+Copy all, the named body region, refs, preview and footer in document order.
+Warnings/blockers render uncapped within that keyboard-scrollable body instead
+of owning inaccessible wheel-only scrollers. Ref/preview panes retain their
+independent caps; a change of focused row also reveals it in the body, after
+the inner list's layout has converged. Repainting the same focused row must not
+undo subsequent pointer-wheel or scrollbar movement of the body. This deliberate
+nested-scroll exception preserves the existing six-row preview while allowing
+unbounded safety prose to be inspected. A pane consumes wheel input only when
+it has overflow and can move in the requested direction at the event's start.
+An event that reaches its boundary still belongs to that pane; later outward
+events chain to the body. Fitting panes also pass wheel input to the body.
+This avoids both simultaneous outer drift and a wheel dead zone over short lists.
+The body owns a dedicated key context and six scroll actions, deeper than the
+app-wide navigation bindings; the row-list context wins inside either pane.
+Pointer inspection focuses the row without selecting or approving an operation.
+The shared keyboard-only ring identifies inspection; no pressed/selected
+operation state is added.
+Empty/unavailable previews keep their existing explanation rather than an empty
+Tab stop. The canonical refs, Copy all, two-stage approval, execution plan and
+backend write pipeline are unchanged.
+
+## Amendment — 2026-10-15: uniform inspection geometry (#1479-S5B)
+
+Restore refs and AFTER graph now use GPUI's public `uniform_list` and
+`UniformListScrollHandle`, not estimated `ListState` item heights. Their existing
+31px and graph-row heights remain zoom-scaled; only the visible range is built.
+The retained RowScroll adapter receives the actual drawn range, and `as_drawn`
+assigns the current frame's Tab stop. Keyboard parent reveal uses the live inner
+viewport, offset and measured content extent divided by row count, retaining
+GPUI's pixel-rounded row height rather than accumulating unrounded zoom tokens.
+It waits for inner reveal to converge and remains one-shot per newly focused
+entry so later pointer scrolling survives. Both lists and the body restrict
+wheel input to their vertical axis. A zero-size out-of-flow canvas registers a
+capture-phase observer for the actual wheel-start offset; Bubble decides pane
+ownership after the native list has scrolled. This avoids treating a deferred
+Home reveal's old render-time offset as the start of the next pointer event.
+Boundary chaining above remains unchanged; fitting panes chain immediately.
+The modal alert-focus backstop recognizes only the active restore card's retained
+inspection-row handles while their deferred reveal mounts the destination. The
+previous frame's dispatch-tree membership alone cannot authorize that move:
+Page Up from a later range would otherwise replace a valid first-row handle with
+the alert trap. Other cards, unrelated handles and departed restore owners retain
+the normal modal containment checks.
+
+Inspector uses the same public uniform-list pattern, with equal-height file,
+directory, generated-fold, More and unavailable slots. Stable file-path focus
+survives generated expansion/collapse. Its final focusable entry reveals the
+trailing More slot without creating a focus stop for that note. This is geometry
+migration only: no user-facing strings, Copy payload, approval or Git behavior changes.
+
+
+## Amendment — 2026-10-14: dense summary typography (#1498)
+
+Operation Log summary time, operation and outcome use the existing
+`FILE_TREE_FONT_PX` 13px identity role, preserving the 22px summary floor,
+RowFocus space, variable-height expanded details and full-entry copy.
+Long operation names truncate inside their fixed column rather than wrapping
+past the summary mask. No global text helper or density setting changes.
+
+
+## Amendment — 2026-10-15: summary priorities and Revert availability (#1562/#1565)
+
+The dense Operation Log list follows macOS Console's severity-first hierarchy
+and HIG Lists and Tables / Buttons guidance: status and Copy are essential;
+actor, worktree and full outcome detail are supplementary. Reuse the existing
+disclosure, focus owner, quiet Copy control, variable-height list and pinned
+recovery Buttons rather than add an interaction convention.
+
+Collapsed summaries use two scaled lines. The first reserves a non-truncated
+localized outcome name and Copy, with the operation name taking the remaining
+width. The second fits time, actor/worktree badges and truncated outcome detail.
+Full detail and exact Copy text remain available. Rest/hover/pressed/focus,
+selection, list scroll anchoring and empty states retain existing owners; the
+status is informational, not another action or Tab stop.
+
+Revert eligibility requires a persisted nonempty ref-move record. A known empty
+record has a disabled Revert with an EN/JA visible and accessibility reason;
+an absent record retains the existing unavailable reason. Restore to point
+continues to require a record, including an empty one, because its meaning is
+the cumulative history after that point rather than this operation's inverse.
+These are UI availability checks only: backend plan, replan, confirmation,
+preflight and execution checks remain mandatory. No receipt, klog or exact
+clipboard serialization change is part of this amendment.
+
+Native regression coverage: `oplog_row_167_result_visible` checks all five named
+outcomes and Copy containment with Inspector open at 1000×720 / 1400×900,
+100% / 167%, EN / JA and Apple Light / Dark, including long worktree names.
+`oplog_revert_eligibility` checks empty Fetch/lock records, visible/native AX
+reasons, inert Revert clicks, independent Restore planning and nonempty Revert.
+The neighboring `oplog_` filter passes all 25 scenarios. Existing geometry
+oracles intentionally follow the new two-line height, reveal older actor rows,
+and start detail selection below the actual summary bounds.
+
+Tier B uses a copied stress repository and explicit five-outcome visual fixture
+receipts in an isolated default-build app. At 167%, EN/JA × Light/Dark × both
+viewports retain every named status and Copy beside an open Inspector; expanded
+empty records visibly disable Revert and retain Restore with localized reason.
+Evidence lives outside Git under
+`/tmp/kagi-hig-audit-20261008/oplog-167-layout-tierb/`. The supplied round-16
+baseline captures show the former field-priority failure; their receipt data is
+not the same five-outcome fixture. Hidden native AX assertions and screenshots
+are not VoiceOver, IME or Full Keyboard Access evidence.

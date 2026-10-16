@@ -1,8 +1,8 @@
 //! Unstaged file-row context menu overlay, split out of `render_helpers.rs`
 //! (T-SPLIT-HELPERS-001 / ADR-0116 Wave 3).
-//! Behaviour-preserving move — no DOM/style/handler/[kagi]/i18n change.
 
 use super::*;
+const FILE_MENU_ROW_H: f32 = 22.0;
 /// File-row intent frozen at the row event source. `path` is a repository-
 /// relative file key, not repository identity; `owner` prevents the intent
 /// from being re-routed through a different active tab.
@@ -19,6 +19,24 @@ pub(crate) enum FileMenuAction {
     ShowHistory,
     Discard,
 }
+
+const FILE_MENU_ACTIONS: [(&str, Msg, FileMenuAction); 3] = [
+    (
+        "file-menu-ext",
+        Msg::OpenInExternalEditor,
+        FileMenuAction::OpenExternal,
+    ),
+    (
+        "file-menu-history",
+        Msg::MenuShowFileHistory,
+        FileMenuAction::ShowHistory,
+    ),
+    (
+        "file-menu-discard",
+        Msg::EditorTreeDiscard,
+        FileMenuAction::Discard,
+    ),
+];
 
 impl KagiApp {
     /// Gate every retained menu callback against the exact intent and its
@@ -78,102 +96,147 @@ impl KagiApp {
     }
 }
 
-/// Unscaled per-row height of these compact menus (px_3 / py 3 / text_sm).
-const FILE_MENU_ROW_H: f32 = 22.0;
+impl KagiApp {
+    pub(crate) fn sync_file_menu_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let visible = self.file_menu_visible(cx);
+        let covered =
+            self.has_modal_or_visible_plan(cx) || self.visible_platform_menu_section().is_some();
+        if covered {
+            self.file_menu = None;
+        }
+        self.file_menu_keys.sync(
+            visible && !covered,
+            covered,
+            self.root_focus.as_ref(),
+            window,
+            cx,
+        );
+    }
 
+    pub(crate) fn sync_pr_menu_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let covered =
+            self.has_modal_or_visible_plan(cx) || self.visible_platform_menu_section().is_some();
+        if covered {
+            self.with_ui(|ui| ui.pr_menu = None);
+        }
+        self.ui().pr_menu_keys.sync(
+            self.pr_menu_visible() && !covered,
+            covered,
+            self.root_focus.as_ref(),
+            window,
+            cx,
+        );
+    }
+}
+
+/// Compact file actions share menu keyboard behavior while preserving their
+/// frozen owner/path dispatcher. Placement uses the actual laid-out card,
+/// including all three rows, scaled padding and fixed borders.
 pub(crate) fn render_file_menu_overlay(
     menu: FileMenu,
-    viewport: gpui::Size<gpui::Pixels>,
+    keys: super::menu_keys::MenuKeys,
+    window_active: bool,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let pos = kagi_ui_core::theme::clamp_menu_pos(
-        menu.anchor,
-        190.0,
-        4.0 + 2.0 * FILE_MENU_ROW_H,
-        viewport,
-    );
-    let dismiss_menu = menu.clone();
-    let dismiss = cx.listener(move |this, _e: &gpui::MouseDownEvent, _window, cx| {
-        if this.file_menu.as_ref() == Some(&dismiss_menu) {
+    let opened = keys.drawn(0..FILE_MENU_ACTIONS.len());
+    let expected = menu.clone();
+    let dismiss = move |this: &mut KagiApp, _window: &mut Window, cx: &mut Context<KagiApp>| {
+        if this.file_menu.as_ref() == Some(&expected) {
             this.file_menu = None;
             cx.notify();
         }
-    });
-    // Issue #286: the menu is keyed by path, so every action targets that exact
-    // path regardless of any renumber that happened while it was open.
-    let discard_menu = menu.clone();
-    let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_file_menu_action(&discard_menu, FileMenuAction::Discard, cx);
-    });
-    // ADR-0089: open File History for this unstaged file.
-    let history_menu = menu.clone();
-    let history_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_file_menu_action(&history_menu, FileMenuAction::ShowHistory, cx);
-    });
-    let external_menu = menu;
-    let wip_ext_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_file_menu_action(&external_menu, FileMenuAction::OpenExternal, cx);
-    });
+    };
+    let dismiss_click = dismiss.clone();
+    let mut card = div()
+        .id("changes-file-menu")
+        .role(gpui::Role::Menu)
+        .aria_label(Msg::CommitPanelTitle.t())
+        .key_context(super::menu_keys::MENU_CONTEXT)
+        .w(theme::scaled_px(190.))
+        .occlude()
+        .bg(rgb(theme().elevated_surface(theme().panel)))
+        .border_1()
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .rounded_md()
+        .shadow_lg()
+        .py(theme::scaled_px(2.))
+        .relative()
+        .child(super::e2e::measure_inside("changes-file-menu"));
+    for (slot, entry) in FILE_MENU_ACTIONS.into_iter().enumerate() {
+        card = card.child(file_menu_item(&menu, &keys, slot, entry, window_active, cx));
+    }
+    let card = super::menu_overlay::with_menu_keys(card, &keys, None, dismiss, opened, window, cx);
+    let pos = kagi_ui_core::theme::clamp_menu_pos(
+        menu.anchor,
+        190.,
+        4. + FILE_MENU_ACTIONS.len() as f32 * 26.,
+        window.viewport_size(),
+    );
     div()
         .absolute()
         .top_0()
         .left_0()
         .size_full()
         .occlude()
-        .on_mouse_down(MouseButton::Left, dismiss)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+                dismiss_click(this, window, cx);
+            }),
+        )
         .child(
-            div()
-                .absolute()
-                .left(pos.x)
-                .top(pos.y)
-                .w(theme::scaled_px(190.))
-                .occlude()
-                .bg(rgb(theme().panel))
-                .border_1()
-                .border_color(rgb(theme().surface))
-                .rounded_md()
-                .shadow_lg()
-                // W27-UIPOLISH: compact (Zed-style) density — tighter vertical
-                // padding to match the commit/branch context menus.
-                .py(theme::scaled_px(2.))
-                .child(crate::ui::e2e::measure_control(
-                    "file-menu-ext",
-                    div()
-                        .id("file-menu-ext")
-                        .px_3()
-                        .py(theme::scaled_px(3.))
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                        .on_click(wip_ext_click)
-                        .child(SharedString::from(Msg::OpenInExternalEditor.t())),
-                ))
-                .child(crate::ui::e2e::measure_control(
-                    "file-menu-history",
-                    div()
-                        .id("file-menu-history")
-                        .px_3()
-                        .py(theme::scaled_px(3.))
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                        .on_click(history_click)
-                        .child(SharedString::from("Show File History")),
-                ))
-                .child(crate::ui::e2e::measure_control(
-                    "file-menu-discard",
-                    div()
-                        .id("file-menu-discard")
-                        .px_3()
-                        .py(theme::scaled_px(3.))
-                        .text_sm()
-                        .text_color(rgb(theme().color_blocker))
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
-                        .on_click(discard_click)
-                        .child(SharedString::from("Discard changes…")),
-                )),
+            gpui::anchored()
+                .position(pos)
+                .snap_to_window_with_margin(px(8.))
+                .child(card),
         )
         .into_any_element()
+}
+
+fn file_menu_item(
+    menu: &FileMenu,
+    keys: &super::menu_keys::MenuKeys,
+    slot: usize,
+    (id, label, action): (&'static str, Msg, FileMenuAction),
+    window_active: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    keys.place(slot, slot);
+    let expected = menu.clone();
+    super::e2e::commit_panel_labels::focus(id, &keys.item(slot, cx));
+    let primary = SharedString::from(label.t());
+    #[cfg(feature = "gui-e2e")]
+    let primary = div()
+        .child(primary)
+        .relative()
+        .child(super::e2e::measure_inside(format!("{id}-primary")));
+    let row = div()
+        .id(id)
+        .role(super::e2e::commit_panel_labels::role(
+            id,
+            gpui::Role::MenuItem,
+        ))
+        .aria_label(super::e2e::commit_panel_labels::name(id, label.t()))
+        .relative()
+        .min_h(px(20.))
+        .px_3()
+        .py(theme::scaled_px(3.))
+        .text_sm()
+        .text_color(rgb(if matches!(action, FileMenuAction::Discard) {
+            theme().color_blocker
+        } else {
+            theme().text_main
+        }))
+        .hover(move |s| super::menu_overlay::highlight_style(s, window_active).cursor_default())
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            this.dispatch_file_menu_action(&expected, action, cx);
+        }))
+        .child(primary);
+    super::e2e::measure_control(
+        id,
+        super::menu_overlay::focus_row(row, keys, slot, true, window_active, cx),
+    )
 }
 
 /// Inspector / Compare changed-file row context menu: History / Open in
@@ -183,6 +246,7 @@ pub(crate) fn render_inspector_file_menu_overlay(
     fi: usize,
     pos: gpui::Point<gpui::Pixels>,
     viewport: gpui::Size<gpui::Pixels>,
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let pos =
@@ -246,25 +310,28 @@ pub(crate) fn render_inspector_file_menu_overlay(
                 .top(pos.y)
                 .w(theme::scaled_px(190.))
                 .occlude()
-                .bg(rgb(theme().panel))
+                .bg(rgb(theme().elevated_surface(theme().panel)))
                 .border_1()
-                .border_color(rgb(theme().surface))
+                .border_color(rgb(theme().elevated_border(theme().surface)))
                 .rounded_md()
                 .shadow_lg()
                 .py(theme::scaled_px(2.))
                 .child(item(
                     ("insp-menu-history", fi),
                     SharedString::from(Msg::MenuShowFileHistory.t()),
+                    window_active,
                     history_click,
                 ))
                 .child(item(
                     ("insp-menu-edit", fi),
                     SharedString::from(Msg::MenuOpenInEditor.t()),
+                    window_active,
                     edit_click,
                 ))
                 .child(item(
                     ("insp-menu-ext", fi),
                     SharedString::from(Msg::OpenInExternalEditor.t()),
+                    window_active,
                     ext_click,
                 ))
                 .child(super::e2e::measure_control(
@@ -272,6 +339,7 @@ pub(crate) fn render_inspector_file_menu_overlay(
                     item(
                         ("insp-menu-copy", fi),
                         SharedString::from(Msg::EditorTreeCopyPath.t()),
+                        window_active,
                         copy_click,
                     ),
                 )),
@@ -280,99 +348,128 @@ pub(crate) fn render_inspector_file_menu_overlay(
 }
 
 /// Compact menu row shared by the hand-rolled overlays here.
-fn item<H>(id: (&'static str, usize), label: SharedString, handler: H) -> gpui::Stateful<gpui::Div>
+fn item<H>(
+    id: (&'static str, usize),
+    label: SharedString,
+    window_active: bool,
+    handler: H,
+) -> gpui::Stateful<gpui::Div>
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
+    let primary = label;
+    #[cfg(feature = "gui-e2e")]
+    let primary = div()
+        .child(primary)
+        .relative()
+        .child(super::e2e::measure_inside(format!("{}-primary", id.0)));
     div()
         .id(id)
         .px_3()
         .py(theme::scaled_px(3.))
         .text_sm()
         .text_color(rgb(theme().text_main))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+        .hover(move |s| super::menu_overlay::highlight_style(s, window_active).cursor_default())
         .on_click(handler)
-        .child(label)
+        .child(primary)
 }
 
-/// PRs tab context menu — Open on GitHub / Copy URL / Jump to branch.
+#[derive(Clone, Copy)]
+enum PrMenuAction {
+    Peek,
+    Jump,
+    Open,
+    Copy,
+}
+
+/// PR context menu — Peek / Jump to branch / Open on GitHub / Copy URL.
 pub(crate) fn render_pr_menu_overlay(
     pr: kagi_domain::github::PullRequest,
     pos: gpui::Point<gpui::Pixels>,
-    viewport: gpui::Size<gpui::Pixels>,
+    keys: super::menu_keys::MenuKeys,
+    owner: Option<crate::app::SessionId>,
+    window_active: bool,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let pos =
-        kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 2.0 * FILE_MENU_ROW_H, viewport);
-    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        cx.notify();
-    });
-    let pr_open = pr.clone();
-    let open_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.open_pr_in_browser(&pr_open);
-        cx.notify();
-    });
-    let pr_copy = pr.clone();
-    let copy_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.copy_pr_url(&pr_copy, cx);
-        cx.notify();
-    });
-    let pr_peek = pr.clone();
-    let peek_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.open_pr_peek(&pr_peek, cx);
-        cx.notify();
-    });
-    let pr_jump = pr.clone();
-    let jump_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.jump_to_pr_head(&pr_jump, cx);
-        cx.notify();
-    });
-    let n = pr.number as usize;
+    let opened = keys.drawn(0..4);
+    let dismiss = move |this: &mut KagiApp, _: &mut Window, cx: &mut Context<KagiApp>| {
+        if this.active_session() == owner {
+            this.with_ui(|ui| ui.pr_menu = None);
+            cx.notify();
+        }
+    };
+    let mut card = div()
+        .id("pr-context-menu")
+        .role(gpui::Role::Menu)
+        .aria_label(Msg::WorkspacePrs.t())
+        .key_context(super::menu_keys::MENU_CONTEXT)
+        .w(theme::scaled_px(190.))
+        .occlude()
+        .bg(rgb(theme().elevated_surface(theme().panel)))
+        .border_1()
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .rounded_md()
+        .shadow_lg()
+        .py(theme::scaled_px(2.));
+    for (slot, (id, label, action)) in [
+        ("pr-menu-peek", Msg::PrPeek, PrMenuAction::Peek),
+        ("pr-menu-jump", Msg::PrJumpToBranch, PrMenuAction::Jump),
+        ("pr-menu-open", Msg::PrOpenOnGitHub, PrMenuAction::Open),
+        ("pr-menu-copy", Msg::PrCopyUrl, PrMenuAction::Copy),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        keys.place(slot, slot);
+        let pr = pr.clone();
+        let row = item(
+            (id, pr.number as usize),
+            SharedString::from(label.t()),
+            window_active,
+            cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                if this.active_session() != owner {
+                    return;
+                }
+                this.with_ui(|ui| ui.pr_menu = None);
+                match action {
+                    PrMenuAction::Peek => this.open_pr_peek(&pr, cx),
+                    PrMenuAction::Jump => this.jump_to_pr_head(&pr, cx),
+                    PrMenuAction::Open => this.open_pr_in_browser(&pr),
+                    PrMenuAction::Copy => this.copy_pr_url(&pr, cx),
+                }
+                cx.notify();
+            }),
+        )
+        .role(gpui::Role::MenuItem)
+        .aria_label(label.t());
+        let row = super::menu_overlay::focus_row(row, &keys, slot, true, window_active, cx);
+        let row = if matches!(action, PrMenuAction::Copy) {
+            super::e2e::probe_pr_menu_copy(row)
+        } else {
+            row
+        };
+        card = card.child(super::e2e::measure_control(id, row));
+    }
+    let card = super::menu_overlay::with_menu_keys(card, &keys, None, dismiss, opened, window, cx);
+    let pos = kagi_ui_core::theme::clamp_menu_pos(pos, 0., 0., window.viewport_size());
     div()
         .absolute()
         .top_0()
         .left_0()
         .size_full()
         .occlude()
-        .on_mouse_down(MouseButton::Left, dismiss)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+                dismiss(this, window, cx);
+            }),
+        )
         .child(
-            div()
-                .absolute()
-                .left(pos.x)
-                .top(pos.y)
-                .w(theme::scaled_px(190.))
-                .occlude()
-                .bg(rgb(theme().panel))
-                .border_1()
-                .border_color(rgb(theme().surface))
-                .rounded_md()
-                .shadow_lg()
-                .py(theme::scaled_px(2.))
-                .child(item(
-                    ("pr-menu-peek", n),
-                    SharedString::from(Msg::PrPeek.t()),
-                    peek_click,
-                ))
-                .child(item(
-                    ("pr-menu-jump", n),
-                    SharedString::from(Msg::PrJumpToBranch.t()),
-                    jump_click,
-                ))
-                .child(item(
-                    ("pr-menu-open", n),
-                    SharedString::from(Msg::PrOpenOnGitHub.t()),
-                    open_click,
-                ))
-                .child(item(
-                    ("pr-menu-copy", n),
-                    SharedString::from(Msg::PrCopyUrl.t()),
-                    copy_click,
-                )),
+            gpui::anchored()
+                .position(pos)
+                .snap_to_window_with_margin(px(8.))
+                .child(card),
         )
         .into_any_element()
 }

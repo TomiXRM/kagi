@@ -116,6 +116,7 @@ fn bounds(window: AnyWindowHandle, id: &str) -> Option<Bounds<Pixels>> {
 /// Draw with the card's bounds cleared, so presence is proven by this frame
 /// rather than inherited from an earlier one.
 fn redraw_card(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    kagi_ui_core::fonts::e2e::take(window.window_id(), "worktree-hover-card");
     for id in CARD_IDS {
         e2e::clear_control_bounds(window.window_id(), id);
     }
@@ -187,6 +188,13 @@ fn open_card(
     cx.run_until_parked();
     redraw_card(cx, window);
     let card = bounds(window, "worktree-inspection").expect("hover card not shown after the delay");
+    let font = kagi_ui_core::fonts::e2e::take(window.window_id(), "worktree-hover-card")
+        .expect("the actual detached worktree hover card was prepainted");
+    assert_eq!(
+        font,
+        kagi_ui_core::fonts::ui_font(),
+        "hoverable tooltips do not inherit the window Root's font"
+    );
     let near = |edge: Pixels, at: Pixels| (f32::from(edge) - f32::from(at)).abs() <= 8.;
     assert!(
         (near(card.origin.x, pointer.x) || near(card.right(), pointer.x))

@@ -107,6 +107,9 @@ pub fn plan_apply_suggestion(
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Github(GithubTitle::ApplySuggestion {
             path: s.path.clone(),
@@ -122,6 +125,7 @@ pub fn plan_apply_suggestion(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         // The fine-grained stale guard lives in execute (line-range compare);
         // only HEAD needs the generic preflight digest here.
         worktree_digest: None,

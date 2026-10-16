@@ -46,6 +46,17 @@ oplog / resolution の JSON 実装は本変更に含めない。
   失敗時は残す(再試行できるように)。
 - **branch 切替**: 現 branch の draft を保存 → 新 branch の draft を読込(branch ごと独立)。
 
+
+### 保存失敗と明示的な回復 (#1435, 2026-10-13)
+
+- パネルは現在の編集値（debounce 検出用）と最後に保存に成功した値を分ける。
+  `save_draft` / 空本文の `clear_draft` の成功時だけ保存 baseline を更新する。
+- 失敗時は Input の本文と dirty 状態を保持し、EN/JA の inline error と完全な I/O
+  詳細を表示する。`draft: saved <branch>` は成功時だけ出す。
+- エラー行の **Save Draft / 下書きを保存** は現在の本文を同じ owner/branch に
+  明示的に保存し直す。復旧を待つ自動 retry は追加しない。成功時に error を消す。
+- commit に消費された本文の debounce と Smart generation を同時に失効させる。
+
 ## Consequences
 
 - oplog / avatar と保存先・env override・background 書き込みの流儀を共有する。

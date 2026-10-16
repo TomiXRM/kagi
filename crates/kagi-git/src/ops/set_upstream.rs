@@ -20,7 +20,6 @@ pub fn plan_set_upstream(
     // cross-op `CommonNote::BranchMissing { in_repo: false }` tail (shared in
     // English with rename); the rest are this op's own `PushNote` variants.
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if repo.find_branch(branch_name, BranchType::Local).is_err() {
         blockers.push(PlanNote::Common(CommonNote::BranchMissing {
@@ -30,13 +29,18 @@ pub fn plan_set_upstream(
     }
     if upstream.trim().is_empty() || upstream.trim() != upstream {
         blockers.push(PlanNote::Push(PushNote::UpstreamFormatInvalid));
-    } else if repo.find_branch(upstream, BranchType::Remote).is_err() {
-        warnings.push(PlanNote::Push(PushNote::UpstreamNotPresentLocally {
+    } else if repo.find_branch(upstream, BranchType::Remote).is_err()
+        && repo.find_branch(upstream, BranchType::Local).is_err()
+    {
+        blockers.push(PlanNote::Push(PushNote::UpstreamNotPresentLocally {
             upstream: upstream.to_string(),
         }));
     }
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Push(PushTitle::SetUpstream {
             branch: branch_name.to_string(),
@@ -47,7 +51,7 @@ pub fn plan_set_upstream(
             head: format!("branch: {} -> {}", branch_name, upstream),
             dirty: "working tree unchanged".to_string(),
         },
-        warnings,
+        warnings: Vec::new(),
         blockers,
         recovery: Some(PlanRecovery {
             kind: RecoveryKind::Push(PushRecovery::SetUpstream {
@@ -58,6 +62,7 @@ pub fn plan_set_upstream(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

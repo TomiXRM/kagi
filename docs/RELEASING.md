@@ -1,111 +1,126 @@
 # Releasing Kagi
 
-The operational runbook for cutting a release. Design rationale lives in
-**ADR-0047** (cross-platform release) and **ADR-0038** (app bundling); this file
-is the step-by-step procedure.
+Operational procedure for ADR-0047 (distribution) and ADR-0038 (bundling).
+Release completed `dev` changes through a reviewed PR into `main`; do not include
+unfinished worktrees or tag a candidate before its main-branch CI is green.
 
-## TL;DR
+## 1. Prepare the candidate
 
-```sh
-# on a feature/release branch with green CI:
-# 1. bump version + changelog, commit
-vim Cargo.toml CHANGELOG.md          # version = "X.Y.Z" ; add a "## [X.Y.Z]" section
-cargo build                          # refresh Cargo.lock
-git add Cargo.toml Cargo.lock CHANGELOG.md
-git commit -m "chore: release X.Y.Z (<one-line summary>)"
-git push
+- Use an isolated worktree. Preserve the owner's checkout and unrelated changes.
+- Bump only the root `Cargo.toml` package version. Workspace crates have independent
+  versions. `cargo build` updates the matching `kagi` entry in `Cargo.lock`.
+- Move Unreleased entries beneath a dated `## [X.Y.Z] - YYYY-MM-DD` heading,
+  retain a fresh Unreleased section, and write `docs/releases/vX.Y.Z.md`.
+- Describe shipped behavior and known limitations, not pending PRs as delivered.
+- The tag, package/lock version, executable `--version`, archive names and generated
+  macOS bundle versions must agree. The workflow does not enforce all of these.
 
-# 2. tag → this triggers the build + a DRAFT GitHub release
-git tag -a vX.Y.Z -m "Kagi X.Y.Z — <summary>"
-git push origin vX.Y.Z
+## 2. Verify, push and review
 
-# 3. wait for the build (~14 min), then publish + merge
-gh run watch "$(gh run list --workflow=release.yml -L1 --json databaseId -q '.[0].databaseId')" --exit-status
-gh release edit vX.Y.Z --draft=false --latest
-gh pr merge <PR#> --merge --delete-branch
-git checkout main && git pull --ff-only
-```
+Run one Cargo command at a time in the worktree:
 
-## How it works
-
-- **Trigger:** pushing a `v*` tag runs `.github/workflows/release.yml`
-  (also runnable manually via *workflow_dispatch* for a dry run — it still
-  uploads to a draft).
-- **Build matrix (4 targets):** `macos-arm64`, `linux-x86_64`,
-  `linux-arm64` (`ubuntu-24.04-arm`), `windows-x86_64`. Each builds via the
-  `xtask` helper and emits a `SHA256SUMS-<target>.txt`.
-- **Draft job:** downloads every artifact and creates a **draft** GitHub release
-  (`softprops/action-gh-release`, `draft: true`) with all files attached.
-  Publishing is a deliberate manual step (below) — the workflow never auto-publishes.
-- **Artifacts (10):** `Kagi-X.Y.Z-arm64.dmg`, `kagi-X.Y.Z-x86_64.tar.gz`,
-  `kagi-X.Y.Z-aarch64.tar.gz`, `kagi_Linux-AppImage_{x86_64,aarch64}.zip`,
-  `kagi-X.Y.Z-x86_64-windows.zip`, plus four `SHA256SUMS-*.txt`.
-
-## Step by step
-
-### 0. Pre-flight (must be green)
 ```sh
 cargo build
-cargo fmt --all --check        # blocking-ish: the advisory CI lint job runs this
-cargo clippy --workspace       # advisory (pre-existing v0.2.0 debt; warnings ok)
-cargo test --workspace         # BLOCKING in CI (macOS) — must be 0 failed
-grep -rnE 'git2::|Repository::open' src/ui/   # must be empty (CI gate, ADR-0078)
+cargo fmt --all
+cargo fmt --all --check
+cargo clippy --workspace
+KAGI_LOG_DIR=/tmp/kagi-release-check-unique cargo test --workspace
+uv run --frozen --project ci check-all
+./target/debug/kagi --version
 ```
-Do the release on a branch (not `main`) so it lands via a PR.
 
-### 1. Version + changelog
-- Bump `version` in the **root `Cargo.toml`** only. `crates/kagi-domain` carries
-  its **own independent version** — leave it unless that crate changed in a way
-  worth versioning.
-- Run `cargo build` to update `Cargo.lock`.
-- Add a `## [X.Y.Z] — YYYY-MM-DD` section to `CHANGELOG.md` (Added / Fixed /
-  Changed). Versioning convention so far: **`0.3.x` minor bumps for features and
-  fixes** (e.g. 0.3.15 → 0.3.16); internal-only refactors still get a bump and a
-  `### Changed (internal)` note.
-- Commit `chore: release X.Y.Z (...)` and push.
+Create a unique log directory before testing. Run the affected native scenarios
+using an explicit `KAGI_GUI_E2E_ONLY` filter and the canonical
+`.claude/skills/verify/SKILL.md` recipe; never launch the unfiltered runner.
+Exercise the real application and preserve screenshots/evidence for the PR.
 
-### 2. Tag (kicks off the build)
+Push only after gates pass and verify the remote head equals the local commit.
+For a `dev` → `main` release, place the release metadata on `dev` and open that
+PR; do not delete the persistent `dev` branch. Follow `docs/agents/workflow.md`:
+review the exact head, answer every review comment, require green blocking CI,
+then merge with `--match-head-commit`.
+
+## 3. Wait for the merged SHA's CI, then tag
+
+Record the PR's merge SHA and find its `ci.yml` run by exact SHA, not the latest
+run across unrelated branches:
+
 ```sh
-git tag -a vX.Y.Z -m "Kagi X.Y.Z — <summary>"
-git push origin vX.Y.Z
+gh run list --workflow ci.yml --commit <merge-sha> \
+  --json databaseId,headSha,status,conclusion
+gh run watch <ci-run-id> --exit-status
 ```
-The tag may sit on the **release branch tip** (before the PR merges); it ends up
-in `main`'s history once the PR is merged. The tag must match `v*`.
 
-### 3. Watch the build (~13–14 min)
+The authoritative gate is `blocking-ci` in the newest `ci.yml` run and its latest
+attempt for that SHA. `check-release-ci` checks that identity again before release.
+It requires the invariant matrix, gate lint/selftests, macOS workspace tests,
+Windows build/stop proof and, when selected, Linux installer proof. Only an
+unselected installer job may be skipped. Advisory Linux tests or lint do not
+replace the aggregate. A successful older attempt is not sufficient.
+
+After recording successful exact-SHA evidence, create the annotated tag on that
+merge commit:
+
 ```sh
-gh run list --workflow=release.yml -L1
-gh run watch <run-id> --exit-status     # blocks until success/failure
+git tag -a vX.Y.Z <merge-sha> -m "Kagi X.Y.Z"
+git push origin refs/tags/vX.Y.Z
 ```
-`gh run watch` can outlast a 10-min shell timeout — run it in the background and
-wait for the completion notification, or re-poll with `gh run view <id>`.
 
-### 4. Publish
+Verify the remote tag peels to the intended commit. Never move a published tag.
+A code fix needs a new reviewed commit and release decision; do not rewrite
+history to hide a failed candidate.
+
+## 4. Build and inspect the draft
+
+The `v*` push starts `.github/workflows/release.yml`. Select its run by the tagged
+SHA and watch that run. `workflow_dispatch` also uploads to a draft; it is not a
+side-effect-free dry run. All four platform build legs must pass.
+
+From v0.45.0, expect **13 assets**:
+
+| Platform | Packages |
+|---|---|
+| macOS arm64 | `Kagi-X.Y.Z-arm64.dmg`, `kagi-X.Y.Z-arm64-macos.tar.gz` |
+| Linux x86_64 | `kagi-X.Y.Z-x86_64-linux.tar.gz`, `kagi_Linux-AppImage_x86_64.zip`, `kagi_X.Y.Z-1_amd64.deb` |
+| Linux aarch64 | `kagi-X.Y.Z-aarch64-linux.tar.gz`, `kagi_Linux-AppImage_aarch64.zip`, `kagi_X.Y.Z-1_arm64.deb` |
+| Windows x86_64 | `kagi-X.Y.Z-x86_64-windows.zip` |
+
+Plus `SHA256SUMS-{macos-arm64,linux-x86_64,linux-arm64,windows-x86_64}.txt`.
+The old platform-less Linux tar aliases were transitional assets in v0.44.0.
+Do not name the macOS tar `aarch64-macos`: older Linux updaters can misidentify it.
+
+Before publication:
+
+1. Inspect draft/tag/target, package names, nonzero sizes and release notes.
+2. Download every asset into a fresh directory. Verify all four checksum files
+   and that their entries cover every package exactly once.
+3. Inspect archive contents, architecture and versions. macOS tar must contain
+   `Kagi.app` plus `bin/kagi` pointing to its executable; Linux tar retains its
+   versioned top-level directory, desktop entry and icon.
+4. Verify macOS signing with `codesign --verify --strict`, both bundle version
+   fields, `--version`, and the DMG's app. Run platform binaries/install checks
+   on matching hosts; do not call archive inspection runtime evidence.
+
+## 5. Publish and verify installation
+
+Set the draft's body from the checked-in release notes, then publish deliberately:
+
 ```sh
-gh release view vX.Y.Z --json isDraft,assets -q '.isDraft, (.assets|length)'  # draft=true, 10 assets
+gh release edit vX.Y.Z --notes-file docs/releases/vX.Y.Z.md
 gh release edit vX.Y.Z --draft=false --latest
-gh release list -L1     # confirm: vX.Y.Z  Latest
+gh release view vX.Y.Z --json tagName,isDraft,isPrerelease,assets,url
 ```
 
-### 5. Merge the PR + sync
-```sh
-gh pr merge <PR#> --merge --delete-branch
-git checkout main && git pull --ff-only
-git merge-base --is-ancestor vX.Y.Z HEAD && echo "tag is in main"
-```
+Confirm the latest release is the intended version. Exercise `install.sh` with
+`--version vX.Y.Z --prefix <fresh-temp-directory> --no-modify-path`, or a
+version-pinned mise installation, without overwriting the owner's installation.
+Record actual downloaded-binary version/signature and platform verification.
 
-## Notes & gotchas
-- **macOS Intel is out of scope** (ADR-0047) — only `macos-arm64` is built.
-- **Code signing:** the macOS app is **ad-hoc signed** (no Developer ID); users
-  may need to right-click → Open or clear the quarantine attribute on first run.
-- **`linux-arm64` runs on `ubuntu-24.04-arm`** — if that runner is flaky, the leg
-  can fail without the others; re-run just that job.
-- **Don't tag twice.** If a build fails, fix on the branch, delete the bad tag
-  locally + remotely (`git tag -d vX.Y.Z; git push origin :refs/tags/vX.Y.Z`),
-  delete the draft release, then re-tag.
-- **The lint CI job is advisory** (`continue-on-error`) — fmt must be clean to
-  keep it green, but clippy warnings won't block. The **macOS test job and the
-  Windows build job are blocking** (`blocking-ci.needs`; Windows became blocking
-  in #728 because the job-object stop proof only runs there).
-- A failed/duplicate artifact upload silently overwrites on same-name collisions;
-  the per-target arch in artifact names prevents that (fixed historically).
+## Distribution limits
+
+- macOS is arm64 only, ad-hoc signed; no Developer ID or notarization is claimed.
+- Linux AppImage/tar builds still depend on supported host system libraries.
+- A failed required platform leg blocks the draft; runner availability is not
+  permission to omit an architecture silently.
+- Keep `dev` aligned with the released main history without rewriting pushed
+  branches. Never delete `dev` as part of PR cleanup.

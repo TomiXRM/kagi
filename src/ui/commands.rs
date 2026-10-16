@@ -55,6 +55,7 @@ thread_local! {
 
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
+use super::settings;
 use super::theme::{self, theme};
 use super::{BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
 
@@ -86,6 +87,7 @@ actions!(
         ZoomReset,
         EnterFullScreen,
         ToggleSidebar,
+        TogglePrSwimlane,
         ToggleCommitDetails,
         ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode.
@@ -117,6 +119,9 @@ actions!(
         // Window
         MinimizeWindow,
         ZoomWindow,
+        PreviousTab,
+        NextTab,
+        BringAllToFront,
         NewWindow,
         CloseWindow,
         // Help
@@ -135,14 +140,25 @@ actions!(
         // View → Language (W22-I18N / ADR-0048): one action per UI language.
         LangEnglish,
         LangJapanese,
-        // ADR-0084: app-level Undo/Redo (Cmd+Z / Cmd+Shift+Z). Distinct from the
-        // OsAction text-input EditUndo/EditRedo — these move branch refs via the
-        // history plan→confirm modal and are bound only when neither a text Input
-        // nor the Terminal is focused.
+        // ADR-0084: repository Undo/Redo, distinct from Input's text actions.
         HistoryUndo,
         HistoryRedo,
     ]
 );
+
+#[cfg(target_os = "macos")]
+actions!(kagi_menu, [HideApp, HideOtherApps, ShowAllApps]);
+
+/// Shared dispatch for native actions and registry-based palette/dropdown calls.
+#[cfg(target_os = "macos")]
+fn visibility_command_handler(id: &str) -> Option<fn(&App)> {
+    match id {
+        "app.hide" => Some(App::hide),
+        "app.hideOthers" => Some(App::hide_other_apps),
+        "app.showAll" => Some(App::unhide_other_apps),
+        _ => None,
+    }
+}
 
 /// Switch to the registered theme with this slug, built-in or custom (#922).
 ///
@@ -155,6 +171,37 @@ actions!(
 #[action(namespace = kagi_menu, no_json)]
 pub struct SetTheme {
     pub slug: SharedString,
+}
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_menu, no_json)]
+pub struct SetToolbarDisplay {
+    pub mode: settings::ToolbarDisplay,
+}
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_menu, no_json)]
+pub struct OpenRecentRepository {
+    pub path: std::path::PathBuf,
+}
+actions!(kagi_menu, [ClearRecentRepositories, FindInFocusedView]);
+
+#[derive(Default)]
+struct RecentMenuAvailable(bool);
+impl gpui::Global for RecentMenuAvailable {}
+
+pub(super) fn register_recent_clear(el: gpui::Div, cx: &App) -> gpui::Div {
+    el.when(
+        cx.try_global::<RecentMenuAvailable>()
+            .is_some_and(|state| state.0),
+        |el| {
+            el.on_action(|_: &ClearRecentRepositories, _, cx| {
+                super::tabs::clear_recent_repos();
+                publish_menus(cx);
+                cx.refresh_windows();
+            })
+        },
+    )
 }
 
 /// Map a language command id back to its [`Lang`].
@@ -201,24 +248,31 @@ pub enum MenuNode {
     Command(&'static str),
     /// An in-menu divider.
     Separator,
-    /// A dynamic submenu whose contents (and the "✓ " active marker) are built
+    /// A dynamic submenu whose contents and checked state are built
     /// at render time.  macOS nests a real `Menu`; Linux expands it inline into
     /// the dropdown panel (it has no nested-panel support) — both behaviours are
     /// preserved from before ADR-0085.
     Submenu(DynSubmenu),
-    /// An OS-standard Edit item (handled by the macOS responder chain via
-    /// `MenuItem::os_action`).  Only ever appears inside a `mac_only` section,
-    /// so Linux skips it wholesale (it has no responder chain — see ADR-0085 §4).
+    /// Standard Edit entry: focused GPUI Undo/Redo or a native responder-chain
+    /// selector. The macOS-only section is skipped by the portable dropdown
+    /// (the intentional Edit-menu OS difference — ADR-0085 §4).
     OsEdit(OsEditItem),
+    /// The editor's existing Save action, whose dirty-buffer owner is an entity.
+    EditorSave,
+    #[cfg(target_os = "macos")]
+    Services,
 }
 
-/// The two dynamic submenus under View (ADR-0036 theme, ADR-0048 language).
+/// Dynamic View submenus, shared by native and in-app menus (ADR-0085).
 pub enum DynSubmenu {
     Theme,
     Language,
+    ToolbarDisplay,
+    OpenRecent,
+    Find,
 }
 
-/// The OS-standard Edit items (macOS responder chain — ADR-0029).
+/// Standard macOS Edit entries; Undo/Redo share the focused keyboard actions.
 pub enum OsEditItem {
     Undo,
     Redo,
@@ -234,7 +288,7 @@ pub struct MenuSection {
     pub label: &'static str,
     /// Ordered entries; separators and submenus are positional.
     pub items: &'static [MenuNode],
-    /// macOS-only section (relies on the responder chain).  Linux skips it
+    /// macOS-only section. Linux skips it
     /// entirely — see ADR-0085 §4 (the intentional Edit-menu OS difference).
     /// Read by `linux_menu_sections`.
     pub mac_only: bool,
@@ -253,6 +307,18 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Separator,
             MenuNode::Command("app.settings"),
             MenuNode::Separator,
+            #[cfg(target_os = "macos")]
+            MenuNode::Services,
+            #[cfg(target_os = "macos")]
+            MenuNode::Separator,
+            #[cfg(target_os = "macos")]
+            MenuNode::Command("app.hide"),
+            #[cfg(target_os = "macos")]
+            MenuNode::Command("app.hideOthers"),
+            #[cfg(target_os = "macos")]
+            MenuNode::Command("app.showAll"),
+            #[cfg(target_os = "macos")]
+            MenuNode::Separator,
             MenuNode::Command("app.quit"),
         ],
     },
@@ -264,8 +330,11 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("file.newTab"),
             MenuNode::Command("file.closeTab"),
             MenuNode::Separator,
+            MenuNode::EditorSave,
+            MenuNode::Separator,
             MenuNode::Command("file.cloneRepository"),
             MenuNode::Command("file.openRepository"),
+            MenuNode::Submenu(DynSubmenu::OpenRecent),
             MenuNode::Command("file.openInTerminal"),
             MenuNode::Command("file.connectRemote"),
             MenuNode::Separator,
@@ -284,6 +353,8 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::OsEdit(OsEditItem::Copy),
             MenuNode::OsEdit(OsEditItem::Paste),
             MenuNode::OsEdit(OsEditItem::SelectAll),
+            MenuNode::Separator,
+            MenuNode::Submenu(DynSubmenu::Find),
         ],
     },
     // ── View ─────────────────────────────────────────────────────────
@@ -298,6 +369,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.fullScreen"),
             MenuNode::Separator,
             MenuNode::Command("view.toggleSidebar"),
+            MenuNode::Command("view.togglePrSwimlane"),
             MenuNode::Command("view.toggleTerminal"),
             MenuNode::Command("view.toggleCommitDetails"),
             MenuNode::Command("view.toggleDiffView"),
@@ -305,9 +377,11 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.togglePrMode"),
             MenuNode::Command("view.showGraph"),
             MenuNode::Separator,
-            // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
+            // Dynamic selections use native checked state, never title prefixes.
             MenuNode::Submenu(DynSubmenu::Theme),
             MenuNode::Submenu(DynSubmenu::Language),
+            MenuNode::Separator,
+            MenuNode::Submenu(DynSubmenu::ToolbarDisplay),
         ],
     },
     // ── Repository ───────────────────────────────────────────────────
@@ -359,6 +433,11 @@ pub const MENU_BAR: &[MenuSection] = &[
         items: &[
             MenuNode::Command("window.minimize"),
             MenuNode::Command("window.zoom"),
+            MenuNode::Separator,
+            MenuNode::Command("window.previousTab"),
+            MenuNode::Command("window.nextTab"),
+            MenuNode::Separator,
+            MenuNode::Command("window.bringAllToFront"),
             MenuNode::Separator,
             MenuNode::Command("window.new"),
             MenuNode::Command("window.close"),
@@ -427,7 +506,7 @@ pub enum CommandState {
 pub const COMMANDS: &[Command] = &[
     Command {
         id: "app.about",
-        label: "About kagi",
+        label: "About Kagi",
         keystroke: None,
         dangerous: false,
     },
@@ -441,6 +520,27 @@ pub const COMMANDS: &[Command] = &[
         id: "app.quit",
         label: "Quit kagi",
         keystroke: Some("secondary-q"),
+        dangerous: false,
+    },
+    #[cfg(target_os = "macos")]
+    Command {
+        id: "app.hide",
+        label: "Hide Kagi",
+        keystroke: Some("cmd-h"),
+        dangerous: false,
+    },
+    #[cfg(target_os = "macos")]
+    Command {
+        id: "app.hideOthers",
+        label: "Hide Others",
+        keystroke: Some("cmd-alt-h"),
+        dangerous: false,
+    },
+    #[cfg(target_os = "macos")]
+    Command {
+        id: "app.showAll",
+        label: "Show All",
+        keystroke: None,
         dangerous: false,
     },
     Command {
@@ -513,6 +613,12 @@ pub const COMMANDS: &[Command] = &[
         id: "view.toggleSidebar",
         label: "Toggle Sidebar",
         keystroke: Some("secondary-b"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.togglePrSwimlane",
+        label: "Toggle PR Swimlane",
+        keystroke: Some("secondary-alt-l"),
         dangerous: false,
     },
     Command {
@@ -678,6 +784,24 @@ pub const COMMANDS: &[Command] = &[
         dangerous: false,
     },
     Command {
+        id: "window.previousTab",
+        label: "Show Previous Tab",
+        keystroke: Some("secondary-shift-["),
+        dangerous: false,
+    },
+    Command {
+        id: "window.nextTab",
+        label: "Show Next Tab",
+        keystroke: Some("secondary-shift-]"),
+        dangerous: false,
+    },
+    Command {
+        id: "window.bringAllToFront",
+        label: "Bring All to Front",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
         id: "window.new",
         label: "New Window",
         keystroke: None,
@@ -753,8 +877,7 @@ pub const COMMANDS: &[Command] = &[
         keystroke: None,
         dangerous: false,
     },
-    // View → Language (W22-I18N / ADR-0048). The live "✓ " active marker is
-    // applied in `lang_submenu`.
+    // View → Language. Native checked state is applied in `lang_submenu`.
     Command {
         id: "lang.english",
         label: "English",
@@ -795,12 +918,28 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     let diff_open = app.ui().main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
+        "file.cloneRepository" if app.has_active_modal() && app.clone_modal().is_none() => {
+            Disabled(Msg::FinishDialogFirst.t())
+        }
+        "view.togglePrSwimlane" if app.pr_mode_visible()
+            && app.pr_mode().is_some_and(|m| m.active.is_some()) => Enabled,
+        "view.togglePrSwimlane" => Disabled(Msg::NoPrOpen.t()),
+        #[cfg(target_os = "macos")]
+        "app.hide" | "app.hideOthers" | "app.showAll" => Enabled,
+        "window.previousTab" | "window.nextTab" => {
+            if app.tabs.len() + usize::from(app.home.is_some()) > 1 {
+                Enabled
+            } else {
+                Disabled(Msg::NoOtherTabs.t())
+            }
+        }
         // ── Always available ────────────────────────────────────────────
         "app.about"
         | "app.settings"
         | "app.quit"
         | "file.newTab"
         | "file.openRepository"
+        | "file.cloneRepository"
         // Remote connect needs no open repo (ADR-0089) — always available.
         | "file.connectRemote"
         // W27-UIPOLISH: zoom is global (rem-size scaling) — always available.
@@ -816,6 +955,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "view.reloadThemes"
         | "window.minimize"
         | "window.zoom"
+        | "window.bringAllToFront"
         | "window.close"
         | "help.shortcuts"
         | "help.documentation"
@@ -833,19 +973,13 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "lang.japanese" => Enabled,
 
         // ── Placeholders (feature not implemented; greyed with a reason) ──
-        "file.cloneRepository" => Disabled(Msg::CloneUnimplemented.t()),
         "window.new" => Disabled(Msg::MultiWindowUnsupported.t()),
         // Reset stays disabled per ADR-0024 (no reset in MVP).
         "commit.reset" => Disabled(Msg::ResetUnimplemented.t()),
 
         // ── Repo required ────────────────────────────────────────────────
-        "file.closeTab" => {
-            if has_repo || (app.home.is_some() && app.home_in_front()) {
-                Enabled
-            } else {
-                Disabled(Msg::NoTabsOpen.t())
-            }
-        }
+        // Cmd-W closes a document when present, otherwise the guarded host.
+        "file.closeTab" => Enabled,
         "file.openInTerminal" | "repo.openInFinder" => {
             if has_repo {
                 Enabled
@@ -935,15 +1069,30 @@ pub(crate) fn is_enabled(app: &KagiApp, id: &str) -> bool {
 /// An id present in [`MENU_BAR`] but missing here is a wiring bug; we
 /// `debug_assert!` so it's caught in dev, and fall back to a non-dispatching
 /// item (`About`, which is always available) so release builds stay usable.
-fn action_menu_item(id: &str) -> MenuItem {
-    let label: SharedString = command(id)
-        .map(|c| SharedString::from(c.label))
-        .unwrap_or_else(|| SharedString::from(id.to_string()));
+fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> MenuItem {
+    let label: SharedString = super::window_menu::state_label(id, state)
+        .unwrap_or_else(|| super::command_palette::command_label(id, i18n::lang()))
+        .into();
     match id {
         // kagi (app menu)
         "app.about" => MenuItem::action(label, About),
         "app.settings" => MenuItem::action(label, OpenSettings),
         "app.quit" => MenuItem::action(label, Quit),
+        #[cfg(target_os = "macos")]
+        "app.hide" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            HideApp,
+        ),
+        #[cfg(target_os = "macos")]
+        "app.hideOthers" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            HideOtherApps,
+        ),
+        #[cfg(target_os = "macos")]
+        "app.showAll" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            ShowAllApps,
+        ),
         // File
         "file.newTab" => MenuItem::action(label, NewTab),
         "file.closeTab" => MenuItem::action(label, CloseTab),
@@ -958,14 +1107,20 @@ fn action_menu_item(id: &str) -> MenuItem {
         "view.zoomReset" => MenuItem::action(label, ZoomReset),
         "view.fullScreen" => MenuItem::action(label, EnterFullScreen),
         "view.toggleSidebar" => MenuItem::action(label, ToggleSidebar),
+        "view.togglePrSwimlane" => MenuItem::action(label, TogglePrSwimlane),
         // Terminal toggle reuses ToggleBottomPanel (cmd-j); registry label is
         // "Toggle Terminal".
         "view.toggleTerminal" => MenuItem::action(label, ToggleBottomPanel),
         "view.toggleCommitDetails" => MenuItem::action(label, ToggleCommitDetails),
         "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
-        "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace),
-        "view.togglePrMode" => MenuItem::action(label, TogglePrMode),
-        "view.showGraph" => MenuItem::action(label, ShowGraph),
+        "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace)
+            .checked(super::window_menu::checked(id, state)),
+        "view.togglePrMode" => {
+            MenuItem::action(label, TogglePrMode).checked(super::window_menu::checked(id, state))
+        }
+        "view.showGraph" => {
+            MenuItem::action(label, ShowGraph).checked(super::window_menu::checked(id, state))
+        }
         // Repository
         "repo.fetch" => MenuItem::action(label, Fetch),
         "repo.pull" => MenuItem::action(label, Pull),
@@ -988,6 +1143,9 @@ fn action_menu_item(id: &str) -> MenuItem {
         // Window
         "window.minimize" => MenuItem::action(label, MinimizeWindow),
         "window.zoom" => MenuItem::action(label, ZoomWindow),
+        "window.previousTab" => MenuItem::action(label, PreviousTab),
+        "window.nextTab" => MenuItem::action(label, NextTab),
+        "window.bringAllToFront" => MenuItem::action(label, BringAllToFront),
         "window.new" => MenuItem::action(label, NewWindow),
         "window.close" => MenuItem::action(label, CloseWindow),
         // Help
@@ -1003,26 +1161,63 @@ fn action_menu_item(id: &str) -> MenuItem {
     }
 }
 
-/// Build the `MenuItem` for an OS-standard Edit entry (macOS responder chain).
-fn os_edit_menu_item(kind: &OsEditItem) -> MenuItem {
+/// Undo/Redo use the same focused GPUI actions as the keyboard. Other standard
+/// Edit commands retain AppKit responder-chain handling.
+fn os_edit_menu_item(kind: &OsEditItem, state: &super::window_menu::ViewMenuState) -> MenuItem {
+    use gpui_component::input::{Redo, Undo};
     match kind {
-        OsEditItem::Undo => MenuItem::os_action("Undo", EditUndo, OsAction::Undo),
-        OsEditItem::Redo => MenuItem::os_action("Redo", EditRedo, OsAction::Redo),
-        OsEditItem::Cut => MenuItem::os_action("Cut", EditCut, OsAction::Cut),
-        OsEditItem::Copy => MenuItem::os_action("Copy", EditCopy, OsAction::Copy),
-        OsEditItem::Paste => MenuItem::os_action("Paste", EditPaste, OsAction::Paste),
+        OsEditItem::Undo if state.input_focused => MenuItem::action(Msg::MenuUndo.t(), Undo),
+        OsEditItem::Redo if state.input_focused => MenuItem::action(Msg::MenuRedo.t(), Redo),
+        OsEditItem::Undo => MenuItem::action(
+            history_menu_label(Msg::MenuUndo, state.undo_summary.as_ref()),
+            HistoryUndo,
+        ),
+        OsEditItem::Redo => MenuItem::action(
+            history_menu_label(Msg::MenuRedo, state.redo_summary.as_ref()),
+            HistoryRedo,
+        ),
+        OsEditItem::Cut => MenuItem::os_action(Msg::MenuCut.t(), EditCut, OsAction::Cut),
+        OsEditItem::Copy => MenuItem::os_action(Msg::MenuCopy.t(), EditCopy, OsAction::Copy),
+        OsEditItem::Paste => MenuItem::os_action(Msg::MenuPaste.t(), EditPaste, OsAction::Paste),
         OsEditItem::SelectAll => {
-            MenuItem::os_action("Select All", EditSelectAll, OsAction::SelectAll)
+            MenuItem::os_action(Msg::MenuSelectAll.t(), EditSelectAll, OsAction::SelectAll)
         }
     }
 }
 
-/// Build the full macOS menu bar by walking [`MENU_BAR`] (ADR-0085 §2).  Pure
-/// function of the canonical tree + [`COMMANDS`] — no app state is read here;
-/// availability is applied later by gpui's per-item validation against the
-/// dispatch tree (see module docs).  Called unconditionally on every OS;
-/// `cx.set_menus` is a no-op outside macOS, so this stays cross-platform.
-pub fn build_menus() -> Vec<Menu> {
+fn history_menu_label(verb: Msg, summary: Option<&SharedString>) -> SharedString {
+    match summary {
+        Some(summary) => format!("{} {}", verb.t(), summary).into(),
+        None => verb.t().into(),
+    }
+}
+
+/// Publish the canonical tree, then restore AppKit's role using the canonical
+/// section identifier rather than its translated display heading.
+pub fn publish_menus(cx: &mut App) {
+    let window_section = MENU_BAR
+        .iter()
+        .position(|section| section.label == "Window")
+        .expect("canonical Window menu");
+    crate::native_menus::publish(cx, build_menus(cx), window_section);
+    let recent = dock_menu_items();
+    let available = !recent.is_empty();
+    if cx.try_global::<RecentMenuAvailable>().map(|state| state.0) != Some(available) {
+        cx.set_global(RecentMenuAvailable(available));
+        cx.refresh_windows();
+    }
+    cx.set_dock_menu(recent);
+}
+
+/// Build the shared canonical tree with the active window's presentation labels.
+/// Dispatch-tree validation owns availability. Find additionally excludes plain
+/// text fields: Kit registers Search even on Inputs that are not searchable.
+pub fn build_menus(cx: &App) -> Vec<Menu> {
+    let state = super::window_menu::current_state(cx);
+    menus_for_state(state)
+}
+
+pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
     MENU_BAR
         .iter()
         .map(|section| {
@@ -1030,15 +1225,38 @@ pub fn build_menus() -> Vec<Menu> {
                 .items
                 .iter()
                 .map(|node| match node {
-                    MenuNode::Command(id) => action_menu_item(id),
+                    MenuNode::Command(id) => action_menu_item(id, &state),
                     MenuNode::Separator => MenuItem::separator(),
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
-                    MenuNode::OsEdit(kind) => os_edit_menu_item(kind),
+                    MenuNode::Submenu(DynSubmenu::OpenRecent) => MenuItem::submenu(recent_menu()),
+                    MenuNode::Submenu(DynSubmenu::Find) => MenuItem::submenu(
+                        Menu::new(Msg::MenuFind.t()).items([MenuItem::action(
+                            Msg::MenuFindOpen.t(),
+                            FindInFocusedView,
+                        )
+                        .disabled(!state.find_sidebar && !state.find_input)]),
+                    ),
+                    MenuNode::Submenu(DynSubmenu::ToolbarDisplay) => MenuItem::submenu(Menu {
+                        name: Msg::SettingsToolbarDisplay.t().into(),
+                        items: toolbar_display_menu_entries()
+                            .into_iter()
+                            .map(|(mode, label, checked)| {
+                                MenuItem::action(label, SetToolbarDisplay { mode }).checked(checked)
+                            })
+                            .collect(),
+                        disabled: false,
+                    }),
+                    MenuNode::OsEdit(kind) => os_edit_menu_item(kind, &state),
+                    MenuNode::EditorSave => MenuItem::action(Msg::MenuSave.t(), SaveEditorFile),
+                    #[cfg(target_os = "macos")]
+                    MenuNode::Services => {
+                        MenuItem::os_submenu(Msg::MenuServices.t(), gpui::SystemMenuType::Services)
+                    }
                 })
                 .collect();
             Menu {
-                name: section.label.into(),
+                name: i18n::menu_heading(section.label, i18n::lang()).into(),
                 items,
                 disabled: false,
             }
@@ -1046,25 +1264,56 @@ pub fn build_menus() -> Vec<Menu> {
         .collect()
 }
 
+/// File and Dock share Home's history order and the existing repository opener.
+pub fn recent_menu() -> Menu {
+    let mut items = dock_menu_items();
+    let empty = items.is_empty();
+    if !empty {
+        items.push(MenuItem::separator());
+    }
+    items.push(MenuItem::action(Msg::MenuClearRecent.t(), ClearRecentRepositories).disabled(empty));
+    Menu::new(Msg::MenuOpenRecent.t()).items(items)
+}
+
+/// Recent-repository entries published to the Dock.
+pub fn dock_menu_items() -> Vec<MenuItem> {
+    super::tabs::recent_repos()
+        .into_iter()
+        .map(|path| {
+            MenuItem::action(
+                path.to_string_lossy().into_owned(),
+                OpenRecentRepository { path },
+            )
+        })
+        .collect()
+}
+
+/// Shared localized rows and checked state for both platform menu renderers.
+pub fn toolbar_display_menu_entries() -> [(settings::ToolbarDisplay, SharedString, bool); 2] {
+    let selected = settings::toolbar_display(&theme().slug);
+    [
+        (
+            settings::ToolbarDisplay::IconAndText,
+            Msg::ToolbarIconAndText,
+        ),
+        (settings::ToolbarDisplay::IconOnly, Msg::ToolbarIconOnly),
+    ]
+    .map(|(mode, label)| (mode, label.t().into(), selected == mode))
+}
+
 /// Build the View → Theme submenu (W9-THEME / ADR-0036, #922).
 ///
-/// One item per registered theme — built-in and custom, from
-/// [`theme_menu_entries`] — with the active theme's label prefixed "✓ ".
-/// Because the label changes when the active theme changes (and the list
-/// changes on a theme reload), the menu bar must be rebuilt (`cx.set_menus`)
-/// after either — unlike the disabled/enabled mechanism, which is purely
-/// dispatch-tree based.
+/// One item per registered theme, with selection in the native check column.
+/// Rebuild on theme changes to publish the new checked state.
 fn theme_submenu() -> Menu {
     let items = theme_menu_entries()
         .into_iter()
         .map(|entry| {
-            let marker = if entry.active { "\u{2713} " } else { "   " };
-            let label = SharedString::from(format!("{marker}{}", entry.name));
-            MenuItem::action(label, SetTheme { slug: entry.slug })
+            MenuItem::action(entry.name, SetTheme { slug: entry.slug }).checked(entry.active)
         })
         .collect();
     Menu {
-        name: "Theme".into(),
+        name: i18n::menu_heading("Theme", i18n::lang()).into(),
         items,
         disabled: false,
     }
@@ -1093,48 +1342,29 @@ pub fn theme_menu_entries() -> Vec<ThemeMenuEntry> {
 
 /// Build the View → Language submenu (W22-I18N / ADR-0048).
 ///
-/// Two items (English / 日本語); the active language's label is prefixed with
-/// "✓ ".  Like the Theme submenu, the label changes on switch, so the menu bar
-/// must be rebuilt (`cx.set_menus`) on every language change.
+/// Rebuilt on language changes to publish the new native checked state.
 fn lang_submenu() -> Menu {
     let active = i18n::lang();
     let entries = [(Lang::En, "English"), (Lang::Ja, "日本語")];
     let mut items: Vec<MenuItem> = Vec::with_capacity(entries.len());
     for (l, name) in entries {
-        let label = if l == active {
-            format!("\u{2713} {}", name)
-        } else {
-            format!("   {}", name)
-        };
-        let label = SharedString::from(label);
+        let label = SharedString::from(name);
         let item = match l {
             Lang::En => MenuItem::action(label, LangEnglish),
             Lang::Ja => MenuItem::action(label, LangJapanese),
         };
-        items.push(item);
+        items.push(item.checked(l == active));
     }
     Menu {
-        name: "Language".into(),
+        name: i18n::menu_heading("Language", i18n::lang()).into(),
         items,
         disabled: false,
     }
 }
 
-// Edit-menu action stubs: gpui's `os_action` still needs an `Action` value for
-// the dispatch tag, but the OS performs the actual edit via the responder
-// chain — these are never dispatched to kagi.  No global KeyBinding is bound to
-// them, so they never interfere with text-input cmd-z/x/c/v/a.
-actions!(
-    kagi_edit,
-    [
-        EditCut,
-        EditCopy,
-        EditPaste,
-        EditSelectAll,
-        EditUndo,
-        EditRedo
-    ]
-);
+// Cut/Copy/Paste/Select All are real AppKit responder-chain selectors. Undo/Redo
+// deliberately use Input or repository actions, not unhandled OS dispatch tags.
+actions!(kagi_edit, [EditCut, EditCopy, EditPaste, EditSelectAll]);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Keybinding registration.
@@ -1178,7 +1408,7 @@ pub fn effective_keystroke(id: &str) -> Option<String> {
 /// - all Edit actions (os_action only — must not shadow text-input).
 use crate::ui::{
     CloseMainDiff, CommitFirst, CommitLast, CommitPageDown, CommitPageUp, CopyDiffSelection,
-    DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane, SaveEditorFile,
+    DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane, SaveEditorFile, TerminalExitFocus,
     TerminalSendShiftTab, TerminalSendTab,
 };
 
@@ -1200,14 +1430,30 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         super::issues_composer::FocusIssueEditor,
         Some("IssueComposer"),
     )]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-f",
+        FindInFocusedView,
+        Some("!Terminal && !Input"),
+    )]);
     // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
     // the toggle key for the bottom panel. context = None means the binding
     // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on
     // Linux is Super-J — so Ctrl-J never toggled the panel.
     cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
     // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
-    // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
-    cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
+    // Terminal and the built-in Find bar own Escape while their controls focus.
+    // A positive owner context keeps this fallback below Input / PopupMenu
+    // bindings. A negation-only predicate matches at their deepest context.
+    cx.bind_keys([KeyBinding::new(
+        "escape",
+        CloseMainDiff,
+        Some("KagiWorkspace && !Terminal && !SearchPanel"),
+    )]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-enter",
+        super::compact::OpenCommitComposer,
+        Some("!Terminal"),
+    )]);
     // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
     // text field keeps its own copy; no-ops when nothing is selected.
     cx.bind_keys([KeyBinding::new(
@@ -1222,6 +1468,8 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", TerminalSendTab, Some("Terminal")),
         KeyBinding::new("shift-tab", TerminalSendShiftTab, Some("Terminal")),
+        KeyBinding::new("ctrl-shift-tab", TerminalExitFocus, Some("Terminal")),
+        KeyBinding::new("secondary-shift-j", TerminalExitFocus, Some("Terminal")),
     ]);
     // Arrow keys step through files while the main diff is open
     // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
@@ -1252,23 +1500,31 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     super::keyboard_nav::bind_keys(cx);
     // #985: the menus' ↑/↓/Home/End outrank the app-wide arrows the same way.
     super::menu_keys::bind_keys(cx);
+    super::commit_panel_coauthor::bind_keys(cx);
     // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
-    // No context predicate — gpui-component 0.5.1's "Input" context binds
-    // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in
-    // its src/input/state.rs), so this fires even while the code editor
-    // has focus. `save_editor_file` no-ops when there is nothing to save.
-    cx.bind_keys([KeyBinding::new("secondary-s", SaveEditorFile, None)]);
-    // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
-    // focused text field (gpui-component Input, key_context "Input") keeps
-    // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
+    // Input has no Save binding, so this reaches the live editor too; the
+    // historical text context excludes it rather than saving a hidden buffer.
+    cx.bind_keys([KeyBinding::new(
+        "secondary-s",
+        SaveEditorFile,
+        Some("!EditorSnapshot"),
+    )]);
+    // ADR-0084: app-level Undo/Redo. Historical text is selectable, not an
+    // input, but must never route text undo to repository operation history.
+    // A focused text field keeps Input's own Undo/Redo actions; the terminal
+    // keeps its own
     // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
     // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
     cx.bind_keys([
-        KeyBinding::new("secondary-z", HistoryUndo, Some("!Input && !Terminal")),
+        KeyBinding::new(
+            "secondary-z",
+            HistoryUndo,
+            Some("!Input && !Terminal && !EditorSnapshot"),
+        ),
         KeyBinding::new(
             "secondary-shift-z",
             HistoryRedo,
-            Some("!Input && !Terminal"),
+            Some("!Input && !Terminal && !EditorSnapshot"),
         ),
     ]);
     // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
@@ -1282,6 +1538,49 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         gpui_component::input::SelectAll,
         Some("Input"),
     )]);
+    #[cfg(target_os = "macos")]
+    {
+        // Remove only the old code-action candidate. Otherwise, after Input's
+        // Escape propagates, ToggleCodeActions consumes Command-Period before
+        // its Popover / dialog owner can handle the next matching binding.
+        cx.bind_keys([KeyBinding::new(
+            "cmd-.",
+            gpui::Unbind(gpui::Action::name(&gpui_component::input::ToggleCodeActions).into()),
+            Some("Input"),
+        )]);
+        // Reuse Escape's registered actions AND owner predicates. This keeps
+        // child menus / Find / completion ahead of their containing dialog
+        // and overrides Input's earlier Command-Period code-action binding.
+        // Keymap inspection/loading is public even when a component's action
+        // type is private (for example gpui-kit's menu cancellation action).
+        let escape = [gpui::Keystroke::parse("escape").expect("valid Escape keystroke")];
+        let aliases: Vec<_> = cx
+            .key_bindings()
+            .borrow()
+            .bindings()
+            // false means complete; true would mean a multi-key prefix.
+            .filter(|binding| binding.match_keystrokes(&escape) == Some(false))
+            .map(|binding| {
+                KeyBinding::load(
+                    "cmd-.",
+                    binding.action().boxed_clone(),
+                    binding.predicate(),
+                    false,
+                    None,
+                    cx.keyboard_mapper().as_ref(),
+                )
+                .expect("valid Command-Period keystroke")
+            })
+            .collect();
+        cx.bind_keys(aliases);
+        // These native Settings alerts handle Escape as a raw key event,
+        // rather than registering an action with the application keymap.
+        cx.bind_keys([KeyBinding::new(
+            "cmd-.",
+            CloseMainDiff,
+            Some("KagiCancelDialog"),
+        )]);
+    }
 }
 
 /// Install the application-wide command bindings and native menu definition.
@@ -1292,7 +1591,31 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
 pub(crate) fn setup_app(cx: &mut App) {
     bind_app_keys(cx);
     register_keybindings(cx);
-    cx.set_menus(build_menus());
+    cx.on_action(|_: &BringAllToFront, cx| super::window_menu::bring_all_to_front(cx));
+    cx.on_action(|action: &OpenRecentRepository, cx| {
+        let path = action.path.clone();
+        // Global listeners can run while their dispatching window is leased.
+        cx.defer(move |cx| super::tabs::open_recent_from_app(&path, cx));
+    });
+    #[cfg(target_os = "macos")]
+    {
+        cx.bind_keys([
+            KeyBinding::new("cmd-h", HideApp, None),
+            KeyBinding::new("cmd-alt-h", HideOtherApps, None),
+        ]);
+        cx.on_action(|_: &HideApp, cx| cx.hide());
+        cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
+        cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
+    }
+    publish_menus(cx);
+}
+
+pub(super) fn quit_app(cx: &mut App) {
+    #[cfg(feature = "gui-e2e")]
+    if super::e2e::capture_app_quit(cx) {
+        return;
+    }
+    cx.quit();
 }
 
 pub fn register_keybindings(cx: &mut App) {
@@ -1327,6 +1650,7 @@ pub fn register_keybindings(cx: &mut App) {
         "view.zoomReset" => ZoomReset,
         "view.fullScreen" => EnterFullScreen,
         "view.toggleSidebar" => ToggleSidebar,
+        "view.togglePrSwimlane" => TogglePrSwimlane,
         "view.toggleCommitDetails" => ToggleCommitDetails,
         "view.toggleDiffView" => ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode (Cmd-Shift-E on
@@ -1340,21 +1664,64 @@ pub fn register_keybindings(cx: &mut App) {
         "repo.fetch" => Fetch,
         "repo.pull" => Pull,
         "repo.push" => Push,
+        "window.previousTab" => PreviousTab,
+        "window.nextTab" => NextTab,
     );
-    // The `+` alias for zoom-in has no command id of its own; keep it fixed.
+    // Fixed aliases match native normalization without changing registry display.
     cx.bind_keys([
         KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary-{", PreviousTab, None),
+        KeyBinding::new("secondary-}", NextTab, None),
         KeyBinding::new("secondary-m", MinimizeWindow, None),
     ]);
 }
 
-/// Human-readable rendering of a registry keystroke string for the in-app
-/// (Linux/FreeBSD) menu dropdown. The stored notation uses gpui's `secondary`
-/// token (Cmd on macOS, Ctrl elsewhere); expand it and the other modifiers into
-/// a `Ctrl+Shift+O`-style label so the menu shows what the user must actually
-/// press. (The macOS native menu derives its accelerator from the keymap, so it
-/// does not go through here.)
+/// Platform rendering of an effective registry keystroke. macOS shares
+/// gpui-kit's native glyph ordering and named keys; in-app menus on other
+/// platforms retain their text notation. Native menus derive it from the keymap.
+#[cfg(target_os = "macos")]
 pub fn display_keystroke(ks: &str) -> String {
+    let mut formatted = String::with_capacity(ks.len());
+    for part in ks.split_whitespace() {
+        let Ok(stroke) = gpui::Keystroke::parse(part) else {
+            return ks.to_owned();
+        };
+        if !formatted.is_empty() {
+            formatted.push(' ');
+        }
+        formatted.push_str(&gpui_component::kbd::Kbd::format(&stroke));
+    }
+    if formatted.is_empty() {
+        ks.to_owned()
+    } else {
+        formatted
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn display_keystroke(ks: &str) -> String {
+    display_keystroke_text(ks)
+}
+
+// Keep the text projection testable on macOS without shipping unused code there.
+#[cfg(any(test, not(target_os = "macos")))]
+fn display_keystroke_text(ks: &str) -> String {
+    let mut formatted = String::with_capacity(ks.len());
+    for stroke in ks.split_whitespace() {
+        if !formatted.is_empty() {
+            formatted.push(' ');
+        }
+        append_text_keystroke(stroke, &mut formatted);
+    }
+    if formatted.is_empty() {
+        ks.to_owned()
+    } else {
+        formatted
+    }
+}
+
+#[cfg(any(test, not(target_os = "macos")))]
+fn append_text_keystroke(ks: &str, formatted: &mut String) {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.
     let (mods_str, key) = if let Some(m) = ks.strip_suffix("--") {
@@ -1365,42 +1732,32 @@ pub fn display_keystroke(ks: &str) -> String {
         ("", ks)
     };
 
-    let mut parts: Vec<String> = Vec::new();
+    let start = formatted.len();
     if !mods_str.is_empty() {
         for m in mods_str.split('-') {
-            parts.push(
-                match m {
-                    "secondary" => {
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Ctrl"
-                        }
-                    }
-                    "cmd" | "super" | "win" => {
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Super"
-                        }
-                    }
-                    "ctrl" => "Ctrl",
-                    "alt" => "Alt",
-                    "shift" => "Shift",
-                    "fn" => "Fn",
-                    other => other,
-                }
-                .to_string(),
-            );
+            if formatted.len() > start {
+                formatted.push('+');
+            }
+            formatted.push_str(match m {
+                "secondary" => "Ctrl",
+                "cmd" | "super" | "win" => "Super",
+                "ctrl" => "Ctrl",
+                "alt" => "Alt",
+                "shift" => "Shift",
+                "fn" => "Fn",
+                other => other,
+            });
         }
     }
+    if formatted.len() > start {
+        formatted.push('+');
+    }
     // Uppercase a single-character key (j → J); leave named keys (escape) alone.
-    parts.push(if key.chars().count() == 1 {
-        key.to_uppercase()
-    } else {
-        key.to_string()
-    });
-    parts.join("+")
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(key), None) => formatted.extend(key.to_uppercase()),
+        _ => formatted.push_str(key),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1431,13 +1788,18 @@ pub fn dump_menu_states(app: &KagiApp) {
 // Keyboard-shortcuts listing (for the Help → Keyboard Shortcuts modal).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Produce `(label, keystroke)` pairs for every command that has a keystroke,
-/// used by the Keyboard Shortcuts modal (auto-generated from the registry).
+/// Produce `(label, display keystroke)` pairs for every bound command,
+/// using the palette/menu formatter for the Keyboard Shortcuts modal.
 pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
     COMMANDS
         .iter()
         .filter_map(|c| {
-            effective_keystroke(c.id).map(|k| (SharedString::from(c.label), SharedString::from(k)))
+            effective_keystroke(c.id).map(|key| {
+                (
+                    super::command_palette::command_label(c.id, i18n::lang()).into(),
+                    SharedString::from(display_keystroke(&key)),
+                )
+            })
         })
         .collect()
 }
@@ -1466,15 +1828,18 @@ pub enum MenuOverlay {
     /// Branch picker list (checkout / delete).
     BranchPicker {
         mode: BranchPickerMode,
-        branches: Vec<String>,
+        branches: std::rc::Rc<[String]>,
+        rows: std::rc::Rc<super::branch_picker::PickerRows>,
     },
-    /// Read-only info panel (About / Keyboard Shortcuts), titled with body lines.
+    /// Read-only Keyboard Shortcuts panel, titled with body lines.
     Info {
         title: SharedString,
-        lines: Vec<SharedString>,
+        lines: std::rc::Rc<[SharedString]>,
+        scroll: gpui::ScrollHandle,
+        focus: gpui::FocusHandle,
     },
-    /// T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window
-    /// (Appearance + Language pages). Hosted as an overlay (no sub-window yet).
+    /// ADR-0080's portable Settings overlay. macOS uses ADR-0223's independent
+    /// native host instead (the E2E portable-host suite still exercises this).
     Settings,
     /// Issue #352: the command palette (fuzzy search over [`COMMANDS`]). The
     /// mutable palette state (search input + highlighted index) lives in
@@ -1482,8 +1847,15 @@ pub enum MenuOverlay {
     CommandPalette,
 }
 
-const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
+pub(super) const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
 const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
+
+/// The confirmation requested after a successful, admitted upstream fetch.
+#[derive(Clone, PartialEq, Eq)]
+pub enum PullTarget {
+    Current,
+    BranchFfOnly(String),
+}
 
 /// One fetch operation and the Pull confirmations attached to its frozen owner.
 ///
@@ -1495,7 +1867,13 @@ pub struct FetchFlight {
     /// Frozen before dispatch: an earlier visit's failure is recorded even
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
-    pub waiters: Vec<(crate::app::SessionId, u64)>,
+    pub waiters: Vec<(crate::app::SessionId, u64, PullTarget)>,
+    /// Live branch captured before dispatch; same-scope requests may join.
+    /// `None` retains the detached/no-upstream ordinary fetch fallback.
+    pub upstream_branch: Option<String>,
+    /// A later user modal superseded the waiting Pull intent, even if that
+    /// modal closed before the fetch finished. A new explicit Pull re-arms it.
+    pub pull_confirm_displaced: bool,
     /// Admission superseded the owner's read in flight (`app::admit`), which a
     /// no-op fetch would never replace (ADR-0127): the completion owes it (#851).
     pub superseded_read: bool,
@@ -1509,6 +1887,7 @@ pub struct FetchFlight {
 #[derive(Clone)]
 struct FetchFailure {
     message: String,
+    auth_remote: Option<String>,
     termination_unknown: bool,
     /// The local refs the attempt moved (#885). Observed, not assumed: a
     /// fetch writes wherever `remote.<name>.fetch` points, and a mirror-style
@@ -1526,6 +1905,39 @@ impl std::fmt::Display for FetchFailure {
 }
 
 impl FetchFailure {
+    fn auth_summary(&self) -> Option<String> {
+        self.auth_remote.as_deref().map(fetch_auth_summary)
+    }
+
+    fn record(
+        &mut self,
+        app: &mut KagiApp,
+        before: kagi_git::StateSummary,
+        repo_path: &std::path::Path,
+        cx: &mut Context<KagiApp>,
+    ) {
+        let entry = self.entry(before, repo_path);
+        app.record_op_impl(entry, cx, true, self.auth_summary());
+    }
+
+    fn entry(
+        &mut self,
+        before: kagi_git::StateSummary,
+        repo_path: &std::path::Path,
+    ) -> kagi_git::oplog::OpLogEntry {
+        let mut entry = kagi_git::oplog::OpLogEntry::new(
+            "fetch",
+            repo_path.display().to_string(),
+            before,
+            self.outcome(),
+        )
+        .with_ref_moves(self.ref_moves.take());
+        if self.auth_remote.is_some() {
+            entry.technical_detail = Some(self.message.clone());
+        }
+        entry
+    }
+
     fn outcome(&self) -> kagi_git::oplog::OpOutcome {
         if self.termination_unknown {
             kagi_git::oplog::OpOutcome::Unknown {
@@ -1537,10 +1949,21 @@ impl FetchFailure {
             }
         } else {
             kagi_git::oplog::OpOutcome::Failed {
-                error: i18n::op_failed(i18n::Op::Fetch, &self.message),
+                error: match self.auth_summary() {
+                    Some(summary) => summary,
+                    None => i18n::op::op_failed_contract(i18n::Op::Fetch, &self.message),
+                },
             }
         }
     }
+}
+
+pub(super) fn fetch_auth_summary(remote: &str) -> String {
+    Msg::FetchAuthenticationRequired.t().replacen(
+        "{}",
+        &kagi_domain::text_safety::sanitize_control_bytes(remote),
+        1,
+    )
 }
 
 impl KagiApp {
@@ -1655,14 +2078,19 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         klog!("menu: invoke {}", id);
+        #[cfg(target_os = "macos")]
+        if let Some(handler) = visibility_command_handler(id) {
+            handler(cx);
+            return;
+        }
         match id {
             // ── kagi ────────────────────────────────────────────────
-            "app.about" => self.open_about_overlay(),
-            // T-SETTINGS-001: open the OpenLogi-style Settings overlay.
-            "app.settings" => self.open_settings_overlay(window, cx),
+            "app.about" => self.open_about_modal(window, cx),
+            // Settings uses the platform's non-modal window or portable overlay.
+            "app.settings" => self.open_settings(window, cx),
             "app.quit" => {
-                if !self.hold_host_close(cx) {
-                    cx.quit();
+                if !self.hold_host_close(super::EditorPendingIntent::Quit, cx) {
+                    quit_app(cx);
                 }
             }
 
@@ -1671,13 +2099,18 @@ impl KagiApp {
             "file.newTab" => self.open_home_tab(window, cx),
             "file.openRepository" => self.pick_repository(window, cx),
             "file.closeTab" => {
-                if self.home.is_some() && self.home_in_front() {
+                if !self.tabs.is_empty() && self.home.is_some() && self.home_in_front() {
                     self.close_home_tab(cx);
                 } else if !self.tabs.is_empty() {
                     self.close_tab(self.active_tab, cx);
+                } else if !self.hold_host_close(
+                    super::EditorPendingIntent::CloseWindow(window.window_handle()),
+                    cx,
+                ) {
+                    window.remove_window();
                 }
             }
-            "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
+            "file.cloneRepository" => self.open_clone_picker(window, cx),
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
             "repo.createSnapshot" => self.create_snapshot_now(cx),
             "file.connectRemote" => self.open_remote_browse(cx),
@@ -1723,15 +2156,22 @@ impl KagiApp {
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
-                self.sidebar.visible = !self.sidebar.visible;
+                if self.pr_mode_visible() && self.pr_mode().is_some_and(|m| m.active.is_some()) {
+                    self.toggle_pr_companion(super::pr_layout::Companion::Navigator, window);
+                } else {
+                    self.sidebar.visible = !self.sidebar.visible;
+                }
                 klog!("menu: sidebar_visible={}", self.sidebar.visible);
+            }
+            "view.togglePrSwimlane" => {
+                self.toggle_pr_companion(super::pr_layout::Companion::Swimlane, window);
             }
             "view.toggleTerminal" => {
                 self.toggle_bottom_panel(window, cx);
                 klog!("menu: bottom_panel_open={}", self.bottom_panel_open);
                 if self.bottom_panel_open {
                     self.bottom_tab = BottomTab::Terminal;
-                    self.ensure_terminal(window, cx);
+                    self.activate_terminal(window, cx);
                 }
             }
             "view.toggleCommitDetails" => {
@@ -1767,9 +2207,9 @@ impl KagiApp {
                     self.open_create_branch_modal(id, cx);
                 }
             }
-            "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout),
-            "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete),
-            "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename),
+            "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout, window, cx),
+            "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete, window, cx),
+            "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename, window, cx),
 
             // ── Commit (selected commit → dispatch_commit_action) ────
             "commit.copyHash"
@@ -1784,14 +2224,20 @@ impl KagiApp {
             // ── Window ──────────────────────────────────────────────
             "window.minimize" => window.minimize_window(),
             "window.zoom" => window.zoom_window(),
+            "window.previousTab" => self.show_adjacent_tab(false, window, cx),
+            "window.nextTab" => self.show_adjacent_tab(true, window, cx),
+            "window.bringAllToFront" => super::window_menu::bring_all_to_front(cx),
             "window.close" => {
-                if !self.hold_host_close(cx) {
+                if !self.hold_host_close(
+                    super::EditorPendingIntent::CloseWindow(window.window_handle()),
+                    cx,
+                ) {
                     window.remove_window();
                 }
             }
 
             // ── Help ────────────────────────────────────────────────
-            "help.shortcuts" => self.open_shortcuts_overlay(),
+            "help.shortcuts" => self.open_shortcuts_overlay(window, cx),
             "help.documentation" => cx.open_url(GITHUB_URL),
             "help.reportIssue" => cx.open_url(ISSUES_URL),
 
@@ -1817,14 +2263,36 @@ impl KagiApp {
 
     /// Rebuild terminal config and push it into every retained session.
     pub(crate) fn apply_terminal_config(&mut self, cx: &mut Context<Self>) {
-        let new_config = super::terminal::build_terminal_config();
+        let config = super::terminal::build_terminal_config();
+        self.apply_terminal_config_local(&config, cx);
+        let owner = cx.entity_id();
+        cx.defer(move |cx| {
+            for handle in cx.windows() {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let Some(app) =
+                        super::repository_window(window, cx).filter(|app| app.entity_id() != owner)
+                    else {
+                        return;
+                    };
+                    app.update(cx, |app, cx| app.apply_terminal_config_local(&config, cx));
+                });
+            }
+        });
+        cx.refresh_windows();
+    }
+
+    fn apply_terminal_config_local(
+        &mut self,
+        config: &gpui_terminal::TerminalConfig,
+        cx: &mut Context<Self>,
+    ) {
         for session in self
             .ui
             .values()
             .filter_map(|ui| ui.terminal_session.as_ref())
         {
             if let Some(view) = session.view.clone() {
-                let cfg = new_config.clone();
+                let cfg = config.clone();
                 view.update(cx, |v, vcx| v.update_config(cfg, vcx));
             }
         }
@@ -1835,9 +2303,7 @@ impl KagiApp {
     /// 1. Update + persist the active theme (`theme::set_active`).
     /// 2. Live-apply the new palette to any running terminal sessions via
     ///    `TerminalView::update_config`.
-    /// 3. Rebuild the menu bar so the "✓ " active marker moves (the label
-    ///    changes, so `cx.set_menus` must be re-called — unlike the disabled
-    ///    mechanism, which is purely dispatch-tree based).
+    /// 3. Rebuild the menu bar to publish the active theme's checked state.
     /// 4. `cx.notify()` so every `theme()`-reading render path repaints.
     pub fn set_theme(&mut self, slug: &str, cx: &mut Context<Self>) {
         if !theme::set_active(slug) {
@@ -1855,22 +2321,22 @@ impl KagiApp {
         self.apply_terminal_config(cx);
 
         // Rebuild the menu bar (active marker moved).
-        cx.set_menus(build_menus());
+        publish_menus(cx);
+        cx.refresh_windows();
         cx.notify();
     }
 
     /// Switch the active UI language (W22-I18N / ADR-0048).
     ///
     /// 1. Update + persist the active language (`i18n::set_lang`).
-    /// 2. Rebuild the menu bar so the "✓ " active marker moves (the label
-    ///    changes, so `cx.set_menus` must be re-called — same as the theme
-    ///    submenu).
+    /// 2. Rebuild the menu bar to publish the active language's checked state.
     /// 3. Notify the persistent Settings picker as well as this view; its
     ///    `SelectItem::title` resolves localized names at render time.
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
         klog!("lang: {}", l.slug());
-        cx.set_menus(build_menus());
+        publish_menus(cx);
+        cx.refresh_windows();
         if let Some(select) = self.theme_select.as_ref() {
             select.update(cx, |_, cx| cx.notify());
         }
@@ -1911,6 +2377,9 @@ impl KagiApp {
     pub(super) fn toggle_bottom_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_settings_for_command(window, cx);
         self.bottom_panel_open = !self.bottom_panel_open;
+        if !self.bottom_panel_open {
+            self.yield_terminal_focus(window, cx);
+        }
         cx.notify();
     }
 
@@ -1920,7 +2389,7 @@ impl KagiApp {
         self.close_settings_for_command(window, cx);
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
-        self.ensure_terminal(window, cx);
+        self.activate_terminal(window, cx);
     }
 
     /// Open the repository working tree in Finder via `open <path>` (no shell).
@@ -1950,9 +2419,9 @@ impl KagiApp {
 
     /// Background fetch of the upstream remote, then reload on success. Runs the
     /// network `git fetch` off the UI thread (`background_spawn`) and applies the
-    /// result on the main thread. `silent` suppresses the success/failure toast +
-    /// footer (used by auto-fetch) — the commit graph still updates on success via
-    /// `reload()` (and the FS watcher would catch the ref change anyway). Never
+    /// result on the main thread. `silent` suppresses ordinary toast + footer
+    /// feedback (auto-fetch), but a current Pull waiter still receives failure.
+    /// The graph updates on success via `reload()` or the ref watcher. Never
     /// stacks: a no-op while another fetch is in flight or an operation is busy.
     pub fn fetch_async(&mut self, silent: bool, cx: &mut Context<Self>) {
         let _ = self.fetch_async_for(silent, None, cx);
@@ -1964,27 +2433,54 @@ impl KagiApp {
         PANIC_NEXT_FETCH.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// [`Self::fetch_async`], plus the tab whose dirty Pull waits for this fetch
-    /// before its confirmation can be planned (#625). The launch request and
+    /// [`Self::fetch_async`], plus the tab whose Pull waits for this fetch
+    /// before confirming or claiming it is up to date. The launch request and
     /// later same-owner requests all live in the flight's waiter list.
     pub fn fetch_async_for(
         &mut self,
         silent: bool,
-        pull_confirm: Option<crate::app::SessionId>,
+        pull_confirm: Option<PullTarget>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.refresh_write_busy();
+        let requested_session = self.active_session();
+        let live_current_branch = || {
+            self.ui()
+                .repo_session
+                .as_ref()
+                .and_then(|session| session.backend().current_branch_name())
+        };
+        let upstream_branch = match pull_confirm.as_ref() {
+            Some(PullTarget::BranchFfOnly(branch)) => Some(branch.clone()),
+            Some(PullTarget::Current) | None => live_current_branch().filter(|branch| {
+                self.ui()
+                    .repo_session
+                    .as_ref()
+                    .is_some_and(|session| session.backend().pull_branch_ref_state(branch).is_ok())
+            }),
+        };
+        let refresh_current_ruleset =
+            !matches!(pull_confirm.as_ref(), Some(PullTarget::BranchFfOnly(_)));
         if let Some(flight) = self.fetch_in_flight.as_mut() {
-            // Only this incarnation can join; its request retains the visit
-            // even if the user leaves and returns before completion.
-            if let Some(session) = pull_confirm.filter(|session| *session == flight.owner) {
-                if let Some(visit) = self.app_sessions.visit(session) {
-                    let waiter = (session, visit);
-                    if !flight.waiters.contains(&waiter) {
-                        flight.waiters.push(waiter);
+            // A same-owner visit can only join the scope it actually requested.
+            if flight.upstream_branch.as_deref() == upstream_branch.as_deref() {
+                if let (Some(target), Some(session)) = (pull_confirm, requested_session) {
+                    if session == flight.owner {
+                        if let Some(visit) = self.app_sessions.visit(session) {
+                            if let Some(waiter) =
+                                flight.waiters.iter_mut().find(|(owner, incarnation, _)| {
+                                    *owner == session && *incarnation == visit
+                                })
+                            {
+                                waiter.2 = target;
+                            } else {
+                                flight.waiters.push((session, visit, target));
+                            }
+                            flight.pull_confirm_displaced = false;
+                            klog!("pull-confirm: waiting on the fetch already in flight");
+                            return true;
+                        }
                     }
-                    klog!("pull-confirm: waiting on the fetch already in flight");
-                    return true;
                 }
             }
             return false;
@@ -2027,10 +2523,12 @@ impl KagiApp {
             owner,
             visit,
             before,
+            upstream_branch,
             waiters: pull_confirm
-                .map(|session| (session, visit))
+                .map(|target| (owner, visit, target))
                 .into_iter()
                 .collect(),
+            pull_confirm_displaced: false,
             superseded_read,
         });
         let repo_path_guard = repo_path.clone();
@@ -2042,6 +2540,10 @@ impl KagiApp {
         let supervision = abandonment.supervision();
         #[cfg(feature = "gui-e2e")]
         let hold = super::busy::take_fetch_hold();
+        let upstream_branch = self
+            .fetch_in_flight
+            .as_ref()
+            .and_then(|flight| flight.upstream_branch.clone());
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
             #[cfg(feature = "gui-e2e")]
@@ -2060,7 +2562,21 @@ impl KagiApp {
                 // Nothing ran: nothing moved.
                 Err(error) => (Err(error), Some(Vec::new()), true),
                 Ok(backend) => {
-                    let (result, moves) = backend.observe_ref_moves(|b| b.fetch_remote());
+                    let (result, moves) =
+                        backend.observe_ref_moves(|b| match upstream_branch.as_deref() {
+                            Some(branch) => {
+                                let result = b.fetch_branch_upstream(branch);
+                                // Preserve ordinary fetch's existing successful
+                                // ruleset refresh when using the exact config route.
+                                if result.is_ok() && refresh_current_ruleset {
+                                    if let Some(current) = b.current_branch_name() {
+                                        let _ = b.refresh_ruleset(&current);
+                                    }
+                                }
+                                result
+                            }
+                            None => b.fetch_remote(),
+                        });
                     (result, moves, false)
                 }
             };
@@ -2070,21 +2586,31 @@ impl KagiApp {
             // as `Unknown` and never as a retryable `Failed` (ADR-0177). The
             // previous `format!` flattened both into a string here, which is
             // why the distinction could not be made at the call site (#646).
-            Some(result.map_err(|error| FetchFailure {
-                termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
-                ref_moves,
-                message: if open_failed {
-                    format!("repo open error: {error}")
-                } else {
-                    format!("{error}")
-                },
-            }))
+            Some(match result {
+                Ok(outcome) => Ok((outcome, ref_moves)),
+                Err(error) => Err(FetchFailure {
+                    auth_remote: match &error {
+                        kagi_git::GitError::FetchAuthentication { remote, .. } => {
+                            Some(remote.clone())
+                        }
+                        _ => None,
+                    },
+                    termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
+                    ref_moves,
+                    message: if open_failed {
+                        format!("repo open error: {error}")
+                    } else {
+                        format!("{error}")
+                    },
+                }),
+            })
         });
         cx.spawn(async move |this, acx| {
             let mut result = task.fallible().await.flatten().unwrap_or_else(|| {
                 let error = abandonment.into_unknown();
                 Err(FetchFailure {
                     message: error.to_string(),
+                    auth_remote: None,
                     termination_unknown: true,
                     ref_moves: None,
                 })
@@ -2095,46 +2621,79 @@ impl KagiApp {
                 };
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
+                if let Ok((outcome, ref_moves)) = &mut result {
+                    if outcome.changed {
+                        // Fetch changes tracking refs even when its owner departs.
+                        // Persist once, without adding a second success toast or
+                        // presenting a quiet auto-fetch on the active tab.
+                        app.record_operation_completion(
+                            "fetch",
+                            flight.before.clone(),
+                            kagi_git::oplog::OpOutcome::Success {
+                                after: flight.before.clone(),
+                            },
+                            ref_moves.take(),
+                            &repo_path_guard,
+                            false,
+                            cx,
+                        );
+                    }
+                }
                 // A visit is a stay in the same tab, not merely its session.
                 // The flight owns one receipt; only waiters on the current
                 // visit may receive a result from an earlier visit's flight.
+                let current_waiter = flight.waiters.iter().any(|(session, visit, _)| {
+                    app.active_session() == Some(*session)
+                        && app.app_sessions.visit(*session) == Some(*visit)
+                });
                 if app.active_session() != Some(flight.owner)
                     || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
                         != Some(flight.visit)
                 {
-                    let current_waiter = flight.waiters.iter().any(|(session, visit)| {
-                        app.active_session() == Some(*session)
-                            && app.app_sessions.visit(*session) == Some(*visit)
-                    });
                     // The auto-fetch contract lines are emitted whatever the
                     // visit: only the presentation is withheld (#992 review).
                     if silent {
                         match &result {
-                            Ok(outcome) => klog!("auto-fetch: ok remote={}", outcome.remote),
+                            Ok((outcome, _)) => klog!("auto-fetch: ok remote={}", outcome.remote),
                             Err(e) => klog!("auto-fetch: failed (silent): {e}"),
                         }
                     }
                     match &mut result {
                         Err(failure) => {
-                            app.record_ref_fetch_failure(
-                                "fetch",
-                                Some(flight.owner),
-                                Some(flight.visit),
-                                flight.before,
-                                failure.outcome(),
-                                failure.ref_moves.take(),
-                                &repo_path_guard,
-                                cx,
-                            );
                             if current_waiter {
-                                let preview = format!("Fetch failed: {}", failure.message);
-                                app.status_footer =
-                                    FooterStatus::Failed(SharedString::from(preview.clone()));
-                                app.push_toast(ToastKind::Error, preview, cx);
-                                cx.notify();
+                                failure.record(app, flight.before, &repo_path_guard, cx);
+                            } else {
+                                app.record_ref_fetch_failure(
+                                    "fetch",
+                                    Some(flight.owner),
+                                    Some(flight.visit),
+                                    flight.before,
+                                    failure.outcome(),
+                                    failure.ref_moves.take(),
+                                    failure
+                                        .auth_remote
+                                        .as_ref()
+                                        .map(|_| failure.message.clone()),
+                                    &repo_path_guard,
+                                    cx,
+                                );
                             }
                         }
-                        Ok(_) if current_waiter => app.deliver_pull_confirm(flight.owner, cx),
+                        Ok((outcome, _)) if current_waiter => {
+                            for (session, visit, target) in flight.waiters {
+                                if app.active_session() == Some(session)
+                                    && app.app_sessions.visit(session) == Some(visit)
+                                {
+                                    app.deliver_pull_confirm(
+                                        session,
+                                        flight.pull_confirm_displaced,
+                                        target,
+                                        &outcome.remote,
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
                         Ok(_) => {}
                     }
                     // A delivered Pull confirmation (or failure preview) must
@@ -2142,12 +2701,12 @@ impl KagiApp {
                     cx.notify();
                     return;
                 }
-                let fetch_succeeded = result.is_ok();
-                if flight.superseded_read && !result.as_ref().is_ok_and(|o| o.changed) {
+                let mut fetched_remote = None;
+                if flight.superseded_read && !result.as_ref().is_ok_and(|(o, _)| o.changed) {
                     app.reload(cx);
                 }
                 match result {
-                    Ok(outcome) => {
+                    Ok((outcome, _)) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the
                         // snapshot-derived fetch timestamp would go stale and the
                         // age indicator would falsely warn — stamp it in place.
@@ -2173,37 +2732,49 @@ impl KagiApp {
                                 cx,
                             );
                         }
+                        fetched_remote = Some(outcome.remote);
                     }
                     Err(mut e) => {
                         // Record even a silent auto-fetch failure. A stopped
                         // child with an uncertain effect is Unknown, not Failed.
-                        let outcome = e.outcome();
-                        app.record_op_persist_moves(
-                            "fetch",
-                            flight.before,
-                            outcome,
-                            e.ref_moves.take(),
-                            &repo_path_guard,
-                            cx,
-                        );
+                        if !silent || current_waiter {
+                            // The receipt presenter owns the single failure
+                            // toast and footer, including joined Pull waiters.
+                            e.record(app, flight.before, &repo_path_guard, cx);
+                        } else {
+                            // No presentation owner: preserve the receipt and
+                            // recording-failure notice without changing the UI.
+                            app.record_ref_fetch_failure(
+                                "fetch",
+                                None,
+                                None,
+                                flight.before,
+                                e.outcome(),
+                                e.ref_moves.take(),
+                                e.auth_remote.as_ref().map(|_| e.message.clone()),
+                                &repo_path_guard,
+                                cx,
+                            );
+                        }
                         if silent {
                             klog!("auto-fetch: failed (silent): {e}");
-                        } else {
-                            app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                                "Fetch failed: {e}"
-                            )));
-                            app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"), cx);
                         }
                     }
                 }
                 // Failed fetches already own one durable receipt. A waiter
                 // only offers a confirmation after a successful fetch.
-                if fetch_succeeded {
-                    for (session, visit) in flight.waiters {
+                if let Some(fetched_remote) = fetched_remote {
+                    for (session, visit, target) in flight.waiters {
                         if app.active_session() == Some(session)
                             && app.app_sessions.visit(session) == Some(visit)
                         {
-                            app.deliver_pull_confirm(session, cx);
+                            app.deliver_pull_confirm(
+                                session,
+                                flight.pull_confirm_displaced,
+                                target,
+                                &fetched_remote,
+                                cx,
+                            );
                         }
                     }
                 }
@@ -2252,8 +2823,8 @@ impl KagiApp {
     }
 
     /// Open the branch picker overlay listing local branches.
-    fn open_branch_picker(&mut self, mode: BranchPickerMode) {
-        let branches: Vec<String> = self
+    fn open_branch_picker(&mut self, mode: BranchPickerMode, window: &Window, cx: &Context<Self>) {
+        let branches: std::rc::Rc<[String]> = self
             .view()
             .branches
             .iter()
@@ -2265,25 +2836,19 @@ impl KagiApp {
             branches.len()
         );
         self.leave_settings_for_overlay();
-        self.menu_overlay = Some(MenuOverlay::BranchPicker { mode, branches });
-    }
-
-    /// Build the About info overlay.
-    fn open_about_overlay(&mut self) {
-        self.leave_settings_for_overlay();
-        self.menu_overlay = Some(MenuOverlay::Info {
-            title: SharedString::from("About kagi"),
-            lines: vec![
-                SharedString::from("kagi — a safe Git GUI client"),
-                SharedString::from(format!("version {}", env!("CARGO_PKG_VERSION"))),
-                SharedString::from(GITHUB_URL),
-            ],
+        self.capture_overlay_return_focus(window, cx);
+        let rows = std::rc::Rc::new(super::branch_picker::PickerRows::new(branches.len(), cx));
+        self.menu_overlay = Some(MenuOverlay::BranchPicker {
+            mode,
+            branches,
+            rows,
         });
     }
 
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
-    fn open_shortcuts_overlay(&mut self) {
+    fn open_shortcuts_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.leave_settings_for_overlay();
+        self.capture_overlay_return_focus(window, cx);
         let mut lines: Vec<SharedString> = shortcut_listing()
             .into_iter()
             .map(|(label, key)| SharedString::from(format!("{key}    {label}")))
@@ -2291,12 +2856,14 @@ impl KagiApp {
         // Tell the user these are re-mappable, and how (settings.json is the
         // one config surface kagi has; no in-app editor for this yet).
         lines.push(SharedString::from(""));
-        lines.push(SharedString::from(
-            "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
-        ));
+        lines.push(SharedString::from(Msg::ShortcutsRemapHelp.t()));
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
         self.menu_overlay = Some(MenuOverlay::Info {
-            title: SharedString::from("Keyboard Shortcuts"),
-            lines,
+            title: super::command_palette::command_label("help.shortcuts", i18n::lang()).into(),
+            lines: lines.into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus,
         });
     }
 
@@ -2307,10 +2874,17 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         match self.menu_overlay.clone()? {
-            MenuOverlay::BranchPicker { mode, branches } => {
-                Some(self.render_branch_picker(mode, branches, cx))
-            }
-            MenuOverlay::Info { title, lines } => Some(self.render_info_overlay(title, lines, cx)),
+            MenuOverlay::BranchPicker {
+                mode,
+                branches,
+                rows,
+            } => Some(self.render_branch_picker(mode, branches, rows, window, cx)),
+            MenuOverlay::Info {
+                title,
+                lines,
+                scroll,
+                focus,
+            } => Some(self.render_info_overlay(title, lines, (&scroll, &focus), window, cx)),
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
@@ -2320,6 +2894,10 @@ impl KagiApp {
                 self.settings_focus.clone(),
                 self.smart_commit.clone(),
                 self.analyze_ignore_input.clone(),
+                &self.settings_controls,
+                self.analyze_ignore_dirty(cx),
+                self.analyze_reset_alert().cloned(),
+                self.settings_scroll.clone(),
                 window,
                 cx,
             )),
@@ -2328,129 +2906,108 @@ impl KagiApp {
         }
     }
 
-    fn render_branch_picker(
-        &self,
-        mode: BranchPickerMode,
-        branches: Vec<String>,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let title = match mode {
-            BranchPickerMode::Checkout => "Checkout Branch",
-            BranchPickerMode::Delete => "Delete Branch",
-            BranchPickerMode::Rename => "Rename Branch",
-        };
-
-        let mut panel = div()
-            // Without occlude, a mouse-down on a branch row propagates through to
-            // the full-screen dismiss scrim beneath (wrap_overlay), which unmounts
-            // the overlay before the row's on_click (down+up on the same element)
-            // can complete — the click silently does nothing. Same fix as the
-            // context/branch/stash menus (see context_menu.rs).
-            .occlude()
-            .w(theme::scaled_px(360.0))
-            .max_h(theme::scaled_px(420.0))
-            .overflow_hidden()
-            .rounded(theme::scaled_px(8.0))
-            .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
-            .shadow_lg()
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(theme().selected))
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(title)),
-            );
-
-        if branches.is_empty() {
-            panel = panel.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::NoLocalBranches.t())),
-            );
-        }
-
-        for (i, name) in branches.into_iter().enumerate() {
-            let name_for_click = name.clone();
-            let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                this.menu_overlay = None;
-                match mode {
-                    BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone(), cx),
-                    BranchPickerMode::Delete => {
-                        this.open_delete_branch_modal(name_for_click.clone(), cx)
-                    }
-                    BranchPickerMode::Rename => {
-                        this.open_rename_branch_modal(name_for_click.clone())
-                    }
-                }
-                cx.notify();
-            });
-            panel = panel.child(
-                div()
-                    .id(("branch-pick", i))
-                    .px_3()
-                    .py(theme::scaled_px(6.0))
-                    .text_sm()
-                    .text_color(rgb(theme().text_sub))
-                    .cursor_pointer()
-                    .hover(|s| {
-                        s.bg(rgb(theme().selected))
-                            .text_color(rgb(theme().text_main))
-                    })
-                    .on_click(click)
-                    .child(SharedString::from(name)),
-            );
-        }
-
-        self.wrap_overlay(panel.into_any_element(), cx)
-    }
-
     fn render_info_overlay(
         &self,
         title: SharedString,
-        lines: Vec<SharedString>,
+        lines: std::rc::Rc<[SharedString]>,
+        navigation: (&gpui::ScrollHandle, &gpui::FocusHandle),
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let mut panel = div()
-            .w(theme::scaled_px(420.0))
-            .max_h(theme::scaled_px(480.0))
-            .overflow_hidden()
-            .rounded(theme::scaled_px(8.0))
-            .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
-            .shadow_lg()
-            .child(
+        let (scroll, focus) = navigation;
+        let gutter = theme::scaled_px(16.);
+        let viewport = window.viewport_size();
+        let mut body = super::operations::oplog_restore_inspection::read_only_scroll_body(
+            scroll,
+            focus,
+            title.clone(),
+        )
+        .gap_0()
+        // Keep the last line clear of the body's fixed focus-border band.
+        .pb(gpui::px(super::keyboard_nav::RING))
+        .child(super::e2e::measure_inside("shortcuts-body"));
+        let last = lines.len().saturating_sub(1);
+        for (index, line) in lines.iter().enumerate() {
+            body = body.child(
                 div()
+                    .relative()
+                    .flex_shrink_0()
+                    .when(index == last, |row| {
+                        row.child(super::e2e::measure_inside("shortcuts-tail"))
+                    })
                     .px_4()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(theme().selected))
-                    .text_color(rgb(theme().color_branch))
-                    .child(title),
-            );
-
-        for line in lines {
-            panel = panel.child(
-                div()
-                    .px_4()
-                    .py(theme::scaled_px(3.0))
+                    .py(theme::scaled_px(3.))
                     .text_sm()
                     .text_color(rgb(theme().text_sub))
-                    .child(line),
+                    .child(line.clone()),
             );
         }
+        let panel = div()
+            .relative()
+            .child(super::e2e::measure_inside("shortcuts-panel"))
+            .w(theme::scaled_px(420.).min(viewport.width - gutter * 2.))
+            .h(theme::scaled_px(480.).min(viewport.height - gutter * 2.))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .rounded(theme::scaled_px(8.))
+            .border_1()
+            .border_color(rgb(theme().elevated_border(theme().selected)))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
+            .shadow_lg()
+            .child(self.render_info_header(title, cx))
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "shortcuts-scrollbar",
+                scroll,
+                body,
+                cx,
+            ));
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(self.wrap_overlay(panel.into_any_element(), cx))
+            .into_any_element()
+    }
 
-        self.wrap_overlay(panel.into_any_element(), cx)
+    fn render_info_header(&self, title: SharedString, cx: &mut Context<Self>) -> gpui::Div {
+        use gpui_component::button::{Button, ButtonVariants as _};
+        use gpui_component::Sizable as _;
+        div()
+            .relative()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_between()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(rgb(theme().selected))
+            .text_color(rgb(theme().color_branch))
+            .child(super::e2e::measure_inside("shortcuts-header"))
+            .child(div().min_w_0().child(title))
+            .child(super::e2e::measure_control(
+                "shortcuts-dismiss",
+                Button::new("shortcuts-dismiss")
+                    .label(Msg::AppNoticeDismiss.t())
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.menu_overlay = None;
+                        cx.notify();
+                    })),
+            ))
     }
 
     /// Centre an overlay panel over a dim, click-to-dismiss backdrop.
-    fn wrap_overlay(&self, panel: gpui::AnyElement, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn wrap_overlay(
+        &self,
+        panel: gpui::AnyElement,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
             this.menu_overlay = None;
             cx.stop_propagation();
@@ -2521,6 +3078,76 @@ mod tests {
 #[cfg(test)]
 mod keybinding_tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_share_native_glyph_order_and_named_keys() {
+        assert_eq!(display_keystroke("secondary-shift-o"), "⇧⌘O");
+        assert_eq!(display_keystroke("ctrl-alt-shift-secondary-k"), "⌃⌥⇧⌘K");
+        for key in ["enter", "escape", "backspace", "delete", "space", "up", "-"] {
+            let binding = format!("secondary-{key}");
+            let stroke = gpui::Keystroke::parse(&binding).unwrap();
+            assert_eq!(
+                display_keystroke(&binding),
+                gpui_component::kbd::Kbd::format(&stroke)
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_format_each_chord_stroke() {
+        assert_eq!(display_keystroke("secondary-k secondary-s"), "⌘K ⌘S");
+        assert_eq!(
+            display_keystroke("secondary-k   ctrl-alt-shift-secondary-s"),
+            "⌘K ⌃⌥⇧⌘S"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_preserve_unformattable_bindings_without_panicking() {
+        for binding in ["not-a-keystroke", "secondary-k bogus-modifier-x", "", "  "] {
+            assert_eq!(display_keystroke(binding), binding);
+        }
+    }
+
+    #[test]
+    fn display_keystrokes_retain_text_notation() {
+        assert_eq!(display_keystroke_text("secondary-shift-o"), "Ctrl+Shift+O");
+        assert_eq!(
+            display_keystroke_text("ctrl-alt-shift-k"),
+            "Ctrl+Alt+Shift+K"
+        );
+        assert_eq!(display_keystroke_text("secondary--"), "Ctrl+-");
+    }
+
+    #[test]
+    fn display_keystrokes_text_formats_each_chord_stroke() {
+        assert_eq!(
+            display_keystroke_text("secondary-k secondary-s"),
+            "Ctrl+K Ctrl+S"
+        );
+        assert_eq!(
+            display_keystroke_text("secondary-k   ctrl-alt-shift-secondary-s"),
+            "Ctrl+K Ctrl+Alt+Shift+Ctrl+S"
+        );
+        assert_eq!(
+            display_keystroke_text("secondary-- secondary-escape"),
+            "Ctrl+- Ctrl+escape"
+        );
+        assert_eq!(display_keystroke_text(""), "");
+        assert_eq!(display_keystroke_text("  "), "  ");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn display_keystrokes_route_chords_to_text_notation() {
+        assert_eq!(
+            display_keystroke("secondary-k secondary-s"),
+            "Ctrl+K Ctrl+S"
+        );
+    }
 
     /// Every default keystroke in the registry must be unique — two commands
     /// on one key would make the later binding silently win.
@@ -2614,5 +3241,108 @@ mod theme_menu_order_tests {
         registered.sort();
         assert_eq!(slugs, registered);
         assert_eq!(entries.iter().filter(|e| e.active).count(), 1);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod standard_app_menu_tests {
+    use super::*;
+
+    #[test]
+    fn standard_app_menu_order() {
+        let menus = menus_for_state(super::super::window_menu::ViewMenuState::default());
+        let items = &menus[0].items;
+        let labels: Vec<&str> = items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Action { name, .. } => name.as_ref(),
+                MenuItem::SystemMenu(menu) => menu.name.as_ref(),
+                MenuItem::Separator => "---",
+                MenuItem::Submenu(menu) => menu.name.as_ref(),
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                Msg::AboutTitle.t(),
+                "---",
+                "Settings…",
+                "---",
+                "Services",
+                "---",
+                "Hide Kagi",
+                "Hide Others",
+                "Show All",
+                "---",
+                "Quit kagi",
+            ]
+        );
+        assert!(matches!(&items[4], MenuItem::SystemMenu(menu)
+            if menu.menu_type == gpui::SystemMenuType::Services));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod standard_app_action_tests {
+    use super::*;
+    use gpui::Action;
+
+    #[test]
+    fn registry_visibility_commands_have_platform_handlers_and_localized_labels() {
+        for (id, handler, en, ja) in [
+            ("app.hide", App::hide as fn(&App), "Hide Kagi", "Kagiを隠す"),
+            (
+                "app.hideOthers",
+                App::hide_other_apps as fn(&App),
+                "Hide Others",
+                "ほかを隠す",
+            ),
+            (
+                "app.showAll",
+                App::unhide_other_apps as fn(&App),
+                "Show All",
+                "すべてを表示",
+            ),
+        ] {
+            assert!(std::ptr::fn_addr_eq(
+                visibility_command_handler(id).unwrap(),
+                handler
+            ));
+            assert_eq!(
+                super::super::command_palette::command_label(id, Lang::En),
+                en
+            );
+            assert_eq!(
+                super::super::command_palette::command_label(id, Lang::Ja),
+                ja
+            );
+        }
+        assert!(visibility_command_handler("app.quit").is_none());
+    }
+
+    #[test]
+    fn visibility_actions_and_standard_keystrokes() {
+        assert_eq!(command("app.hide").unwrap().keystroke, Some("cmd-h"));
+        assert_eq!(
+            command("app.hideOthers").unwrap().keystroke,
+            Some("cmd-alt-h")
+        );
+        assert_eq!(command("app.showAll").unwrap().keystroke, None);
+        for (id, expected) in [
+            ("app.hide", HideApp.name()),
+            ("app.hideOthers", HideOtherApps.name()),
+            ("app.showAll", ShowAllApps.name()),
+        ] {
+            match action_menu_item(id, &super::super::window_menu::ViewMenuState::default()) {
+                MenuItem::Action {
+                    action, os_action, ..
+                } => {
+                    assert_eq!(action.name(), expected);
+                    // This GPUI revision has no visibility OsAction variants.
+                    assert!(os_action.is_none());
+                }
+                _ => panic!("visibility command must be an action"),
+            }
+        }
     }
 }

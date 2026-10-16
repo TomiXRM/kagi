@@ -154,6 +154,72 @@ fn lcs_flags(ot: &[Token<'_>], nt: &[Token<'_>]) -> (Vec<bool>, Vec<bool>) {
     (old_common, new_common)
 }
 
+/// Bound line-attribution matching independently of input size.
+const MAX_LINE_DIFF_CELLS: usize = 1_000_000;
+
+fn comparable_line(line: &str) -> &str {
+    let Some(line) = line.strip_suffix('\n') else {
+        return line;
+    };
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+/// Match unchanged lines using the same linear-space diff as word highlighting.
+/// Indices are zero-based; inserted/replaced lines have no original index.
+pub(crate) fn unchanged_line_map(old: &str, new: &str) -> Vec<Option<usize>> {
+    let old: Vec<_> = old.split_inclusive('\n').map(comparable_line).collect();
+    let new_lines: Vec<_> = new.split_inclusive('\n').map(comparable_line).collect();
+    let mut map = vec![None; new_lines.len()];
+    // InputState has an editable empty row after a final newline, not a HEAD line.
+    if new.is_empty() || new.ends_with('\n') {
+        map.push(None);
+    }
+    // Ordinary typing must not run quadratic DP over an unchanged whole file.
+    let prefix = old
+        .iter()
+        .zip(&new_lines)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new_lines[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    for (index, entry) in map.iter_mut().take(prefix).enumerate() {
+        *entry = Some(index);
+    }
+    for offset in 0..suffix {
+        map[new_lines.len() - 1 - offset] = Some(old.len() - 1 - offset);
+    }
+    let a = &old[prefix..old.len() - suffix];
+    let b = &new_lines[prefix..new_lines.len() - suffix];
+    // Beyond the work bound, do not invent attribution for the edited region.
+    // Exact unchanged prefix/suffix rows above remain attributed.
+    if a.len().saturating_mul(b.len()) > MAX_LINE_DIFF_CELLS {
+        return map;
+    }
+    let mut ac = vec![false; a.len()];
+    let mut bc = vec![false; b.len()];
+    if b.len() <= a.len() {
+        hirschberg(a, b, 0, 0, &mut ac, &mut bc);
+    } else {
+        hirschberg(b, a, 0, 0, &mut bc, &mut ac);
+    }
+    let originals = ac
+        .iter()
+        .enumerate()
+        .filter_map(|(i, same)| same.then_some(i + prefix));
+    let retained = bc
+        .iter()
+        .enumerate()
+        .filter_map(|(i, same)| same.then_some(i + prefix));
+    for (original, current) in originals.zip(retained) {
+        map[current] = Some(original);
+    }
+    map
+}
+
 /// Mark one LCS of `a[ao..]` vs `b[bo..]` in the `ac` / `bc` masks (indices
 /// offset by `ao` / `bo` into the full sequences). Divide-and-conquer on `a`;
 /// each level's split point comes from two rolling-row LCS length passes.

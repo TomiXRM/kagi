@@ -110,3 +110,69 @@ store は自分が load した path を持ち、**別 path へ転用されない
   set / remove するため。process global と公開 API を通る経路 (stat 不可視の
   外部編集、実 trailing thread、graceful quit、強制終了、path 切替) は
   `settings/store_env_tests.rs` が子プロセスで検証する。
+
+## Amendment — 2026-10-12: Analyze ignore write feedback (#1299)
+
+The sibling Analyze ignore document remains owned by `settings::`, not a UI
+filesystem path or a settings.json key. Its public writer returns a Result with
+the OS cause and target path. Save/Reset advance the editor's saved baseline
+only on success; failed Reset does not replace the draft. An EN/JA unsaved
+marker and bounded toast/inline error distinguish failure from quiet successful
+confirmation. First-run seeding uses this same writer only for a missing file;
+an unreadable existing file is never overwritten by defaults.
+
+Replacement uses the existing same-directory atomic-file helper: temp write,
+content sync, then rename. A failed write leaves the saved file intact and
+returns its OS cause through this same owner; no UI persistence path is added.
+
+## Amendment — 2026-10-13: main repository-window frame (#1367)
+
+`window_frame` is one flat string value: `x,y,width,height,display-uuid`,
+in logical coordinates relative to the identified display. Bounds events from
+the main repository window replace a 200ms trailing task, so moving/resizing
+commits only the settled frame through the existing store. Graceful quit and
+root release save the last pending frame; maximized/fullscreen bounds are not
+persisted. Parsed sizes must be finite, positive and at most 16384×16384;
+the placement owner, rather than the settings parser, enforces the product minimum.
+
+Restore requires a connected display with the saved UUID and a reachable
+titlebar: the entire upper 28 logical-pixel band and at least 100 logical
+pixels of its width must intersect that display's visible area. A changed,
+missing or unavailable UUID, or an unreachable titlebar, centres the window
+on the primary display. The chosen display's visible area caps width/height;
+the origin is moved inward as needed so the restored rectangle fits. A saved
+rectangle already within that area restores exactly.
+
+The pinned GPUI macOS host takes/reports display-relative window origins and
+exposes every display's bounds at origin (0,0); no desktop-space inference or
+GPUI fork change is used. Linux/Windows desktop-space bounds are translated
+to/from the selected display's origin at the native boundary. A secondary
+monitor's physical location left/above the main monitor is not persisted as
+a negative desktop origin; its UUID and local origin own restoration.
+
+Legacy `window_size` is read only when no valid frame exists and is removed
+on the first frame save. `KAGI_NO_RESTORE=1` skips both reading and writing
+geometry; explicit `KAGI_WINDOW` retains its dev/test override. Secondary
+windows keep their separate geometry owners.
+
+## Amendment — 2026-10-14: supported repository-window minimum (#1550)
+
+The main repository window has one supported minimum of 940×660 logical
+points, the established compact viewport at EN/JA and 100%/167% zoom.
+`window_restore::minimum_size` supplies both `WindowOptions::window_min_size`
+(the native runtime resize constraint) and startup placement. Positive
+undersized saved frames, legacy sizes and explicit dev/test size overrides
+expand to this minimum. Display fitting still caps startup geometry to the
+usable area if the display itself is smaller; the native minimum remains the
+supported product size. Larger 1000×720 and 1400×900 requests stay unconstrained.
+Settings and other secondary windows remain independently owned.
+
+Validation separates native configuration from OS resize delivery. Tier A
+reads the actual NSWindow `contentMinSize` and observes a renderer resize
+from 1000×720 to that minimum, alongside restore and control-layout coverage.
+The hidden runner cannot deliver AXSize reliably: same-process calls return
+-25208 and external runner-child calls return -25204, even offscreen-visible.
+The legacy NSWindow accessibility setter is a no-op and is not an oracle.
+Tier B uses an external Swift AXUIElementSetAttributeValue request against
+the isolated plain app: 200×150 reads back as 940×660 in AX and CGWindow
+bounds. This runtime evidence remains in the screenshot-side evidence.json.

@@ -47,6 +47,7 @@ impl TabUiState {
         self.commit_panel_open = true;
         self.selected = None;
         self.main_diff = None;
+        self.main_diff_req = self.main_diff_req.wrapping_add(1);
     }
 
     /// Replace the Smart Commit status line.
@@ -74,6 +75,7 @@ impl TabUiState {
         }
         let Self {
             selected,
+            graph_motion: _, // Derived Graph presentation, not additional intent.
             // Scroll handles expose their position only under gpui `test-support`;
             // the leak matrix observes both (ADR-0197 決定 4, last paragraph).
             commit_scroll_handle: _,
@@ -82,12 +84,17 @@ impl TabUiState {
             graph_scroll_x,
             branch_groups_collapsed,
             cleanup_scroll: _,
+            inspector_message_scroll: _,
+            activity_ranking_scroll: _,
             cleanup_selected,
             branch_cleanup_open,
             pr_mode,
             pr_menu,
+            // Focus/cache state follows pr_menu, like filter_controls.menu_keys.
+            pr_menu_keys: _,
             filter_controls,
             smart_commit_generating,
+            smart_commit_generation,
             smart_commit_status,
             view_publish_gen: _,
             cache_epoch: _,
@@ -107,6 +114,8 @@ impl TabUiState {
             github_prs_epoch: _,
             github_prs_gen: _,
             github_prs_loading: _,
+            github_prs_paging: _,
+            github_prs_visit: _,
             github_pr_filter,
             github_prs_strip: _,
             pr_details: _,
@@ -122,6 +131,8 @@ impl TabUiState {
             github_issues_loading_more,
             github_issues_page: _,
             github_issues_list: _,
+            // Derived row-focus handles; intent is classified through Issues above.
+            issue_rows: _,
             github_issue_mentions: _,
             github_issue_tab,
             github_issue_filter,
@@ -134,6 +145,13 @@ impl TabUiState {
             github_issue_detail_loading: _,
             github_issue_detail_error: _,
             github_issue_detail_gen: _,
+            // Accepted conversation caches, read revisions and viewport state
+            // belong to this session; opening a thread is classified above by
+            // selected_github_issue, just like the existing detail/composer cache.
+            issue_conversations: _,
+            issue_conversation_gen: _,
+            issue_conversation_scope: _,
+            issue_thread_pending_list: _,
             issue_composer: _,
             cleanup_scanning: _,
             cleanup_prs: _,
@@ -174,6 +192,7 @@ impl TabUiState {
             (pr_menu.is_some(), "pr_menu"),
             (filter_controls.menu.is_some(), "filter_controls"),
             (*smart_commit_generating, "smart_commit_generating"),
+            (smart_commit_generation.is_some(), "smart_commit_generation"),
             (smart_commit_status.is_some(), "smart_commit_status"),
             (
                 *github_issues_loaded
@@ -229,6 +248,10 @@ impl super::KagiApp {
     /// PR mode of the tab on screen (ADR-0197: a workspace mode is per-session).
     pub fn pr_mode(&self) -> Option<&super::pr_mode::PrModeState> {
         self.ui().pr_mode.as_ref()
+    }
+    /// Retained PR tabs do not take over Graph while Peek is on screen.
+    pub(crate) fn pr_mode_visible(&self) -> bool {
+        self.pr_mode().is_some_and(|mode| mode.visible)
     }
     /// Foreground writer for [`Self::pr_mode`]. A background completion must
     /// write through the owner it froze at spawn, never through this.

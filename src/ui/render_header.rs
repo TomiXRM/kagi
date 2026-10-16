@@ -5,11 +5,58 @@
 
 #![allow(clippy::too_many_arguments)]
 
+pub(super) mod overflow_trigger;
 #[cfg_attr(not(feature = "gui-e2e"), allow(dead_code))]
 pub(super) mod toolbar_a11y;
+pub(super) mod toolbar_overflow;
 
 use super::*;
 use crate::ui::workspace_mode::WorkspaceMode;
+use kagi_ui_core::tooltip::HoverTooltip as _;
+
+// Keep the trigger configurable until its click handler is installed, then
+// wrap the complete element so tooltip geometry follows the whole control.
+struct ToolbarButton {
+    id: &'static str,
+    element: gpui::Stateful<gpui::Div>,
+    help: Option<SharedString>,
+}
+
+impl ToolbarButton {
+    fn tooltip_summary(mut self, summary: Option<SharedString>) -> Self {
+        if let Some(summary) = summary {
+            self.help = Some(summary);
+        }
+        self
+    }
+
+    fn on_click(
+        self,
+        on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> gpui::AnyElement {
+        let element = self.element.on_click(on_click);
+        if let Some(help) = self.help {
+            element
+                .hover_tooltip_builder((self.id, 0usize), move |window, cx| {
+                    Tooltip::new(help.clone()).build(window, cx)
+                })
+                .into_any_element()
+        } else {
+            element.into_any_element()
+        }
+    }
+}
+
+/// Shared workspace/Home frame height; both presentation modes fit ≤54px at 100%.
+pub(super) fn chrome_frame_height() -> gpui::Pixels {
+    theme::scaled_px(
+        if settings::toolbar_display(&theme().slug) == settings::ToolbarDisplay::IconOnly {
+            52.
+        } else {
+            60.
+        },
+    )
+}
 
 // ── AppShell layout slots ────────────────────────────────────────────────────
 // ADR-0007 / T-BP-001: KagiApp::render is decomposed into four vertical
@@ -17,6 +64,108 @@ use crate::ui::workspace_mode::WorkspaceMode;
 // (T-BP-002, T-HT-001, …) can extend their signatures without
 // touching the caller site.
 impl KagiApp {
+    /// Only blank spacers are draggable. macOS disables AppKit's whole-titlebar
+    /// gesture and delegates movement/double-click from this exact hit target.
+    pub(super) fn render_chrome_spacer(
+        &self,
+        id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .relative()
+            .flex_1()
+            .min_w(theme::scaled_px(8.))
+            .h_full()
+            .window_control_area(gpui::WindowControlArea::Drag)
+            .child(super::e2e::measure_inside(id))
+            .when(cfg!(target_os = "macos"), |el| {
+                el.on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.titlebar_should_move = false),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.titlebar_should_move = true;
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.titlebar_should_move = false;
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(|this, event: &gpui::MouseMoveEvent, window, _| {
+                        if this.titlebar_should_move
+                            && event.pressed_button == Some(gpui::MouseButton::Left)
+                        {
+                            this.titlebar_should_move = false;
+                            window.start_window_move();
+                        }
+                    }),
+                )
+                .on_click(|event, window, _| {
+                    if event.click_count() == 2 {
+                        window.titlebar_double_click();
+                    }
+                })
+            })
+    }
+
+    /// Pointer, keyboard and overflow items share exactly one activation path.
+    fn activate_toolbar(
+        &mut self,
+        index: usize,
+        reason: Option<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(reason) = reason {
+            self.status_footer = FooterStatus::Idle(reason.into());
+            cx.notify();
+            return;
+        }
+        match index {
+            0 => self.open_pull_modal(cx),
+            1 => self.open_push_modal(cx),
+            2 => {
+                if let Some(id) = self.selected_or_head_commit() {
+                    self.open_create_branch_modal(id, cx);
+                }
+            }
+            3 => self.open_stash_push_modal(cx),
+            4 => self.open_pop_modal(0, cx),
+            5 => {
+                if !self.reject_if_busy(cx) {
+                    self.open_history_undo_modal();
+                }
+            }
+            6 => {
+                if !self.reject_if_busy(cx) {
+                    self.open_history_redo_modal();
+                }
+            }
+            7 => {
+                if self.bottom_panel_open && self.bottom_tab == BottomTab::Terminal {
+                    self.bottom_panel_open = false;
+                } else {
+                    self.bottom_panel_open = true;
+                    self.bottom_tab = BottomTab::Terminal;
+                    self.activate_terminal(window, cx);
+                }
+            }
+            8 => self.handle_menu_command("view.showGraph", window, cx),
+            9 => self.handle_menu_command("view.togglePrMode", window, cx),
+            10 => self.handle_menu_command("view.toggleEditorWorkspace", window, cx),
+            11 => self.open_ecosystem_view(cx),
+            12 => self.open_settings(window, cx),
+            13 => self.open_update_modal(),
+            _ => unreachable!("toolbar command index"),
+        }
+        cx.notify();
+    }
     /// W5-MENU / ADR-0029: register an `on_action` handler for every menu
     /// command, **but only when that command is currently enabled**.  Leaving a
     /// handler unregistered is exactly how macOS greys the matching menu item
@@ -25,6 +174,7 @@ impl KagiApp {
     /// behaviour stays in `commands.rs` (no menu-specific logic lives here).
     pub(super) fn register_menu_actions(&self, el: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
         use commands as cmds;
+        let el = cmds::register_recent_clear(el, cx);
 
         // Helper: conditionally attach one action handler bound to its registry
         // id.  `$ty` is the gpui Action type; `$id` is the registry id string.
@@ -55,6 +205,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ZoomReset, "view.zoomReset");
         let el = menu_act!(el, cmds::EnterFullScreen, "view.fullScreen");
         let el = menu_act!(el, cmds::ToggleSidebar, "view.toggleSidebar");
+        let el = menu_act!(el, cmds::TogglePrSwimlane, "view.togglePrSwimlane");
         let el = menu_act!(el, cmds::ToggleCommitDetails, "view.toggleCommitDetails");
         let el = menu_act!(el, cmds::ToggleDiffView, "view.toggleDiffView");
         let el = menu_act!(
@@ -88,6 +239,8 @@ impl KagiApp {
         );
         let el = menu_act!(el, cmds::MinimizeWindow, "window.minimize");
         let el = menu_act!(el, cmds::ZoomWindow, "window.zoom");
+        let el = menu_act!(el, cmds::PreviousTab, "window.previousTab");
+        let el = menu_act!(el, cmds::NextTab, "window.nextTab");
         let el = menu_act!(el, cmds::NewWindow, "window.new");
         let el = menu_act!(el, cmds::CloseWindow, "window.close");
         let el = menu_act!(el, cmds::KeyboardShortcuts, "help.shortcuts");
@@ -106,19 +259,19 @@ impl KagiApp {
         let el = el.on_action(cx.listener(|this, action: &cmds::SetTheme, _window, cx| {
             this.set_theme(&action.slug, cx);
         }));
+        let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
+            settings::set_toolbar_display(action.mode);
+            cmds::publish_menus(cx);
+            cx.notify();
+        }));
         // W22-I18N: language switch actions (always enabled).
         let el = menu_act!(el, cmds::LangEnglish, "lang.english");
         let el = menu_act!(el, cmds::LangJapanese, "lang.japanese");
         el
     }
 
-    /// Header slot — the Toolbar bar (T-HT-001 / ADR-0013). The in-progress
-    /// operation gets its own row below this one (`render_operation_strip`).
-    ///
-    /// Layout (34 px):
-    ///   LEFT:   repo-name | branch → upstream ↑A ↓B
-    ///   CENTRE: Pull(↓N) Push(↑N) | Branch Stash Pop | Undo("<summary>") Terminal
-    ///   RIGHT:  Refresh
+    /// Second-row toolbar: repository identity, actions and workspace group.
+    /// Document tabs and native traffic lights belong to the titlebar above.
     pub(super) fn render_header_slot(
         &mut self,
         toolbar: ToolbarState,
@@ -141,13 +294,8 @@ impl KagiApp {
                 Msg::PullNothing.t()
             }
         });
-        let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if let Some(reason) = pull_reason {
-                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
-            } else {
-                this.open_pull_modal(cx);
-            }
-            cx.notify();
+        let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(0, pull_reason, window, cx);
         });
 
         // Push (T-HT-004).
@@ -166,28 +314,16 @@ impl KagiApp {
                 Msg::PushNothing.t()
             }
         });
-        let push_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if let Some(reason) = push_reason {
-                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
-            } else {
-                this.open_push_modal(cx);
-            }
-            cx.notify();
+        let push_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(1, push_reason, window, cx);
         });
 
         // Ecosystem (ADR-0119) — read-only hot-spot analysis; open the
         // full-screen view. Disabled when no repo is open.
         let ecosystem_on = self.repo_path.is_some();
         let no_repo_reason = (!ecosystem_on).then(|| Msg::NoRepoOpen.t());
-        let ecosystem_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if this.repo_path.is_some() {
-                this.open_ecosystem_view(cx);
-            } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    no_repo_reason.unwrap_or_else(|| Msg::NoRepoOpen.t()),
-                ));
-                cx.notify();
-            }
+        let ecosystem_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(11, no_repo_reason, window, cx);
         });
 
         // Editor Workspace toggle (T-WS-EDITOR-004 / ADR-0120 §4) — placed
@@ -195,14 +331,7 @@ impl KagiApp {
         // command path and `[kagi] menu:` log line.
         let editor_ws_on = self.repo_path.is_some();
         let editor_ws_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-            if this.repo_path.is_some() {
-                this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
-            } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(
-                    no_repo_reason.unwrap_or_else(|| Msg::NoRepoOpen.t()),
-                ));
-            }
-            cx.notify();
+            this.activate_toolbar(10, no_repo_reason, window, cx);
         });
         // ── Workspace mode switcher: Graph | PRs | Editor ──────────────
         // Three mutually exclusive modes, one button each. Every button names
@@ -213,33 +342,15 @@ impl KagiApp {
         let pr_mode_on = self.repo_path.is_some() && kagi_git::github::gh_available();
         let mode = self.workspace_mode();
         let graph_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.handle_menu_command("view.showGraph", window, cx);
-            cx.notify();
+            this.activate_toolbar(8, None, window, cx);
         });
         let pr_mode_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.handle_menu_command("view.togglePrMode", window, cx);
-            cx.notify();
+            this.activate_toolbar(9, None, window, cx);
         });
 
-        // Active-mode highlight for the Graph/PRs/Editor group: a wash in the
-        // theme's primary colour, distinct from the neutral `selected` hover
-        // so "hovered" never reads as "current mode". `color_branch` is that
-        // primary (apple-dark yellow, catppuccin blue, dracula purple …) and
-        // is already what the toolbar's count chips use — `accent` is the
-        // cherry-pick mauve, purple in most themes regardless of the theme.
-        let mode_on = |el: gpui::Stateful<gpui::Div>| {
-            let mut c: gpui::Hsla = rgb(theme().color_branch).into();
-            c.a = if theme().dark { 0.26 } else { 0.18 };
-            el.bg(c)
-        };
-
         // Branch — always enabled; use selected commit if any, else HEAD.
-        let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-            // Resolve target commit: selected row → HEAD commit (first detail).
-            if let Some(id) = this.selected_or_head_commit() {
-                this.open_create_branch_modal(id, cx);
-            }
-            cx.notify();
+        let branch_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(2, None, window, cx);
         });
 
         // Stash — enabled only when dirty, and not while another operation
@@ -251,13 +362,8 @@ impl KagiApp {
                 Msg::StashClean.t()
             }
         });
-        let stash_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if let Some(reason) = stash_reason {
-                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
-            } else {
-                this.open_stash_push_modal(cx);
-            }
-            cx.notify();
+        let stash_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(3, stash_reason, window, cx);
         });
 
         // Pop — enabled only when a stash exists, and not while another
@@ -269,14 +375,8 @@ impl KagiApp {
                 Msg::PopEmpty.t()
             }
         });
-        let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if let Some(reason) = pop_reason {
-                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
-            } else {
-                // Pop the newest stash (index 0) — plan with conflict prediction.
-                this.open_pop_modal(0, cx);
-            }
-            cx.notify();
+        let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(4, pop_reason, window, cx);
         });
 
         // Undo — operation-history undo (T-UNDOREDO-001, ADR-0081). Enabled per
@@ -284,29 +384,15 @@ impl KagiApp {
         // modal (preview → confirm runs the safe ref move).
         let undo_on = self.ui().operation_history.can_undo();
         let undo_reason = (!undo_on).then(|| Msg::NothingToUndo.t());
-        let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if this.ui().operation_history.can_undo() {
-                if !this.reject_if_busy(cx) {
-                    this.open_history_undo_modal();
-                }
-            } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
-            }
-            cx.notify();
+        let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(5, undo_reason, window, cx);
         });
 
         // Redo — operation-history redo. Enabled per can_redo().
         let redo_on = self.ui().operation_history.can_redo();
         let redo_reason = (!redo_on).then(|| Msg::NothingToRedo.t());
-        let redo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if this.ui().operation_history.can_redo() {
-                if !this.reject_if_busy(cx) {
-                    this.open_history_redo_modal();
-                }
-            } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
-            }
-            cx.notify();
+        let redo_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            this.activate_toolbar(6, redo_reason, window, cx);
         });
 
         // Refresh — always enabled.
@@ -328,19 +414,44 @@ impl KagiApp {
         // Terminal — toggles bottom panel to Terminal tab (ADR-0013).
         let terminal_on = self.bottom_panel_open && self.bottom_tab == BottomTab::Terminal;
         let terminal_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-            if this.bottom_panel_open && this.bottom_tab == BottomTab::Terminal {
-                // Same tab visible → close panel (toggle off).
-                this.bottom_panel_open = false;
-            } else {
-                this.bottom_panel_open = true;
-                this.bottom_tab = BottomTab::Terminal;
-                // T-BP-007: lazy-start terminal session when first opened.
-                this.ensure_terminal(window, cx);
-            }
-            cx.notify();
+            this.activate_toolbar(7, None, window, cx);
         });
 
         use toolbar_a11y::{button_flags, ButtonState};
+        // No allocation or contrast work when no count chip is drawn; share
+        // one foreground calculation if both Pull and Push have counts.
+        let chip_fg = std::cell::LazyCell::new(|| theme::primary_button_foreground(&theme()));
+        let icon_only =
+            settings::toolbar_display(&theme().slug) == settings::ToolbarDisplay::IconOnly;
+        let undo_has_summary = self.ui().operation_history.peek_undo().is_some();
+        let redo_has_summary = self.ui().operation_history.peek_redo().is_some();
+        let present = (if mode == WorkspaceMode::Graph {
+            0xff
+        } else {
+            0
+        }) | 0x1d00
+            | if pr_mode_on { 1 << 9 } else { 0 }
+            | if self.update_available.is_some() {
+                1 << 13
+            } else {
+                0
+            };
+        let selected = match mode {
+            WorkspaceMode::Graph => 8,
+            WorkspaceMode::Prs => 9,
+            WorkspaceMode::Editor => 10,
+            _ => usize::MAX,
+        };
+        let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
+        let pending_widths = self.toolbar_layout.pending(present, style_key);
+        let hidden = self.toolbar_layout.hidden(present, selected, style_key);
+        let identity_width = self.toolbar_layout.identity_width(style_key);
+        let visible = present & !hidden;
+        let workspace_width = self
+            .toolbar_layout
+            .workspace_width(visible, hidden, style_key);
+        let gap = |left, right| toolbar_overflow::gap(visible, left, right);
+        let layout_app = cx.entity().downgrade();
 
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
         // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
@@ -363,24 +474,65 @@ impl KagiApp {
                         state: ButtonState,
                         reason: Option<&'static str>,
                         count: usize| {
+            let index = toolbar_overflow::IDS
+                .iter()
+                .position(|candidate| *candidate == id)
+                .unwrap();
+            let mode_selected = index == selected;
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
             let (enabled, unavailable) = button_flags(state);
+            let accessible_label = match id {
+                "tb-branch" => Msg::ToolbarBranch.t(),
+                "tb-stash" => Msg::ToolbarStash.t(),
+                "tb-pop" => Msg::ToolbarPop.t(),
+                "tb-editor-ws" => Msg::ToolbarEditor.t(),
+                "tb-ecosystem" => Msg::ToolbarAnalyze.t(),
+                "tb-terminal" => Msg::ToolbarTerminal.t(),
+                "tb-graph-mode" => Msg::WorkspaceGraph.t(),
+                "tb-pr-mode" => Msg::WorkspacePrs.t(),
+                _ => label,
+            };
+            // Pending hidden commands need natural widths, not interactive
+            // descendants; retaining the last fit keeps the open menu stable.
+            if hidden & (1 << index) != 0 {
+                let element = if pending_widths & (1 << index) != 0 {
+                    toolbar_overflow::measure_hidden(
+                        layout_app.clone(),
+                        index,
+                        accessible_label,
+                        icon_only,
+                        style_key,
+                    )
+                } else {
+                    div().id(id).hidden()
+                };
+                return ToolbarButton {
+                    id,
+                    element,
+                    help: None,
+                };
+            }
+            #[cfg(feature = "gui-e2e")]
+            toolbar_a11y::record_label(id, accessible_label);
             // #354: the exact bool that gates `set_disabled` below, recorded
             // for the GUI E2E oracle (the AccessKit tree itself is only built
             // once assistive technology connects, which a test cannot force).
             toolbar_a11y::record_unavailable(id, unavailable);
-            let text_color = if enabled {
+            let text_color = rgb(if mode_selected || enabled {
                 theme().text_main
             } else {
                 theme().text_muted
-            };
-            let chip_bg = theme().color_branch;
-            let chip_fg = theme().bg_base;
+            });
+            let chip_bg = theme().ui_accent();
 
-            // Icon cell — `.relative()` so the count chip can be `.absolute()`
-            // anchored to the icon's top-right corner (gpui has no negative
-            // clip, so the chip is placed inside the icon bounds).
+            // The count is an overlay on the icon cell. Native probes stay
+            // inside that cell so they do not change the toolbar's layout.
+            let glyph = icon
+                .with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
+                .text_color(text_color);
+            #[cfg(feature = "gui-e2e")]
+            let glyph = super::e2e::measure_control(format!("{id}-glyph"), glyph);
             let mut icon_cell = div()
                 .relative()
                 .flex()
@@ -388,34 +540,45 @@ impl KagiApp {
                 .justify_center()
                 .w(theme::scaled_px(22.0))
                 .h(theme::scaled_px(22.0))
-                .child(
-                    icon.with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
-                        .text_color(rgb(text_color)),
-                );
+                .child(glyph)
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside(format!("{id}-icon")))
+                });
             if count > 0 {
                 let chip_text = if count > 99 {
                     "99+".to_string()
                 } else {
                     count.to_string()
                 };
+                let chip_label = SharedString::from(chip_text).into_any_element();
+                #[cfg(feature = "gui-e2e")]
+                let chip_label =
+                    super::e2e::measure_control(format!("{id}-count-text"), chip_label);
                 icon_cell = icon_cell.child(
                     div()
                         .absolute()
-                        .top(theme::scaled_px(-2.0))
-                        .right(theme::scaled_px(-2.0))
-                        .min_w(theme::scaled_px(14.0))
-                        .h(theme::scaled_px(14.0))
+                        // Grow towards the outside, never left across the arrow.
+                        .top(theme::scaled_px(
+                            -2.0 - (theme::TOOLBAR_COUNT_HEIGHT - 14.0) / 2.0,
+                        ))
+                        .left(theme::scaled_px(22.0 - theme::TOOLBAR_COUNT_ICON_OVERLAP))
+                        .min_w(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
+                        .h(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
                         .px(theme::scaled_px(3.0))
                         .rounded_full()
                         .bg(rgb(chip_bg))
+                        .when(!enabled, |el| el.opacity(0.5))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_color(rgb(chip_fg))
-                        .text_size(px(9.0))
+                        .text_color(rgb(*chip_fg))
+                        .text_size(theme::scaled_px(theme::TOOLBAR_COUNT_TEXT))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(theme::scaled_px(14.0))
-                        .child(SharedString::from(chip_text)),
+                        .line_height(theme::scaled_px(theme::TOOLBAR_COUNT_LINE_HEIGHT))
+                        .child(chip_label)
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            el.child(super::e2e::measure_inside(format!("{id}-count")))
+                        }),
                 );
             }
 
@@ -424,7 +587,7 @@ impl KagiApp {
                 // Bare string captions have no AX node;
                 // share the visible label explicitly.
                 .role(gpui::Role::Button)
-                .aria_label(label)
+                .aria_label(accessible_label)
                 .when_some(reason, |el, reason| {
                     toolbar_a11y::record_description(id, reason);
                     el.aria_description(reason)
@@ -442,33 +605,60 @@ impl KagiApp {
                 .items_center()
                 .justify_center()
                 .gap(theme::scaled_px(1.0))
-                .min_w(theme::scaled_px(52.0))
+                .flex_shrink_0()
+                .relative()
+                .child(toolbar_overflow::probe(
+                    layout_app.clone(),
+                    Some(index),
+                    style_key,
+                ))
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside(id))
+                })
+                .min_w(theme::scaled_px(toolbar_overflow::minimum_width(icon_only)))
                 .px(keyboard_nav::inset(4.0))
                 // At 0.7× the old 2px zoomed padding is smaller than the
                 // fixed 2px ring. The centred row keeps its icon/text in
                 // place while the extra fraction belongs to the ring.
                 .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
-                .hover(|style| style.bg(rgb(theme().selected)))
-                .cursor(if enabled {
-                    gpui::CursorStyle::PointingHand
-                } else {
-                    gpui::CursorStyle::Arrow
+                .when(mode_selected, |el| {
+                    el.bg(theme().segment_selected_bg()).text_color(text_color)
                 })
+                .when(!mode_selected, |el| {
+                    el.hover(|style| style.bg(rgb(theme().surface)))
+                })
+                .cursor(gpui::CursorStyle::Arrow)
                 .child(icon_cell)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(text_color))
-                        .child(SharedString::from(label)),
-                );
+                .when(!icon_only, |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    toolbar_a11y::record_caption(id, accessible_label);
+                    el.child(
+                        div()
+                            .text_xs()
+                            .text_color(text_color)
+                            .child(SharedString::from(accessible_label)),
+                    )
+                });
+            let help =
+                if !(id == "tb-undo" && undo_has_summary || id == "tb-redo" && redo_has_summary) {
+                    #[cfg(feature = "gui-e2e")]
+                    toolbar_a11y::record_tooltip(id, accessible_label);
+                    Some(SharedString::from(accessible_label))
+                } else {
+                    None
+                };
             #[cfg(feature = "gui-e2e")]
             let btn = btn.on_key_down(move |event, _, _| {
                 if event.keystroke.key == "f19" {
                     toolbar_a11y::record_focus_probe(id);
                 }
             });
-            keyboard_nav::focusable(btn)
+            ToolbarButton {
+                id,
+                element: keyboard_nav::focusable(btn),
+                help,
+            }
         };
 
         // ── Undo / Redo tooltips: previewed operation summary (ADR-0081) ────
@@ -479,12 +669,12 @@ impl KagiApp {
             .ui()
             .operation_history
             .peek_undo()
-            .map(|e| SharedString::from(format!("Undo: {}", e.summary)));
+            .map(|e| SharedString::from(format!("{}: {}", Msg::Undo.t(), e.summary)));
         let redo_tooltip_text: Option<SharedString> = self
             .ui()
             .operation_history
             .peek_redo()
-            .map(|e| SharedString::from(format!("Redo: {}", e.summary)));
+            .map(|e| SharedString::from(format!("{}: {}", Msg::Redo.t(), e.summary)));
 
         // ── Left label: branch info (ADR-0013) ─────────────────────────────
         // Format: `branch → upstream ↑A ↓B`  or state labels when detached/unborn.
@@ -517,26 +707,35 @@ impl KagiApp {
                 // only the visible height tracks zoom.
                 .w(px(1.0))
                 .h(theme::scaled_px(16.0))
-                .bg(rgb(theme().text_muted))
+                .bg(rgb(theme().surface))
                 .mx_1()
                 .flex_shrink_0()
         };
 
-        // ── Toolbar bar (52 px — W10-TOOLBAR vertical buttons) ──────────────
+        // Toolbar controls follow the separate titlebar strip.
         div()
             .id("toolbar-bar")
             .flex()
             .flex_row()
             .items_center()
+            .relative()
+            .overflow_hidden()
+            .child(toolbar_overflow::probe(layout_app.clone(), None, style_key))
             .w_full()
             .px_3()
-            .h(theme::scaled_px(52.0))
+            .h(chrome_frame_height())
             .flex_shrink_0()
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().chrome_surface()))
+            .when(theme().slug == "apple-dark", |bar| {
+                bar.border_b_1().border_color(rgb(theme().surface))
+            })
             .text_color(rgb(theme().text_sub))
-            // ── LEFT column (flex_1, equal width to the RIGHT column so the
-            // centre cluster is window-centred regardless of side widths).
-            // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside("toolbar-row"))
+            })
+            // Equal flex side columns center commands when space permits.
+            // At narrow widths the left retains readable repository identity,
+            // while the right may yield its secondary-workspace reservation.
             .child(
                 div()
                     .flex()
@@ -544,6 +743,10 @@ impl KagiApp {
                     .items_center()
                     .flex_1()
                     .min_w_0()
+                    .when(icon_only, |el| {
+                        el.min_w(theme::scaled_px(toolbar_overflow::ICON_IDENTITY_MIN_WIDTH))
+                    })
+                    .when(!icon_only, |el| el.min_w(px(identity_width)))
                     // ── LEFT: Refresh (user request: left of the repo title) ──
                     .child({
                         // Spin for one full turn after a click (user request).
@@ -560,8 +763,8 @@ impl KagiApp {
                         let spinning = self.op_latched() || self.refresh_spin_started.is_some();
                         let icon = gpui::svg()
                             .path("icons/refresh-cw.svg")
-                            .w(theme::scaled_px(16.0))
-                            .h(theme::scaled_px(16.0))
+                            .w(theme::scaled_px(if icon_only { 20.0 } else { 16.0 }))
+                            .h(theme::scaled_px(if icon_only { 20.0 } else { 16.0 }))
                             .text_color(rgb(theme().text_main));
                         let icon: gpui::AnyElement = if spinning && !theme::reduce_motion() {
                             use gpui::AnimationExt as _;
@@ -586,11 +789,20 @@ impl KagiApp {
                             .when_some(commands::command("file.refresh"), |el, command| {
                                 el.aria_label(command.label)
                             })
+                            .relative()
+                            .child(super::e2e::measure_inside("tb-refresh"))
+                            .when(!icon_only, |el| {
+                                el.child(toolbar_overflow::probe(
+                                    layout_app.clone(),
+                                    Some(14),
+                                    style_key,
+                                ))
+                            })
                             .flex_shrink_0()
                             .mr_2()
                             .p(keyboard_nav::inset(4.0))
                             .rounded_md()
-                            .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                            .hover(|st| st.bg(rgb(theme().surface)).cursor_default())
                             .child(icon);
                         #[cfg(feature = "gui-e2e")]
                         let refresh = refresh.on_key_down(|event, _, _| {
@@ -598,7 +810,17 @@ impl KagiApp {
                                 toolbar_a11y::record_focus_probe("tb-refresh");
                             }
                         });
-                        keyboard_nav::focusable(refresh).on_click(refresh_click)
+                        let refresh = keyboard_nav::focusable(refresh).on_click(refresh_click);
+                        if let Some(command) = commands::command("file.refresh") {
+                            refresh
+                                .hover_tooltip_builder(
+                                    "tb-refresh-hover-help",
+                                    move |window, cx| Tooltip::new(command.label).build(window, cx),
+                                )
+                                .into_any_element()
+                        } else {
+                            refresh.into_any_element()
+                        }
                     })
                     // ── repo name (top) + current branch (smaller, below) ──
                     // Stacked vertically so a long branch label never competes
@@ -609,8 +831,20 @@ impl KagiApp {
                         div()
                             .flex()
                             .flex_col()
-                            .flex_1()
+                            .w(theme::scaled_px(180.))
                             .min_w_0()
+                            .when(icon_only, |el| {
+                                el.flex_shrink(1.).min_w(theme::scaled_px(40.))
+                            })
+                            .relative()
+                            .when(!icon_only, |el| {
+                                el.flex_shrink_0().child(toolbar_overflow::probe(
+                                    layout_app.clone(),
+                                    Some(15),
+                                    style_key,
+                                ))
+                            })
+                            .child(super::e2e::measure_inside("toolbar-identity"))
                             .mr_2()
                             .child(
                                 div()
@@ -633,7 +867,8 @@ impl KagiApp {
                                     .truncate()
                                     .child(SharedString::from(branch_label)),
                             ),
-                    ),
+                    )
+                    .child(self.render_chrome_spacer("toolbar-drag-region", cx)),
             ) // ── end LEFT column ──
             // ── CENTRE: window-centred cluster (flex_shrink_0 group) ──
             // Pull Push | Branch Stash Pop | Undo Terminal
@@ -647,12 +882,13 @@ impl KagiApp {
                     // the other modes get this slot for their own actions, added
                     // when each mode needs them (user request).
                     .when(mode == WorkspaceMode::Graph, |el| {
-                        el.child(super::e2e::measure_control(
-                            "tb-repo-actions",
+                        el.child(
                             div()
+                                .relative()
                                 .flex()
                                 .flex_row()
                                 .items_center()
+                                .child(super::e2e::measure_inside("tb-repo-actions"))
                                 // Pull (↓N chip when behind>0)
                                 .child(
                                     make_btn(
@@ -667,7 +903,7 @@ impl KagiApp {
                                     )
                                     .on_click(pull_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(1, 2), |el| el.child(div().w(theme::scaled_px(2.0))))
                                 // Push (↑N chip when ahead>0)
                                 .child(
                                     make_btn(
@@ -682,7 +918,7 @@ impl KagiApp {
                                     )
                                     .on_click(push_click),
                                 )
-                                .child(sep())
+                                .when(gap(3, 0xfc), |el| el.child(sep()))
                                 // Branch
                                 .child(
                                     make_btn(
@@ -695,7 +931,7 @@ impl KagiApp {
                                     )
                                     .on_click(branch_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(4, 0x18), |el| el.child(div().w(theme::scaled_px(2.0))))
                                 // Stash
                                 .child(
                                     make_btn(
@@ -708,7 +944,7 @@ impl KagiApp {
                                     )
                                     .on_click(stash_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(8, 0x10), |el| el.child(div().w(theme::scaled_px(2.0))))
                                 // Pop
                                 .child(
                                     make_btn(
@@ -723,7 +959,7 @@ impl KagiApp {
                                     )
                                     .on_click(pop_click),
                                 )
-                                .child(sep())
+                                .when(gap(0x1c, 0xe0), |el| el.child(sep()))
                                 // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
                                 // previewed operation summary is shown in the tooltip.
                                 .child(
@@ -735,11 +971,7 @@ impl KagiApp {
                                         undo_reason,
                                         0,
                                     )
-                                    .when_some(undo_tooltip_text, |btn, text| {
-                                        btn.tooltip(move |window, cx| {
-                                            Tooltip::new(text.clone()).build(window, cx)
-                                        })
-                                    })
+                                    .tooltip_summary(undo_tooltip_text)
                                     .on_click(undo_click),
                                 )
                                 // Redo — operation-history redo (T-UNDOREDO-001).
@@ -752,14 +984,12 @@ impl KagiApp {
                                         redo_reason,
                                         0,
                                     )
-                                    .when_some(redo_tooltip_text, |btn, text| {
-                                        btn.tooltip(move |window, cx| {
-                                            Tooltip::new(text.clone()).build(window, cx)
-                                        })
-                                    })
+                                    .tooltip_summary(redo_tooltip_text)
                                     .on_click(redo_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(0x60, 0x80), |el| {
+                                    el.child(div().w(theme::scaled_px(2.0)))
+                                })
                                 // Terminal (toggles bottom panel Terminal tab)
                                 .child(
                                     make_btn(
@@ -774,10 +1004,10 @@ impl KagiApp {
                                     )
                                     .on_click(terminal_click),
                                 ),
-                        ))
+                        )
                     }),
             ) // ── end CENTRE cluster ──
-            // ── RIGHT column (flex_1, equal width to the LEFT column) ──
+            // ── RIGHT column (flex_1; natural workspace/overflow minimum) ──
             // Settings — now a standard toolbar button (icon + "Settings"
             // label) matching Pull/Push (T-SETTINGS-001 / ADR-0080). Opens the
             // Settings overlay; also reachable via the kagi menu and cmd-,.
@@ -788,34 +1018,75 @@ impl KagiApp {
                     .items_center()
                     .justify_end()
                     .flex_1()
+                    .min_w(px(workspace_width))
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(
-                        self.update_available.as_ref().map(|(p, _)| p.tag.clone()),
+                        self.update_available
+                            .as_ref()
+                            .filter(|_| hidden & (1 << 13) == 0 || pending_widths & (1 << 13) != 0)
+                            .map(|(p, _)| p.tag.clone()),
                         |el, tag| {
-                            let open = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
-                                this.open_update_modal();
-                                cx.notify();
+                            let open = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                                this.activate_toolbar(13, None, window, cx);
                             });
                             let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
+                            if hidden & (1 << 13) != 0 {
+                                return if pending_widths & (1 << 13) != 0 {
+                                    el.child(
+                                        div()
+                                            .absolute()
+                                            .invisible()
+                                            .flex()
+                                            .border_2()
+                                            .border_color(gpui::transparent_black())
+                                            .px(keyboard_nav::inset(8.0))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .child(chip_text),
+                                            )
+                                            .child(toolbar_overflow::probe(
+                                                layout_app.clone(),
+                                                Some(13),
+                                                style_key,
+                                            )),
+                                    )
+                                } else {
+                                    el
+                                };
+                            }
+                            let hover_fill =
+                                gpui_component::ActiveTheme::theme(&**cx).button_primary_hover;
                             el.child(
                                 keyboard_nav::focusable(
                                     div()
                                         .id("tb-update")
                                         .role(gpui::Role::Button)
                                         .aria_label(chip_text.clone())
+                                        .relative()
+                                        .child(super::e2e::measure_inside("tb-update"))
+                                        .flex_shrink_0()
+                                        .child(toolbar_overflow::probe(
+                                            layout_app.clone(),
+                                            Some(13),
+                                            style_key,
+                                        ))
                                         .flex()
                                         .items_center()
                                         .px(keyboard_nav::inset(8.0))
                                         .py(keyboard_nav::inset(4.0))
                                         .mr(theme::scaled_px(8.0))
                                         .rounded_md()
-                                        .bg(rgb(theme().color_branch))
-                                        .cursor(gpui::CursorStyle::PointingHand)
-                                        .hover(|s| s.bg(rgb(theme().color_remote)))
+                                        .bg(rgb(theme().ui_accent()))
+                                        .cursor(gpui::CursorStyle::Arrow)
+                                        .hover(move |s| s.bg(hover_fill))
                                         .child(
                                             div()
-                                                .text_color(rgb(theme().bg_base))
+                                                .text_color(rgb(theme::primary_button_foreground(
+                                                    &theme(),
+                                                )))
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .child(chip_text),
@@ -835,10 +1106,11 @@ impl KagiApp {
                             None,
                             0,
                         )
-                        .when(mode == WorkspaceMode::Graph, mode_on)
                         .on_click(graph_click),
                     )
-                    .child(div().w(theme::scaled_px(2.0)))
+                    .when(gap(0x100, 0xe00), |el| {
+                        el.child(div().w(theme::scaled_px(2.0)))
+                    })
                     // PRs — hidden when gh isn't installed (nothing to show).
                     .when(pr_mode_on, |el| {
                         el.child(
@@ -850,10 +1122,11 @@ impl KagiApp {
                                 None,
                                 0,
                             )
-                            .when(mode == WorkspaceMode::Prs, mode_on)
                             .on_click(pr_mode_click),
                         )
-                        .child(div().w(theme::scaled_px(2.0)))
+                        .when(gap(0x200, 0xc00), |el| {
+                            el.child(div().w(theme::scaled_px(2.0)))
+                        })
                     })
                     // Editor
                     .child(
@@ -865,10 +1138,11 @@ impl KagiApp {
                             no_repo_reason,
                             0,
                         )
-                        .when(mode == WorkspaceMode::Editor, mode_on)
                         .on_click(editor_ws_click),
                     )
-                    .child(div().w(theme::scaled_px(2.0)))
+                    .when(gap(0x400, 0x800), |el| {
+                        el.child(div().w(theme::scaled_px(2.0)))
+                    })
                     // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
                     // analysis; placed just left of Settings.
                     .child(
@@ -882,11 +1156,11 @@ impl KagiApp {
                         )
                         .on_click(ecosystem_click),
                     )
-                    .child(sep())
+                    .when(gap(0xf00, 0x1000), |el| el.child(sep()))
                     .child({
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-                                this.open_settings_overlay(window, cx)
+                                this.activate_toolbar(12, None, window, cx)
                             });
                         // Measured so Tier A opens Settings by pointer (#974).
                         super::e2e::measure_control(
@@ -901,7 +1175,28 @@ impl KagiApp {
                             )
                             .on_click(settings_click),
                         )
-                    }),
+                    })
+                    .child(toolbar_overflow::button(
+                        layout_app.clone(),
+                        hidden,
+                        [
+                            pull_reason,
+                            push_reason,
+                            None,
+                            stash_reason,
+                            pop_reason,
+                            undo_reason,
+                            redo_reason,
+                            None,
+                            None,
+                            None,
+                            no_repo_reason,
+                            no_repo_reason,
+                            None,
+                            None,
+                        ],
+                        self.root_focus.clone(),
+                    )),
             )
     }
 }

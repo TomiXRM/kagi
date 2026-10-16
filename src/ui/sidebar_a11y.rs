@@ -73,7 +73,7 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             collapsed,
             ..
         } => (
-            fill(Msg::A11ySidebarGroup, &[title, &count.to_string()]),
+            fill(Msg::A11ySidebarGroup, &[title.t(), &count.to_string()]),
             Some(!collapsed),
         ),
         SidebarRow::LocalGroupHeader {
@@ -92,12 +92,16 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             Some(!collapsed),
         ),
         SidebarRow::RemoteSubGroup {
+            remote,
             prefix,
             count,
             collapsed,
             ..
         } => (
-            fill(Msg::A11ySidebarGroup, &[prefix, &count.to_string()]),
+            fill(
+                Msg::A11ySidebarGroup,
+                &[&format!("{remote}/{prefix}"), &count.to_string()],
+            ),
             Some(!collapsed),
         ),
         SidebarRow::LocalBranchLeaf { name, is_head, .. } => (
@@ -128,7 +132,10 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             }
             (s, None)
         }
-        SidebarRow::Stash { message, .. } => (fill(Msg::A11yStashRow, &[message]), None),
+        SidebarRow::Stash { index, message, .. } => (
+            fill(Msg::A11ySidebarStash, &[&index.to_string(), message]),
+            None,
+        ),
     };
     TreeItemSpec {
         label,
@@ -146,12 +153,12 @@ mod tests {
     fn headers_are_expandable_and_leaves_carry_state_in_the_name() {
         let section = tree_item(&SidebarRow::SectionHeader {
             section: "local",
-            title: "LOCAL BRANCHES",
+            title: Msg::A11ySidebarLocal,
             count: 3,
             collapsed: true,
         });
         assert_eq!((section.level, section.expanded), (1, Some(false)));
-        assert!(section.label.contains("LOCAL BRANCHES") && section.label.contains('3'));
+        assert!(section.label.contains(Msg::A11ySidebarLocal.t()) && section.label.contains('3'));
 
         let head = tree_item(&SidebarRow::LocalBranchLeaf {
             name: "main".into(),
@@ -210,6 +217,7 @@ mod tests {
             },
             SidebarRow::RemoteSubGroup {
                 key: "remote:x:y".into(),
+                remote: "x".into(),
                 prefix: evil.into(),
                 count: 1,
                 collapsed: false,

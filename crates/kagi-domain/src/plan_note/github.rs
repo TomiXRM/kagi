@@ -8,6 +8,14 @@
 /// Plan notes for the GitHub PR ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubNote {
+    /// Frozen GitHub-owned change scope, separate from local branch cleanup.
+    MergeScope {
+        branch: String,
+        head_sha: String,
+        totals: Option<(u32, u32, u32)>,
+    },
+    /// No same-head whole-PR path manifest was available at plan time.
+    MergeFilesUnavailable,
     /// blocker — the L1 list did not provide the immutable head commit needed
     /// by `gh pr merge --match-head-commit`.
     HeadUnavailable { number: u64 },
@@ -119,6 +127,21 @@ impl GithubNote {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
+            GithubNote::MergeScope {
+                branch,
+                head_sha,
+                totals,
+            } => match totals {
+                Some((files, additions, deletions)) => format!(
+                    "PR source: {branch}@{head_sha}\nFiles: {files} · +{additions} / −{deletions}"
+                ),
+                None => format!(
+                    "PR source: {branch}@{head_sha}\nPR file totals are unavailable for this head commit."
+                ),
+            },
+            GithubNote::MergeFilesUnavailable => {
+                "PR file paths are unavailable for this head commit.".into()
+            }
             GithubNote::HeadUnavailable { number } => {
                 format!(crate::advice_template_en!(GithubHeadUnavailable), number)
             }
@@ -228,6 +251,27 @@ impl GithubNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            GithubNote::KeepsLocalBranch { branch, reason } => format!(
+                crate::advice_template_display_en!(GithubKeepsLocalBranch),
+                branch,
+                reason.message_display_en()
+            ),
+            GithubNote::LocalBranchKept { name, reason } => format!(
+                crate::advice_template_display_en!(GithubLocalBranchKept),
+                name,
+                reason.message_display_en()
+            ),
+            GithubNote::LocalBranchNotDeleted { reason } => format!(
+                crate::advice_template_display_en!(GithubLocalBranchNotDeleted),
+                reason.message_display_en()
+            ),
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Why a PR merge's local head branch was **not** deleted (#705 review P3).
@@ -283,6 +327,18 @@ impl PrMergeLocalReason {
                 detail
             ),
             Self::Detail(detail) => detail.clone(),
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            Self::Plan(note) => note.message_display_en(),
+            Self::DeletionUnauthorized { detail } => format!(
+                crate::advice_template_display_en!(GithubLocalBranchNotDeletedDeletionUnauthorized),
+                detail
+            ),
+            _ => self.message_en(),
         }
     }
 }
@@ -341,6 +397,11 @@ impl GithubTitle {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the GitHub PR ops.
@@ -386,6 +447,15 @@ impl GithubRecovery {
             ),
             GithubRecovery::ApplySuggestion =>
                 "This rewrites only the working-tree file (nothing is staged or committed). The file's pre-apply content is kept under a backup ref first, recorded in the oplog (op=\"apply-suggestion\"); read it back with `git cat-file blob <backup-ref>`.".to_string(),
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            GithubRecovery::ApplySuggestion =>
+                "This rewrites only the working-tree file (nothing is staged or committed). The previous content is saved first; see the Operation Log entry for the backup ref. Read it back with `git cat-file blob <backup-ref>`.".to_string(),
+            _ => self.message_en(),
         }
     }
 }

@@ -12,7 +12,7 @@ pub(crate) const ADVICE_CHERRY_REVERT_WOULD_CONFLICT_CHERRY_PICK: &str =
 pub(crate) const ADVICE_CHERRY_REVERT_WOULD_CONFLICT_REVERT: &str =
     "revert すると {} 件 conflict します。先に解決してください。\nfiles {}";
 pub(crate) const ADVICE_CHERRY_REVERT_DIRTY_MAY_REFUSE: &str =
-    "作業ツリーに{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。";
+    "working tree に{}があります。revert が同じファイルを変更する場合は中止されることがあります。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA (mirrors
 /// `i18n::plan::common::parts_ja`; kept local since that helper is private to
@@ -84,6 +84,17 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &CherryRevertNote) -> String {
+    match note {
+        CherryRevertNote::DirtyMayRefuse { parts } => format!(
+            "working tree に{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。",
+            parts_ja(parts)
+        ),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one cherry_revert title.
 pub fn title_ja(title: &CherryRevertTitle) -> String {
     match title {
@@ -119,5 +130,79 @@ pub fn recovery_ja(recovery: &CherryRevertRecovery) -> String {
             "取り消すには、作成された revert commit をさらに revert:\n  git revert <new-revert-commit-sha>\n以前の HEAD は reflog に記録されています:\n  git reflog"
                 .to_string()
         }
+    }
+}
+
+/// Localize generated Revert AFTER prose from typed data, not user text.
+pub fn predicted_head_text<'a>(
+    title: &kagi_domain::plan_note::PlanTitle,
+    disposition: &kagi_domain::plan_note::PlanDisposition,
+    canonical: &'a str,
+    language: crate::i18n::Lang,
+) -> std::borrow::Cow<'a, str> {
+    use kagi_domain::plan_note::{PlanDisposition, PlanTitle};
+    if *disposition == PlanDisposition::Ready {
+        if let PlanTitle::CherryRevert(CherryRevertTitle::Revert {
+            branch, summary, ..
+        }) = title
+        {
+            return match language {
+                crate::i18n::Lang::En => {
+                    format!("branch: {branch} (+1 new revert commit: Revert \"{summary}\")")
+                }
+                crate::i18n::Lang::Ja => format!(
+                    "branch: {branch} (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+                ),
+            }
+            .into();
+        }
+    }
+    std::borrow::Cow::Borrowed(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Lang;
+    use kagi_domain::plan_note::{PlanDisposition, PlanTitle};
+
+    #[test]
+    fn dirty_may_refuse_preserves_legacy_bytes() {
+        assert_eq!(
+            note_ja_contract(&CherryRevertNote::DirtyMayRefuse {
+                parts: DirtyParts {
+                    staged: 2,
+                    modified: 1,
+                },
+            }),
+            "working tree にstage 済み 2 件、変更 1 件があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。"
+        );
+    }
+
+    #[test]
+    fn revert_after_summary_preserves_user_text() {
+        let summary = "日本語の commit: が新規作成されます";
+        let title = PlanTitle::CherryRevert(CherryRevertTitle::Revert {
+            sha: "12345678".into(),
+            branch: "日本語-branch".into(),
+            summary: summary.into(),
+        });
+        let canonical = format!(
+            "branch: 日本語-branch (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+        );
+        assert_eq!(
+            predicted_head_text(&title, &PlanDisposition::Ready, &canonical, Lang::En),
+            format!("branch: 日本語-branch (+1 new revert commit: Revert \"{summary}\")")
+        );
+        assert_eq!(
+            predicted_head_text(&title, &PlanDisposition::Ready, &canonical, Lang::Ja),
+            format!(
+                "branch: 日本語-branch (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+            )
+        );
+        assert_eq!(
+            predicted_head_text(&title, &PlanDisposition::Blocked, "branch: main", Lang::Ja),
+            "branch: main"
+        );
     }
 }

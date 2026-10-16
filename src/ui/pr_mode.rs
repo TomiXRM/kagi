@@ -19,7 +19,8 @@
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
 use gpui::{
-    div, prelude::*, px, relative, rgb, Context, ListState, SharedString, UniformListScrollHandle,
+    div, prelude::*, px, relative, rgb, Context, ListState, ScrollHandle, SharedString,
+    UniformListScrollHandle,
 };
 use kagi_domain::github::{
     Comment, Mergeable, PrKey, PullRequest, Review, ReviewComment, ReviewState,
@@ -27,6 +28,7 @@ use kagi_domain::github::{
 use kagi_domain::pr_list::PrSection;
 use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
+use kagi_ui_core::variable_list::VariableListState;
 
 use super::diff_view::{build_main_diff_view, MainDiffView};
 // issue #414: `gh`-sourced PR text (title, @login, ref names, check names) is the
@@ -40,6 +42,7 @@ use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
 
+mod detail_controls;
 pub mod threads;
 pub mod viewed;
 /// One open PR tab.
@@ -66,7 +69,8 @@ pub struct PrTab {
     pub selected_commit: Option<usize>,
     pub selected_file: Option<usize>,
     pub diff: Option<MainDiffView>,
-    pub diff_scroll: ListState,
+    pub diff_scroll: VariableListState,
+    pub(crate) diff_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// The 概要/レビュー page's virtualized list. The tabs are navigation:
     /// they reveal an item of this list instead of swapping the body
     /// (ADR-0200); the state lives here so the scroll survives a tab switch.
@@ -95,7 +99,8 @@ pub struct PrTab {
     /// them would point at the wrong row.
     pub conflict_selected: Option<usize>,
     /// Scroll state for the conflict diff, one per tab like `diff_scroll`.
-    pub conflict_scroll: ListState,
+    pub conflict_scroll: VariableListState,
+    pub(crate) conflict_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Which conflict within the file the jump control is on (0-based).
     pub conflict_at: usize,
     /// One loaded conflict file's rows/jumps; raw marker text is dropped after
@@ -139,8 +144,12 @@ pub enum PrFocus {
 }
 
 pub struct PrModeState {
+    /// Peek hides the workspace without dropping its tabs or parked drafts.
+    pub(crate) visible: bool,
     pub tabs: Vec<PrTab>,
     pub active: Option<usize>,
+    /// Roving keyboard focus for the detail view selector.
+    pub(crate) detail_focus: super::keyboard_nav::TabFocus,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
     pub focus: PrFocus,
     /// Whether the checks card on the PR page is expanded (mock 7b). Folded
@@ -160,6 +169,13 @@ pub struct PrModeState {
     /// The PR home table is virtualized so its layout processor can report the
     /// visible PR-number set to the lazy detail controller.
     pub dashboard_scroll: UniformListScrollHandle,
+    /// Natural-height navigator scrolling belongs to this repository session.
+    pub navigator_scroll: ScrollHandle,
+    /// Shared horizontal viewport for the dashboard's header and virtual rows.
+    pub dashboard_horizontal_scroll: ScrollHandle,
+    pub dashboard_keys: std::cell::RefCell<super::keyboard_nav::RowFocus>,
+    pub dashboard_drawn: std::cell::RefCell<std::ops::Range<usize>>,
+    pub dashboard_row_keys: std::cell::RefCell<super::keyboard_nav::RowKeys>,
     /// Which navigator sections are unfolded, indexed by
     /// [`PrSection::index`]. The Inbox opens with the mode; the rest are the
     /// viewer's own lists and stay folded until asked for.
@@ -172,21 +188,35 @@ pub struct PrModeState {
     /// position, because a pane that scrolls back on its own cannot be
     /// scrolled. Opening another PR returns it to following.
     pub lane_scroll_x: Option<f32>,
+    pub(super) lane_navigation: super::pr_lane::Navigation,
+    /// Presentation only; the tabs and their list/input owners never move.
+    pub(super) companion: Option<super::pr_layout::Companion>,
+    pub(super) lane_hidden: bool,
 }
 
 impl Default for PrModeState {
     fn default() -> Self {
         Self {
+            visible: true,
             tabs: Vec::new(),
             active: None,
+            detail_focus: Default::default(),
             focus: PrFocus::List,
             checks_open: false,
             comment_preview: false,
             feed_anchor: None,
             view: PrView::Overview,
             dashboard_scroll: UniformListScrollHandle::new(),
+            navigator_scroll: ScrollHandle::new(),
+            dashboard_horizontal_scroll: ScrollHandle::new(),
+            dashboard_keys: Default::default(),
+            dashboard_drawn: Default::default(),
+            dashboard_row_keys: Default::default(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
+            lane_navigation: Default::default(),
+            companion: None,
+            lane_hidden: false,
         }
     }
 }
@@ -217,7 +247,7 @@ impl PrModeState {
 pub(super) const COMMIT_LIMIT: usize = 500;
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
-        if self.pr_mode().is_some() {
+        if self.pr_mode_visible() {
             self.with_ui(|ui| ui.leave_pr_mode());
             klog!("pr-mode: closed");
         } else {
@@ -232,7 +262,12 @@ impl KagiApp {
             // bottom terminal panel would eat a third of it. Collapse it on
             // entry — Cmd-J still brings it back (user request).
             self.bottom_panel_open = false;
-            self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            self.with_ui(|ui| ui.retire_issue_conversation_scope());
+            if let Some(mode) = self.pr_mode_mut() {
+                mode.visible = true;
+            } else {
+                self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            }
             klog!("pr-mode: opened");
         }
         cx.notify();
@@ -240,7 +275,7 @@ impl KagiApp {
 
     /// Open (or activate) a tab for `pr` and load its content.
     pub fn pr_mode_open(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
-        if self.pr_mode().is_none() {
+        if !self.pr_mode_visible() {
             self.toggle_pr_mode(cx);
         }
         if let Some(ix) = self.pr_mode().and_then(|m| {
@@ -295,7 +330,8 @@ impl KagiApp {
             selected_commit: None,
             selected_file: None,
             diff: None,
-            diff_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            diff_scroll: VariableListState::new(0, px(200.)),
+            diff_layout: Default::default(),
             // A fresh tab opens on the description — "what is this PR" first,
             // the diff once a file/commit is picked (user request).
             reviews: Vec::new(),
@@ -307,7 +343,8 @@ impl KagiApp {
             feed_entries: std::rc::Rc::new(Vec::new()),
             conflicts: None,
             conflict_selected: None,
-            conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            conflict_scroll: VariableListState::new(0, px(200.)),
+            conflict_layout: Default::default(),
             conflict_preview: None,
             conflict_at: 0,
             merge_status: None,
@@ -448,7 +485,7 @@ impl KagiApp {
                     return;
                 };
                 let line_comments = kagi_domain::review_thread::feed_comments(&threads);
-                t.threads.set(threads);
+                t.threads.set(threads, &t.diff_scroll, t.diff.as_ref());
                 klog!(
                     "pr-mode: conversation #{} reviews={} comments={} line={}",
                     number,
@@ -526,26 +563,26 @@ impl KagiApp {
                     // index addresses a different element there.
                     let split = super::theme::diff_split();
                     let (count, target) = if split {
-                        let sp = super::diff_split::split_rows(&rows);
-                        let t = super::diff_split::split_index_of(&sp, row).unwrap_or(row);
-                        (sp.len(), t)
+                        let projection = super::diff_split::split_projection(&rows);
+                        let target =
+                            super::diff_split::split_index_of(&projection.rows, row).unwrap_or(row);
+                        (projection.rows.len(), target)
                     } else {
                         (rows.len(), row)
                     };
-                    // Sync the count first. `render_diff_list` resets the list
-                    // whenever its count disagrees, and `reset` clears
-                    // `logical_scroll_top` — so scrolling before the list has
-                    // been told how many rows there are is thrown away on the
-                    // very next frame, which is why this did nothing.
-                    if t.conflict_scroll.item_count() != count {
-                        t.conflict_scroll.reset(count);
-                    }
-                    // `scroll_to`, not `scroll_to_reveal_item`: revealing seeks
-                    // by accumulated height, and the list only measures rows it
-                    // has drawn, so downward targets land short. Setting the
-                    // top item is exact regardless of what has been measured —
-                    // and puts the conflict header at the top, which is where
-                    // it belongs.
+                    // Initialize the same source/layout memo as the renderer
+                    // before setting the explicit item anchor.
+                    let Some(preview) = t.conflict_preview.as_mut() else {
+                        return;
+                    };
+                    let (view, _) = preview.snapshot();
+                    t.conflict_layout.sync(
+                        &t.conflict_scroll,
+                        view.height_source,
+                        split,
+                        false,
+                        count,
+                    );
                     t.conflict_scroll.scroll_to(gpui::ListOffset {
                         item_ix: target,
                         offset_in_item: px(0.),
@@ -559,6 +596,9 @@ impl KagiApp {
     /// Back to the dashboard. Deactivates the tab without closing it, so its
     /// loaded commits / files / conversation survive the round trip.
     pub fn pr_mode_home(&mut self, cx: &mut Context<Self>) {
+        if let Some(owner) = self.active_session() {
+            super::diff_selection::retire_owner(super::diff_selection::SelectionOwner::Pr(owner));
+        }
         if let Some(m) = self.pr_mode_mut() {
             m.active = None;
             m.focus = PrFocus::List;
@@ -579,6 +619,9 @@ impl KagiApp {
     pub fn pr_mode_close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             if ix < m.tabs.len() {
+                let tab = &m.tabs[ix];
+                super::diff_selection::retire_surface(tab.diff_layout.selection_owner());
+                super::diff_selection::retire_surface(tab.conflict_layout.selection_owner());
                 m.tabs.remove(ix);
                 m.active = if m.tabs.is_empty() {
                     None
@@ -604,6 +647,13 @@ impl KagiApp {
     pub fn pr_mode_select_commit(&mut self, sel: Option<usize>, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.view = PrView::Diff;
+            if m.active
+                .and_then(|i| m.tabs.get(i))
+                .is_some_and(|tab| tab.selected_commit == sel)
+            {
+                cx.notify();
+                return;
+            }
         }
         let Some(mut tab) = self.pr_mode_take_active() else {
             return;
@@ -697,6 +747,13 @@ impl KagiApp {
     pub fn pr_mode_select_file(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.view = PrView::Diff;
+            if m.active
+                .and_then(|i| m.tabs.get(i))
+                .is_some_and(|tab| tab.selected_file == Some(ix))
+            {
+                cx.notify();
+                return;
+            }
         }
         let Some(mut tab) = self.pr_mode_take_active() else {
             return;
@@ -883,7 +940,11 @@ impl KagiApp {
         if let Some(mode) = self.pr_mode_of(owner) {
             mode.settle_composer_for(pr);
         }
-        if self.pr_comment_for.as_ref() == Some(pr) {
+        if self
+            .pr_comment_for
+            .as_ref()
+            .is_some_and(|(held_owner, held_pr)| Some(*held_owner) == owner && held_pr == pr)
+        {
             // `InputState::set_value` needs a `&mut Window`, which a completion
             // callback has none of. Dropping the entity is what the next
             // window-bearing frame rebuilds from the (now empty) draft.
@@ -906,13 +967,20 @@ impl KagiApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        // The composer follows the PR by repository and number: two tabs
-        // numbered 7 from two repositories are two drafts (#940 review).
-        // Compared in place every frame; the key is cloned only on a switch.
+        // A PR's draft belongs to its session too: two sessions reading the
+        // exact same repository and number must not share the box's text.
+        // Compare in place every frame; clone the key only on a switch.
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         let Some(same_pr) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-            .map(|t| self.pr_comment_for.as_ref().is_some_and(|k| t.pr.is(k)))
+            .map(|t| {
+                self.pr_comment_for
+                    .as_ref()
+                    .is_some_and(|(held_owner, key)| *held_owner == owner && t.pr.is(key))
+            })
         else {
             return;
         };
@@ -930,13 +998,13 @@ impl KagiApp {
         };
         if same_pr {
             // Same PR: the box is the truth, the tab keeps the copy.
-            let text = input.read(cx).value().to_string();
+            let text = input.read(cx).value();
             if let Some(tab) = self
                 .pr_mode_mut()
                 .and_then(|m| m.active.and_then(|ix| m.tabs.get_mut(ix)))
             {
-                if tab.comment_draft != text {
-                    tab.comment_draft = text;
+                if tab.comment_draft.as_str() != text.as_str() {
+                    tab.comment_draft = text.to_string();
                 }
             }
             return;
@@ -947,13 +1015,15 @@ impl KagiApp {
         if let Some(mode) = self.pr_mode_mut() {
             mode.comment_preview = false;
         }
-        let parked = input.read(cx).value().to_string();
-        if let Some(previous) = self.pr_comment_for.take() {
+        let parked = input.read(cx).value();
+        if let Some((previous_owner, previous)) = self.pr_comment_for.take() {
             if let Some(tab) = self
-                .pr_mode_mut()
+                .pr_mode_of(Some(previous_owner))
                 .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&previous)))
             {
-                tab.comment_draft = parked;
+                if tab.comment_draft.as_str() != parked.as_str() {
+                    tab.comment_draft = parked.to_string();
+                }
             }
         }
         let Some((open, draft)) = self
@@ -964,7 +1034,7 @@ impl KagiApp {
             return;
         };
         input.update(cx, |state, cx| state.set_value(draft, window, cx));
-        self.pr_comment_for = Some(open);
+        self.pr_comment_for = Some((owner, open));
     }
 
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
@@ -995,11 +1065,11 @@ impl KagiApp {
         };
         let repo = session.backend();
         let Some(fi) = tab.selected_file else {
-            tab.diff = None;
+            super::diff_view::highlight::install(&mut tab.diff, None);
             return;
         };
         let Some(file) = tab.files.get(fi) else {
-            tab.diff = None;
+            super::diff_view::highlight::install(&mut tab.diff, None);
             return;
         };
         let path = file.path.clone();
@@ -1024,13 +1094,14 @@ impl KagiApp {
                 },
             ),
         };
-        tab.diff = match result {
+        let built = match result {
             Ok(fd) => Some(build_main_diff_view(&fd, &path, fi, source)),
             Err(e) => {
                 klog!("pr-mode: diff error: {}", e);
                 None
             }
         };
+        super::diff_view::highlight::install(&mut tab.diff, built);
     }
 }
 
@@ -1073,20 +1144,48 @@ const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(
     app: &mut KagiApp,
     panel: Option<gpui::AnyElement>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
     // Faces for the logins on this page (ADR-0200). One attempt per login per
     // process; the pass is a set lookup once they are in hand.
     app.ensure_pr_avatars(cx);
-    let left = super::e2e::measure_control(
-        "pr-mode-left-pane",
+    let layout = super::pr_layout::Layout::for_window(app, window);
+    // A reveal is transient: an inline/undrawn companion must not reappear
+    // after another resize or consume Escape when there is no drawer.
+    if let Some(mode) = app.pr_mode_mut() {
+        mode.companion = layout.drawer;
+    }
+    if !layout.swimlane && layout.drawer != Some(super::pr_layout::Companion::Swimlane) {
+        if let Some(mode) = app.pr_mode() {
+            mode.lane_navigation
+                .keyboard
+                .yield_focus(app.root_focus.as_ref(), window, cx);
+        }
+    }
+    let drawer = match layout.drawer {
+        Some(super::pr_layout::Companion::Navigator) => Some(super::pr_layout::drawer(
+            super::workspace_mode::render_sidebar_pages(
+                app,
+                super::workspace_mode::WorkspaceMode::Prs,
+                cx,
+            ),
+            super::pr_layout::Companion::Navigator,
+        )),
+        Some(super::pr_layout::Companion::Swimlane) => {
+            super::pr_lane::render_pr_lane(app, window, cx)
+                .map(|pane| super::pr_layout::drawer(pane, super::pr_layout::Companion::Swimlane))
+        }
+        None => None,
+    };
+    let left = layout.navigator.then(|| {
         super::workspace_mode::render_sidebar_pages(
             app,
             super::workspace_mode::WorkspaceMode::Prs,
             cx,
-        ),
-    );
+        )
+    });
     // Measured from inside, not wrapped: the body's height chain (`h_full`,
     // `flex_1`) must reach the virtualized feed unbroken.
     let center = div()
@@ -1098,7 +1197,11 @@ pub fn render_pr_mode(
         .h_full()
         .flex()
         .flex_col()
-        .child(render_center(app, cx))
+        .when(has_tab, |el| {
+            el.child(super::pr_layout::toolbar(app, window, cx))
+        })
+        .child(render_center(app, window, cx))
+        .children(drawer)
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {
         None => center.into_any_element(),
@@ -1114,13 +1217,17 @@ pub fn render_pr_mode(
     };
     // The swimlane sits between the navigator and the body: it is about the
     // PRs, not about the file being read, and it is absent with no tab open.
-    let lane = super::pr_lane::render_pr_lane(app, cx)
+    let lane = layout
+        .swimlane
+        .then(|| super::pr_lane::render_pr_lane(app, window, cx))
+        .flatten()
         .map(|pane| super::e2e::measure_control("pr-mode-lane-pane", pane));
     // No outer right pane: the checks, the facts and the file list moved
     // inside the PR body, where the mock has them (ADR-0200). Three panes
     // between the navigator and the diff left the diff a sliver.
     div()
         .id("pr-mode-layout")
+        .relative()
         .flex()
         .flex_row()
         .flex_1()
@@ -1128,26 +1235,57 @@ pub fn render_pr_mode(
         .min_h(px(0.))
         .h_full()
         .bg(rgb(theme().bg_base))
-        .child(left)
-        .child(vdivider(DividerKind::PrModeLeft))
+        .children(left)
+        .when(layout.navigator, |el| {
+            el.child(vdivider(
+                DividerKind::PrModeLeft,
+                theme().sidebar,
+                "pr-navigator-divider",
+            ))
+        })
         .children(lane)
-        .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeLeft)))
+        .when(layout.swimlane, |el| {
+            el.child(vdivider(
+                DividerKind::PrModeLeft,
+                theme().bg_base,
+                "pr-lane-divider",
+            ))
+        })
         .child(center)
         .into_any_element()
 }
 
-fn vdivider(kind: DividerKind) -> gpui::Stateful<gpui::Div> {
+fn vdivider(kind: DividerKind, fill: u32, group: &'static str) -> gpui::Stateful<gpui::Div> {
     let id = match kind {
         DividerKind::PrModeLeft => "pr-mode-div-left",
         _ => "pr-mode-div-right",
     };
     div()
         .id(id)
+        .group(group)
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
-        .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .bg(rgb(fill))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover(group, |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>(group, |s| s.bg(rgb(theme().ui_accent()))),
+        )
+        .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_col_resize())
+        .drag_over::<DividerDrag>(move |style, drag, _, _| {
+            if drag.kind == kind {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(DividerDrag { kind }, |_drag, _position, _window, cx| {
             cx.new(|_| DividerGhost)
@@ -1189,14 +1327,22 @@ pub(super) fn card_pane_bg() -> u32 {
 /// A pane's focus cue: a 2px accent top border when it owns the arrow keys.
 pub(super) fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
     el.border_t_2().border_color(rgb(if focused {
-        theme().color_branch
+        theme().ui_accent()
     } else {
         theme().panel
     }))
 }
 
 // ── Center: header + view tabs + commits + body ──────────────
-fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn render_center(
+    app: &mut KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let selection_owner = super::diff_selection::SelectionOwner::Pr(
+        app.active_session()
+            .expect("PR mode requires an attached session"),
+    );
     let active: Option<usize> = app.pr_mode().and_then(|m| m.active);
     // No tab strip: the left PR list already highlights the active PR and
     // switching is one click there, so a second row of #N chips was pure
@@ -1212,59 +1358,38 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .h_full();
 
     let Some(ix) = active else {
+        if let Some(mode) = app.pr_mode() {
+            mode.detail_focus.sync(&[], cx);
+            mode.detail_focus
+                .release_closed(app.root_focus.as_ref(), window, cx);
+        }
         // No tab: use the whole center as a PR dashboard instead of an empty
         // hint (user request) — every open PR as a table row, click to open.
         return col
-            .child(super::pr_dashboard::render_dashboard(app, cx))
+            .child(super::pr_dashboard::render_dashboard(app, window, cx))
             .into_any_element();
     };
-    // Snapshot what the renderers need from the active tab.
-    let (pr, commits, selected_commit, diff, scroll, files_n) = {
-        let m = app.pr_mode().unwrap();
-        let t = &m.tabs[ix];
-        (
-            t.pr.clone(),
-            t.commits.clone(),
-            t.selected_commit,
-            t.diff.clone(),
-            t.diff_scroll.clone(),
-            t.files.len(),
-        )
-    };
-    let (
-        view,
-        reviews,
-        comments,
-        line_comments,
-        conflicts,
-        conflict_selected,
-        conflict_scroll,
-        conflict_at,
-        conversation_loaded,
-        merge_status_loaded,
-        local_refs_loading,
-    ) = {
-        let m = app.pr_mode().unwrap();
-        let t = &m.tabs[ix];
-        (
-            m.view,
-            t.reviews.clone(),
-            t.comments.clone(),
-            t.line_comments.clone(),
-            t.conflicts.clone(),
-            t.conflict_selected,
-            t.conflict_scroll.clone(),
-            t.conflict_at,
-            t.conversation_loaded,
-            t.merge_status_loaded,
-            t.local_refs_loading,
-        )
-    };
+    // Header facts and counts borrow the tab; owning snapshots are taken only
+    // by the selected view or when an action actually runs.
+    let mode = app.pr_mode().unwrap();
+    mode.dashboard_keys
+        .borrow_mut()
+        .yield_focus(app.root_focus.as_ref(), window, cx);
+    let tab = &mode.tabs[ix];
+    let pr = &tab.pr;
+    let commits = &tab.commits;
+    let selected_commit = tab.selected_commit;
+    let files_n = tab.files.len();
+    let convo_n = tab.reviews.len() + tab.comments.len() + tab.line_comments.len();
+    let view = mode.view;
+    let conversation_loaded = tab.conversation_loaded;
+    let merge_status_loaded = tab.merge_status_loaded;
+    let local_refs_loading = tab.local_refs_loading;
+    let owner = app.active_session();
     // 概要 and レビュー are two sections of one page, so both tabs draw it;
     // which chip is lit is which section the reader last jumped to.
     let show_feed = matches!(view, PrView::Overview | PrView::Review);
     let show_description = view == PrView::Overview;
-    let show_review = view == PrView::Review;
 
     // PR header
     let (g, c) = ci_glyph(pr.ci);
@@ -1278,26 +1403,38 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         app.transport_holds
             .contains(owner, &format!("pr-merge #{}", pr.number))
     });
-    let pr_open = pr.clone();
+    let open_key = pr.key();
     let open_gh = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.open_pr_in_browser(&pr_open);
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation("pr-mode-open-gh");
+        if this.active_session() != owner {
+            return;
+        }
+        let pr = this
+            .pr_mode_of(owner)
+            .and_then(|mode| mode.tabs.iter().find(|tab| tab.pr.is(&open_key)))
+            .map(|tab| tab.pr.clone());
+        if let Some(pr) = pr {
+            this.open_pr_in_browser(&pr);
+        }
         cx.notify();
     });
     let header = div()
         .flex()
         .flex_row()
         .items_center()
+        .flex_wrap()
         .gap_2()
         .flex_shrink_0()
         .px_3()
         .py_2()
         // Leaving a PR: back to the dashboard, and a manual fetch so CI state
         // can be refreshed without waiting out the ticker (user request).
-        .child(super::pr_dashboard::home_button(cx))
-        .child(super::pr_dashboard::refresh_button(cx))
+        .child(super::pr_dashboard::controls::home_button(app, cx))
+        .child(super::pr_dashboard::controls::refresh_button(app, cx))
         .child(
             div()
-                .text_color(rgb(theme().color_branch))
+                .text_color(rgb(theme().accent_text_on(theme().bg_base)))
                 .text_sm()
                 .child(SharedString::from(format!("#{}", pr.number))),
         )
@@ -1305,27 +1442,11 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             // Click the title → the PR description (markdown) takes the diff
             // area; click again (or pick a file / commit) to go back.
             let toggle = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                #[cfg(feature = "gui-e2e")]
+                super::e2e::pr_detail::record_activation("pr-mode-title");
                 this.pr_mode_toggle_description(cx);
             });
-            div()
-                .id("pr-mode-title")
-                .flex_1()
-                .min_w(px(0.))
-                .truncate()
-                .text_sm()
-                .cursor_pointer()
-                .text_color(rgb(if show_description {
-                    theme().color_branch
-                } else {
-                    theme().text_main
-                }))
-                .hover(|s| s.text_color(rgb(theme().color_branch)))
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::PrModeShowDescription.t())
-                        .build(w, cx)
-                })
-                .on_click(toggle)
-                .child(safe_text(&pr.title))
+            detail_controls::description(safe_text(&pr.title), show_description, toggle)
         })
         .child(
             div()
@@ -1345,12 +1466,24 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                     .child(SharedString::from(rv.to_string())),
             )
         })
-        // Merge — only for a mergeable, non-draft PR; the confirm modal
-        // states the CI / review caveats before anything happens.
+        // Merge opens a plan even with conflicts; the modal presents blockers
+        // and CI / review caveats before any write is approved.
         .when(!pr.is_draft && !merge_held, |el| {
-            let pr_merge = pr.clone();
+            let merge_key = pr.key();
             let merge_click =
                 cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::pr_detail::record_activation("pr-mode-merge");
+                    if this.active_session() != owner {
+                        return;
+                    }
+                    let Some(pr_merge) = this
+                        .pr_mode_of(owner)
+                        .and_then(|mode| mode.tabs.iter().find(|tab| tab.pr.is(&merge_key)))
+                        .map(|tab| tab.pr.clone())
+                    else {
+                        return;
+                    };
                     // Squash is kagi's own default (its history is squash-merged);
                     // the modal names the method it will use.
                     this.open_pr_merge_modal(
@@ -1360,311 +1493,199 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                         cx,
                     );
                 });
-            let ready = pr.mergeable != kagi_domain::github::Mergeable::Conflicting;
-            el.child(
-                div()
-                    .id("pr-mode-merge")
-                    .px_2()
-                    .py_px()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(if ready {
-                        theme().color_success
-                    } else {
-                        theme().selected
-                    }))
-                    .text_xs()
-                    .text_color(rgb(if ready {
-                        theme().color_success
-                    } else {
-                        theme().text_muted
-                    }))
-                    .cursor_pointer()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .hover(|s| s.bg(rgb(theme().surface)))
-                    .on_click(merge_click)
-                    .child(
-                        gpui::svg()
-                            .path("icons/git-merge.svg")
-                            .flex_shrink_0()
-                            .w(theme::scaled_px(12.))
-                            .h(theme::scaled_px(12.))
-                            .text_color(rgb(if ready {
-                                theme().color_success
-                            } else {
-                                theme().text_muted
-                            })),
-                    )
-                    .child(SharedString::from(Msg::PrModeMerge.t())),
-            )
+            el.child(detail_controls::merge(merge_click, cx))
         })
-        .child(
-            div()
-                .id("pr-mode-open-gh")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(theme().selected))
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(open_gh)
-                .child(SharedString::from("GitHub \u{2197}")),
-        );
+        .child(detail_controls::github(open_gh));
 
     // Commit strip
-    let all_click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_select_commit(None, cx);
-    });
-    let now = kagi_ui_core::time::now_unix_secs();
-    let commits_focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::Commits);
-    let commits_focus_click =
-        cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
-            this.pr_mode_focus(PrFocus::Commits, cx);
+    let strip = (view == PrView::Commits).then(|| {
+        let all_click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+            this.pr_mode_select_commit(None, cx);
         });
-    // The strip is its own panel (panel bg, section header) so where it ends
-    // and the description / diff begins is unmistakable (user request).
-    let mut strip = focus_border(
-        div()
-            .id("pr-mode-commits")
-            .flex_shrink_0()
-            .max_h(theme::scaled_px(COMMIT_STRIP_MAX_H))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .bg(rgb(theme().panel))
-            .border_b_1()
-            .border_color(rgb(theme().selected))
-            .on_mouse_down(gpui::MouseButton::Left, commits_focus_click),
-        commits_focused,
-    )
-    // The COMMITS header IS the "whole PR" selector: a separate "All changes"
-    // row said the same thing one line below it (user request). Clicking the
-    // header clears the per-commit selection; it highlights while active.
-    .child(
-        div()
-            .id("pr-mode-commits-all")
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px_3()
-            .py_1()
-            .cursor_pointer()
-            .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .on_click(all_click)
-            .child(
-                div()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(rgb(if selected_commit.is_none() {
-                        theme().text_main
-                    } else {
-                        theme().text_muted
-                    }))
-                    .child(SharedString::from(format!(
-                        "{} ({})",
-                        Msg::PrModeCommits.t(),
-                        commits.len()
-                    ))),
-            ),
-    );
-    for (i, cmt) in commits.iter().enumerate() {
-        let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            this.pr_mode_select_commit(Some(i), cx);
-        });
-        let sel = selected_commit == Some(i);
-        strip = strip.child(
+        let now = kagi_ui_core::time::now_unix_secs();
+        let commits_focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::Commits);
+        let commits_focus_click =
+            cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
+                this.pr_mode_focus(PrFocus::Commits, cx);
+            });
+        // The strip is its own panel (panel bg, section header) so where it ends
+        // and the description / diff begins is unmistakable (user request).
+        let mut strip = focus_border(
             div()
-                .id(("pr-mode-commit", i))
-                .h(theme::scaled_px(ROW_H))
+                .id("pr-mode-commits")
+                .flex_shrink_0()
+                .max_h(theme::scaled_px(COMMIT_STRIP_MAX_H))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .bg(rgb(theme().panel))
+                .border_b_1()
+                .border_color(rgb(theme().selected))
+                .on_mouse_down(gpui::MouseButton::Left, commits_focus_click),
+            commits_focused,
+        )
+        // The COMMITS header IS the "whole PR" selector: a separate "All changes"
+        // row said the same thing one line below it (user request). Clicking the
+        // header clears the per-commit selection; it highlights while active.
+        .child(
+            div()
+                .id("pr-mode-commits-all")
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_2()
+                .gap_1()
                 .px_3()
-                .text_sm()
+                .py_1()
                 .cursor_pointer()
-                .when(sel, |el| el.bg(rgb(theme().selected)))
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(click)
-                // Straight-line "graph": a dot per commit, no lanes — the
-                // user asked for focus on this change, not the whole repo.
+                .when(selected_commit.is_none(), |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
+                .when(selected_commit.is_some(), |el| {
+                    el.hover(|s| s.bg(rgb(theme().surface)))
+                })
+                .on_click(all_click)
+                .map(|el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el
+                        .relative()
+                        .child(super::e2e::measure_inside("pr-mode-commits-all"));
+                    el
+                })
                 .child(
                     div()
-                        .flex_shrink_0()
-                        .text_color(rgb(theme().color_branch))
-                        .child(SharedString::from("\u{25CF}")),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .font_family(super::MONO_FONT)
                         .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(cmt.id.short())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(theme().text_main))
-                        .child(safe_text(&cmt.summary)),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(theme().text_sub))
-                        .child(safe_text(&cmt.author.name)),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(kagi_ui_core::time::relative_time(
-                            cmt.author.time,
-                            now,
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(
+                            if theme().selection_uses_on_accent(
+                                selected_commit.is_none(),
+                                app.window_active,
+                            ) {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            },
+                        )
+                        .child(SharedString::from(format!(
+                            "{} ({})",
+                            Msg::PrModeCommits.t(),
+                            commits.len()
                         ))),
                 ),
         );
-    }
+        for (i, cmt) in commits.iter().enumerate() {
+            let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                this.pr_mode_select_commit(Some(i), cx);
+            });
+            let sel = selected_commit == Some(i);
+            let selection_on_accent = theme().selection_uses_on_accent(sel, app.window_active);
+            strip = strip.child(
+                div()
+                    .id(("pr-mode-commit", i))
+                    .h(theme::scaled_px(ROW_H))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(sel, |el| {
+                        el.bg(theme().selected_for_window(app.window_active))
+                    })
+                    .when(!sel, |el| el.hover(|s| s.bg(rgb(theme().surface))))
+                    .on_click(click)
+                    // Straight-line "graph": a dot per commit, no lanes — the
+                    // user asked for focus on this change, not the whole repo.
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(if selection_on_accent {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().accent_text_on(theme().bg_base)).into()
+                            })
+                            .child(SharedString::from("\u{25CF}")),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_family(super::MONO_FONT)
+                            .text_xs()
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            })
+                            .child(SharedString::from(cmt.id.short())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_color(if selection_on_accent {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_main).into()
+                            })
+                            .child(safe_text(&cmt.summary)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_sub).into()
+                            })
+                            .child(safe_text(&cmt.author.name)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            })
+                            .child(SharedString::from(kagi_ui_core::time::relative_time(
+                                cmt.author.time,
+                                now,
+                            ))),
+                    ),
+            );
+        }
+        strip
+    });
 
-    // Overview | Review | Diff — one place to say what the body shows, so
-    // the title click is a shortcut rather than the only route.
-    let convo_n = reviews.len() + comments.len() + line_comments.len();
-    let tab_btn = |id: &'static str,
-                   icon: &'static str,
-                   label: String,
-                   on: bool,
-                   view: PrView,
-                   cx: &mut Context<KagiApp>| {
-        let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            this.pr_mode_show(view, cx);
-        });
-        // A real tab: underline on the active one, no pill background —
-        // buttons read as actions, these switch what the pane shows.
-        div()
-            .id(id)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px_3()
-            .py_1()
-            .cursor_pointer()
-            .border_b_2()
-            .border_color(rgb(if on {
-                theme().color_branch
-            } else {
-                theme().panel
-            }))
-            .text_color(rgb(if on {
-                theme().text_main
-            } else {
-                theme().text_sub
-            }))
-            .hover(|s| s.text_color(rgb(theme().text_main)))
-            .on_click(click)
-            .child(
-                gpui::svg()
-                    .path(icon)
-                    .flex_shrink_0()
-                    .w(theme::scaled_px(13.))
-                    .h(theme::scaled_px(13.))
-                    .text_color(rgb(if on {
-                        theme().color_branch
-                    } else {
-                        theme().text_sub
-                    })),
-            )
-            .child(div().text_xs().child(SharedString::from(label)))
-    };
-    let views = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .px_2()
-        .bg(rgb(theme().panel))
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .child(tab_btn(
-            "pr-view-overview",
-            "icons/file-text.svg",
-            Msg::PrModeOverview.t().to_string(),
-            show_description,
-            PrView::Overview,
-            cx,
-        ))
-        .child(tab_btn(
-            "pr-view-review",
-            "icons/message-square.svg",
-            if convo_n > 0 {
-                format!("{} ({})", Msg::PrModeReview.t(), convo_n)
-            } else {
-                Msg::PrModeReview.t().to_string()
-            },
-            show_review,
-            PrView::Review,
-            cx,
-        ))
-        .child(tab_btn(
-            "pr-view-diff",
-            "icons/git-compare.svg",
-            // The mock's `FILES n`: the count is what says whether this is a
-            // one-line fix or a rewrite, and it is already in the tab's data.
-            match files_n {
-                0 => Msg::PrModeFiles.t().to_string(),
-                n => format!("{} ({})", Msg::PrModeFiles.t(), n),
-            },
-            view == PrView::Diff,
-            PrView::Diff,
-            cx,
-        ))
-        .child(tab_btn(
-            "pr-view-commits",
-            "icons/git-commit.svg",
-            match commits.len() {
-                0 => Msg::PrModeCommits.t().to_string(),
-                n => format!("{} ({})", Msg::PrModeCommits.t(), n),
-            },
-            view == PrView::Commits,
-            PrView::Commits,
-            cx,
-        ))
-        // ADR-0145: only when GitHub says the merge conflicts. A tab that is
-        // always there but empty six times out of seven teaches people to
-        // ignore it, which is the opposite of the point.
-        .when(pr.mergeable == Mergeable::Conflicting, |el| {
-            el.child(tab_btn(
-                "pr-view-conflicts",
-                "icons/git-merge.svg",
-                Msg::PrModeConflicts.t().to_string(),
-                view == PrView::Conflicts,
-                PrView::Conflicts,
-                cx,
-            ))
-        });
+    let views = detail_controls::selector(
+        app,
+        view,
+        pr.mergeable,
+        [convo_n, files_n, commits.len()],
+        window,
+        cx,
+    );
 
     col = col.child(header).child(views);
 
     // The body below the tabs is the view's own content, full width.
-    let mut content = div().flex_1().min_w(px(0.)).min_h(px(0.)).flex().flex_col();
+    let mut content = div()
+        .relative()
+        .flex_1()
+        .min_w(px(0.))
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .child(super::e2e::measure_inside("pr-mode-body"));
     if local_refs_loading {
         content = content.child(super::pr_conversation::render_loading());
     }
     // The commits are their own tab now, at full height, instead of a strip
     // pinned above every other view (ADR-0200).
-    if view == PrView::Commits {
+    if let Some(strip) = strip {
         content = content.child(strip.flex_1().max_h(relative(1.)));
     } else if show_feed {
         // #347: the merge-status card rides at the top of the feed - the four
@@ -1676,9 +1697,19 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         }
         content = content.child(super::pr_conversation::render_feed(app, ix, cx));
     } else if view == PrView::Conflicts {
+        let tab = &mut app.pr_mode_mut().unwrap().tabs[ix];
+        let conflicts = &tab.conflicts;
+        let conflict_selected = tab.conflict_selected;
+        let conflict_scroll = tab.conflict_scroll.clone();
+        let conflict_at = tab.conflict_at;
+        if !matches!(conflicts, Some(Ok(files)) if !files.is_empty()) {
+            super::diff_selection::retire_surface(tab.conflict_layout.selection_owner());
+        }
         let body: gpui::AnyElement = match conflicts.as_ref() {
             None => pr_center_note(SharedString::from("\u{2026}")),
-            Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
+            Some(Err(e)) => pr_center_note(SharedString::from(
+                super::i18n::op::user_text::diagnostic(e).into_owned(),
+            )),
             Some(Ok(files)) if files.is_empty() => {
                 pr_center_note(SharedString::from(Msg::PrConflictsNone.t()))
             }
@@ -1686,10 +1717,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 let file_index = conflict_selected.unwrap_or(0).min(files.len() - 1);
                 // Loaded rows belong to the tab. A loading shell is just one
                 // explanatory row; it must not borrow another file's content.
-                let (dv, jumps) = app
-                    .pr_mode_mut()
-                    .and_then(|mode| mode.tabs.get_mut(ix))
-                    .and_then(|tab| tab.conflict_preview.as_mut())
+                let (dv, jumps) = tab
+                    .conflict_preview
+                    .as_mut()
                     .filter(|preview| preview.path() == files[file_index].path)
                     .map(|preview| preview.snapshot())
                     .unwrap_or_else(|| {
@@ -1708,27 +1738,60 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                     )
                 });
                 let header = DiffHeader::leading(nav);
-                render_diff_list::<KagiApp>(dv, header, conflict_scroll, None, cx)
-                    .into_any_element()
+                let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
+                    return content.into_any_element();
+                };
+                render_diff_list::<KagiApp>(
+                    dv,
+                    header,
+                    conflict_scroll,
+                    &tab.conflict_layout,
+                    None,
+                    selection_owner,
+                    cx,
+                )
+                .into_any_element()
             }
         };
         content = content.child(body);
     } else {
         // Diff
+        let tab = &app.pr_mode().unwrap().tabs[ix];
+        let diff = tab.diff.clone();
+        let scroll = tab.diff_scroll.clone();
         let diff_el: gpui::AnyElement = match diff {
             Some(dv) => {
                 let header = threads::diff_header(app, ix, &dv, cx);
-                render_diff_list::<KagiApp>(dv, header, scroll, None, cx).into_any_element()
+                let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
+                    return content.into_any_element();
+                };
+                render_diff_list::<KagiApp>(
+                    dv,
+                    header,
+                    scroll,
+                    &tab.diff_layout,
+                    None,
+                    selection_owner,
+                    cx,
+                )
+                .into_any_element()
             }
-            None => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::PrModeNoFile.t()))
-                .into_any_element(),
+            None => {
+                let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
+                    return content.into_any_element();
+                };
+                super::diff_selection::retire_surface(tab.diff_layout.selection_owner());
+                tab.diff_layout.clear(&tab.diff_scroll);
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::PrModeNoFile.t()))
+                    .into_any_element()
+            }
         };
         content = content.child(diff_el);
     }
@@ -1743,7 +1806,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     col.child(content)
         .children(
             show_feed
-                .then(|| super::pr_page::render_composer(app, cx))
+                .then(|| super::pr_page::render_composer(app, window, cx))
                 .flatten(),
         )
         .into_any_element()
@@ -1822,6 +1885,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
             }
         });
         let sel = selected_file == Some(i);
+        let selection_on_accent = theme().selection_uses_on_accent(sel, app.window_active);
         let is_viewed = marks.map(|v| v.is_viewed(&f.path));
         let name = f
             .path
@@ -1844,22 +1908,39 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .px_3()
                 .text_sm()
                 .cursor_pointer()
-                .when(sel, |el| el.bg(rgb(theme().selected)))
-                .hover(|s| s.bg(rgb(theme().surface)))
+                .when(sel, |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
+                .when(!sel, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                 .on_click(click)
+                .map(|el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el
+                        .relative()
+                        .child(super::e2e::measure_inside(format!("pr-mode-file-{i}")));
+                    el
+                })
                 .when(is_viewed == Some(true), |el| el.opacity(0.5))
                 .children(is_viewed.map(|on| viewed::checkbox(i, on, cx)))
                 .child(
                     div()
                         .w(theme::scaled_px(14.))
                         .flex_shrink_0()
-                        .text_color(rgb(color))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(app.window_active)
+                        } else {
+                            rgb(color).into()
+                        })
                         .child(SharedString::from(badge)),
                 )
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(app.window_active)
+                        } else {
+                            rgb(theme().text_main).into()
+                        })
                         .child(SharedString::from(name)),
                 )
                 .child(
@@ -1868,7 +1949,11 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                         .min_w(px(0.))
                         .truncate()
                         .text_xs()
-                        .text_color(rgb(theme().text_muted))
+                        .text_color(if selection_on_accent {
+                            theme().selection_secondary_foreground(app.window_active)
+                        } else {
+                            rgb(theme().text_muted).into()
+                        })
                         .child(SharedString::from(dir)),
                 ),
         );
@@ -1964,5 +2049,47 @@ mod pr_fixture_tests {
             base_repo: "o/r".into(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn pr_mode_reload_conversation_for_e2e(&mut self, cx: &mut Context<Self>) {
+        let Some(pr) = self
+            .pr_mode()
+            .and_then(|mode| mode.active.and_then(|index| mode.tabs.get(index)))
+            .map(|tab| tab.pr.clone())
+        else {
+            return;
+        };
+        self.pr_mode_load_conversation(&pr, cx);
+    }
+
+    pub fn pr_detail_tabs_for_e2e(
+        &self,
+    ) -> (Option<gpui::Role>, Vec<(gpui::Role, String, bool, bool)>) {
+        let role =
+            super::e2e::pr_detail::control("pr-detail-view-tabs").and_then(|control| control.role);
+        let tabs = self
+            .pr_mode()
+            .filter(|mode| mode.active.is_some())
+            .map(|mode| mode.detail_focus.recorded_tabs())
+            .unwrap_or_default();
+        (role, tabs)
+    }
+
+    pub fn focus_pr_detail_tab_for_e2e(
+        &self,
+        slot: usize,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        if let Some(mode) = self.pr_mode() {
+            mode.detail_focus.focus(slot, window, cx);
+        }
+    }
+
+    pub fn pr_detail_tab_focused_for_e2e(&self, window: &gpui::Window) -> Option<usize> {
+        self.pr_mode()?.detail_focus.focused(window)
     }
 }

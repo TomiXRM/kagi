@@ -74,6 +74,188 @@ fn build_unborn_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     (d.to_path_buf(), repo)
 }
 
+#[cfg(unix)]
+fn check_dangling_symlink_stage(bulk: bool, existing: bool, target_kind: u8) {
+    use std::os::unix::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::symlink,
+    };
+    let tmp = TempDir::new().unwrap();
+    let (dir, _) = build_clean_repo(&tmp);
+    write_file(&dir, "target", "target\n");
+    if existing {
+        symlink("target", dir.join("link")).unwrap();
+    }
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-qm", "symlink base"]);
+    write_file(&dir, "README.md", "sentinel staged\n");
+    git(&dir, &["add", "README.md"]);
+    write_file(&dir, "README.md", "sentinel working tree\n");
+    let sentinel = git_fixture::git_output(&dir, &["ls-files", "--stage", "--", "README.md"]);
+    let index_before = Repository::open(&dir).unwrap().index().unwrap();
+    let unrelated: Vec<_> = index_before
+        .iter()
+        .filter(|e| e.path != b"link")
+        .map(|e| (e.path, e.id, e.mode))
+        .collect();
+    if existing {
+        std::fs::remove_file(dir.join("link")).unwrap();
+    }
+    let target = match target_kind {
+        0 => "missing".into(),
+        1 => dir.join("missing"),
+        _ => std::ffi::OsString::from_vec(b"missing-\xff".to_vec()).into(),
+    };
+    symlink(&target, dir.join("link")).unwrap();
+    let backend = kagi_git::Backend::open(&dir).unwrap();
+    if bulk {
+        assert_eq!(backend.stage_files(&["link".into()]).unwrap(), 1);
+    } else {
+        backend.stage_file(Path::new("link")).unwrap();
+    }
+    let staged = git_fixture::git_output(&dir, &["ls-files", "--stage", "--", "link"]);
+    assert!(
+        staged.starts_with("120000 "),
+        "link must be staged, not deleted: {staged:?}"
+    );
+    let repo = Repository::open(&dir).unwrap();
+    let index = repo.index().unwrap();
+    let link = index.get_path(Path::new("link"), 0).unwrap();
+    assert_eq!(link.mode, 0o120000);
+    assert_eq!(
+        repo.find_blob(link.id).unwrap().content(),
+        target.as_os_str().as_bytes()
+    );
+    assert_eq!(std::fs::read_link(dir.join("link")).unwrap(), target);
+    assert_eq!(
+        git_fixture::git_output(&dir, &["ls-files", "--stage", "--", "README.md"]),
+        sentinel
+    );
+    assert_eq!(
+        std::fs::read(dir.join("README.md")).unwrap(),
+        b"sentinel working tree\n"
+    );
+    assert_eq!(
+        index
+            .iter()
+            .filter(|e| e.path != b"link")
+            .map(|e| (e.path, e.id, e.mode))
+            .collect::<Vec<_>>(),
+        unrelated
+    );
+    // Only removal of the link itself stages a deletion.
+    std::fs::remove_file(dir.join("link")).unwrap();
+    if bulk {
+        assert_eq!(backend.stage_files(&["link".into()]).unwrap(), 1);
+    } else {
+        backend.stage_file(Path::new("link")).unwrap();
+    }
+    let index = Repository::open(&dir).unwrap().index().unwrap();
+    assert!(index.get_path(Path::new("link"), 0).is_none());
+    assert_eq!(
+        index
+            .iter()
+            .map(|e| (e.path, e.id, e.mode))
+            .collect::<Vec<_>>(),
+        unrelated
+    );
+    assert_eq!(
+        std::fs::read(dir.join("README.md")).unwrap(),
+        b"sentinel working tree\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_stage_single() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for existing in [true, false] {
+        for target_kind in 0..3 {
+            check_dangling_symlink_stage(false, existing, target_kind);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_stage_bulk() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for existing in [true, false] {
+        for target_kind in 0..3 {
+            check_dangling_symlink_stage(true, existing, target_kind);
+        }
+    }
+}
+
+#[test]
+fn stage_directory_replaced_by_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for bulk in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        init_repo(dir, "main");
+        std::fs::create_dir(dir.join("dir")).unwrap();
+        write_file(dir, "dir/a", "old\n");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+        std::fs::remove_file(dir.join("dir/a")).unwrap();
+        std::fs::remove_dir(dir.join("dir")).unwrap();
+        write_file(dir, "dir", "replacement\n");
+        let backend = kagi_git::Backend::open(dir).unwrap();
+        if bulk {
+            backend
+                .stage_files(&["dir/a".into(), "dir".into()])
+                .unwrap();
+        } else {
+            backend.stage_file(Path::new("dir/a")).unwrap();
+            backend.stage_file(Path::new("dir")).unwrap();
+        }
+        let repo = Repository::open(dir).unwrap();
+        let index = repo.index().unwrap();
+        assert_eq!(index.len(), 1);
+        assert!(index.get_path(Path::new("dir/a"), 0).is_none());
+        let entry = index.get_path(Path::new("dir"), 0).unwrap();
+        assert_eq!(
+            repo.find_blob(entry.id).unwrap().content(),
+            b"replacement\n"
+        );
+    }
+}
+
+#[test]
+fn stage_batch_error_does_not_leak_cached_index_edits() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (dir, _) = build_clean_repo(&tmp);
+    write_file(&dir, "README.md", "aborted batch edit\n");
+    write_file(&dir, "next", "next successful stage\n");
+    std::fs::create_dir(dir.join("not-a-file")).unwrap();
+    let before = std::fs::read(dir.join(".git/index")).unwrap();
+    let backend = kagi_git::Backend::open(&dir).unwrap();
+    assert!(backend
+        .stage_files(&["README.md".into(), "not-a-file".into()])
+        .is_err());
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), before);
+    backend.stage_file(Path::new("next")).unwrap();
+    let repo = Repository::open(&dir).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index.get_path(Path::new("README.md"), 0).unwrap();
+    assert_eq!(repo.find_blob(entry.id).unwrap().content(), b"# test\n");
+    assert!(index.get_path(Path::new("next"), 0).is_some());
+    assert_eq!(
+        std::fs::read(dir.join("README.md")).unwrap(),
+        b"aborted batch edit\n"
+    );
+}
+
 // ────────────────────────────────────────────────────────────
 // Test 1: stage a modified tracked file
 // ────────────────────────────────────────────────────────────

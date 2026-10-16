@@ -428,6 +428,119 @@ mod reflow_tests {
     }
 }
 
+/// Byte ranges of explicit HTTP(S) URLs in plain commit text, not Markdown.
+/// Japanese prose/punctuation and unmatched closing brackets terminate a URL;
+/// balanced ASCII brackets inside paths remain part of it.
+pub fn message_url_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+    for (start, _) in text.match_indices("http") {
+        // A scheme-looking substring inside an already consumed URL is inert.
+        if start < offset {
+            continue;
+        }
+        let suffix = &text[start + 4..];
+        let scheme_len = if suffix.starts_with("s://") {
+            8
+        } else if suffix.starts_with("://") {
+            7
+        } else {
+            continue;
+        };
+        let mut end = start + scheme_len;
+        let mut brackets = [0usize; 3];
+        for (index, ch) in text[end..].char_indices() {
+            if ch.is_whitespace()
+                || ch.is_control()
+                || matches!(ch, '<' | '>' | '"' | '\'' | '`' | '\\')
+                || !ch.is_ascii()
+            {
+                break;
+            }
+            if let Some(slot) = ['(', '[', '{'].iter().position(|&c| c == ch) {
+                brackets[slot] += 1;
+            }
+            if let Some(slot) = [')', ']', '}'].iter().position(|&c| c == ch) {
+                if brackets[slot] == 0 {
+                    break;
+                }
+                brackets[slot] -= 1;
+            }
+            end = start + scheme_len + index + ch.len_utf8();
+        }
+        while end > start + scheme_len
+            && matches!(
+                text.as_bytes()[end - 1],
+                b'.' | b',' | b';' | b':' | b'!' | b'?'
+            )
+        {
+            end -= 1;
+        }
+        let authority = text[start + scheme_len..end]
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default();
+        let boundary = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_ascii_alphanumeric() && !matches!(c, '_' | ':' | '/' | '.'));
+        if boundary && !authority.is_empty() {
+            ranges.push(start..end);
+        }
+        offset = end.max(start + scheme_len);
+    }
+    ranges
+}
+
+/// Inspector's literal HTML, with only detected HTTP(S) URLs made into anchors.
+/// Attribute escaping is separate from text escaping; authored HTML stays text.
+pub fn message_with_links_to_html(text: &str, links: &[std::ops::Range<usize>]) -> String {
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut start = 0;
+    for range in links {
+        escape_message_text(&text[start..range.start], &mut out, false);
+        let url = &text[range.clone()];
+        out.push_str("<a href=\"");
+        escape_message_text(url, &mut out, true);
+        out.push_str("\">");
+        escape_message_text(url, &mut out, false);
+        out.push_str("</a>");
+        start = range.end;
+    }
+    escape_message_text(&text[start..], &mut out, false);
+    message_html_paragraphs(&out, |line, out| out.push_str(line))
+}
+
+fn escape_message_text(text: &str, out: &mut String, attribute: bool) {
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' if attribute => out.push_str("&quot;"),
+            '\'' if attribute => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+}
+
+fn message_html_paragraphs(text: &str, mut write_line: impl FnMut(&str, &mut String)) -> String {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = String::with_capacity(text.len() + 16);
+    for para in text
+        .split("\n\n")
+        .map(|p| p.trim_matches('\n'))
+        .filter(|p| !p.trim().is_empty())
+    {
+        for line in para.split('\n') {
+            out.push_str("<p>");
+            write_line(line, &mut out);
+            out.push_str("</p>");
+        }
+    }
+    out
+}
+
 /// Render a commit message as HTML that displays **literally**.
 ///
 /// The only selectable text element available is `TextView`, and it parses
@@ -441,32 +554,7 @@ mod reflow_tests {
 /// commit body's bullet lines into one (#946, first seen in the Operation Log
 /// detail, #908). Blank lines only separate lines; a run of them adds nothing.
 pub fn message_to_html(msg: &str) -> String {
-    fn escape(s: &str, out: &mut String) {
-        for c in s.chars() {
-            match c {
-                '&' => out.push_str("&amp;"),
-                '<' => out.push_str("&lt;"),
-                '>' => out.push_str("&gt;"),
-                _ => out.push(c),
-            }
-        }
-    }
-    let text = msg.replace("\r\n", "\n").replace('\r', "\n");
-    let mut out = String::with_capacity(text.len() + 16);
-    // A run of blank lines separates paragraphs; collapsing them here keeps an
-    // over-spaced message from rendering as a column of empty paragraphs.
-    for para in text
-        .split("\n\n")
-        .map(|p| p.trim_matches('\n'))
-        .filter(|p| !p.trim().is_empty())
-    {
-        for line in para.split('\n') {
-            out.push_str("<p>");
-            escape(line, &mut out);
-            out.push_str("</p>");
-        }
-    }
-    out
+    message_html_paragraphs(msg, |line, out| escape_message_text(line, out, false))
 }
 
 #[cfg(test)]
@@ -535,5 +623,66 @@ mod message_to_html_tests {
             message_to_html("a\r\n\r\nb\r\nc"),
             "<p>a</p><p>b</p><p>c</p>"
         );
+    }
+}
+
+#[cfg(test)]
+mod message_link_tests {
+    use super::{message_url_ranges, message_with_links_to_html};
+
+    fn urls(text: &str) -> Vec<&str> {
+        message_url_ranges(text)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect()
+    }
+
+    #[test]
+    fn japanese_prose_brackets_and_sentence_punctuation() {
+        assert_eq!(
+            urls("参照（https://example.com/a）。https://example.com/b日本語"),
+            ["https://example.com/a", "https://example.com/b"]
+        );
+        assert_eq!(
+            urls("(https://example.com/a_(b)), http://example.com/c!"),
+            ["https://example.com/a_(b)", "http://example.com/c"]
+        );
+        assert_eq!(
+            urls("[https://example.com/a?q=x&n=2#part]."),
+            ["https://example.com/a?q=x&n=2#part"]
+        );
+    }
+
+    #[test]
+    fn large_single_scheme_input_remains_linear() {
+        let text = "https://a ".repeat(20_000);
+        let start = std::time::Instant::now();
+        let ranges = message_url_ranges(&text);
+        assert_eq!(ranges.len(), 20_000);
+        for (index, range) in ranges.iter().enumerate() {
+            assert_eq!(*range, index * 10..index * 10 + 9);
+        }
+        // Deliberately loose for busy CI hosts; the one match_indices scan and
+        // disjoint consumed spans prevent repeated searches of the suffix.
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn arbitrary_schemes_embedded_prefixes_and_empty_hosts_are_not_links() {
+        assert!(urls("javascript:alert(1) data:text/html,x file:///tmp/a ftp://host xhttps://host javascript:https://host https:///a https://").is_empty());
+    }
+
+    #[test]
+    fn authored_markup_is_literal_and_attributes_cannot_escape() {
+        let text = "<script>alert(1)</script> [label](https://example.com/a?q=x&n=2) <img src=x> https://example.com/\" onclick=alert(1)";
+        let html = message_with_links_to_html(text, &message_url_ranges(text));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(html.contains("&lt;img src=x&gt;"));
+        assert!(html.contains("[label](<a href=\"https://example.com/a?q=x&amp;n=2\">https://example.com/a?q=x&amp;n=2</a>)"));
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("<img "));
+        assert!(html.contains(
+            "<a href=\"https://example.com/\">https://example.com/</a>\" onclick=alert(1)"
+        ));
     }
 }

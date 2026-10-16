@@ -38,7 +38,9 @@
 //! into `TabUiState`; this registry renders but never disposes them on a switch.
 
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled};
+use gpui::{
+    div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, Window,
+};
 use std::sync::Arc;
 
 use super::inspector_model::{FilesSource, InspectorFiles};
@@ -82,6 +84,7 @@ pub trait WorkspaceItem {
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement>;
 }
@@ -107,6 +110,7 @@ impl WorkspaceItem for FileHistoryItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().file_history.clone()?;
@@ -146,6 +150,7 @@ impl WorkspaceItem for EcosystemItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let eco = app.ui().ecosystem.clone()?;
@@ -166,16 +171,17 @@ impl WorkspaceItem for PrModeItem {
         Some(CenterPane::PrMode)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.pr_mode().is_some()
+        app.pr_mode_visible()
     }
     fn render(
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(super::pr_mode::render_pr_mode(app, panel, cx))
+        Some(super::pr_mode::render_pr_mode(app, panel, window, cx))
     }
 }
 
@@ -198,9 +204,12 @@ impl WorkspaceItem for IssuesModeItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(super::issues_mode::render_issues_mode(app, panel, cx))
+        Some(super::issues_mode::render_issues_mode(
+            app, panel, window, cx,
+        ))
     }
 }
 
@@ -225,6 +234,7 @@ impl WorkspaceItem for BranchCleanupItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(
@@ -270,6 +280,7 @@ impl WorkspaceItem for EditorWorkspaceItem {
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().editor_workspace.clone()?;
@@ -325,6 +336,7 @@ impl WorkspaceItem for MainDiffItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(app.ui().main_diff.clone()?.into_any_element())
@@ -376,30 +388,11 @@ impl WorkspaceItem for CommitPanelItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let entity = app.ui().commit_panel.clone()?;
-        let active_wip = match app
-            .ui()
-            .main_diff
-            .as_ref()
-            .map(|d| d.read(cx).view.source.clone())
-        {
-            Some(MainDiffSource::Unstaged { path }) => Some((false, path)),
-            Some(MainDiffSource::Staged { path }) => Some((true, path)),
-            _ => None,
-        };
-        let smart = app.smart_commit.clone();
-        let smart_ui = &app.ui[&entity.read(cx).owner];
-        let panel_width = app.panel_width;
-        entity.update(cx, |v, _| {
-            v.active_wip = active_wip;
-            v.panel_render_width = panel_width;
-            v.smart_snapshot = smart;
-            v.smart_generating = smart_ui.smart_commit_generating;
-            v.smart_status = smart_ui.smart_commit_status.clone();
-        });
-        Some(entity.into_any_element())
+        app.prepare_commit_panel_presentation(window, cx)
+            .map(IntoElement::into_any_element)
     }
 }
 
@@ -407,40 +400,51 @@ impl WorkspaceItem for CommitPanelItem {
 /// selected commit's detail + badges + active-file highlight, sync the
 /// message slot of the derived model, and render `inspector::render_inspector`
 /// from it. The caller has already synced the files slot to its own source
-/// (issue #512); `compare_title` is the one other input that differs between
-/// the normal and compare modes.
+/// (issue #512). Compare can render its files with no selected commit; only
+/// the normal Inspector requires the commit-specific header/message.
 pub(super) fn render_inspector_body(
     app: &mut KagiApp,
     selected: Option<usize>,
     compare_title: Option<SharedString>,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
     // During the exit clip `selected` is the last drawn row; the app's active
     // selection has already been cleared by Escape.
-    let d = selected.and_then(|i| app.view().details.get(i)).cloned()?;
-    let at = CommitId(d.full_sha.as_ref().to_string());
+    let d = selected.and_then(|i| app.view().details.get(i)).cloned();
+    if d.is_none() && compare_title.is_none() {
+        return None;
+    }
+    let at = d
+        .as_ref()
+        .map(|d| CommitId(d.full_sha.as_ref().to_string()));
     let selected_badges: Vec<commit_list::RefBadge> = selected
+        .filter(|_| d.is_some())
         .and_then(|i| app.view().rows.get(i))
         .map(|r| r.badges.clone())
         .unwrap_or_default();
     // GitHub Phase 1: PRs whose head branch (local or origin/) points at this
     // commit — rendered as clickable `#N ✓` chips next to the ref badges.
-    let prs_here: Vec<kagi_domain::github::PullRequest> = app
-        .ui()
-        .github_prs
-        .iter()
-        .filter(|pr| {
-            let local_tip = app.view().branch_targets.get(&pr.head);
-            let remote_tip = app
-                .view()
-                .remote_branches
+    let prs_here: Vec<kagi_domain::github::PullRequest> = at
+        .as_ref()
+        .map(|at| {
+            app.ui()
+                .github_prs
                 .iter()
-                .find(|rb| rb.name == pr.head)
-                .map(|rb| &rb.target);
-            local_tip == Some(&at) || remote_tip == Some(&at)
+                .filter(|pr| {
+                    let local_tip = app.view().branch_targets.get(&pr.head);
+                    let remote_tip = app
+                        .view()
+                        .remote_branches
+                        .iter()
+                        .find(|rb| rb.name == pr.head)
+                        .map(|rb| &rb.target);
+                    local_tip == Some(at) || remote_tip == Some(at)
+                })
+                .cloned()
+                .collect()
         })
-        .cloned()
-        .collect();
+        .unwrap_or_default();
     // Active file (for list highlight) derived from the open main diff.
     let active_commit_file: Option<usize> = match app
         .ui()
@@ -453,26 +457,32 @@ pub(super) fn render_inspector_body(
         _ => None,
     };
     let generated_expanded = app.inspector_generated_expanded;
-    app.ui_mut()?
-        .inspector_model
-        .sync_message(&d.full_sha, d.full_message.as_ref());
+    if let Some(d) = &d {
+        app.ui_mut()?
+            .inspector_model
+            .sync_message(&d.full_sha, d.full_message.as_ref());
+    }
     Some(
         inspector::render_inspector(
-            d,
-            at,
+            d.zip(at),
             selected_badges,
             prs_here,
             &app.ui().inspector_model,
             generated_expanded,
             compare_title,
             active_commit_file,
+            app.window_active,
             app.inspector_tree_view,
             app.inspector_split,
             app.inspector_geom.clone(),
-            app.panel_width,
+            app.pane_fit.right,
+            app.compact.enabled,
             // W11-AVATAR: resolved avatar images so the inspector can swap
             // the initial circle for a real image.
             &app.avatars.images,
+            app.root_focus.as_ref(),
+            &app.ui().inspector_message_scroll,
+            window,
             cx,
         )
         .into_any_element(),
@@ -500,13 +510,14 @@ impl WorkspaceItem for InspectorItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // Changed files + diffstat for the selected commit (vs parent). A cache
         // miss or an unavailable diff both derive to "(diff unavailable)".
         let selected = app.ui().selected?;
         app.ui_mut()?.sync_inspector_commit_files(selected);
-        render_inspector_body(app, Some(selected), None, cx)
+        render_inspector_body(app, Some(selected), None, window, cx)
     }
 }
 
@@ -532,6 +543,7 @@ impl WorkspaceItem for CompareItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // No per-file diffstat — W16-DIFFSTAT keeps compare out of scope.
@@ -545,7 +557,7 @@ impl WorkspaceItem for CompareItem {
         app.ui_mut()?.inspector_model.sync_files(source, || {
             Some(InspectorFiles::derive(&compare.view().files, None, None))
         });
-        render_inspector_body(app, app.ui().selected, Some(title), cx)
+        render_inspector_body(app, app.ui().selected, Some(title), window, cx)
     }
     // Per-repo: the compared base/files belong to the previous repo; drop the
     // entity on repo/tab switch like the other registered panes.
@@ -641,7 +653,7 @@ pub struct WorkspaceInputs {
     pub ecosystem_open: bool,
     /// `branch_cleanup_open` (ADR-0128).
     pub branch_cleanup_open: bool,
-    /// `pr_mode.is_some()` (GitHub Phase 1c).
+    /// PR workspace visibility, independent of retained tabs (GitHub Phase 1c).
     pub pr_mode: bool,
     /// Read-only Issues workspace is open.
     pub issues_mode: bool,

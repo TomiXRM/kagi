@@ -118,7 +118,10 @@ fn delete_current_branch(cx: &mut VisualTestAppContext) {
     let notes = blocked_plan(cx, &app, "delete-branch", |app| {
         app.delete_branch_modal().map(|m| m.plan.blockers.clone())
     });
-    press_root_enter(cx, &app, window);
+    // #1270: root Return cancels danger dialogs. Exercise the guarded
+    // confirmation boundary explicitly; the disabled button remains inert.
+    app.update(cx, |app, cx| app.start_delete_branch(cx));
+    wait_idle(cx, &app);
     assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
     assert_refused(cx, &app, &repo, "delete-branch", &notes);
     assert_eq!(repo_fingerprint(&repo), before);

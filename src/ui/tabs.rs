@@ -23,10 +23,14 @@ use gpui::{div, prelude::*, px, rgb, Context, PathPromptOptions, SharedString, W
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
 use super::{EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
+
+mod overflow;
+mod strip;
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,22 +48,72 @@ pub struct RepoTab {
     /// `Some` for a remote read-only repository opened over SSH; `None` for a
     /// normal local repository.
     pub remote: Option<super::RemoteRepoView>,
-    /// True when this tab is a linked git worktree (shown with a 🌲 marker and a
-    /// distinct tab colour so it's not mistaken for the main repository).
+    /// True when this tab is a linked git worktree (shown with a 🌲 marker so
+    /// it is not mistaken for the main repository).
     pub is_worktree: bool,
-    /// Lane-colour index for a worktree tab, matching that worktree's WIP-row
-    /// colour (its rank in the repo's worktree list). Set when the tab's view is
-    /// applied; `None` until then / for non-worktree tabs.
-    pub wt_color_idx: Option<usize>,
 }
 
-/// Height of the tab strip in pixels. The strip doubles as the themed title bar
-/// (the OS bar is transparent), so it carries a little extra height for padding
-/// around the tabs and the traffic lights.
-pub(crate) const TAB_STRIP_H: f32 = 40.0;
+/// Fixed logical titlebar height, independent of UI zoom and shared density.
+/// Native macOS traffic lights remain at (9,9); document labels cap at 14px.
+pub(crate) const TAB_STRIP_H: f32 = 36.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;
 const TAB_MAX_W: f32 = 200.0;
+
+/// Document tabs use ordinary text on subtle selection fills, not accent-selected rows.
+fn tab_colors(palette: &theme::Theme, selected: bool) -> (gpui::Hsla, u32) {
+    match palette.slug.as_ref() {
+        "apple-light" => (
+            rgb(if selected {
+                palette.bg_base
+            } else {
+                palette.surface
+            })
+            .into(),
+            palette.text_main,
+        ),
+        "apple-dark" => (
+            rgb(if selected {
+                palette.surface
+            } else {
+                palette.bg_base
+            })
+            .into(),
+            palette.text_main,
+        ),
+        _ => (
+            if selected {
+                palette.segment_selected_bg()
+            } else {
+                rgb(palette.surface).into()
+            },
+            if selected {
+                palette.text_main
+            } else {
+                palette.text_sub
+            },
+        ),
+    }
+}
+
+fn tab_has_rail(palette: &theme::Theme) -> bool {
+    !matches!(palette.slug.as_ref(), "apple-light" | "apple-dark")
+}
+
+fn tab_rail(palette: &theme::Theme, window_active: bool) -> gpui::Div {
+    let ring = super::keyboard_nav::RING;
+    div()
+        .absolute()
+        .top(px(-ring))
+        .left(px(-ring))
+        .right(px(-ring))
+        .h(px(2.))
+        .bg(rgb(if window_active {
+            palette.ui_accent()
+        } else {
+            palette.text_muted
+        }))
+}
 
 impl KagiApp {
     // ──────────────────────────────────────────────────────────────────────
@@ -91,6 +145,9 @@ impl KagiApp {
                         .map(|c| c == path)
                         .unwrap_or(false))
         }) {
+            record_recent_repo(&path);
+            cx.add_recent_document(&path);
+            super::commands::publish_menus(cx);
             let left = self.home_yields_to_repository();
             self.return_to_tab(idx, left, cx);
             return true;
@@ -100,17 +157,15 @@ impl KagiApp {
         let info = match open_repository(&path) {
             Ok(info) => info,
             Err(e) => {
-                let msg = format!("Error: {e}");
-                klog!("open: {}", msg);
-                self.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
-                self.push_toast(ToastKind::Error, msg, cx);
-                cx.notify();
+                self.present_repository_open_failure(e, cx);
                 return false;
             }
         };
 
         // Remember it for the Welcome screen's "Recent" list.
         record_recent_repo(&path);
+        cx.add_recent_document(&path);
+        super::commands::publish_menus(cx);
 
         // #482: `attach` unifies by the *resolved* `WorktreeId`, so two locators
         // for one worktree (`/repo` and `/repo/.git`, a symlink) come back as the
@@ -129,13 +184,34 @@ impl KagiApp {
             name: info.name.clone(),
             remote: None,
             is_worktree: info.is_worktree,
-            wt_color_idx: None,
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
         let left = self.home_yields_to_repository();
         self.return_to_tab(new_idx, left, cx);
         true
+    }
+
+    /// Finder only opens folders; never discover a repository from a file's parent.
+    pub(super) fn open_external_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        for path in paths {
+            if path.is_dir() {
+                self.open_repository(path.clone(), cx);
+            } else {
+                self.present_repository_open_failure(
+                    kagi_git::GitError::NotARepository(path.display().to_string()),
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn present_repository_open_failure(&mut self, e: kagi_git::GitError, cx: &mut Context<Self>) {
+        let msg = format!("Error: {e}");
+        klog!("open: {}", msg);
+        self.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
+        self.push_toast(ToastKind::Error, msg, cx);
+        cx.notify();
     }
 
     /// The application-layer session on screen (#482 stage 1). `None` on the
@@ -152,6 +228,7 @@ impl KagiApp {
     pub(crate) fn depart_active_tab(&mut self) {
         self.close_departing_screen_overlays();
         if let Some(session) = self.active_session() {
+            super::diff_selection::retire_session(session);
             self.app_sessions.depart(session);
             if self
                 .file_menu
@@ -161,7 +238,11 @@ impl KagiApp {
                 self.file_menu = None;
             }
             if let Some(ui) = self.ui.get_mut(&session) {
+                ui.retire_issue_conversation_scope();
                 ui.worktree_inspections.cancel();
+                if ui.pr_mode.is_some() {
+                    ui.invalidate_pr_list_visit();
+                }
             }
         }
         self.close_window_slots_of_departing_tab();
@@ -209,7 +290,17 @@ impl KagiApp {
         self.panel_motion.reset_right();
         self.depart_active_tab();
         self.active_tab = index;
+        // Re-enter the retained final list without replaying another visit's
+        // presentation; neither row membership nor scroll position changes.
+        self.ui().inspector_model.keyboard.settle_motion();
+        let panel = self.ui().commit_panel.clone();
+        if let Some(panel) = panel {
+            panel.update(cx, |panel, _| panel.settle_file_motion());
+        }
         self.error = None;
+        if let Some(editor) = self.ui().editor_workspace.clone() {
+            editor.update(cx, |editor, _| editor.settle_tree_motion());
+        }
 
         // ── Remote tab (ADR-0089 Phase 2b): re-enter the read-only view from
         //    the cached snapshot. No local path, no Backend, no watcher. ──
@@ -252,6 +343,12 @@ impl KagiApp {
         // GitHub Phase 1: refetch PRs for the new repo right away (the
         // ticker alone left the tab at 0 PRs until its next tick).
         self.refresh_github_prs(cx);
+        // A selected Closed/All first read interrupted by departure has no
+        // authoritative empty answer. Reauthorize that retained intent for
+        // this visit through its ordinary owner-bound read.
+        if self.ui().pr_mode.is_some() && self.ui().github_prs_strip.loading {
+            self.refresh_pr_strip(cx);
+        }
 
         // #482 stage 2: "cached" now means "this session already has a read".
         // The swap is the switch itself — `view()` reads a different key — so
@@ -365,7 +462,6 @@ impl KagiApp {
                     name: name.clone(),
                     remote: Some(rv.clone()),
                     is_worktree: false,
-                    wt_color_idx: None,
                 });
                 self.tabs.len() - 1
             }
@@ -464,12 +560,18 @@ impl KagiApp {
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_tab_load_commit_limit(session, commit_limit);
         let read = self.begin_slow_read(session, None, cx);
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::slow_reads::take_snapshot_hold();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let mut backend = kagi_git::Backend::open(&bg_path)
-                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+                .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
             let snap = backend
                 .snapshot_repairing_stat_cache(commit_limit, read.probe())
-                .map_err(|e| i18n::op_failed(i18n::Op::Snapshot, e))?;
+                .map_err(|e| i18n::op::op_failed_contract(i18n::Op::Snapshot, e))?;
             let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
             let status = snap.status.clone();
             let repo_name = bg_path
@@ -517,7 +619,7 @@ impl KagiApp {
                         if !app.reads.fail(key) || app.active_session() != Some(session) {
                             return;
                         }
-                        let msg = format!("Error: {err}");
+                        let msg = i18n::op::user_text::diagnostic(&err).into_owned();
                         klog!("tab-load: {} error: {}", name, err);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg));
                         cx.notify();
@@ -528,10 +630,7 @@ impl KagiApp {
         .detach();
     }
 
-    /// Close the tab at `index`.  Discards that tab's per-repo state only
-    /// (the repository itself is untouched).  Closing the last tab returns to
-    /// the Welcome screen (ADR-0027 / ADR-0028).
-    /// Persist the open tabs + active index to `settings.json` so a fresh
+    /// Persist open local tabs and the active repository identity so a fresh
     /// launch (or a Dock-reopen after the last window closed) restores the
     /// previous session.  Paths are joined with U+001F (unit separator) —
     /// settings.json is kagi-private and read back by the same tolerant
@@ -556,7 +655,14 @@ impl KagiApp {
             super::settings::write_setting("session_active", None);
         } else {
             super::settings::write_setting("session_repos", Some(&joined));
-            super::settings::write_setting("session_active", Some(&self.active_tab.to_string()));
+            let active = self
+                .tabs
+                .get(self.active_tab)
+                .filter(|tab| tab.remote.is_none());
+            super::settings::write_setting(
+                "session_active",
+                active.map(|tab| tab.path.to_string_lossy()).as_deref(),
+            );
         }
     }
 
@@ -764,62 +870,6 @@ impl KagiApp {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Single-instance listener (ADR-0102)
-    // ──────────────────────────────────────────────────────────────────────
-
-    /// Drain the single-instance accept-thread channel on the UI thread.
-    ///
-    /// Mirrors [`arm_watcher`]'s spawn/weak/update/notify shape: a background
-    /// `std::thread` (spawned in `main`) feeds an `mpsc` channel as secondary
-    /// `kagi …` invocations forward repo paths; this loop polls the receiver and
-    /// opens each path as a new tab (`open_repository`, Backend-backed — no git2
-    /// in UI) and raises the window via `cx.activate(true)` (the same call the
-    /// Dock-reopen handler uses).  A `None` message is a focus-only request
-    /// (bare `kagi`).  Called once from `open_main_window`; a no-op when the
-    /// receiver is absent (bind failed, or headless).
-    pub fn arm_single_instance_listener(&mut self, cx: &mut Context<Self>) {
-        let rx = match crate::single_instance::take_receiver() {
-            Some(rx) => rx,
-            None => return,
-        };
-
-        cx.spawn(async move |weak, acx| {
-            use std::sync::mpsc::TryRecvError;
-            loop {
-                acx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
-                match rx.try_recv() {
-                    Ok(Some(path)) => {
-                        let result = acx.update(|cx| {
-                            cx.activate(true);
-                            weak.update(cx, |app, cx| {
-                                klog!("single-instance: open tab {}", path.display());
-                                app.open_repository(path.clone(), cx);
-                                cx.notify();
-                            })
-                        });
-                        if result.is_err() {
-                            break; // app gone
-                        }
-                    }
-                    Ok(None) => {
-                        // Focus-only request (bare `kagi`).
-                        acx.update(|cx| cx.activate(true));
-                        let _ = weak.update(acx, |_app, cx| {
-                            klog!("single-instance: focus");
-                            cx.notify();
-                        });
-                    }
-                    Err(TryRecvError::Empty) => continue,
-                    Err(TryRecvError::Disconnected) => break,
-                }
-            }
-        })
-        .detach();
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
     // Directory picker (ADR-0028)
     // ──────────────────────────────────────────────────────────────────────
 
@@ -827,298 +877,138 @@ impl KagiApp {
     /// directory as a repository tab.  Headless builds cannot open the panel
     /// (use `KAGI_OPEN_REPO` instead — see main.rs).
     pub fn pick_repository(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
+        let owner = self.repository_picker_owner();
+        let receiver = cx.prompt_for_paths(Self::repository_picker_options());
+
+        cx.spawn(async move |weak, acx| {
+            let response = receiver.await;
+            let _ = weak.update(acx, |app, cx| {
+                app.complete_repository_picker_response(owner, response, cx);
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn repository_picker_options() -> PathPromptOptions {
+        PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some(SharedString::from("Open Repository")),
-        });
+            prompt: Some(SharedString::from(Msg::RepositoryPickerOpen.t())),
+        }
+    }
 
-        cx.spawn(async move |weak, acx| {
-            let picked: Option<PathBuf> = match receiver.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                _ => None,
-            };
-            if let Some(path) = picked {
-                acx.update(|cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.open_repository(path, cx);
-                    });
-                });
+    fn complete_repository_picker(
+        &mut self,
+        owner: Option<PathBuf>,
+        result: Result<Option<Vec<PathBuf>>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(Some(paths)) => {
+                if let Some(path) = paths.into_iter().next() {
+                    self.open_repository(path, cx);
+                }
             }
-        })
-        .detach();
+            Ok(None) => {}
+            Err(error) => self.report_path_picker_failure(
+                owner,
+                "open-repository-picker",
+                Msg::RepositoryPickerOpen.t(),
+                error,
+                cx,
+            ),
+        }
+    }
+
+    fn complete_repository_picker_response<E: std::fmt::Display, C: std::fmt::Display>(
+        &mut self,
+        owner: Option<PathBuf>,
+        response: Result<Result<Option<Vec<PathBuf>>, E>, C>,
+        cx: &mut Context<Self>,
+    ) {
+        let result = response
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()));
+        self.complete_repository_picker(owner, result, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn repository_picker_options_for_e2e() -> PathPromptOptions {
+        Self::repository_picker_options()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn deliver_repository_picker_for_e2e(
+        &mut self,
+        response: Result<Result<Option<Vec<PathBuf>>, String>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.complete_repository_picker_response(self.repository_picker_owner(), response, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn repository_picker_owner_for_e2e(&self) -> Option<PathBuf> {
+        self.repository_picker_owner()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn deliver_owned_repository_picker_for_e2e(
+        &mut self,
+        owner: Option<PathBuf>,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.complete_repository_picker(owner, Err(error), cx);
+    }
+
+    fn repository_picker_owner(&self) -> Option<PathBuf> {
+        self.repo_path.clone().filter(|_| !self.home_in_front())
     }
 
     // ──────────────────────────────────────────────────────────────────────
     // Rendering
     // ──────────────────────────────────────────────────────────────────────
 
-    /// Render the repository tab strip (above the header toolbar).  Returns
-    /// `None` when no tabs are open (Welcome screen is shown instead).
-    pub fn render_tab_strip(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        // The strip's cells are keyed by the tab they stand for, not by
-        // slot, so a tab added, closed or moved before a cell leaves its
-        // handle, a focus on it and the arrowed-to mark with it (#961
-        // review). Home is the last cell, under a key no tab has.
-        const HOME_KEY: u64 = u64::MAX;
-        if self.tabs.is_empty() {
-            // No strip: every cell is gone, and one that still holds the
-            // focus (the last tab's, Home's) hands it to the window.
-            self.tab_strip_focus.sync(&[], cx);
-            self.tab_strip_focus
-                .release_closed(self.root_focus.as_ref(), window, cx);
-            return None;
-        }
-        let mut keys: Vec<u64> = self.tabs.iter().map(|tab| tab.session.tab().0).collect();
-        if self.home.is_some() {
-            keys.push(HOME_KEY);
-        }
-
-        let active = self.active_tab;
-        let tabs: Vec<RepoTab> = self.tabs.clone();
-        // With Home in front no repository tab is the selected one (ADR-0219).
-        let home_front = self.home_in_front();
-        // Keyboard (#959): one Tab stop, ←/→/Home/End between the tabs, and
-        // Enter / Space switch — not the arrows, as switching to a tab reads
-        // its repository again (ADR-0197 S4). Home is the last cell.
-        let repos = tabs.len();
-        let home_slot = self.home.is_some().then_some(repos);
-        let slots = repos + usize::from(home_slot.is_some());
-        let entity = cx.weak_entity();
-        let strip_tabs = super::keyboard_nav::TabList::new(
-            &self.tab_strip_focus,
-            keys,
-            (0..slots).collect(),
-            if home_front { home_slot } else { Some(active) },
-            super::keyboard_nav::Activation::Manual,
-            self.root_focus.clone(),
-            move |slot, window, cx| {
-                let _ = entity.update(cx, |this, cx| {
-                    if slot < repos {
-                        // A repository tab moves Home (if open) to the back;
-                        // on the tab already behind it, `switch_repo` is a
-                        // no-op (#488), so the notify is what brings the
-                        // repository back on screen.
-                        let left = this.send_home_back();
-                        this.return_to_tab(slot, left, cx);
-                        cx.notify();
-                    } else {
-                        // Opening Home puts the focus on the root; a key
-                        // pressed on Home's cell keeps it there, as on a
-                        // repository's cell, so ←/→ go on working (#961
-                        // review). A pointer click hands the focus to the
-                        // root afterwards anyway (`TabList::cell`).
-                        let kept = this.tab_strip_focus.focused_cell(window);
-                        this.open_home_tab(window, cx);
-                        if let Some(cell) = kept {
-                            window.focus(&cell, cx);
-                        }
-                    }
-                });
-            },
-            cx,
-        );
-        // A closed tab's cell that still holds the focus hands it to the
-        // window, not to a cell drawn in its place (#961 review).
-        self.tab_strip_focus
-            .release_closed(self.root_focus.as_ref(), window, cx);
-
-        let mut strip = strip_tabs
-            .list(div().id("tab-strip"))
-            .flex()
-            .flex_row()
-            .items_center()
-            .w_full()
-            .h(theme::scaled_px(TAB_STRIP_H))
-            .bg(rgb(theme().panel))
-            .border_b_1()
-            .border_color(rgb(theme().surface))
-            // Themed title bar: the strip now fills the (transparent) OS title-bar
-            // area. Drag it to move the window, and on macOS reserve space at the
-            // left for the traffic lights drawn over it.
-            .window_control_area(gpui::WindowControlArea::Drag)
-            .when(cfg!(target_os = "macos"), |s| s.pl(gpui::px(80.)));
-        let ring = super::keyboard_nav::RING;
-
-        for (i, tab) in tabs.into_iter().enumerate() {
-            let is_active = i == active && !home_front;
-            let is_wt = tab.is_worktree;
-            // Match the tab colour to the worktree's WIP-row lane colour.
-            let wt_color = is_wt.then(|| theme().lane_color(tab.wt_color_idx.unwrap_or(0)));
-            let bg = if is_active {
-                theme().selected
-            } else {
-                theme().surface
-            };
-            let fg = if is_active {
-                theme().text_main
-            } else {
-                theme().text_sub
-            };
-            let full_path = tab.path.display().to_string();
-
-            // chars()-based truncation is handled by `.truncate()` on the label
-            // div (the byte-slice approach panics on multi-byte names). Remote
-            // tabs (ADR-0089) get a ☁ marker; worktree tabs get a 🌲 marker so
-            // they're distinct from the main repository.
-            let label = SharedString::from(if tab.remote.is_some() {
-                format!("\u{2601} {}", tab.name) // ☁ name
-            } else if is_wt {
-                format!("\u{1f332} {}", tab.name) // 🌲 name
-            } else {
-                tab.name.clone()
-            });
-            let name = tab.name.clone();
-            let close = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                this.close_tab(i, cx);
-            });
-
-            let close_btn = Button::new(("tab-close", i))
-                .label("\u{00d7}") // ×
-                .ghost()
-                .xsmall()
-                .ml(theme::scaled_px(4.))
-                // The strip is one Tab stop; ⌘W closes the tab in front.
-                .tab_stop(false)
-                .on_click(close);
-
-            // Accent bar colour: worktree lane colour (every worktree tab), else
-            // the blue accent on the active main-repo tab; `None` → no bar.
-            let accent = wt_color.or_else(|| is_active.then(|| rgb(theme().color_branch).into()));
-            let tab_el = strip_tabs
-                .cell(i, &name, div().id(("repo-tab", i)))
-                .relative()
-                .flex()
-                .flex_row()
-                .items_center()
-                .h_full()
-                .min_w(theme::scaled_px(TAB_MIN_W))
-                .max_w(theme::scaled_px(TAB_MAX_W))
-                .px(super::keyboard_nav::inset(8.))
-                .gap_1()
-                // Worktree tabs are tinted with the SAME lane colour as that
-                // worktree's WIP row (user request), washed when inactive.
-                .when(!is_wt || is_active, |el| el.bg(rgb(bg)))
-                .when_some(wt_color.filter(|_| is_wt && !is_active), |el, c| {
-                    el.bg(gpui::hsla(c.h, c.s, c.l, 0.20))
-                })
-                .text_sm()
-                .text_color(rgb(fg))
-                // The 1px between tabs is the strip showing through (the
-                // tab's own border is the keyboard focus ring).
-                .mr(px(1.))
-                .child(super::e2e::measure_inside(format!("repo-tab-{i}")))
-                // Top accent as an ABSOLUTE overlay bar (not `border_t_2`): no
-                // layout shift on selection, and an even full-width line. It
-                // covers the ring's top edge, as it did the tab's.
-                .when_some(accent, |el, c| {
-                    el.child(
-                        div()
-                            .absolute()
-                            .top(px(-ring))
-                            .left(px(-ring))
-                            .right(px(-ring))
-                            .h(px(2.))
-                            .bg(c),
-                    )
-                })
-                .cursor(gpui::CursorStyle::PointingHand)
-                .tooltip({
-                    let full = full_path.clone();
-                    move |window, cx| Tooltip::new(full.clone()).build(window, cx)
-                })
-                .child(div().flex_1().truncate().child(label))
-                .child(close_btn);
-
-            strip = strip.child(tab_el);
-        }
-
-        // The Home tab (ADR-0219), after the repositories.
-        if let (Some(home), Some(slot)) = (self.home, home_slot) {
-            strip = strip.child(render_home_tab(&strip_tabs, slot, home.front, cx));
-        }
-
-        // [+] new-tab button at the right end → the Home tab (#923).
-        let plus = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.open_home_tab(window, cx);
-        });
-        let plus_btn = Button::new("tab-add")
-            .label("+")
-            .ghost()
-            .small()
-            .tooltip(Msg::HomeTabTitle.t())
-            // The strip is one Tab stop (#961 review); ⌘T opens Home.
-            .tab_stop(false)
-            .on_click(plus);
-
-        strip = strip.child(super::e2e::measure_control("tab-add", plus_btn));
-
-        Some(strip.into_any())
-    }
-}
-
-/// The Home tab's entry in the strip: shaped like a repository tab, with a
-/// house glyph and its own ×. It is cell `slot` of the strip's tab list.
-fn render_home_tab(
-    tabs: &super::keyboard_nav::TabList,
-    slot: usize,
-    front: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let close = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
-        this.close_home_tab(cx);
-    });
-    let close_btn = Button::new("home-tab-close")
-        .label("\u{00d7}") // ×
-        .ghost()
-        .xsmall()
-        .ml(theme::scaled_px(4.))
-        .tab_stop(false)
-        .on_click(close);
-    let (bg, fg) = if front {
-        (theme().selected, theme().text_main)
-    } else {
-        (theme().surface, theme().text_sub)
-    };
-    let ring = super::keyboard_nav::RING;
-    tabs.cell(slot, Msg::HomeTabTitle.t(), div().id("home-tab"))
-        .relative()
-        .flex()
-        .flex_row()
-        .items_center()
-        .h_full()
-        .min_w(theme::scaled_px(TAB_MIN_W))
-        .max_w(theme::scaled_px(TAB_MAX_W))
-        .px(super::keyboard_nav::inset(8.))
-        .gap_1()
-        .bg(rgb(bg))
-        .text_sm()
-        .text_color(rgb(fg))
-        .mr(px(1.))
-        .child(super::e2e::measure_inside("home-tab"))
-        .when(front, |el| {
-            el.child(
-                div()
-                    .absolute()
-                    .top(px(-ring))
-                    .left(px(-ring))
-                    .right(px(-ring))
-                    .h(px(2.))
-                    .bg(rgb(theme().color_branch)),
-            )
-        })
-        .cursor(gpui::CursorStyle::PointingHand)
-        .child(div().flex_1().truncate().child(SharedString::from(format!(
-            "\u{2302} {}",
+    /// New-document affordance follows document tabs in the titlebar strip.
+    pub(super) fn render_tab_add(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.tabs.is_empty() && self.remote_view.is_some() {
+            match i18n::lang() {
+                i18n::Lang::Ja => {
+                    i18n::command_label_ja("file.openRepository").unwrap_or("Open Repository…")
+                }
+                i18n::Lang::En => "Open Repository…",
+            }
+        } else {
             Msg::HomeTabTitle.t()
-        ))))
-        .child(close_btn)
-        .into_any_element()
+        };
+        // Like the named overflow trigger, a glyph-only node cannot take its AX
+        // name from gpui-kit's visible label (which would name it merely "+").
+        super::e2e::measure_control(
+            "tab-add",
+            div()
+                .id("tab-add")
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(theme::scaled_px(28.))
+                .h(px(f32::from(theme::scaled_px(24.)).min(24.)))
+                .flex_shrink_0()
+                .rounded_md()
+                .text_size(px(f32::from(theme::scaled_px(14.)).min(14.)))
+                .text_color(rgb(theme().text_main))
+                .hover(|style| style.bg(rgb(theme().surface)))
+                .cursor_pointer()
+                .child("+")
+                // Cmd+T / File → New Tab is the keyboard path.
+                .on_click(cx.listener(|this, _, window, cx| this.open_home_tab(window, cx)))
+                .hover_tooltip_builder("tab-add-hover-help", move |window, cx| {
+                    Tooltip::new(label).build(window, cx)
+                }),
+        )
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1149,6 +1039,57 @@ pub fn record_recent_repo(path: &Path) {
     super::settings::write_setting(RECENT_REPOS_KEY, Some(&list.join("\u{1f}")));
 }
 
+/// Forget only this history entry; repository files and open tabs are untouched.
+pub fn remove_recent_repo(path: &Path) {
+    let p = path.to_string_lossy();
+    let mut list = recent_repo_strings();
+    list.retain(|entry| entry != p.as_ref());
+    super::settings::write_setting(RECENT_REPOS_KEY, Some(&list.join("\u{1f}")));
+}
+
+/// Clear history only; leave open tabs and all repository files untouched.
+pub fn clear_recent_repos() {
+    super::settings::write_setting(RECENT_REPOS_KEY, None);
+}
+
+/// Dock and utility-window dispatch need a repository host even after the last
+/// repository window closes. Opening still belongs to the normal tab path.
+pub(super) fn open_recent_from_app(path: &Path, cx: &mut gpui::App) {
+    let host = super::window_menu::preferred_repository_window(cx)
+        .into_iter()
+        .chain(cx.windows())
+        .find_map(|handle| {
+            handle
+                .update(cx, |_, window, cx| super::repository_window(window, cx))
+                .ok()
+                .flatten()
+                .map(|host| (handle, host))
+        });
+    if let Some((handle, host)) = host {
+        let _ = handle.update(cx, |_, window, cx| {
+            super::window_menu::activate_recent_repository(window, cx);
+        });
+        host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx));
+        return;
+    }
+    super::open_main_window(KagiApp::with_error(""), cx);
+    for handle in cx.windows() {
+        let handled = handle
+            .update(cx, |_, window, cx| {
+                let Some(host) = super::repository_window(window, cx) else {
+                    return false;
+                };
+                super::window_menu::activate_recent_repository(window, cx);
+                host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx));
+                true
+            })
+            .unwrap_or(false);
+        if handled {
+            break;
+        }
+    }
+}
+
 /// Recently-opened repositories that still exist on disk (most-recent first).
 pub fn recent_repos() -> Vec<PathBuf> {
     recent_repo_strings()
@@ -1169,6 +1110,14 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         Some(s) if !s.is_empty() => s,
         _ => return,
     };
+    // Legacy numeric settings name an entry in the saved set, not in the
+    // filtered result. All new saves contain the local repository path itself.
+    let active_path = super::settings::read_setting("session_active").and_then(|identity| {
+        match identity.parse::<usize>() {
+            Ok(index) => saved.split('\u{1f}').nth(index).map(PathBuf::from),
+            Err(_) => Some(PathBuf::from(identity)),
+        }
+    });
     for raw in saved.split('\u{1f}') {
         let path = PathBuf::from(raw);
         if app.tabs.iter().any(|t| t.path == path) {
@@ -1183,7 +1132,6 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
                     name: info.name.clone(),
                     remote: None,
                     is_worktree: info.is_worktree,
-                    wt_color_idx: None,
                 });
             }
             Err(e) => klog!("session: skip {} ({})", path.display(), e),
@@ -1192,10 +1140,15 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     if app.tabs.is_empty() {
         return;
     }
-    let active = super::settings::read_setting("session_active")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0)
-        .min(app.tabs.len() - 1);
+    // Missing/ephemeral active owners fall back to the first surviving local
+    // repository. With no survivors the early return above keeps initial Home.
+    let active = active_path
+        .and_then(|path| {
+            app.tabs
+                .iter()
+                .position(|tab| tab.remote.is_none() && tab.path == path)
+        })
+        .unwrap_or(0);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
     let session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
@@ -1206,4 +1159,56 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     app.reload_prelaunch();
     app.prompt_trust_if_untrusted(); // ADR-0160: prompt on restore too.
     klog!("session: restored {} tab(s)", app.tabs.len());
+}
+
+#[cfg(test)]
+mod tab_chrome_tests {
+    use super::*;
+
+    fn luminance(color: gpui::Hsla) -> f64 {
+        let color: gpui::Rgba = color.into();
+        let channel = |value: f32| {
+            let value = value as f64;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+    }
+
+    #[test]
+    fn apple_tab_selection_contrast_and_preset_roles() {
+        for palette in theme::THEMES {
+            let (active, active_text) = tab_colors(palette, true);
+            let (inactive, inactive_text) = tab_colors(palette, false);
+            if !tab_has_rail(palette) {
+                let first = luminance(active);
+                let second = luminance(inactive);
+                assert!(
+                    (first.max(second) + 0.05) / (first.min(second) + 0.05) >= 1.15,
+                    "{} selected tab must be distinct",
+                    palette.slug
+                );
+                for (fill, text) in [(active, active_text), (inactive, inactive_text)] {
+                    let fill = luminance(fill);
+                    let text = luminance(rgb(text).into());
+                    assert!((fill.max(text) + 0.05) / (fill.min(text) + 0.05) >= 4.5);
+                }
+            } else {
+                assert_eq!(
+                    active,
+                    palette.segment_selected_bg(),
+                    "{} keeps segment selection palette",
+                    palette.slug
+                );
+                assert_eq!(inactive, gpui::Hsla::from(rgb(palette.surface)));
+                assert_eq!(
+                    (active_text, inactive_text),
+                    (palette.text_main, palette.text_sub)
+                );
+            }
+        }
+    }
 }

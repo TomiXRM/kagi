@@ -15,16 +15,24 @@
 
 use super::i18n::Msg;
 use gpui::{
-    div, prelude::*, rgb, App, ClickEvent, Context, Entity, FocusHandle, KeyDownEvent,
+    div, prelude::*, rgb, App, ClickEvent, Context, Entity, FocusHandle, KeyDownEvent, ListState,
     SharedString, Window,
 };
 use gpui_component::input::Input;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use kagi_domain::remote::{self, RemoteDirEntry, RemoteHost, RemoteRepoSummary};
 
 use super::button_style::{modal_button, ModalButtonKind};
+use super::keyboard_nav::{self, RowFocus, RowKeys, RowScroll};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
+use super::{button_style, dialog_a11y, e2e, list_a11y, modal_renderers};
+
+#[path = "remote_browse_render.rs"]
+mod render;
+pub(crate) use render::render_remote_browse;
 
 static REMOTE_BROWSE_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
@@ -67,12 +75,17 @@ pub struct RemoteBrowseModal {
     /// Connected host (set once a connection succeeds).
     pub host: Option<RemoteHost>,
     pub cwd: String,
-    pub entries: Vec<RemoteDirEntry>,
+    pub entries: Rc<[RemoteDirEntry]>,
     pub current_is_repo: bool,
     pub summary: Option<RemoteRepoSummary>,
     /// An SSH round-trip (connect / navigate / open) is in flight.
     pub busy: bool,
     pub error: Option<SharedString>,
+    row_keys: RowKeys,
+    row_focus: Rc<RefCell<RowFocus>>,
+    row_scroll: ListState,
+    selected_row: Rc<Cell<Option<usize>>>,
+    focus_accepted_read: Rc<Cell<bool>>,
 }
 
 impl RemoteBrowseModal {
@@ -88,17 +101,48 @@ impl RemoteBrowseModal {
             identity_state: None,
             host: None,
             cwd: String::new(),
-            entries: Vec::new(),
+            entries: Rc::from([]),
             current_is_repo: false,
             summary: None,
             busy: false,
             error: None,
+            row_keys: Rc::from([]),
+            row_focus: Rc::new(RefCell::new(RowFocus::default())),
+            row_scroll: ListState::new(0, gpui::ListAlignment::Top, gpui::px(0.)),
+            selected_row: Rc::new(Cell::new(None)),
+            focus_accepted_read: Rc::new(Cell::new(false)),
         }
     }
 
     fn with_generation(mut self, generation: u64) -> Self {
         self.generation = generation;
         self
+    }
+
+    fn accept_directory(&mut self, data: RemoteBrowseData) {
+        self.stage = RemoteBrowseStage::Browse;
+        self.cwd = data.cwd;
+        self.entries = data.entries.into();
+        self.current_is_repo = data.is_repo;
+        self.summary = data.summary;
+        self.error = None;
+        let parent = remote::parent_dir(&self.cwd);
+        self.row_keys = parent
+            .iter()
+            .map(|_| format!("{}/..", self.cwd))
+            .chain(
+                self.entries
+                    .iter()
+                    .map(|entry| remote::join_path(&self.cwd, &entry.name)),
+            )
+            .enumerate()
+            .map(|(ix, key)| (key, ix))
+            .collect();
+        self.row_scroll.reset(self.row_keys.len());
+        *self.row_focus.borrow_mut() = RowFocus::default();
+        self.selected_row
+            .set((!self.row_keys.is_empty()).then_some(0));
+        self.focus_accepted_read.set(true);
     }
 }
 
@@ -126,6 +170,7 @@ impl KagiApp {
     /// Close the remote browse modal without making any changes.
     pub fn cancel_remote_browse(&mut self) {
         self.clear_remote_browse();
+        self.focus_root_for_modal();
     }
 
     /// Confirm the action presented by the current remote-browse stage.
@@ -197,14 +242,7 @@ impl KagiApp {
                 app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
-                        Ok(data) => {
-                            m.stage = RemoteBrowseStage::Browse;
-                            m.cwd = data.cwd;
-                            m.entries = data.entries;
-                            m.current_is_repo = data.is_repo;
-                            m.summary = data.summary;
-                            m.error = None;
-                        }
+                        Ok(data) => m.accept_directory(data),
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
                 });
@@ -218,11 +256,11 @@ impl KagiApp {
     /// a background thread).
     pub fn remote_browse_navigate(&mut self, path: String, cx: &mut Context<Self>) {
         let (host, generation) = match self.remote_browse() {
-            Some(m) => match m.host.clone() {
+            Some(m) if m.stage == RemoteBrowseStage::Browse && !m.busy => match m.host.clone() {
                 Some(host) => (host, m.generation),
                 None => return,
             },
-            None => return,
+            _ => return,
         };
         if let Some(m) = self.remote_browse_mut() {
             if m.busy {
@@ -233,20 +271,26 @@ impl KagiApp {
         }
         cx.notify();
 
-        let task = cx.background_spawn(async move { remote_browse_blocking(&host, &path) });
+        #[cfg(feature = "gui-e2e")]
+        let supplied = e2e_transport::take_remote_navigate(&path);
+        let browse = async move { remote_browse_blocking(&host, &path) };
+        #[cfg(feature = "gui-e2e")]
+        let task = supplied.unwrap_or_else(|| {
+            cx.background_spawn(async move {
+                e2e_transport::RemoteConnectOutcome::from_transport(browse.await)
+            })
+        });
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(browse);
         cx.spawn(async move |this, acx| {
             let result = task.await;
+            #[cfg(feature = "gui-e2e")]
+            let result = result.into_result();
             let _ = this.update(acx, |app, cx| {
                 app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
-                        Ok(data) => {
-                            m.cwd = data.cwd;
-                            m.entries = data.entries;
-                            m.current_is_repo = data.is_repo;
-                            m.summary = data.summary;
-                            m.error = None;
-                        }
+                        Ok(data) => m.accept_directory(data),
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
                 });
@@ -306,457 +350,7 @@ impl KagiApp {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Renderer
-// ──────────────────────────────────────────────────────────────
 
-/// One labelled field: a small muted label over a soft rounded box holding a
-/// borderless input (the same look as Home's search field). The box is a
-/// flex row so the input takes its whole width.
-fn labeled_input(
-    label: &'static str,
-    state: Option<&Entity<gpui_component::input::InputState>>,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1p5()
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .child(SharedString::from(label)),
-        )
-        .children(state.map(|st| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .w_full()
-                .px_2()
-                .rounded_lg()
-                .bg(rgb(current_theme().bg_base))
-                .border_1()
-                .border_color(rgb(current_theme().surface))
-                .child(Input::new(st).appearance(false).flex_1())
-        }))
-}
-
-pub(crate) fn render_remote_browse(
-    modal: RemoteBrowseModal,
-    focus_handle: Option<FocusHandle>,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let busy = modal.busy;
-    let app = cx.entity();
-
-    // Cancel/close: an `&mut App` handler (gpui-component Button form) that
-    // closes the modal and restores root focus.
-    let cancel = {
-        let app = app.clone();
-        move |_e: &ClickEvent, window: &mut Window, cx: &mut App| {
-            app.update(cx, |this, cx| {
-                this.cancel_remote_browse();
-                if let Some(fh) = this.root_focus.clone() {
-                    window.focus(&fh, cx);
-                }
-                cx.notify();
-            });
-        }
-    };
-
-    let mut card = div()
-        .w(theme::scaled_px(520.))
-        // Same popup surface as `modal_shell::modal_card` and the Settings
-        // panel (`theme.panel`); `modal` is lighter and read as a different
-        // surface class next to them (#454 follow-up).
-        .bg(rgb(current_theme().panel))
-        .rounded_xl()
-        .border_1()
-        .border_color(rgb(current_theme().surface))
-        .shadow_lg()
-        .p_6()
-        .flex()
-        .flex_col()
-        .gap_4();
-
-    match modal.stage {
-        // ── Connect form ────────────────────────────────────────
-        RemoteBrowseStage::Connect => {
-            let connect = {
-                let app = app.clone();
-                move |_e: &ClickEvent, _w: &mut Window, cx: &mut App| {
-                    app.update(cx, |this, cx| {
-                        this.start_remote_connect(cx);
-                        cx.notify();
-                    });
-                }
-            };
-
-            card = card
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .text_lg()
-                                .child(SharedString::from(Msg::RemoteConnectTitle.t())),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(current_theme().text_muted))
-                                .child(SharedString::from(Msg::RemoteSshNotice.t())),
-                        ),
-                )
-                .child(labeled_input(
-                    Msg::RemoteHostLabel.t(),
-                    modal.host_state.as_ref(),
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_3()
-                        .child(div().w(theme::scaled_px(120.)).child(labeled_input(
-                            Msg::RemotePortLabel.t(),
-                            modal.port_state.as_ref(),
-                        )))
-                        .child(div().flex_1().child(labeled_input(
-                            Msg::RemoteIdentityLabel.t(),
-                            modal.identity_state.as_ref(),
-                        ))),
-                );
-
-            if let Some(ref err) = modal.error {
-                card = card.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(err.clone()),
-                );
-            }
-
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .pt_2()
-                    .justify_end()
-                    .child(super::e2e::measure_control(
-                        "remote-connect-cancel",
-                        modal_button(
-                            "remote-connect-cancel",
-                            Msg::PlanCancel.t(),
-                            ModalButtonKind::Cancel,
-                            None,
-                            cancel,
-                            cx,
-                        ),
-                    ))
-                    .child(super::e2e::measure_control(
-                        "remote-connect-go",
-                        modal_button(
-                            "remote-connect-go",
-                            if busy {
-                                Msg::RemoteConnecting.t()
-                            } else {
-                                Msg::RemoteConnect.t()
-                            },
-                            ModalButtonKind::Primary,
-                            busy.then(|| SharedString::from(Msg::RemoteRequestBusy.t())),
-                            connect,
-                            cx,
-                        ),
-                    )),
-            );
-        }
-
-        // ── Directory browser ───────────────────────────────────
-        RemoteBrowseStage::Browse => {
-            let host_label = modal.host.as_ref().map(|h| h.label()).unwrap_or_default();
-
-            let change_host = {
-                let app = app.clone();
-                move |_e: &ClickEvent, _w: &mut Window, cx: &mut App| {
-                    app.update(cx, |this, cx| {
-                        if let Some(m) = this.remote_browse_mut() {
-                            m.stage = RemoteBrowseStage::Connect;
-                            m.error = None;
-                        }
-                        cx.notify();
-                    });
-                }
-            };
-
-            // Header: host + current path + "Change host".
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .text_color(rgb(current_theme().text_main))
-                                    .text_lg()
-                                    .child(SharedString::from(host_label)),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(current_theme().text_sub))
-                                    .child(SharedString::from(if busy {
-                                        format!("{}  \u{2026}", modal.cwd)
-                                    } else {
-                                        modal.cwd.clone()
-                                    })),
-                            ),
-                    )
-                    .child(modal_button(
-                        "remote-change-host",
-                        Msg::RemoteChangeHost.t(),
-                        ModalButtonKind::Secondary,
-                        busy.then(|| SharedString::from(Msg::RemoteRequestBusy.t())),
-                        change_host,
-                        cx,
-                    )),
-            );
-
-            // Repo card when the current directory is itself a repository.
-            if modal.current_is_repo {
-                let mut repo_card = div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .p_2()
-                    .rounded_md()
-                    .bg(rgb(current_theme().surface))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(current_theme().color_success))
-                            .child(SharedString::from(format!(
-                                "\u{25cf} {}",
-                                Msg::RemoteGitRepository.t()
-                            ))),
-                    );
-                if let Some(ref s) = modal.summary {
-                    let branch = s
-                        .branch
-                        .clone()
-                        .unwrap_or_else(|| Msg::RemoteDetached.t().to_string());
-                    repo_card = repo_card
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .text_sm()
-                                .child(
-                                    div()
-                                        .text_color(rgb(current_theme().text_main))
-                                        .child(SharedString::from(branch)),
-                                )
-                                .child(
-                                    div()
-                                        .text_color(rgb(current_theme().text_sub))
-                                        .child(SharedString::from(s.head_short.clone())),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(current_theme().text_muted))
-                                .overflow_hidden()
-                                .child(SharedString::from(s.summary.clone())),
-                        );
-                } else {
-                    repo_card = repo_card.child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(current_theme().text_muted))
-                            .child(SharedString::from(Msg::RemoteNoCommits.t())),
-                    );
-                }
-                let open_repo = {
-                    let app = app.clone();
-                    move |_e: &ClickEvent, _w: &mut Window, cx: &mut App| {
-                        app.update(cx, |this, cx| {
-                            this.start_remote_open_repo(cx);
-                            cx.notify();
-                        });
-                    }
-                };
-                repo_card = repo_card.child(div().pt_1().child(modal_button(
-                    "remote-open-repo",
-                    if busy {
-                        Msg::RemoteOpeningRepository.t()
-                    } else {
-                        Msg::RemoteOpenRepository.t()
-                    },
-                    ModalButtonKind::Primary,
-                    busy.then(|| SharedString::from(Msg::RemoteRequestBusy.t())),
-                    open_repo,
-                    cx,
-                )));
-                card = card.child(repo_card);
-            }
-
-            // Directory listing (scrollable). A `..` row navigates to the parent.
-            // Rows are lightweight clickable list items (not Buttons) — a file
-            // browser reads better as rows, matching how Zed renders its tree.
-            let mut list = div()
-                .id("remote-dir-list")
-                .flex()
-                .flex_col()
-                .gap_px()
-                .max_h(theme::scaled_px(280.))
-                .overflow_y_scroll();
-
-            if let Some(parent) = remote::parent_dir(&modal.cwd) {
-                let nav = cx.listener(move |this, _e: &ClickEvent, _window, cx| {
-                    this.remote_browse_navigate(parent.clone(), cx);
-                    cx.notify();
-                });
-                list = list.child(
-                    div()
-                        .id("remote-dir-up")
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .on_click(nav)
-                        .hover(|style| style.bg(rgb(current_theme().surface)))
-                        .child(SharedString::from("\u{2191}  ..")),
-                );
-            }
-
-            for entry in &modal.entries {
-                if entry.is_dir() {
-                    let target = remote::join_path(&modal.cwd, &entry.name);
-                    let nav = cx.listener(move |this, _e: &ClickEvent, _window, cx| {
-                        this.remote_browse_navigate(target.clone(), cx);
-                        cx.notify();
-                    });
-                    list = list.child(
-                        div()
-                            .id(SharedString::from(format!("remote-dir-{}", entry.name)))
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .on_click(nav)
-                            .hover(|style| style.bg(rgb(current_theme().surface)))
-                            .child(SharedString::from(format!("\u{1f4c1}  {}/", entry.name))),
-                    );
-                } else {
-                    list = list.child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_muted))
-                            .child(SharedString::from(format!("\u{1f4c4}  {}", entry.name))),
-                    );
-                }
-            }
-            card = card.child(list);
-
-            if let Some(ref err) = modal.error {
-                card = card.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(err.clone()),
-                );
-            }
-
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .justify_end()
-                    .child(modal_button(
-                        "remote-browse-close",
-                        Msg::RemoteClose.t(),
-                        ModalButtonKind::Cancel,
-                        None,
-                        cancel,
-                        cx,
-                    )),
-            );
-        }
-    }
-
-    // Escape cancels (mirrors the other input modals).
-    let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
-        if e.keystroke.key == "escape" {
-            this.cancel_remote_browse();
-            if let Some(fh) = this.root_focus.clone() {
-                window.focus(&fh, cx);
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }
-    });
-    let focusable_card = {
-        let base = div()
-            .relative()
-            .on_key_down(esc_cancel)
-            .child(super::e2e::measure_inside("remote-browse-card"));
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        // Measured from inside: a wrapper around an absolute overlay would
-        // itself be laid out in flow and move the overlay with it.
-        .child(super::e2e::measure_inside("active-modal/remote-browse"))
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(current_theme().modal_overlay))
-                .opacity(0.65),
-        )
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .child(focusable_card),
-        )
-}
-
-// ──────────────────────────────────────────────────────────────
 // Off-thread blocking helpers (call crate::remote → system `ssh`)
 // ──────────────────────────────────────────────────────────────
 

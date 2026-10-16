@@ -5,12 +5,15 @@ use super::{
     theme::{self, theme},
     KagiApp,
 };
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, Context, Entity, Focusable, SharedString, Window,
+};
 use gpui_component::input::{
     Enter, IndentInline, Input, InputEvent, InputState, OutdentInline, Paste,
 };
 use gpui_component::{button::Button, Disableable, Icon, Sizable};
 use kagi_domain::issue_composer::{fenced_code_paste, title_paste_split, IssueDraft};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::collections::HashMap;
 
 gpui::actions!(issues_composer, [FocusIssueEditor]);
@@ -55,6 +58,7 @@ impl KagiApp {
         if !self.issues_mode_open() {
             return;
         }
+        self.sync_issue_conversation_activation(window, cx);
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
@@ -75,6 +79,7 @@ impl KagiApp {
                 let body = cx.new(|cx| {
                     InputState::new(window, cx)
                         .code_editor("markdown")
+                        .search_labels(kagi_ui_core::find::labels())
                         .line_number(false)
                         .placeholder(if number.is_some() {
                             Msg::PrCommentPlaceholder.t()
@@ -178,6 +183,7 @@ impl KagiApp {
                 if editor.placeholder_lang != Some(active_lang) {
                     if let Some(input) = &editor.body_input {
                         input.update(cx, |st, cx| {
+                            st.set_search_labels(kagi_ui_core::find::labels(), cx);
                             st.set_placeholder(
                                 if number.is_some() {
                                     Msg::PrCommentPlaceholder.t()
@@ -251,6 +257,11 @@ impl KagiApp {
         if let Some(input) = input {
             input.update(cx, |st, cx| st.focus(window, cx));
         }
+        if focused {
+            self.retire_issue_conversation(cx);
+        } else {
+            self.activate_issue_conversation(cx);
+        }
         cx.notify();
     }
 }
@@ -258,6 +269,7 @@ impl KagiApp {
 pub(super) fn render_composer(
     app: &KagiApp,
     number: Option<u64>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let state = &app.ui().issue_composer;
@@ -305,9 +317,12 @@ pub(super) fn render_composer(
         .base_repo
         .clone()
         .unwrap_or_else(|| Msg::IssueRepoUnavailable.t().into());
-    let mut content = super::timeline_row::content_column().gap(theme::scaled_px(10.));
+    let mut content = super::timeline_row::content_column()
+        .gap(theme::scaled_px(10.))
+        .when(editor.focused, |content| content.h_full().min_h(px(0.)));
     content = content.child(
         div()
+            .flex_none()
             .self_start()
             .h(theme::scaled_px(28.))
             .px(theme::scaled_px(10.))
@@ -334,6 +349,7 @@ pub(super) fn render_composer(
         let paste_body = input.clone();
         content = content.child(
             div()
+                .flex_none()
                 .h(theme::scaled_px(32.))
                 .on_action(cx.listener(|_, action: &Enter, _, cx| {
                     if action.secondary || action.shift {
@@ -384,6 +400,8 @@ pub(super) fn render_composer(
                 }))
                 .child(
                     Input::new(&title)
+                        .context_menu(kagi_ui_core::input::context_menu(&title, false))
+                        .aria_label(Msg::A11yIssueTitle.t())
                         .appearance(false)
                         .bordered(false)
                         .focus_bordered(false)
@@ -401,20 +419,34 @@ pub(super) fn render_composer(
                 super::timeline_row::body_markdown(
                     ("issue-preview", number.unwrap_or(0) as usize),
                     &editor.draft.body,
+                    super::timeline_row::BodyMarkdownFormat::Original,
                     super::timeline_row::markdown_style(15., cx),
+                    window,
+                    cx,
                 ),
             ))
             .into_any_element()
     } else {
         let paste_input = input.clone();
         div()
-            .h(px(if editor.focused {
+            .relative()
+            .child(super::e2e::measure_inside("issue-composer-body"))
+            .h(theme::scaled_px(if editor.focused {
                 420.
             } else if editor.draft.body.lines().count() > 3 || editor.draft.body.contains("```") {
                 220.
             } else {
                 100.
             }))
+            .when(editor.focused, |body| {
+                // Flex gives the Input only space left after the nonshrinking
+                // fields/footer. Short panes scroll the frame's intrinsic
+                // minimum; the Input's own scroll handles longer drafts.
+                body.h_auto()
+                    .flex_1()
+                    .min_h(theme::scaled_px(25.5 * 2.))
+                    .max_h(theme::scaled_px(420.))
+            })
             // #909: Tab and Shift+Tab move focus out of the body like every
             // other field (title → body → Labels → Assignees → Create), so the
             // controls below are reachable from the keyboard. Indentation keeps
@@ -429,6 +461,11 @@ pub(super) fn render_composer(
             }))
             .capture_action(cx.listener(move |app, _: &Paste, window, cx| {
                 if app.has_active_modal() {
+                    return;
+                }
+                // Descendant Find controls own their text/actions; capture
+                // must not bypass that boundary and edit the hidden body.
+                if !paste_input.read(cx).focus_handle(cx).is_focused(window) {
                     return;
                 }
                 let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
@@ -450,16 +487,24 @@ pub(super) fn render_composer(
                 });
                 cx.stop_propagation();
             }))
-            .child(super::timeline_row::body_input(&input).h_full())
+            .child(
+                super::timeline_row::body_input(
+                    &input,
+                    if number.is_some() {
+                        Msg::A11yCommentBody.t()
+                    } else {
+                        Msg::A11yIssueBody.t()
+                    },
+                )
+                .h_full(),
+            )
             .into_any_element()
     };
     if !empty_create {
         content = content.child(body);
         if number.is_none() {
-            content = content.child(super::issue_fields::render_issue_fields(
-                app,
-                &editor.fields,
-                cx,
+            content = content.child(div().flex_none().child(
+                super::issue_fields::render_issue_fields(app, &editor.fields, cx),
             ));
         }
     }
@@ -473,8 +518,26 @@ pub(super) fn render_composer(
         disabled,
         cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)),
     );
+    let focus_label = if editor.focused {
+        Msg::IssueExitFocus.t()
+    } else {
+        Msg::IssueFocusEditor.t()
+    };
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = format!("{id}-focus");
+        super::e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(focus_label),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&name, true, false, None);
+    }
     content = content.child(
         div()
+            .flex_none()
             .flex()
             .justify_between()
             .items_center()
@@ -509,7 +572,8 @@ pub(super) fn render_composer(
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(
+                    .child(super::e2e::measure_control(
+                        format!("{id}-focus"),
                         Button::new(SharedString::from(format!("{id}-focus")))
                             .icon(Icon::empty().path(if editor.focused {
                                 "icons/window-restore.svg"
@@ -517,33 +581,40 @@ pub(super) fn render_composer(
                                 "icons/window-maximize.svg"
                             }))
                             .small()
-                            .tooltip_with_action(
-                                if editor.focused {
-                                    Msg::IssueExitFocus.t()
-                                } else {
-                                    Msg::IssueFocusEditor.t()
-                                },
-                                &FocusIssueEditor,
-                                Some("IssueComposer"),
-                            )
+                            .tab_stop(true)
+                            .map(|button| {
+                                super::button_style::named_button(button, focus_label, None)
+                            })
                             .on_click(cx.listener(move |app, _, window, cx| {
+                                #[cfg(feature = "gui-e2e")]
+                                super::e2e::pr_detail::record_activation(&format!("{id}-focus"));
                                 app.toggle_issue_focus(number, window, cx)
-                            })),
-                    )
+                            }))
+                            .hover_tooltip_builder(
+                                SharedString::from(format!("{id}-focus-hover-help")),
+                                move |window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(focus_label)
+                                        .action(&FocusIssueEditor, Some("IssueComposer"))
+                                        .build(window, cx)
+                                },
+                            ),
+                    ))
                     .child(super::e2e::measure_control(format!("{id}-submit"), submit)),
             ),
     );
     if let Some(error) = editor.save_error.as_ref() {
         content = content.child(
             div()
+                .flex_none()
                 .text_xs()
                 .text_color(rgb(theme().color_blocker))
-                .child(error.clone()),
+                .child(crate::ui::i18n::op::user_text::diagnostic(error).into_owned()),
         );
     }
     if let Some(error) = state.repo_error.as_ref() {
         content = content.child(
             div()
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -552,7 +623,7 @@ pub(super) fn render_composer(
                         .flex_1()
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
-                        .child(error.clone()),
+                        .child(crate::ui::i18n::op::user_text::diagnostic(error).into_owned()),
                 )
                 .child(
                     Button::new(SharedString::from(format!("{id}-retry-repo")))
@@ -565,11 +636,14 @@ pub(super) fn render_composer(
     } else if editor.save_error.is_none()
         && (!editor.draft.body.trim().is_empty() || !editor.draft.title.trim().is_empty())
     {
-        content = content.child(super::timeline_row::draft_status(if editor.saving {
-            Msg::ComposerDraftSaving.t()
-        } else {
-            Msg::ComposerDraftSaved.t()
-        }));
+        content = content.child(
+            super::timeline_row::draft_status(if editor.saving {
+                Msg::ComposerDraftSaving.t()
+            } else {
+                Msg::ComposerDraftSaved.t()
+            })
+            .flex_none(),
+        );
     }
     // Lets Tier A read whose avatar the composer draws. Absolute, so it adds
     // no gap; compiled out of normal builds, where it would be a flow child.
@@ -584,11 +658,17 @@ pub(super) fn render_composer(
         &app.avatars.images,
         content,
     )
+    .when(editor.focused, |composer| {
+        composer.h_auto().flex_grow(1.).flex_shrink_0()
+    })
     .border_b_1()
     .border_color(rgb(theme().selected))
     .key_context("IssueComposer")
     .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
         app.toggle_issue_focus(number, window, cx)
     }));
-    super::e2e::measure_control(id, composer).into_any_element()
+    composer
+        .relative()
+        .child(super::e2e::measure_inside(id))
+        .into_any_element()
 }

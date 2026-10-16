@@ -1,4 +1,5 @@
 use super::*;
+use kagi_ui_core::i18n::{queue_text, QueueText};
 
 /// Use the real Commit Panel inputs and plan button, not a synthetic queue event.
 pub(super) fn queue_commit(
@@ -110,7 +111,10 @@ pub fn scenario_queue_commit_runs_after_checkout(cx: &mut VisualTestAppContext) 
     queue_commit(cx, &app, window, "frozen subject", "frozen body");
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("commit frozen subject".into(), "waiting: write".into())]
+        vec![(
+            "commit frozen subject".into(),
+            queue_text(QueueText::WaitWrite).into()
+        )]
     );
     assert!(drawn(cx, window, "queue-strip"));
     cx.read(|cx| {
@@ -290,7 +294,10 @@ pub fn scenario_queue_commit_rechecks_staging_on_confirm(cx: &mut VisualTestAppC
     );
     assert_eq!(
         strip(cx, &app).unwrap().2,
-        vec![("commit staging guard".into(), "plan failed".into())],
+        vec![(
+            "commit staging guard".into(),
+            queue_text(QueueText::ReasonPlanError).into()
+        )],
         "the confirmation became stale before admission, not during execution"
     );
     unmount(cx, app, window);
@@ -441,4 +448,288 @@ pub fn scenario_queue_waits_while_input_focused(cx: &mut VisualTestAppContext) {
     assert_eq!(head(&repo), "b");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_waits_while_input_focused");
+}
+
+/// #1126: both immediate Commit approval and the queued confirmation retain
+/// the approved index even when another git add happens before execution.
+pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_domain::plan_note::{CommitNote, PlanNote};
+    use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+    use kagi_ui_core::i18n::{self, Lang, Msg};
+
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let language = i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        commit_planning_refusal(cx);
+        commit_identity_unavailable_plan(cx, lang);
+        for queued in [false, true] {
+            let fixture = branches_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let (app, window) = mount(cx, &repo);
+            let (hold, release) = deferred::<()>(cx);
+            KagiApp::hold_next_run_for_e2e(hold);
+            if queued {
+                app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+                cx.run_until_parked();
+            }
+            std::fs::write(repo.join("approved.txt"), "APPROVED\n").unwrap();
+            git(&repo, &["add", "approved.txt"]);
+            queue_commit(cx, &app, window, "approved identity", "");
+            // Force the queued head to present its existing staging-change
+            // confirmation, then hold the resulting commit after approval.
+            let release = if queued {
+                std::fs::write(repo.join("another.txt"), "also approved\n").unwrap();
+                git(&repo, &["add", "another.txt"]);
+                release.send(());
+                frozen_modal(cx, &app, window, "approved identity");
+                let (hold, release) = deferred::<()>(cx);
+                KagiApp::hold_next_run_for_e2e(hold);
+                click(cx, window, "plan-confirm");
+                cx.run_until_parked();
+                release
+            } else {
+                release
+            };
+            let head = rev_parse(&repo, &["HEAD"]);
+            std::fs::write(repo.join("approved.txt"), "NOT_APPROVED\n").unwrap();
+            git(&repo, &["add", "approved.txt"]);
+            let index = std::fs::read(repo.join(".git/index")).unwrap();
+            release.send(());
+            tick_until(cx, &app, "stale commit refusal", |app| {
+                !app.app_sessions.has_leases() && app.write_busy_op.is_none()
+            });
+            let reason = Msg::AdviceCommitStagedContentChanged.t();
+            assert_eq!(
+                reason,
+                i18n::plan_note_text(&PlanNote::Commit(CommitNote::StagedContentChanged))
+            );
+            cx.read(|cx| {
+                let app = app.read(cx);
+                assert!(matches!(&app.status_footer, FooterStatus::Failed(message) if message.contains(reason)),
+                    "localized reason must reach the footer: {:?}", app.status_footer);
+                let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+                assert!(matches!(toast.kind, ToastKind::Error) && toast.message.contains(reason),
+                    "localized reason must reach the bounded error toast: {}", toast.message);
+            });
+            let contract_line = match lang {
+                Lang::En => "[kagi] async: commit failed — Commit failed: Staged content changed since confirmation. Nothing was committed. Review the staged changes and confirm a new plan.",
+                Lang::Ja => "[kagi] async: commit failed — commit に失敗しました: 確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。",
+            };
+            assert!(
+                kagi_ui_core::klog::tail()
+                    .iter()
+                    .any(|line| line == contract_line),
+                "localized display must not rewrite the stderr contract: {contract_line}"
+            );
+            assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+            assert_eq!(
+                std::fs::read_to_string(repo.join("approved.txt")).unwrap(),
+                "NOT_APPROVED\n"
+            );
+            let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "commit")
+                .collect();
+            assert_eq!(receipts.len(), 1);
+            assert!(
+                matches!(&receipts[0].outcome, OpOutcome::Failed { error } if error == &CommitNote::StagedContentChanged.message_en())
+            );
+            unmount(cx, app, window);
+        }
+    }
+    i18n::set_lang(language);
+    eprintln!("[gui-e2e] PASS commit_index_identity_refusal");
+}
+
+/// #1132: a real rejecting hook reaches the localized failure surfaces.
+#[cfg(unix)]
+pub fn scenario_commit_hook_failure(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+    use kagi_ui_core::i18n::{self, Lang};
+    use std::os::unix::fs::PermissionsExt;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let language = i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let fixture = branches_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        git(&repo, &["config", "core.hooksPath", ".git/hooks"]);
+        let hook = repo.join(".git/hooks/pre-commit");
+        std::fs::write(
+            &hook,
+            "#!/bin/sh\necho project-policy-rejected >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(repo.join("approved.txt"), "approved\n").unwrap();
+        git(&repo, &["add", "approved.txt"]);
+        let head = rev_parse(&repo, &["HEAD"]);
+        let (app, window) = mount(cx, &repo);
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        queue_commit(cx, &app, window, "hook policy", "");
+        tick_until(cx, &app, "hook failure settlement", |app| {
+            !app.app_sessions.has_leases() && app.write_busy_op.is_none()
+        });
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let failure = match lang {
+                Lang::En => "failed",
+                Lang::Ja => "失敗",
+            };
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Failed(message)
+                if message.contains(failure) && message.contains("project-policy-rejected")),
+                "localized failed footer: {:?}",
+                app.status_footer
+            );
+            let toast = app
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert!(matches!(toast.kind, ToastKind::Error));
+            assert!(
+                toast.message.contains(failure)
+                    && toast.message.contains("project-policy-rejected"),
+                "localized failed toast: {}",
+                toast.message
+            );
+        });
+        assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "commit")
+            .collect();
+        assert_eq!(receipts.len(), 1);
+        assert!(matches!(&receipts[0].outcome, OpOutcome::Failed { error }
+            if error.contains("project-policy-rejected")));
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(language);
+    eprintln!("[gui-e2e] PASS commit_hook_failure");
+}
+
+/// Planning's final index check and execute preflight produce the same real
+/// typed refusal. Deliver that result through the normal Commit plan-result
+/// boundary, without a fabricated error or a timing-dependent planner race.
+fn commit_planning_refusal(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_ui_core::i18n::{self, Msg, Op};
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("approved.txt"), "APPROVED\n").unwrap();
+    git(&repo, &["add", "approved.txt"]);
+    let (app, window) = mount(cx, &repo);
+    let repository = git2::Repository::open(&repo).unwrap();
+    let plan = kagi_git::plan_commit(&repository, "approved identity").unwrap();
+    std::fs::write(repo.join("approved.txt"), "NOT_APPROVED\n").unwrap();
+    git(&repo, &["add", "approved.txt"]);
+    let error = kagi_git::preflight_commit(&repository, &plan).unwrap_err();
+    let head = rev_parse(&repo, &["HEAD"]);
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let refs = git_output(&repo, &["show-ref"]);
+    let expected = i18n::op_plan_failed(Op::Commit, Msg::AdviceCommitStagedContentChanged.t());
+    app.update(cx, |app, cx| app.commit_plan_result_for_e2e(Err(error), cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(matches!(&app.status_footer, FooterStatus::Failed(message) if message.as_ref() == expected),
+            "planning refusal must reach the localized footer: {:?}", app.status_footer);
+        let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+        assert!(matches!(toast.kind, ToastKind::Error) && toast.message.as_ref() == expected,
+            "planning refusal must reach the localized error toast: {}", toast.message);
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+    });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(git_output(&repo, &["show-ref"]), refs);
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty(),
+        "a planning refusal must not start or record execution"
+    );
+    drop(repository);
+    unmount(cx, app, window);
+}
+
+/// Empty local identity overrides the runner's global fixture identity. The
+/// real Commit Panel backend plan must retain a localized, non-executable card.
+fn commit_identity_unavailable_plan(cx: &mut VisualTestAppContext, lang: kagi_ui_core::i18n::Lang) {
+    use kagi::ui::button_style;
+    use kagi_domain::plan_note::{CommitNote, PlanNote};
+    use kagi_ui_core::i18n::{self, Lang};
+
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("identity.txt"), "staged without identity\n").unwrap();
+    git(&repo, &["add", "identity.txt"]);
+    git(&repo, &["config", "--local", "user.name", ""]);
+    git(&repo, &["config", "--local", "user.email", ""]);
+    git(&repo, &["config", "--local", "user.useConfigOnly", "true"]);
+    let (app, window) = mount(cx, &repo);
+    let head = rev_parse(&repo, &["HEAD"]);
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let reason = match lang {
+        Lang::En => "Git author or committer identity is unavailable. Set user.name and user.email before committing.",
+        Lang::Ja => "Git の作者または committer の情報が設定されていません。commit する前に user.name と user.email を設定してください。",
+    };
+    let note = PlanNote::Commit(CommitNote::IdentityUnavailable);
+    assert_eq!(i18n::plan_note_text(&note), reason);
+    queue_commit(cx, &app, window, "missing identity", "");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let panel = app.ui().commit_panel.as_ref().unwrap().read(cx);
+        let modal = panel
+            .state
+            .plan_modal
+            .as_ref()
+            .expect("blocked commit plan");
+        assert_eq!(modal.plan.blockers, vec![note.clone()]);
+        assert!(
+            modal.error.is_none(),
+            "identity is a plan blocker, not a plan error"
+        );
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+    });
+    button_style::clear_recorded_modal_buttons();
+    focus_root(cx, &app, window);
+    let confirm = button_style::recorded_modal_button("commit-plan-confirm")
+        .expect("blocked Commit button is rendered");
+    assert!(confirm.disabled);
+    assert_eq!(confirm.description.as_deref(), Some(reason));
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty(),
+        "planning a blocked commit must not manufacture an execution receipt"
+    );
+
+    // Enter dispatches to start_commit even though the button is inert; the
+    // backend-derived blocker must also guard this keyboard execution boundary.
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let panel = app.ui().commit_panel.as_ref().unwrap().read(cx);
+        assert_eq!(
+            panel.state.plan_modal.as_ref().unwrap().plan.blockers,
+            vec![note]
+        );
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+        assert!(app.queue_strip_for_e2e(std::time::Instant::now()).is_none());
+    });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty(),
+        "a refused start without an admitted run must not record execution"
+    );
+    unmount(cx, app, window);
 }

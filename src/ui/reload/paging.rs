@@ -85,7 +85,8 @@ impl KagiApp {
                             ui.commit_limit = previous_limit;
                         }
                         if app.active_session() == Some(session) {
-                            let msg = format!("Load more failed: {msg}");
+                            let raw = format!("Load more failed: {msg}");
+                            let msg = crate::ui::i18n::op::user_text::diagnostic(&raw).into_owned();
                             app.status_footer =
                                 FooterStatus::Failed(SharedString::from(msg.clone()));
                             app.push_toast(ToastKind::Error, msg, cx);

@@ -479,10 +479,8 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         root_focused(cx, &app, window),
         "the closed Home tab's focus goes to the window"
     );
-    // ⌘W with the focus arrowed to another tab's cell closes the tab in
-    // front, not that one; the cells after it move up a slot, and the focus
-    // and the arrowed-to cell move with their tab (#961 review): Enter then
-    // switches to the tab that had the focus.
+    // ⌘W closes the front tab, not the arrow-focused cell. Closing down to
+    // one repository keeps the strip and its surviving keyed focus visible.
     assert_eq!(
         cx.read(|cx| app.read(cx).tabs.len()),
         2,
@@ -493,6 +491,43 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         0,
         "the first in front"
     );
+    // #961 retains keyed focus when closing/reindexing still leaves a strip.
+    let reindex_fixture = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(reindex_fixture.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(strip_focus(cx), Some(1));
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "keyed focus follows second tab into slot zero"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        1,
+        "the third tab stays selected while keyed focus follows the second"
+    );
+    keys(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        0,
+        "Enter activates reindexed focus"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).tabs[0].path.canonicalize().unwrap()),
+        second.path().canonicalize().unwrap()
+    );
+    // Keep the independent two→one visibility and keyed-focus oracle below.
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
     })
@@ -501,12 +536,19 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     assert_eq!(strip_focus(cx), Some(1), "precondition: on the second tab");
     app.update(cx, |app, cx| app.close_tab(0, cx));
     cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "repo-tab-0");
     assert_eq!(
         strip_focus(cx),
         Some(0),
-        "the focus moved with the second tab into the first slot"
+        "keyed focus follows the surviving tab into slot zero"
     );
-    keys(cx, window, "enter");
+    let surviving_tab = e2e::control_bounds(window.window_id(), "repo-tab-0")
+        .expect("single repository tab remains visible");
+    assert!(surviving_tab.size.width > gpui::px(0.) && surviving_tab.size.height > gpui::px(0.));
+    assert!(
+        !root_focused(cx, &app, window),
+        "the visible surviving tab retains focus instead of handing it to root"
+    );
     let (tabs, active, path) = cx.read(|cx| {
         let app = app.read(cx);
         (
@@ -518,16 +560,16 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     assert_eq!((tabs, active), (1, 0));
     assert_eq!(
         path.map(|p| p.canonicalize().unwrap()),
-        Some(second.path().canonicalize().unwrap()),
-        "the tab left is the one the focus was on"
+        Some(reindex_fixture.path().canonicalize().unwrap()),
+        "the surviving arrow-focused repository remains selected with the strip visible"
     );
     let third = build_fixture();
     app.update(cx, |app, cx| {
         assert!(app.open_repository(third.path().to_path_buf(), cx));
     });
     cx.run_until_parked();
-    // The same for a tab that is not the last: its cell is drawn again, for
-    // the tab after it, so the focus must not pass to that tab (#961 review).
+    // Closing a focused tab releases only that identity to root, even when
+    // another tab moves into its slot and the one-tab strip stays visible.
     assert!(repos >= 2, "two repository tabs");
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
@@ -540,6 +582,7 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     );
     app.update(cx, |app, cx| app.close_tab(0, cx));
     cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "repo-tab-0");
     assert_eq!(
         strip_focus(cx),
         None,
@@ -549,6 +592,9 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         root_focused(cx, &app, window),
         "the closed first tab's focus goes to the window"
     );
+    let surviving_tab = e2e::control_bounds(window.window_id(), "repo-tab-0")
+        .expect("closing a focused tab retains the surviving one-tab strip");
+    assert!(surviving_tab.size.width > gpui::px(0.) && surviving_tab.size.height > gpui::px(0.));
 
     // A repository opened while the focus is on Home's cell (Home behind)
     // is added before Home: Home's cell, its handle and the focus move to

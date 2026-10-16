@@ -18,6 +18,12 @@ impl KagiApp {
     /// the backend).  On any `Err` the result falls back to the rule-based draft
     /// so the UI never blocks or shows a blocking error.
     pub(super) fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.smart_commit.llm_enabled
+            || !self.smart_commit.consent_accepted
+            || message_gen::offline()
+        {
+            return;
+        }
         // #476: generate from the PANEL's staged diff, not the tab's.
         let Some(repo_path) = self.commit_panel_repo_path(cx) else {
             return;
@@ -50,6 +56,7 @@ impl KagiApp {
             v.gen = v.gen.wrapping_add(1);
             v.gen
         });
+        let request = (cp_entity.entity_id(), gen);
         // #722 P1: only this weak handle crosses into the completion, so
         // closing the tab drops the panel immediately even mid-generation.
         let cp_weak = cp_entity.downgrade();
@@ -57,11 +64,16 @@ impl KagiApp {
             return;
         };
         ui.smart_commit_generating = true;
+        ui.smart_commit_generation = Some(smart_commit::SmartGeneration {
+            request,
+            provider,
+            model: (provider == smart_commit::SmartProvider::Ollama).then(|| model.clone().into()),
+        });
         ui.smart_commit_status = Some(match provider {
-            smart_commit::SmartProvider::Ollama => "Generating with local LLM…".to_string(),
-            smart_commit::SmartProvider::Cli(p) => {
-                format!("Generating with {}…", p.display_name())
-            }
+            smart_commit::SmartProvider::Ollama => Msg::SmartGeneratingLocal.t().to_string(),
+            smart_commit::SmartProvider::Cli(p) => Msg::SmartGeneratingProvider
+                .t()
+                .replace("{}", p.display_name()),
         });
         cx.notify();
 
@@ -114,35 +126,51 @@ impl KagiApp {
                 let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
-                ui.smart_commit_generating = false;
+                // A replacement panel can have a newer request in this same
+                // session, even after the initiating weak entity disappeared.
+                if ui
+                    .smart_commit_generation
+                    .as_ref()
+                    .is_none_or(|generation| generation.request != request)
+                {
+                    return;
+                }
                 // Upgrade only now: `release_session` dropped the entity when
                 // the tab closed, so a completion that lost its panel writes
                 // nothing instead of resurrecting it (#722 P1).
                 let Some(cp_entity) = cp_weak.upgrade() else {
+                    ui.smart_commit_generating = false;
+                    ui.smart_commit_generation = None;
+                    ui.smart_commit_status = None;
+                    if app.active_session() == Some(owner) {
+                        cx.notify();
+                    }
                     return;
                 };
                 let stale = cp_entity.read(cx).gen != gen;
+                // Superseded/consumed work cannot alter the newer spinner,
+                // status or draft, including failed late completions.
+                if stale {
+                    return;
+                }
+                ui.smart_commit_generating = false;
+                ui.smart_commit_generation = None;
                 match out {
                     Some((msg, used_llm)) if !msg.trim().is_empty() => {
-                        // Drop only a result superseded by a newer generation.
-                        if !stale {
-                            // The Input's set_value needs `&mut Window`, which is
-                            // unavailable here. Mirror into the initiating panel
-                            // entity; its next render pushes it into the Input.
-                            cp_entity.update(cx, |v, _| {
-                                v.state.commit_msg = msg.clone();
-                                v.pending_smart_msg = Some(msg.clone());
-                            });
-                            ui.smart_commit_status = Some(if used_llm {
-                                "Generated with local LLM".to_string()
-                            } else {
-                                "LLM unavailable — used rule-based".to_string()
-                            });
-                        }
+                        // Input replacement needs a Window; the panel applies
+                        // this reversible edit on its next render.
+                        cp_entity.update(cx, |v, _| {
+                            v.state.commit_msg = msg.clone();
+                            v.pending_smart_msg = Some(msg.clone());
+                        });
+                        ui.smart_commit_status = Some(if used_llm {
+                            Msg::SmartGeneratedLocal.t().to_string()
+                        } else {
+                            Msg::SmartGenerationFallback.t().to_string()
+                        });
                     }
                     _ => {
-                        ui.smart_commit_status =
-                            Some("Generation failed — edit manually".to_string());
+                        ui.smart_commit_status = Some(Msg::SmartGenerationFailed.t().to_string());
                     }
                 }
                 if app.active_session() == Some(owner) {

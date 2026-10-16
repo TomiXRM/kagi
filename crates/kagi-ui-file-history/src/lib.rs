@@ -14,7 +14,9 @@
 //! opaque `AnyView` (`diff_pane`) that this crate embeds below the commit list.
 
 mod detail;
+mod keyboard;
 mod render;
+pub use keyboard::bind_keys;
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -32,14 +34,14 @@ use kagi_ui_core::theme;
 
 pub use render::render_file_history_view;
 
-/// Full row height for a File History commit row.
-///
-/// ponytail: copy of the bin's `row_height(false)` (= `graph_view::ROW_H` =
-/// 24.0 * 1.2); keep in sync if the graph row height ever changes.
-const ROW_H_FULL: f32 = 29.0;
+#[cfg(feature = "gui-e2e")]
+pub use kagi_ui_core::commit_row::{clear_table_row_paints, table_row_paint, TableRowPaint};
 
-/// Zoom-scaled height of a File History commit row (matches the bin's
-/// `row_height(false)`).
+/// Finder-inspired reference height for File History's single-line commit rows.
+/// This surface is independent of the graph and Editor History card densities.
+const ROW_H_FULL: f32 = 20.0;
+
+/// Density- and zoom-scaled height of a File History commit row.
 pub(crate) fn fh_row_height() -> f32 {
     theme::scaled(ROW_H_FULL)
 }
@@ -132,8 +134,11 @@ impl FileHistoryState {
 /// `open_file_history` and maps them onto `KagiApp`.
 #[derive(Debug, Clone)]
 pub enum FileHistoryEvent {
-    /// Back / Open File clicked → host drops the entity (ADR-0117 shape kept).
+    /// Back clicked → host drops the entity.
     CloseRequested,
+    /// Open the selected entry's exact path in the Editor workspace.
+    /// The host keeps History open if that worktree file is unavailable.
+    OpenFileRequested(PathBuf),
     /// Double-click / Open Commit / Show in Graph → host closes the pane and
     /// jumps the commit graph to this commit.
     JumpToCommit(CommitId),
@@ -162,6 +167,7 @@ pub enum FileHistoryEvent {
 pub struct FileHistoryView {
     /// The view-model data (loaded history, selection, split, generation).
     pub data: FileHistoryState,
+    pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     /// Commit-row context menu: (entry index, anchor). Moved off `KagiApp`.
     pub menu: Option<(usize, Point<Pixels>)>,
     /// Shared with `KagiApp.file_history_geom` (the *same* `Rc<Cell>`): the
@@ -193,6 +199,7 @@ pub struct FileHistoryView {
     /// narrow for their labels. Its measured bounds are what the layout
     /// scenario reads.
     pub header_fit: kagi_ui_core::header_fit::HeaderFit,
+    pub(crate) keyboard: keyboard::HistoryKeyboard,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -210,6 +217,7 @@ impl FileHistoryView {
     ) -> Self {
         Self {
             data,
+            window_activation_subscription: None,
             menu: None,
             geom,
             panel_width,
@@ -218,7 +226,18 @@ impl FileHistoryView {
             list_scroll: UniformListScrollHandle::new(),
             last_built_range: 0..0,
             header_fit: Default::default(),
+            keyboard: Default::default(),
         }
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn header_focused_for_e2e(
+        &self,
+        slot: usize,
+        window: &gpui::Window,
+        cx: &gpui::App,
+    ) -> bool {
+        self.keyboard.header_focused(slot, window, cx)
     }
 
     /// Ask the host to run the async history load for the current `rel_path` /
@@ -262,6 +281,7 @@ impl FileHistoryView {
                     klog!("file-history: loaded {} entries", history.entries.len());
                 }
                 let initial = Self::pick_initial_index(&history, &origin);
+                self.keyboard.seed(&history);
                 self.data.history = Some(history);
                 self.data.error = None;
                 self.data.selected = initial;

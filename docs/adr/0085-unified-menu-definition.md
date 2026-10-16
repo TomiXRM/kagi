@@ -118,3 +118,136 @@ pub const MENU_BAR: &[MenuSection] = &[ /* kagi, File, Edit(mac_only), View, Rep
   を検証する単体テストでガードする。
 - 既存の keystroke 表示・disabled 灰色化(dispatch tree 方式・ADR-0029)・`handle_menu_command` の
   挙動は不変。`.occlude()` 修正も不変。
+
+## Amendment — 2026-10-11: standard macOS application menu (#1083)
+
+The native application menu uses Finder's grouping: About, separator,
+Settings, separator, Services, separator, Hide Kagi, Hide Others, Show All,
+separator, Quit. The entries remain in `MENU_BAR`, guarded by
+`cfg(target_os = "macos")`; no separate menu definition is introduced.
+Services uses `MenuItem::os_submenu` with `SystemMenuType::Services`.
+Both issue-audit GPUI `90b3aa0` and the current fork pin `caf5007` expose only Edit variants of `OsAction`, so visibility
+uses application-wide GPUI actions delegating to `App::hide`,
+`hide_other_apps`, and `unhide_other_apps`, with standard ⌘H / ⌥⌘H bindings.
+These platform delegates do not remove a window or mutate Kagi entities.
+Quit and its existing settings flush path are unchanged.
+
+Role/density/reference: native macOS application menu / OS-owned / Finder.
+AppKit owns rest, hover, pressed, keyboard focus and Services availability.
+Selected/loading/error/empty states are not applicable to visibility actions.
+No Kagi colours, zoom geometry, modal slot, Git operation or oplog is touched.
+The isolated PID AX baseline showed only About kagi, Settings…, Quit kagi;
+AppKit did not insert the missing standard groups.
+
+Review amendment: registry-based palette/dropdown invocations route visibility
+IDs through the same platform API selection before ordinary command dispatch.
+Native visibility labels use the palette's registry label path; Japanese
+registry translations resolve the corresponding `Msg` values rather than
+maintaining another translation table.
+
+## Amendment — 2026-10-12: stateful View and Window navigation (#1313 / #1314)
+
+`MENU_BAR` remains the only layout and action-ID source. Menu construction now
+reads the active main window's presentation snapshot: Sidebar and Full Screen
+offer their localized next action (Show/Hide, Enter/Exit), retaining the same
+actions and keymap. Native menu metadata is rebuilt on owner/state changes;
+theme, language and toolbar-display rebuilds retain that snapshot. The in-app
+dropdown uses the same state-label resolver.
+
+Window groups Minimize/Zoom, Previous/Next Tab, Bring All to Front, then the
+existing New/Close entries. Tab commands reuse the repository/Home switch paths
+and are not registered in Settings. Fixed brace-key aliases match macOS's
+normalized shifted-bracket events without changing displayed registry shortcuts.
+Bring All to Front raises registered main windows back-to-front in their native
+stack order, restoring the original frontmost window last without changing the
+selected repository. Inactive renders retain the last menu owner; only the first
+publication may occur without an active main window.
+
+
+## Amendment — 2026-10-13: localized native roles and live Editor Save (#1438–#1440)
+
+Native and portable headings share `i18n::menu_heading`; ordinary actions use
+the existing `command_label` resolver, including the EN/JA command vocabulary.
+Standard Edit text uses shared `Msg` labels. Canonical section identifiers are
+unchanged: the shell publisher selects AppKit's Window submenu by canonical
+section position after installing each translated tree. This is necessary
+because GPUI caf5007 otherwise assigns the Window role only to `"Window"`.
+Every theme/language/toolbar/window rebuild goes through that publisher.
+
+The native Settings host publishes only its Edit focus target, retaining the
+main window's View labels; its Input never inherits a repository-history label.
+
+Undo/Redo are not responder-chain stubs: the pinned backend dispatches those
+OS selectors to GPUI tags. They use Input's real Undo/Redo actions when an
+attached Input owns focus, otherwise the guarded repository-history actions.
+History labels include the actual pending entry summary. Dispatch-tree
+availability excludes missing history, busy/modal/Home state, focused Input
+or Terminal, and the foreground historical Editor. Text Input availability
+remains the pinned component's own dispatch contract (an empty text-history
+action is safely handled there); no duplicate input undo stack is introduced.
+Cut/Copy/Paste/Select All retain their actual AppKit responder selectors.
+
+Review: Japanese Undo uses the macOS-standard 「取り消す」, shared by plain
+Input and targeted history labels. History label publication is independent
+of modal/write-busy availability; those conditions only gate dispatch-tree
+handlers. Home retains the last history labels without reading a parked
+session, while focused Input still selects its own actions. Only a changed
+editing target (Input, Terminal or snapshot) or actual history entry changes
+the Edit presentation. This avoids unnecessary whole-menu replacements:
+pinned GPUI accumulates `menu_actions` each time `set_menus` runs.
+
+`MenuNode::EditorSave` exposes the existing `SaveEditorFile` action in File,
+with the same ⌘S binding and save path. Its owner is the live Editor entity,
+so native handler registration and the portable row read the same
+`editor_save_available` predicate: dirty editable open buffer, current Editor,
+no selected historical commit, external-change decision, modal or write.
+Graph/closed/clean/snapshot buffers therefore have no available Save handler.
+This entity-owned node deliberately avoids a second registry state cache.
+
+Role/density/reference: native macOS menu / AppKit-owned / standard File and
+Edit menus. Existing portable row rendering is reused; there is no new control
+style, modal, save executor, repository mutation or operation-log path.
+
+
+## Amendment — 2026-10-15: native selection, recent repositories and Find (#1604/#1608; Refs #1607)
+
+Menu action names contain no checkmarks or indentation. Theme, Language,
+Toolbar and workspace entries carry native `checked` state; the portable
+renderer draws its own separate check column from the same selection values.
+Workspace menu labels use dedicated nouns: Graph / Pull Requests / Editor in
+English and グラフ / Pull Request / エディター in Japanese, not compact toolbar labels.
+
+File > Open Recent and the Dock use the existing Home recent-repository store,
+in its most-recent-first order. Clear Menu clears only that history, never open
+tabs or repository data. Opening an entry uses `KagiApp::open_repository` and
+registers successful opens through GPUI's public recent-document API.
+The portable renderer retains an Open Recent heading and separators around the
+group and before Clear Menu; all action labels align with the shared check column.
+Clear Menu registers a handler on repository/Home and Settings roots only while
+the published history is nonempty. Availability changes refresh those roots;
+no unconditional global Clear handler bypasses AppKit validation.
+Clear Menu belongs only to File > Open Recent, not the Dock. Dock entries are
+repository actions only, with no separators; their global dispatch remains
+available without an active window and creates a repository host when needed.
+The target is the active repository window or the last main host, preserved
+independently of Settings' menu ownership, with native ordering as a fallback.
+Activate the repository window and application before attempting the open,
+including newly created hosts, so missing repositories' existing error feedback
+is also brought forward. Hidden native tests check repository routing, rendered
+failure notices and activation requests; actual OS foreground behavior remains
+Tier B coverage.
+
+
+Edit > Find exposes a Kagi action only when the focused target can find: its
+conditional root handler forwards to public `input::Search`, or the existing
+Graph sidebar filter as the non-Input/non-Terminal Cmd-F target. Plain sidebar,
+commit and Settings Inputs do not register that handler. Native validation
+checks action availability, not merely MenuItem's disabled metadata.
+Input search keeps priority; no global Cmd-F override is introduced. The owner approved
+omitting Next/Previous/Use Selection until official Kit offers public navigation
+actions: pinned `7a116a2` keeps SearchPanel and next/previous private. Do not
+emulate those commands by changing queries, synthetic keys or dependency forks.
+
+Role/density/reference: native menu / OS-owned / Finder and TextEdit.
+Hidden native assertions cover menu metadata and dispatch; Tier B remains
+pending while the screen is locked.

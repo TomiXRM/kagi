@@ -93,6 +93,9 @@ fn health_plan(
         dirty: format!("{after}; working tree unchanged"),
     };
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Maintenance(title),
         current,
@@ -103,6 +106,7 @@ fn health_plan(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

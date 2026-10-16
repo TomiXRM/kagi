@@ -599,6 +599,52 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         "every Issues read names the verified acme/local: {:?}",
         issue_calls()
     );
+    // A retained, unaccepted selection must not start its own detail read
+    // while Home is opening #4, whether it is another issue or #4 itself.
+    std::fs::remove_file(state.join("default-repo")).unwrap();
+    for retained in [9, 4] {
+        wait_for(cx, &app, "the previous issue read to settle", |app| {
+            app.ui().github_issue_detail_loading.is_none()
+        });
+        app.update(cx, |app, cx| {
+            app.seed_issue_reply_for_e2e(retained, cx);
+            app.show_graph_mode(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| app.read(cx).ui().selected_github_issue),
+            Some(retained)
+        );
+        assert!(!cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .github_issue_details
+                .contains_key(&retained)
+        }));
+        click_control(cx, window, "tab-add");
+        cx.run_until_parked();
+        click_control(cx, window, "home-pane-issues");
+        let before_reads = issue_calls()
+            .iter()
+            .filter(|call| call.starts_with("view-"))
+            .count();
+        click(cx, window, "home-work-acme/local-4");
+        wait_for(cx, &app, "Home's selected issue read to settle", |app| {
+            app.workspace_mode() == WorkspaceMode::Issues
+                && app.ui().selected_github_issue == Some(4)
+                && app.ui().github_issue_detail_loading.is_none()
+                && app.ui().github_issue_detail_error.is_some()
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            issue_calls()
+                .iter()
+                .filter(|call| call.starts_with("view-"))
+                .count(),
+            before_reads + 1,
+            "Home opening #4 from retained #{retained} issues exactly one detail read"
+        );
+    }
     // Close the clone's tab, so the next open starts a session whose Issues
     // mode has not loaded yet, as the steps below expect.
     cx.read(|cx| {

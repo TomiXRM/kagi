@@ -1,6 +1,6 @@
 //! Cherry-pick / commit-plan modal renderers split out of `modal_renderers.rs`
-//! (T-SPLIT-MODALS-001 / ADR-0116 Wave 3). Both build a preview file-tree
-//! section via `file_tree::build_file_tree`.
+//! (T-SPLIT-MODALS-001 / ADR-0116 Wave 3). Cherry-pick shares the bounded
+//! plan-file preview; commit retains its staging tree.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -19,7 +19,6 @@ use super::{file_tree, KagiApp};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::IconName;
 use kagi_domain::plan_note::ShellKind;
-use kagi_git::ChangeKind;
 use kagi_ui_core::i18n::{
     plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
 };
@@ -36,14 +35,14 @@ use std::rc::Rc;
 /// - Centred modal card:
 ///   - Title (commit short sha + summary onto HEAD branch)
 ///   - Current → Predicted state
-///   - Preview files section (file tree, reusing T018 build_file_tree)
+///   - Bounded computed files-to-change preview with full path labels
 ///   - Blockers (red) if any — includes conflict file names
 ///   - Ready recovery commands in one collapsed disclosure
 ///   - Error message (if preflight/execute failed)
 ///   - `[Cancel]` always; `[Cherry-pick]` disabled with a reason when unavailable
 pub(crate) fn render_cherry_pick_modal(
     modal: CherryPickModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
@@ -76,79 +75,6 @@ pub(crate) fn render_cherry_pick_modal(
         }
         cx.notify();
     });
-
-    // Change-kind colours come from the active theme (W9-THEME).
-
-    // ── Build preview file tree rows ────────────────────────
-    let tree_rows = file_tree::build_file_tree(&plan.preview_files);
-    let tree_element_rows: Vec<_> = tree_rows
-        .iter()
-        .map(|row| {
-            match row {
-                file_tree::TreeRow::Dir { depth, name } => {
-                    let indent = (*depth as f32) * 12.0;
-                    div()
-                        .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .pl(theme::scaled_px(indent))
-                        .mb_px()
-                        .flex_shrink_0()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(current_theme().change_dir))
-                                .child(name.clone()),
-                        )
-                        .into_any()
-                }
-                file_tree::TreeRow::File {
-                    depth,
-                    name,
-                    file_index,
-                    change,
-                } => {
-                    let indent = (*depth as f32) * 12.0;
-                    let (badge_char, badge_color) = match change {
-                        Some(ChangeKind::Added) => ("A", current_theme().change_added),
-                        Some(ChangeKind::Modified) => ("M", current_theme().change_modified),
-                        Some(ChangeKind::Deleted) => ("D", current_theme().change_deleted),
-                        Some(ChangeKind::Renamed { .. }) => ("R", current_theme().change_renamed),
-                        Some(ChangeKind::TypeChange) => ("T", current_theme().change_typechange),
-                        None => ("", current_theme().text_muted),
-                    };
-                    let _ = file_index; // not clickable in preview
-                    div()
-                        .id(("cpk-file", *file_index))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .pl(theme::scaled_px(indent))
-                        .mb_px()
-                        .flex_shrink_0()
-                        .child(
-                            div()
-                                .w(theme::scaled_px(14.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge_char)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_sm()
-                                .text_color(rgb(current_theme().text_main))
-                                .overflow_hidden()
-                                .child(name.clone()),
-                        )
-                        .into_any()
-                }
-            }
-        })
-        .collect();
 
     // ── Build modal card ────────────────────────────────────
     // #454: fixed title + scrolling body + pinned button row (`modal_card`).
@@ -207,28 +133,8 @@ pub(crate) fn render_cherry_pick_modal(
     let mut body =
         modal_scroll_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
 
-    // ── Preview files section ─────────────────────────────
     if !plan.preview_files.is_empty() {
-        let mut preview_col = div().flex().flex_col().gap_px().child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
-                .mb_1()
-                .child(SharedString::from(format!(
-                    "Preview ({} file{})",
-                    plan.preview_files.len(),
-                    if plan.preview_files.len() == 1 {
-                        ""
-                    } else {
-                        "s"
-                    }
-                ))),
-        );
-        for row in tree_element_rows {
-            preview_col = preview_col.child(row);
-        }
-        body = body.child(preview_col.flex_shrink_0());
+        body = body.child(super::modal_preview_files::render(&plan));
     }
 
     // ── Warnings ──────────────────────────────────────────
@@ -293,11 +199,7 @@ pub(crate) fn render_cherry_pick_modal(
     }
 
     // The confirm stays visible and explains blocked and failed plans.
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "cherry-pick-cancel",
             Msg::PlanCancel.t(),
@@ -315,9 +217,10 @@ pub(crate) fn render_cherry_pick_modal(
             cx,
         ));
 
-    let card = card
-        .child(body)
-        .child(div().flex_shrink_0().child(button_row));
+    let card = card.child(body).child(super::e2e::measure_control(
+        "modal-footer",
+        div().flex_shrink_0().child(button_row),
+    ));
 
     // ── Full-screen overlay wrapper ─────────────────────────
     modal_overlay(card)
@@ -516,11 +419,7 @@ pub(crate) fn render_commit_plan_modal(
         );
     }
 
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "commit-plan-cancel",
             Msg::PlanCancel.t(),

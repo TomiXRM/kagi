@@ -24,7 +24,7 @@ impl KagiApp {
         (a11y_offset, a11y_size): (usize, usize),
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        let visible_lanes = graph_view::lanes_for_width(graph_col_w);
+        let visible_lanes = graph_view::lanes_for_width(theme::scaled(graph_col_w));
         let stash_color = theme().color_warning;
         let stash_lanes = self.view().stash_graph_lanes.clone();
         let rh = row_height(self.graph_compact);
@@ -49,6 +49,20 @@ impl KagiApp {
             .take(range.len())
             .map(|(position, sr)| {
                 let index = sr.index;
+                let key = self
+                    .view()
+                    .stashes
+                    .iter()
+                    .find(|stash| stash.index == index)
+                    .map(|stash| super::render_body::motion::RowKey::Stash(stash.target.clone()));
+                let selection = key
+                    .as_ref()
+                    .map_or(0., |key| self.ui().graph_motion.selection(key));
+                let selected = key
+                    .as_ref()
+                    .is_some_and(|key| self.ui().graph_motion.selected(key));
+                let wash = theme().selection_wash(self.window_active);
+                let base: gpui::Hsla = rgb(theme().bg_base).into();
                 let label = sr.label.clone();
                 let msg_for_menu = sr.label.to_string();
                 let mut edges: Vec<crate::graph::GraphEdge> = passing_lanes
@@ -91,6 +105,7 @@ impl KagiApp {
                 // committed mid-run just from looking at it).
                 let peek = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                     this.open_stash_peek(index, cx);
+                    cx.stop_propagation();
                     cx.notify();
                 });
                 let menu = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -105,8 +120,30 @@ impl KagiApp {
                     a11y_offset + position,
                     a11y_size,
                     super::list_a11y::stash_row_label(&label),
-                    false,
+                    selected,
                 )
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |row| {
+                    row.child(super::e2e::measure_inside(format!(
+                        "graph-stash-row-{index}"
+                    )))
+                })
+                .when(selection > 0., |row| {
+                    row.bg(base.blend(wash.alpha(wash.a * selection))).child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.))
+                            .bg(rgb(if self.window_active {
+                                theme().ui_accent()
+                            } else {
+                                theme().text_muted
+                            }))
+                            .opacity(selection),
+                    )
+                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -115,7 +152,9 @@ impl KagiApp {
                 .h(px(rh))
                 .on_click(peek)
                 .on_mouse_down(gpui::MouseButton::Right, menu)
-                .hover(|s| s.bg(rgb(theme().selected)))
+                .when(selection == 0., |row| {
+                    row.hover(|s| s.bg(rgb(theme().selected)))
+                })
                 // Badge column: a yellow stash chip with an inbox icon.
                 .child(
                     div()
@@ -250,7 +289,6 @@ impl KagiApp {
         diffstat: Option<WipDiffStat>,
         click: WipRowClick,
         is_worktree: bool,
-        commit_panel_open: bool,
         lane: Option<usize>,
         pass_lanes: &[(usize, usize)],
         badge_col_w: f32,
@@ -258,20 +296,25 @@ impl KagiApp {
         graph_scroll_x: f32,
         // #354: absolute position in the commit list and its size.
         (a11y_position, a11y_size): (usize, usize),
+        ghost_key: Option<&super::render_body::motion::RowKey>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let color = theme().lane_color(color_idx);
         let is_commit_panel = matches!(click, WipRowClick::CommitPanel);
+        let ghost = ghost_key.is_some();
+        let key = ghost_key.or_else(|| self.ui().graph_motion.key(a11y_position));
+        let is_selected = !ghost && key.is_some_and(|key| self.ui().graph_motion.selected(key));
+        let selection = key.map_or(0., |key| self.ui().graph_motion.selection(key));
         let dark = theme().dark;
         // Tinted chip built from the worktree's lane colour (badge_style only
         // takes a packed u32; lane_color is Hsla, so build the tint directly).
         // Stronger fill than a ref badge so the WIP rows read loudly.
         let chip_bg = gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 });
         let chip_border = gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 });
-        let chip_text = if dark {
-            rgb(0xffffff)
+        let chip_text: gpui::Hsla = if dark {
+            rgb(0xffffff).into()
         } else {
-            rgb(theme().bg_base)
+            rgb(theme().bg_base).into()
         };
         // Whole-row background: a subtle wash of the worktree colour so each WIP
         // row is distinguishable at a glance (user request), with a bold colour
@@ -290,20 +333,34 @@ impl KagiApp {
         let glyph = if is_worktree { "🌲" } else { "✏️" };
         let chip_label = SharedString::from(format!("{glyph} {label}"));
 
-        let mut row = super::list_a11y::list_option(
-            "commit-list",
-            div().id(SharedString::from(format!("wip-row-{label}"))),
-            a11y_position,
-            a11y_size,
-            super::list_a11y::wip_row_label(&label, &note),
-            is_commit_panel && commit_panel_open,
-        )
+        let row = div().id(SharedString::from(format!("wip-row-{label}")));
+        let mut row = if ghost {
+            row
+        } else {
+            super::list_a11y::list_option(
+                "commit-list",
+                row,
+                a11y_position,
+                a11y_size,
+                super::list_a11y::wip_row_label(&label, &note),
+                is_selected,
+            )
+        }
         .flex()
         .flex_row()
         .items_center()
         .w_full()
         .relative()
+        .when(!ghost && cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside(format!(
+                "graph-wip-row-{a11y_position}"
+            )))
+        })
         .px_3()
+        .when(
+            !ghost && is_commit_panel && cfg!(feature = "gui-e2e"),
+            |row| row.child(super::e2e::measure_inside("graph-wip-row")),
+        )
         .child(
             div()
                 .absolute()
@@ -314,55 +371,95 @@ impl KagiApp {
                 .bg(color),
         )
         .h(px(row_height(self.graph_compact)));
-        row = if is_commit_panel && commit_panel_open {
-            row.bg(rgb(theme().selected))
-        } else {
-            row.bg(row_wash)
-        };
+        let base: gpui::Hsla = rgb(theme().bg_base).into();
+        let wash = theme().selection_wash(self.window_active);
+        row = row
+            .bg(base.blend(row_wash).blend(wash.alpha(wash.a * selection)))
+            .when(selection > 0., |row| {
+                row.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(2.))
+                        .bg(rgb(if self.window_active {
+                            theme().ui_accent()
+                        } else {
+                            theme().text_muted
+                        }))
+                        .opacity(selection),
+                )
+            });
+        if !ghost {
+            row = self.render_compact_wip(row, &click, cx);
+        }
         // Both row kinds are clickable and open the commit panel: the open
         // repo's row against the tab's repository, a linked worktree's row
         // against that worktree (#473 — read-only, no tab, no snapshot). The
         // closures are distinct types, so wire `on_click` inside each match arm.
-        row = match click {
-            WipRowClick::CommitPanel => {
-                row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                    this.open_commit_panel(window, cx);
-                    cx.notify();
-                }))
-            }
-            WipRowClick::Worktree { path, name, locked } => {
-                let menu_path = path.clone();
-                let chip = label.clone();
-                row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                    this.open_commit_panel_for_worktree(
-                        path.clone(),
-                        chip.clone(),
-                        color_idx,
-                        window,
-                        cx,
-                    );
-                    cx.notify();
-                }))
-                // #473: the WIP row had no context menu at all (the one on the
-                // stash rows above is `open_stash_menu`). Right-click gets the
-                // sidebar's worktree menu plus the three path items.
-                .on_mouse_down(
-                    gpui::MouseButton::Right,
-                    cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
-                        this.open_worktree_menu(
-                            name.clone(),
-                            locked,
-                            false,
-                            Some(menu_path.clone()),
-                            e.position,
+        row = if ghost {
+            // A closing first-prefix ghost can paint over a real commit.
+            // Consume only its context press, without occluding ancestor input.
+            row.on_mouse_down(gpui::MouseButton::Right, |_, _, cx| {
+                cx.stop_propagation();
+            })
+        } else {
+            match click {
+                WipRowClick::CommitPanel => {
+                    row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                        this.open_commit_panel(window, cx);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }))
+                }
+                WipRowClick::Worktree { path, name, locked } => {
+                    let menu_path = path.clone();
+                    let chip = label.clone();
+                    row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                        this.open_commit_panel_for_worktree(
+                            path.clone(),
+                            chip.clone(),
+                            color_idx,
+                            window,
+                            cx,
                         );
                         cx.stop_propagation();
                         cx.notify();
-                    }),
-                )
+                    }))
+                    // #473: the WIP row had no context menu at all (the one on the
+                    // stash rows above is `open_stash_menu`). Right-click gets the
+                    // sidebar's worktree menu plus the three path items.
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
+                            this.open_worktree_menu(
+                                name.clone(),
+                                locked,
+                                false,
+                                Some(menu_path.clone()),
+                                e.position,
+                            );
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    )
+                }
             }
         };
-        row = row.hover(|s| s.bg(rgb(theme().selected))).cursor_pointer();
+        row = row
+            .when(!ghost && !is_selected && selection == 0., |row| {
+                let palette = theme();
+                let hover = if palette.selection_uses_on_accent(true, true) {
+                    let base: gpui::Hsla = rgb(palette.bg_base).into();
+                    let accent: gpui::Hsla = rgb(palette.ui_accent()).into();
+                    base.blend(row_wash).blend(accent.alpha(0.15))
+                } else {
+                    rgb(palette.selected).into()
+                };
+                row.hover(move |s| s.bg(hover))
+            })
+            .when(!ghost, |row| row.cursor_pointer());
 
         row
             // Badges column: worktree-coloured chip carrying the glyph + the branch
@@ -390,6 +487,10 @@ impl KagiApp {
                             .min_w_0()
                             .overflow_hidden()
                             .truncate()
+                            .when(is_commit_panel && cfg!(feature = "gui-e2e"), |el| {
+                                el.relative()
+                                    .child(super::e2e::measure_inside("graph-wip-chip"))
+                            })
                             .child(chip_label),
                     )
                     .when(lane.is_some(), |el| {
@@ -439,25 +540,28 @@ impl KagiApp {
                     .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .when(graph_view::lanes_for_width(graph_col_w) > 0, |el| {
-                        el.child(
-                            graph_view::graph_canvas(
-                                lane.unwrap_or(0),
-                                color_idx,
-                                edges,
-                                if lane.is_some() {
-                                    graph_view::GraphNode::Wip
-                                } else {
-                                    graph_view::GraphNode::Hidden
-                                },
-                                lane.is_some(),
-                                graph_scroll_x,
-                                graph_lane_pad_l(),
-                                Vec::new(),
+                    .when(
+                        graph_view::lanes_for_width(theme::scaled(graph_col_w)) > 0,
+                        |el| {
+                            el.child(
+                                graph_view::graph_canvas(
+                                    lane.unwrap_or(0),
+                                    color_idx,
+                                    edges,
+                                    if lane.is_some() {
+                                        graph_view::GraphNode::Wip
+                                    } else {
+                                        graph_view::GraphNode::Hidden
+                                    },
+                                    lane.is_some(),
+                                    graph_scroll_x,
+                                    graph_lane_pad_l(),
+                                    Vec::new(),
+                                )
+                                .size_full(),
                             )
-                            .size_full(),
-                        )
-                    })
+                        },
+                    )
             })
             // Inner divider spacer (graph|message handle width)
             .child(
@@ -484,9 +588,26 @@ impl KagiApp {
                             .text_color(rgb(theme().text_muted))
                             .overflow_hidden()
                             .truncate()
+                            .when(is_commit_panel && cfg!(feature = "gui-e2e"), |el| {
+                                el.relative()
+                                    .child(super::e2e::measure_inside("graph-wip-note"))
+                            })
                             .child(SharedString::from(note)),
                     )
-                    .when_some(diffstat, |el, stat| el.child(render_wip_diffstat(stat))),
+                    .children(self.render_compact_wip_affordance(is_commit_panel))
+                    .when_some(diffstat, |el, stat| {
+                        let stat = render_wip_diffstat(stat);
+                        if self.compact.enabled && is_commit_panel {
+                            el.child(
+                                div().flex_shrink_0().child(super::e2e::measure_control(
+                                    "compact-wip-diffstat",
+                                    stat,
+                                )),
+                            )
+                        } else {
+                            el.child(stat)
+                        }
+                    }),
             )
             .into_any_element()
     }

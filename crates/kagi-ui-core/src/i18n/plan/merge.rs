@@ -18,15 +18,15 @@ pub(crate) const ADVICE_MERGE_INTO_UNRELATED_HISTORIES: &str =
 pub(crate) const ADVICE_MERGE_INTO_CHECKED_OUT_ELSEWHERE: &str =
     "branch は別の worktree で checkout 中です。その worktree 側で merge してください。\nbranch `{}` / worktree `{}`";
 pub(crate) const ADVICE_MERGE_INTO_WOULD_CONFLICT: &str =
-    "`{}` を `{}` に merge すると {} 件 conflict します。解決は作業ツリー上で行うため、`{}` を checkout してから実行してください。";
+    "`{}` を `{}` に merge すると {} 件 conflict します。解決は working tree 上で行うため、`{}` を checkout してから実行してください。";
 pub(crate) const ADVICE_MERGE_INTO_FAST_FORWARD: &str =
     "`{}` に固有の commit が無いため `{}` へ fast-forward します。ref が動くだけで merge commit は作られません。";
 pub(crate) const ADVICE_MERGE_INTO_WORKING_TREE_UNTOUCHED: &str =
-    "作業ツリーには触れません。`{}` は checkout されたまま、ディスク上のファイルは変わりません。";
+    "working tree には触れません。`{}` は checkout されたまま、ディスク上のファイルは変わりません。";
 pub(crate) const ADVICE_MERGE_INTO_CREATES_LOCAL_BRANCH: &str =
     "ローカルに `{}` が無いため `{}` の先頭に作成して merge します。push はしません。remote 側の `{}` は変わりません。";
 pub(crate) const ADVICE_MERGE_INTO_REMOTE_SOURCE: &str =
-    "remote-tracking ref `{}` (tip: {}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。";
+    "`{}` (tip: {}) は前回の fetch 時点の内容で、古い可能性があります。";
 pub(crate) const ADVICE_MERGE_INTO_LOCAL_DIFFERS_FROM_REMOTE: &str =
     "ローカルの `{}` は `{}` と位置が異なります。merge はローカル branch に対して行われ、remote の ref は触れません。";
 
@@ -114,6 +114,33 @@ pub fn note_ja(note: &MergeNote) -> String {
         MergeNote::NoChanges { target } => {
             format!("`{}` を merge しても変更はありません。", target)
         }
+    }
+}
+
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &MergeNote) -> String {
+    match note {
+        MergeNote::IntoRemoteSource { reference, tip } => format!(
+            "remote-tracking ref `{}` (tip: {}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。",
+            reference, tip
+        ),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn remote_source_preserves_legacy_bytes_and_raw_payloads() {
+        assert_eq!(
+            note_ja_contract(&MergeNote::IntoRemoteSource {
+                reference: "origin/日本語-{}".into(),
+                tip: "abc{}\nraw".into(),
+            }),
+            "remote-tracking ref `origin/日本語-{}` (tip: abc{}\nraw) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。"
+        );
     }
 }
 

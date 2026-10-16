@@ -281,13 +281,16 @@ pub(in crate::inventory) fn coauthor_menu(
     })
     .unwrap();
     cx.run_until_parked();
-    app.update(cx, |app, cx| {
-        app.ui()
-            .commit_panel
-            .as_ref()
-            .expect("commit panel")
-            .update(cx, |panel, cx| panel.toggle_coauthor_menu(cx));
-    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.ui()
+                .commit_panel
+                .as_ref()
+                .expect("commit panel")
+                .update(cx, |panel, cx| panel.toggle_coauthor_menu(window, cx));
+        });
+    })
+    .unwrap();
     assert!(cx.read(|cx| app
         .read(cx)
         .ui()

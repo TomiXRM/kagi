@@ -30,7 +30,11 @@ by construction.
 
 Prepended to every invocation, before the caller's subcommand:
 `--no-pager -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.askPass=
--c protocol.allow=user`, plus `GIT_ASKPASS=/bin/false` in the environment.
+-c protocol.allow=user`, plus empty `GIT_ASKPASS` and `SSH_ASKPASS` environment
+overrides. Together with `GIT_TERMINAL_PROMPT=0`, they disable the complete
+askpass fallback chain without spawning a helper (#1561, 2026-10-15 amendment).
+The former `/bin/false` helper path does not exist on stock macOS and obscured
+the real authentication failure with a helper-execution diagnostic.
 
 Two keys are neutralised **only when the repo-local or worktree config sets
 them** (`core.sshCommand`, `credential.helper` / `credential.<url>.helper`),

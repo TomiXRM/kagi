@@ -18,7 +18,7 @@
 //! uses.
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Div, SharedString, Stateful};
+use gpui::{div, px, relative, rgb, Div, Hsla, SharedString, Stateful};
 
 use kagi_domain::file_history::{FileHistoryEntry, FileHistoryEntryKind};
 
@@ -123,13 +123,13 @@ pub fn commit_row_model(entry: &FileHistoryEntry, now: i64) -> CommitRowModel {
 }
 
 /// Row background: selection wins, then zebra striping by visible position.
-pub fn row_background(is_selected: bool, ix: usize) -> u32 {
+pub fn row_background(is_selected: bool, ix: usize, window_active: bool) -> Hsla {
     if is_selected {
-        theme().selected
+        theme().selected_for_window(window_active)
     } else if ix % 2 == 1 {
-        theme().bg_row_alt
+        rgb(theme().bg_row_alt).into()
     } else {
-        theme().panel
+        rgb(theme().panel).into()
     }
 }
 
@@ -144,11 +144,33 @@ pub fn render_commit_row(
     model: &CommitRowModel,
     layout: CommitRowLayout,
     is_selected: bool,
+    window_active: bool,
 ) -> Stateful<Div> {
+    let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+    let foreground = if uses_on_accent {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(theme().text_main).into()
+    };
+    let secondary_foreground = if uses_on_accent {
+        theme().selection_secondary_foreground(window_active)
+    } else {
+        rgb(theme().text_sub).into()
+    };
+    let muted_foreground = if uses_on_accent {
+        theme().selection_secondary_foreground(window_active)
+    } else {
+        rgb(theme().text_muted).into()
+    };
+    let badge_foreground = if uses_on_accent {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(model.badge_color).into()
+    };
     let base = div()
         .id((id, ix))
         .w_full()
-        .bg(rgb(row_background(is_selected, ix)))
+        .bg(row_background(is_selected, ix, window_active))
         .cursor_pointer()
         // Hover uses the subtle `surface` tint (like the commit panel / branch
         // list), NOT `selected` — using the selection colour made a hovered row
@@ -158,46 +180,62 @@ pub fn render_commit_row(
         .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))));
 
     match layout {
-        CommitRowLayout::Table { row_height } => base
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_3()
-            .py_px()
-            .h(px(row_height))
-            .flex_shrink_0()
-            .child(fixed_col(18., model.badge_color, true, model.badge.into()))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .truncate()
-                    .child(model.subject.clone()),
-            )
-            .child(
-                fixed_col(90., theme().text_sub, false, model.author.clone())
+        CommitRowLayout::Table { row_height } => {
+            let row = base
+                .flex()
+                .flex_row()
+                .items_center()
+                .px_3()
+                .h(px(row_height))
+                .flex_shrink_0()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(relative(1.2))
+                .child(table_col(
+                    ix,
+                    "badge",
+                    16.,
+                    badge_foreground,
+                    model.badge.into(),
+                ))
+                .child(
+                    table_text(ix, "subject", foreground, model.subject.clone())
+                        .flex_1()
+                        .min_w(px(0.)),
+                )
+                .child(
+                    table_col(
+                        ix,
+                        "author",
+                        90.,
+                        secondary_foreground,
+                        model.author.clone(),
+                    )
                     .min_w(px(0.))
                     .flex_shrink(1.),
-            )
-            .child(fixed_col(
-                64.,
-                theme().text_muted,
-                false,
-                model.date_relative.clone(),
-            ))
-            .child(
-                fixed_col(72., theme().text_sub, false, model.stat.clone())
-                    .min_w(px(0.))
-                    .flex_shrink(1.),
-            )
-            .child(fixed_col(
-                64.,
-                theme().text_muted,
-                false,
-                model.short_hash.clone(),
-            )),
+                )
+                .child(table_col(
+                    ix,
+                    "date",
+                    64.,
+                    muted_foreground,
+                    model.date_relative.clone(),
+                ))
+                .child(
+                    table_col(ix, "stat", 72., secondary_foreground, model.stat.clone())
+                        .min_w(px(0.))
+                        .flex_shrink(1.),
+                )
+                .child(table_col(
+                    ix,
+                    "hash",
+                    64.,
+                    muted_foreground,
+                    model.short_hash.clone(),
+                ));
+            #[cfg(feature = "gui-e2e")]
+            let row = row.relative().child(table_probe(ix, "row"));
+            row
+        }
         CommitRowLayout::Card => base
             .flex()
             .flex_row()
@@ -205,7 +243,7 @@ pub fn render_commit_row(
             .px_2()
             .py_1()
             .gap_1()
-            .child(fixed_col(14., model.badge_color, true, model.badge.into()))
+            .child(fixed_col(14., badge_foreground, model.badge.into()))
             .child(
                 div()
                     .flex_1()
@@ -216,7 +254,7 @@ pub fn render_commit_row(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(theme().text_main))
+                            .text_color(foreground)
                             .truncate()
                             .child(model.subject.clone()),
                     )
@@ -226,7 +264,7 @@ pub fn render_commit_row(
                             .flex_row()
                             .gap_2()
                             .text_xs()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(muted_foreground)
                             .child(model.short_hash.clone())
                             .child(model.author.clone())
                             .child(model.date_ymd.clone()),
@@ -235,16 +273,93 @@ pub fn render_commit_row(
     }
 }
 
-/// One fixed-width, non-shrinking, truncating column.
-fn fixed_col(width: f32, color: u32, large: bool, text: SharedString) -> Div {
-    let col = div()
+/// Table columns inherit File History's Finder font and leading.
+fn table_text(ix: usize, part: &'static str, color: Hsla, text: SharedString) -> Div {
+    let col = div().text_color(color).truncate().child(text);
+    #[cfg(feature = "gui-e2e")]
+    let col = col.relative().child(table_probe(ix, part));
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = (ix, part);
+    col
+}
+
+fn table_col(ix: usize, part: &'static str, width: f32, color: Hsla, text: SharedString) -> Div {
+    table_text(ix, part, color, text)
         .w(theme::scaled_px(width))
         .flex_shrink_0()
-        .text_color(rgb(color))
-        .truncate();
-    if large {
-        col.text_sm().child(text)
-    } else {
-        col.text_xs().child(text)
-    }
+}
+
+/// One fixed-width, non-shrinking, truncating column.
+fn fixed_col(width: f32, color: Hsla, text: SharedString) -> Div {
+    div()
+        .w(theme::scaled_px(width))
+        .flex_shrink_0()
+        .text_color(color)
+        .truncate()
+        .text_sm()
+        .child(text)
+}
+
+/// Actual table paint geometry for native File History density/containment tests.
+/// `"row"` is the inner frame: `RowList` reserves `keyboard_nav::RING` on each
+/// edge of the full fixed-height row. Text parts are `"badge"`, `"subject"`,
+/// `"author"`, `"date"`, `"stat"` and `"hash"`.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct TableRowPaint {
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+    pub mask: gpui::Bounds<gpui::Pixels>,
+    pub font_size: gpui::Pixels,
+    pub font_weight: gpui::FontWeight,
+    pub line_height: gpui::Pixels,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static TABLE_ROW_PAINTS: std::cell::RefCell<std::collections::HashMap<
+        (gpui::WindowId, usize, &'static str), TableRowPaint
+    >> = std::cell::RefCell::new(Default::default());
+}
+
+/// Read a painted File History table row or column, scoped to its native window.
+#[cfg(feature = "gui-e2e")]
+pub fn table_row_paint(
+    window: gpui::WindowId,
+    ix: usize,
+    part: &'static str,
+) -> Option<TableRowPaint> {
+    TABLE_ROW_PAINTS.with(|paints| paints.borrow().get(&(window, ix, part)).copied())
+}
+
+/// Clear a window before drawing so offscreen rows cannot reuse stale geometry.
+#[cfg(feature = "gui-e2e")]
+pub fn clear_table_row_paints(window: gpui::WindowId) {
+    TABLE_ROW_PAINTS.with(|paints| paints.borrow_mut().retain(|(id, _, _), _| *id != window));
+}
+
+/// An absolute inside probe, never a wrapper: native test layout equals production.
+#[cfg(feature = "gui-e2e")]
+fn table_probe(ix: usize, part: &'static str) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let style = window.text_style();
+            let paint = TableRowPaint {
+                bounds,
+                mask: window.content_mask().bounds,
+                font_size: style.font_size.to_pixels(window.rem_size()),
+                font_weight: style.font_weight,
+                line_height: style.line_height_in_pixels(window.rem_size()),
+            };
+            TABLE_ROW_PAINTS.with(|paints| {
+                paints
+                    .borrow_mut()
+                    .insert((window.window_handle().window_id(), ix, part), paint);
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }

@@ -1,6 +1,9 @@
 //! Graph sidebar row model and item renderers (#864).
 
-use std::collections::HashSet;
+use kagi_ui_core::motion::{self, Easing, KeyedTransition, Reveal, RowSplice};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle};
 use gpui_component::input::InputState;
@@ -8,16 +11,19 @@ use gpui_component::tooltip::Tooltip;
 
 use kagi_git::CommitId;
 
+use super::sidebar_ref_rows::{
+    build_group_row, build_section_header, build_stash_row, build_tag_row,
+};
 #[cfg(test)]
 use super::sidebar_rows::{
     build_sidebar_rows, group_by_prefix, group_key, group_remotes, remote_group_key, remote_key,
     split_first_segment, GroupRow, RemoteRow,
 };
 use super::theme::{self, theme};
-use super::{BranchDrag, BranchDragGhost, KagiApp};
+use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
-/// Row slot height (unscaled) for section headers and every virtualized leaf
-/// outside the WORKTREES pane.
+/// Row slot height (unscaled) for every virtualized leaf outside WORKTREES.
 ///
 /// `uniform_list` measures the first item of a list and applies that height to
 /// all of them. Each pane owns its own list, so every row a pane's list can
@@ -25,9 +31,8 @@ use super::{BranchDrag, BranchDragGhost, KagiApp};
 /// and the list scrolls correctly regardless of which row happens to be first.
 pub(super) const SIDEBAR_ROW_H: f32 = 20.0;
 
-/// Visible height of a group heading, centered inside its `SIDEBAR_ROW_H` slot
-/// so the LOCAL / REMOTE lists keep one uniform row height.
-const SIDEBAR_GROUP_HEADING_H: f32 = 18.0;
+/// Pinned pane headings are separate from the virtualized body slots.
+pub(super) const SIDEBAR_SECTION_HEADER_H: f32 = 28.0;
 
 /// Row slot height for the WORKTREES pane. Its list only ever draws worktree
 /// rows (name, path, port link and inspection badge), so it can use a taller
@@ -35,8 +40,8 @@ const SIDEBAR_GROUP_HEADING_H: f32 = 18.0;
 pub(super) const SIDEBAR_WORKTREE_ROW_H: f32 = 24.0;
 
 /// Font size (unscaled) for auxiliary row text — commit age, upstream counts,
-/// PR badge, worktree path / port / inspection badge — one step under the
-/// rows' `text_xs` labels.
+/// PR badge, worktree path / port / inspection badge — quieter than the
+/// shared 13px file/ref identity role.
 pub(super) const SIDEBAR_AUX_TEXT: f32 = 11.0;
 
 /// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
@@ -48,11 +53,102 @@ pub(super) const SIDEBAR_AUX_TEXT: f32 = 11.0;
 /// rest of the session (it is not written to `settings.json`).
 const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static FILTER_PLACEHOLDER: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn record_filter_placeholder(label: &'static str) {
+    FILTER_PLACEHOLDER.with(|record| record.set(Some(label)));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn filter_placeholder_for_e2e() -> Option<&'static str> {
+    FILTER_PLACEHOLDER.with(|record| record.get())
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct SidebarDrawnMotion {
+    pub opacity: f32,
+    pub y: f32,
+    pub height: f32,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DRAWN_MOTION: RefCell<HashMap<(usize, String, &'static str), SidebarDrawnMotion>> = RefCell::new(HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn clear_sidebar_motion_for_e2e() {
+    DRAWN_MOTION.with(|drawn| drawn.borrow_mut().clear());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn sidebar_motion_for_e2e(
+    pane: usize,
+    key: &str,
+    kind: &'static str,
+) -> Option<SidebarDrawnMotion> {
+    DRAWN_MOTION.with(|drawn| drawn.borrow().get(&(pane, key.to_owned(), kind)).copied())
+}
+
+/// Record style opacity and actual painted geometry, not a pure-state sample.
+pub(super) fn probe_row_motion(
+    el: gpui::Div,
+    row: &SidebarRow,
+    pane: usize,
+    kind: &'static str,
+) -> gpui::Div {
+    #[cfg(feature = "gui-e2e")]
+    {
+        let mut el = el;
+        let key = match row {
+            SidebarRow::SectionHeader { section, .. } => format!("section:{section}"),
+            SidebarRow::LocalGroupHeader { key, .. }
+            | SidebarRow::RemoteHeader { key, .. }
+            | SidebarRow::RemoteSubGroup { key, .. } => format!("group:{key}"),
+            SidebarRow::LocalBranchLeaf { name, .. } => format!("branch:{name}"),
+            SidebarRow::RemoteLeaf { display, .. } => format!("remote:{display}"),
+            SidebarRow::Tag { name, .. } => format!("tag:{name}"),
+            SidebarRow::Worktree { path, .. } => format!("worktree:{}", path.display()),
+            SidebarRow::Stash { target, .. } => format!("stash:{target}"),
+        };
+        let opacity = el.style().opacity.unwrap_or(1.);
+        el.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds: gpui::Bounds<gpui::Pixels>, (), _, _| {
+                    DRAWN_MOTION.with(|drawn| {
+                        drawn.borrow_mut().insert(
+                            (pane, key.clone(), kind),
+                            SidebarDrawnMotion {
+                                opacity,
+                                y: f32::from(bounds.origin.y),
+                                height: f32::from(bounds.size.height),
+                            },
+                        );
+                    });
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = (row, pane, kind);
+        el
+    }
+}
+
 /// Consolidated Repository-Navigator (left sidebar) state.
 ///
 /// App-global (not per-tab), preserved across repository reloads. `new()`
 /// restores the five-pane weights and collapsed sections from settings once;
-/// the filter `InputState` is created lazily on first focus.
+/// the filter `InputState` is created with the window before its first frame.
 pub struct SidebarState {
     /// Current sidebar width in pixels (T023: user-resizable).
     pub width: f32,
@@ -67,6 +163,8 @@ pub struct SidebarState {
     pub pane_weights: [u16; 5],
     /// Measured window-space bounds for drag calculations, including zoom.
     pub pane_geom: [std::rc::Rc<std::cell::Cell<(f32, f32)>>; 5],
+    /// Pane viewport height, including unused flex space when every pane is closed.
+    pub(super) pane_viewport_height: std::rc::Rc<std::cell::Cell<f32>>,
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): fingerprint of the inputs that
     /// produced the cached `rows`. `render` hashes cheap input revisions,
     /// collapse sets and filter text; unchanged frames do not rebuild refs.
@@ -81,9 +179,9 @@ pub struct SidebarState {
     tree_positions_for: Option<u64>,
     /// Sole runtime owner of section collapse, restored and persisted as a mask.
     pub collapsed: HashSet<&'static str>,
-    /// Lazy `InputState` for the filter input (gpui-component IME 対応); created
-    /// on first click of the filter area (requires `&mut Window`).
+    /// Window-owned filter input; initialized before the first GUI frame.
     pub filter: Option<Entity<InputState>>,
+    pub(super) filter_placeholder_lang: Option<super::i18n::Lang>,
     /// Whether the navigator is shown (View → Toggle Sidebar). Default `true`.
     pub visible: bool,
     /// Transient pointer gesture, never repository data (ADR-0199).
@@ -96,6 +194,8 @@ pub struct SidebarState {
     pub(crate) mode_focus: super::keyboard_nav::TabFocus,
     /// The panes' rows and headers, for the keyboard (#981).
     pub(crate) focus: super::sidebar_focus::SidebarFocus,
+    /// Presentation only; logical rows, focus and accessibility never wait for it.
+    pub(super) motion: RefCell<SidebarMotion>,
 }
 
 impl SidebarState {
@@ -114,16 +214,19 @@ impl SidebarState {
             pane_ranges: std::array::from_fn(|_| 0..0),
             pane_weights: layout.weights,
             pane_geom: std::array::from_fn(|_| Default::default()),
+            pane_viewport_height: Default::default(),
             rows_fingerprint: u64::MAX,
             tree_positions: Vec::new(),
             tree_positions_for: None,
             collapsed,
             filter: None,
+            filter_placeholder_lang: None,
             visible: true,
             swipe: Default::default(),
             settle_gen: 0,
             mode_focus: Default::default(),
             focus: Default::default(),
+            motion: RefCell::new(SidebarMotion::default()),
         }
     }
 
@@ -150,6 +253,372 @@ impl Default for SidebarState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) enum SidebarMotionKey {
+    Group(String),
+    Branch(String),
+    Remote(String),
+    Tag(String),
+    Worktree(std::path::PathBuf),
+    Stash(CommitId, usize),
+}
+
+pub(super) type MotionKey = Rc<SidebarMotionKey>;
+
+impl SidebarRow {
+    fn motion_key(&self, stashes: &mut HashMap<CommitId, usize>) -> Option<MotionKey> {
+        Some(Rc::new(match self {
+            Self::SectionHeader { .. } => return None,
+            Self::LocalGroupHeader { key, .. }
+            | Self::RemoteHeader { key, .. }
+            | Self::RemoteSubGroup { key, .. } => SidebarMotionKey::Group(key.clone()),
+            Self::LocalBranchLeaf { name, .. } => SidebarMotionKey::Branch(name.clone()),
+            Self::RemoteLeaf { display, .. } => SidebarMotionKey::Remote(display.clone()),
+            Self::Tag { name, .. } => SidebarMotionKey::Tag(name.clone()),
+            Self::Worktree { path, .. } => SidebarMotionKey::Worktree(path.clone()),
+            Self::Stash { target, .. } => {
+                let rank = stashes.entry(target.clone()).or_default();
+                *rank += 1;
+                SidebarMotionKey::Stash(target.clone(), *rank)
+            }
+        }))
+    }
+}
+
+pub(super) struct SidebarGhost {
+    pub row: SidebarRow,
+    key: MotionKey,
+    after: Option<MotionKey>,
+    between: Vec<MotionKey>,
+    pub mount: usize,
+}
+
+#[derive(Default)]
+pub(super) struct SidebarPaneMotion {
+    keys: Vec<MotionKey>,
+    order: HashMap<MotionKey, usize>,
+    ordered: Vec<MotionKey>,
+    pub ghosts: Vec<SidebarGhost>,
+    splice: RowSplice<MotionKey>,
+    washes: HashMap<MotionKey, KeyedTransition<bool>>,
+    selected: Option<MotionKey>,
+    pub reveal: Reveal,
+    pub natural_body: f32,
+    pub closing_rows: Vec<SidebarRow>,
+}
+
+#[derive(Default)]
+pub(super) struct SidebarMotion {
+    owner: Option<crate::app::SessionId>,
+    filter: String,
+    initialized: bool,
+    pub panes: [SidebarPaneMotion; 5],
+}
+
+impl SidebarPaneMotion {
+    pub(super) fn clear_focus_motion(&mut self) {
+        self.selected = None;
+        self.washes.clear();
+    }
+
+    pub fn row_sample(&self, position: usize, row_h: gpui::Pixels) -> motion::RowSample {
+        let Some(key) = self.keys.get(position) else {
+            return motion::RowSample {
+                offset: px(0.),
+                opacity: 1.,
+            };
+        };
+        let at = self.order.get(key);
+        self.splice.row(key, row_h, motion::now(), |changed| {
+            self.order.get(changed) < at
+        })
+    }
+
+    pub fn wash(&self, position: usize) -> f32 {
+        self.keys
+            .get(position)
+            .and_then(|key| self.washes.get(key))
+            .map_or(0., |wash| wash.sample(motion::now()).value)
+    }
+
+    pub fn ghost_sample<'a>(
+        &'a self,
+        ghost: &'a SidebarGhost,
+        row_h: gpui::Pixels,
+    ) -> Option<motion::GhostSample<'a, MotionKey>> {
+        self.splice.ghost(
+            &ghost.key,
+            ghost.after.as_ref(),
+            ghost.between.iter(),
+            row_h,
+            motion::now(),
+        )
+    }
+
+    /// Derived from this frame's existing RowList, after its focus sync. No
+    /// logical selection is introduced, and reordered rows never borrow an index.
+    pub fn sync_wash(&mut self, at: Option<usize>) -> bool {
+        let selected = at.and_then(|at| self.keys.get(at)).cloned();
+        if let Some(key) = &selected {
+            self.washes
+                .entry(key.clone())
+                .or_insert_with(|| KeyedTransition::new(false, 0.));
+        }
+        self.selected = selected;
+        let now = motion::now();
+        let mut moving = false;
+        for (key, wash) in &mut self.washes {
+            let selected = self.selected.as_ref() == Some(key);
+            wash.retarget(
+                selected,
+                if selected { 1. } else { 0. },
+                now,
+                motion::TRANSITION,
+                Easing::OutCubic,
+                motion::instant(),
+            );
+            moving |= !wash.sample(now).done;
+        }
+        moving
+    }
+
+    fn set_rows(
+        &mut self,
+        old: &[SidebarRow],
+        new: &[SidebarRow],
+        instant: bool,
+        pane_toggle: bool,
+    ) {
+        let now = motion::now();
+        let mut stashes = HashMap::new();
+        let keys: Vec<_> = new
+            .iter()
+            .filter_map(|row| row.motion_key(&mut stashes))
+            .collect();
+        let present: HashSet<_> = keys.iter().cloned().collect();
+        let previous: HashSet<_> = self.keys.iter().cloned().collect();
+        let changed = keys.iter().filter(|key| !previous.contains(*key)).count()
+            + self
+                .keys
+                .iter()
+                .filter(|key| !present.contains(*key))
+                .count();
+        let instant = instant || pane_toggle || changed > 24;
+        if instant {
+            self.splice.advance(now, true);
+            self.ghosts.clear();
+        } else {
+            self.ghosts.retain(|ghost| !present.contains(&ghost.key));
+            for (key, row) in self.keys.iter().zip(old) {
+                if !present.contains(key) && !self.ghosts.iter().any(|ghost| &ghost.key == key) {
+                    self.ghosts.push(SidebarGhost {
+                        key: key.clone(),
+                        row: row.clone(),
+                        after: None,
+                        between: Vec::new(),
+                        mount: 0,
+                    });
+                }
+            }
+            if self.splice.splice(
+                keys.iter().filter(|key| !previous.contains(*key)).cloned(),
+                self.keys
+                    .iter()
+                    .filter(|key| !present.contains(*key))
+                    .cloned(),
+                now,
+                false,
+            ) {
+                self.ghosts.clear();
+            }
+        }
+        // Keep removed identities in their old logical order, anchored to the
+        // nearest survivor. Only a bounded active splice is merged on a rebuild.
+        let mut ordered = keys.clone();
+        let mut previous_key: Option<MotionKey> = None;
+        for key in &self.ordered {
+            if present.contains(key) {
+                previous_key = Some(key.clone());
+            } else if self.ghosts.iter().any(|ghost| &ghost.key == key) {
+                let at = previous_key
+                    .as_ref()
+                    .and_then(|key| ordered.iter().position(|other| other == key))
+                    .map_or(0, |at| at + 1);
+                ordered.insert(at, key.clone());
+                previous_key = Some(key.clone());
+            }
+        }
+        let positions: HashMap<_, _> = keys
+            .iter()
+            .enumerate()
+            .map(|(at, key)| (key.clone(), at))
+            .collect();
+        let mut anchor = None;
+        let mut between = Vec::new();
+        for key in &ordered {
+            if present.contains(key) {
+                anchor = Some(key.clone());
+                between.clear();
+            } else if let Some(ghost) = self.ghosts.iter_mut().find(|ghost| &ghost.key == key) {
+                ghost.after = anchor.clone();
+                ghost.between.clone_from(&between);
+                ghost.mount = anchor
+                    .as_ref()
+                    .and_then(|key| positions.get(key))
+                    .copied()
+                    .unwrap_or(0);
+                between.push(key.clone());
+            }
+        }
+        self.order = ordered
+            .iter()
+            .enumerate()
+            .map(|(at, key)| (key.clone(), at))
+            .collect();
+        self.ordered = ordered;
+        self.keys = keys;
+        self.washes.retain(|key, _| present.contains(key));
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|key| !present.contains(key))
+        {
+            self.selected = None;
+        }
+    }
+}
+
+impl SidebarState {
+    /// Hidden/replaced lists do not paint, so they cannot retire a stale ring.
+    pub(super) fn clear_focus_motion(&self) {
+        for pane in &mut self.motion.borrow_mut().panes {
+            pane.clear_focus_motion();
+        }
+    }
+
+    /// Called once by the existing row-cache publisher, before replacing rows.
+    pub(super) fn prepare_rows_motion(
+        &self,
+        rows: &[SidebarRow],
+        owner: Option<crate::app::SessionId>,
+        filter: &str,
+        ready: bool,
+    ) {
+        let ranges = super::sidebar_panes::pane_ranges(rows);
+        let mut state = self.motion.borrow_mut();
+        let reset = !state.initialized || state.owner != owner || state.filter != filter;
+        if reset {
+            *state = SidebarMotion {
+                owner,
+                filter: filter.to_owned(),
+                initialized: ready,
+                ..Default::default()
+            };
+        }
+        for (pane, range) in ranges.iter().enumerate() {
+            let old_range = &self.pane_ranges[pane];
+            let old = self
+                .rows
+                .get(old_range.start + 1..old_range.end)
+                .unwrap_or_default();
+            let new = rows.get(range.start + 1..range.end).unwrap_or_default();
+            let old_closed = matches!(
+                self.rows.get(old_range.start),
+                Some(SidebarRow::SectionHeader {
+                    collapsed: true,
+                    ..
+                })
+            );
+            let closed = matches!(
+                rows.get(range.start),
+                Some(SidebarRow::SectionHeader {
+                    collapsed: true,
+                    ..
+                })
+            );
+            let pane_motion = &mut state.panes[pane];
+            if !reset && closed && !old_closed {
+                pane_motion.closing_rows = old.to_vec();
+            } else if !closed || reset {
+                pane_motion.closing_rows.clear();
+            }
+            pane_motion.set_rows(old, new, reset || motion::instant(), old_closed != closed);
+        }
+    }
+
+    /// Owner-frame sampling, including empty/closing lists and offscreen fades.
+    pub(super) fn advance_motion(&self, window: &gpui::Window, _cx: &gpui::App) {
+        let now = motion::now();
+        let instant = motion::instant();
+        let header_h = f32::from(theme::scaled_px(SIDEBAR_SECTION_HEADER_H));
+        // A fully collapsed stack occupies only its headers. Its viewport still
+        // owns the unused flex space into which the next pane must reveal.
+        let dividers: f32 = self
+            .pane_geom
+            .windows(2)
+            .map(|pair| (pair[1].get().0 - pair[0].get().1).max(0.))
+            .sum();
+        let available = (self.pane_viewport_height.get() - dividers).max(0.);
+        let expanded_weight: f32 = super::sidebar_panes::SECTIONS
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| !self.collapsed.contains(**key))
+            .map(|(pane, _)| f32::from(self.pane_weights[pane]))
+            .sum();
+        let closed_count = self.collapsed.len().min(5) as f32;
+        let mut moving = false;
+        let mut state = self.motion.borrow_mut();
+        for (index, pane) in state.panes.iter_mut().enumerate() {
+            let open = !self
+                .collapsed
+                .contains(super::sidebar_panes::SECTIONS[index]);
+            if pane.reveal.target() == Some(true) && !pane.reveal.animating(now) {
+                let (top, bottom) = self.pane_geom[index].get();
+                pane.natural_body = (bottom - top - header_h).max(0.);
+            } else if open && pane.reveal.target() == Some(false) && !pane.reveal.animating(now) {
+                pane.natural_body = ((available - closed_count * header_h)
+                    * f32::from(self.pane_weights[index])
+                    / expanded_weight.max(1.)
+                    - header_h)
+                    .max(0.);
+            }
+            pane.reveal.sync(open, now, instant);
+            moving |= pane.reveal.animating(now);
+            if !pane
+                .reveal
+                .sample(px(pane.natural_body), now)
+                .retain_content
+            {
+                pane.closing_rows.clear();
+            }
+            moving |= pane.splice.advance(now, instant);
+            pane.ghosts.retain(|ghost| {
+                pane.splice
+                    .ghost(&ghost.key, None, std::iter::empty(), px(1.), now)
+                    .is_some()
+            });
+            if !open {
+                pane.sync_wash(None);
+            }
+            pane.washes.retain(|key, wash| {
+                let selected = pane.selected.as_ref() == Some(key);
+                wash.retarget(
+                    selected,
+                    if selected { 1. } else { 0. },
+                    now,
+                    motion::TRANSITION,
+                    Easing::OutCubic,
+                    instant,
+                );
+                let sample = wash.sample(now);
+                moving |= !sample.done;
+                selected || !sample.done
+            });
+        }
+        motion::request_frame(window, moving);
+    }
+}
+
 // W9-THEME: all colours come from `theme()` (see theme.rs).
 
 // ──────────────────────────────────────────────────────────────
@@ -162,7 +631,7 @@ pub const SECTION_TAGS: &str = "tags";
 pub const SECTION_WORKTREES: &str = "worktrees";
 pub const SECTION_STASHES: &str = "stashes";
 
-/// Build a `.tooltip(...)` closure showing the full (untruncated) name.
+/// Build hover help showing the full (untruncated) name.
 /// Row labels are single-line + ellipsized, so the tooltip is how the user
 /// reads a name that doesn't fit the sidebar width.
 pub(super) fn name_tooltip(
@@ -188,7 +657,7 @@ pub enum SidebarRow {
     /// A top-level pane header. `section` is the static collapse key.
     SectionHeader {
         section: &'static str,
-        title: &'static str,
+        title: Msg,
         count: usize,
         collapsed: bool,
     },
@@ -220,6 +689,8 @@ pub enum SidebarRow {
     /// `remote:<remote>:<prefix>`.
     RemoteSubGroup {
         key: String,
+        /// Owning remote, retained separately from the namespaced collapse key.
+        remote: String,
         prefix: String,
         count: usize,
         collapsed: bool,
@@ -274,44 +745,60 @@ pub(super) fn build_sidebar_row(
     now_secs: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    build_sidebar_row_presentation(this, row, now_secs, true, cx)
+}
+
+/// Ghosts reuse the real row's content but install no hit targets, focus or AX.
+pub(super) fn build_sidebar_row_presentation(
+    this: &KagiApp,
+    row: &SidebarRow,
+    now_secs: i64,
+    interactive: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     match row {
         SidebarRow::SectionHeader {
             section,
             title,
             count,
             collapsed,
-        } => build_section_header(section, title, *count, *collapsed, cx),
-        SidebarRow::LocalGroupHeader {
-            key,
-            prefix,
-            count,
-            collapsed,
-        } => build_group_header(key, prefix, *count, *collapsed, theme::scaled_px(20.), cx),
+        } => build_section_header(section, *title, *count, *collapsed, cx),
+        SidebarRow::LocalGroupHeader { .. }
+        | SidebarRow::RemoteHeader { .. }
+        | SidebarRow::RemoteSubGroup { .. } => build_group_row(row, interactive, cx),
         SidebarRow::LocalBranchLeaf {
             name,
             display_label,
             is_head,
             indented,
-        } => build_local_branch_leaf(this, name, *is_head, display_label, *indented, now_secs, cx),
-        SidebarRow::RemoteHeader {
-            key,
-            remote,
-            count,
-            collapsed,
-        } => build_group_header(key, remote, *count, *collapsed, theme::scaled_px(20.), cx),
-        SidebarRow::RemoteSubGroup {
-            key,
-            prefix,
-            count,
-            collapsed,
-        } => build_group_header(key, prefix, *count, *collapsed, theme::scaled_px(32.), cx),
+        } => build_local_branch_leaf(
+            this,
+            name,
+            *is_head,
+            display_label,
+            *indented,
+            now_secs,
+            interactive,
+            cx,
+        ),
         SidebarRow::RemoteLeaf {
             display,
             display_label,
             target,
             depth,
-        } => build_remote_leaf(this, display, display_label, target, *depth, now_secs, cx),
-        SidebarRow::Tag { name, target } => build_tag_row(this, name, target.clone(), cx),
+        } => build_remote_leaf(
+            this,
+            display,
+            display_label,
+            target,
+            *depth,
+            now_secs,
+            interactive,
+            cx,
+        ),
+        SidebarRow::Tag { name, target } => {
+            build_tag_row(this, name, target.clone(), interactive, cx)
+        }
         SidebarRow::Worktree {
             name,
             branch,
@@ -331,93 +818,13 @@ pub(super) fn build_sidebar_row(
                 port: *port,
             },
             this,
+            interactive,
             cx,
         ),
-        SidebarRow::Stash { index, message, .. } => build_stash_row(*index, message, cx),
+        SidebarRow::Stash { index, message, .. } => {
+            build_stash_row(*index, message, interactive, cx)
+        }
     }
-}
-
-/// Section header row (LOCAL BRANCHES / …). Click toggles `sidebar_collapsed`.
-fn build_section_header(
-    section: &'static str,
-    title: &'static str,
-    count: usize,
-    collapsed: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let label = SharedString::from(format!(
-        "{} {} ({})",
-        if collapsed { "\u{25b8}" } else { "\u{25be}" },
-        title,
-        count
-    ));
-    let toggle = cx.listener(
-        move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            this.sidebar.toggle_section(section);
-            cx.notify();
-        },
-    );
-    div()
-        .id(SharedString::from(format!("sidebar-section-{}", section)))
-        .relative()
-        .child(super::e2e::measure_inside(section))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        .px_3()
-        .flex()
-        .flex_row()
-        .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(rgb(theme().text_muted))
-        .on_click(toggle)
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .child(label)
-        .into_any()
-}
-
-/// A `/`-prefix group header (local groups, remote level-1, remote level-2).
-/// Click toggles `branch_groups_collapsed` for `key`. `left_pad` sets indent.
-fn build_group_header(
-    key: &str,
-    label_text: &str,
-    count: usize,
-    collapsed: bool,
-    left_pad: gpui::Pixels,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let arrow = if collapsed { "\u{25b8}" } else { "\u{25be}" };
-    // issue #414: `label_text` is a remote name / branch prefix (remote-origin).
-    let label_text = kagi_domain::text_safety::sanitize_control_bytes(label_text);
-    let glabel = SharedString::from(format!("{} {} ({})", arrow, label_text, count));
-    let key_for_toggle = key.to_string();
-    let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.with_ui(|ui| ui.toggle_branch_group(&key_for_toggle));
-        cx.notify();
-    });
-    // The `SIDEBAR_ROW_H` slot keeps the pane's list uniform; the visible
-    // heading (and its hover) is the slightly shorter box inside it.
-    div()
-        .id(SharedString::from(format!("sidebar-group-{}", key)))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        .flex()
-        .items_center()
-        .on_click(toggle)
-        .child(
-            div()
-                .h(theme::scaled_px(SIDEBAR_GROUP_HEADING_H))
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .pl(left_pad)
-                .pr_3()
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .overflow_hidden()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .child(div().flex_1().truncate().child(glabel)),
-        )
-        .into_any()
 }
 
 /// Bound the root flex width and give the suffix a preferential shrink share.
@@ -465,6 +872,7 @@ fn branch_row_meta(
 
 /// A local branch leaf. HEAD is a merge drop target that only jumps on click;
 /// a non-HEAD row drags, checks out on double click, and carries the delete.
+#[allow(clippy::too_many_arguments)] // Existing leaf facts plus inert-ghost presentation.
 fn build_local_branch_leaf(
     this: &KagiApp,
     branch_name: &str,
@@ -472,6 +880,7 @@ fn build_local_branch_leaf(
     display_label: &str,
     indented: bool,
     now_secs: i64,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let upstream_label: Option<SharedString> = this
@@ -530,7 +939,7 @@ fn build_local_branch_leaf(
         theme::scaled_px(12.)
     };
 
-    if is_head {
+    let row = if is_head {
         let branch_for_click = branch_name.to_string();
         let branch_for_menu = branch_name.to_string();
         let head_click = cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
@@ -561,22 +970,42 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_xs()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+            .line_height(gpui::relative(1.2))
             .text_color(rgb(text_color))
             .overflow_hidden()
-            .on_click(head_click)
-            .on_mouse_down(gpui::MouseButton::Right, menu_click)
-            .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                style
-                    .bg(rgb(theme().selected))
-                    .border_color(rgb(theme().color_branch))
+            .when(interactive, |el| {
+                el.on_click(head_click)
+                    .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                    .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
+                    .on_drop::<BranchDrag>(drop_handler)
+                    .hover(|style| style.bg(rgb(theme().surface)))
             })
-            .on_drop::<BranchDrag>(drop_handler)
-            .hover(|style| style.bg(rgb(theme().surface)))
-            .tooltip(name_tooltip(full_name))
-            .child(div().flex_auto().truncate().child(label))
+            .child(
+                div()
+                    .relative()
+                    .flex_auto()
+                    .truncate()
+                    .line_height(gpui::relative(1.2))
+                    .child(label)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!(
+                            "sidebar-local-name-{branch_name}"
+                        )))
+                    }),
+            )
             .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
-            .into_any()
+            .map(|el| {
+                if interactive {
+                    el.hover_tooltip_builder(
+                        SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
+                        name_tooltip(full_name),
+                    )
+                    .into_any_element()
+                } else {
+                    el.into_any_element()
+                }
+            })
     } else {
         let branch_for_dbl = branch_name.to_string();
         let branch_for_delete = branch_name.to_string();
@@ -615,7 +1044,7 @@ fn build_local_branch_leaf(
                 cx.notify();
             },
         );
-        let row = div()
+        div()
             .id(SharedString::from(format!(
                 "sidebar-branch-{}",
                 branch_name
@@ -626,29 +1055,39 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_xs()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+            .line_height(gpui::relative(1.2))
             .text_color(rgb(text_color))
             .overflow_hidden()
-            .on_click(click_handler)
-            .on_mouse_down(gpui::MouseButton::Right, menu_click)
-            .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                style
-                    .bg(rgb(theme().selected))
-                    .border_color(rgb(theme().color_branch))
+            .when(interactive, |el| {
+                el.on_click(click_handler)
+                    .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                    .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
+                    .on_drop::<BranchDrag>(drop_handler)
+                    .on_drag(
+                        BranchDrag {
+                            name: branch_for_drag.clone(),
+                        },
+                        move |drag: &BranchDrag, _pos, _window, cx| {
+                            let name = SharedString::from(drag.name.clone());
+                            cx.new(|_| BranchDragGhost { name })
+                        },
+                    )
+                    .hover(|style| style.bg(rgb(theme().surface)))
             })
-            .on_drop::<BranchDrag>(drop_handler)
-            .on_drag(
-                BranchDrag {
-                    name: branch_for_drag.clone(),
-                },
-                move |drag: &BranchDrag, _pos, _window, cx| {
-                    let name = SharedString::from(drag.name.clone());
-                    cx.new(|_| BranchDragGhost { name })
-                },
+            .child(
+                div()
+                    .relative()
+                    .flex_auto()
+                    .truncate()
+                    .line_height(gpui::relative(1.2))
+                    .child(label)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!(
+                            "sidebar-local-name-{branch_name}"
+                        )))
+                    }),
             )
-            .hover(|style| style.bg(rgb(theme().surface)))
-            .tooltip(name_tooltip(full_name))
-            .child(div().flex_auto().truncate().child(label))
             .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
             .child(
                 div()
@@ -661,16 +1100,36 @@ fn build_local_branch_leaf(
                     .px_1()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .on_click(delete_handler)
-                    .hover(|s| s.text_color(rgb(theme().color_blocker)))
+                    .when(interactive, |el| {
+                        el.on_click(delete_handler)
+                            .hover(|s| s.text_color(rgb(theme().color_blocker)))
+                    })
                     .child(SharedString::from("\u{00d7}")),
             )
-            .into_any();
+            .map(|el| {
+                if interactive {
+                    el.hover_tooltip_builder(
+                        SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
+                        name_tooltip(full_name),
+                    )
+                    .into_any_element()
+                } else {
+                    el.into_any_element()
+                }
+            })
+    };
+    #[cfg(feature = "gui-e2e")]
+    {
         super::e2e::measure_control(format!("sidebar-local-{branch_name}"), row)
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        row
     }
 }
 
 /// A remote branch leaf: a merge drag source, clickable while its tip is loaded.
+#[allow(clippy::too_many_arguments)] // Share the real leaf renderer with noninteractive ghosts.
 fn build_remote_leaf(
     this: &KagiApp,
     display: &str,
@@ -678,6 +1137,7 @@ fn build_remote_leaf(
     rb_target: &CommitId,
     depth: u8,
     now_secs: i64,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let can_jump = this.view().commit_row_index.contains_key(rb_target);
@@ -710,32 +1170,52 @@ fn build_remote_leaf(
 
     let base = div()
         .id(SharedString::from(format!("sidebar-remote-{}", display)))
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside(format!(
+                "sidebar-remote-{display}"
+            )))
+        })
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
         .flex_row()
         .items_center()
         .pl(left_pad)
         .pr_3()
-        .text_xs()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(gpui::relative(1.2))
         .text_color(rgb(theme().color_remote))
         .overflow_hidden()
-        .on_mouse_down(gpui::MouseButton::Right, menu_click)
-        .cursor_grab()
-        .on_drag(
-            BranchDrag {
-                name: drag_name.clone(),
-            },
-            move |drag: &BranchDrag, _pos, _window, cx| {
-                let name = SharedString::from(drag.name.clone());
-                cx.new(|_| BranchDragGhost { name })
-            },
+        .when(interactive, |el| {
+            el.on_mouse_down(gpui::MouseButton::Right, menu_click)
+                .cursor_grab()
+                .on_drag(
+                    BranchDrag {
+                        name: drag_name.clone(),
+                    },
+                    move |drag: &BranchDrag, _pos, _window, cx| {
+                        let name = SharedString::from(drag.name.clone());
+                        cx.new(|_| BranchDragGhost { name })
+                    },
+                )
+                .hover(|style| style.bg(rgb(theme().surface)))
+        })
+        .child(
+            div()
+                .relative()
+                .flex_auto()
+                .truncate()
+                .line_height(gpui::relative(1.2))
+                .child(label)
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label.child(super::e2e::measure_inside(format!(
+                        "sidebar-remote-name-{display}"
+                    )))
+                }),
         )
-        .hover(|style| style.bg(rgb(theme().surface)))
-        .tooltip(name_tooltip(full_name))
-        .child(div().flex_auto().truncate().child(label))
         .map(|el| branch_row_meta(el, age, None, None));
 
-    if can_jump {
+    let base = if can_jump && interactive {
         let target_for_jump = rb_target.clone();
         let click_handler = cx.listener(
             move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
@@ -743,107 +1223,19 @@ fn build_remote_leaf(
                 cx.notify();
             },
         );
-        base.on_click(click_handler).into_any()
+        base.on_click(click_handler)
     } else {
-        base.into_any()
-    }
-}
-
-/// A tag leaf — click jumps to the tag's target when it is in the loaded graph.
-fn build_tag_row(
-    this: &KagiApp,
-    tag_name: &str,
-    tag_target: CommitId,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    // issue #356: tag names are remote-origin — neutralize control bytes in
-    // the visible label (the raw `tag_name` operand stays untouched).
-    let tag_label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(tag_name));
-    let full_name = SharedString::from(tag_name.to_string());
-    let can_jump = this.view().commit_row_index.contains_key(&tag_target);
-    // Right-click → the tag menu (ADR-0140). Tags were the only sidebar ref
-    // with no menu, so publishing one meant leaving kagi for a terminal.
-    let menu_name = tag_name.to_string();
-    let menu = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
-            this.open_tag_menu(menu_name.clone(), e.position);
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    let base = div()
-        .id(SharedString::from(format!("sidebar-tag-{}", tag_name)))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        .flex()
-        .flex_row()
-        .items_center()
-        .px_3()
-        .text_xs()
-        .text_color(rgb(theme().color_tag))
-        .overflow_hidden()
-        .tooltip(name_tooltip(full_name))
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .child(div().flex_1().truncate().child(tag_label));
-    if can_jump {
-        let click_handler = cx.listener(
-            move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                this.jump_to_commit(&tag_target);
-                cx.notify();
-            },
-        );
-        base.hover(|style| style.bg(rgb(theme().surface)))
-            .on_click(click_handler)
-            .into_any()
-    } else {
-        base.into_any()
-    }
-}
-
-/// A stash leaf — left-click **pops** (apply + remove); right-click opens a
-/// menu (Apply / Drop). User request: clicking a stash should consume it.
-fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    // issue #414: a stash message embeds a commit subject, which is remote-origin
-    // after a pull. Neutralize control bytes before display.
-    let message = kagi_domain::text_safety::sanitize_control_bytes(message);
-    let raw_label = format!("stash@{{{}}}: {}", index, message);
-    let full_name = SharedString::from(raw_label.clone());
-    // #236: click PEEKS (read-only), same as the graph's stash row; Pop lives
-    // in the context menu only.
-    let click_handler = cx.listener(
-        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-            this.open_stash_peek(index, cx);
-            cx.notify();
-        },
-    );
-    let msg_for_menu = message.to_string();
-    let menu_handler = cx.listener(
-        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-            this.open_stash_menu(index, msg_for_menu.clone(), event.position);
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    div()
-        .id(("sidebar-stash", index))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        .flex()
-        .flex_row()
-        .items_center()
-        .px_3()
-        .text_xs()
-        .text_color(rgb(theme().color_warning))
-        .overflow_hidden()
-        .on_click(click_handler)
-        .on_mouse_down(gpui::MouseButton::Right, menu_handler)
-        .hover(|style| style.bg(rgb(theme().surface)))
-        .tooltip(name_tooltip(full_name))
-        .child(
-            div()
-                .flex_1()
-                .truncate()
-                .child(SharedString::from(raw_label)),
+        base
+    };
+    if interactive {
+        base.hover_tooltip_builder(
+            SharedString::from(format!("sidebar-remote-{display}-hover-help")),
+            name_tooltip(full_name),
         )
-        .into_any()
+        .into_any_element()
+    } else {
+        base.into_any_element()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -851,284 +1243,5 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
 // ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Compact view of a GroupRow for assertions: ("G", prefix, count) for a
-    /// group header, ("L", leaf_label, item) for a grouped leaf, and
-    /// ("T", item, item) for a top-level item.
-    fn summarize(rows: &[GroupRow<String>]) -> Vec<(&'static str, String, String)> {
-        rows.iter()
-            .map(|r| match r {
-                GroupRow::Group { prefix, count } => ("G", prefix.clone(), count.to_string()),
-                GroupRow::GroupedLeaf {
-                    leaf_label, item, ..
-                } => ("L", leaf_label.clone(), item.clone()),
-                GroupRow::TopLevel { item } => ("T", item.clone(), item.clone()),
-            })
-            .collect()
-    }
-
-    fn group(names: &[&str]) -> Vec<GroupRow<String>> {
-        let owned: Vec<String> = names.iter().map(|s| s.to_string()).collect();
-        group_by_prefix(&owned, |s| s.as_str())
-    }
-
-    #[test]
-    fn split_basic() {
-        assert_eq!(
-            split_first_segment("feat/a"),
-            Some(("feat".into(), "a".into()))
-        );
-        assert_eq!(
-            split_first_segment("feat/ui/x"),
-            Some(("feat".into(), "ui/x".into()))
-        );
-        assert_eq!(split_first_segment("main"), None);
-        // Empty halves stay top-level.
-        assert_eq!(split_first_segment("/x"), None);
-        assert_eq!(split_first_segment("feat/"), None);
-    }
-
-    #[test]
-    fn split_non_ascii() {
-        // chars()-based: multibyte prefixes must not panic or mis-split.
-        assert_eq!(
-            split_first_segment("機能/あ"),
-            Some(("機能".into(), "あ".into()))
-        );
-    }
-
-    #[test]
-    fn groups_and_top_level() {
-        // feat/a, feat/b → group feat(2); fix/c → group fix(1); main → top.
-        let rows = group(&["feat/a", "feat/b", "fix/c", "main"]);
-        assert_eq!(
-            summarize(&rows),
-            vec![
-                ("G", "feat".into(), "2".into()),
-                ("L", "a".into(), "feat/a".into()),
-                ("L", "b".into(), "feat/b".into()),
-                ("G", "fix".into(), "1".into()),
-                ("L", "c".into(), "fix/c".into()),
-                ("T", "main".into(), "main".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn multi_segment_leaf_keeps_remainder() {
-        // Single first-level split: feat/ui/x → group feat, leaf "ui/x".
-        let rows = group(&["feat/ui/x"]);
-        assert_eq!(
-            summarize(&rows),
-            vec![
-                ("G", "feat".into(), "1".into()),
-                ("L", "ui/x".into(), "feat/ui/x".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn remote_grouped_by_remote_name() {
-        // origin/feat/x → group origin, leaf "feat/x".
-        let rows = group(&["origin/main", "origin/feat/x", "upstream/dev"]);
-        assert_eq!(
-            summarize(&rows),
-            vec![
-                ("G", "origin".into(), "2".into()),
-                ("L", "main".into(), "origin/main".into()),
-                ("L", "feat/x".into(), "origin/feat/x".into()),
-                ("G", "upstream".into(), "1".into()),
-                ("L", "dev".into(), "upstream/dev".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn no_groups_all_top_level() {
-        let rows = group(&["main", "dev", "trunk"]);
-        assert!(rows.iter().all(|r| matches!(r, GroupRow::TopLevel { .. })));
-        assert_eq!(rows.len(), 3);
-    }
-
-    // ── W19-REMOTE-TREE: two-level remote grouping ──────────────────
-
-    /// Compact view of a RemoteRow: ("R", remote, count), ("S", prefix, count),
-    /// ("RL", remote, leaf), ("SL", prefix, leaf).
-    fn summarize_remote(
-        rows: &[RemoteRow<(String, String)>],
-    ) -> Vec<(&'static str, String, String)> {
-        rows.iter()
-            .map(|r| match r {
-                RemoteRow::Remote { remote, count } => ("R", remote.clone(), count.to_string()),
-                RemoteRow::SubGroup { prefix, count, .. } => {
-                    ("S", prefix.clone(), count.to_string())
-                }
-                RemoteRow::RemoteLeaf { leaf_label, .. } => {
-                    ("RL", leaf_label.clone(), String::new())
-                }
-                RemoteRow::SubGroupedLeaf {
-                    prefix, leaf_label, ..
-                } => ("SL", prefix.clone(), leaf_label.clone()),
-            })
-            .collect()
-    }
-
-    /// Build remote rows from (remote, name) pairs.
-    fn group_rem(pairs: &[(&str, &str)]) -> Vec<RemoteRow<(String, String)>> {
-        let owned: Vec<(String, String)> = pairs
-            .iter()
-            .map(|(r, n)| (r.to_string(), n.to_string()))
-            .collect();
-        group_remotes(&owned, |(r, _)| r.as_str(), |(_, n)| n.as_str())
-    }
-
-    #[test]
-    fn remote_two_levels_basic() {
-        // origin/main → origin ▸ main (direct leaf)
-        // origin/feat/x → origin ▸ feat ▸ x (sub-grouped leaf)
-        let rows = group_rem(&[("origin", "main"), ("origin", "feat/x")]);
-        assert_eq!(
-            summarize_remote(&rows),
-            vec![
-                ("R", "origin".into(), "2".into()),
-                ("RL", "main".into(), String::new()),
-                ("S", "feat".into(), "1".into()),
-                ("SL", "feat".into(), "x".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn remote_multiple_remotes_independent() {
-        // origin and upstream group independently, in first-seen order.
-        let rows = group_rem(&[
-            ("origin", "feat/a"),
-            ("origin", "feat/b"),
-            ("upstream", "feat/c"),
-            ("upstream", "dev"),
-        ]);
-        assert_eq!(
-            summarize_remote(&rows),
-            vec![
-                ("R", "origin".into(), "2".into()),
-                ("S", "feat".into(), "2".into()),
-                ("SL", "feat".into(), "a".into()),
-                ("SL", "feat".into(), "b".into()),
-                ("R", "upstream".into(), "2".into()),
-                ("S", "feat".into(), "1".into()),
-                ("SL", "feat".into(), "c".into()),
-                ("RL", "dev".into(), String::new()),
-            ]
-        );
-    }
-
-    #[test]
-    fn remote_deep_name_keeps_remainder() {
-        // origin/feat/ui/x → origin ▸ feat ▸ ui/x (single sub-level split).
-        let rows = group_rem(&[("origin", "feat/ui/x")]);
-        assert_eq!(
-            summarize_remote(&rows),
-            vec![
-                ("R", "origin".into(), "1".into()),
-                ("S", "feat".into(), "1".into()),
-                ("SL", "feat".into(), "ui/x".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn remote_collapse_keys_unique_and_no_collision() {
-        // Level-1 remote header vs level-2 sub-group vs local must all differ.
-        assert_eq!(remote_key("origin"), "remote:origin");
-        assert_eq!(remote_group_key("origin", "feat"), "remote:origin:feat");
-        assert_eq!(remote_group_key("upstream", "feat"), "remote:upstream:feat");
-        // Two remotes with the same sub-group prefix get distinct keys.
-        assert_ne!(
-            remote_group_key("origin", "feat"),
-            remote_group_key("upstream", "feat")
-        );
-        // The remote header key (2 segments) never equals any sub-group key
-        // (3 segments), and never matches a local key.
-        assert_ne!(remote_key("origin"), remote_group_key("origin", "feat"));
-        assert_ne!(
-            remote_group_key("origin", "feat"),
-            group_key(SECTION_LOCAL, "feat")
-        );
-    }
-
-    #[test]
-    fn remote_non_ascii_subgroup() {
-        let rows = group_rem(&[("origin", "機能/あ")]);
-        assert_eq!(
-            summarize_remote(&rows),
-            vec![
-                ("R", "origin".into(), "1".into()),
-                ("S", "機能".into(), "1".into()),
-                ("SL", "機能".into(), "あ".into()),
-            ]
-        );
-    }
-
-    /// Rebuild `rows` the way `render` does (rows and fingerprint together),
-    /// then let the list processor's cache catch up.
-    fn rebuild(state: &mut SidebarState, fingerprint: u64, groups: &HashSet<String>, filter: &str) {
-        let branches = [
-            ("main".to_string(), true),
-            ("feat/a".to_string(), false),
-            ("feat/b".to_string(), false),
-        ];
-        let rows = build_sidebar_rows(
-            &branches,
-            &[],
-            &[],
-            &[],
-            &[],
-            Default::default(),
-            &state.collapsed,
-            groups,
-            filter,
-        );
-        state.rows = rows;
-        state.rows_fingerprint = fingerprint;
-        state.refresh_tree_positions();
-    }
-
-    fn branch_position(state: &SidebarState, branch: &str) -> Option<(usize, usize)> {
-        let i = state.rows.iter().position(
-            |r| matches!(r, SidebarRow::LocalBranchLeaf { name, .. } if name == branch),
-        )?;
-        Some(state.tree_positions[i])
-    }
-
-    #[test]
-    fn tree_positions_follow_each_rows_rebuild() {
-        let mut state = SidebarState::new();
-        let no_groups = HashSet::new();
-        rebuild(&mut state, 1, &no_groups, "");
-        assert_eq!(branch_position(&state, "feat/b"), Some((2, 2)));
-
-        // Filter edit: only `feat/b` is left under its parent.
-        rebuild(&mut state, 2, &no_groups, "b");
-        assert_eq!(state.tree_positions.len(), state.rows.len());
-        assert_eq!(branch_position(&state, "feat/b"), Some((1, 1)));
-
-        // Group collapse: its leaves leave the list, the cache follows.
-        let collapsed: HashSet<String> = [group_key(SECTION_LOCAL, "feat")].into();
-        rebuild(&mut state, 3, &collapsed, "");
-        assert_eq!(state.tree_positions.len(), state.rows.len());
-        assert_eq!(branch_position(&state, "feat/b"), None);
-
-        // Section collapse leaves only the header.
-        state.collapsed.insert(SECTION_LOCAL);
-        rebuild(&mut state, 4, &no_groups, "");
-        assert_eq!(state.tree_positions.len(), state.rows.len());
-        assert_eq!(branch_position(&state, "main"), None);
-
-        // Expanding again restores the positions.
-        state.collapsed.remove(SECTION_LOCAL);
-        rebuild(&mut state, 5, &no_groups, "");
-        assert_eq!(branch_position(&state, "feat/b"), Some((2, 2)));
-    }
-}
+#[path = "sidebar_tests.rs"]
+mod tests;

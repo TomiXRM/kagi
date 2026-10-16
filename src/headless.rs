@@ -57,7 +57,6 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
         name: info.name.clone(),
         remote: None,
         is_worktree: info.is_worktree,
-        wt_color_idx: None,
     });
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());
@@ -194,6 +193,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
             ui::BottomTab::OperationLog => "OperationLog",
             ui::BottomTab::Terminal => "Terminal",
             ui::BottomTab::Activity => "Activity",
+            ui::BottomTab::Changes => "Changes",
         };
         // W2-STATUS: the height is resolved at first render (18% of viewport);
         // before that the field holds the 0.0 sentinel.

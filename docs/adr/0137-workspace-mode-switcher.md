@@ -48,5 +48,8 @@ command, so it inherits the View menu entry and user keybinding overrides.
   PRs → Editor lossless.
 - Leaving PR mode for Graph does not preserve an editor, by design: Graph means
   graph. The dirty guard still runs, so nothing is discarded silently.
+- PR Peek は Graph への guarded navigation と既存 Inspector の read-only Compare 表示を
+  組み合わせる。dirty Editor の承認は元の owner／editor に限り有効であり、成功時も
+  Commit Panel entity／draft は捨てない（[ADR-0026](0026-compare-view-model.md)）。
 - Adding a fourth mode means a fourth button and a `workspace_mode()` arm — no
   new toggle semantics to reason about.

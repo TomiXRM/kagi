@@ -89,10 +89,14 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     cx.run_until_parked();
 }
 
-/// Run the production PR refresh over `prs`; its completion asks for the
+/// Run the production PR refresh over a resolved page; its completion asks for the
 /// login on the PRs' host.
-fn refresh_prs(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, prs: Vec<PullRequest>) {
-    e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move { Ok(prs) }));
+fn refresh_prs(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    page: kagi_domain::github::PrListSnapshot,
+) {
+    e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move { Ok(page) }));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     cx.run_until_parked();
 }
@@ -125,7 +129,11 @@ pub fn scenario_ghe_viewer_login(cx: &mut VisualTestAppContext) {
         app.github_host_logins
             .insert(Some("github.com".into()), "dotcom-me".into());
     });
-    refresh_prs(cx, &app, prs.clone());
+    refresh_prs(
+        cx,
+        &app,
+        crate::evidence_support::pr_page(prs.clone(), "", None),
+    );
     wait(cx, "the failed Enterprise login read never settled", |cx| {
         !cx.read(|cx| app.read(cx).host_login_requested_for_e2e(Some(HOST)))
     });
@@ -186,7 +194,7 @@ pub fn scenario_ghe_viewer_login(cx: &mut VisualTestAppContext) {
 
     // The Enterprise login arrives with the next PR refresh.
     std::fs::write(gh_dir.path().join("ghe_login.txt"), "ghe-me\n").unwrap();
-    refresh_prs(cx, &app, prs);
+    refresh_prs(cx, &app, crate::evidence_support::pr_page(prs, "", None));
     wait(cx, "the Enterprise login was never read", |cx| {
         cx.read(|cx| {
             app.read(cx)
@@ -235,7 +243,11 @@ pub fn scenario_ghe_viewer_login_closed_only(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
 
-    refresh_prs(cx, &app, Vec::new());
+    refresh_prs(
+        cx,
+        &app,
+        crate::evidence_support::pr_page(Vec::new(), "github.com/example/repo", None),
+    );
     assert!(
         !cx.read(|cx| app.read(cx).host_login_requested_for_e2e(Some(HOST))),
         "an empty open list names no host"
@@ -247,7 +259,7 @@ pub fn scenario_ghe_viewer_login_closed_only(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     e2e::queue_github_pr_fetch(
         cx.background_executor
-            .spawn(async move { Ok(vec![closed]) }),
+            .spawn(async move { Ok(crate::evidence_support::pr_page(vec![closed], "", None)) }),
     );
     click(cx, window, "list-filter-state");
     click(cx, window, "list-filter-option-0-1");

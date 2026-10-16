@@ -39,7 +39,7 @@ family!(HistoryRecord, "HistoryRecovery", {
         kind_slug: String, from_full: String,
     },
 });
-family!(PullRecord, "PullRecovery", { Pull, PullAutoStash, PullRemote, PullBranchFf { branch: String }, });
+family!(PullRecord, "PullRecovery", { Pull, PullAutoStash, PullRemote, PullCurrentFf { branch: String }, PullBranchFf { branch: String }, });
 family!(PushRecord, "PushRecovery", { Push, PushBlocked, PushBranch, SetUpstream { branch: String }, });
 family!(SwitchRecord, "SwitchRecovery", {
     CheckoutTracking { local: String }, SwitchToLatest { remote: String, branch: String },
@@ -192,6 +192,9 @@ mod tests {
                 blocked: false,
             }),
             RecoveryKind::Pull(PullRecovery::Pull),
+            RecoveryKind::Pull(PullRecovery::PullCurrentFf {
+                branch: "main".into(),
+            }),
             RecoveryKind::Push(PushRecovery::Push),
             RecoveryKind::Switch(SwitchRecovery::CheckoutTracking {
                 local: "feature".into(),

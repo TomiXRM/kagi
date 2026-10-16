@@ -45,7 +45,7 @@ pub(crate) const ADVICE_RULESET_CREATION_BLOCKED: &str =
 
 /// JA text for `Msg::AdviceRulesetConstraintsUnknown`.
 pub(crate) const ADVICE_RULESET_CONSTRAINTS_UNKNOWN: &str =
-    "branch の ruleset を確定できませんでした。ルール無しとは仮定せず、保守的なフローを維持します。";
+    "この branch の GitHub ルールを取得できませんでした。push 時に拒否される可能性があります。";
 
 /// Japanese subject noun for a pattern-rule field.
 fn field_ja(field: RuleField) -> &'static str {
@@ -95,5 +95,26 @@ pub fn note_ja(note: &RulesetNote) -> String {
         RulesetNote::ConstraintsUnknown => {
             super::advice_text(Msg::AdviceRulesetConstraintsUnknown, &[])
         }
+    }
+}
+
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &RulesetNote) -> String {
+    match note {
+        RulesetNote::ConstraintsUnknown => "branch の ruleset を確定できませんでした。ルール無しとは仮定せず、保守的なフローを維持します。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_unknown_constraints_bytes() {
+        assert_eq!(
+            note_ja_contract(&RulesetNote::ConstraintsUnknown),
+            "branch の ruleset を確定できませんでした。ルール無しとは仮定せず、保守的なフローを維持します。"
+        );
     }
 }

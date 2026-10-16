@@ -13,6 +13,7 @@ pub const DRACULA: Theme = Theme {
     bg_row_alt: 0x21222c,
     surface: 0x343746,
     selected: 0x44475a,
+    inactive_selected: 0x484848,
     panel: 0x21222c,
     sidebar: 0x191a21,
     modal: 0x343746,
@@ -25,6 +26,7 @@ pub const DRACULA: Theme = Theme {
 
     color_head: 0xff79c6,   // pink
     color_branch: 0xbd93f9, // purple
+    link: 0xbd93f9,
     selection_tint: 0xbd93f9,
     color_remote: 0x50fa7b, // green
     color_tag: 0xffb86c,    // orange

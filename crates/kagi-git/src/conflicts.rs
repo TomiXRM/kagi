@@ -52,9 +52,9 @@ use super::log::CommitId;
 // #704 / #707: the abort family and the ADR-0058 terminology moved to their
 // own modules, re-exported here so `conflicts::…` stays the one path callers
 // name.
-pub(crate) use super::conflict_abort::{execute_conflict_abort, execute_stash_conflict_abort};
-pub use super::conflict_abort::{plan_conflict_abort, AbortOutcome};
 pub use super::conflict_labels::{side_labels, SideLabel, SideLabels};
+pub(crate) use super::ops::conflict_abort::{execute_conflict_abort, execute_stash_conflict_abort};
+pub use super::ops::conflict_abort::{plan_conflict_abort, AbortOutcome};
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
 use super::status::working_tree_status;
@@ -966,6 +966,9 @@ pub fn plan_conflict_continue(
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Conflicts(ConflictsTitle::Continue { op }),
         current,
@@ -976,6 +979,7 @@ pub fn plan_conflict_continue(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -1037,8 +1041,6 @@ pub(crate) fn execute_conflict_continue(
             .index()
             .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
         let oid = create_merge_commit(repo, &mut index, None)?;
-        repo.cleanup_state()
-            .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
         return Ok(ContinueResult {
             outcome: ContinueOutcome::Committed(oid),
             after: read_after()?,
@@ -1378,24 +1380,8 @@ fn create_merge_commit(
     let tree_oid = index
         .write_tree_to(repo)
         .map_err(|e| GitError::Other(format!("write_tree failed: {}", e.message())))?;
-    let tree = repo
-        .find_tree(tree_oid)
-        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-
-    let head_commit = repo
-        .head()
-        .ok()
-        .and_then(|h| h.target())
-        .and_then(|oid| repo.find_commit(oid).ok())
-        .ok_or_else(|| GitError::Other("HEAD commit lookup failed".to_string()))?;
-
-    let merge_head_oid = std::fs::read_to_string(repo.path().join("MERGE_HEAD"))
-        .ok()
-        .and_then(|s| git2::Oid::from_str(s.trim()).ok())
-        .ok_or_else(|| GitError::Other("MERGE_HEAD missing or unreadable".to_string()))?;
-    let merge_commit = repo.find_commit(merge_head_oid).map_err(|e| {
-        GitError::Other(format!("MERGE_HEAD commit lookup failed: {}", e.message()))
-    })?;
+    let merge_head_oid = read_head_oid(repo, "MERGE_HEAD")
+        .ok_or_else(|| GitError::Other("MERGE_HEAD missing or unreadable".into()))?;
 
     let message = match message_override {
         Some(m) => m.to_string(),
@@ -1403,19 +1389,21 @@ fn create_merge_commit(
             .unwrap_or_else(|_| format!("Merge commit {}", short_sha(&merge_head_oid.to_string()))),
     };
 
-    let sig = super::ops::build_signature(repo)?;
-    let oid = repo
-        .commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            &message,
-            &tree,
-            &[&head_commit, &merge_commit],
-        )
-        .map_err(|e| GitError::Other(format!("merge commit failed: {}", e.message())))?;
-
-    Ok(CommitId(oid.to_string()))
+    crate::ops::execute_git_commit(
+        repo,
+        index,
+        tree_oid,
+        &[
+            repo.head()
+                .and_then(|head| head.peel_to_commit())
+                .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {e}")))?
+                .id(),
+            merge_head_oid,
+        ],
+        &message,
+        None,
+    )
+    .map(|oid| CommitId(oid.to_string()))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1604,30 +1592,29 @@ fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &
 ///
 /// Stages no files (Save already staged them); writes the current index as the
 /// tree and commits with **two parents** (HEAD + MERGE_HEAD), then cleans up the
-/// merge state (`cleanup_state` removes MERGE_HEAD / MERGE_MSG).  Refuses if the
+/// merge state through Git. Refuses if the
 /// index still has unmerged entries (a defensive re-check of the gate).
 ///
 /// Returns the new merge commit's [`CommitId`].
-pub(crate) fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
+pub(crate) fn execute_merge_commit(
+    repo: &Repository,
+    plan: &OperationPlan,
+    message: &str,
+) -> Result<CommitId, GitError> {
     if message.trim().is_empty() {
         return Err(GitError::Other(
             "merge commit message must not be empty".to_string(),
         ));
     }
 
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    let mut index = crate::ops::approved_commit_index(repo, plan)?;
     if index.has_conflicts() {
         return Err(GitError::Other(
             "Refusing to create the merge commit: the index still has unmerged entries. Save every file first.".to_string(),
         ));
     }
 
-    let oid = create_merge_commit(repo, &mut index, Some(message))?;
-    repo.cleanup_state()
-        .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
-    Ok(oid)
+    create_merge_commit(repo, &mut index, Some(message))
 }
 
 /// Read a commit-oid sidecar file under `.git` (e.g. `MERGE_HEAD`,
@@ -1691,6 +1678,9 @@ pub fn plan_conflict_skip(
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Conflicts(ConflictsTitle::Skip { op }),
         current,
@@ -1704,6 +1694,7 @@ pub fn plan_conflict_skip(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

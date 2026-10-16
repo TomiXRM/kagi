@@ -9,6 +9,7 @@
 // #707 review: accessors live here, never in the feature modules that open a
 // modal. Split by feature as this file hits its LOC ceiling, not by relocating
 // them somewhere `active_modal` gets touched directly.
+mod analyze_help;
 mod apply_suggestion;
 mod arbitration;
 mod conflict;
@@ -16,6 +17,7 @@ mod editor;
 mod oplog_restore;
 mod repo_health;
 mod smart;
+mod terminal;
 mod window;
 mod worktree;
 
@@ -56,6 +58,8 @@ impl KagiApp {
                 M::RemoteBrowse(_)
                 | M::Clone(_)
                 | M::AppNotice(_)
+                | M::AnalyzeHelp(_)
+                | M::About(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)
                 | M::Pull(_)
@@ -101,6 +105,7 @@ impl KagiApp {
                 | M::EditorDirtyGuard(_)
                 | M::EditorFsPrompt(_)
                 | M::EditorDeleteConfirm(_)
+                | M::TerminalPaste(_)
                 | M::TrustRepo(_),
             ) => true,
         }
@@ -137,6 +142,8 @@ impl KagiApp {
                 | M::Update(_)
                 | M::SmartCommit(_)
                 | M::AppNotice(_)
+                | M::AnalyzeHelp(_)
+                | M::About(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)
                 | M::Pull(_)
@@ -173,6 +180,7 @@ impl KagiApp {
                 | M::ConflictAbort(_)
                 | M::EditorDirtyGuard(_)
                 | M::EditorDeleteConfirm(_)
+                | M::TerminalPaste(_)
                 | M::TrustRepo(_),
             ) => false,
         }
@@ -226,7 +234,8 @@ impl KagiApp {
     /// Forget every explicit disclosure choice. Called when a modal opens.
     ///
     /// Per-confirm, not a preference: closing a safety warning must not hide it
-    /// on later confirmations (#454).
+    /// on later confirmations. Clear also retires reveal measurements and motion,
+    /// including a body retained by a closing disclosure in the previous modal.
     pub fn reset_modal_sections(&mut self) {
         self.modal_section_overrides.clear();
     }
@@ -431,6 +440,13 @@ impl KagiApp {
     #[inline]
     pub fn branch_plan_modal(&self) -> Option<&BranchPlanModal> {
         match &self.active_modal {
+            Some(ActiveModal::BranchPlan(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn branch_plan_modal_mut(&mut self) -> Option<&mut BranchPlanModal> {
+        match &mut self.active_modal {
             Some(ActiveModal::BranchPlan(m)) => Some(m),
             _ => None,
         }
@@ -921,7 +937,12 @@ impl KagiApp {
         let mut set_path: Option<String> = None;
         if let Some(m) = self.create_worktree_modal_mut() {
             if m.branch_state.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
+                let initial = m.branch_input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("branch-name")
+                        .default_value(initial)
+                });
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.branch_state = Some(st);
             }

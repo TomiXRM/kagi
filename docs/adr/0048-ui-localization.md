@@ -127,3 +127,80 @@ JA 側の match は網羅的になり、フォールバックは消えた。
 1 呼び出しごとに `Msg` を生やすのは非現実的なため、**操作**を key にした
 `Op` enum(`(en, ja)` ラベル表)を持たせている。ここでも ja ラベルは
 上記方針どおり、git ドメインワードは英語のままにする。
+
+## Amendment — 2026-10-13: unborn Graph guidance (#1371)
+
+Clean unborn repositories display `No commits yet` / `まだ commit がありません`
+and `Add files and create the first commit` / `ファイルを追加して最初の commit を作成してください`.
+The primary `Changes` action keeps its English domain label and opens the existing
+Commit Panel; it does not create files, stage content or write a commit. Dirty
+unborn repositories retain their WIP row. The icon/title/hint/action layout reuses
+the Terminal empty-state block (#1273), with theme tokens and scaled icon geometry.
+The guidance is local-only: SSH remote views remain read-only and retain their
+existing empty list, without a Changes action that requires a local repository.
+Visual review fixes the shared block's hierarchy as a pane-centered vertical
+icon/title/hint/action stack (`flex_col`, `items_center`, `justify_center`).
+Native geometry assertions pin vertical order, both center axes and containment
+for Graph and Terminal, including JA at 167% zoom.
+
+## Amendment — 2026-10-13: Relative ages (#1454)
+
+Relative-time explanation words are not Git domain terms. The parameterized
+`i18n::time::relative_age` helper owns EN/JA compact, short and fully spoken
+accessibility wording. All forms use the same count/unit calculation in `time`;
+future timestamps still clamp to “now”, and minute/hour/day/30-day month/365-day
+year boundaries are unchanged. Japanese uses 「たった今」「N分前」 etc.
+Graph reads retain author timestamps instead of localized date strings; language
+switches render the retained model without a repository reload. PR row AX names
+use full unit descriptions, while their visible column remains compact.
+The fixed-width Graph column uses 「今」「N分」「N時間」「N日」「Nか月」「N年」
+without 「前」; full Compact/AX wording retains it. Graph rendering samples its
+reference instant once per list render and passes it to both visible and AX
+formatters. The short text is moved directly into SharedString, without cloning.
+Native font shaping checks the actual drawn 12-month label against the fixed
+column at Japanese high zoom.
+
+
+## Amendment — 2026-10-13: English Git terminology throughout JA (#1465)
+
+- Git terms are English in **all** Japanese UI strings: `Msg`, plan templates,
+  menus, toolbar captions, tooltips, accessibility names, notifications and
+  modal explanations. This includes commit / branch / remote / merge / stash /
+  worktree / working tree / fetch / pull / push / tag / checkout / rebase /
+  cherry-pick / revert / amend / squash / stage / index / HEAD / upstream /
+  conflict / submodule / committer. English translations remain byte-identical.
+- Verbs retain Japanese grammar and ASCII spacing: 「commit する」
+  「stash する」「未 commit の変更」「stage 済み」. Newly translated toolbar
+  captions use `Stash`, `Branch`, `Pop`; existing English labels retain their
+  established case and number (`worktree` / `stash` sidebar headings and
+  `stash apply` / `stash push` operation labels). `Commit Panel` stays English.
+- `worktree` names a checkout (including a linked checkout), while
+  `working tree` describes on-disk files, dirty status and preservation versus
+  index/ref-only changes. Replay's warning about leaving a checkout behind
+  therefore uses `worktree`; dirty/create/stash/restore guidance uses
+  `working tree` even when rendered for a linked checkout.
+- 「取り込み」is interpreted by operation, never blindly changed to `fetch`:
+  squash-merged branch advice says 「変更は merge 先に反映済み」; amend modes
+  say 「stage 済みの変更を含める」. Neither performs a fetch or pull.
+- Git file conflicts use `conflict`; ref namespace 「競合」 remains ordinary
+  name-collision prose. SSH 「リモート」 uses `remote`, but repository-owned
+  names/messages, historical user quotations and the colour 「パープル」
+  remain untouched.
+- `check-ja-git-terms` runs in CI with positive/negative selftest samples and
+  rejects translated Git vocabulary inside JA localization string literals.
+  Comments, EN arms, negative assertions and ordinary namespace collisions
+  are not translation candidates.
+- Review preserves already-English captions rather than changing casing during
+  terminology migration. `コンフリクト` is also forbidden; ordinary compounds
+  such as 「マージン」「ステージマネージャ」「プルダウン」
+  「リモートデスクトップ」 are not Git translations and stay permissible.
+
+## Amendment — 2026-10-14: native Git headings and source coverage (#1501)
+
+- Native `Branch` and `Commit` menu headings retain English in JA; ordinary
+  File/Edit/View headings remain localized. Canonical section identities,
+  command actions and the AppKit Window-menu role do not change.
+- The JA Git-term invariant scans all application and crate Rust sources, not
+  only the i18n directory. It recognizes helpers that return EN unchanged as
+  their first statement and render JA in the remaining body, with a positive
+  early-return selftest sample. EN return expressions remain outside selection.

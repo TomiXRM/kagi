@@ -7,11 +7,11 @@ use crate::i18n::Msg;
 
 /// JA text for `Msg::AdviceSnapshotSavepointFirst`.
 pub(crate) const ADVICE_SNAPSHOT_SAVEPOINT_FIRST: &str =
-    "先に現在の作業ツリーを savepoint として保存するので、この復元も後から取り消せます。";
+    "先に現在の working tree を savepoint として保存するので、この復元も後から取り消せます。";
 
 /// JA text for `Msg::AdviceSnapshotRewritesWorkingTree`.
 pub(crate) const ADVICE_SNAPSHOT_REWRITES_WORKING_TREE: &str =
-    "作業ツリーをスナップショットの状態に戻します。tracked ファイルは上書き、記録済みファイルは再作成されます。直前に savepoint を保存するので復元できます。";
+    "working tree をスナップショットの状態に戻します。tracked ファイルは上書き、記録済みファイルは再作成されます。直前に savepoint を保存するので復元できます。";
 
 /// Japanese rendering of one snapshot note.
 pub fn note_ja(note: &SnapshotNote) -> String {

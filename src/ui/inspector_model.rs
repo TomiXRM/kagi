@@ -21,8 +21,10 @@
 //! [`DiffCaches::revision`]: super::diff_cache::DiffCaches::revision
 
 use gpui::SharedString;
+use kagi_domain::trailers::{parse_coauthors, parse_trailers, CoAuthor, Trailer};
 use kagi_git::{find_stat, ChangeKind, FileDiffStat, FileStatus};
 use kagi_ui_core::file_tree::{self, TreeRow};
+use std::rc::Rc;
 
 use super::tab_view::TabUiState;
 
@@ -118,17 +120,37 @@ impl InspectorFiles {
     }
 }
 
+/// Complete-message derivations, prepared once for an immutable commit SHA.
+struct InspectorMessage {
+    html: SharedString,
+    links: Vec<SharedString>,
+    coauthors: Vec<CoAuthor>,
+    trailers: Vec<Trailer>,
+}
+
 /// The session's derived Inspector model (lives in `TabUiState`, so it is
 /// owned and dropped with the tab like the caches it is derived from).
 #[derive(Default)]
 pub(super) struct InspectorModel {
     /// `None` inside = the source list is unavailable ("(diff unavailable)").
-    files: Option<(FilesSource, Option<InspectorFiles>)>,
-    /// `(full SHA, escaped HTML of the reflowed message)`.
-    message: Option<(SharedString, SharedString)>,
+    files: Option<(FilesSource, Option<Rc<InspectorFiles>>)>,
+    /// `(full SHA, complete-message display derivations)`.
+    message: Option<(SharedString, InspectorMessage)>,
+    pub(super) keyboard: super::inspector_files::InspectorKeyboard,
+    pub(super) view_focus: super::keyboard_nav::TabFocus,
 }
 
 impl InspectorModel {
+    pub(super) fn yield_focus(
+        &self,
+        fallback: Option<&gpui::FocusHandle>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.keyboard.yield_focus(fallback, window, cx);
+        self.view_focus.yield_focus(fallback, window, cx);
+    }
+
     /// Re-derive the files slot iff it was built for another `source`.
     pub(super) fn sync_files(
         &mut self,
@@ -138,7 +160,8 @@ impl InspectorModel {
         if self.files.as_ref().is_some_and(|(key, _)| *key == source) {
             return;
         }
-        self.files = Some((source, derive()));
+        self.files = Some((source, derive().map(Rc::new)));
+        self.keyboard.invalidate();
     }
 
     /// Re-derive the message HTML iff it was built for another commit.
@@ -151,22 +174,61 @@ impl InspectorModel {
         // fragments flap in and out while resizing. HTML, not Markdown: the
         // selectable `TextView` parses only those two, and Markdown would
         // misread the message (`* fix` as a bullet, `#123` as a heading).
-        let html =
-            kagi_domain::message::message_to_html(&kagi_domain::message::reflow_message(message));
+        let reflowed = kagi_domain::message::reflow_message(message);
+        let ranges = kagi_domain::message::message_url_ranges(&reflowed);
+        let html = kagi_domain::message::message_with_links_to_html(&reflowed, &ranges);
+        let links = ranges
+            .into_iter()
+            .map(|range| SharedString::from(reflowed[range].to_owned()))
+            .collect();
         #[cfg(any(test, feature = "gui-e2e"))]
         DERIVATIONS.with(|d| d.set((d.get().0, d.get().1 + 1)));
-        self.message = Some((sha.clone(), SharedString::from(html)));
+        self.message = Some((
+            sha.clone(),
+            InspectorMessage {
+                html: SharedString::from(html),
+                links,
+                coauthors: parse_coauthors(message),
+                trailers: parse_trailers(message),
+            },
+        ));
     }
 
     /// The synced file list; `None` = unavailable.
     pub(super) fn files(&self) -> Option<&InspectorFiles> {
-        self.files.as_ref().and_then(|(_, files)| files.as_ref())
+        self.files.as_ref().and_then(|(_, files)| files.as_deref())
+    }
+
+    /// Immutable ownership for lazy row processors, without copying file stats.
+    pub(super) fn files_snapshot(&self) -> Option<Rc<InspectorFiles>> {
+        self.files.as_ref().and_then(|(_, files)| files.clone())
+    }
+
+    pub(super) fn message_links(&self) -> &[SharedString] {
+        self.message
+            .as_ref()
+            .map(|(_, message)| message.links.as_slice())
+            .unwrap_or_default()
     }
 
     pub(super) fn message_html(&self) -> SharedString {
         self.message
             .as_ref()
-            .map(|(_, html)| html.clone())
+            .map(|(_, message)| message.html.clone())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn coauthors(&self) -> &[CoAuthor] {
+        self.message
+            .as_ref()
+            .map(|(_, message)| message.coauthors.as_slice())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn trailers(&self) -> &[Trailer] {
+        self.message
+            .as_ref()
+            .map(|(_, message)| message.trailers.as_slice())
             .unwrap_or_default()
     }
 }

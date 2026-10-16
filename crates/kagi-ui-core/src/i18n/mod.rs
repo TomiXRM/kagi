@@ -25,9 +25,28 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::settings::{read_setting, write_setting};
 
+pub fn settings_zoom_action(increase: bool, value: &str) -> String {
+    match (lang(), increase) {
+        (Lang::En, false) => format!("Decrease UI zoom ({value})"),
+        (Lang::En, true) => format!("Increase UI zoom ({value})"),
+        (Lang::Ja, false) => format!("UI ズームを下げる ({value})"),
+        (Lang::Ja, true) => format!("UI ズームを上げる ({value})"),
+    }
+}
+
+pub fn settings_zoom_value(value: &str) -> String {
+    match lang() {
+        Lang::En => format!("UI zoom {value}"),
+        Lang::Ja => format!("UI ズーム {value}"),
+    }
+}
+
 // Lang + active-language atomic
+pub mod activity;
+pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
+mod conflict;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
@@ -35,15 +54,38 @@ pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;
 pub mod queue;
+pub mod status_chips;
+pub mod time;
 pub use op::{
-    auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
-    auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
-    op_refused, oplog_write_failed, plan_not_shown_retry, pull_failed_stash_restored,
-    rebase_repository_settings_may_block_start, recorded_outcome_notice,
-    terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
+    auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
+    auto_stash_restore_failed, op_failed, op_plan_failed, op_refused, oplog_write_failed,
+    plan_not_shown_retry, pull_failed_stash_restored, rebase_repository_settings_may_block_start,
+    recorded_outcome_notice, terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
+
+/// Accessibility action for a document tab's localized display name.
+pub fn tab_close_name(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Close {name}"),
+        Lang::Ja => format!("{name} を閉じる"),
+    }
+}
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
+
+pub fn terminal_exited_title(code: u32) -> String {
+    match lang() {
+        Lang::En => format!("{} (code {code})", Msg::TerminalExitedTitle.t_for(Lang::En)),
+        Lang::Ja => format!(
+            "{}（終了コード {code}）",
+            Msg::TerminalExitedTitle.t_for(Lang::Ja)
+        ),
+    }
+}
+
+pub fn terminal_failed_hint(reason: &str) -> String {
+    format!("{}\n{reason}", Msg::TerminalRestartHint.t())
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,
@@ -167,7 +209,62 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    AboutTitle,
+    InspectorOpenLink,
+    InspectorCopyLink,
+    A11yCommandPaletteQuery,
+    A11yCommitSummary,
+    A11yCommitDescription,
+    A11yConflictResult,
+    A11yIssueTitle,
+    A11yIssueBody,
+    A11yCommentBody,
+    A11yHomeFilter,
+    A11yListTitleFilter,
+    A11ySidebarFilter,
+    A11ySidebarClearSearch,
+    SidebarGroupFilterExpanded,
+    A11yPrReviewersFilter,
+    A11yPrAssigneesFilter,
+    A11yPrLabelsFilter,
+    A11yStashMessage,
+    A11yAnalyzeIgnorePatterns,
+    A11yEditorFileContents,
+    AboutDescription,
+    MenuHideSidebar,
+    MenuShowSidebar,
+    MenuEnterFullScreen,
+    MenuExitFullScreen,
+    MenuPreviousTab,
+    MenuNextTab,
+    MenuBringAllToFront,
+    NoOtherTabs,
+    MenuHideApp,
+    MenuHideOthers,
+    MenuShowAll,
+    MenuServices,
+    ShortcutsRemapHelp,
+    MenuUndo,
+    MenuRedo,
+    MenuCut,
+    MenuCopy,
+    MenuPaste,
+    MenuSelectAll,
+    MenuSave,
+    MenuOpenRecent,
+    MenuClearRecent,
+    MenuFind,
+    MenuFindOpen,
+    MenuWorkspaceGraph,
+    MenuWorkspacePrs,
+    MenuWorkspaceEditor,
+    NothingToSave,
     AppNoticeDismiss,
+    ToastDismiss,
+    ToastOpenRepository,
+    ToastMore,
+    ToastMoreOne,
+    ToastCollapse,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -201,13 +298,24 @@ pub enum Msg {
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
-    NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
-    /// ADR-0124: diff-header toggle tooltip → switch to side-by-side.
+    /// ADR-0124: diff-header selected mode segments.
     DiffViewSplit,
-    /// ADR-0124: diff-header toggle tooltip → switch back to unified.
     DiffViewUnified,
+    /// Line-ending-only replacement captions; existing sigils/columns identify sides.
+    DiffLineEndingLf,
+    DiffLineEndingCrLf,
+    DiffLineEndingNone,
+    DiffBinaryNoText,
+    DiffImageAdded,
+    DiffImageModified,
+    DiffImageDeleted,
+    DiffImageBefore,
+    DiffImageAfter,
+    DiffImagePreviewUnavailable,
+    ImageFileSize,
+    ImageDimensions,
     /// `kagi_ui_core::commit_header::render_commit_header`'s placeholder
     /// before any commit is selected — shared by the Editor Workspace's
     /// History pane and File History's detail pane.
@@ -223,9 +331,9 @@ pub enum Msg {
     AgentReviewedTooltip,
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
-    CloneUnimplemented,
     MultiWindowUnsupported,
     ResetUnimplemented,
+    FinishDialogFirst,
 
     // ── Busy footers (op in flight) ─────────────────────────────────
     BusyCheckout,
@@ -245,9 +353,6 @@ pub enum Msg {
     BusyDeleteBranch,
     BusyDeleteBranchPlan,
     BusyDiscard,
-    /// Footer label when a discard mutated the working tree but did not finish
-    /// (issue #281). The backup blob SHAs are in the oplog entry.
-    DiscardPartial,
     BusyCommit,
     BusyCreateWorktree,
     /// Footer label while a worktree removal runs off the main thread (issue
@@ -309,6 +414,19 @@ pub enum Msg {
     TerminalAutoLockPendingRelease,
     /// An auto lock/unlock offer can no longer be attributed to its owner.
     TerminalAutoLockStaleOwner,
+    TerminalNotStartedTitle,
+    TerminalExitedTitle,
+    TerminalFailedTitle,
+    TerminalNotStartedHint,
+    TerminalRestartHint,
+    TerminalRestart,
+    TerminalPasteTitle,
+    TerminalPasteBody,
+    TerminalPasteControlBody,
+    TerminalPasteConfirm,
+    TerminalFocusDescription,
+    UnbornEmptyTitle,
+    UnbornEmptyHint,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -317,6 +435,10 @@ pub enum Msg {
     // driven by `busy_op` with a spinning sync icon — now signals progress.)
     AlreadyUpToDatePull,
     AlreadyUpToDatePush,
+    PullUpstreamChangedDuringFetch,
+    PullAutoStashIdentityChanged,
+    PullAutoStashPlanStale,
+    PullAutoStashRestoreChanged,
 
     // ── Toolbar guard reasons (domain words kept English) ───────────
     PullBusy,
@@ -354,6 +476,7 @@ pub enum Msg {
     NoLocalChanges,
     DirtyStashFirst,
     AmendNeedMessageOrStaged,
+    AmendStatusLoading,
 
     // ── Context-menu disabled reasons ───────────────────────────────
     CmDetachedHead,
@@ -377,11 +500,18 @@ pub enum Msg {
     BcmDetachedHead,
     BcmCheckedOutElsewhere,
     BcmConflictMode,
-    BcmNothingToPull,
     BcmNothingToPush,
+    BcmIntegrateMenu,
+    BcmAdvancedMenu,
+    BcmWorktreeMenu,
 
     // ── Empty states ────────────────────────────────────────────────
     NoLocalBranches,
+    BranchPickerCheckout,
+    BranchPickerDelete,
+    BranchPickerRename,
+    A11yIssueOpenRow,
+    A11yRecentOpenRow,
     NoOperationsYet,
     /// Operation Log row: tooltip on the per-row copy button (issue #468).
     OpLogCopyEntry,
@@ -398,6 +528,8 @@ pub enum Msg {
     CommandPalettePlaceholder,
     /// Shown when the query matches no command.
     CommandPaletteNoResults,
+    /// Empty-query palette's command section.
+    CommandPaletteActions,
 
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
@@ -405,9 +537,17 @@ pub enum Msg {
     SnapshotCreated,
     /// Toast prefix when a manual snapshot fails (ADR-0154 / #335).
     SnapshotFailed,
+    /// Fetch authentication failure; `{}` is the sanitized remote identity.
+    FetchAuthenticationRequired,
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
+    /// Computed plan file preview; `{}` is the full count.
+    ModalFilesToChange,
+    /// Bounded preview remainder; `{}` is the omitted count.
+    ModalFilesMore,
+    /// Preview producer reached its cap; the true omitted count is unknown.
+    ModalFilesMoreUnknown,
 
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
@@ -448,7 +588,6 @@ pub enum Msg {
     // ── #321: binary / symlink / submodule side viewer ──
     ConflictSymlinkTarget,
     ConflictOpenBothExternal,
-    ConflictBinaryCompareHint,
     ConflictImageTooLarge,
     ConflictSubmoduleCommit,
     // ── W32-CONFLICT-EDITOR: hunk-level Conflict Editor ──────
@@ -536,8 +675,17 @@ pub enum Msg {
     CommitTitle,
     /// Commit panel: body input placeholder.
     CommitBody,
+    /// Compact WIP row's authoring affordance and pinned composer.
+    CompactCommitAffordance,
+    CompactCommitComposer,
+    CompactCommitClose,
+    /// Commit draft persistence failure, followed by the I/O detail.
+    CommitDraftSaveFailed,
+    CommitDraftSaveRetry,
     /// Commit panel: tooltip on the sparkles (AI message) icon.
     GenerateMessage,
+    /// Smart Commit capabilities are still being discovered in the background.
+    SmartDetecting,
     /// Commit panel: tooltip on the person+ (co-author) icon.
     AddCoAuthor,
     /// Commit panel: tooltip on the amend icon.
@@ -546,10 +694,15 @@ pub enum Msg {
     NoRecentAuthors,
     /// Conflict editor: pane-header pill that takes the whole file's side.
     EditorUseAll,
+    EditorSelectionNone,
+    EditorSelectionPartial,
+    EditorSelectionAll,
     /// Inspector file context menu: open the file in the Editor Workspace.
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
     MenuShowFileHistory,
+    A11yInspectorFiles,
+    A11yFileHistory,
     /// Context menus: open the file in the user's external editor.
     OpenInExternalEditor,
     DiffStageHunk,
@@ -591,6 +744,12 @@ pub enum Msg {
     PrSectionAssigned,
     /// Swimlane pane (ADR-0200).
     PrLaneTitle,
+    PrLaneLoaded,
+    PrLaneCommit,
+    PrLaneContext,
+    PrNavigator,
+    PrSwimlane,
+    NoPrOpen,
     /// Detail rail facts (ADR-0200).
     PrRailReviewers,
     PrRailAssignees,
@@ -646,6 +805,7 @@ pub enum Msg {
     HomeTitle,
     HomeRecent,
     HomeNoRecent,
+    HomeRemoveRecent,
     HomeOpenFolder,
     HomeConnectRemote,
     HomeGithubMine,
@@ -662,7 +822,10 @@ pub enum Msg {
     /// `{}` = why the read failed.
     HomeGithubRefreshFailed,
     HomeGithubFailedHint,
-    HomeGithubEmpty,
+    /// `{owner}` = section heading; `{host}` = host this list was read from.
+    HomeGithubSectionEmpty,
+    /// `{host}` = host the user's successfully empty list was read from.
+    HomeGithubMineEmpty,
     HomeGithubNoMatch,
     /// `{}` = how many were read.
     HomeGithubTruncated,
@@ -700,6 +863,8 @@ pub enum Msg {
     /// `{}` = the folder that will be created.
     CloneWillCreate,
     CloneChooseFolder,
+    CloneChangeFolder,
+    CloneCopyLocation,
     CloneConfirm,
     CloneBusy,
     /// `{}` = elapsed time, `m:ss`.
@@ -707,6 +872,9 @@ pub enum Msg {
     /// `{}` = the host it downloads from.
     CloneRunningHint,
     CloneHide,
+    /// `{}` = the full source of the single running clone.
+    CloneHiddenRunning,
+    CloneShowProgress,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -795,6 +963,10 @@ pub enum Msg {
     ListSortDescending,
     ListFilterClear,
     ListLoadMore,
+    PrLoadingMore,
+    /// `{}` = the number of locally loaded rows, with `+` when unfinished.
+    ListLoadedCount,
+    ListMatchesCount,
     IssuesEmpty,
     IssuesFilterEmpty,
     IssuesViewerUnknown,
@@ -830,14 +1002,46 @@ pub enum Msg {
     //    domain word "graph" stays English per ADR-0048) ──────────────────
     /// Settings window title.
     SettingsTitle,
+    /// Settings pane containing appearance and general application preferences.
+    SettingsGeneral,
+    /// The native settings host could not be opened.
+    SettingsWindowFailed,
     /// Settings sidebar: Appearance page title.
     SettingsAppearance,
+    /// Semantic grouped-form headings (#1200).
+    SettingsGraph,
+    SettingsNetwork,
+    SettingsBehaviour,
+    /// Compact visible supporting text; full guidance remains in help.
+    SettingsLaneCompactSummary,
+    SettingsTerminalAutoLockSummary,
+    SettingsCustomThemesSummary,
+    SettingsAnalyzeIgnoreSummary,
+    SettingsGraphCopySummary,
+    SettingsSmartProviderSummary,
+    SettingsAnalyze,
+    SettingsAutoFetchSummary,
+    SettingsReduceMotionSummary,
+    SettingsSmartEnableSummary,
     /// Settings sidebar: Language page title.
     SettingsLanguage,
     /// Appearance → Theme row title.
     SettingsTheme,
     /// Appearance → Theme row description.
     SettingsThemeDesc,
+    /// Apple theme chrome accent preference and detected macOS colour.
+    SettingsAccent,
+    SettingsAccentSystem,
+    SettingsAccentTheme,
+    SettingsAccentGraphite,
+    SettingsAccentRed,
+    SettingsAccentOrange,
+    SettingsAccentYellow,
+    SettingsAccentGreen,
+    SettingsAccentBlue,
+    SettingsAccentPurple,
+    SettingsAccentPink,
+    SettingsAccentDefault,
     /// Appearance → Custom themes row title (#922).
     SettingsCustomThemes,
     /// Appearance → Custom themes row description (#922).
@@ -870,6 +1074,32 @@ pub enum Msg {
     SettingsGraphCopy,
     /// Appearance → Graph Cmd+C copy-target row description.
     SettingsGraphCopyDesc,
+    SettingsToolbarDisplay,
+    SettingsToolbarDisplayDesc,
+    ToolbarIconOnly,
+    ToolbarIconAndText,
+    ToolbarBranch,
+    ToolbarStash,
+    ToolbarPop,
+    ToolbarEditor,
+    ToolbarAnalyze,
+    ToolbarTerminal,
+    BottomTabOperationLog,
+    BottomTabActivity,
+    BottomTabChanges,
+    ActivityPeriod,
+    ActivityChart,
+    ActivityDay,
+    ActivityWeek,
+    ActivityMonth,
+    ActivityYear,
+    ActivityAll,
+    StatusShowTerminal,
+    StatusHideTerminal,
+    StatusShowOperationLog,
+    StatusHideOperationLog,
+    ToolbarOverflow,
+    TabOverflow,
     /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
@@ -892,6 +1122,12 @@ pub enum Msg {
     SettingsAnalyzeIgnoreSave,
     /// Analyze-ignore → Reset-to-defaults button.
     SettingsAnalyzeIgnoreReset,
+    SettingsAnalyzeIgnoreUnsaved,
+    SettingsAnalyzeIgnoreSaved,
+    SettingsAnalyzeIgnoreFailed,
+    SettingsAnalyzeIgnoreClean,
+    SettingsAnalyzeResetTitle,
+    SettingsAnalyzeResetDetail,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -966,9 +1202,16 @@ pub enum Msg {
     AdviceCommonDirtyRollbackHint,
     AdviceCommonPartialCloneObjectMissing,
     AdviceCommonSparseExcludedPath,
+    AdviceCommonExternalFilter,
+    AdviceCommonExternalFilterSync,
+    AdviceCommonSparseCheckoutUnsupported,
+    AdviceCommonSubmoduleCheckoutUnsupported,
     AdviceCommonHunkChanged,
     AdviceCommonMergeConflictWarning,
     AdviceCommitNothingStaged,
+    AdviceCommitStagedContentChanged,
+    AdviceCommitIdentityUnavailable,
+    AdviceGitIdentityUnavailable,
     AdviceCommitConflictedFiles,
     AdviceCommitLeftoverNotIncluded,
     AdviceDiscardTargetConflicted,
@@ -1024,6 +1267,8 @@ pub enum Msg {
     AdviceConflictsPlanChanged,
     AdviceConflictsRepositoryIdentityChanged,
     AdviceConflictsConflictGone,
+    AdviceConflictsAbortStartUnavailable,
+    AdviceConflictsAbortHeadMoved,
     AdviceConflictsResolutionMarkers,
     AdviceConflictsUnresolvedFiles,
     AdviceConflictsMarkerResidue,
@@ -1036,6 +1281,11 @@ pub enum Msg {
     AdviceConflictsSkipDiscardsStep,
     AdviceBranchRenameRefOnlyDirty,
     AdviceBranchRenameRemoteNotRenamed,
+    AdviceBranchRenameConfig,
+    AdviceBranchRenameConfigChanged,
+    AdviceBranchRenameConfigExternal,
+    AdviceBranchRenameConfigConditional,
+    AdviceBranchRenameConfigHeader,
     AdviceBranchDeleteCurrentBranch,
     AdviceBranchDeleteBranchCheckedOut,
     AdviceBranchDeleteBranchInLockedWorktree,
@@ -1094,6 +1344,7 @@ pub enum Msg {
     AdvicePullRemoteDiverged,
     AdvicePullRemoteDirty,
     AdvicePullRemotePreviewStale,
+    AdviceStashHeadRequired,
     AdviceStashUntrackedIncluded,
     AdviceStashDirtyBlocksApply,
     AdviceStashConflictUnknownFiles,
@@ -1197,6 +1448,17 @@ pub enum Msg {
     PlanMerge,
     /// Confirm button on the rebase modal, `{}` = branch.
     PlanRebaseOnto,
+    PlanRebaseCandidates,
+    PlanRebaseMore,
+    PlanRebaseResultUnknown,
+    PlanTagPublishScope,
+    PlanTagName,
+    PlanTagKind,
+    PlanTagObject,
+    PlanTagTarget,
+    PlanTagRemote,
+    PlanTagPushDestination,
+    PlanTagLocalUnchanged,
     PlanReplayOnto,
     PlanReplayOntoArmed,
     ThemeColorVision,
@@ -1215,6 +1477,9 @@ pub enum Msg {
     A11ySidebarCurrentBranch,
     A11ySidebarRemoteBranch,
     A11ySidebarTag,
+    SidebarTagCommitNotLoaded,
+    SidebarTagHiddenBySolo,
+    A11ySidebarStash,
     A11ySidebarWorktree,
     A11ySidebarCurrentSuffix,
     A11ySidebarLockedSuffix,
@@ -1223,6 +1488,19 @@ pub enum Msg {
     A11yFileTree,
     A11yUnstagedTree,
     A11yStagedTree,
+    CommitPanelTitle,
+    CommitPanelUnstaged,
+    CommitPanelStaged,
+    CommitPanelList,
+    CommitPanelTree,
+    CommitPanelStageAll,
+    CommitPanelUnstageAll,
+    CommitPanelDiscardAll,
+    CommitPanelNoStageTargets,
+    CommitPanelNothingUnstaged,
+    CommitPanelConflict,
+    CommitPanelStage,
+    CommitPanelUnstage,
     A11yFileTreeDir,
     A11yFileTreeFile,
     A11yFileTreeUnsaved,
@@ -1240,6 +1518,7 @@ pub enum Msg {
     PlanAmendConfirmArmed,
     PlanDiscardConfirm,
     PlanDiscardConfirmArmed,
+    DiscardUnsafePath,
     PlanSyncToRemote,
     PlanSyncToRemoteArmed,
     /// Delete-remote-branch confirm, and its armed second stage.
@@ -1271,6 +1550,7 @@ pub enum Msg {
     InputStashAfter,
     /// The status chip of a plan state with no working-tree changes.
     PlanStateClean,
+    PlanStateUntrackedRetained,
     InputStashUntrackedWarning,
     InputUpstream,
     InputCheckoutAfterCreate,
@@ -1279,6 +1559,7 @@ pub enum Msg {
     InputSetUpstream,
     InputRename,
     InputPlanPending,
+    InputRenameEnterNewName,
     CleanupEmpty,
     /// Branch Cleanup: shown while the background scan is still running.
     CleanupScanning,
@@ -1339,6 +1620,10 @@ pub enum Msg {
     EcoResetView,
     /// Help overlay title.
     EcoHelpTitle,
+    EcoMode,
+    EcoPeriod,
+    EcoView,
+    EcoExportFormat,
 
     // ── Editor Workspace (T-WS-EDITOR-001) ──────────────────────
     /// Left/center/right placeholder while the working-tree file list (or a
@@ -1365,6 +1650,8 @@ pub enum Msg {
     /// (and weren't flagged binary by the NUL-byte probe; T-WS-EDITOR-005
     /// finding #6).
     EditorWorkspaceUndecodable,
+    /// File History unavailable pre-rename path; `{path}` is its current name.
+    FileHistoryPathRenamed,
 
     // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──────
     /// Banner shown above a dirty buffer when the FS watcher sees the file
@@ -1380,6 +1667,12 @@ pub enum Msg {
     EditorWorkspaceSaveBlocked,
     /// Unsaved-changes confirmation title (file/source switch, close).
     EditorWorkspaceUnsavedTitle,
+    EditorHostUnsavedTitle,
+    EditorHostUnsavedCount,
+    EditorHostSaveAll,
+    EditorHostSaveWaiting,
+    EditorHostRecoveryRequired,
+    EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
     /// Unsaved-changes confirmation: cancel button (stay on the buffer).
@@ -1397,6 +1690,9 @@ pub enum Msg {
     TrustRepoBody,
     /// Trust-confirmation: the "trust this repository" confirm button.
     TrustRepoConfirm,
+    TrustRepoSaveFailed,
+    TrustRepoReopenFailed,
+    TrustRepoRetry,
 
     // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ─
     /// Right-pane tab: the open file's WIP hunks (default, unchanged v1
@@ -1413,9 +1709,15 @@ pub enum Msg {
     /// Right-pane History tab placeholder when the file has no commit
     /// history.
     EditorHistoryEmpty,
+    EditorHistoryFailed,
+    EditorHistoryRetry,
     /// Snapshot tab placeholder when the load finished but found nothing
     /// (e.g. the path didn't exist yet at that commit).
     EditorSnapshotUnavailable,
+    /// Historical content is selectable, never editable.
+    EditorSnapshotReadOnly,
+    /// Return from a historical revision to the live buffer.
+    EditorOpenCurrent,
 
     // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
     /// File/dir row: rename.
@@ -1434,6 +1736,15 @@ pub enum Msg {
     EditorTreePreviewMarkdown,
     EditorWorkspacePreviewShow,
     EditorWorkspacePreviewEdit,
+    EditorFindPrevious,
+    EditorFindNext,
+    EditorFindReplace,
+    EditorFindReplaceAll,
+    EditorFindClose,
+    EditorFindCase,
+    EditorFindReplaceMode,
+    EditorFindField,
+    EditorFindReplacementField,
     EditorWorkspaceMermaidRendering,
     EditorWorkspaceMermaidNeedsCli,
     EditorWorkspaceMermaidFailed,
@@ -1505,6 +1816,8 @@ pub enum Msg {
     /// issue #350: blame legend tooltip for the `?` marker on an unblamable
     /// (uncommitted) line.
     BlameUnblamableMarkTip,
+    /// Live buffer text with no unchanged HEAD line attribution.
+    BlameUncommitted,
     /// issue #350: the Editor Workspace's inline-blame toggle chip. "Blame"
     /// is a Git term of art (ADR-0048) — verbatim in both languages.
     EditorWorkspaceBlame,
@@ -1525,8 +1838,15 @@ pub enum Msg {
     RemoteDetached,
     RemoteNoCommits,
     RemoteOpenRepository,
+    RepositoryPickerOpen,
+    PathPickerFailed,
     RemoteOpeningRepository,
     RemoteClose,
+    RemoteDirectoryList,
+    RemoteParentDirectory,
+    RemoteDirectoryRow,
+    RemoteFileRow,
+    RemoteDirectoryEmpty,
     SmartConsentTitle,
     SmartConsentIntro,
     SmartConsentEnable,
@@ -1536,12 +1856,23 @@ pub enum Msg {
     SmartConsentSecretsWarning,
     SmartModelTitle,
     SmartModelRemembered,
+    SmartRuleBasedInserted,
+    SmartNoModelsInserted,
+    SmartGeneratingLocal,
+    SmartGeneratingProvider,
+    SmartGeneratedLocal,
+    SmartGenerationFallback,
+    SmartGenerationFailed,
     UpdateAvailableTitle,
     UpdateSkipVersion,
     UpdateReleasePage,
     UpdateLater,
+    UpdateHideContinuing,
     UpdateInstalling,
     UpdateInstallingReason,
+    UpdateRestartReady,
+    UpdateRestart,
+    UpdateRestartWaiting,
     UpdateFailed,
     UpdateNow,
     PrFieldsNoChanges,
@@ -1595,6 +1926,14 @@ pub fn worktree_removal_verdict_text(
 }
 
 impl Msg {
+    /// Operation-inclusive elapsed status, formatted without an intermediate string.
+    pub fn clone_running_status(seconds: u64) -> String {
+        match lang() {
+            Lang::En => format!("Cloning… {seconds} s"),
+            Lang::Ja => format!("clone 中… {seconds} 秒"),
+        }
+    }
+
     /// Resolve this message to a `&'static str` in the active [`lang()`].
     ///
     /// Domain words (Pull / Push / Branch / Stash / Pop / Undo / amend /
@@ -1605,25 +1944,123 @@ impl Msg {
     }
 
     pub(crate) fn t_for(self, language: Lang) -> &'static str {
-        use kagi_domain::advice_template_en as advice_en;
+        use kagi_domain::advice_template_display_en as advice_en;
         use kagi_domain::plan_note::{push::PushPunct, UntrackedCtx};
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, InspectorOpenLink) => "Open Link",
+            (Ja, InspectorOpenLink) => "リンクを開く",
+            (En, InspectorCopyLink) => "Copy Link",
+            (Ja, InspectorCopyLink) => "リンクをコピー",
+            (En, A11yCommandPaletteQuery) => "Command search",
+            (Ja, A11yCommandPaletteQuery) => "コマンド検索",
+            (En, A11yCommitSummary) => "Commit summary",
+            (Ja, A11yCommitSummary) => "commit の概要",
+            (En, A11yCommitDescription) => "Commit description",
+            (Ja, A11yCommitDescription) => "commit の説明",
+            (En, A11yConflictResult) => "Conflict resolution",
+            (Ja, A11yConflictResult) => "conflict の解決結果",
+            (En, A11yIssueTitle) => "Issue title",
+            (Ja, A11yIssueTitle) => "Issue のタイトル",
+            (En, A11yIssueBody) => "Issue description",
+            (Ja, A11yIssueBody) => "Issue の説明",
+            (En, A11yCommentBody) => "Comment",
+            (Ja, A11yCommentBody) => "コメント",
+            (En, A11yHomeFilter) => "Search repositories",
+            (Ja, A11yHomeFilter) => "リポジトリを検索",
+            (En, A11yListTitleFilter) => "Filter by title",
+            (Ja, A11yListTitleFilter) => "タイトルで絞り込み",
+            (En, A11ySidebarFilter) => "Filter sidebar",
+            (Ja, A11ySidebarFilter) => "サイドバーを絞り込み",
+            (En, A11ySidebarClearSearch) => "Clear search",
+            (Ja, A11ySidebarClearSearch) => "検索内容を消去",
+            (En, SidebarGroupFilterExpanded) => "Groups stay expanded while filtering. Clear the filter to collapse a group.",
+            (Ja, SidebarGroupFilterExpanded) => "絞り込み中はグループを展開したままにします。グループを折りたたむには絞り込みを解除してください。",
+            (En, A11yPrReviewersFilter) => "Filter pull request reviewers",
+            (Ja, A11yPrReviewersFilter) => "pull request のレビュー担当者を絞り込み",
+            (En, A11yPrAssigneesFilter) => "Filter pull request assignees",
+            (Ja, A11yPrAssigneesFilter) => "pull request の担当者を絞り込み",
+            (En, A11yPrLabelsFilter) => "Filter pull request labels",
+            (Ja, A11yPrLabelsFilter) => "pull request のラベルを絞り込み",
+            (En, A11yStashMessage) => "Stash message",
+            (Ja, A11yStashMessage) => "stash メッセージ",
+            (En, A11yAnalyzeIgnorePatterns) => "Analyze ignore patterns",
+            (Ja, A11yAnalyzeIgnorePatterns) => "Analyze の除外パターン",
+            (En, A11yEditorFileContents) => "File contents",
+            (Ja, A11yEditorFileContents) => "ファイルの内容",
+            (En, AboutTitle) => "About Kagi",
+            (Ja, AboutTitle) => "Kagiについて",
+            (En, AboutDescription) => "A safety-first Git GUI client",
+            (Ja, AboutDescription) => "安全を優先する Git GUI クライアント",
+            (En, MenuHideSidebar) => "Hide Sidebar",
+            (Ja, MenuHideSidebar) => "サイドバーを非表示",
+            (En, MenuShowSidebar) => "Show Sidebar",
+            (Ja, MenuShowSidebar) => "サイドバーを表示",
+            (En, MenuEnterFullScreen) => "Enter Full Screen",
+            (Ja, MenuEnterFullScreen) => "フルスクリーンにする",
+            (En, MenuExitFullScreen) => "Exit Full Screen",
+            (Ja, MenuExitFullScreen) => "フルスクリーンを解除",
+            (En, MenuPreviousTab) => "Show Previous Tab",
+            (Ja, MenuPreviousTab) => "前のタブを表示",
+            (En, MenuNextTab) => "Show Next Tab",
+            (Ja, MenuNextTab) => "次のタブを表示",
+            (En, MenuBringAllToFront) => "Bring All to Front",
+            (Ja, MenuBringAllToFront) => "すべてを手前に移動",
+            (En, NoOtherTabs) => "No other tabs",
+            (Ja, NoOtherTabs) => "ほかのタブがありません",
+            (En, MenuHideApp) => "Hide Kagi",
+            (Ja, MenuHideApp) => "Kagiを隠す",
+            (En, MenuHideOthers) => "Hide Others",
+            (Ja, MenuHideOthers) => "ほかを隠す",
+            (En, MenuShowAll) => "Show All",
+            (Ja, MenuShowAll) => "すべてを表示",
+            (En, MenuServices) => "Services",
+            (Ja, MenuServices) => "サービス",
+            (En, MenuUndo) => "Undo",
+            (Ja, MenuUndo) => "取り消す",
+            (En, MenuRedo) => "Redo",
+            (Ja, MenuRedo) => "やり直す",
+            (En, MenuCut) => "Cut",
+            (Ja, MenuCut) => "カット",
+            (En, MenuCopy) => "Copy",
+            (Ja, MenuCopy) => "コピー",
+            (En, MenuPaste) => "Paste",
+            (Ja, MenuPaste) => "ペースト",
+            (En, MenuSelectAll) => "Select All",
+            (Ja, MenuSelectAll) => "すべてを選択",
+            (En, MenuSave) => "Save",
+            (Ja, MenuSave) => "保存",
+            (En, MenuOpenRecent) => "Open Recent",
+            (Ja, MenuOpenRecent) => "最近使った項目を開く",
+            (En, MenuClearRecent) => "Clear Menu",
+            (Ja, MenuClearRecent) => "メニューを消去",
+            (En, MenuFind) => "Find",
+            (Ja, MenuFind) => "検索",
+            (En, MenuFindOpen) => "Find…",
+            (Ja, MenuFindOpen) => "検索…",
+            (En, MenuWorkspaceGraph) => "Graph",
+            (Ja, MenuWorkspaceGraph) => "グラフ",
+            (En, MenuWorkspacePrs) => "Pull Requests",
+            (Ja, MenuWorkspacePrs) => "Pull Request",
+            (En, MenuWorkspaceEditor) => "Editor",
+            (Ja, MenuWorkspaceEditor) => "エディター",
+            (En, NothingToSave) => "No editable unsaved file",
+            (Ja, NothingToSave) => "保存できる未保存のファイルがありません",
             (language, OplogPanel(key)) => key.t_for(language),
-            (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
-            (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
+            (En, RestoreRepoSessionUnavailable) => "The repository is no longer open. Reopen it and try again.",
+            (Ja, RestoreRepoSessionUnavailable) => "リポジトリが開かれていません。開き直してからやり直してください。",
             (En, RestorePlanRowsInvalidSeeLog) => {
-                "Restore plan ref rows are invalid; see the Operation Log"
+                "Can't restore: this Operation Log entry is damaged. See the Operation Log for details."
             }
             (Ja, RestorePlanRowsInvalidSeeLog) => {
-                "復元計画の ref 行が不正です。詳細は Operation Log を確認してください"
+                "復元できません: この操作記録が破損しています。詳細は操作ログを確認してください。"
             }
             (En, RestorePlanRowsInvalidNoRepository) => {
-                "Restore plan ref rows are invalid; no repository is open"
+                "Can't restore: this Operation Log entry is damaged. No repository is open."
             }
             (Ja, RestorePlanRowsInvalidNoRepository) => {
-                "復元計画の ref 行が不正です。リポジトリは開かれていません"
+                "復元できません: この操作記録が破損しています。リポジトリが開かれていません。"
             }
             (En, AdviceUntrackedRemain(ctx)) => match ctx {
                 UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
@@ -1666,12 +2103,26 @@ impl Msg {
             (Ja, AdviceCommonPartialCloneObjectMissing) => plan::common::ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING,
             (En, AdviceCommonSparseExcludedPath) => advice_en!(CommonSparseExcludedPath),
             (Ja, AdviceCommonSparseExcludedPath) => plan::common::ADVICE_COMMON_SPARSE_EXCLUDED_PATH,
+            (En, AdviceCommonExternalFilter) => advice_en!(CommonExternalFilter),
+            (Ja, AdviceCommonExternalFilter) => plan::common::ADVICE_COMMON_EXTERNAL_FILTER,
+            (En, AdviceCommonExternalFilterSync) => advice_en!(CommonExternalFilterSync),
+            (Ja, AdviceCommonExternalFilterSync) => plan::common::ADVICE_COMMON_EXTERNAL_FILTER_SYNC,
+            (En, AdviceCommonSparseCheckoutUnsupported) => advice_en!(CommonSparseCheckoutUnsupported),
+            (Ja, AdviceCommonSparseCheckoutUnsupported) => plan::common::ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED,
+            (En, AdviceCommonSubmoduleCheckoutUnsupported) => advice_en!(CommonSubmoduleCheckoutUnsupported),
+            (Ja, AdviceCommonSubmoduleCheckoutUnsupported) => plan::common::ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED,
             (En, AdviceCommonHunkChanged) => advice_en!(CommonHunkChanged),
             (Ja, AdviceCommonHunkChanged) => plan::common::ADVICE_COMMON_HUNK_CHANGED,
             (En, AdviceCommonMergeConflictWarning) => advice_en!(CommonMergeConflictWarning),
             (Ja, AdviceCommonMergeConflictWarning) => plan::common::ADVICE_COMMON_MERGE_CONFLICT_WARNING,
             (En, AdviceCommitNothingStaged) => advice_en!(CommitNothingStaged),
             (Ja, AdviceCommitNothingStaged) => plan::commit::ADVICE_COMMIT_NOTHING_STAGED,
+            (En, AdviceCommitStagedContentChanged) => advice_en!(CommitStagedContentChanged),
+            (Ja, AdviceCommitStagedContentChanged) => plan::commit::ADVICE_COMMIT_STAGED_CONTENT_CHANGED,
+            (En, AdviceCommitIdentityUnavailable) => "Git author or committer identity is unavailable. Set user.name and user.email before committing.",
+            (Ja, AdviceCommitIdentityUnavailable) => "Git の作者または committer の情報が設定されていません。commit する前に user.name と user.email を設定してください。",
+            (En, AdviceGitIdentityUnavailable) => "This operation needs a Git identity. Set user.name and user.email before continuing.",
+            (Ja, AdviceGitIdentityUnavailable) => "この操作には Git のユーザー情報が必要です。続行する前に user.name と user.email を設定してください。",
             (En, AdviceCommitConflictedFiles) => advice_en!(CommitConflictedFiles),
             (Ja, AdviceCommitConflictedFiles) => plan::commit::ADVICE_COMMIT_CONFLICTED_FILES,
             (En, AdviceCommitLeftoverNotIncluded) => advice_en!(CommitLeftoverNotIncluded),
@@ -1782,6 +2233,10 @@ impl Msg {
             (Ja, AdviceConflictsRepositoryIdentityChanged) => plan::conflicts::ADVICE_CONFLICTS_REPOSITORY_IDENTITY_CHANGED,
             (En, AdviceConflictsConflictGone) => advice_en!(ConflictsConflictGone),
             (Ja, AdviceConflictsConflictGone) => plan::conflicts::ADVICE_CONFLICTS_CONFLICT_GONE,
+            (En, AdviceConflictsAbortStartUnavailable) => advice_en!(ConflictsAbortStartUnavailable),
+            (Ja, AdviceConflictsAbortStartUnavailable) => plan::conflicts::ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE,
+            (En, AdviceConflictsAbortHeadMoved) => advice_en!(ConflictsAbortHeadMoved),
+            (Ja, AdviceConflictsAbortHeadMoved) => plan::conflicts::ADVICE_CONFLICTS_ABORT_HEAD_MOVED,
             (En, AdviceConflictsResolutionMarkers) => advice_en!(ConflictsResolutionMarkers),
             (Ja, AdviceConflictsResolutionMarkers) => plan::conflicts::ADVICE_CONFLICTS_RESOLUTION_MARKERS,
             (En, AdviceConflictsUnresolvedFiles) => advice_en!(ConflictsUnresolvedFiles),
@@ -1806,6 +2261,16 @@ impl Msg {
             (Ja, AdviceBranchRenameRefOnlyDirty) => plan::branch::ADVICE_BRANCH_RENAME_REF_ONLY_DIRTY,
             (En, AdviceBranchRenameRemoteNotRenamed) => advice_en!(BranchRenameRemoteNotRenamed),
             (Ja, AdviceBranchRenameRemoteNotRenamed) => plan::branch::ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED,
+            (En, AdviceBranchRenameConfig) => advice_en!(BranchRenameConfig),
+            (Ja, AdviceBranchRenameConfig) => plan::branch::ADVICE_BRANCH_RENAME_CONFIG,
+            (En, AdviceBranchRenameConfigChanged) => advice_en!(BranchRenameConfigChanged),
+            (Ja, AdviceBranchRenameConfigChanged) => plan::branch::ADVICE_BRANCH_RENAME_CONFIG_CHANGED,
+            (En, AdviceBranchRenameConfigExternal) => advice_en!(BranchRenameConfigExternal),
+            (Ja, AdviceBranchRenameConfigExternal) => plan::branch::ADVICE_BRANCH_RENAME_CONFIG_EXTERNAL,
+            (En, AdviceBranchRenameConfigConditional) => advice_en!(BranchRenameConfigConditional),
+            (Ja, AdviceBranchRenameConfigConditional) => plan::branch::ADVICE_BRANCH_RENAME_CONFIG_CONDITIONAL,
+            (En, AdviceBranchRenameConfigHeader) => advice_en!(BranchRenameConfigHeader),
+            (Ja, AdviceBranchRenameConfigHeader) => plan::branch::ADVICE_BRANCH_RENAME_CONFIG_HEADER,
             (En, AdviceBranchDeleteCurrentBranch) => advice_en!(BranchDeleteCurrentBranch),
             (Ja, AdviceBranchDeleteCurrentBranch) => plan::branch::ADVICE_BRANCH_DELETE_CURRENT_BRANCH,
             (En, AdviceBranchDeleteBranchCheckedOut) => advice_en!(BranchDeleteBranchCheckedOut),
@@ -1922,6 +2387,8 @@ impl Msg {
             (Ja, AdvicePullRemoteDirty) => plan::pull::ADVICE_PULL_REMOTE_DIRTY,
             (En, AdvicePullRemotePreviewStale) => advice_en!(PullRemotePreviewStale),
             (Ja, AdvicePullRemotePreviewStale) => plan::pull::ADVICE_PULL_REMOTE_PREVIEW_STALE,
+            (En, AdviceStashHeadRequired) => advice_en!(StashHeadRequired),
+            (Ja, AdviceStashHeadRequired) => plan::stash::ADVICE_STASH_HEAD_REQUIRED,
             (En, AdviceStashUntrackedIncluded) => advice_en!(StashUntrackedIncluded),
             (Ja, AdviceStashUntrackedIncluded) => plan::stash::ADVICE_STASH_UNTRACKED_INCLUDED,
             (En, AdviceStashDirtyBlocksApply) => advice_en!(StashDirtyBlocksApply),
@@ -2008,33 +2475,45 @@ impl Msg {
             (En, RulesetBadge) => "Ruleset",
             (Ja, RulesetBadge) => "Ruleset",
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
-            (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
+            (Ja, RulesetBadgeTooltip) => "branch の ruleset に違反する可能性があります:",
 
+            (En, ShortcutsRemapHelp) => "In ~/.kagi/settings.json, set \"keybinding.<command id>\" to a key combination; for example, \"keybinding.view.toggleSidebar\": \"secondary-shift-b\". Separate modifiers and the key with hyphens (secondary = ⌘ on macOS, Ctrl elsewhere). Use \"\" to unbind, then restart Kagi.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\" にキーの組み合わせを設定します。例: \"keybinding.view.toggleSidebar\": \"secondary-shift-b\"。修飾キーとキーはハイフンで区切ります(secondary は macOS では ⌘、その他では Ctrl)。\"\" で割り当てを解除できます。変更後は Kagi を再起動してください。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
+            (En, ToastDismiss) => "Dismiss notification",
+            (Ja, ToastDismiss) => "通知を閉じる",
+            (En, ToastOpenRepository) => "Open Repository",
+            (Ja, ToastOpenRepository) => "リポジトリを開く",
+            (En, ToastMore) => "{count} more notifications",
+            (Ja, ToastMore) => "ほか{count}件の通知",
+            (En, ToastMoreOne) => "1 more notification",
+            (Ja, ToastMoreOne) => "ほか1件の通知",
+            (En, ToastCollapse) => "Collapse notifications",
+            (Ja, ToastCollapse) => "通知を折りたたむ",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
-            (Ja, AppNoticeDetailsInOpLog) => "Operation Log で操作の詳細を確認・コピーできます。",
+            (Ja, AppNoticeDetailsInOpLog) => "操作ログで操作の詳細を確認・コピーできます。",
             (En, AppReconcileInspect) => "Inspect current state",
             (Ja, AppReconcileInspect) => "現在の状態を照会",
-            (En, AppReconcileConfirm) => "Acknowledge observation",
-            (Ja, AppReconcileConfirm) => "照会結果を確認",
-            (En, AppReconcileAcknowledge) => "Execution stopped. Acknowledge this read-only observation to allow a new plan (no operation is retried).",
-            (Ja, AppReconcileAcknowledge) => "実行は停止済みです。この照会結果を確認すると新しい計画を作成できます（操作は再実行しません）。",
-            (En, AppReconcileUnobservable) => "Execution stopped, but Kagi has not verified the result on the remote. Releasing this block keeps the original outcome Unknown and allows a new plan; it does not retry the operation.",
-            (Ja, AppReconcileUnobservable) => "実行は停止済みですが、remote 側の結果を Kagi は確認していません。この制限を解放しても元の結果は Unknown のままで、新しい計画を作成できるだけです。操作は再実行しません。",
-            (En, AppReconcileArmRelease) => "Review release without verification",
-            (Ja, AppReconcileArmRelease) => "未確認のまま解放する内容を確認",
-            (En, AppReconcileReleaseUnobservable) => "Release without remote verification",
-            (Ja, AppReconcileReleaseUnobservable) => "remote 未確認のまま解放",
-            (En, AppReconcileReleaseArmed) => "Confirm again to record your acknowledgement and release the block. Kagi has not verified the result on the remote.",
-            (Ja, AppReconcileReleaseArmed) => "もう一度確定すると、了承を記録して制限を解放します。remote 側の結果を Kagi は確認していません。",
+            (En, AppReconcileConfirm) => "I've checked",
+            (Ja, AppReconcileConfirm) => "確認しました",
+            (En, AppReconcileAcknowledge) => "The operation stopped. Confirm you have checked the current state to continue. Nothing is retried.",
+            (Ja, AppReconcileAcknowledge) => "操作は停止しました。現在の状態を確認したら続行できます。再実行はしません。",
+            (En, AppReconcileUnobservable) => "The operation stopped, but Kagi couldn't confirm what happened on the remote. You can continue without checking; nothing is retried.",
+            (Ja, AppReconcileUnobservable) => "操作は停止しましたが、remote 側の結果を確認できていません。確認せずに続行できます。再実行はしません。",
+            (En, AppReconcileArmRelease) => "Review continuing without checking",
+            (Ja, AppReconcileArmRelease) => "未確認のまま続行する内容を確認",
+            (En, AppReconcileReleaseUnobservable) => "Continue without checking the remote",
+            (Ja, AppReconcileReleaseUnobservable) => "remote を確認せずに続行",
+            (En, AppReconcileReleaseArmed) => "Click again to continue without checking the remote. Nothing is retried.",
+            (Ja, AppReconcileReleaseArmed) => "もう一度押すと、remote を確認せずに続行します。再実行はしません。",
             (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
-            (En, CheckoutStashCannotQueue) => "Cannot queue stash + checkout during another write: they require two writes. Try again when it finishes.",
-            (Ja, CheckoutStashCannotQueue) => "ほかの書き込み中は stash + checkout をキューに入れられません。2 回の書き込みが必要です。完了後にやり直してください。",
+            (En, CheckoutStashCannotQueue) => "Can't stash and switch while another operation is running. Try again when it finishes.",
+            (Ja, CheckoutStashCannotQueue) => "別の操作の実行中は stash して切り替えできません。完了後にやり直してください。",
             (En, SlowWriteNetwork) => "network: waiting for the remote",
             (Ja, SlowWriteNetwork) => "network: remote の応答を待っています",
             (En, SlowWriteRebase) => "rebase: replaying commits",
@@ -2052,27 +2531,47 @@ impl Msg {
             (En, SlowWriteWorktree) => "worktree: updating local files",
             (Ja, SlowWriteWorktree) => "worktree: ローカルファイルを更新中",
             (En, SlowWriteConflict) => "conflict resolution: updating local files",
-            (Ja, SlowWriteConflict) => "競合解決: ローカルファイルを更新中",
+            (Ja, SlowWriteConflict) => "conflict 解決: ローカルファイルを更新中",
             (En, SlowWriteLocal) => "writing local repository data",
             (Ja, SlowWriteLocal) => "ローカルの repository データを書き込み中",
             (En, SlowWriteGeneric) => "operation in progress",
             (Ja, SlowWriteGeneric) => "処理中",
-            (En, TransportRetryHeld) => "Retry is disabled because the operation may have changed remote state. Inspect it before restarting Kagi.",
-            (Ja, TransportRetryHeld) => "remote の状態が変わった可能性があるため、再実行を停止しています。状態を確認してから Kagi を再起動してください。",
-            (En, RemoteOpAwaitingCompletion) => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",
-            (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
+            (En, TransportRetryHeld) => "Retry is turned off because this may already have changed the remote. Check the remote before trying again.",
+            (Ja, TransportRetryHeld) => "remote が既に変わっている可能性があるため、再実行できません。remote を確認してからやり直してください。",
+            (En, RemoteOpAwaitingCompletion) => "Kagi can't confirm yet whether this remote operation finished. Don't retry it; check the remote first.",
+            (Ja, RemoteOpAwaitingCompletion) => "この remote 操作が完了したかまだ確認できていません。再実行せず、先に remote を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
-            (En, NoTabsOpen) => "no open tabs",
-            (Ja, NoTabsOpen) => "開いているタブがありません",
             (En, NoCommitSelected) => "no commit selected",
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",
             (Ja, DiffNotOpen) => "diff が開かれていません",
-            (En, DiffViewSplit) => "Side-by-side view",
-            (Ja, DiffViewSplit) => "横並びで表示",
-            (En, DiffViewUnified) => "Unified view",
-            (Ja, DiffViewUnified) => "1カラムで表示",
+            (En | Ja, DiffViewSplit) => "Split",
+            (En | Ja, DiffViewUnified) => "Unified",
+            (En, DiffLineEndingLf) => "LF line ending",
+            (Ja, DiffLineEndingLf) => "LF 改行",
+            (En, DiffLineEndingCrLf) => "CRLF line ending",
+            (Ja, DiffLineEndingCrLf) => "CRLF 改行",
+            (En, DiffLineEndingNone) => "No line ending",
+            (Ja, DiffLineEndingNone) => "改行なし",
+            (En, DiffBinaryNoText) => "Binary file — no text diff. Open in external editor to compare.",
+            (Ja, DiffBinaryNoText) => "binary ファイル — テキスト diff はありません。外部エディタで開いて比較してください。",
+            (En, DiffImageAdded) => "Added image (no previous version)",
+            (Ja, DiffImageAdded) => "追加された画像（以前のバージョンはありません）",
+            (En, DiffImageModified) => "Modified image: before → after",
+            (Ja, DiffImageModified) => "変更された画像：変更前 → 変更後",
+            (En, DiffImageDeleted) => "Deleted image",
+            (Ja, DiffImageDeleted) => "削除された画像",
+            (En, DiffImageBefore) => "Before",
+            (Ja, DiffImageBefore) => "変更前",
+            (En, DiffImageAfter) => "After",
+            (Ja, DiffImageAfter) => "変更後",
+            (En, DiffImagePreviewUnavailable) => "Preview not available for this version.",
+            (Ja, DiffImagePreviewUnavailable) => "このバージョンはプレビューできません。",
+            (En, ImageFileSize) => "Size",
+            (Ja, ImageFileSize) => "サイズ",
+            (En, ImageDimensions) => "Dimensions",
+            (Ja, ImageDimensions) => "寸法",
             (En, CommitHeaderSelectPrompt) => "Select a commit to see its details.",
             (Ja, CommitHeaderSelectPrompt) => "commit を選択すると詳細が表示されます。",
 
@@ -2087,12 +2586,12 @@ impl Msg {
             (Ja, AgentUnnamed) => "AI エージェント",
 
             // ── Placeholders ────────────────────────────────────────
-            (En, CloneUnimplemented) => "clone is not implemented yet",
-            (Ja, CloneUnimplemented) => "clone は未実装です",
             (En, MultiWindowUnsupported) => "multiple windows are not supported",
             (Ja, MultiWindowUnsupported) => "複数ウィンドウは未対応です",
-            (En, ResetUnimplemented) => "reset is not implemented (ADR-0024)",
-            (Ja, ResetUnimplemented) => "reset は未実装です (ADR-0024)",
+            (En, ResetUnimplemented) => "Reset is not available yet",
+            (Ja, ResetUnimplemented) => "reset はまだ利用できません",
+            (En, FinishDialogFirst) => "Finish or dismiss the open dialog first",
+            (Ja, FinishDialogFirst) => "開いているダイアログを完了するか閉じてください",
 
             // ── Busy footers ────────────────────────────────────────
             (En, BusyCheckout) => "checkout in progress…",
@@ -2115,7 +2614,7 @@ impl Msg {
                 "applied with conflicts — the stash was KEPT. Resolve the conflicts, then drop the stash manually."
             }
             (Ja, StashPopConflictedKept) => {
-                "コンフリクトありで適用しました — stash は保持されています。コンフリクトを解決してから手動で drop してください。"
+                "conflict ありで適用しました — stash は保持されています。conflict を解決してから手動で drop してください。"
             }
             (En, BusyStashDrop) => "stash drop in progress…",
             (Ja, BusyStashDrop) => "stash drop 実行中…",
@@ -2131,8 +2630,6 @@ impl Msg {
             (Ja, BusyDeleteBranchPlan) => "delete branch 計画中…",
             (En, BusyDiscard) => "discard in progress…",
             (Ja, BusyDiscard) => "discard 実行中…",
-            (En, DiscardPartial) => "discard only partially applied (backup blobs are in the oplog)",
-            (Ja, DiscardPartial) => "discard は一部しか適用されていません (backup blob は oplog に記録済み)",
             (En, BusyCommit) => "commit in progress…",
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",
@@ -2163,8 +2660,8 @@ impl Msg {
             (Ja, WorktreeUnborn) => "不明: HEAD に commit がありません",
             (En, WorktreeUpstreamUnavailable) => "Unknown: upstream has not been fetched",
             (Ja, WorktreeUpstreamUnavailable) => "不明: upstream が未取得です",
-            (En, WorktreeObservationFailed) => "Unknown: observation failed",
-            (Ja, WorktreeObservationFailed) => "不明: 観測に失敗しました",
+            (En, WorktreeObservationFailed) => "Unknown: couldn't read this worktree",
+            (Ja, WorktreeObservationFailed) => "不明: worktree の状態を読み取れませんでした",
             (En, WorktreeSafeShort) => "Git-safe",
             (Ja, WorktreeSafeShort) => "Git条件OK",
             (En, WorktreeKeepShort) => "Keep",
@@ -2216,8 +2713,34 @@ impl Msg {
             (Ja, WorktreeLockReview) => "ロック内容を確認…",
             (En, TerminalAutoLockPendingRelease) => "Confirm the terminal worktree unlock or unlock it manually before restarting the shell",
             (Ja, TerminalAutoLockPendingRelease) => "terminal の worktree ロック解除を確認するか、手動で解除してから shell を再起動してください",
-            (En, TerminalAutoLockStaleOwner) => "Terminal lock owner, shell, or repository changed; recover the lock manually",
-            (Ja, TerminalAutoLockStaleOwner) => "terminal のロック所有者・shell・repository が変わりました。ロックは手動で確認して解除してください",
+            (En, TerminalAutoLockStaleOwner) => "This lock no longer belongs to this terminal. Unlock it manually.",
+            (Ja, TerminalAutoLockStaleOwner) => "このロックはこの terminal のものではなくなりました。手動で解除してください。",
+            (En, TerminalNotStartedTitle) => "Shell not started",
+            (Ja, TerminalNotStartedTitle) => "shell は未起動です",
+            (En, TerminalExitedTitle) => "Shell exited",
+            (Ja, TerminalExitedTitle) => "shell が終了しました",
+            (En, TerminalFailedTitle) => "Shell failed",
+            (Ja, TerminalFailedTitle) => "shell でエラーが発生しました",
+            (En, TerminalNotStartedHint) => "Start a shell in this repository.",
+            (Ja, TerminalNotStartedHint) => "このリポジトリで shell を起動します。",
+            (En, TerminalRestartHint) => "Restart to open a new shell in this repository.",
+            (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
+            (En, TerminalRestart) => "Restart",
+            (Ja, TerminalRestart) => "Restart",
+            (En, TerminalPasteTitle) => "Paste into Terminal?",
+            (Ja, TerminalPasteTitle) => "Terminal に Paste しますか？",
+            (En, TerminalPasteBody) => "This shell has not enabled bracketed paste. Newlines in this text may execute commands immediately. Paste only if you trust the clipboard contents.",
+            (Ja, TerminalPasteBody) => "この shell は bracketed paste を有効にしていません。テキストの改行でコマンドが直ちに実行される場合があります。clipboard の内容を信頼できる場合だけ Paste してください。",
+            (En, TerminalPasteControlBody) => "This clipboard contains invisible control characters that may interrupt programs or execute commands. This shell has not enabled bracketed paste. Paste only if you trust the clipboard contents.",
+            (Ja, TerminalPasteControlBody) => "clipboard に不可視の制御文字が含まれています。プログラムの中断やコマンドの実行につながる場合があります。この shell は bracketed paste を有効にしていません。内容を信頼できる場合だけ Paste してください。",
+            (En, TerminalPasteConfirm) => "Paste",
+            (Ja, TerminalPasteConfirm) => "Paste",
+            (En, TerminalFocusDescription) => "Terminal input. Tab and Shift-Tab send shell completion keys. Press Control-Shift-Tab or Command-Shift-J to focus the bottom-panel tabs; use Left or Right, then Return to switch tabs.",
+            (Ja, TerminalFocusDescription) => "Terminal 入力。Tab と Shift-Tab は shell の補完キーを送信します。Control-Shift-Tab または Command-Shift-J で下部パネルのタブに移動し、左右キーと Return でタブを切り替えます。",
+            (En, UnbornEmptyTitle) => "No commits yet",
+            (Ja, UnbornEmptyTitle) => "まだ commit がありません",
+            (En, UnbornEmptyHint) => "Add files and create the first commit",
+            (Ja, UnbornEmptyHint) => "ファイルを追加して最初の commit を作成してください",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",
@@ -2228,36 +2751,44 @@ impl Msg {
             (Ja, AlreadyUpToDatePull) => "すでに最新です。pull するものはありません",
             (En, AlreadyUpToDatePush) => "Already up to date — nothing to push",
             (Ja, AlreadyUpToDatePush) => "すでに最新です。push するものはありません",
+            (En, PullUpstreamChangedDuringFetch) => "Pull upstream changed during fetch; request Pull again",
+            (Ja, PullUpstreamChangedDuringFetch) => "fetch 中に Pull の upstream が変わりました。もう一度 Pull してください。",
+            (En, PullAutoStashIdentityChanged) => "The branch or its remote changed after you confirmed. Nothing was stashed or pulled; press Pull again.",
+            (Ja, PullAutoStashIdentityChanged) => "確認後に branch または remote が変わりました。stash も pull もしていません。もう一度 Pull を押してください。",
+            (En, PullAutoStashPlanStale) => "Your files changed after you confirmed. Nothing was stashed or pulled; press Pull again.",
+            (Ja, PullAutoStashPlanStale) => "確認後にファイルが変わりました。stash も pull もしていません。もう一度 Pull を押してください。",
+            (En, PullAutoStashRestoreChanged) => "The stash restore preview changed after confirmation. Nothing was stashed or pulled; press Pull again to review the new restore preview.",
+            (Ja, PullAutoStashRestoreChanged) => "確認後に stash の復元予測が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の復元予測を確認してください。",
 
             // ── Toolbar guards ──────────────────────────────────────
             (En, PullBusy) => "Pull: another operation is in progress",
             (Ja, PullBusy) => "Pull: 別の操作が実行中です",
             (En, PullDetached) => "Pull: detached HEAD — switch to a branch first",
-            (Ja, PullDetached) => "Pull: detached HEAD。branch に切り替えてください",
+            (Ja, PullDetached) => "Pull: detached HEAD です。branch に切り替えてください",
             (En, PullUnborn) => "Pull: no commits yet — no upstream",
-            (Ja, PullUnborn) => "Pull: commit がまだなく、upstream もありません",
-            (En, PullNoUpstream) => "Pull: no upstream is configured (no upstream)",
-            (Ja, PullNoUpstream) => "Pull: upstream が設定されていません (no upstream)",
-            (En, PullNothing) => "Pull: nothing to pull (behind=0)",
-            (Ja, PullNothing) => "Pull: nothing to pull (behind=0)",
+            (Ja, PullUnborn) => "Pull: commit も upstream もまだありません",
+            (En, PullNoUpstream) => "Pull: no upstream branch is set",
+            (Ja, PullNoUpstream) => "Pull: upstream が設定されていません",
+            (En, PullNothing) => "Pull: already up to date",
+            (Ja, PullNothing) => "Pull: pull する変更がありません",
             (En, PushBusy) => "Push: another operation is in progress",
             (Ja, PushBusy) => "Push: 別の操作が実行中です",
             (En, PushDetached) => "Push: detached HEAD — switch to a branch first",
-            (Ja, PushDetached) => "Push: detached HEAD。branch に切り替えてください",
+            (Ja, PushDetached) => "Push: detached HEAD です。branch に切り替えてください",
             (En, PushUnborn) => "Push: no commits yet — no upstream",
-            (Ja, PushUnborn) => "Push: commit がまだなく、upstream もありません",
+            (Ja, PushUnborn) => "Push: commit も upstream もまだありません",
             (En, PushNoRemote) => "Push: no upstream and no remote configured",
-            (Ja, PushNoRemote) => "Push: no upstream and no remote configured",
-            (En, PushNothing) => "Push: nothing to push (ahead=0)",
-            (Ja, PushNothing) => "Push: nothing to push (ahead=0)",
+            (Ja, PushNoRemote) => "Push: upstream も remote も設定されていません",
+            (En, PushNothing) => "Push: nothing to push",
+            (Ja, PushNothing) => "Push: push する変更がありません",
             (En, StashClean) => "Stash: working tree is clean — nothing to stash",
-            (Ja, StashClean) => "Stash: working tree is clean — nothing to stash",
+            (Ja, StashClean) => "working tree に stash する変更がありません",
             (En, StashBusy) => "Stash: another operation is in progress",
-            (Ja, StashBusy) => "Stash: 別の操作が実行中です",
+            (Ja, StashBusy) => "別の操作が実行中です",
             (En, PopEmpty) => "Pop: stash is empty",
-            (Ja, PopEmpty) => "Pop: stash が空です",
+            (Ja, PopEmpty) => "stash した変更がありません",
             (En, PopBusy) => "Pop: another operation is in progress",
-            (Ja, PopBusy) => "Pop: 別の操作が実行中です",
+            (Ja, PopBusy) => "別の操作が実行中です",
             // ── Operation Undo / Redo (ADR-0081; domain words English) ──
             (En, Undo) | (Ja, Undo) => "Undo",
             (En, Redo) | (Ja, Redo) => "Redo",
@@ -2283,14 +2814,16 @@ impl Msg {
             }
             (En, AmendNeedMessageOrStaged) => "Amend: enter a message or stage changes",
             (Ja, AmendNeedMessageOrStaged) => "Amend: メッセージを入力するか変更を stage してください",
+            (En, AmendStatusLoading) => "Amend: waiting for repository status",
+            (Ja, AmendStatusLoading) => "Amend: リポジトリの状態を読み込み中",
 
             // ── Context-menu disabled reasons ───────────────────────
             (En, CmDetachedHead) => "detached HEAD",
             (Ja, CmDetachedHead) => "detached HEAD",
             (En, CmSameAsHead) => "same as HEAD",
             (Ja, CmSameAsHead) => "HEAD と同一",
-            (En, CmMergeUnsupported) => "merge commit is out of MVP scope",
-            (Ja, CmMergeUnsupported) => "merge commit は MVP 対象外",
+            (En, CmMergeUnsupported) => "Not available for merge commits",
+            (Ja, CmMergeUnsupported) => "merge commit には使えません",
             (En, CmAlreadyInBranch) => "already in the current branch",
             (Ja, CmAlreadyInBranch) => "既に現在 branch に含まれています",
             (En, CmNotInBranch) => "not in the current branch",
@@ -2305,12 +2838,12 @@ impl Msg {
             (Ja, CmResetUnneeded) => "不要(HEAD と同一)",
             (En, CmNoCurrentBranch) => "no current branch",
             (Ja, CmNoCurrentBranch) => "現在 branch がありません",
-            (En, CmResetUnimplemented) => "reset is not implemented in MVP",
-            (Ja, CmResetUnimplemented) => "MVP では reset は未実装",
+            (En, CmResetUnimplemented) => "Reset is not available yet",
+            (Ja, CmResetUnimplemented) => "reset はまだ利用できません",
             (En, BcmBusy) => "another operation is in progress",
             (Ja, BcmBusy) => "別の操作が実行中です",
-            (En, BcmNotImplementedYet) => "not implemented yet",
-            (Ja, BcmNotImplementedYet) => "未実装です",
+            (En, BcmNotImplementedYet) => "Not available here yet",
+            (Ja, BcmNotImplementedYet) => "ここではまだ利用できません",
             (En, BcmCurrentBranch) => "current branch",
             (Ja, BcmCurrentBranch) => "現在 branch",
             (En, BcmLocalOnly) => "local branches only",
@@ -2327,18 +2860,34 @@ impl Msg {
             (Ja, BcmCheckedOutElsewhere) => "branch は別の worktree で checkout 済みです",
             (En, BcmConflictMode) => "resolve conflicts first",
             (Ja, BcmConflictMode) => "先に conflict を解決してください",
-            (En, BcmNothingToPull) => "nothing to pull",
-            (Ja, BcmNothingToPull) => "pull するものがありません",
             (En, BcmNothingToPush) => "nothing to push",
             (Ja, BcmNothingToPush) => "push するものがありません",
+            (En, BcmIntegrateMenu) => "Integrate",
+            (Ja, BcmIntegrateMenu) => "統合",
+            (En, BcmAdvancedMenu) => "Advanced",
+            (Ja, BcmAdvancedMenu) => "詳細",
+            (En, BcmWorktreeMenu) => "Worktree",
+            (Ja, BcmWorktreeMenu) => "Worktree",
 
             // ── Empty states ────────────────────────────────────────
             (En, NoLocalBranches) => "No local branches",
             (Ja, NoLocalBranches) => "ローカル branch がありません",
+            (En, BranchPickerCheckout) => "Checkout Branch",
+            (Ja, BranchPickerCheckout) => "checkout する branch",
+            (En, BranchPickerDelete) => "Delete Branch",
+            (Ja, BranchPickerDelete) => "削除する branch",
+            (En, BranchPickerRename) => "Rename Branch",
+            (Ja, BranchPickerRename) => "リネームする branch",
+            (En, A11yIssueOpenRow) => "Open issue #{}, {}, {}",
+            (Ja, A11yIssueOpenRow) => "Issue #{} を開く、{}、{}",
+            (En, A11yRecentOpenRow) => "Open repository {name}",
+            (Ja, A11yRecentOpenRow) => "リポジトリ {name} を開く",
             (En, CommandPalettePlaceholder) => "Search commands…",
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
             (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
+            (En, CommandPaletteActions) => "Actions",
+            (Ja, CommandPaletteActions) => "操作",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
             (En, OpLogCopyEntry) => "Copy entry",
@@ -2364,10 +2913,18 @@ impl Msg {
             (Ja, SnapshotCreated) => "スナップショットを作成しました",
             (En, SnapshotFailed) => "Snapshot failed",
             (Ja, SnapshotFailed) => "スナップショットの作成に失敗しました",
+            (En, FetchAuthenticationRequired) => "Fetch from {} requires authentication. Check your credentials.",
+            (Ja, FetchAuthenticationRequired) => "{} からの Fetch には認証が必要です。認証情報を確認してください。",
             (En, LoadMoreCommits) => "Load more commits",
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",
             (Ja, OpenedInFinder) => "Finder で開きました",
+            (En, ModalFilesToChange) => "Files to change ({})",
+            (Ja, ModalFilesToChange) => "変更するファイル ({})",
+            (En, ModalFilesMore) => "…and {} more",
+            (Ja, ModalFilesMore) => "…ほか {} 件",
+            (En, ModalFilesMoreUnknown) => "…and more files",
+            (Ja, ModalFilesMoreUnknown) => "…ほかにもファイルがあります",
 
             // ── W30-CONFLICT-UI: Conflict Mode ──────────────────────
             (En, ConflictContinue) => "Continue",
@@ -2393,7 +2950,7 @@ impl Msg {
             (En, ConflictKindAddAdd) => "add/add",
             (Ja, ConflictKindAddAdd) => "add/add",
             (En, ConflictKindSubmodule) => "submodule",
-            (Ja, ConflictKindSubmodule) => "サブモジュール",
+            (Ja, ConflictKindSubmodule) => "submodule",
             (En, ConflictKindSymlink) => "symlink",
             (Ja, ConflictKindSymlink) => "シンボリックリンク",
             (En, ConflictKindBinary) => "binary",
@@ -2426,16 +2983,10 @@ impl Msg {
             (Ja, ConflictSymlinkTarget) => "シンボリックリンクの参照先",
             (En, ConflictOpenBothExternal) => "Open both sides in external editor",
             (Ja, ConflictOpenBothExternal) => "両方の側を外部エディタで開く",
-            (En, ConflictBinaryCompareHint) => {
-                "Binary file — no inline preview. Open both sides to compare."
-            }
-            (Ja, ConflictBinaryCompareHint) => {
-                "binary ファイル — インラインプレビューはありません。両方の側を開いて比較してください。"
-            }
             (En, ConflictImageTooLarge) => "Image too large to preview inline.",
             (Ja, ConflictImageTooLarge) => "画像が大きすぎてインラインプレビューできません。",
             (En, ConflictSubmoduleCommit) => "Submodule commit",
-            (Ja, ConflictSubmoduleCommit) => "サブモジュールのコミット",
+            (Ja, ConflictSubmoduleCommit) => "submodule の commit",
             // ── W32-CONFLICT-EDITOR ──────────────────────────────────
             (En, EditorCurrentSide) => "Current",
             (Ja, EditorCurrentSide) => "現在の側",
@@ -2459,8 +3010,8 @@ impl Msg {
             (Ja, EditorAllResolved) => "すべての hunk を解決しました",
             (En, EditorUnresolvedHunks) => "hunk(s) still unresolved",
             (Ja, EditorUnresolvedHunks) => "件の hunk が未解決です",
-            (En, EditorSavedResolved) => "Saved. File marked as a resolved candidate.",
-            (Ja, EditorSavedResolved) => "保存しました。ファイルを resolved candidate にしました。",
+            (En, EditorSavedResolved) => "Saved. File marked as resolved.",
+            (Ja, EditorSavedResolved) => "保存しました。ファイルを解決済みにしました。",
             (En, EditorNoTextMerge) => "No text merge is available for this file (binary or single-sided). Use the conflict list to choose a side.",
             (Ja, EditorNoTextMerge) => "このファイルはテキスト merge できません(binary / 片側のみ)。conflict 一覧で側を選択してください。",
             // ── T-CONFLICT-UI/UX: 3-pane editor controls ──
@@ -2481,19 +3032,25 @@ impl Msg {
             // blocks land in the result when both sides are taken.
             (En | Ja, EditorCurrentFirst) => "Current → Incoming",
             (En | Ja, EditorIncomingFirst) => "Incoming → Current",
+            (En, EditorSelectionNone) => "Not adopted",
+            (Ja, EditorSelectionNone) => "未採用",
+            (En, EditorSelectionPartial) => "Partially adopted",
+            (Ja, EditorSelectionPartial) => "一部を採用",
+            (En, EditorSelectionAll) => "Fully adopted",
+            (Ja, EditorSelectionAll) => "すべて採用済み",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",
             (En, ConflictRebaseApplying) => "Applying",
             (Ja, ConflictRebaseApplying) => "適用中",
             (En, ConflictRebaseCommits) => "commits",
-            (Ja, ConflictRebaseCommits) => "コミット",
+            (Ja, ConflictRebaseCommits) => "commit",
             (En, ConflictRoleCurrent) => "Current",
             (Ja, ConflictRoleCurrent) => "現在の側",
             (En, ConflictRoleIncoming) => "Incoming",
             (Ja, ConflictRoleIncoming) => "取り込む側",
-            (En, ConflictGitTermHint) => "internal git stage",
-            (Ja, ConflictGitTermHint) => "内部 git stage",
+            (En, ConflictGitTermHint) => "Side of the conflict",
+            (Ja, ConflictGitTermHint) => "conflict の側",
             (En, ConflictConflictedCount) => "conflicted",
             (Ja, ConflictConflictedCount) => "conflicted",
             (En, ConflictResolvedCount) => "resolved",
@@ -2538,8 +3095,8 @@ impl Msg {
             (Ja, ConflictBlockerBinary) => "binary conflict の側が未選択です。",
             (En, ConflictBlockerDeletion) => "A keep-or-delete decision is still pending.",
             (Ja, ConflictBlockerDeletion) => "keep / delete の判断が未了です。",
-            (En, ConflictBlockerIndex) => "The index still has untracked unmerged entries.",
-            (Ja, ConflictBlockerIndex) => "index に未追跡の unmerged エントリが残っています。",
+            (En, ConflictBlockerIndex) => "Some unmerged files are not shown in this list. Refresh the repository.",
+            (Ja, ConflictBlockerIndex) => "一覧に表示されていない未 merge のファイルがあります。リポジトリを再読み込みしてください。",
             (En, ConflictBlockerMessage) => "The merge commit message is empty.",
             (Ja, ConflictBlockerMessage) => "merge commit のメッセージが空です。",
             (En, ConflictBlockerChecklist) => "A commit checklist rule is blocking continue.",
@@ -2549,7 +3106,7 @@ impl Msg {
             (En, ConflictMore) => "More",
             (Ja, ConflictMore) => "その他",
             (En, ConflictNextConflict) => "Next conflict",
-            (Ja, ConflictNextConflict) => "次の衝突へ",
+            (Ja, ConflictNextConflict) => "次の conflict へ",
             (En, ConflictNoConflictedFiles) => "No conflicted files remain.",
             (Ja, ConflictNoConflictedFiles) => "未解決ファイルはありません。",
             (En, ConflictNoResolvedFiles) => "No files resolved yet.",
@@ -2577,8 +3134,20 @@ impl Msg {
             (Ja, CommitTitle) => "概要",
             (En, CommitBody) => "Description (optional)",
             (Ja, CommitBody) => "説明(任意)",
+            (En, CompactCommitAffordance) => "Commit…",
+            (Ja, CompactCommitAffordance) => "Commit…",
+            (En, CompactCommitComposer) => "Commit message",
+            (Ja, CompactCommitComposer) => "Commit メッセージ",
+            (En, CompactCommitClose) => "Close commit composer",
+            (Ja, CompactCommitClose) => "Commit の入力を閉じる",
+            (En, CommitDraftSaveFailed) => "Draft could not be saved",
+            (Ja, CommitDraftSaveFailed) => "下書きを保存できません",
+            (En, CommitDraftSaveRetry) => "Save Draft",
+            (Ja, CommitDraftSaveRetry) => "下書きを保存",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
+            (En, SmartDetecting) => "Detecting Smart Commit providers…",
+            (Ja, SmartDetecting) => "Smart Commit のプロバイダーを検出中…",
             (En, AddCoAuthor) => "Add co-author",
             (Ja, AddCoAuthor) => "共同作成者を追加",
             (En, AmendLastCommit) => "Amend last commit",
@@ -2588,6 +3157,10 @@ impl Msg {
             (En, MenuOpenInEditor) => "Open in Editor",
             (Ja, MenuOpenInEditor) => "エディタで開く",
             (En, MenuShowFileHistory) => "Show File History",
+            (En, A11yInspectorFiles) => "Changed files",
+            (Ja, A11yInspectorFiles) => "変更されたファイル",
+            (En, A11yFileHistory) => "File History",
+            (Ja, A11yFileHistory) => "ファイルの履歴",
             (En, OpenInExternalEditor) => "Open in External Editor",
             (En, DiffStageHunk) => "Stage hunk",
             (En, DiffUnstageHunk) => "Unstage hunk",
@@ -2648,6 +3221,18 @@ impl Msg {
             (Ja, PrSectionAssigned) => "担当",
             (En, PrLaneTitle) => "SWIMLANE",
             (Ja, PrLaneTitle) => "SWIMLANE",
+            (En, PrLaneLoaded) => "{} loaded",
+            (Ja, PrLaneLoaded) => "{} 読み込み済み",
+            (En, PrLaneCommit) => "{}; SHA {}; PR #{}",
+            (Ja, PrLaneCommit) => "{}、SHA {}、PR #{}",
+            (En, PrLaneContext) => "{}; SHA {}; read-only context",
+            (Ja, PrLaneContext) => "{}、SHA {}、読み取り専用の周辺履歴",
+            (En, PrNavigator) => "Navigator",
+            (Ja, PrNavigator) => "ナビゲーター",
+            (En, PrSwimlane) => "Swimlane / Files",
+            (Ja, PrSwimlane) => "スイムレーン・ファイル",
+            (En, NoPrOpen) => "No PR is open",
+            (Ja, NoPrOpen) => "開いている PR がありません",
             (En, PrRailReviewers) => "REVIEWERS",
             (Ja, PrRailReviewers) => "レビュアー",
             (En, PrRailAssignees) => "ASSIGNEES",
@@ -2687,7 +3272,7 @@ impl Msg {
             (En, PrWhyChangesRequested) => "Changes requested",
             (Ja, PrWhyChangesRequested) => "修正依頼",
             (En, PrWhyConflicting) => "Conflicts",
-            (Ja, PrWhyConflicting) => "コンフリクト",
+            (Ja, PrWhyConflicting) => "conflict",
             (En, PrWhyCiRunning) => "CI running",
             (Ja, PrWhyCiRunning) => "CI 実行中",
             (En, PrWhyReadyToMerge) => "Ready to merge",
@@ -2746,10 +3331,12 @@ impl Msg {
             (Ja, HomeRecent) => "最近開いたリポジトリ",
             (En, HomeNoRecent) => "No recently opened repositories.",
             (Ja, HomeNoRecent) => "最近開いたリポジトリはありません。",
+            (En, HomeRemoveRecent) => "Remove from Recently Opened",
+            (Ja, HomeRemoveRecent) => "最近使った項目から取り除く",
             (En, HomeOpenFolder) => "Open Folder…",
             (Ja, HomeOpenFolder) => "フォルダーを開く…",
             (En, HomeConnectRemote) => "Connect to SSH remote…",
-            (Ja, HomeConnectRemote) => "SSH リモートに接続…",
+            (Ja, HomeConnectRemote) => "SSH remote に接続…",
             (En, HomeGithubMine) => "Yours",
             (Ja, HomeGithubMine) => "自分",
             (En, HomeGithubOwnerFailed) => "Could not be read: {}",
@@ -2775,13 +3362,15 @@ impl Msg {
                 "GitHub の一覧を更新できませんでした(前回の一覧を表示しています): {}"
             }
             (En, HomeGithubFailedHint) => {
-                "Kagi reads this list with the GitHub CLI. Check `gh auth status` in a terminal, then Refresh."
+                "Check that the GitHub CLI is signed in (`gh auth status`), then Refresh."
             }
             (Ja, HomeGithubFailedHint) => {
-                "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
+                "GitHub CLI にサインインしているか(`gh auth status`)確認してから再読み込みしてください。"
             }
-            (En, HomeGithubEmpty) => "You have no repositories on GitHub.",
-            (Ja, HomeGithubEmpty) => "GitHub にリポジトリがありません。",
+            (En, HomeGithubSectionEmpty) => "No repositories to display for {owner} on {host}.",
+            (Ja, HomeGithubSectionEmpty) => "{host} の {owner} には表示できるリポジトリがありません。",
+            (En, HomeGithubMineEmpty) => "You have no repositories to display on {host}.",
+            (Ja, HomeGithubMineEmpty) => "{host} に表示できるあなたのリポジトリはありません。",
             (En, HomeGithubNoMatch) => "No repository matches the filter.",
             (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
             (En, HomeGithubTruncated) => {
@@ -2840,6 +3429,10 @@ impl Msg {
             (Ja, CloneWillCreate) => "{} を作成します",
             (En, CloneChooseFolder) => "Choose…",
             (Ja, CloneChooseFolder) => "選択…",
+            (En, CloneChangeFolder) => "Change…",
+            (Ja, CloneChangeFolder) => "変更…",
+            (En, CloneCopyLocation) => "Copy Location",
+            (Ja, CloneCopyLocation) => "保存先をコピー",
             (En, CloneConfirm) => "Clone",
             (Ja, CloneConfirm) => "clone",
             (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",
@@ -2854,6 +3447,10 @@ impl Msg {
             }
             (En, CloneHide) => "Continue in background",
             (Ja, CloneHide) => "バックグラウンドで続ける",
+            (En, CloneHiddenRunning) => "Cloning {}…",
+            (Ja, CloneHiddenRunning) => "{} を clone 中…",
+            (En, CloneShowProgress) => "Show Progress",
+            (Ja, CloneShowProgress) => "進捗を表示",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",
@@ -2963,6 +3560,12 @@ impl Msg {
             (Ja, ListFilterClear) => "絞り込みを解除",
             (En, ListLoadMore) => "Load more",
             (Ja, ListLoadMore) => "さらに読み込む",
+            (En, PrLoadingMore) => "Loading more pull requests…",
+            (Ja, PrLoadingMore) => "さらに読み込み中…",
+            (En, ListLoadedCount) => "Loaded {}",
+            (Ja, ListLoadedCount) => "読み込み済み {} 件",
+            (En, ListMatchesCount) => "{} matches",
+            (Ja, ListMatchesCount) => "一致 {} 件",
             (En, IssuesEmpty) => "No issues",
             (Ja, IssuesEmpty) => "Issues はありません",
             (En, IssuesFilterEmpty) => "No issues in this view",
@@ -3005,8 +3608,8 @@ impl Msg {
             (Ja, PrFetchStale) => "前回取得できた一覧を表示しています(最新の取得は失敗しました)。",
             (En, PrFetchAuth) => "GitHub authentication failed — run `gh auth login`.",
             (Ja, PrFetchAuth) => "GitHub の認証に失敗しました(`gh auth login` を実行してください)。",
-            (En, PrFetchNetwork) => "Couldn't reach GitHub — network or transport failure.",
-            (Ja, PrFetchNetwork) => "GitHub に接続できませんでした(ネットワーク/通信の失敗)。",
+            (En, PrFetchNetwork) => "Couldn't reach GitHub. Check your network connection.",
+            (Ja, PrFetchNetwork) => "GitHub に接続できませんでした。ネットワーク接続を確認してください。",
             (En, PrFetchInvalid) => "GitHub returned a response kagi could not read.",
             (Ja, PrFetchInvalid) => "GitHub の応答を解析できませんでした。",
             (En, PrFetchUnknown) => "The GitHub fetch failed for an unknown reason.",
@@ -3049,14 +3652,66 @@ impl Msg {
             // ── T-SETTINGS-001: Settings window ──────────────────────
             (En, SettingsTitle) => "Settings",
             (Ja, SettingsTitle) => "設定",
+            (En, SettingsGeneral) => "General",
+            (Ja, SettingsGeneral) => "一般",
+            (En, SettingsWindowFailed) => "Could not open Settings",
+            (Ja, SettingsWindowFailed) => "設定ウィンドウを開けませんでした",
             (En, SettingsAppearance) => "Appearance",
             (Ja, SettingsAppearance) => "外観",
+            (En, SettingsGraph) | (Ja, SettingsGraph) => "Graph",
+            (En, SettingsNetwork) => "Network",
+            (Ja, SettingsNetwork) => "ネットワーク",
+            (En, SettingsBehaviour) => "Behaviour / Terminal",
+            (Ja, SettingsBehaviour) => "動作 / Terminal",
+            (En, SettingsLaneCompactSummary) => "Show author avatars and lane-colour bands.",
+            (Ja, SettingsLaneCompactSummary) => "著者アバターとレーン色の帯を表示します。",
+            (En, SettingsTerminalAutoLockSummary) => "Offer to lock linked worktrees; confirm each time.",
+            (Ja, SettingsTerminalAutoLockSummary) => "linked worktree のロックを毎回確認して提案します。",
+            (En, SettingsCustomThemesSummary) => "Load themes from JSON files.",
+            (Ja, SettingsCustomThemesSummary) => "JSON ファイルからテーマを読み込みます。",
+            (En, SettingsAnalyzeIgnoreSummary) => "Exclude matching files. Save, then reload to apply.",
+            (Ja, SettingsAnalyzeIgnoreSummary) => "一致するファイルを除外します。保存後に再読み込みで反映します。",
+            (En, SettingsGraphCopySummary) => "Copy Hash or Branch; Hash if no local branch.",
+            (Ja, SettingsGraphCopySummary) => "Hash または Branch。local branch が無い行は Hash。",
+            (En, SettingsSmartProviderSummary) => "Local Ollama or your installed CLI.",
+            (Ja, SettingsSmartProviderSummary) => "ローカルの Ollama、またはインストール済み CLI。",
+            (En, SettingsAnalyze) | (Ja, SettingsAnalyze) => "Analyze",
+            (En, SettingsAutoFetchSummary) => "Keep remote history up to date in the background.",
+            (Ja, SettingsAutoFetchSummary) => "remote の履歴をバックグラウンドで最新に保ちます。",
+            (En, SettingsReduceMotionSummary) => "Keep decorative animations still.",
+            (Ja, SettingsReduceMotionSummary) => "装飾的なアニメーションを静止させます。",
+            (En, SettingsSmartEnableSummary) => "Draft commit messages with an LLM.",
+            (Ja, SettingsSmartEnableSummary) => "LLM で commit メッセージの草案を作成します。",
             (En, SettingsLanguage) => "Language",
             (Ja, SettingsLanguage) => "言語",
             (En, SettingsTheme) => "Theme",
             (Ja, SettingsTheme) => "テーマ",
             (En, SettingsThemeDesc) => "Colour theme used across the whole app.",
             (Ja, SettingsThemeDesc) => "アプリ全体で使用するカラーテーマ。",
+            (En, SettingsAccent) => "Accent",
+            (Ja, SettingsAccent) => "アクセント",
+            (En, SettingsAccentSystem) => "System",
+            (Ja, SettingsAccentSystem) => "システム",
+            (En, SettingsAccentTheme) => "Theme accent",
+            (Ja, SettingsAccentTheme) => "テーマのアクセント",
+            (En, SettingsAccentGraphite) => "Detected Mac accent: Graphite",
+            (Ja, SettingsAccentGraphite) => "Mac のアクセント：グラファイト",
+            (En, SettingsAccentRed) => "Detected Mac accent: Red",
+            (Ja, SettingsAccentRed) => "Mac のアクセント：レッド",
+            (En, SettingsAccentOrange) => "Detected Mac accent: Orange",
+            (Ja, SettingsAccentOrange) => "Mac のアクセント：オレンジ",
+            (En, SettingsAccentYellow) => "Detected Mac accent: Yellow",
+            (Ja, SettingsAccentYellow) => "Mac のアクセント：イエロー",
+            (En, SettingsAccentGreen) => "Detected Mac accent: Green",
+            (Ja, SettingsAccentGreen) => "Mac のアクセント：グリーン",
+            (En, SettingsAccentBlue) => "Detected Mac accent: Blue",
+            (Ja, SettingsAccentBlue) => "Mac のアクセント：ブルー",
+            (En, SettingsAccentPurple) => "Detected Mac accent: Purple",
+            (Ja, SettingsAccentPurple) => "Mac のアクセント：パープル",
+            (En, SettingsAccentPink) => "Detected Mac accent: Pink",
+            (Ja, SettingsAccentPink) => "Mac のアクセント：ピンク",
+            (En, SettingsAccentDefault) => "Mac accent: Default (Blue)",
+            (Ja, SettingsAccentDefault) => "Mac のアクセント：既定（ブルー）",
             (En, SettingsCustomThemes) => "Custom themes",
             (Ja, SettingsCustomThemes) => "自作テーマ",
             (En, SettingsCustomThemesDesc) => "Add JSON files to the folder below, then reload the themes.",
@@ -3071,8 +3726,8 @@ impl Msg {
             (Ja, SettingsThemesFolderUnavailable) => "テーマフォルダーのパスが見つかりません",
             (En, SettingsZoom) => "UI Zoom",
             (Ja, SettingsZoom) => "UI ズーム",
-            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.67×).",
-            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜1.67×)。",
+            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–2.0×).",
+            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜2.0×)。",
             // "graph" is a domain word and stays English in both arms (ADR-0048).
             (En, SettingsCompact) => "Compact graph",
             (Ja, SettingsCompact) => "graph をコンパクト表示",
@@ -3102,21 +3757,73 @@ impl Msg {
             (Ja, SettingsGraphCopyDesc) => {
                 "選択中の commit 行を ⌘C でコピーする対象。branch は local branch が無い行では hash を代わりにコピーします。"
             }
+            (En, SettingsToolbarDisplay) => "Toolbar",
+            (Ja, SettingsToolbarDisplay) => "ツールバー",
+            (En, SettingsToolbarDisplayDesc) => "Show icons alone or icons with captions.",
+            (Ja, SettingsToolbarDisplayDesc) => "アイコンのみ、またはアイコンと文字を表示します。",
+            (En, ToolbarIconOnly) => "Icon Only",
+            (Ja, ToolbarIconOnly) => "アイコンのみ",
+            (En, ToolbarIconAndText) => "Icon and Text",
+            (Ja, ToolbarIconAndText) => "アイコンと文字",
+            (En, ToolbarBranch) => "Branch",
+            (Ja, ToolbarBranch) => "Branch",
+            (En, ToolbarStash) => "Stash",
+            (Ja, ToolbarStash) => "Stash",
+            (En, ToolbarPop) => "Pop",
+            (Ja, ToolbarPop) => "Pop",
+            (En, ToolbarEditor) => "Editor",
+            (Ja, ToolbarEditor) => "エディター",
+            (En, ToolbarAnalyze) => "Analyze",
+            (Ja, ToolbarAnalyze) => "分析",
+            (En, ToolbarTerminal) => "Terminal",
+            (Ja, ToolbarTerminal) => "ターミナル",
+            (En, BottomTabOperationLog) => "Operation Log",
+            (Ja, BottomTabOperationLog) => "操作ログ",
+            (En, BottomTabActivity) => "Activity",
+            (Ja, BottomTabActivity) => "アクティビティ",
+            (En, BottomTabChanges) => "Changes",
+            (Ja, BottomTabChanges) => "変更",
+            (En, ActivityPeriod) => "Activity period",
+            (Ja, ActivityPeriod) => "アクティビティの期間",
+            (En, ActivityChart) => "Commit activity",
+            (Ja, ActivityChart) => "commit の推移",
+            (En, ActivityDay) => "Day",
+            (Ja, ActivityDay) => "日",
+            (En, ActivityWeek) => "Week",
+            (Ja, ActivityWeek) => "週",
+            (En, ActivityMonth) => "Month",
+            (Ja, ActivityMonth) => "月",
+            (En, ActivityYear) => "Year",
+            (Ja, ActivityYear) => "年",
+            (En, ActivityAll) => "All",
+            (Ja, ActivityAll) => "全期間",
+            (En, StatusShowTerminal) => "Show Terminal",
+            (Ja, StatusShowTerminal) => "ターミナルを表示",
+            (En, StatusHideTerminal) => "Hide Terminal (⌘J)",
+            (Ja, StatusHideTerminal) => "ターミナルを隠す (⌘J)",
+            (En, StatusShowOperationLog) => "Show Operation Log (↵ / Space)",
+            (Ja, StatusShowOperationLog) => "操作ログを表示 (↵ / Space)",
+            (En, StatusHideOperationLog) => "Hide Operation Log (↵ / Space)",
+            (Ja, StatusHideOperationLog) => "操作ログを隠す (↵ / Space)",
+            (En, ToolbarOverflow) => "More Toolbar Commands",
+            (Ja, ToolbarOverflow) => "その他のツールバーコマンド",
+            (En, TabOverflow) => "All Tabs",
+            (Ja, TabOverflow) => "すべてのタブ",
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
-                "Render decorative animations static (e.g. the tab-loading dots stop bobbing)."
+                "Stop decorative animations. macOS Reduce Motion is also respected, even when this switch is off."
             }
             (Ja, SettingsReduceMotionDesc) => {
-                "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
+                "装飾的なアニメーションを静止させます。オフでも macOS の「視差効果を減らす」を尊重します。"
             }
             (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
             (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",
             (En, SettingsTerminalAutoLockDesc) => {
-                "When the embedded terminal starts in a linked worktree, offer to place a Kagi-owned `git worktree lock` (confirmed each time), and offer to release it when the shell exits. Locks placed by hand are never touched. macOS / Linux only."
+                "When the terminal opens in a linked worktree, offer to lock that worktree and to unlock it when the shell exits. Locks you added yourself are left alone. macOS / Linux only."
             }
             (Ja, SettingsTerminalAutoLockDesc) => {
-                "linked worktree で埋め込み terminal を起動したとき、Kagi 所有の `git worktree lock` を(毎回確認のうえ)提案し、shell 終了時に解除を提案します。手動のロックには触れません。macOS / Linux のみ。"
+                "linked worktree で terminal を開いたときにロックを提案し、shell 終了時に解除を提案します。自分で付けたロックはそのままです。macOS / Linux のみ。"
             }
             (En, SettingsInterfaceLang) => "Interface language",
             (Ja, SettingsInterfaceLang) => "表示言語",
@@ -3130,15 +3837,27 @@ impl Msg {
             // ── Analyze ignore section (ADR-0119) ────────────────────
             (En, SettingsAnalyzeIgnore) | (Ja, SettingsAnalyzeIgnore) => "Analyze ignore",
             (En, SettingsAnalyzeIgnoreDesc) => {
-                "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Saved to the analyze_ignore file. Reload the repository to apply."
+                "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Reload the repository to apply."
             }
             (Ja, SettingsAnalyzeIgnoreDesc) => {
-                "これらのパターンに一致するファイルは Analyze(Hotspots / Coupling / Ownership)から除外されます。1 行 1 パターン、.gitignore と同じ書式でワイルドカード(* ** ?)や否定(!)が使えます。analyze_ignore ファイルに保存されます。反映にはリポジトリの再読み込みが必要です。"
+                "これらのパターンに一致するファイルは Analyze(Hotspots / Coupling / Ownership)から除外されます。1 行 1 パターン、.gitignore と同じ書式でワイルドカード(* ** ?)や否定(!)が使えます。反映にはリポジトリの再読み込みが必要です。"
             }
             (En, SettingsAnalyzeIgnoreSave) => "Save",
             (Ja, SettingsAnalyzeIgnoreSave) => "保存",
             (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
             (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
+            (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
+            (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
+            (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
+            (En, SettingsAnalyzeIgnoreClean) => "Saved",
+            (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
+            (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
+            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
+            (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. Your Analyze ignore patterns will be replaced with the defaults.",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。Analyze ignore のパターンを既定値に置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -3212,8 +3931,8 @@ impl Msg {
             (Ja, ModalCommitConfirm) => "commit",
             (En, ModalNoDiscardTargets) => "No files to discard",
             (Ja, ModalNoDiscardTargets) => "破棄するファイルがありません",
-            (En, ModalPlanNotReady) => "Plan is not ready",
-            (Ja, ModalPlanNotReady) => "plan の準備ができていません",
+            (En, ModalPlanNotReady) => "Still checking…",
+            (Ja, ModalPlanNotReady) => "確認中…",
             (En, MaintenanceCommitGraphAfter) => "commit-graph written",
             (Ja, MaintenanceCommitGraphAfter) => "commit-graph 書き込み済み",
             (En, MaintenanceFsmonitorAfter) => "fsmonitor enabled",
@@ -3222,13 +3941,13 @@ impl Msg {
                 "commit-graph written for every reachable commit; working tree unchanged"
             }
             (Ja, MaintenanceCommitGraphDetail) => {
-                "到達可能なすべてのコミットの commit-graph を書き込みます。作業ツリーは変更されません。"
+                "到達可能なすべての commit の commit-graph を書き込みます。working tree は変更されません。"
             }
             (En, MaintenanceFsmonitorDetail) => {
                 "core.fsmonitor = true (local config); working tree unchanged"
             }
             (Ja, MaintenanceFsmonitorDetail) => {
-                "ローカル設定で core.fsmonitor = true にします。作業ツリーは変更されません。"
+                "ローカル設定で core.fsmonitor = true にします。working tree は変更されません。"
             }
             (En, MaintenanceWriteCommitGraph) => "Write commit-graph",
             (Ja, MaintenanceWriteCommitGraph) => "commit-graph を書き込む",
@@ -3257,9 +3976,9 @@ impl Msg {
             }
             (Ja, PlanOverlapSummary) => "切り替え先も変更する {} 件のファイルに変更があります。先に stash か commit してください。",
             (En, PlanRestoreConflictSummary) => {
-                "{} path(s) whose stash restore conflicts: Kagi merged your edit with the incoming change and it does not merge. The stash is kept."
+                "{} file(s) will conflict when your stashed changes are restored. The stash is kept."
             }
-            (Ja, PlanRestoreConflictSummary) => "stash 復元が conflict する {} 件のパスです。あなたの編集と incoming の変更は merge できません(stash は保持されます)。",
+            (Ja, PlanRestoreConflictSummary) => "stash を戻すときに {} 件のファイルが conflict します。stash は保持されます。",
             (En, PlanRestoreConflictMaybeSummary) => {
                 "{} path(s) changed on both sides that Kagi could not merge in advance — the stash restore may conflict. The stash is kept."
             }
@@ -3279,7 +3998,7 @@ impl Msg {
             (En, PlanHeadingStashes) => "{} stashes",
             (Ja, PlanHeadingStashes) => "stash {} 件",
             (En, PlanHeadingBranches) => "{} branches",
-            (Ja, PlanHeadingBranches) => "{} 件のブランチ",
+            (Ja, PlanHeadingBranches) => "{} 件の branch",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",
@@ -3287,7 +4006,29 @@ impl Msg {
             (En, PlanMerge) => "Merge",
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
-            (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (Ja, PlanRebaseOnto) => "{} を rebase",
+            (En, PlanRebaseCandidates) => "Replay candidates",
+            (Ja, PlanRebaseCandidates) => "replay 候補の commit",
+            (En, PlanRebaseMore) => "… and {} more",
+            (Ja, PlanRebaseMore) => "…ほか {} 個の commit",
+            (En, PlanRebaseResultUnknown) => "Result OID is not yet known",
+            (Ja, PlanRebaseResultUnknown) => "実行後の OID は未確定",
+            (En, PlanTagPublishScope) => "Tag to publish",
+            (Ja, PlanTagPublishScope) => "公開する tag",
+            (En, PlanTagName) => "Tag",
+            (Ja, PlanTagName) => "tag",
+            (En, PlanTagKind) => "Kind",
+            (Ja, PlanTagKind) => "種類",
+            (En, PlanTagObject) => "Tag object OID",
+            (Ja, PlanTagObject) => "tag object OID",
+            (En, PlanTagTarget) => "Peeled target OID",
+            (Ja, PlanTagTarget) => "peel 後の対象 OID",
+            (En, PlanTagRemote) => "Remote",
+            (Ja, PlanTagRemote) => "remote",
+            (En, PlanTagPushDestination) => "Push destination",
+            (Ja, PlanTagPushDestination) => "push 先",
+            (En, PlanTagLocalUnchanged) => "Local HEAD, index and working tree stay unchanged.",
+            (Ja, PlanTagLocalUnchanged) => "ローカルの HEAD、index、working tree は変更しません。",
             (En, A11yCommitList) => "Commits",
             (Ja, A11yCommitList) => "commit 一覧",
             (En, A11yCommitRow) => "{}, by {}, {}, commit {}",
@@ -3296,9 +4037,9 @@ impl Msg {
             (Ja, A11yCommitRefs) => "、ref: {}",
             (En, A11yWipRow) => "Uncommitted changes in {}, {}",
             (Ja, A11yWipRow) => "{} の未 commit の変更、{}",
-            (En, A11ySidebarLocal) => "Local branches",
+            (En, A11ySidebarLocal) => "Local Branches",
             (Ja, A11ySidebarLocal) => "ローカル branch",
-            (En, A11ySidebarRemote) => "Remote branches",
+            (En, A11ySidebarRemote) => "Remote Branches",
             (Ja, A11ySidebarRemote) => "remote branch",
             (En, A11ySidebarWorktrees) => "Worktrees",
             (Ja, A11ySidebarWorktrees) => "worktree",
@@ -3316,6 +4057,11 @@ impl Msg {
             (Ja, A11ySidebarRemoteBranch) => "remote branch {}",
             (En, A11ySidebarTag) => "Tag {}",
             (Ja, A11ySidebarTag) => "tag {}",
+            (En, SidebarTagCommitNotLoaded) => "Commit not loaded; load more history.",
+            (Ja, SidebarTagCommitNotLoaded) => "commit が未読込みです。履歴を追加で読み込んでください。",
+            (En, SidebarTagHiddenBySolo) => "Commit is hidden by Branch Solo.",
+            (Ja, SidebarTagHiddenBySolo) => "commit は Branch Solo により非表示です。",
+            (En, A11ySidebarStash) | (Ja, A11ySidebarStash) => "stash@{{}}: {}",
             (En, A11ySidebarWorktree) => "Worktree {}, {}",
             (Ja, A11ySidebarWorktree) => "worktree {}、{}",
             (En, A11ySidebarCurrentSuffix) => ", current",
@@ -3332,6 +4078,30 @@ impl Msg {
             (Ja, A11yUnstagedTree) => "未 stage のファイル",
             (En, A11yStagedTree) => "Staged files",
             (Ja, A11yStagedTree) => "stage 済みのファイル",
+            (En, CommitPanelTitle) => "Commit Panel",
+            (Ja, CommitPanelTitle) => "Commit Panel",
+            (En, CommitPanelUnstaged) => "Unstaged",
+            (Ja, CommitPanelUnstaged) => "未 stage",
+            (En, CommitPanelStaged) => "Staged",
+            (Ja, CommitPanelStaged) => "stage 済み",
+            (En, CommitPanelList) => "List",
+            (Ja, CommitPanelList) => "一覧",
+            (En, CommitPanelTree) => "Tree",
+            (Ja, CommitPanelTree) => "ツリー",
+            (En, CommitPanelStageAll) => "Stage all",
+            (Ja, CommitPanelStageAll) => "Stage all",
+            (En, CommitPanelUnstageAll) => "Unstage all",
+            (Ja, CommitPanelUnstageAll) => "Unstage all",
+            (En, CommitPanelDiscardAll) => "Discard all",
+            (Ja, CommitPanelDiscardAll) => "Discard all",
+            (En, CommitPanelNoStageTargets) => "No files can be staged while conflicts remain",
+            (Ja, CommitPanelNoStageTargets) => "conflict 中のファイルは stage できません",
+            (En, CommitPanelNothingUnstaged) => "No unstaged changes",
+            (Ja, CommitPanelNothingUnstaged) => "未 stage の変更がありません",
+            (En, CommitPanelConflict) => "Conflict",
+            (Ja, CommitPanelConflict) => "conflict",
+            (En, CommitPanelStage) | (Ja, CommitPanelStage) => "Stage",
+            (En, CommitPanelUnstage) | (Ja, CommitPanelUnstage) => "Unstage",
             (En, A11yFileTreeDir) => "Folder {}",
             (Ja, A11yFileTreeDir) => "フォルダー {}",
             (En, A11yFileTreeFile) => "File {}, {}",
@@ -3351,14 +4121,14 @@ impl Msg {
             (En, A11yFileUnchanged) => "unchanged",
             (Ja, A11yFileUnchanged) => "変更なし",
             (En, A11yFileConflicted) => "conflicted",
-            (Ja, A11yFileConflicted) => "競合",
+            (Ja, A11yFileConflicted) => "conflict",
             (En, A11yStashRow) => "Stash: {}",
             (Ja, A11yStashRow) => "stash: {}",
             (En, ThemeColorVision) => "Color Vision (Blue/Orange)",
             (Ja, ThemeColorVision) => "色覚対応（青 / 橙）",
-            (En, A11yDialogTwoStage) => "This operation needs two confirmations. The first Confirm only arms it.",
+            (En, A11yDialogTwoStage) => "This operation needs two confirmations. Press Confirm twice to run it.",
             (Ja, A11yDialogTwoStage) => "この操作は 2 回の確認が必要です。1 回目の Confirm では実行されません。",
-            (En, A11yDialogArmed) => "Armed: the next Confirm runs this operation.",
+            (En, A11yDialogArmed) => "Ready: the next Confirm runs this operation.",
             (Ja, A11yDialogArmed) => "確認済み: 次の Confirm で実行されます。",
             (En, A11yDialogBlocked) => "This operation cannot run; see the blockers.",
             (Ja, A11yDialogBlocked) => "この操作は実行できません。blocker を確認してください。",
@@ -3370,6 +4140,8 @@ impl Msg {
             (Ja, PlanDiscardConfirm) => "{} 個のファイルを破棄",
             (En, PlanDiscardConfirmArmed) => "Permanently discard {} file(s)",
             (Ja, PlanDiscardConfirmArmed) => "{} 個のファイルを完全に破棄",
+            (En, DiscardUnsafePath) => "Cannot discard '{}': this path cannot be represented safely on this platform. No files were changed.",
+            (Ja, DiscardUnsafePath) => "「{}」はこの環境で元のパスを安全に扱えないため破棄できません。ファイルは変更していません。",
             (En, PlanReplayOnto) => "Replay {}",
             (Ja, PlanReplayOnto) => "{} を replay",
             (En, PlanReplayOntoArmed) => "\u{26a0} Really replay — rewrites the branch",
@@ -3403,7 +4175,7 @@ impl Msg {
             (En, InputWorktreeTitle) => "Create worktree",
             (Ja, InputWorktreeTitle) => "worktree を作成",
             (En, InputStashTitle) => "Stash changes",
-            (Ja, InputStashTitle) => "変更を退避",
+            (Ja, InputStashTitle) => "変更を stash する",
             (En, InputBranchName) => "Branch name",
             (Ja, InputBranchName) => "branch 名",
             (En, InputNewBranchName) => "New branch name",
@@ -3423,8 +4195,10 @@ impl Msg {
             (Ja, InputStashAfter) => "実行後",
             (En, PlanStateClean) => "clean",
             (Ja, PlanStateClean) => "変更なし",
+            (En, PlanStateUntrackedRetained) => "{} untracked retained",
+            (Ja, PlanStateUntrackedRetained) => "未追跡ファイル {} 件を保持",
             (En, InputStashUntrackedWarning) => "{} untracked file(s) will be included in the stash",
-            (Ja, InputStashUntrackedWarning) => "未追跡ファイル {} 件も退避に含まれます",
+            (Ja, InputStashUntrackedWarning) => "未追跡ファイル {} 件も stash に含まれます",
             (En, InputUpstream) => "Upstream",
             (Ja, InputUpstream) => "upstream",
             (En, InputCheckoutAfterCreate) => "Checkout after create",
@@ -3432,19 +4206,21 @@ impl Msg {
             (En, InputCreate) => "Create",
             (Ja, InputCreate) => "作成",
             (En, InputStash) => "Stash",
-            (Ja, InputStash) => "退避する",
+            (Ja, InputStash) => "Stash",
             (En, InputSetUpstream) => "Set upstream",
             (Ja, InputSetUpstream) => "upstream を設定",
             (En, InputRename) => "Rename",
             (Ja, InputRename) => "リネーム",
-            (En, InputPlanPending) => "Checking plan…",
-            (Ja, InputPlanPending) => "plan を確認中…",
+            (En, InputPlanPending) => "Checking…",
+            (Ja, InputPlanPending) => "確認中…",
+            (En, InputRenameEnterNewName) => "Enter a new name",
+            (Ja, InputRenameEnterNewName) => "新しい名前を入力",
             (En, TagPushTo) => "Push tag to {}",
             (Ja, TagPushTo) => "tag を {} に push",
             (En, TagPush) => "Push tag",
             (Ja, TagPush) => "tag を push",
             (En, TagNoRemote) => "no remote configured",
-            (Ja, TagNoRemote) => "リモートが設定されていません",
+            (Ja, TagNoRemote) => "remote が設定されていません",
             (En, TagCopyName) => "Copy tag name",
             (Ja, TagCopyName) => "tag 名をコピー",
             (En, PushTagConfirm) => "Push tag",
@@ -3502,12 +4278,20 @@ impl Msg {
             (Ja, EcoResetView) => "reset",
             (En, EcoHelpTitle) => "How to read Analyze",
             (Ja, EcoHelpTitle) => "Analyze の見方",
+            (En, EcoMode) => "Analyze mode",
+            (Ja, EcoMode) => "Analyze の評価軸",
+            (En, EcoPeriod) => "Analysis period",
+            (Ja, EcoPeriod) => "解析期間",
+            (En, EcoView) => "Analysis view",
+            (Ja, EcoView) => "解析の表示方法",
+            (En, EcoExportFormat) => "Diagnostic export format",
+            (Ja, EcoExportFormat) => "診断の出力形式",
 
             // ── Editor Workspace (T-WS-EDITOR-001) ──────────────────
             (En, EditorWorkspaceLoading) => "Loading…",
             (Ja, EditorWorkspaceLoading) => "読み込み中…",
             (En, EditorWorkspaceEmpty) => "No changed files in the working tree.",
-            (Ja, EditorWorkspaceEmpty) => "作業ツリーに変更されたファイルはありません。",
+            (Ja, EditorWorkspaceEmpty) => "working tree に変更されたファイルはありません。",
             (En, EditorWorkspaceSelectFile) => "Select a file to view its contents.",
             (Ja, EditorWorkspaceSelectFile) => "内容を表示するファイルを選択してください。",
             (En, EditorWorkspaceBinary) => "Binary file — preview not available.",
@@ -3521,9 +4305,11 @@ impl Msg {
             (En, EditorWorkspaceSourceAll) => "All",
             (Ja, EditorWorkspaceSourceAll) => "すべて",
             (En, EditorWorkspaceDeleted) => "File does not exist in the working tree (deleted).",
-            (Ja, EditorWorkspaceDeleted) => "作業ツリーに存在しません(削除済み)。",
+            (Ja, EditorWorkspaceDeleted) => "working tree に存在しません(削除済み)。",
             (En, EditorWorkspaceUndecodable) => "Cannot decode as UTF-8 — preview not available.",
             (Ja, EditorWorkspaceUndecodable) => "UTF-8として読めないためプレビューできません。",
+            (En, FileHistoryPathRenamed) => "File was renamed; open {path} instead.",
+            (Ja, FileHistoryPathRenamed) => "ファイル名が変更されています。{path} を開いてください。",
 
             // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──
             (En, EditorWorkspaceExternalChanged) => "File changed on disk.",
@@ -3540,6 +4326,30 @@ impl Msg {
             }
             (En, EditorWorkspaceUnsavedTitle) => "Unsaved changes — discard?",
             (Ja, EditorWorkspaceUnsavedTitle) => "未保存の変更があります。破棄しますか?",
+            (En, EditorHostUnsavedTitle) => "Save changes before closing?",
+            (Ja, EditorHostUnsavedTitle) => "閉じる前に変更を保存しますか?",
+            (En, EditorHostUnsavedCount) => "Files with unsaved changes: {count}",
+            (Ja, EditorHostUnsavedCount) => "未保存の変更があるファイル: {count}",
+            (En, EditorHostSaveAll) => "Save All",
+            (Ja, EditorHostSaveAll) => "すべて保存",
+            (En, EditorHostSaveWaiting) => {
+                "Another operation is still running. Wait for it to finish, then try Save All again."
+            }
+            (Ja, EditorHostSaveWaiting) => {
+                "別の操作がまだ実行中です。完了を待ってから、もう一度「すべて保存」を選んでください。"
+            }
+            (En, EditorHostRecoveryRequired) => {
+                "The result of an operation is unknown. Choose Cancel and review recovery in the Operation Log before trying again."
+            }
+            (Ja, EditorHostRecoveryRequired) => {
+                "操作の結果が不明です。「キャンセル」を選び、操作ログで復旧方法を確認してから再試行してください。"
+            }
+            (En, EditorWorkspaceSaveInterrupted) => {
+                "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
+            }
+            (Ja, EditorWorkspaceSaveInterrupted) => {
+                "保存が中断されました。未保存の変更は開いたままです。再試行する前に操作ログを確認してください。"
+            }
             (En, EditorWorkspaceDiscard) => "Discard",
             (Ja, EditorWorkspaceDiscard) => "破棄",
             (En, EditorWorkspaceCancel) => "Cancel",
@@ -3560,6 +4370,12 @@ impl Msg {
             }
             (En, TrustRepoConfirm) => "Trust this repository",
             (Ja, TrustRepoConfirm) => "このリポジトリを信頼する",
+            (En, TrustRepoSaveFailed) => "Could not save trust for repository {}.",
+            (Ja, TrustRepoSaveFailed) => "リポジトリ {} の信頼設定を保存できませんでした。",
+            (En, TrustRepoReopenFailed) => "Trust was saved, but repository {} could not be reopened. It stays open as before.",
+            (Ja, TrustRepoReopenFailed) => "信頼設定は保存しましたが、リポジトリ {} を開き直せませんでした。表示は以前のままです。",
+            (En, TrustRepoRetry) => "Retry",
+            (Ja, TrustRepoRetry) => "再試行",
 
             // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ──
             (En, EditorRightTabDiff) => "Diff",
@@ -3572,8 +4388,16 @@ impl Msg {
             (Ja, EditorMiddleTabSnapshot) => "スナップショット",
             (En, EditorHistoryEmpty) => "No history for this file.",
             (Ja, EditorHistoryEmpty) => "このファイルの変更履歴はありません。",
+            (En, EditorHistoryFailed) => "Could not load History.",
+            (Ja, EditorHistoryFailed) => "History を取得できませんでした。",
+            (En, EditorHistoryRetry) => "Retry",
+            (Ja, EditorHistoryRetry) => "再試行",
             (En, EditorSnapshotUnavailable) => "Content not available for this commit.",
             (Ja, EditorSnapshotUnavailable) => "この commit 時点のコンテンツは取得できません。",
+            (En, EditorSnapshotReadOnly) => "Snapshot — read only",
+            (Ja, EditorSnapshotReadOnly) => "スナップショット — 読み取り専用",
+            (En, EditorOpenCurrent) => "Open current",
+            (Ja, EditorOpenCurrent) => "現在のファイルを開く",
 
             // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
             (En, EditorTreeRename) => "Rename…",
@@ -3593,6 +4417,24 @@ impl Msg {
             (En, EditorWorkspacePreviewShow) => "Preview",
             (Ja, EditorWorkspacePreviewEdit) => "編集に戻る",
             (En, EditorWorkspacePreviewEdit) => "Back to editor",
+            (En, EditorFindPrevious) => "Previous match",
+            (Ja, EditorFindPrevious) => "前の一致",
+            (En, EditorFindNext) => "Next match",
+            (Ja, EditorFindNext) => "次の一致",
+            (En, EditorFindReplace) => "Replace",
+            (Ja, EditorFindReplace) => "置換",
+            (En, EditorFindReplaceAll) => "Replace all",
+            (Ja, EditorFindReplaceAll) => "すべて置換",
+            (En, EditorFindClose) => "Close",
+            (Ja, EditorFindClose) => "閉じる",
+            (En, EditorFindCase) => "Match case",
+            (Ja, EditorFindCase) => "大文字と小文字を区別",
+            (En, EditorFindReplaceMode) => "Show replacement field",
+            (Ja, EditorFindReplaceMode) => "置換欄を表示",
+            (En, EditorFindField) => "Find",
+            (Ja, EditorFindField) => "検索",
+            (En, EditorFindReplacementField) => "Replacement",
+            (Ja, EditorFindReplacementField) => "置換文字列",
             (Ja, EditorWorkspaceMermaidRendering) => "図を描画中…",
             (En, EditorWorkspaceMermaidRendering) => "Rendering diagram…",
             (Ja, EditorWorkspaceMermaidNeedsCli) => "図の描画には mermaid-cli (mmdc) が必要です",
@@ -3662,13 +4504,15 @@ impl Msg {
             (Ja, BlameIgnoredMarkTip) => "* commit は .git-blame-ignore-revs に含まれます",
             (En, BlameUnblamableMarkTip) => "? line is not yet committed",
             (Ja, BlameUnblamableMarkTip) => "? まだ commit されていない行",
+            (En, BlameUncommitted) => "Uncommitted",
+            (Ja, BlameUncommitted) => "未 commit",
             (En, EditorWorkspaceBlame) => "Blame",
             (Ja, EditorWorkspaceBlame) => "Blame",
             // #1016 PR B — modal controls, validation and AFTER-state chips.
             (En, CloneChangeFolderWhileRunning) => "Cannot change the folder while cloning.",
             (Ja, CloneChangeFolderWhileRunning) => "clone 中はフォルダーを変更できません。",
             (En, RemoteConnectTitle) => "Connect to a remote host (SSH)",
-            (Ja, RemoteConnectTitle) => "リモートホストに接続 (SSH)",
+            (Ja, RemoteConnectTitle) => "remote ホストに接続 (SSH)",
             (En, RemoteSshNotice) => "Uses your system ssh (~/.ssh/config, keys, ssh-agent, known_hosts). New or password-only hosts must be set up in a terminal first.",
             (Ja, RemoteSshNotice) => "システムの ssh (~/.ssh/config、鍵、ssh-agent、known_hosts) を使用します。新しいホストやパスワードのみのホストは先にターミナルで設定してください。",
             (En, RemoteHostLabel) => "Host — user@host or a ~/.ssh/config alias",
@@ -3697,10 +4541,24 @@ impl Msg {
             (Ja, RemoteNoCommits) => "(commit はまだありません)",
             (En, RemoteOpenRepository) => "Open repository (read-only)",
             (Ja, RemoteOpenRepository) => "リポジトリを開く (読み取り専用)",
+            (En, RepositoryPickerOpen) => "Open Repository",
+            (Ja, RepositoryPickerOpen) => "リポジトリを開く",
+            (En, PathPickerFailed) => "{picker} failed: {error}",
+            (Ja, PathPickerFailed) => "{picker} に失敗しました: {error}",
             (En, RemoteOpeningRepository) => "Opening…",
             (Ja, RemoteOpeningRepository) => "開いています…",
             (En, RemoteClose) => "Close",
             (Ja, RemoteClose) => "閉じる",
+            (En, RemoteDirectoryList) => "Remote directory",
+            (Ja, RemoteDirectoryList) => "remote ディレクトリ",
+            (En, RemoteParentDirectory) => "Parent directory",
+            (Ja, RemoteParentDirectory) => "親ディレクトリ",
+            (En, RemoteDirectoryRow) => "Directory: {}",
+            (Ja, RemoteDirectoryRow) => "ディレクトリ: {}",
+            (En, RemoteFileRow) => "File: {}",
+            (Ja, RemoteFileRow) => "ファイル: {}",
+            (En, RemoteDirectoryEmpty) => "This directory is empty.",
+            (Ja, RemoteDirectoryEmpty) => "このディレクトリは空です。",
             (En, SmartConsentTitle) => "Enable Local LLM generation?",
             (Ja, SmartConsentTitle) => "ローカル LLM による生成を有効にしますか？",
             (En, SmartConsentIntro) => "Pressing Generate sends your staged diff to a local Ollama model on this machine. Please review:",
@@ -3719,6 +4577,20 @@ impl Msg {
             (Ja, SmartModelTitle) => "ローカルモデルを選択",
             (En, SmartModelRemembered) => "Your choice is remembered.",
             (Ja, SmartModelRemembered) => "選んだモデルは次回も使用されます。",
+            (En, SmartRuleBasedInserted) => "Rule-based suggestion inserted",
+            (Ja, SmartRuleBasedInserted) => "ルールベースの下書きを挿入しました",
+            (En, SmartNoModelsInserted) => "No local models found — rule-based draft inserted",
+            (Ja, SmartNoModelsInserted) => "ローカルモデルがありません — ルールベースの下書きを挿入しました",
+            (En, SmartGeneratingLocal) => "Generating with local LLM…",
+            (Ja, SmartGeneratingLocal) => "ローカルLLMで生成中…",
+            (En, SmartGeneratingProvider) => "Generating with {}…",
+            (Ja, SmartGeneratingProvider) => "{} で生成中…",
+            (En, SmartGeneratedLocal) => "Generated with local LLM",
+            (Ja, SmartGeneratedLocal) => "ローカルLLMで生成しました",
+            (En, SmartGenerationFallback) => "LLM unavailable — used rule-based",
+            (Ja, SmartGenerationFallback) => "LLMを利用できません — ルールベースで生成しました",
+            (En, SmartGenerationFailed) => "Generation failed — edit manually",
+            (Ja, SmartGenerationFailed) => "生成に失敗しました — 手動で編集してください",
             (En, UpdateAvailableTitle) => "Update available",
             (Ja, UpdateAvailableTitle) => "アップデートがあります",
             (En, UpdateSkipVersion) => "Skip this version",
@@ -3727,10 +4599,22 @@ impl Msg {
             (Ja, UpdateReleasePage) => "リリースページ",
             (En, UpdateLater) => "Later",
             (Ja, UpdateLater) => "後で",
+            (En, UpdateHideContinuing) => "Hide — update continues",
+            (Ja, UpdateHideContinuing) => "非表示 — 更新は続行します",
             (En, UpdateInstalling) => "Updating…",
             (Ja, UpdateInstalling) => "更新中…",
             (En, UpdateInstallingReason) => "An update is currently being installed.",
             (Ja, UpdateInstallingReason) => "更新をインストール中です。",
+            (En, UpdateRestartReady) => "Update installed. Restart to finish updating.",
+            (Ja, UpdateRestartReady) => "更新をインストールしました。再起動すると更新が完了します。",
+            (En, UpdateRestart) => "Restart Kagi",
+            (Ja, UpdateRestart) => "Kagi を再起動",
+            (En, UpdateRestartWaiting) => {
+                "Another operation is still running. Wait for it to finish, then choose Restart Kagi."
+            }
+            (Ja, UpdateRestartWaiting) => {
+                "別の操作がまだ実行中です。完了を待ってから「Kagi を再起動」を選んでください。"
+            }
             (En, UpdateFailed) => "Update failed",
             (Ja, UpdateFailed) => "更新に失敗しました",
             (En, UpdateNow) => "Update now",
@@ -3755,8 +4639,8 @@ impl Msg {
             (Ja, EditorDeleteGitBlocked) => ".git は削除できません",
             (En, EditorTrashUnsupported) => "Trash is only supported on macOS",
             (Ja, EditorTrashUnsupported) => "ゴミ箱は macOS でのみ利用できます",
-            (En, EditorTrashHomeUnset) => "HOME is not set",
-            (Ja, EditorTrashHomeUnset) => "HOME が設定されていません",
+            (En, EditorTrashHomeUnset) => "Can't find your home folder, so the Trash is unavailable.",
+            (Ja, EditorTrashHomeUnset) => "ホームフォルダーが見つからないため、ゴミ箱を使えません。",
             (En, EditorTrashCreateDirFailed) => "cannot create ~/.Trash",
             (Ja, EditorTrashCreateDirFailed) => "~/.Trash を作成できません",
             (En, EditorTrashPathMissingName) => "path has no file name",
@@ -3771,8 +4655,8 @@ impl Msg {
             (Ja, PrMergeMethodSquash) => "squash して merge",
             (En, PrMergeMethodRebase) => "Rebase and merge",
             (Ja, PrMergeMethodRebase) => "rebase して merge",
-            (En, PrMergeSessionUnavailable) => "repository session unavailable",
-            (Ja, PrMergeSessionUnavailable) => "リポジトリのセッションを利用できません",
+            (En, PrMergeSessionUnavailable) => "The repository is no longer open. Reopen it and try again.",
+            (Ja, PrMergeSessionUnavailable) => "リポジトリが開かれていません。開き直してからやり直してください。",
             (En, AfterStashDrop) => "stash dropped",
             (Ja, AfterStashDrop) => "stash 削除",
             (En, AfterStashPop) => "restored, stash removed",
@@ -3823,6 +4707,16 @@ pub fn editor_delete_file_count_note(count: usize, truncated: bool) -> String {
     }
 }
 
+/// Commit Panel section count; file names and diffstats remain user/Git data.
+pub fn commit_panel_section(staged: bool, count: usize) -> String {
+    let label = if staged {
+        Msg::CommitPanelStaged
+    } else {
+        Msg::CommitPanelUnstaged
+    };
+    format!("{} ({count})", label.t())
+}
+
 /// Read-only Issues detail comment heading.
 pub fn issue_comments(count: usize) -> String {
     match lang() {
@@ -3835,6 +4729,15 @@ pub fn issue_comments(count: usize) -> String {
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Palette section and unavailable reason share language-appropriate punctuation.
+pub fn command_palette_description(language: Lang, section: &str, reason: Option<&str>) -> String {
+    match (language, reason) {
+        (Lang::En, Some(reason)) => format!("{section}. {reason}"),
+        (Lang::Ja, Some(reason)) => format!("{section}。{reason}"),
+        (_, None) => section.to_string(),
+    }
+}
+
 /// Help-overlay sections for the Analyze view: `(heading, body)` in the active
 /// language. Kept here so EN/JA stay side by side (ADR-0119).
 pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
@@ -3842,15 +4745,15 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::En => vec![
             (
                 "What is Analyze?",
-                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Excluded files are fully configurable in the \"analyze_ignore\" file (gitignore syntax, next to settings.json) — it is seeded with sensible defaults (images, PDF, CAD, KiCad, fonts, archives); edit or clear it freely.",
+                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Set excluded files in Settings → Analyze ignore.",
             ),
             (
                 "Hotspots",
-                "Files ranked by risk = how often a file changes (commits) × how big it is (LOC). The top of the list is where bugs are most likely — busy AND complex code. List shows the ranking with a risk bar; Map shows a treemap (tile size = LOC, colour = risk, green → red). It is a hint to look, not a verdict.",
+                "Files ranked by risk = how often a file changes (commits) × how big it is (LOC). Risk is shown numerically on a 0.0–1.0 scale. List bars are relative to the highest risk; Map colour shows absolute risk (green → red), with tile size = LOC (commits when LOC is zero). Busy AND complex code is worth examining — this is a hint to look, not a verdict.",
             ),
             (
                 "Coupling",
-                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row to expand one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit. 'Mermaid' shows the same graph as Mermaid source with one-click open in mermaid.live.",
+                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row, or focus it and press Enter/Space, to expand or collapse one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit. 'Mermaid' shows the same graph as Mermaid source with one-click open in mermaid.live.",
             ),
             (
                 "Ownership",
@@ -3864,15 +4767,15 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::Ja => vec![
             (
                 "Analyze とは",
-                "Git 履歴を読み取り専用で分析します(変更は加えません)。右上で期間(Day … All)を選ぶと、各ビューがその期間で再集計されます。除外対象は settings.json の隣の \"analyze_ignore\" ファイル(gitignore 形式)で完全に設定可能で、初回に既定値(画像・PDF・CAD・KiCad・フォント・アーカイブ)が書き込まれます。自由に編集・全削除できます。",
+                "Git 履歴を分析します(変更は加えません)。右上で期間(Day … All)を選ぶと、各ビューがその期間で再集計されます。除外ファイルは 設定 → Analyze ignore で指定します。",
             ),
             (
                 "Hotspots(ホットスポット)",
-                "リスク = 変更頻度(commit 数)× 規模(行数 LOC)でファイルを順位付け。上位ほどバグが出やすい＝「よく触られて、かつ複雑」な場所です。List はリスクバー付きランキング、Map はツリーマップ(面積=LOC、色=リスク、緑→赤)。断定ではなく「注目の目安」です。",
+                "リスク = 変更頻度(commit 数)× 規模(行数 LOC)でファイルを順位付け。risk は 0.0–1.0 の数値で表示します。List のバーは最大 risk に対する相対値、Map の色は絶対 risk(緑→赤)、面積は LOC(0 LOC の場合は commit 数)です。「よく触られて、かつ複雑」な場所を調べるための目安で、断定ではありません。",
             ),
             (
                 "Coupling(結合)",
-                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー(1:多)が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『reset』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
+                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックするか、focus して Enter/Space を押すと、全パートナー(1:多)の展開・折りたたみができます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『reset』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
             ),
             (
                 "Ownership(所有)",
@@ -3895,7 +4798,7 @@ pub fn wip_row_note(n: usize) -> String {
             "// WIP — {} change{} (click to open commit panel)",
             n, plural
         ),
-        Lang::Ja => format!("// WIP — {} change{}(クリックで commit panel)", n, plural),
+        Lang::Ja => format!("// WIP — {} change{}(クリックで Commit Panel)", n, plural),
     }
 }
 
@@ -3918,7 +4821,7 @@ pub fn wip_row_other(n: usize) -> String {
 pub fn pr_lane_elided(n: usize) -> String {
     match lang() {
         Lang::En => format!("{} commit{} elided", n, if n == 1 { "" } else { "s" }),
-        Lang::Ja => format!("{} コミット省略", n),
+        Lang::Ja => format!("{} commit 省略", n),
     }
 }
 
@@ -3965,6 +4868,16 @@ pub fn commit_button() -> &'static str {
     }
 }
 
+/// Analyze settings failure; the filesystem path and OS cause stay verbatim.
+pub fn analyze_ignore_failed_fmt(detail: &str) -> String {
+    format!("{}: {detail}", Msg::SettingsAnalyzeIgnoreFailed.t())
+}
+
+/// A missing pre-rename history path, with the current filename left verbatim.
+pub fn file_history_renamed_fmt(path: &str) -> String {
+    Msg::FileHistoryPathRenamed.t().replace("{path}", path)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // W29-I18N-WAVE2: keyed git-layer validation → localized text
 // ──────────────────────────────────────────────────────────────────────────
@@ -3993,7 +4906,7 @@ pub fn branch_rename_exists_fmt(name: &str) -> String {
 pub fn branch_invalid_ref_fmt(name: &str) -> String {
     match lang() {
         Lang::En => format!(
-            kagi_domain::advice_template_en!(CommonBranchInvalidRef),
+            kagi_domain::advice_template_display_en!(CommonBranchInvalidRef),
             name
         ),
         Lang::Ja => plan::advice_text(Msg::AdviceCommonBranchInvalidRef, &[&name]),
@@ -4024,6 +4937,16 @@ pub fn worktree_exists_fmt(path: &str) -> String {
     }
 }
 
+impl Msg {
+    /// Name the browser action, not merely the port it points at.
+    pub fn worktree_inspection_open_url(port: u16) -> String {
+        match lang() {
+            Lang::En => format!("Open http://localhost:{port} in browser"),
+            Lang::Ja => format!("http://localhost:{port} をブラウザで開く"),
+        }
+    }
+}
+
 /// Map a keyed [`kagi_domain::plan::BranchNameError`] to localized text.
 pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
     use kagi_domain::plan::BranchNameError::*;
@@ -4037,6 +4960,21 @@ pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
         CreateInvalidRef(name) => branch_invalid_ref_fmt(name),
         CreateLeadingDash(name) => branch_leading_dash_fmt(name),
         CreateExists(name) => branch_exists_fmt(name),
+        CreateNamespaceCollision { name, existing } => match lang() {
+            Lang::En => e.to_string(),
+            Lang::Ja => format!(
+                "既存の ref `{}` と名前空間が競合しています。\nbranch `{}`",
+                existing, name
+            ),
+        },
+    }
+}
+
+/// Accessible action name for the Inspector's short SHA chip.
+pub fn inspector_copy_hash(short_sha: &str) -> String {
+    match lang() {
+        Lang::En => format!("Copy commit hash {short_sha}"),
+        Lang::Ja => format!("commit hash {short_sha} をコピー"),
     }
 }
 
@@ -4099,6 +5037,27 @@ pub fn smart_model_switch_note(model: &str) -> String {
     }
 }
 
+/// Commit footer help names the actual backend; only Ollama owns a Kagi model.
+pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bool) -> String {
+    let provider = kagi_domain::text_safety::sanitize_control_bytes(provider);
+    let name = match model.filter(|model| !model.is_empty()) {
+        Some(model) => format!(
+            "{} ({})",
+            provider,
+            kagi_domain::text_safety::sanitize_control_bytes(model)
+        ),
+        None => provider,
+    };
+    if generating {
+        Msg::SmartGeneratingProvider.t().replace("{}", &name)
+    } else {
+        match lang() {
+            Lang::En => format!("Generate commit message with {name}"),
+            Lang::Ja => format!("{name} で commit メッセージを生成"),
+        }
+    }
+}
+
 /// Smart Commit provider chip hint when a CLI provider is not on `$PATH`:
 /// "<name> (not found on PATH)". The provider display name stays verbatim.
 pub fn provider_not_found_hint(name: &str) -> String {
@@ -4123,27 +5082,27 @@ pub fn smart_cli_warning_lines(name: &str, bin: &str) -> [String; 4] {
     match lang() {
         Lang::En => [
             format!(
-                "Your staged diff is sent to the external `{}` CLI — it leaves kagi's local-Ollama sandbox.",
+                "Your staged diff is sent to the external `{}` CLI, which may send it outside this computer.",
                 bin
             ),
             format!(
                 "It uses YOUR {} account and consumes YOUR usage quota — each generation may incur cost.",
                 name
             ),
-            "kagi runs the CLI non-interactively in read-only mode; it can never modify your repository."
+            "The CLI can't change your repository."
                 .to_string(),
             format!("Requires the `{}` CLI to be installed and logged in.", bin),
         ],
         Lang::Ja => [
             format!(
-                "staged な diff は外部の `{}` CLI に送信され、kagi のローカル Ollama サンドボックスの外に出ます。",
+                "stage 済みの diff は外部の `{}` CLI に送られ、このコンピューターの外に送信される可能性があります。",
                 bin
             ),
             format!(
                 "あなたの {} アカウントを使い、利用量を消費します。生成ごとに費用が発生する場合があります。",
                 name
             ),
-            "kagi は CLI を非対話・読み取り専用で実行します。リポジトリを変更することはありません。"
+            "CLI がリポジトリを変更することはありません。"
                 .to_string(),
             format!("`{}` CLI のインストールとログインが必要です。", bin),
         ],
@@ -4164,6 +5123,24 @@ pub fn graph_detached_worktree_label(short_oid: &str) -> String {
     format!("{} {}", Msg::GraphDetachedWorktree.t(), short_oid)
 }
 
+/// Localized display heading; canonical section names remain stable identifiers.
+pub fn menu_heading(section: &str, language: Lang) -> &str {
+    if language == Lang::En {
+        return section;
+    }
+    match section {
+        "File" => "ファイル",
+        "Edit" => "編集",
+        "View" => "表示",
+        "Repository" => "リポジトリ",
+        "Window" => "ウインドウ",
+        "Help" => "ヘルプ",
+        "Theme" => "テーマ",
+        "Language" => "言語",
+        _ => section,
+    }
+}
+
 /// Japanese label for a command-registry id (issue #352, command palette).
 ///
 /// Returns `None` for ids whose English label is a domain word that stays
@@ -4174,21 +5151,25 @@ pub fn graph_detached_worktree_label(short_oid: &str) -> String {
 /// command table, and translations belong with the rest of the i18n table.
 pub fn command_label_ja(id: &str) -> Option<&'static str> {
     Some(match id {
-        "app.about" => "kagi について",
+        "app.about" => Msg::AboutTitle.t_for(Lang::Ja),
         "app.settings" => "設定…",
         "app.quit" => "kagi を終了",
+        "app.hide" => Msg::MenuHideApp.t_for(Lang::Ja),
+        "app.hideOthers" => Msg::MenuHideOthers.t_for(Lang::Ja),
+        "app.showAll" => Msg::MenuShowAll.t_for(Lang::Ja),
         "file.newTab" => "新規タブ",
         "file.closeTab" => "タブを閉じる",
         "file.cloneRepository" => "リポジトリを clone…",
         "file.openRepository" => "リポジトリを開く…",
         "file.openInTerminal" => "リポジトリをターミナルで開く",
-        "file.connectRemote" => "リモートホストに接続…",
+        "file.connectRemote" => "remote ホストに接続…",
         "file.refresh" => "リポジトリを再読み込み",
         "view.zoomIn" => "拡大",
         "view.zoomOut" => "縮小",
         "view.zoomReset" => "実際のサイズ",
         "view.fullScreen" => "フルスクリーンにする",
         "view.toggleSidebar" => "サイドバーの表示切替",
+        "view.togglePrSwimlane" => "PR スイムレーンの表示切替",
         "view.toggleTerminal" => "ターミナルの表示切替",
         "view.toggleCommitDetails" => "commit 詳細の表示切替",
         "view.toggleDiffView" => "diff 表示の切替",
@@ -4206,9 +5187,12 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "commit.checkout" => "commit を checkout",
         "commit.createBranch" => "commit から branch を作成…",
         "commit.reset" => "HEAD を commit に reset…",
-        "commit.compareWorkingTree" => "作業ツリーと比較",
+        "commit.compareWorkingTree" => "working tree と比較",
         "window.minimize" => "最小化",
         "window.zoom" => "ズーム",
+        "window.previousTab" => Msg::MenuPreviousTab.t_for(Lang::Ja),
+        "window.nextTab" => Msg::MenuNextTab.t_for(Lang::Ja),
+        "window.bringAllToFront" => Msg::MenuBringAllToFront.t_for(Lang::Ja),
         "window.new" => "新規ウィンドウ",
         "window.close" => "ウィンドウを閉じる",
         "help.shortcuts" => "キーボードショートカット",
@@ -4227,3 +5211,115 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
 #[cfg(test)]
 #[path = "i18n_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod input_name_tests {
+    use super::*;
+
+    #[test]
+    fn input_names_are_nonempty_and_localized() {
+        for message in [
+            Msg::A11yCommandPaletteQuery,
+            Msg::A11yCommitSummary,
+            Msg::A11yCommitDescription,
+            Msg::A11yConflictResult,
+            Msg::A11yIssueTitle,
+            Msg::A11yIssueBody,
+            Msg::A11yCommentBody,
+            Msg::A11yHomeFilter,
+            Msg::A11yListTitleFilter,
+            Msg::A11ySidebarFilter,
+            Msg::A11ySidebarClearSearch,
+            Msg::A11yPrReviewersFilter,
+            Msg::A11yPrAssigneesFilter,
+            Msg::A11yPrLabelsFilter,
+            Msg::A11yStashMessage,
+            Msg::A11yAnalyzeIgnorePatterns,
+            Msg::A11yEditorFileContents,
+        ] {
+            assert!(!message.t_for(Lang::En).trim().is_empty());
+            assert!(!message.t_for(Lang::Ja).trim().is_empty());
+            assert_ne!(message.t_for(Lang::En), message.t_for(Lang::Ja));
+        }
+    }
+}
+
+#[cfg(test)]
+mod standard_app_menu_tests {
+    use super::*;
+
+    #[test]
+    fn standard_app_menu_labels_en_ja() {
+        for (message, en, ja) in [
+            (Msg::MenuHideApp, "Hide Kagi", "Kagiを隠す"),
+            (Msg::MenuHideOthers, "Hide Others", "ほかを隠す"),
+            (Msg::MenuShowAll, "Show All", "すべてを表示"),
+            (Msg::MenuServices, "Services", "サービス"),
+        ] {
+            assert_eq!(message.t_for(Lang::En), en);
+            assert_eq!(message.t_for(Lang::Ja), ja);
+        }
+    }
+}
+
+/// Read-opening list rows preserve literal braces in external titles/names.
+pub fn issue_row_name(number: u64, title: &str, state: &str) -> String {
+    use std::fmt::Write as _;
+    let template = Msg::A11yIssueOpenRow.t();
+    let mut parts = template.split("{}");
+    let mut name = String::with_capacity(template.len() + 20 + title.len() + state.len());
+    name.push_str(parts.next().unwrap_or_default());
+    let _ = write!(name, "{number}");
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(title);
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(state);
+    name.push_str(parts.next().unwrap_or_default());
+    name
+}
+
+pub fn recent_row_name(name: &str) -> String {
+    Msg::A11yRecentOpenRow.t().replace("{name}", name)
+}
+
+#[cfg(test)]
+mod rebase_plan_label_tests {
+    use super::*;
+
+    #[test]
+    fn rebase_plan_labels_name_source_not_destination() {
+        for branch in ["feature", "main"] {
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Rebase {branch}")
+            );
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を rebase")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Replay {branch}")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を replay")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod toast_count_tests {
+    use super::*;
+
+    #[test]
+    fn older_notification_caption_has_a_singular_english_form() {
+        assert_eq!(Msg::ToastMoreOne.t_for(Lang::En), "1 more notification");
+        assert_eq!(Msg::ToastMoreOne.t_for(Lang::Ja), "ほか1件の通知");
+        assert_eq!(
+            Msg::ToastMore.t_for(Lang::En).replace("{count}", "3"),
+            "3 more notifications"
+        );
+    }
+}

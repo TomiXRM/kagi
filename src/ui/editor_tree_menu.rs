@@ -94,12 +94,12 @@ fn item(
     label: &'static str,
     dangerous: bool,
 ) -> MenuItem<EditorTreeAction> {
-    MenuItem {
+    MenuItem::command(
         action,
-        label: SharedString::from(label),
-        state: ItemState::Enabled,
+        SharedString::from(label),
+        ItemState::Enabled,
         dangerous,
-    }
+    )
 }
 
 /// Build the header + grouped items for `info`. `is_root` narrows the menu to
@@ -277,6 +277,7 @@ pub fn render_editor_tree_menu(
     entity: &Entity<EditorWorkspaceView>,
     target: TreeMenuTarget,
     pos: Point<Pixels>,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<gpui::AnyElement> {
@@ -312,6 +313,7 @@ pub fn render_editor_tree_menu(
         on_dismiss,
         on_select,
         None,
+        window_active,
         window,
         cx,
     ))

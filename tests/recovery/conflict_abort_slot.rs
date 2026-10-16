@@ -1,11 +1,137 @@
 //! #755: the window's single modal slot around the conflict Abort
 //! confirmation — which focus its Escape resolves against, and which reload is
 //! allowed to sweep it.
-use crate::app_conflict::{click_control, content_fixture};
+use crate::app_conflict::{click_control, content_fixture, wait_idle};
 use crate::macos::{mount, unmount};
 use gpui::{Focusable, VisualTestAppContext};
 use kagi_git::oplog::read_oplog_tail_for_repo;
 use std::path::Path;
+
+#[path = "../support/cherry_pick_sequence.rs"]
+mod cherry_pick_sequence;
+
+/// The native confirmation and its receipt must describe the entire sequence.
+pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
+    use kagi::ui::i18n::{self, Lang};
+    use kagi_git::oplog::OpOutcome;
+    struct RestoreLanguage {
+        lang: Lang,
+        _saved: crate::gui_isolation::SavedKeys,
+    }
+    impl Drop for RestoreLanguage {
+        fn drop(&mut self) {
+            i18n::set_lang(self.lang);
+        }
+    }
+    let _language = RestoreLanguage {
+        lang: i18n::lang(),
+        _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
+    };
+    for (lang, unavailable, moved) in [
+        (
+            Lang::En,
+            "pre-sequence HEAD cannot be established",
+            "HEAD moved since the sequence started",
+        ),
+        (
+            Lang::Ja,
+            "sequence 開始前の HEAD を確認できません",
+            "sequence 開始後に HEAD が移動したため",
+        ),
+    ] {
+        i18n::set_lang(lang);
+        for case in ["ready", "missing-start", "head-moved"] {
+            let fixture = cherry_pick_sequence::Fixture::new(true, false);
+            let repo = fixture.path().canonicalize().unwrap();
+            let refusal = match case {
+                "missing-start" => {
+                    std::fs::remove_file(repo.join(".git/sequencer/head")).unwrap();
+                    Some(unavailable)
+                }
+                "head-moved" => {
+                    std::fs::write(repo.join(".git/sequencer/abort-safety"), &fixture.start)
+                        .unwrap();
+                    Some(moved)
+                }
+                _ => None,
+            };
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+            cx.run_until_parked();
+            click_control(cx, window, "conflict-abort");
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let modal = state.conflict_abort_modal().expect("abort confirmation");
+                if let Some(reason) = refusal {
+                    assert!(modal
+                        .plan
+                        .blockers
+                        .iter()
+                        .any(|note| i18n::plan::plan_note_text(note).contains(reason)));
+                } else {
+                    assert!(modal.plan.predicted.head.contains(&fixture.start[..7]));
+                }
+            });
+            draw(cx, window);
+            let before = crate::macos::repo_fingerprint(&repo);
+            let confirm = kagi::ui::button_style::recorded_modal_button("plan-confirm")
+                .expect("abort confirmation button is drawn");
+            assert_eq!(confirm.disabled, refusal.is_some(), "{lang:?}/{case}");
+            if let Some(reason) = refusal {
+                assert!(confirm.description.as_deref().unwrap().contains(reason));
+                // A blocked action is intentionally inert and has no Tab stop.
+                // Preserve the app-boundary refusal/receipt oracle separately,
+                // as the other blocked destructive confirmations do (#1277).
+                app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+            } else {
+                crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
+            }
+            wait_idle(cx, &app);
+            let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "cherry-pick-abort")
+                .collect();
+            assert_eq!(entries.len(), 1);
+            let backend = kagi_git::Backend::open(&repo).unwrap();
+            if let Some(reason) = refusal {
+                assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
+                assert!(repo.join(".git/sequencer").exists());
+                assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    let toast = state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .last()
+                        .unwrap();
+                    assert!(toast.message.contains(reason), "{}", toast.message);
+                });
+            } else {
+                assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+                assert!(backend.conflict_snapshot().unwrap().is_none());
+                let repository = git2::Repository::open(&repo).unwrap();
+                assert_eq!(
+                    repository.head().unwrap().target().unwrap().to_string(),
+                    fixture.start
+                );
+                assert!(repository.statuses(None).unwrap().is_empty());
+                assert!(entries[0]
+                    .ref_moves
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|movement| movement.new.as_deref() == Some(fixture.start.as_str())));
+            }
+            drop(backend);
+            unmount(cx, app, window);
+        }
+    }
+    eprintln!("[gui-e2e] PASS cherry_pick_abort_sequence");
+}
 
 fn draw(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
@@ -40,7 +166,7 @@ pub fn scenario_conflict_abort_escape_focus(cx: &mut VisualTestAppContext) {
     // the real `InputState`; nothing here is a test double.
     conflict.update(cx, |view, cx| {
         view.conflict_open_editor(Path::new("file.txt"));
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(true);
         cx.notify();
     });
     draw(cx, window);
@@ -75,7 +201,7 @@ pub fn scenario_conflict_abort_escape_focus(cx: &mut VisualTestAppContext) {
     // focus: the reachable dangling-focus path diagnosed in #755. (Which focus
     // #711's Esc was delivered into was never observed.)
     conflict.update(cx, |view, cx| {
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(false);
         cx.notify();
     });
     draw(cx, window);

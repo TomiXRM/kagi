@@ -146,17 +146,23 @@ impl MainDiffView {
     /// re-read of an unchanged file (a reload, re-opening the same diff) then
     /// costs neither a highlight nor a projection.
     pub(crate) fn adopt(&mut self, next: MainDiffView) {
-        let same = self.lang == next.lang
+        let same = self.title == next.title
             && self.images.is_none()
             && next.images.is_none()
             && same_text(&self.rows, &next.rows);
         if same {
-            let rows = self.rows.clone();
+            let same_language = self.lang == next.lang;
+            let rows = same_language.then(|| self.rows.clone());
             let highlighted = self.highlighted;
+            let height_source = self.height_source;
             *self = next;
-            self.rows = rows;
-            self.highlighted = highlighted;
+            if let Some(rows) = rows {
+                self.rows = rows;
+                self.highlighted = highlighted;
+            }
+            self.height_source = height_source;
         } else {
+            crate::ui::diff_selection::retire_revision(self.height_source);
             *self = next;
         }
     }
@@ -175,6 +181,8 @@ fn same_text(a: &Arc<Vec<DiffRow>>, b: &Arc<Vec<DiffRow>>) -> bool {
                         text,
                         old_lineno,
                         new_lineno,
+                        line_ending,
+                        line_ending_changed,
                         ..
                     },
                     DiffRow::Line {
@@ -182,9 +190,18 @@ fn same_text(a: &Arc<Vec<DiffRow>>, b: &Arc<Vec<DiffRow>>) -> bool {
                         text: t,
                         old_lineno: o,
                         new_lineno: n,
+                        line_ending: ending,
+                        line_ending_changed: ending_changed,
                         ..
                     },
-                ) => kind == k && text == t && old_lineno == o && new_lineno == n,
+                ) => {
+                    kind == k
+                        && text == t
+                        && old_lineno == o
+                        && new_lineno == n
+                        && line_ending == ending
+                        && line_ending_changed == ending_changed
+                }
                 _ => false,
             }))
 }
@@ -193,6 +210,10 @@ fn same_text(a: &Arc<Vec<DiffRow>>, b: &Arc<Vec<DiffRow>>) -> bool {
 pub(crate) fn install(slot: &mut Option<MainDiffView>, next: Option<MainDiffView>) {
     match (slot.as_mut(), next) {
         (Some(current), Some(next)) => current.adopt(next),
+        (Some(current), None) => {
+            crate::ui::diff_selection::retire_revision(current.height_source);
+            *slot = None;
+        }
         (_, next) => *slot = next,
     }
 }

@@ -210,15 +210,19 @@ fn commit_from_oid(repo: &Repository, oid: git2::Oid) -> Result<Commit, GitError
     let raw = repo
         .find_commit(oid)
         .map_err(|e| GitError::Other(e.message().to_string()))?;
+    Ok(commit_from_raw(&raw))
+}
+
+pub(crate) fn commit_from_raw(raw: &git2::Commit<'_>) -> Commit {
     let message = String::from_utf8_lossy(raw.message_bytes()).into_owned();
-    Ok(Commit {
-        id: CommitId(oid.to_string()),
+    Commit {
+        id: CommitId(raw.id().to_string()),
         parents: raw.parent_ids().map(|p| CommitId(p.to_string())).collect(),
         author: sig_from_git2(raw.author()),
         committer: sig_from_git2(raw.committer()),
         summary: message.lines().next().unwrap_or("").trim_end().to_string(),
         message,
-    })
+    }
 }
 
 // ────────────────────────────────────────────────────────────

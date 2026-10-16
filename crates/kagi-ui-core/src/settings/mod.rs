@@ -32,16 +32,70 @@
 //! *repeated* write of one key (a column-divider drag) updates memory and is
 //! collapsed into one file write; every other write still lands immediately.
 
+mod main_window_frame;
 mod store;
 #[cfg(test)]
 mod store_env_tests;
 mod terminal_autolock;
+mod window_frame;
 
+pub use main_window_frame::{main_window_frame, write_main_window_frame, MainWindowFrame};
 pub use store::flush;
 pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
+pub use window_frame::{settings_window_frame, write_settings_window_frame, SettingsWindowFrame};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// Toolbar caption preference; an unset preference follows the active preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarDisplay {
+    IconOnly,
+    IconAndText,
+}
+
+impl ToolbarDisplay {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::IconOnly => "icon_only",
+            Self::IconAndText => "icon_and_text",
+        }
+    }
+}
+
+static TOOLBAR_DISPLAY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn init_toolbar_display() {
+    let mode = Settings::load().toolbar_display();
+    TOOLBAR_DISPLAY.store(
+        match mode {
+            None => 0,
+            Some(ToolbarDisplay::IconOnly) => 1,
+            Some(ToolbarDisplay::IconAndText) => 2,
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub fn toolbar_display(theme_slug: &str) -> ToolbarDisplay {
+    match TOOLBAR_DISPLAY.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => ToolbarDisplay::IconOnly,
+        2 => ToolbarDisplay::IconAndText,
+        _ if matches!(theme_slug, "apple-light" | "apple-dark") => ToolbarDisplay::IconOnly,
+        _ => ToolbarDisplay::IconAndText,
+    }
+}
+
+pub fn set_toolbar_display(mode: ToolbarDisplay) {
+    write_setting("toolbar_display", Some(mode.as_str()));
+    TOOLBAR_DISPLAY.store(
+        match mode {
+            ToolbarDisplay::IconOnly => 1,
+            ToolbarDisplay::IconAndText => 2,
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
 
 /// The legacy scalar coercion: kagi writes strings, but tolerate bool/number.
 fn scalar_to_string(v: &serde_json::Value) -> Option<String> {
@@ -167,6 +221,18 @@ impl Settings {
         self.get_str("theme")
     }
 
+    pub fn toolbar_display(&self) -> Option<ToolbarDisplay> {
+        match self
+            .raw
+            .get("toolbar_display")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("icon_only") => Some(ToolbarDisplay::IconOnly),
+            Some("icon_and_text") => Some(ToolbarDisplay::IconAndText),
+            _ => None,
+        }
+    }
+
     /// Graph Cmd+C copy target (`graph_copy_target`, `"hash"`/`"branch"`;
     /// ADR-0170). Defaults to [`CopyTarget::Hash`] when unset or unrecognized.
     pub fn graph_copy_target(&self) -> CopyTarget {
@@ -182,6 +248,15 @@ impl Settings {
         let raw = self.get_str("window_size")?;
         let (w, h) = raw.trim().split_once('x')?;
         Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }
+
+    /// Bottom-panel body height in unscaled reference pixels (#1372).
+    /// The UI applies its minimum and viewport-dependent maximum.
+    pub fn bottom_panel_height(&self) -> Option<f32> {
+        self.get_str("bottom_panel_height")?
+            .parse::<f32>()
+            .ok()
+            .filter(|height| height.is_finite() && *height > 0.)
     }
 
     /// UI zoom, stored as a permille integer string (`"ui_zoom"`). Returns the
@@ -382,25 +457,32 @@ pub fn read_analyze_ignore_text() -> String {
     };
     match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(_) => {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        Err(error) => {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                let _ = write_analyze_ignore(DEFAULT_ANALYZE_IGNORE);
             }
-            let _ = std::fs::write(&path, DEFAULT_ANALYZE_IGNORE);
             DEFAULT_ANALYZE_IGNORE.to_string()
         }
     }
 }
 
-/// Persist new `analyze_ignore` contents (the Settings pane editor). Best-effort.
-pub fn write_analyze_ignore(content: &str) {
-    let Some(path) = analyze_ignore_path() else {
-        return;
-    };
+/// Persist Analyze ignore text through its settings owner, returning the OS cause.
+pub fn write_analyze_ignore(content: &str) -> std::io::Result<()> {
+    let path = analyze_ignore_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Analyze ignore settings directory unavailable",
+        )
+    })?;
+    write_analyze_ignore_at(&path, content)
+        .map_err(|error| std::io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
+fn write_analyze_ignore_at(path: &std::path::Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
-    let _ = std::fs::write(&path, content);
+    crate::atomic_file::write_atomic(path, content.as_bytes())
 }
 
 /// The Analyze exclude patterns (gitignore syntax, one per line) — comments /
@@ -457,6 +539,39 @@ mod tests {
 
     fn parse(text: &str) -> Settings {
         serde_json::from_str(text).unwrap_or_default()
+    }
+
+    #[test]
+    fn bottom_panel_body_height_is_finite_and_positive() {
+        assert_eq!(
+            parse(r#"{"bottom_panel_height":"202.5"}"#).bottom_panel_height(),
+            Some(202.5)
+        );
+        for value in ["NaN", "inf", "-inf", "0", "-2", "invalid"] {
+            let mut settings = Settings::default();
+            settings.set_str("bottom_panel_height", value);
+            assert_eq!(settings.bottom_panel_height(), None, "{value}");
+        }
+        assert_eq!(Settings::default().bottom_panel_height(), None);
+    }
+
+    #[test]
+    fn toolbar_display_round_trips_flat_strings() {
+        for mode in [ToolbarDisplay::IconOnly, ToolbarDisplay::IconAndText] {
+            let mut settings = parse(r#"{"future":"preserve"}"#);
+            settings.set_str("toolbar_display", mode.as_str());
+            let serialized = serde_json::to_string(&settings).unwrap();
+            assert_eq!(parse(&serialized).toolbar_display(), Some(mode));
+            assert_eq!(
+                parse(&serialized).get_str("future").as_deref(),
+                Some("preserve")
+            );
+        }
+        assert_eq!(parse("{}").toolbar_display(), None);
+        assert_eq!(
+            parse(r#"{"toolbar_display":"invalid"}"#).toolbar_display(),
+            None
+        );
     }
 
     #[test]
@@ -560,6 +675,40 @@ mod tests {
                 "a read must not rewrite malformed user settings"
             );
         }
+    }
+
+    #[test]
+    fn analyze_ignore_writer_reports_directory_and_parent_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("analyze_ignore");
+        std::fs::create_dir(&path).unwrap();
+        let original = path.join("original");
+        std::fs::write(&original, b"saved bytes").unwrap();
+        assert!(write_analyze_ignore_at(&path, "draft").is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"saved bytes");
+        std::fs::remove_file(&original).unwrap();
+        std::fs::remove_dir(&path).unwrap();
+        write_analyze_ignore_at(&path, "draft").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
+        assert!(write_analyze_ignore_at(&path.join("child"), "draft").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
+    }
+
+    #[test]
+    fn analyze_ignore_failed_atomic_replacement_preserves_saved_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("analyze_ignore");
+        write_analyze_ignore_at(&path, "saved bytes").unwrap();
+        let temp = dir
+            .path()
+            .join(format!(".analyze_ignore.{}.tmp", std::process::id()));
+        std::fs::create_dir(&temp).unwrap();
+        assert!(write_analyze_ignore_at(&path, "draft").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "saved bytes");
+        std::fs::remove_dir(&temp).unwrap();
+        write_analyze_ignore_at(&path, "draft").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
+        assert!(!temp.exists());
     }
 
     #[test]

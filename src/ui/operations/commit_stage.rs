@@ -52,11 +52,7 @@ impl KagiApp {
         match result {
             Ok(n) => {
                 klog!("staged-all: {} file(s)", n);
-                if let Some(entity) = self.ui().commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
-                }
-                self.start_wip_diffstat_scan(cx);
-                self.refresh_worktree_wip_row(&repo_path);
+                self.refresh_batch_staging(&repo_path, cx);
             }
             Err(e) => {
                 self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
@@ -104,15 +100,75 @@ impl KagiApp {
         match result {
             Ok(n) => {
                 klog!("unstaged-all: {} file(s)", n);
-                if let Some(entity) = self.ui().commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
-                }
-                self.start_wip_diffstat_scan(cx);
-                self.refresh_worktree_wip_row(&repo_path);
+                self.refresh_batch_staging(&repo_path, cx);
             }
             Err(e) => {
                 self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
             }
         }
+    }
+
+    /// Publish the write's read once; local feedback must not wait for the
+    /// filesystem watcher's debounce or repeat the panel's two diffstat reads.
+    fn refresh_batch_staging(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        let backend = match kagi_git::Backend::open(path) {
+            Ok(backend) => backend,
+            Err(error) => {
+                klog!("commit_panel: repo open error: {}", error);
+                return;
+            }
+        };
+        let status = match backend.working_tree_status() {
+            Ok(status) => status,
+            Err(error) => {
+                klog!("commit_panel: working_tree_status error: {}", error);
+                return;
+            }
+        };
+        let local = self.repo_path.as_deref() == Some(path);
+        let baseline = local.then(|| status.clone());
+        let wip = kagi_domain::refs::WorktreeWip {
+            staged: status.staged.len(),
+            unstaged: status.unstaged.len(),
+            untracked: status.untracked.len(),
+        };
+        let diffstat = self.ui().commit_panel.clone().map(|panel| {
+            panel.update(cx, |panel, cx| {
+                panel.apply_status(&backend, status);
+                let mut diffstat = WipDiffStat::default();
+                for stat in panel
+                    .state
+                    .staged_stats
+                    .iter()
+                    .chain(&panel.state.unstaged_stats)
+                {
+                    diffstat.additions += stat.additions;
+                    diffstat.deletions += stat.deletions;
+                }
+                cx.notify();
+                diffstat
+            })
+        });
+        if let Some(status) = baseline {
+            let view = self.view_mut();
+            view.status_summary.is_dirty = status.is_dirty();
+            view.status_summary.staged = status.staged.len();
+            view.status_summary.unstaged = status.unstaged.len();
+            view.status_summary.untracked = status.untracked.len();
+            view.status_summary.conflict_count = status.conflicted.len();
+            view.is_dirty = status.is_dirty();
+            if let Some(ui) = self.ui_mut() {
+                ui.last_working_status = Some(status);
+                ui.wip_diffstat = diffstat;
+                ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
+            }
+        } else {
+            for worktree in &mut self.view_mut().worktrees {
+                if crate::ui::worktree_wip::canon(worktree.path.clone()) == path {
+                    worktree.wip = Some(wip);
+                }
+            }
+        }
+        cx.notify();
     }
 }

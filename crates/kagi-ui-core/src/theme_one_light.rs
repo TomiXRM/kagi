@@ -11,8 +11,9 @@ pub const ONE_LIGHT: Theme = Theme {
 
     bg_base: 0xfafafa,
     bg_row_alt: 0xf0f0f1,
-    surface: 0xeaeaeb,
+    surface: 0xe0e0e1, // ≥1.15:1 structural step from panel
     selected: 0xd4e2fb,
+    inactive_selected: 0xd0d0d0,
     panel: 0xf0f0f0,
     sidebar: 0xeaeaeb,
     modal: 0xffffff,
@@ -25,6 +26,7 @@ pub const ONE_LIGHT: Theme = Theme {
 
     color_head: 0xe45649,   // red
     color_branch: 0x4078f2, // blue
+    link: 0x3068e2,         // deepen body text without changing ref/Primary fill
     selection_tint: 0x4078f2,
     color_remote: 0x50a14f, // green
     color_tag: 0xc18401,    // amber

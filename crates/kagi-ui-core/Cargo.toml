@@ -23,6 +23,10 @@ serde_json = "1"
 # `markdown::flatten_html_blocks`.
 markdown = "1.0.0"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
 [dev-dependencies]
 ttf-parser = "0.25.1"
 tempfile = "3"

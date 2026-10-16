@@ -13,6 +13,7 @@ pub const ONE_DARK: Theme = Theme {
     bg_row_alt: 0x24272e,
     surface: 0x3a3f4b,
     selected: 0x4b5263,
+    inactive_selected: 0x101010,
     panel: 0x21252b,
     sidebar: 0x1c1f24,
     modal: 0x3a3f4b,
@@ -25,6 +26,7 @@ pub const ONE_DARK: Theme = Theme {
 
     color_head: 0xe06c75,   // red
     color_branch: 0x61afef, // blue
+    link: 0x61afef,
     selection_tint: 0x61afef,
     color_remote: 0x98c379, // green
     color_tag: 0xe5c07b,    // yellow

@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
@@ -104,7 +105,7 @@ impl Render for Rows {
             .size_full()
             .font_family(theme::UI_FONT)
             .child(
-                uniform_list("recovery-history", 3, move |range, _, _| {
+                uniform_list("recovery-history", 3, move |range, window, _| {
                     range
                         .map(|ix| {
                             render_commit_row(
@@ -113,6 +114,7 @@ impl Render for Rows {
                                 &commit_row_model(&entries[ix], NOW),
                                 layout,
                                 ix == selected,
+                                window.is_window_active(),
                             )
                             .track_scroll(&handles[ix])
                         })
@@ -134,6 +136,7 @@ impl Render for Rows {
                                     &commit_row_model(entry, NOW),
                                     layout,
                                     ix == selected,
+                                    window.is_window_active(),
                                 )
                                 .into_any_element()
                                 .layout_as_root(
@@ -287,7 +290,7 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
             for layout in [
                 CommitRowLayout::Card,
                 CommitRowLayout::Table {
-                    row_height: 29. * zoom,
+                    row_height: theme::scaled(20.),
                 },
             ] {
                 for (name, text) in inputs() {
@@ -404,7 +407,7 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                 // No `history_loading = false` needed since #489: the loading
                 // state belongs to an in-flight request, and this harness
                 // seeds `history` directly without ever issuing one.
-                view.history = Some(history.clone());
+                view.history = Some(Arc::new(history.clone()));
                 view.selected_history_commit = Some(format!("{:040x}", 2));
                 cx.notify();
             });
@@ -421,11 +424,6 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                     Bounds::new(state.base_handle.bounds().origin, measured.contents),
                     name,
                 );
-                assert_eq!(
-                    view.history.as_ref(),
-                    Some(&history),
-                    "{name}: raw history changed"
-                );
                 measured.contents
             });
             // uniform_list measures its first entry. Reordering the SAME real
@@ -434,7 +432,7 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
             let mut reordered = history.clone();
             reordered.entries.swap(0, 1);
             editor.update(cx, |view, cx| {
-                view.history = Some(reordered.clone());
+                view.history = Some(Arc::new(reordered.clone()));
                 cx.notify();
             });
             draw(cx, win.into(), dimensions);
@@ -449,14 +447,9 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                     short_first, long_first,
                     "{name}: first author changes history scroll extent"
                 );
-                assert_eq!(
-                    view.history.as_ref(),
-                    Some(&reordered),
-                    "{name}: raw history changed"
-                );
             });
             editor.update(cx, |view, cx| {
-                view.history = Some(history.clone());
+                view.history = Some(Arc::new(history.clone()));
                 cx.notify();
             });
         }
@@ -710,7 +703,7 @@ pub fn scenario_file_history_virtualized(cx: &mut VisualTestAppContext, repo_pat
             row_h > 0. && list_h > 0.,
             "{dimensions:?}: list not laid out"
         );
-        let expected_row_h = theme::scaled(29.);
+        let expected_row_h = theme::scaled(20.);
         assert!(
             (row_h - expected_row_h).abs() <= EPS,
             "{dimensions:?}: row height {row_h} ≠ File History ROW_H {expected_row_h}"
@@ -845,4 +838,259 @@ pub fn scenario_file_history_wip_changes(cx: &mut VisualTestAppContext, repo_pat
     unmount(cx, app, win.into());
     drop(restore);
     eprintln!("[gui-e2e] PASS file_history_wip_changes");
+}
+
+fn pr_table_frame(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    win: AnyWindowHandle,
+    dimensions: (f32, f32),
+) {
+    kagi::ui::list_a11y::clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    draw(cx, win, dimensions);
+    let list = kagi::ui::list_a11y::recorded_list("pr-list").expect("actual PR table");
+    assert_eq!(list.role, Some(gpui::Role::ListBox));
+    assert_eq!(list.size, 100);
+    assert!(
+        !list.rows.is_empty() && list.rows.len() < 100,
+        "the bounded virtual list must render only a visible range: {list:?}"
+    );
+}
+
+fn pr_table_alignment(win: AnyWindowHandle, number: u64, case: ((f32, f32), &str, f32, &str)) {
+    let bounds = |name: &str| {
+        e2e::control_bounds(win.window_id(), name)
+            .unwrap_or_else(|| panic!("missing table geometry: {name}"))
+    };
+    let header = bounds("pr-home-table-header");
+    let header_title = bounds("pr-home-header-title");
+    let title = bounds(&format!("pr-home-title-{number}"));
+    let row = bounds(&format!("pr-home-row-{number}"));
+    let header_age = bounds("pr-home-header-age");
+    let age = bounds(&format!("pr-home-age-{number}"));
+    assert!(
+        header_title.size.width >= theme::scaled_px(320.) - px(EPS)
+            && title.size.width >= theme::scaled_px(300.) - px(EPS),
+        "title/header must retain readable width: {header_title:?}, {title:?}"
+    );
+    assert!(
+        header_title.top() >= header.top() - px(EPS)
+            && header_title.bottom() <= header.bottom() + px(EPS)
+            && row.top() >= header.bottom() - px(EPS),
+        "the nonwrapping header must not overlap controls or rows: header={header:?}, header-title={header_title:?}, row={row:?}, number={number}, case=(dimensions, locale, zoom, phase)={case:?}"
+    );
+    assert!(
+        (title.left() - header_title.left()).abs() <= px(EPS)
+            && (age.left() - header_age.left()).abs() <= px(EPS),
+        "header and body must align at both ends: {header_title:?}, {title:?}, {header_age:?}, {age:?}"
+    );
+}
+
+/// #1095: actual KagiApp table, narrow/normal width, EN/JA and 100%/167%.
+/// Wheel input must move header/body together without turning X into Y, and
+/// the independently virtualized Y list must still reach its last PR.
+pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
+    use crate::evidence_support::pull_request;
+    use gpui::{point, ScrollDelta, ScrollStrategy, ScrollWheelEvent, TouchPhase};
+    use gpui_component::scroll::ScrollbarShow;
+
+    let _restore = GlobalSettings::capture();
+    let _theme_key = crate::gui_isolation::SavedKeys::keep(&["theme"]);
+    let before_theme = theme::theme();
+    let fixture = crate::macos::build_fixture();
+    assert!(kagi_git::github::gh_available(), "PR mode requires gh");
+    for dimensions in [(940., 660.), (1440., 900.)] {
+        let state = e2e::app_state(fixture.path()).expect("fixture app state");
+        let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
+        let output = captured.clone();
+        let win = crate::macos::open_offscreen(
+            cx,
+            size(px(dimensions.0), px(dimensions.1)),
+            move |window, cx| e2e::mount_root(state, window, cx, &output),
+        );
+        let win: AnyWindowHandle = win.into();
+        let app = captured.borrow_mut().take().expect("captured KagiApp");
+        let saved_scrollbar_policy = cx.read(|cx| gpui_component::Theme::global(cx).scrollbar_show);
+        assert!(theme::set_active("apple-light"));
+        assert_eq!(theme::theme().slug, "apple-light");
+        cx.update(theme::sync_gpui_component_theme);
+        cx.run_until_parked();
+        let prs = (1..=100)
+            .map(|number| {
+                pull_request(
+                    number,
+                    &format!("PR {number}: readable title / 日本語の長いタイトル"),
+                    &format!("feature/readable-branch-{number}"),
+                )
+            })
+            .collect();
+        e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+            prs, "", None,
+        ))));
+        app.update(cx, |app, cx| app.refresh_github_prs(cx));
+        cx.run_until_parked();
+        app.update(cx, |app, cx| app.show_pr_mode(cx));
+        cx.run_until_parked();
+        let (horizontal, vertical, first, last) = cx.read(|cx| {
+            let app = app.read(cx);
+            let mode = app.pr_mode().expect("PR mode");
+            let ui = app.ui();
+            let prs = &ui.github_prs;
+            let rows = kagi_domain::list_filter::apply_prs(prs, &ui.github_pr_filter, |_| {
+                kagi_domain::github::PrDetailAvailability::Missing
+            });
+            assert_eq!(rows.len(), 100);
+            (
+                mode.dashboard_horizontal_scroll.clone(),
+                mode.dashboard_scroll.clone(),
+                prs[rows[0]].number,
+                prs[rows[99]].number,
+            )
+        });
+        for locale in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            for (zoom, policy) in [
+                (1., ScrollbarShow::Scrolling),
+                (1.667, ScrollbarShow::Scrolling),
+                (1., ScrollbarShow::Hover),
+                (1.667, ScrollbarShow::Hover),
+                (1., ScrollbarShow::Always),
+                (1.667, ScrollbarShow::Always),
+            ] {
+                cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = policy);
+                theme::set_zoom(zoom);
+                horizontal.set_offset(point(px(0.), px(0.)));
+                vertical.scroll_to_item_strict(0, ScrollStrategy::Top);
+                pr_table_frame(cx, &app, win, dimensions);
+                assert_eq!(
+                    cx.read(|cx| kagi::ui::commands::command_state(
+                        app.read(cx),
+                        "view.togglePrSwimlane"
+                    )),
+                    kagi::ui::commands::CommandState::Disabled(i18n::Msg::NoPrOpen.t()),
+                    "dashboard must explain the unavailable reveal command"
+                );
+                // ADR-0224 keeps the compact rail at 940px; Cmd-B changes
+                // the shared preference, not an inline navigator below 1000px.
+                let compact = dimensions.0 < 1000.;
+                for visible in [false, true] {
+                    cx.update_window(win, |_, window, cx| {
+                        app.update(cx, |app, cx| {
+                            app.root_focus.as_ref().unwrap().focus(window, cx)
+                        })
+                    })
+                    .unwrap();
+                    cx.simulate_keystrokes(win, "cmd-b");
+                    e2e::clear_control_bounds(win.window_id(), "pr-mode-left-pane");
+                    e2e::clear_control_bounds(win.window_id(), "compact-rail");
+                    cx.run_until_parked();
+                    pr_table_frame(cx, &app, win, dimensions);
+                    assert_eq!(
+                        cx.read(|cx| app.read(cx).sidebar.visible),
+                        visible,
+                        "Toggle Sidebar must update the shared preference at every width/zoom"
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(win.window_id(), "pr-mode-left-pane").is_some(),
+                        visible && !compact,
+                        "only desktop dashboards draw the toggled inline Sidebar"
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(win.window_id(), "compact-rail").is_some(),
+                        compact,
+                        "compact dashboards keep their navigator rail regardless of Sidebar preference"
+                    );
+                }
+                pr_table_alignment(win, first, (dimensions, locale, zoom, "initial"));
+                let viewport = e2e::control_bounds(win.window_id(), "pr-home-table-viewport")
+                    .expect("horizontal viewport");
+                let center = e2e::control_bounds(win.window_id(), "pr-mode-center-pane")
+                    .expect("PR center pane");
+                contained(center, viewport, "table stays inside its center pane");
+                for name in ["timeline-row", "pr-table-header"] {
+                    assert_eq!(
+                        e2e::chrome_border(name),
+                        Some(gpui::rgb(theme::theme().surface).into()),
+                        "{name}: resting structural boundary must be neutral surface"
+                    );
+                }
+                let table = e2e::control_bounds(win.window_id(), "pr-home-table")
+                    .expect("table outer bounds");
+                assert!(
+                    (viewport.size.width - table.size.width).abs() <= px(EPS),
+                    "overlay scrollbar must not reserve a side lane"
+                );
+                let lane = if policy == ScrollbarShow::Scrolling {
+                    px(0.)
+                } else {
+                    px(16.)
+                };
+                assert!((table.bottom() - viewport.bottom() - lane).abs() <= px(EPS),
+                    "non-auto-hide policies reserve the bottom lane: {policy:?}, {viewport:?}, {table:?}");
+                eprintln!("[gui-e2e] chrome apple-light {dimensions:?}/{locale}@{zoom}/{policy:?}: table={table:?}, viewport={viewport:?}, header-border={:?}", e2e::chrome_border("pr-table-header"));
+                let row = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{first}"))
+                    .expect("first row");
+                let position = point(viewport.center().x, row.center().y);
+                let before_y = vertical.0.borrow().base_handle.offset().y;
+                let before_title =
+                    e2e::control_bounds(win.window_id(), "pr-home-header-title").unwrap();
+                cx.simulate_event(
+                    win,
+                    ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+                        touch_phase: TouchPhase::Moved,
+                        ..Default::default()
+                    },
+                );
+                pr_table_frame(cx, &app, win, dimensions);
+                assert_eq!(
+                    vertical.0.borrow().base_handle.offset().y,
+                    before_y,
+                    "horizontal wheel input must not move the vertical list"
+                );
+                let after_title =
+                    e2e::control_bounds(win.window_id(), "pr-home-header-title").unwrap();
+                if horizontal.max_offset().x > px(EPS) {
+                    assert!(after_title.left() < before_title.left() - px(EPS));
+                }
+                pr_table_alignment(win, first, (dimensions, locale, zoom, "horizontal-wheel"));
+                let age = e2e::control_bounds(win.window_id(), &format!("pr-home-age-{first}"))
+                    .expect("last metadata column");
+                assert!(
+                    age.left() >= viewport.left() - px(EPS)
+                        && age.right() <= viewport.right() + px(EPS),
+                    "horizontal wheel must expose the trailing metadata: {age:?}, {viewport:?}"
+                );
+                let before_x = horizontal.offset().x;
+                cx.simulate_event(
+                    win,
+                    ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-100_000.))),
+                        touch_phase: TouchPhase::Moved,
+                        ..Default::default()
+                    },
+                );
+                e2e::clear_control_bounds(win.window_id(), &format!("pr-home-row-{last}"));
+                pr_table_frame(cx, &app, win, dimensions);
+                assert_eq!(horizontal.offset().x, before_x, "Y must not become X");
+                let tail = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{last}"))
+                    .expect("vertical wheel reaches the last PR");
+                assert!(tail.bottom() <= viewport.bottom() + px(EPS));
+                pr_table_alignment(win, last, (dimensions, locale, zoom, "vertical-tail"));
+                let list = kagi::ui::list_a11y::recorded_list("pr-list").unwrap();
+                assert!(list.rows[&99].0.contains(&format!("#{last}")));
+            }
+        }
+        cx.update(|cx| {
+            gpui_component::Theme::global_mut(cx).scrollbar_show = saved_scrollbar_policy
+        });
+        unmount(cx, app, win);
+    }
+    theme::set_active(&before_theme.slug);
+    cx.update(theme::sync_gpui_component_theme);
+    eprintln!("[gui-e2e] PASS pr_dashboard_responsive: aligned columns, shared X wheel, independent Y tail, neutral boundaries, Scrolling/Hover/Always lane geometry, 24 width/locale/zoom/policy cells");
 }

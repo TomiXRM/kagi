@@ -69,3 +69,63 @@ WIP entry は working tree / index / untracked から合成し、`kind = Wip`、
 - v1 非スコープ: line blame、per-line history、履歴グラフ、複数ファイル同時、restore/checkout、commit 間比較 UI、semantic diff、binary preview。
 - CI gate(src/ui は git2 直叩き禁止)は維持。UI は `kagi::git::Backend` 経由のみ。
 - テスト: history.rs のパーサを fixture(add/modify/rename/delete/binary を1ファイルに対して持つ repo)で検証。
+
+## Amendment — 2026-10-12: Open File action (#1308)
+
+The header's **Open File** action is distinct from Back: it requests the selected
+entry's `path_after` (the displayed historical path), or the requested `rel_path`
+when no entry is loaded, through `FileHistoryEvent::OpenFileRequested(PathBuf)`.
+It opens that exact path's current worktree file in the existing Editor workspace;
+it does not restore a revision, launch an external application, or substitute the
+latest name for a missing pre-rename path. The operation label stays English in
+EN/JA under ADR-0048.
+
+The host probes file availability/binary content off the UI thread before
+switching workspace. PNG/JPEG/WebP/GIF pass the same magic-byte detector used
+by the Editor hook, applied to the already-read 8 KiB prefix without allocating
+or decoding a second image. Unsupported binary files retain the existing
+localized Editor reason. Missing pre-rename names explain the rename and name
+the current path in EN/JA; missing current names retain the deleted-file reason.
+All refusals keep History and any retained Editor unchanged. On
+success, reveal or create the Editor through `show_editor_mode` and reuse
+`open_tab` so dirty buffers survive and retained PR/Issues modes step aside.
+History closes as part of that successful workspace handoff. Both request
+delivery and async completion require the original
+owner and pane to remain active; the pane crate stays Git-free. Back emits only
+`CloseRequested`. These are read/navigation actions and perform no Git write.
+
+## Amendment — 2026-10-13: list/header focus return (#1376)
+
+The Git-free FileHistoryView retains shared RowFocus/RowList ownership keyed
+by entry identity. Header actions do not discard its remembered row. Shift+Tab
+from Back and Tab from Follow Renames reveal that row before returning focus.
+Arrows/Home/End on the list route through the existing select/diff request path;
+root-only shortcuts remain a separate fallback. Virtualization, historical
+rename paths, loading-generation guards and all read-only semantics remain.
+The embedded diff keeps its independent focus owner and header visits never
+replace entry selection merely to obtain a Tab stop.
+The fixed-height uniform list retains its measured virtualization; returning
+focus uses the shared Uniform RowScroll reveal rather than replacing it with
+a variable-height ListState. Header-fit's offscreen measurement replicas are
+not Tab stops: only the real named header actions participate in traversal.
+While a reload hides the list, its focus owner yields to the header without
+discarding the remembered key. Boundary traversal does not focus unmounted
+rows; the loaded list reclaims its single roving stop.
+
+## Amendment — 2026-10-13: Finder-inspired list density (#1467)
+
+The owner's Finder list reference replaces the graph-derived 29-reference-pixel
+File History row with a fixed, zoom-scaled 20px slot. Table labels share
+UI-core's `FILE_TREE_FONT_PX = 13`, 16px badge column and 1.2em leading;
+graph/Card rendering is unchanged. The same role applies independently to the
+Editor file tree and sidebar ref identities. Sidebar headings remain 12px,
+ordinary ref rows remain 20px, and worktree rows retain the 24px path/port
+wrapping contract from #855. Changes and Worktrees' file panes share the
+already-completed Commit Panel sizing and are not another renderer to migrate.
+
+Keep uniform-list extents, existing RowFocus/reveal/AX assignments and click
+handlers. `finder_scale_rest` measures actual painted rows, typography and
+native glyph bounds against the content mask at 100%/167% in Apple Light/Dark;
+leading assertions account for GPUI's integer-pixel rounding. Existing neighbor
+scenarios continue to cover keyboard, selection and virtualization contracts.
+

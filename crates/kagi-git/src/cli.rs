@@ -81,7 +81,7 @@ pub struct GitCliOutput {
 /// reach them. None of them has a legitimate use inside kagi:
 ///
 /// - `core.fsmonitor` — runs on every `git status`; kagi never uses it.
-/// - `core.hooksPath` — kagi runs no repo hooks (it cannot show their output).
+/// - `core.hooksPath` — suppressed except for an approved commit (#1132).
 /// - `core.askPass` — kagi already sets `GIT_TERMINAL_PROMPT=0`; askpass is
 ///   purely an execution vector here.
 /// - `protocol.allow=user` — the CVE-2018-17456 class hardening. Verified not
@@ -374,7 +374,10 @@ fn git_command_with_executable(repo_dir: &Path, executable: &Path) -> std::proce
         .env("GIT_ADVICE", "0")
         .env("LC_ALL", "C")
         .env("GIT_EDITOR", "true")
-        .env("GIT_ASKPASS", "/bin/false");
+        // Empty overrides disable Git's askpass chain, including SSH_ASKPASS.
+        // A synthetic helper path is neither portable nor necessary (#1561).
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "");
     cmd
 }
 
@@ -405,7 +408,7 @@ pub fn gh_command() -> std::process::Command {
 /// | `GIT_TERMINAL_PROMPT`| `0`   | Disable interactive credential prompts  |
 /// | `LC_ALL`             | `C`   | Stable locale for output parsing        |
 /// | `GIT_EDITOR`         | `true`| No interactive editor (e.g. `--continue` message prompts) |
-/// | `GIT_ASKPASS`        | `/bin/false` | No askpass helper is ever run     |
+/// | `GIT_ASKPASS`, `SSH_ASKPASS` | empty | Disable askpass helpers without launching a process |
 ///
 /// `GIT_CONFIG_NOSYSTEM` is deliberately **not** set: the system config is not
 /// attacker-controlled (it needs root to write) and on macOS it is where
@@ -431,14 +434,42 @@ pub fn run_git_with_options(
     args: &[&str],
     options: GitCliOptions<'_>,
 ) -> Result<GitCliOutput, GitError> {
+    run_git_internal(repo_dir, args, options, None)
+}
+
+/// Only approved commit executors may opt into the user's hooks. The private
+/// index is supplied by Kagi, never inherited from the launching environment.
+pub(crate) fn run_git_commit(
+    repo_dir: &Path,
+    index: &Path,
+    args: &[&str],
+) -> Result<GitCliOutput, GitError> {
+    run_git_internal(repo_dir, args, GitCliOptions::default(), Some(index))
+}
+
+fn run_git_internal(
+    repo_dir: &Path,
+    args: &[&str],
+    options: GitCliOptions<'_>,
+    commit_index: Option<&Path>,
+) -> Result<GitCliOutput, GitError> {
     let local_overrides = repo_local_overrides(repo_dir)?;
     let mut full = hardening_args(options.fsmonitor);
+    if commit_index.is_some() {
+        // Remove this pair only, retaining fsmonitor, askpass and protocol
+        // hardening. Do not override hooksPath: relative/absolute/disabled
+        // paths keep Git's own configuration semantics.
+        full.drain(3..5);
+    }
     full.extend(local_overrides.args.iter().map(String::as_str));
     full.extend_from_slice(args);
 
     let executable = options.executable.unwrap_or_else(|| Path::new("git"));
     let mut cmd = git_command_with_executable(repo_dir, executable);
     cmd.args(&full);
+    if let Some(index) = commit_index {
+        cmd.env("GIT_INDEX_FILE", index);
+    }
 
     let run = run_child(
         &mut cmd,
@@ -547,7 +578,8 @@ mod tests {
         }
         // Clearing must not have taken the non-interactive hardening with it.
         assert!(has_env(&git, "GIT_TERMINAL_PROMPT", "0"));
-        assert!(has_env(&git, "GIT_ASKPASS", "/bin/false"));
+        assert!(has_env(&git, "GIT_ASKPASS", ""));
+        assert!(has_env(&git, "SSH_ASKPASS", ""));
         assert!(has_env(&git, "LC_ALL", "C"));
     }
     #[test]

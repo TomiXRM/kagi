@@ -324,6 +324,8 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
         title: SharedString::from(f.path.display().to_string()),
         stats: SharedString::from(format!("{total} conflict(s)")),
         rows: std::sync::Arc::new(rows),
+        hunk_approvals: Default::default(),
+        height_source: Default::default(),
         source: MainDiffSource::Synthetic,
         images: None,
         lang: super::diff_view::lang_for_path(&f.path),
@@ -358,6 +360,8 @@ fn line(
         text: SharedString::from(format!("{sigil}{text}")),
         old_lineno,
         new_lineno,
+        line_ending: kagi_domain::diff::LineEnding::None,
+        line_ending_changed: false,
         highlights: Vec::new(),
     }
 }

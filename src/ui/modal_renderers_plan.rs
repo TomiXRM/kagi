@@ -17,7 +17,7 @@ use super::modal_renderers::{
     render_plan_modal_wrapper_extra, render_plan_modal_wrapper_staged,
     render_plan_modal_wrapper_styled, ModalIcon, PlanCardExtra,
 };
-use super::modal_renderers_input::render_input_plan_modal;
+use super::modal_renderers_input::{render_input_plan_modal, InputPlanValidation};
 use super::modal_renderers_stash::render_stash_planning;
 use super::modals::worktree::*;
 use super::modals::*;
@@ -30,7 +30,7 @@ use kagi_git::{MergeKind, OperationPlan};
 /// even when the live draft has since changed.
 pub(crate) fn render_queued_commit_modal(
     modal: QueuedCommitModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     use kagi_ui_core::i18n::{queue_text, QueueText};
@@ -108,7 +108,7 @@ pub(crate) fn render_queued_commit_modal(
 
 pub(crate) fn render_plan_modal(
     modal: CheckoutPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let create_branch_target = match &modal.target {
@@ -134,7 +134,7 @@ pub(crate) fn render_plan_modal(
 /// Pull button (`color_branch`, same as the ↓N chip).
 pub(crate) fn render_pull_modal(
     modal: PullPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label = if modal.auto_stash {
@@ -161,7 +161,7 @@ pub(crate) fn render_pull_modal(
 /// and advances/retreats the history cursor.
 pub(crate) fn render_history_modal(
     modal: HistoryPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label = if modal.is_undo {
@@ -192,7 +192,7 @@ pub(crate) fn render_history_modal(
 /// revert; confirming advances the sequencer.
 pub(crate) fn render_conflict_continue_modal(
     modal: ConflictContinuePlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -211,7 +211,7 @@ pub(crate) fn render_conflict_continue_modal(
 /// Stash-pop confirmation overlay (T-HT-007).
 pub(crate) fn render_pop_modal(
     modal: PopPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let Some(plan) = modal.plan else {
@@ -235,7 +235,7 @@ pub(crate) fn render_pop_modal(
 /// `start_stash_drop`.
 pub(crate) fn render_stash_drop_modal(
     modal: StashDropModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let Some(plan) = modal.plan else {
@@ -259,7 +259,7 @@ pub(crate) fn render_stash_drop_modal(
 /// `plan_pr_merge` output.
 pub(crate) fn render_pr_merge_modal(
     modal: PrMergeModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -283,7 +283,7 @@ pub(crate) fn render_pr_merge_modal(
 /// touches any working tree).
 pub(crate) fn render_unlock_worktree_modal(
     modal: UnlockWorktreeModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -307,7 +307,7 @@ pub(crate) fn render_unlock_worktree_modal(
 /// the containment-checked path (and optionally the branch).
 pub(crate) fn render_remove_worktree_modal(
     modal: RemoveWorktreeModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -326,7 +326,7 @@ pub(crate) fn render_remove_worktree_modal(
 /// Lock-worktree confirmation overlay (issue #340).
 pub(crate) fn render_lock_worktree_modal(
     modal: LockWorktreeModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -349,7 +349,7 @@ pub(crate) fn render_lock_worktree_modal(
 /// the dry-run preview (count + paths).
 pub(crate) fn render_prune_worktrees_modal(
     modal: PruneWorktreesModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -368,7 +368,7 @@ pub(crate) fn render_prune_worktrees_modal(
 /// Repair-worktree-links confirmation overlay (issue #340).
 pub(crate) fn render_repair_worktrees_modal(
     modal: RepairWorktreesModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -390,7 +390,7 @@ pub(crate) fn render_repair_worktrees_modal(
 /// two are scannable at a glance.
 pub(crate) fn render_push_modal(
     modal: PushPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // W3-NOTIFY: confirm runs on a background thread (start/finish toasts).
@@ -409,7 +409,7 @@ pub(crate) fn render_push_modal(
 
 pub(crate) fn render_branch_plan_modal(
     modal: BranchPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let accent = match modal.kind {
@@ -436,7 +436,8 @@ pub(crate) fn render_branch_plan_modal(
 
 pub(crate) fn render_set_upstream_modal(
     modal: SetUpstreamModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    focus: Option<&gpui::FocusHandle>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
@@ -471,13 +472,15 @@ pub(crate) fn render_set_upstream_modal(
         cancel_handler,
         confirm_handler,
         overrides,
+        focus,
         cx,
     )
 }
 
 pub(crate) fn render_rename_branch_modal(
     modal: RenameBranchModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    focus: Option<&gpui::FocusHandle>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
@@ -503,7 +506,18 @@ pub(crate) fn render_rename_branch_modal(
         // #510: a failed replan hands over no plan; the button remains visibly
         // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
-        Some(modal.validation),
+        Some(
+            if matches!(
+                &modal.validation,
+                kagi_git::ops::BranchRenameValidation::Invalid(
+                    kagi_git::ops::BranchNameError::SameName
+                )
+            ) {
+                InputPlanValidation::Unchanged
+            } else {
+                InputPlanValidation::Rename(modal.validation)
+            },
+        ),
         plan_or_exec_error(&modal.plan, modal.error),
         Msg::InputRename.t(),
         (
@@ -513,13 +527,14 @@ pub(crate) fn render_rename_branch_modal(
         cancel_handler,
         confirm_handler,
         overrides,
+        focus,
         cx,
     )
 }
 
 pub(crate) fn render_merge_modal(
     modal: MergePlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
@@ -557,7 +572,7 @@ pub(crate) fn render_merge_modal(
 
 pub(crate) fn render_tracking_checkout_modal(
     modal: TrackingCheckoutPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -576,7 +591,7 @@ pub(crate) fn render_tracking_checkout_modal(
 /// Switch-to-latest confirmation overlay (ADR-0101).
 pub(crate) fn render_switch_to_latest_modal(
     modal: SwitchToLatestPlanModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -595,7 +610,7 @@ pub(crate) fn render_switch_to_latest_modal(
 /// Delete-branch confirmation overlay (W2-DELETE).
 pub(crate) fn render_delete_branch_modal(
     modal: DeleteBranchModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let (stage, label) = (modal.confirm_stage(), modal.confirm_label());
@@ -620,7 +635,7 @@ pub(crate) fn render_delete_branch_modal(
 /// via the shared plan-modal card rather than a bespoke renderer.
 pub(crate) fn render_delete_remote_branch_modal(
     modal: DeleteRemoteBranchModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
@@ -647,7 +662,7 @@ pub(crate) fn render_delete_remote_branch_modal(
 /// `render_delete_remote_branch_modal`.
 pub(crate) fn render_reset_current_modal(
     modal: ResetCurrentModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
@@ -677,7 +692,7 @@ pub(crate) fn render_reset_current_modal(
 /// `render_reset_current_modal`.
 pub(crate) fn render_force_lease_push_modal(
     modal: ForceLeasePushModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
@@ -699,12 +714,59 @@ pub(crate) fn render_force_lease_push_modal(
     )
 }
 
+/// Primary publication preview, projected only from the frozen plan identity.
+/// Local HEAD is unrelated to the published tag and stays secondary.
+pub(crate) fn render_tag_push_scope(
+    identity: &kagi_domain::plan::TagPushIdentity,
+) -> gpui::AnyElement {
+    let rows = kagi_ui_core::i18n::plan::tag::push_scope_rows(identity);
+    let mut description = format!("{}\n", Msg::PlanTagPublishScope.t());
+    for row in &rows {
+        description.push_str(row);
+        description.push('\n');
+    }
+    description.push_str(Msg::PlanTagLocalUnchanged.t());
+    div()
+        .id("plan-tag-push-scope")
+        .role(gpui::Role::Group)
+        .aria_label(description)
+        .w_full()
+        .min_w(gpui::px(0.))
+        .rounded(theme_mod::scaled_px(10.))
+        .bg(rgb(theme().bg_base))
+        .border_1()
+        .border_color(gpui::rgba(theme_mod::panel_style().1))
+        .p(theme_mod::scaled_px(12.))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(Msg::PlanTagPublishScope.t()),
+        )
+        .children(rows.into_iter().map(|row| {
+            div()
+                .min_w(gpui::px(0.))
+                .font_family(MONO_FONT)
+                .text_sm()
+                .child(row)
+        }))
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_sub))
+                .child(Msg::PlanTagLocalUnchanged.t()),
+        )
+        .into_any_element()
+}
+
 /// Push-tag confirmation overlay (tag context menu, ADR-0140). Single confirm:
 /// publishing a tag only ever *adds* a ref on the remote — the push is never
 /// forced, so a tag that moved is refused by the remote rather than overwritten.
 pub(crate) fn render_push_tag_modal(
     modal: PushTagModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -724,9 +786,11 @@ pub(crate) fn render_push_tag_modal(
 /// Rebase: single confirm, no armed second stage — see `operations/rebase.rs`'s
 /// module doc for why. Replay (#344): destructive, so the label swaps to the
 /// armed form after the first confirm and the accent is the blocker colour.
+/// Ordinary Rebase retains the backend's ordered commit preview; Replay hides
+/// its machine-only ref script through `display_plan`.
 pub(crate) fn render_rebase_modal(
     modal: RebaseCurrentOntoModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let accent = if modal.is_replay() {
@@ -753,7 +817,7 @@ pub(crate) fn render_rebase_modal(
 /// local/origin tips), and blockers hide the confirm button.
 pub(crate) fn render_branch_cleanup_modal(
     modal: BranchCleanupModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -772,7 +836,7 @@ pub(crate) fn render_branch_cleanup_modal(
 /// Revert confirmation overlay (T-CM-034).
 pub(crate) fn render_revert_modal(
     modal: RevertModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(

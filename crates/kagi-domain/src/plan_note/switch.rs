@@ -77,6 +77,19 @@ impl SwitchNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            SwitchNote::FfLocalKnowledge { behind } => {
+                format!(
+                    crate::advice_template_display_en!(SwitchFfLocalKnowledge),
+                    behind
+                )
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the switch op family.
@@ -99,6 +112,11 @@ impl SwitchTitle {
                 format!("Switch to latest {} (fetch {})", branch, remote)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -126,6 +144,11 @@ impl SwitchRecovery {
                 remote, branch
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

@@ -186,6 +186,14 @@ def check_plan_verbatim() -> int:
     return _run_rule(_rule("plan-verbatim"))
 
 
+def check_ja_git_terms() -> int:
+    return _run_rule(_rule("ja-git-terms"))
+
+
+def check_ui_internal_jargon() -> int:
+    return _run_rule(_rule("ui-internal-jargon"))
+
+
 def check_recovery_safe_advice() -> int:
     return _run_rule(_rule("recovery-safe-advice"))
 
@@ -205,6 +213,10 @@ def check_klog_raw() -> int:
 def check_shell_hygiene() -> int:
     status = _run_rule(_rule("shell-hygiene"))
     return status | _run_rule(_rule("uv-invocation"))
+
+
+def check_hover_tooltip() -> int:
+    return _run_rule(_rule("hover-tooltip"))
 
 
 def check_static_spinner() -> int:

@@ -46,6 +46,11 @@ pub struct Backend {
     identity_before: std::sync::Mutex<Option<crate::oplog::RepoIdentity>>,
 }
 
+pub struct HunkReport {
+    pub result: Result<(), GitError>,
+    pub recording: recording::Recording,
+}
+
 impl Backend {
     /// Read-only identity for admission, not authorization for Git writes.
     /// Plain editor saves do not require Git owner trust (ADR-0120).
@@ -365,6 +370,12 @@ impl Backend {
         Ok(count)
     }
 
+    /// Resolve a unique revision from the object database and peel tags to commits.
+    /// This read is not limited by the snapshot's graph display budget.
+    pub fn resolve_commit(&self, revision: &str) -> Result<crate::Commit, GitError> {
+        crate::revision::resolve_commit(&self.repo, revision)
+    }
+
     pub fn snapshot(&mut self, commit_limit: usize) -> Result<RepoSnapshot, GitError> {
         snapshot::snapshot(&mut self.repo, commit_limit)
     }
@@ -615,30 +626,7 @@ impl Backend {
     /// metadata is deliberately excluded; path bytes, object OID, mode, and
     /// conflict stage determine whether the selected content has changed.
     pub fn staged_set_digest(&self) -> Result<String, GitError> {
-        use sha2::{Digest, Sha256};
-
-        let mut index = self
-            .repo
-            .index()
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-        // `Repository::index` can return its cached snapshot. A queued
-        // commit must observe staging performed after this Backend was opened.
-        index
-            .read(true)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-        let mut digest = Sha256::new();
-        // libgit2's index is already ordered by path and conflict stage.
-        for entry in index.iter() {
-            // A length prefix separates paths even when their bytes contain
-            // arbitrary delimiters; OID, mode, and stage have fixed lengths.
-            digest.update((entry.path.len() as u64).to_be_bytes());
-            digest.update(&entry.path);
-            digest.update(entry.id.as_bytes());
-            digest.update(entry.mode.to_be_bytes());
-            digest.update((entry.flags & 0x3000).to_be_bytes()); // GIT_INDEX_ENTRY_STAGEMASK
-        }
-        Ok(hex::encode(digest.finalize()))
+        ops::staged_set_digest(&self.repo)
     }
 
     /// Whether this worktree is mid-merge, including a merge whose conflicts
@@ -727,7 +715,10 @@ impl Backend {
 
     pub fn unstage_file(&self, path: &Path) -> Result<(), GitError> {
         self.require_trust()?;
-        staging::unstage_file(&self.repo, path)
+        let plan = ops::unstage::plan_unstage(&self.repo, std::iter::once(path))?;
+        ops::unstage::preflight_unstage(&self.repo, &plan)?;
+        ops::unstage::execute_unstage(&self.repo, &plan)?;
+        Ok(())
     }
 
     pub fn stage_files(&self, paths: &[PathBuf]) -> Result<usize, GitError> {
@@ -737,27 +728,78 @@ impl Backend {
 
     pub fn unstage_files(&self, paths: &[PathBuf]) -> Result<usize, GitError> {
         self.require_trust()?;
-        staging::unstage_files(&self.repo, paths)
+        let plan = ops::unstage::plan_unstage(&self.repo, paths.iter().map(|p| p.as_path()))?;
+        ops::unstage::preflight_unstage(&self.repo, &plan)?;
+        ops::unstage::execute_unstage(&self.repo, &plan)
     }
 
-    /// Stage one unstaged hunk of `path`, named by its header (#842).
+    /// Stage exactly the unstaged hunk approved from the displayed diff.
     pub fn stage_hunk(
         &self,
         path: &Path,
-        range: kagi_domain::diff::HunkRange,
+        approved: kagi_domain::diff::HunkApproval,
     ) -> Result<(), GitError> {
-        self.require_trust()?;
-        crate::hunk_staging::stage_hunk(&self.repo, path, range)
+        self.stage_hunk_recorded(path, approved, false).result
     }
 
-    /// Unstage one staged hunk of `path`, named by its header (#842).
+    /// Unstage exactly the staged hunk approved from the displayed diff.
     pub fn unstage_hunk(
         &self,
         path: &Path,
-        range: kagi_domain::diff::HunkRange,
+        approved: kagi_domain::diff::HunkApproval,
     ) -> Result<(), GitError> {
-        self.require_trust()?;
-        crate::hunk_staging::unstage_hunk(&self.repo, path, range)
+        self.stage_hunk_recorded(path, approved, true).result
+    }
+
+    /// Mutation-owned receipt; callers only present it, never append again.
+    pub fn stage_hunk_recorded(
+        &self,
+        path: &Path,
+        approved: kagi_domain::diff::HunkApproval,
+        staged: bool,
+    ) -> HunkReport {
+        let op = if staged { "unstage" } else { "stage" };
+        let summary = || ops::StateSummary {
+            head: resolve_head(&self.repo)
+                .map(|h| h.display())
+                .unwrap_or_else(|_| "unobserved".into()),
+            dirty: status::working_tree_status(&self.repo)
+                .map(|s| ops::status_summary_display(&s))
+                .unwrap_or_else(|_| "unobserved".into()),
+        };
+        let before = summary();
+        let plan = ops::hunk_staging::plan_hunk(path, approved, staged);
+        let (result, ref_moves) = self.observe_ref_moves(|this| {
+            this.require_trust().and_then(|()| {
+                let diff = ops::hunk_staging::preflight_hunk(&this.repo, &plan)?;
+                ops::hunk_staging::execute_hunk(&this.repo, &plan, &diff)
+            })
+        });
+        let outcome = match &result {
+            Ok(()) => crate::OpOutcome::Success { after: summary() },
+            Err(GitError::Blocked(note)) => crate::OpOutcome::Refused {
+                blockers: vec![note.message_en()],
+            },
+            Err(GitError::Untrusted(error)) => crate::OpOutcome::Refused {
+                blockers: vec![error.to_string()],
+            },
+            Err(error) => crate::OpOutcome::Failed {
+                error: format!("{}: {}: {error}", self.path.display(), path.display()),
+            },
+        };
+        let recording = self.record_receipt(
+            op,
+            &before,
+            outcome,
+            recording::Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                recovery_plan: None,
+                failure_code: None,
+                ref_moves,
+            },
+        );
+        HunkReport { result, recording }
     }
 
     pub fn unstaged_file_diff(&self, path: &Path) -> Result<FileDiff, GitError> {
@@ -923,11 +965,15 @@ impl Backend {
     }
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
-        staging::plan_commit(&self.repo, message)
+        ops::plan_commit(&self.repo, message)
     }
 
-    pub(crate) fn execute_commit(&self, message: &str) -> Result<CommitId, GitError> {
-        staging::execute_commit(&self.repo, message)
+    pub(crate) fn execute_commit(
+        &self,
+        plan: &OperationPlan,
+        message: &str,
+    ) -> Result<CommitId, GitError> {
+        ops::execute_commit(&self.repo, plan, message)
     }
 
     /// Plan a merge-finalize commit (`git commit` with `MERGE_HEAD` present).
@@ -1049,8 +1095,8 @@ impl Backend {
         ops::plan_push_tag(&self.repo, name)
     }
 
-    pub(crate) fn execute_push_tag(&self, remote: &str, name: &str) -> Result<(), GitError> {
-        ops::execute_push_tag(&self.path, remote, name)
+    pub(crate) fn execute_push_tag(&self, plan: &OperationPlan) -> Result<(), GitError> {
+        ops::execute_push_tag(&self.path, plan)
     }
 
     /// The remote a tag push would target, for the menu label.
@@ -1330,8 +1376,8 @@ impl Backend {
         ops::plan_pull(&self.repo)
     }
 
-    pub(crate) fn execute_pull(&self) -> Result<PullOutcome, GitError> {
-        ops::execute_pull(&self.repo, &self.path)
+    pub(crate) fn execute_pull(&self, plan: &OperationPlan) -> Result<PullOutcome, GitError> {
+        ops::execute_pull(&self.repo, &self.path, plan)
     }
 
     pub fn fetch_remote(&self) -> Result<FetchOutcome, GitError> {
@@ -1343,6 +1389,12 @@ impl Backend {
             let _ = self.refresh_ruleset(&branch);
         }
         Ok(outcome)
+    }
+
+    /// Fetch only, using the selected local branch's live upstream configuration.
+    pub fn fetch_branch_upstream(&self, branch: &str) -> Result<FetchOutcome, GitError> {
+        self.require_trust()?;
+        ops::fetch_branch_upstream(&self.repo, &self.path, branch)
     }
 
     /// The current branch's short name (`None` when detached/unborn) — used to
@@ -1429,12 +1481,119 @@ impl Backend {
         ops::plan_pull_branch_ff(&self.repo, branch_name)
     }
 
+    /// Freeze the preview's status without a second working-tree walk.
+    pub fn plan_pull_branch_ff_preview(
+        &self,
+        branch_name: &str,
+    ) -> Result<(OperationPlan, kagi_domain::status::WorktreeDigest), GitError> {
+        let (plan, status) = ops::plan_pull_branch_ff_with_status(&self.repo, branch_name)?;
+        Ok((plan, status.digest()))
+    }
+
+    /// Ref identities used to retain a fetched ff-only preview across unchanged reads.
+    pub fn pull_branch_ref_state(
+        &self,
+        name: &str,
+    ) -> Result<(CommitId, String, CommitId), GitError> {
+        let branch = self
+            .repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let upstream = branch
+            .upstream()
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let target = branch
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Other("branch has no target".into()))?;
+        let upstream_target = upstream
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Other("upstream has no target".into()))?;
+        let upstream_name = upstream
+            .name()
+            .map_err(|error| GitError::Other(error.to_string()))?
+            .ok_or_else(|| GitError::Other("upstream has no name".into()))?;
+        Ok((
+            CommitId(target.to_string()),
+            upstream_name.to_owned(),
+            CommitId(upstream_target.to_string()),
+        ))
+    }
+
     pub(crate) fn execute_pull_branch_ff(
         &self,
         plan: &OperationPlan,
         branch_name: &str,
+        partial_after: &mut Option<ops::StateSummary>,
     ) -> Result<PullOutcome, GitError> {
-        ops::execute_pull_branch_ff(&self.repo, &self.path, plan, branch_name)
+        let current =
+            matches!(&plan.head_at_plan, Head::Attached { branch, .. } if branch == branch_name);
+        let index_before = if current {
+            Some(self.staged_set_digest()?)
+        } else {
+            None
+        };
+        let mut checkout_target = None;
+        let result = ops::execute_pull_branch_ff(
+            &self.repo,
+            &self.path,
+            plan,
+            branch_name,
+            &mut checkout_target,
+        );
+        if let (Err(original), Some(index_before), Some(checkout_target)) =
+            (&result, index_before, checkout_target)
+        {
+            let observe = || -> Result<Option<ops::StateSummary>, GitError> {
+                let index_after = self.staged_set_digest();
+                let head_after = resolve_head(&self.repo);
+                let status_after = self.working_tree_status();
+                let index_changed = index_after
+                    .as_ref()
+                    .is_ok_and(|after| after != &index_before);
+                let head_changed = head_after
+                    .as_ref()
+                    .is_ok_and(|after| after != &plan.head_at_plan);
+                let status_changed = status_after.as_ref().is_ok_and(|after| {
+                    plan.worktree_digest
+                        .is_some_and(|before| before != after.digest())
+                });
+                if !index_changed && !head_changed && !status_changed {
+                    index_after?;
+                    head_after?;
+                    status_after?;
+                    return Ok(None);
+                }
+                // A later observation failure cannot erase an already
+                // observed mutation. Missing fields stay explicitly unknown.
+                let head = head_after
+                    .map(|head| head.display())
+                    .unwrap_or_else(|error| format!("HEAD unavailable: {error}"));
+                let mut dirty = status_after
+                    .map(|status| ops::status_summary_display(&status))
+                    .unwrap_or_else(|error| format!("status unavailable: {error}"));
+                if let Err(error) = index_after {
+                    dirty.push_str(&format!("; index observation failed: {error}"));
+                }
+                dirty.push_str(&format!(
+                    "; checkout_target={}; checkout_changed=true",
+                    checkout_target.0
+                ));
+                Ok(Some(ops::StateSummary { head, dirty }))
+            };
+            // Do not call an empty-tree checkout or a pre-checkout refusal
+            // Partial. A changed index/HEAD/status is observed, not predicted.
+            match observe() {
+                Ok(after) => *partial_after = after,
+                Err(observation_error) => {
+                    return Err(GitError::Other(format!(
+                        "{original}; unable to observe checkout after failure: {observation_error}"
+                    )));
+                }
+            }
+        }
+        result
     }
 
     pub fn plan_push_branch(
@@ -1484,8 +1643,24 @@ impl Backend {
         plan: &OperationPlan,
         old_name: &str,
         new_name: &str,
+        partial_after: &mut Option<ops::StateSummary>,
     ) -> Result<(), GitError> {
-        ops::execute_rename_branch(&self.repo, plan, old_name, new_name)
+        let result = ops::execute_rename_branch(&self.repo, plan, old_name, new_name);
+        if result.is_err()
+            && self
+                .repo
+                .find_branch(old_name, git2::BranchType::Local)
+                .is_err()
+            && self
+                .repo
+                .find_branch(new_name, git2::BranchType::Local)
+                .is_ok()
+        {
+            // Config migration can fail after the ref-only rename. Record the
+            // observed after-state instead of claiming that nothing was applied.
+            *partial_after = self.current_state().ok();
+        }
+        result
     }
 
     pub fn validate_branch_rename(
@@ -1568,10 +1743,11 @@ impl Backend {
 
     pub(crate) fn execute_amend(
         &self,
+        plan: &OperationPlan,
         mode: AmendMode,
         message: Option<&str>,
     ) -> Result<AmendOutcome, GitError> {
-        ops::execute_amend(&self.repo, mode, message)
+        ops::execute_amend(&self.repo, plan, mode, message)
     }
 
     /// Build the absorb distribution table (issue #345 / ADR-0151). `window` is

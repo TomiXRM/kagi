@@ -55,10 +55,61 @@ pub enum ItemState {
 
 #[derive(Clone, Debug)]
 pub struct MenuItem<A = CommitAction> {
-    pub action: A,
+    pub kind: MenuItemKind<A>,
     pub label: SharedString,
     pub state: ItemState,
     pub dangerous: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum MenuItemKind<A> {
+    Command(A),
+    Submenu(Vec<MenuGroup<A>>),
+}
+
+impl<A> MenuItem<A> {
+    pub fn command(
+        action: A,
+        label: impl Into<SharedString>,
+        state: ItemState,
+        dangerous: bool,
+    ) -> Self {
+        Self {
+            kind: MenuItemKind::Command(action),
+            label: label.into(),
+            state,
+            dangerous,
+        }
+    }
+
+    pub fn submenu(label: impl Into<SharedString>, groups: Vec<MenuGroup<A>>) -> Self {
+        Self {
+            kind: MenuItemKind::Submenu(groups),
+            label: label.into(),
+            state: ItemState::Enabled,
+            dangerous: false,
+        }
+    }
+
+    pub fn action(&self) -> Option<&A> {
+        match &self.kind {
+            MenuItemKind::Command(action) => Some(action),
+            MenuItemKind::Submenu(_) => None,
+        }
+    }
+
+    pub fn find_action<'a>(groups: &'a [MenuGroup<A>], action: &A) -> Option<&'a Self>
+    where
+        A: PartialEq,
+    {
+        groups
+            .iter()
+            .flat_map(|group| &group.items)
+            .find_map(|item| match &item.kind {
+                MenuItemKind::Command(found) => (found == action).then_some(item),
+                MenuItemKind::Submenu(children) => Self::find_action(children, action),
+            })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -262,12 +313,14 @@ pub fn log_commit_menu(row_index: usize, groups: &[MenuGroup]) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_commit_menu_overlay(
     state: CommitMenuState,
     target: CommitId,
     header: SharedString,
     groups: Vec<MenuGroup>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -292,6 +345,7 @@ pub fn render_commit_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )
@@ -331,12 +385,7 @@ fn item(
     state: ItemState,
     dangerous: bool,
 ) -> MenuItem {
-    MenuItem {
-        action,
-        label: SharedString::from(label.into()),
-        state,
-        dangerous,
-    }
+    MenuItem::command(action, SharedString::from(label.into()), state, dangerous)
 }
 
 fn disabled(reason: impl Into<SharedString>) -> ItemState {
@@ -456,7 +505,7 @@ mod tests {
         groups
             .iter()
             .flat_map(|group| group.items.iter())
-            .find(|item| item.action == action)
+            .find(|item| item.action() == Some(&action))
             .map(|item| item.state.clone())
             .expect("action must exist")
     }
@@ -465,7 +514,7 @@ mod tests {
         groups
             .iter()
             .flat_map(|group| group.items.iter())
-            .find(|item| matches!(item.action, CommitAction::CheckoutRef(_)))
+            .find(|item| matches!(item.action(), Some(CommitAction::CheckoutRef(_))))
             .map(|item| item.state.clone())
             .expect("checkout ref item must exist")
     }
@@ -593,13 +642,13 @@ mod tests {
         let item = groups
             .iter()
             .flat_map(|group| group.items.iter())
-            .find(|item| matches!(item.action, CommitAction::CheckoutRef(_)))
+            .find(|item| matches!(item.action(), Some(CommitAction::CheckoutRef(_))))
             .expect("checkout ref item");
 
         assert_eq!(item.state, ItemState::Enabled);
         assert_eq!(
-            item.action,
-            CommitAction::CheckoutRef("feature/checkout".to_string())
+            item.action(),
+            Some(&CommitAction::CheckoutRef("feature/checkout".to_string()))
         );
     }
 
@@ -626,7 +675,7 @@ mod tests {
 
     fn has_tracking_checkout(groups: &[MenuGroup], remote: &str) -> bool {
         groups.iter().flat_map(|g| g.items.iter()).any(|i| {
-            matches!(&i.action, CommitAction::CheckoutTrackingBranch(n) if n == remote)
+            matches!(i.action(), Some(CommitAction::CheckoutTrackingBranch(n)) if n == remote)
                 && i.state == ItemState::Enabled
         })
     }

@@ -9,11 +9,11 @@
 //!    row's height, so an expanded row's detail block — N lines, each free to
 //!    soft-wrap — painted straight over the rows below. The list is now
 //!    `gpui::list` + a `gpui::ListState`, the same swap T-DIFF-WRAP-001 made
-//!    for the diff panes (`render_helpers::render_diff_list`); the item count
-//!    is synced once per render, the lifecycle documented there. With a
-//!    variable height the detail lines are free to wrap, so they do (no
+//!    for the diff panes (`render_helpers::render_diff_list`). The panel seeds
+//!    the count once and splices new receipts/retention cuts, preserving the
+//!    measured rows and scrolled focus. Detail lines are free to wrap (no
 //!    truncation) — a 200-char `error:` is readable instead of clipped. The
-//!    summary row stays one fixed-height truncated line.
+//!    summary uses two scaled lines, reserving named status and Copy first.
 //! 2. **Selection + copy.** The detail block renders through a selectable
 //!    `gpui_component::text::TextView` (escaped HTML, the same trick
 //!    `inspector.rs` uses for commit messages — GPUI has no selection for a
@@ -24,7 +24,7 @@
 //!
 //! Never read this entity back through `cx` inside the list closure (it runs
 //! while the entity is borrowed → panic). The row data is snapshotted before
-//! the list is built; the click handlers run on mouse events, well after.
+//! the list is built; activation handlers run after the entity borrow ends.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -35,6 +35,7 @@ use gpui_component::button::Button;
 use gpui_component::{Disableable as _, Sizable as _};
 use kagi_domain::oplog_reflog::Attribution;
 use kagi_git::oplog::{Actor, OpLogEntry, OpOutcome};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::{self, Msg};
 use super::render_helpers::with_vertical_scrollbar;
@@ -42,9 +43,8 @@ use super::theme::theme;
 use super::{format_hms, oplog_panel, theme as theme_mod};
 use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
 
-/// Height of the collapsed summary line (issue #468's E2E asserts that an
-/// expanded row grows past it).
-const SUMMARY_ROW_H: f32 = 22.;
+/// Two collapsed summary lines: required status/Copy, then quiet metadata.
+const SUMMARY_ROW_H: f32 = 44.;
 
 /// Issue #548: above this many bytes of detail text the block stops being
 /// selectable.
@@ -71,8 +71,10 @@ impl gpui::Render for oplog_panel::OpLogPanel {
     /// Each row shows `HH:MM:SS  op  outcome-summary` (outcome coloured
     /// green/red/yellow). Clicking a row toggles single-row expansion
     /// (before/after + error/blockers); the copy button copies the entry.
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entry_count = self.len();
+        #[cfg(feature = "gui-e2e")]
+        oplog_panel::keyboard::clear();
 
         if entry_count == 0 {
             return div()
@@ -89,15 +91,13 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         }
 
         let scroll_handle = self.scroll_handle();
-        // ListState lifecycle (see `render_helpers::render_diff_list`): sync the
-        // item count here, once per render. Every mutation path (`push`, the
-        // disk seed) calls `cx.notify()`, so the next render sees the new count.
-        if scroll_handle.item_count() != entry_count {
-            scroll_handle.reset(entry_count);
-        }
+        // Constructors and push() keep the count in sync through ListState::splice,
+        // retaining measured row heights and a scrolled keyboard reading anchor.
         // W12-GCADOPT (§2.10): scrollbar overlay on the Operation Log list.
         // gpui-component implements `ScrollbarHandle` for `ListState` directly.
         let scrollbar_handle = scroll_handle.clone();
+        let rows = std::rc::Rc::new(self.keyboard_rows(window, cx));
+        let list_container = rows.list(rows_container());
 
         // Snapshot before the closure — capped at OP_ENTRIES_MAX (200), and the
         // previous `uniform_list` cloned the same vec on every range callback.
@@ -109,7 +109,7 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         let oplog_list = gpui::list(scroll_handle, move |i, _window, _cx| match entries.get(i) {
             Some(entry) => {
                 let detail = (expanded == Some(i)).then_some(reflog.as_ref());
-                render_row(i, entry, detail, &entity)
+                render_row(i, entry, detail, &entity, &rows)
             }
             None => div().into_any_element(),
         })
@@ -117,41 +117,39 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         .min_h(px(0.))
         .bg(rgb(theme().panel));
 
-        with_vertical_scrollbar("oplog-list-scroll", &scrollbar_handle, oplog_list, true)
-            .into_any_element()
+        super::list_a11y::plain_list(
+            "oplog-list",
+            list_container.child(with_vertical_scrollbar(
+                "oplog-list-scroll",
+                &scrollbar_handle,
+                oplog_list,
+                true,
+            )),
+            Msg::BottomTabOperationLog.t(),
+        )
+        .into_any_element()
     }
 }
 
-/// One op-log row: the fixed-height truncated summary line plus, when
-/// expanded (`detail` is `Some`), the selectable detail block underneath with
-/// the entry's reflog section.
+fn rows_container() -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("oplog-list")
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.))
+}
+
+/// One op-log row: a two-line summary plus, when expanded (`detail` is `Some`),
+/// the selectable detail block underneath with the entry's reflog section.
 fn render_row(
     i: usize,
     entry: &OpLogEntry,
     detail: Option<Option<&oplog_panel::ReflogDetail>>,
     entity: &Entity<oplog_panel::OpLogPanel>,
+    rows: &std::rc::Rc<super::keyboard_nav::RowList>,
 ) -> gpui::AnyElement {
-    let outcome_color = match &entry.outcome {
-        OpOutcome::Success { .. } => theme().color_success,
-        OpOutcome::Partial { .. } | OpOutcome::Refused { .. } => theme().color_warning,
-        OpOutcome::Unknown { .. } | OpOutcome::Failed { .. } => theme().color_blocker,
-    };
-    let outcome_label = SharedString::from(oplog_panel::outcome_summary(&entry.outcome));
-    let time_label = SharedString::from(format_hms(entry.timestamp));
-    let op_label = SharedString::from(entry.op.clone());
-
-    let toggle_entity = entity.clone();
-    let row_click = move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-        toggle_entity.update(cx, |this, cx| {
-            this.select_row(i, cx);
-            cx.notify();
-        });
-    };
-    let copy_entity = entity.clone();
-    let copy_click = move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-        copy_entity.update(cx, |this, cx| this.copy_entry(i, cx));
-    };
-
+    let stable_key = SharedString::from(oplog_panel::keyboard::entry_key(entry));
     // `bg_row_alt` is the zebra token; this used to be `panel`, which only
     // looked striped in themes whose chrome happens to differ from the base.
     let row_bg = if i.is_multiple_of(2) {
@@ -161,7 +159,7 @@ fn render_row(
     };
 
     div()
-        .id(("oplog-row", i))
+        .id(stable_key.clone())
         // Issue #468 E2E: the row's real laid-out height is read back through
         // `ListState::bounds_for_item`, which proves an expanded row GROWS
         // instead of overflowing onto the next one. So never pin a height here.
@@ -169,83 +167,15 @@ fn render_row(
         .flex_col()
         .w_full()
         .bg(rgb(row_bg))
-        .child(
-            // Only the summary line toggles the row. The expanded block below
-            // must not sit inside a click target: stopping its mouse-down to
-            // keep a drag from toggling the row also hid the press from
-            // gpui-component's window text selection, so nothing could be
-            // selected there.
-            div()
-                .id(("oplog-row-summary", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .px_3()
-                .h(theme_mod::scaled_px(SUMMARY_ROW_H))
-                .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
-                .on_click(row_click)
-                .child(
-                    div()
-                        .w(theme_mod::scaled_px(60.))
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(time_label),
-                )
-                .child(
-                    div()
-                        .w(theme_mod::scaled_px(100.))
-                        .flex_shrink_0()
-                        .ml(theme_mod::scaled_px(6.))
-                        .text_xs()
-                        .text_color(rgb(theme().text_sub))
-                        .child(op_label),
-                )
-                .child(actor_badge(i, entry.actor))
-                .child(worktree_badge(i, entry))
-                .child(
-                    div()
-                        .flex_1()
-                        .ml(theme_mod::scaled_px(6.))
-                        .text_xs()
-                        .text_color(rgb(outcome_color))
-                        .truncate()
-                        .child(outcome_label),
-                )
-                // Issue #468: copy the WHOLE entry — the summary row truncates,
-                // so its tail is otherwise unreachable. Quiet until hovered,
-                // same treatment as the PR-hunk copy button.
-                .child(
-                    div()
-                        .id(("oplog-row-copy", i))
-                        .flex_shrink_0()
-                        .ml(theme_mod::scaled_px(6.))
-                        .p_1()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .opacity(0.55)
-                        .hover(|s| s.bg(rgb(theme().selected)).opacity(1.0))
-                        .tooltip(|w, cx| {
-                            gpui_component::tooltip::Tooltip::new(Msg::OpLogCopyEntry.t())
-                                .build(w, cx)
-                        })
-                        // Swallow the mouse-DOWN too, not just the click:
-                        // otherwise it reaches the selectable TextView below and
-                        // starts a text selection that tracks the cursor after
-                        // the button is released.
-                        .on_mouse_down(MouseButton::Left, |_e, _w, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_click(copy_click)
-                        .child(
-                            gpui::svg()
-                                .path("icons/copy.svg")
-                                .w(theme_mod::scaled_px(11.))
-                                .h(theme_mod::scaled_px(11.))
-                                .text_color(rgb(theme().text_sub)),
-                        ),
-                ),
-        )
+        // Keep selectable detail outside the disclosure's activation target.
+        .child(render_summary(
+            i,
+            entry,
+            detail.is_some(),
+            entity,
+            rows,
+            stable_key,
+        ))
         .when_some(detail, |row, reflog| {
             let row = row.child(render_detail(i, entry));
             let row = row.when_some(oplog_panel::recovery_lines(entry), |row, lines| {
@@ -258,6 +188,197 @@ fn render_row(
             row.child(render_restore_actions(i, entry, entity))
         })
         .into_any_element()
+}
+
+fn render_summary(
+    i: usize,
+    entry: &OpLogEntry,
+    expanded: bool,
+    entity: &Entity<oplog_panel::OpLogPanel>,
+    rows: &std::rc::Rc<super::keyboard_nav::RowList>,
+    stable_key: SharedString,
+) -> gpui::AnyElement {
+    let outcome = SharedString::from(oplog_panel::outcome_summary(entry));
+    let operation = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+        &kagi_ui_core::i18n::op::user_text::operation_label(&entry.op),
+    ));
+    let time = SharedString::from(format_hms(entry.timestamp));
+    let identity = kagi_ui_core::i18n::oplog_panel::entry_disclosure_name(
+        entry.id, &time, &operation, &outcome,
+    );
+    let copy_name = kagi_ui_core::i18n::oplog_panel::entry_copy_name(&identity);
+    let key = oplog_panel::EntryKey::of(entry);
+    let toggle_entity = entity.clone();
+    let toggle_rows = rows.clone();
+    rows.row(
+        i,
+        oplog_panel::keyboard::disclosure(
+            div().id(stable_key.clone()),
+            i,
+            rows.len(),
+            identity.into(),
+            expanded,
+        ),
+    )
+    .flex()
+    .flex_col()
+    .items_center()
+    .px(super::keyboard_nav::inset(12.))
+    .h(theme_mod::scaled_px(SUMMARY_ROW_H))
+    .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
+    .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+        toggle_rows.focus_row(i, window, cx);
+        toggle_entity.update(cx, |this, cx| {
+            this.select_entry(&key, cx);
+            cx.notify();
+        });
+    })
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .w_full()
+            .min_w(px(0.))
+            .h(theme_mod::scaled_px(22.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
+                    .text_color(rgb(theme().text_sub))
+                    .truncate()
+                    .child(operation)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!("oplog-operation-{i}")))
+                    }),
+            )
+            .child(render_status(i, &entry.outcome))
+            .child(render_copy(
+                i, entry, expanded, copy_name, entity, stable_key,
+            )),
+    )
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .w_full()
+            .min_w(px(0.))
+            .h(theme_mod::scaled_px(22.))
+            .children(summary_fields(i, entry, time, outcome)),
+    )
+    .into_any_element()
+}
+
+fn render_status(i: usize, outcome: &OpOutcome) -> gpui::AnyElement {
+    let (kind, message, color) = match outcome {
+        OpOutcome::Success { .. } => ("Success", P::StatusSuccess, theme().color_success),
+        OpOutcome::Failed { .. } => ("Failed", P::StatusFailed, theme().color_blocker),
+        OpOutcome::Unknown { .. } => ("Unknown", P::StatusUnknown, theme().color_blocker),
+        OpOutcome::Partial { .. } => ("Partial", P::StatusPartial, theme().color_warning),
+        OpOutcome::Refused { .. } => ("Refused", P::StatusRefused, theme().color_warning),
+    };
+    let label = Msg::OplogPanel(message).t();
+    div()
+        .id(("oplog-status", i))
+        .role(gpui::Role::Status)
+        .aria_label(label)
+        .flex_shrink_0()
+        .ml(theme_mod::scaled_px(6.))
+        .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
+        .text_color(rgb(color))
+        .child(label)
+        .when(cfg!(feature = "gui-e2e"), |status| {
+            status.child(super::e2e::measure_inside(format!(
+                "oplog-status-{i}-{kind}"
+            )))
+        })
+        .into_any_element()
+}
+
+fn summary_fields(
+    i: usize,
+    entry: &OpLogEntry,
+    time: SharedString,
+    outcome: SharedString,
+) -> [gpui::AnyElement; 4] {
+    let color = match &entry.outcome {
+        OpOutcome::Success { .. } => theme().color_success,
+        OpOutcome::Partial { .. } | OpOutcome::Refused { .. } => theme().color_warning,
+        OpOutcome::Unknown { .. } | OpOutcome::Failed { .. } => theme().color_blocker,
+    };
+    [
+        div()
+            .w(theme_mod::scaled_px(60.))
+            .flex_shrink_0()
+            .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
+            .text_color(rgb(theme().text_muted))
+            .child(time)
+            .when(cfg!(feature = "gui-e2e"), |label| {
+                label.child(super::e2e::measure_inside(format!("oplog-time-{i}")))
+            })
+            .into_any_element(),
+        actor_badge(i, entry.actor),
+        worktree_badge(i, entry),
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .ml(theme_mod::scaled_px(6.))
+            .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
+            .text_color(rgb(color))
+            .truncate()
+            .child(outcome)
+            .when(cfg!(feature = "gui-e2e"), |label| {
+                label.child(super::e2e::measure_inside(format!("oplog-outcome-{i}")))
+            })
+            .into_any_element(),
+    ]
+}
+
+fn render_copy(
+    i: usize,
+    entry: &OpLogEntry,
+    expanded: bool,
+    name: String,
+    entity: &Entity<oplog_panel::OpLogPanel>,
+    stable_key: SharedString,
+) -> gpui::AnyElement {
+    let copy_entity = entity.clone();
+    let key = oplog_panel::EntryKey::of(entry);
+    // Reuse the quiet-copy focus owner rather than the kit's low-alpha outer
+    // ring; a second hover style on the pinned Button also conflicts with its own.
+    let button = super::keyboard_nav::focusable(oplog_panel::keyboard::copy_button(
+        div().id(stable_key.clone()),
+        i,
+        name,
+    ))
+    .tab_stop(expanded)
+    .w(theme_mod::scaled_px(19.))
+    .h(theme_mod::scaled_px(19.))
+    .flex_shrink_0()
+    .ml(theme_mod::scaled_px(6.))
+    .p(super::keyboard_nav::inset(4.))
+    .rounded_sm()
+    .cursor_pointer()
+    .opacity(0.55)
+    .hover(|style| style.bg(rgb(theme().selected)).opacity(1.0))
+    .focus_visible(|style| style.opacity(1.0).border_color(rgb(theme().ui_accent())))
+    // Swallow the press as well, so it cannot start detail-text selection.
+    .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+    .on_click(move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+        cx.stop_propagation();
+        copy_entity.update(cx, |this, cx| this.copy_entry_key(&key, cx));
+    })
+    .child(
+        gpui::svg()
+            .path("icons/copy.svg")
+            .w(theme_mod::scaled_px(11.))
+            .h(theme_mod::scaled_px(11.))
+            .text_color(rgb(theme().text_sub)),
+    )
+    .hover_tooltip_builder((stable_key, 0usize), |w, cx| {
+        gpui_component::tooltip::Tooltip::new(Msg::OpLogCopyEntry.t()).build(w, cx)
+    });
+    super::e2e::measure_control(format!("oplog-copy-{i}"), button)
 }
 
 /// The expanded detail block: every line of the entry, soft-wrapped (never
@@ -366,19 +487,25 @@ fn worktree_badge(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
     let name = kagi_domain::text_safety::sanitize_control_bytes(&name);
     div()
         .id(("oplog-worktree", i))
-        .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(path.clone()).build(w, cx))
+        .min_w(px(0.))
+        .max_w(theme_mod::scaled_px(140.))
+        .flex_shrink(1.)
+        .overflow_hidden()
         .child(badge(
             format!("oplog-worktree-{i}-{name}"),
             name.into(),
             theme().text_sub,
         ))
+        .hover_tooltip_builder(("oplog-worktree-help", i), move |w, cx| {
+            gpui_component::tooltip::Tooltip::new(path.clone()).build(w, cx)
+        })
         .into_any_element()
 }
 
 fn badge(probe: String, label: SharedString, color: u32) -> gpui::AnyElement {
     div()
         .relative()
-        .flex_shrink_0()
+        .min_w(px(0.))
         .max_w(theme_mod::scaled_px(140.))
         .ml(theme_mod::scaled_px(6.))
         .px_1()
@@ -533,30 +660,48 @@ fn render_restore_actions(
     entry: &OpLogEntry,
     entity: &Entity<oplog_panel::OpLogPanel>,
 ) -> gpui::AnyElement {
-    let enabled = oplog_panel::restorable(entry);
-    let state = if enabled { "enabled" } else { "disabled" };
-    let button =
-        |kind: &'static str, icon: &'static str, label: &'static str, op: kagi_git::Operation| {
-            let entity = entity.clone();
-            div()
-                .relative()
-                .child(
-                    Button::new(SharedString::from(format!("oplog-{kind}-{i}")))
-                        .icon(gpui_component::Icon::empty().path(icon))
-                        .label(label)
-                        .small()
-                        .disabled(!enabled)
-                        .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
+    let restore_enabled = oplog_panel::restorable(entry);
+    let revert_enabled = oplog_panel::revertible(entry);
+    let reason = if !restore_enabled {
+        Some(Msg::OplogPanel(P::RestoreUnavailable).t())
+    } else if !revert_enabled {
+        Some(Msg::OplogPanel(P::RevertNoMoves).t())
+    } else {
+        None
+    };
+    let button = |kind: &'static str,
+                  icon: &'static str,
+                  label: &'static str,
+                  enabled: bool,
+                  op: kagi_git::Operation| {
+        let entity = entity.clone();
+        let state = if enabled { "enabled" } else { "disabled" };
+        div()
+            .relative()
+            .child(super::button_style::named_button_with_description(
+                SharedString::from(format!("oplog-{kind}-{i}-hover-help")),
+                Button::new(SharedString::from(format!("oplog-{kind}-{i}")))
+                    .icon(gpui_component::Icon::empty().path(icon))
+                    .label(label)
+                    .small()
+                    .disabled(!enabled)
+                    .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
+                        if enabled {
                             let op = op.clone();
                             entity.update(cx, |_, cx| {
                                 cx.emit(oplog_panel::OpLogPanelEvent::Restore(op))
                             });
-                        }),
-                )
-                .child(super::e2e::measure_inside(format!(
-                    "oplog-{kind}-{i}-{state}"
-                )))
-        };
+                        }
+                    }),
+                label.into(),
+                None,
+                (!enabled).then(|| reason.unwrap_or_default().into()),
+                !enabled,
+            ))
+            .child(super::e2e::measure_inside(format!(
+                "oplog-{kind}-{i}-{state}"
+            )))
+    };
     let entry_id = entry.id;
     div()
         .id(("oplog-row-restore", i))
@@ -572,25 +717,36 @@ fn render_restore_actions(
                 .flex()
                 .flex_row()
                 .gap_2()
+                .flex_wrap()
                 .child(button(
                     "revert",
                     "icons/undo-2.svg",
                     Msg::OplogPanel(P::RevertButton).t(),
+                    revert_enabled,
                     kagi_git::Operation::OpRevert { entry_id },
                 ))
                 .child(button(
                     "restore",
                     "icons/history.svg",
                     Msg::OplogPanel(P::RestoreButton).t(),
+                    restore_enabled,
                     kagi_git::Operation::RestoreToPoint { entry_id },
                 )),
         )
-        .when(!enabled, |d| {
+        .when_some(reason, |d, reason| {
             d.child(
                 div()
+                    .id(("oplog-revert-reason", i))
+                    .role(gpui::Role::Status)
+                    .aria_label(reason)
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(Msg::OplogPanel(P::RestoreUnavailable).t()),
+                    .child(reason)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!(
+                            "oplog-revert-reason-{i}"
+                        )))
+                    }),
             )
         })
         .into_any_element()

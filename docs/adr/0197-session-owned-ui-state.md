@@ -145,6 +145,30 @@ rehydrate 案（plain data から entity を作り直す）を採らない理由
 undo / 選択、list handle、未保存 buffer、pane の request token まで lossless に表す必要があり、
 entity と seed の二重 owner を作る。A4 の決定文とも衝突する。
 
+### Main Diff の image read と retained refresh（#1075）
+
+- `MainDiffRead` は既存の background read 内で text と画像の file / blob bytes、
+  形式判定、encoded bytes を包む GPUI Image を準備する。cached binary commit は
+  不変の `Arc<FileDiff>` を再利用する。GPUI の pixel decode は変更・検証対象に含めない。
+- foreground は起動時に固定した session / visit、request、必要な published-model
+  generation と source owner を照合して prepared view を適用する。Compare は entity
+  と revision、WIP の通常 open は panel entity、retained refresh は main-diff entity
+  に属する。commit の OID は固定し、row 再採番後の旧 key には cache を書き込まない。
+- linked worktree の retained refresh は、pane 復元時に捕捉した repository から読む。
+  revalidation がその後に空の Commit Panel を削除しても、同じ request / main-diff
+  entity / staged・unstaged side / path の結果は受理し、`Nothing` なら差分を閉じる。
+  消えた panel から tab repository を再解決して、この結果を拒否してはならない。
+  通常の WIP open は引き続き現在の panel・repository・file を照合する。
+- 2026-10-09 の最終 native Tier A は `binary_diff_prepared`、
+  `binary_diff_owner_transitions`、`binary_diff_worktree_owner`、
+  `binary_diff_linked_empty_revisit` の 4 ケースで PASS。build / full workspace
+  （最新 dev 統合後 3,086 passed、0 failed、40 ignored）/ clippy / fmt / 22 gates も PASS。
+- default build の実ウィンドウでは、各 6,532,139 bytes の変更前・変更後 PNG、
+  unsupported binary への切り替え、追加 PNG の After のみ、staged 削除 PNG の
+  Before のみを確認した。閲覧後も HEAD、全 index entry の path / OID / mode /
+  stage、全 working file の SHA256 は不変。表示確認を FPS や read/decode 時間の
+  計測とは扱わない。
+
 ## 決定 4 — 受け入れ oracle
 
 | | 内容 | 位置付け |
@@ -240,3 +264,67 @@ Wave 4 は #703（abandoned executor の supervisor）より先に開始・land 
 
 共有 hotspot は `Sessions` と `release_session` 周辺なので、同時に実装する場合は
 #703 が `src/app/session.rs`、Wave 4 が UI 側 store / tabs を owner とし、schema 変更は直列に統合する。
+
+## Host-close amendment (#1603)
+
+Quit, Close Window, and the native window-close callback destroy all retained
+editors, so they share one guard after the existing lease/clone hold. Settings
+Quit routes to its repository owner and reveals that window's confirmation.
+The confirmation counts dirty files across every session, including cached file
+tabs, and offers Save All / Discard / Cancel rather than silently dropping hidden
+buffers or asking only about the selected repository.
+
+Save All uses the existing conflict-aware editor save and writer admission,
+one file at a time, attributed to the retained pane's owning session. Only a
+successful save completion advances the sequence. A disk conflict or write
+failure stops it with the guard open; Cancel retires the exit intent without
+discarding any remaining buffers. An already admitted write may finish after
+Cancel but cannot close the host. Discard writes nothing and resumes the original
+exit only if the lease/clone hold still permits it. Existing repository-tab
+close and editor-close confirmations retain their current behavior.
+
+### Host-close follow-up (#1614)
+
+An installed update's relaunch is a host-destruction intent, not permission to
+exit immediately. It uses the same retained-buffer confirmation and write/clone
+hold as Quit. Save All and Discard resume that frozen relaunch only after the
+hold permits it; Cancel retires the current relaunch intent without replacing
+unsaved text, but retains the installed replacement and restart-pending state.
+Reopening Update shows the installed status and Restart action, with Skip
+unavailable; it never installs that update again. Settings are flushed before
+spawning the replacement process and exiting.
+
+While the confirmation is open, Quit upgrades Close Window to Quit without
+replacing the modal or interrupting its admitted save. Save All blocked by a
+running operation reports a localized explanation and leaves its controls usable
+for retry. An abandoned save clears the confirmation's busy marker at the
+host-owned terminal callback, including when its editor has disappeared, and
+reports a localized failure while retaining the existing Unknown receipt and
+recovery requirement. Discard blocked by a new operation retains the intent
+rather than silently dismissing it.
+
+A clean editor waiting for restart has a dedicated Restart / Cancel confirmation:
+no zero-unsaved-file count, Save All or Discard. Running work asks the user to
+wait for completion and then explicitly choose Restart again. An Unknown retained
+lease instead asks the user to Cancel and review recovery in Operation Log;
+waiting cannot resolve that recovery requirement.
+The distinction follows the lease that actually blocks the host: a non-running
+retained lease requires recovery; an unrelated lease-free recovery reminder does
+not turn a running write or clone into a recovery wait.
+
+**Manual Restart retry is intentional.** Operation completion and recovery never
+automatically restart the app. Cancel keeps the installed update pending, and the
+user decides when to retry Restart after completing work or recovery, so returning
+to editing cannot trigger a surprise restart.
+
+Installer completion is an asynchronous producer under #718 modal arbitration.
+It clears only its own Update presentation, then offers a restart guard only to
+an empty modal slot. An existing plan, editor form or dirty-buffer confirmation
+keeps its data and intent; the installed update remains pending for the user's
+later explicit Restart action. Even a clean host must not exit behind an
+unrelated active modal.
+
+Dock Quit, logout and shutdown require a public GPUI termination-veto/deferral
+hook; the API audit and upstream migration/removal condition are recorded in
+`docs/rearch/upstream-migration-1479.md` and `docs/decisions.md`. No dependency
+fork or private macOS delegate interception is permitted for this gap.

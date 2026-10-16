@@ -108,11 +108,14 @@ mod branch_delete_safety;
 mod checkout;
 mod cherry_revert;
 mod clone;
+mod commit;
+pub(crate) mod conflict_abort;
 mod dir_file_conflict;
 mod discard;
 mod fetch;
 mod force_lease;
 mod history;
+pub(crate) mod hunk_staging;
 mod merge;
 mod merge_into;
 mod oplog_restore;
@@ -135,6 +138,7 @@ mod suggestion;
 mod switch;
 mod sync_to_remote;
 mod tag;
+pub(crate) mod unstage;
 mod worktree;
 mod worktree_lifecycle;
 mod worktree_nested_repo;
@@ -148,6 +152,10 @@ pub use branch_cleanup::*;
 pub use checkout::*;
 pub use cherry_revert::*;
 pub use clone::*;
+pub(crate) use commit::{
+    approved_commit_index, execute_commit, execute_git_commit, staged_set_digest,
+};
+pub use commit::{plan_commit, preflight_commit};
 pub use dir_file_conflict::*;
 pub use discard::*;
 pub(crate) use fetch::*;
@@ -238,24 +246,57 @@ pub(crate) fn status_summary_display(status: &super::status::WorkingTreeStatus) 
     }
 }
 
-/// Build a `git2::Signature` from the repository config.
-///
-/// Falls back to `"kagi <kagi@local>"` if either `user.name` or `user.email`
-/// is not configured.
+/// Build the effective Git committer signature without inventing an identity.
+/// Libgit2 commit writers share Git's config/env semantics with CLI commits.
 pub(crate) fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
-    let config = repo
-        .config()
-        .map_err(|e| GitError::Other(format!("failed to open config: {}", e.message())))?;
+    git_signature(repo, "GIT_COMMITTER_IDENT")
+}
 
-    let name = config
-        .get_string("user.name")
-        .unwrap_or_else(|_| "kagi".to_string());
-    let email = config
-        .get_string("user.email")
-        .unwrap_or_else(|_| "kagi@local".to_string());
+/// Fixed application provenance is reserved for private recovery refs/objects.
+pub(crate) fn internal_signature() -> Result<git2::Signature<'static>, GitError> {
+    git2::Signature::now("kagi", "kagi@local")
+        .map_err(|error| GitError::Other(error.message().into()))
+}
 
-    git2::Signature::now(&name, &email)
-        .map_err(|e| GitError::Other(format!("failed to create signature: {}", e.message())))
+pub(crate) fn check_git_identity(repo: &Repository) -> Result<(), GitError> {
+    for variable in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
+        git_signature(repo, variable)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn add_git_identity_blocker(
+    repo: &Repository,
+    blockers: &mut Vec<PlanNote>,
+) -> Result<(), GitError> {
+    match check_git_identity(repo) {
+        Err(GitError::Blocked(note)) => blockers.push(*note),
+        result => result?,
+    }
+    Ok(())
+}
+
+/// Read and parse identity with the same CLI/config/environment as execution.
+pub(crate) fn git_signature(
+    repo: &Repository,
+    variable: &str,
+) -> Result<git2::Signature<'static>, GitError> {
+    let workdir = repo.workdir().unwrap_or_else(|| repo.path());
+    let output = crate::cli::run_git(workdir, &["var", variable])?;
+    if output.status != 0 {
+        return Err(GitError::Blocked(Box::new(PlanNote::Common(
+            CommonNote::GitIdentityUnavailable,
+        ))));
+    }
+    let invalid = || GitError::Other("failed to parse Git committer identity".into());
+    let (name, remainder) = output.stdout.trim().rsplit_once(" <").ok_or_else(invalid)?;
+    let (email, date) = remainder.rsplit_once("> ").ok_or_else(invalid)?;
+    let (seconds, offset) = date.split_once(' ').ok_or_else(invalid)?;
+    let seconds = seconds.parse::<i64>().map_err(|_| invalid())?;
+    let offset = offset.parse::<i32>().map_err(|_| invalid())?;
+    let minutes = (offset / 100) * 60 + offset % 100;
+    git2::Signature::new(name, email, &git2::Time::new(seconds, minutes))
+        .map_err(|e| GitError::Other(format!("failed to parse Git identity: {}", e.message())))
 }
 
 pub(crate) fn short_oid(oid: git2::Oid) -> String {
@@ -287,7 +328,7 @@ pub(crate) fn conflict_paths_from_index(index: &mut git2::Index) -> Result<Vec<S
 /// 10k files must not allocate a 10k-element Vec, clone it into the modal, and
 /// hand it to GPUI; the modal only ever renders the first handful anyway (issue
 /// #301). `Backend::snapshot` is likewise bounded.
-pub(crate) const PREVIEW_FILES_CAP: usize = 200;
+pub const PREVIEW_FILES_CAP: usize = 200;
 
 /// Cap on how many conflicting file names a merge plan note lists. The note
 /// still carries the true `count`; the renderer appends "and N more" (#301).

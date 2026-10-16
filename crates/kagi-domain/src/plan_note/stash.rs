@@ -25,6 +25,8 @@ pub enum StashDirtyOp {
 /// Plan notes for the stash op family (ADR-0129 appendix §B-7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StashNote {
+    /// blocker: Git cannot create a stash without an initial HEAD commit.
+    HeadRequired,
     /// blocker (`plan_stash_push`, no-op family): working tree is already
     /// clean — nothing to stash.
     NothingToStash,
@@ -34,6 +36,14 @@ pub enum StashNote {
     /// warning (`plan_stash_push`, `include_untracked=false`): untracked
     /// files are left behind in the working tree.
     UntrackedExcluded { count: usize },
+    /// Saved index changes absent from the stash worktree tree. The existing
+    /// non-`--index` Apply/Pop does not restore them; successful Pop loses them.
+    IndexOnlyNotRestored {
+        files: Vec<crate::status::FileStatus>,
+    },
+    /// The selected stash's files could not be read. Preserve prediction
+    /// blockers/warnings rather than replacing the plan with a preview error.
+    ManifestUnavailable { reason: String },
     /// blocker (`plan_stash_apply` / `plan_stash_pop` / `plan_stash_drop`):
     /// `index` names a stash entry that doesn't exist. The singular/plural
     /// "entry"/"entries" tail is computed inside `message_en` — JA needs no
@@ -81,6 +91,7 @@ impl StashNote {
     /// Byte-identical to the legacy `ops/stash.rs` strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
+            StashNote::HeadRequired => crate::advice_template_en!(StashHeadRequired).to_string(),
             StashNote::NothingToStash => "Nothing to stash: working tree is already clean \
                  (no staged, modified, or untracked files)."
                 .to_string(),
@@ -90,6 +101,14 @@ impl StashNote {
             StashNote::UntrackedExcluded { count } => {
                 format!(crate::advice_template_en!(UntrackedExcluded), count)
             }
+            StashNote::IndexOnlyNotRestored { files } => format!(
+                "Index-only content not restored ({}): Apply/Pop does not use --index; successful Pop deletes this saved content.\n{}",
+                files.len(),
+                files.iter().map(|file| format!("{} {}", file.change.label(), file.path.display())).collect::<Vec<_>>().join("\n")
+            ),
+            StashNote::ManifestUnavailable { reason } => format!(
+                "Stash manifest unavailable: {reason}. Restored file names, count and change kinds are unknown."
+            ),
             StashNote::IndexOutOfRange { index, count } => format!(
                 "Stash index {} is out of range (only {} stash entr{} exist).",
                 index,
@@ -147,6 +166,23 @@ impl StashNote {
             StashNote::ListChanged => crate::advice_template_en!(StashListChanged).to_string(),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            StashNote::UntrackedExcluded { count } => {
+                format!(crate::advice_template_display_en!(UntrackedExcluded), count)
+            }
+            StashNote::TargetChanged { index, expected } => format!(
+                crate::advice_template_display_en!(StashTargetChanged),
+                index, expected
+            ),
+            StashNote::ListChanged => {
+                crate::advice_template_display_en!(StashListChanged).to_string()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the stash op family (appendix §C stash-* rows).
@@ -180,6 +216,11 @@ impl StashTitle {
             StashTitle::Drop { index } => format!("Stash drop — delete stash@{{{}}}", index),
             StashTitle::DropRemote { label } => format!("Drop {}", label),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -248,6 +289,11 @@ impl StashRecovery {
                  stash reflog until gc, but Kagi does not manage remote recovery."
                 .to_string(),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

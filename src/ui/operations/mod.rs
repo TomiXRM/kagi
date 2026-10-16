@@ -26,6 +26,7 @@ pub mod merge;
 pub mod modal_state;
 pub(crate) mod oplog_restore;
 pub(crate) mod oplog_restore_card;
+pub(crate) mod oplog_restore_inspection;
 pub(crate) mod oplog_restore_preview;
 pub mod pull_push;
 pub mod rebase;
@@ -45,12 +46,56 @@ use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
 use crate::ui::{BottomTab, ToastKind};
 
+/// Translate at the display boundary without changing a receipt or a log line.
+pub(crate) fn display_text(text: gpui::SharedString) -> gpui::SharedString {
+    match kagi_ui_core::i18n::op::user_text::diagnostic(&text) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(display) => display.into(),
+    }
+}
+
+/// Present the outcome, not the receipt's internal state fields.
+pub(crate) fn outcome_text(op: &str, outcome: &kagi_git::oplog::OpOutcome) -> String {
+    use kagi_git::oplog::OpOutcome;
+    use kagi_ui_core::i18n::op::user_text::{diagnostic, operations};
+    match outcome {
+        OpOutcome::Success { .. } => operations::completed(op),
+        OpOutcome::Partial { error, .. } => operations::partial(op, error),
+        OpOutcome::Unknown { evidence, .. } => operations::unknown(op, evidence),
+        OpOutcome::Failed { error } => operations::failed(op, error),
+        OpOutcome::Refused { blockers } => {
+            let reason = blockers
+                .first()
+                .map(|reason| diagnostic(reason))
+                .unwrap_or_else(|| diagnostic("plan has blockers"));
+            kagi_ui_core::i18n::op_refused(op, reason, blockers.len().saturating_sub(1))
+        }
+    }
+}
+
 /// A failure handed to a family's `on_done` by [`KagiApp::finish_recorded`]:
-/// the localized text plus the receipt's typed code (ADR-0195), so a family
-/// can special-case a code without matching on prose.
+/// the historical localized contract text plus the receipt's typed code
+/// (ADR-0195), so a family can special-case a code without matching prose.
 pub(crate) struct OpFailure {
     pub message: String,
+    display: Option<String>,
     pub code: FailureCode,
+}
+
+impl OpFailure {
+    fn display_message(&self) -> &str {
+        self.display.as_deref().unwrap_or(&self.message)
+    }
+}
+
+fn failure_contract(op: crate::ui::i18n::Op, error: &kagi_git::GitError) -> String {
+    match error.blocker() {
+        Some(note) => crate::ui::i18n::op::op_failed_contract(
+            op,
+            crate::ui::i18n::plan::plan_note_contract(note),
+        ),
+        None => crate::ui::i18n::op::op_failed_contract(op, error),
+    }
 }
 
 pub(crate) enum RunHistory {
@@ -299,12 +344,10 @@ impl KagiApp {
                     // above whatever happened, so nothing wedges.
                     None => {
                         klog!("op panicked: {} — busy_op cleared", tag);
-                        // ponytail: raw string, not a new i18n Msg — this is an
-                        // edge-case recovery footer, matching the raw-format!
-                        // footers already used across the op modules.
-                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                            "{tag}: operation failed unexpectedly"
-                        )));
+                        app.status_footer =
+                            FooterStatus::Failed(crate::ui::operations::display_text(
+                                SharedString::from(format!("{tag}: operation failed unexpectedly")),
+                            ));
                     }
                 }
                 cx.notify();
@@ -463,29 +506,32 @@ impl KagiApp {
                     app.queue_write_settled(stamp, id, &report, cx);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
-                    let (mut presentation, failure_message, finished) = match &report.result {
-                        Ok(outcome) => (
-                            on_done(Ok(outcome)),
-                            None,
-                            Some(finished_note(outcome).unwrap_or_else(|| "finished".to_string())),
-                        ),
-                        Err(error) => {
-                            let failure = OpFailure {
-                                // A typed refusal speaks the reader's language
-                                // (#866); everything else keeps its own text.
-                                message: match error.blocker() {
-                                    Some(note) => crate::ui::i18n::op_failed(
-                                        op,
-                                        crate::ui::i18n::plan::plan_note_text(note),
-                                    ),
-                                    None => crate::ui::i18n::op_failed(op, error),
-                                },
-                                code: FailureCode::from(error),
-                            };
-                            let message = failure.message.clone();
-                            (on_done(Err(&failure)), Some(message), None)
-                        }
-                    };
+                    let (mut presentation, failure_message, failure_display, finished) =
+                        match &report.result {
+                            Ok(outcome) => (
+                                on_done(Ok(outcome)),
+                                None,
+                                None,
+                                Some(
+                                    finished_note(outcome)
+                                        .unwrap_or_else(|| "finished".to_string()),
+                                ),
+                            ),
+                            Err(error) => {
+                                let failure = OpFailure {
+                                    message: failure_contract(op, error),
+                                    display: error.blocker().map(|note| {
+                                        crate::ui::i18n::op_failed(
+                                            op,
+                                            crate::ui::i18n::plan_note_text(note),
+                                        )
+                                    }),
+                                    code: FailureCode::from(error),
+                                };
+                                let presentation = on_done(Err(&failure));
+                                (presentation, Some(failure.message), failure.display, None)
+                            }
+                        };
                     app.record_run_history_for(
                         stamp.session,
                         &repo_path,
@@ -546,7 +592,13 @@ impl KagiApp {
                             op_name,
                             failure_message.as_deref().unwrap_or_default()
                         );
-                        app.present_recorded(&report.recording, cx);
+                        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                            &report.recording,
+                        );
+                        // Logs and receipts keep the original reason; the typed
+                        // preview remains localized independently.
+                        let preview = failure_display.clone();
+                        app.record_op_impl(entry, cx, false, preview);
                         None
                     };
                     let notice_override = presentation.outcome_notice.clone();
@@ -554,10 +606,15 @@ impl KagiApp {
                     app.enqueue_run_outcome_notice(
                         id,
                         &report.recording,
-                        failure_message.as_deref(),
+                        failure_display.as_deref().or(failure_message.as_deref()),
                         notice_override,
                     );
-                    if matches!(report.recording, Recording::Failed { .. }) {
+                    if matches!(report.recording, Recording::Failed { .. })
+                        || !matches!(
+                            report.recording.entry().outcome,
+                            kagi_git::oplog::OpOutcome::Success { .. }
+                        )
+                    {
                         if let Some(recorded_status) = recorded_status {
                             app.status_footer = recorded_status;
                         }
@@ -631,6 +688,14 @@ impl KagiApp {
 
     fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
         if let Some((repo, message)) = presentation.consume_commit_message {
+            if self
+                .ui()
+                .commit_panel
+                .as_ref()
+                .is_some_and(|panel| panel.read(cx).repo_path == repo)
+            {
+                self.compact.popup_owner = None;
+            }
             match message {
                 Some((branch, frozen)) => {
                     let panel_matches = self.ui().commit_panel.as_ref().is_some_and(|panel| {
@@ -652,7 +717,7 @@ impl KagiApp {
                         .as_ref()
                         .is_some_and(|panel| panel.read(cx).repo_path == repo)
                         && self.panel_draft_branch(cx) == branch;
-                    let cleared = crate::ui::commit_panel::clear_committed_draft(
+                    let cleared = crate::ui::commit_panel::composer::clear_committed_draft(
                         &repo,
                         &branch,
                         &frozen,
@@ -666,7 +731,7 @@ impl KagiApp {
                         // us from consuming the panel message.
                         if let Some(panel) = self.ui().commit_panel.clone() {
                             panel.update(cx, |panel, _| {
-                                if panel.repo_path == repo && panel.last_draft_value == frozen {
+                                if panel.repo_path == repo && panel.draft_edit_value == frozen {
                                     panel.draft_save_gen = panel.draft_save_gen.wrapping_add(1);
                                 }
                             });
@@ -748,13 +813,8 @@ impl KagiApp {
         };
         let message = override_message
             .or_else(|| failure_message.map(str::to_owned))
-            .unwrap_or_else(|| {
-                format!(
-                    "{}: {}",
-                    entry.op,
-                    crate::ui::oplog_panel::outcome_summary(&entry.outcome)
-                )
-            });
+            .map(|reason| crate::ui::i18n::op::user_text::operations::partial(&entry.op, &reason))
+            .unwrap_or_else(|| outcome_text(&entry.op, &entry.outcome));
         // Recorded failures already have two surfaces: a transient toast and
         // the durable Operation Log row. A modal is reserved for an outcome
         // that needs an explicit inspect/acknowledge action.
@@ -790,8 +850,14 @@ impl KagiApp {
         repo: &Path,
     ) {
         if let Recording::Failed { error, .. } = recording {
-            self.app_notices
-                .push_back(format!("{}: {op}: recording failed: {error}", repo.display()).into());
+            self.app_notices.push_back(
+                crate::ui::i18n::op::user_text::operations::recording_failed(
+                    repo.display(),
+                    op,
+                    &error.to_string(),
+                )
+                .into(),
+            );
         }
     }
 
@@ -810,6 +876,37 @@ impl KagiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocked_failure_preserves_stderr_contract() {
+        use kagi_domain::plan_note::{CommitNote, CommonNote, PlanNote, WorktreeNote};
+        let payload = "git error: index.write() failed: Permission denied";
+        for note in [
+            PlanNote::Commit(CommitNote::StagedContentChanged),
+            PlanNote::Common(CommonNote::GitErrorPassthrough {
+                message: payload.into(),
+            }),
+            PlanNote::Worktree(WorktreeNote::LockedWithReason {
+                reason: Some("kagi:auto:terminal-owner".into()),
+            }),
+        ] {
+            // Explicit-locale renderer tests cover EN/JA without global mutation.
+            let expected = crate::ui::i18n::op::op_failed_contract(
+                crate::ui::i18n::Op::Commit,
+                crate::ui::i18n::plan::plan_note_contract(&note),
+            );
+            let error = kagi_git::GitError::Blocked(Box::new(note));
+            let actual = failure_contract(crate::ui::i18n::Op::Commit, &error);
+            assert_eq!(
+                format!("[kagi] async: commit failed — {actual}"),
+                format!("[kagi] async: commit failed — {expected}"),
+            );
+            assert_eq!(
+                format!("[kagi] pr-comment failed: {actual}"),
+                format!("[kagi] pr-comment failed: {expected}"),
+            );
+        }
+    }
 
     #[test]
     fn op_may_start_only_when_no_op_is_in_flight() {

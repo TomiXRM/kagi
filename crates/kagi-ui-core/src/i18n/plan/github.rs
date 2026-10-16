@@ -30,15 +30,15 @@ pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_KEPT: &str = "local branch を残し
 pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED: &str =
     "merge は完了しました。local branch は削除していません: {}";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_RANGE_GONE: &str =
-    "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`";
+    "レビュー対象だった行が working tree にありません。現在のファイルでレビューを開き直してください。\nfile `{}`";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_STALE: &str =
     "suggestion のレビュー後にファイルが変更されています。誤った行を書き換える恐れがあるため拒否します。現在のファイルでレビューを開き直してください。\nfile `{}`";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_NOT_PR_HEAD: &str =
-    "作業ツリーのファイルが PR の head 版と一致しないため、レビューされた行番号が別の行を指すおそれがあります。適用を拒否します。このファイルが PR の head と同じ状態で適用してください。\nfile `{}`";
+    "working tree のファイルが PR の head 版と一致しないため、レビューされた行番号が別の行を指すおそれがあります。適用を拒否します。このファイルが PR の head と同じ状態で適用してください。\nfile `{}`";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_HEAD_UNAVAILABLE: &str =
-    "PR の head コミットがローカルにないため、レビューされた版とファイルを比較できません。PR を開き直して head を取得してから、もう一度試してください。";
+    "PR の head commit がローカルにないため、レビューされた版とファイルを比較できません。PR を開き直して head を取得してから、もう一度試してください。";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_WORKING_TREE_ONLY: &str =
-    "作業ツリーだけを書き換えます(stage も commit もしません)。commit 前に Commit Panel で変更を確認してください。";
+    "working tree だけを書き換えます(stage も commit もしません)。commit 前に Commit Panel で変更を確認してください。";
 pub(crate) const ADVICE_GITHUB_COMMENT_BODY_EMPTY: &str =
     "コメント本文が空です。投稿する文章を入力してください。";
 pub(crate) const ADVICE_GITHUB_ISSUE_TITLE_EMPTY: &str =
@@ -54,11 +54,26 @@ pub(crate) const ADVICE_GITHUB_REVIEW_BODY_EMPTY: &str =
 pub(crate) const ADVICE_GITHUB_FIELD_EDIT_EMPTY: &str =
     "#{} は何も変わりません。追加または削除する reviewer / 担当 / label を選んでください。";
 pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED_DELETION_UNAUTHORIZED: &str =
-    "gh がエラーを返したため、local branch の削除は transport に許可されていません: {}";
+    "GitHub CLI がエラーを返したため、local branch は残しました: {}";
 
 /// Japanese rendering of one GitHub note.
 pub fn note_ja(note: &GithubNote) -> String {
     match note {
+        GithubNote::MergeScope {
+            branch,
+            head_sha,
+            totals,
+        } => match totals {
+            Some((files, additions, deletions)) => format!(
+                "PR source: {branch}@{head_sha}\nファイル: {files} 件 · +{additions} / −{deletions}"
+            ),
+            None => format!(
+                "PR source: {branch}@{head_sha}\nこの head commit の PR ファイル合計は取得できていません。"
+            ),
+        },
+        GithubNote::MergeFilesUnavailable => {
+            "この head commit の PR ファイルパスは取得できていません。".into()
+        }
         GithubNote::HeadUnavailable { number } => {
             super::advice_text(Msg::AdviceGithubHeadUnavailable, &[number])
         }
@@ -152,6 +167,36 @@ pub fn note_ja(note: &GithubNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, including nested plan reasons.
+pub(crate) fn note_ja_contract(note: &GithubNote) -> String {
+    match note {
+        GithubNote::KeepsLocalBranch { branch, reason } => super::advice_text(
+            Msg::AdviceGithubKeepsLocalBranch,
+            &[&reason_ja_contract(reason), branch],
+        ),
+        GithubNote::LocalBranchKept { name, reason } => super::advice_text(
+            Msg::AdviceGithubLocalBranchKept,
+            &[name, &reason_ja_contract(reason)],
+        ),
+        GithubNote::LocalBranchNotDeleted { reason } => super::advice_text(
+            Msg::AdviceGithubLocalBranchNotDeleted,
+            &[&reason_ja_contract(reason)],
+        ),
+        _ => note_ja(note),
+    }
+}
+
+fn reason_ja_contract(reason: &PrMergeLocalReason) -> String {
+    match reason {
+        PrMergeLocalReason::Plan(note) => super::note_ja_contract_any(note),
+        PrMergeLocalReason::DeletionUnauthorized { detail } => format!(
+            "gh がエラーを返したため、local branch の削除は transport に許可されていません: {}",
+            detail
+        ),
+        _ => reason_ja(reason),
+    }
+}
+
 /// Japanese rendering of one kept-local-branch reason.
 ///
 /// [`PrMergeLocalReason::Plan`] recurses through the **whole** plan-note
@@ -225,7 +270,7 @@ pub fn recovery_ja(recovery: &GithubRecovery) -> String {
             number
         ),
         GithubRecovery::ApplySuggestion =>
-            "作業ツリーのファイルだけを書き換えます(stage も commit もしません)。適用前の内容は先に backup ref に保持し、oplog(op=\"apply-suggestion\")に記録します:\n  git cat-file blob <backup-ref>"
+            "working tree のファイルだけを書き換えます(stage も commit もしません)。適用前の内容を先に保存します。操作ログの詳細で backup ref を確認し、`git cat-file blob <backup-ref>` で内容を取り出せます。"
                 .to_string(),
     }
 }
@@ -235,6 +280,83 @@ mod tests {
     use super::*;
     use crate::i18n::{plan::plan_note_text, set_lang_no_persist, Lang};
     use kagi_domain::plan_note::{branch::BranchNote, PlanNote};
+
+    #[test]
+    fn contract_reasons_preserve_legacy_bytes_through_every_wrapper() {
+        let reasons = [
+            (
+                PrMergeLocalReason::Plan(Box::new(PlanNote::Branch(
+                    BranchNote::RenameConfigChanged,
+                ))),
+                "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。",
+            ),
+            (
+                PrMergeLocalReason::DeletionUnauthorized {
+                    detail: "transport {}\nraw 日本語".into(),
+                },
+                "gh がエラーを返したため、local branch の削除は transport に許可されていません: transport {}\nraw 日本語",
+            ),
+            (
+                PrMergeLocalReason::Detail("transport {}\nraw 日本語".into()),
+                "transport {}\nraw 日本語",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            assert_eq!(
+                note_ja_contract(&GithubNote::KeepsLocalBranch {
+                    branch: "日本語-{}".into(),
+                    reason: reason.clone(),
+                }),
+                format!("local branch は削除しません: {expected}\nbranch `日本語-{{}}`")
+            );
+            assert_eq!(
+                note_ja_contract(&GithubNote::LocalBranchKept {
+                    name: "日本語-{}".into(),
+                    reason: reason.clone(),
+                }),
+                format!("local branch を残しました: 日本語-{{}} ({expected})")
+            );
+            assert_eq!(
+                note_ja_contract(&GithubNote::LocalBranchNotDeleted { reason }),
+                format!("merge は完了しました。local branch は削除していません: {expected}")
+            );
+        }
+    }
+
+    #[test]
+    fn contract_recurses_through_nested_github_notes_without_changing_payloads() {
+        let nested = PlanNote::Github(GithubNote::LocalBranchNotDeleted {
+            reason: PrMergeLocalReason::Plan(Box::new(PlanNote::Common(
+                kagi_domain::plan_note::CommonNote::ExternalFilter {
+                    path: "日本語/{}".into(),
+                    filter: "filter{}\nraw".into(),
+                },
+            ))),
+        });
+        assert_eq!(
+            note_ja_contract(&GithubNote::LocalBranchNotDeleted {
+                reason: PrMergeLocalReason::Plan(Box::new(nested)),
+            }),
+            "merge は完了しました。local branch は削除していません: merge は完了しました。local branch は削除していません: '日本語/{}' は外部 filter (filter{}\nraw) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。"
+        );
+    }
+
+    #[test]
+    fn contract_keeps_unchanged_local_reasons_identical() {
+        for reason in [
+            PrMergeLocalReason::NotAtPrHead {
+                tip: "tip{}".into(),
+                head: "head{}\nraw".into(),
+            },
+            PrMergeLocalReason::Queued,
+            PrMergeLocalReason::Changed,
+            PrMergeLocalReason::HeadChanged,
+            PrMergeLocalReason::IdentityChanged,
+            PrMergeLocalReason::Detail("raw{}\n日本語".into()),
+        ] {
+            assert_eq!(reason_ja_contract(&reason), reason_ja(&reason));
+        }
+    }
 
     /// The reason a merge kept the local branch is carried, not printed: a
     /// blocker raised by the delete-branch family reaches the Japanese notice
@@ -260,6 +382,6 @@ mod tests {
             "no English inside the Japanese notice: {ja}"
         );
         set_lang_no_persist(Lang::En);
-        assert_eq!(plan_note_text(&note), note.message_en());
+        assert_eq!(plan_note_text(&note), note.message_display_en());
     }
 }

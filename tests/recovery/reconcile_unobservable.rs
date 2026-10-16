@@ -1,7 +1,7 @@
 //! An unobserved remote result needs an armed, audited release, never dismissal.
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 use crate::recovery_operations::press_key;
-use gpui::{AnyWindowHandle, Entity, Modifiers, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, Modifiers, VisualTestAppContext};
 use kagi::{
     app,
     ui::{
@@ -125,6 +125,136 @@ fn hold_oplog_append_lock() -> std::fs::File {
     lock
 }
 
+fn assert_notice_dismissed(
+    cx: &mut VisualTestAppContext,
+    view: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+    id: app::OperationId,
+) {
+    for frame in 0..5 {
+        view.update(cx, |_, cx| cx.notify());
+        paint(cx, window);
+        assert!(
+            cx.read(|cx| !e2e::active_modal_present(view.read(cx))),
+            "dismissed actionable notice re-presented on render {frame}"
+        );
+    }
+    assert_blocked(cx, view, repo, id);
+}
+
+fn recur_notice(
+    cx: &mut VisualTestAppContext,
+    view: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    id: app::OperationId,
+) {
+    // A new explicit write attempt is a recurring condition, not a render.
+    view.update(cx, |view, cx| view.fetch_async(false, cx));
+    paint(cx, window);
+    cx.read(|cx| {
+        let notice = view.read(cx).app_notice().expect("fresh refusal notice");
+        assert_eq!(notice.inspect, Some(id));
+        assert!(!notice.release_armed);
+    });
+}
+
+pub fn scenario_app_notice_escape_dismiss(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    for lang in [Lang::En, Lang::Ja] {
+        let fixture = build_fixture();
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-q"]);
+        git(
+            fixture.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        let repo = fixture.path().canonicalize().unwrap();
+        let before = repo_fingerprint(&repo);
+        let (view, window) = mount(cx, &repo);
+        view.update(cx, |view, cx| view.set_lang(lang, cx));
+        paint(cx, window);
+        let input = cx.read(|cx| view.read(cx).sidebar.filter.clone().unwrap());
+        let opener = cx.read(|cx| input.read(cx).focus_handle(cx));
+        cx.update_window(window, |_, window, cx| window.focus(&opener, cx))
+            .unwrap();
+        let id = park_unobservable(cx, &view, &repo);
+        paint(cx, window);
+        cx.simulate_keystrokes(window, "escape");
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        cx.update_window(window, |_, window, _| {
+            assert!(opener.is_focused(window), "Escape must restore the opener");
+        })
+        .unwrap();
+        recur_notice(cx, &view, window, id);
+        view.update(cx, |view, cx| {
+            e2e::deliver_app_notice(view, "Next unread notice");
+            cx.notify();
+        });
+        cx.simulate_keystrokes(window, "escape");
+        paint(cx, window);
+        assert_eq!(
+            cx.read(|cx| e2e::app_notice_message(view.read(cx)).map(str::to_owned)),
+            Some("Next unread notice".into())
+        );
+        cx.simulate_keystrokes(window, "escape");
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        recur_notice(cx, &view, window, id);
+        cx.simulate_keystrokes(window, "enter"); // Non-destructive default: inspect.
+        paint(cx, window);
+        assert!(cx.read(|cx| e2e::app_notice_is_acknowledgeable(view.read(cx))));
+        cx.simulate_keystrokes(window, "enter"); // First release step only arms.
+        paint(cx, window);
+        assert!(cx.read(|cx| view.read(cx).app_notice().unwrap().release_armed));
+        cx.simulate_keystrokes(window, "escape");
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        recur_notice(cx, &view, window, id);
+        cx.simulate_keystrokes(window, "enter");
+        paint(cx, window);
+        assert!(!cx.read(|cx| view.read(cx).app_notice().unwrap().release_armed));
+        cx.simulate_keystrokes(window, "escape");
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        assert_eq!(repo_fingerprint(&repo), before);
+        assert!(read_oplog_tail_for_repo(&repo, 100)
+            .iter()
+            .any(|entry| entry.op == "push" && matches!(entry.outcome, OpOutcome::Unknown { .. })));
+        assert!(
+            cx.read(|cx| input.read(cx).value().is_empty()),
+            "notice Return must not insert text into its Input opener"
+        );
+        drop(input);
+        unmount(cx, view, window);
+    }
+    eprintln!("[gui-e2e] PASS app_notice_escape_dismiss");
+}
+
+pub fn scenario_app_notice_acknowledge_dismiss(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    for lang in [Lang::En, Lang::Ja] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let (view, window) = mount(cx, &repo);
+        let id = view.update(cx, |view, cx| {
+            view.set_lang(lang, cx);
+            assert!(e2e::deliver_acknowledge_notice(view, "Resolved operation"));
+            view.app_sessions.reconcile_ids()[0]
+        });
+        paint(cx, window);
+        cx.simulate_keystrokes(window, "escape");
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        recur_notice(cx, &view, window, id);
+        cx.simulate_keystrokes(window, "enter"); // Inspect the current condition.
+        paint(cx, window);
+        assert!(cx.read(|cx| e2e::app_notice_is_acknowledgeable(view.read(cx))));
+        cx.simulate_keystrokes(window, "enter"); // Non-destructive acknowledge.
+        paint(cx, window);
+        assert!(cx.read(|cx| !view.read(cx).app_sessions.needs_reconcile(id)));
+        assert!(cx.read(|cx| !e2e::active_modal_present(view.read(cx))));
+        unmount(cx, view, window);
+    }
+    eprintln!("[gui-e2e] PASS app_notice_acknowledge_dismiss");
+}
+
 pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let old_lang = i18n::lang();
@@ -161,6 +291,15 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
             e2e::control_bounds(window.window_id(), "app-notice-release-warning").is_some(),
             "first release click must draw the final warning"
         );
+        // #1270: root Return on the armed danger state cancels the arm,
+        // without persisting a release or admitting another writer.
+        press_key(cx, &view, window, "enter");
+        paint(cx, window);
+        assert_blocked(cx, &view, &repo, id);
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        recur_notice(cx, &view, window, id);
+        click_confirm(cx, window); // A fresh Inspect obtains a new release read.
+        click_confirm(cx, window); // Explicitly arm again before testing Escape.
         press_key(cx, &view, window, "escape");
         paint(cx, window);
         assert_blocked(cx, &view, &repo, id);
@@ -168,6 +307,9 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
             e2e::control_bounds(window.window_id(), "app-notice-release-warning").is_none(),
             "Escape must remove the armed warning"
         );
+        assert_notice_dismissed(cx, &view, window, &repo, id);
+        recur_notice(cx, &view, window, id);
+        click_confirm(cx, window); // Reinspect after Escape discarded the read.
         click_confirm(cx, window); // Escape discarded the previous arm.
         assert_blocked(cx, &view, &repo, id);
         view.update(cx, |view, cx| view.open_remote_browse(cx));
@@ -209,7 +351,8 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
         });
         click_confirm(cx, window); // The retry arms from scratch.
         assert_blocked(cx, &view, &repo, id);
-        click_confirm(cx, window); // Explicit final confirmation persists then releases.
+        crate::destructive_modal_return::focused_confirm(cx, &view, window, "app-notice-dismiss");
+        paint(cx, window); // Tab + Enter explicitly persists the final release.
         view.update(cx, |view, _| {
             assert!(
                 !view.app_sessions.needs_reconcile(id),

@@ -15,21 +15,21 @@ pub fn finding_text(finding: HealthFinding) -> &'static str {
              object. Writing one makes those walks faster."
         }
         (HealthFinding::CommitGraphMissing, Lang::Ja) => {
-            "commit-graph がありません。グラフ表示・Analyze・blame などの履歴走査が、毎回すべてのコミットを解析しています。書き込むと高速になります。"
+            "commit-graph がありません。グラフ表示・Analyze・blame などの履歴走査が、毎回すべての commit を解析しています。書き込むと高速になります。"
         }
         (HealthFinding::CommitGraphStale, Lang::En) => {
             "The commit-graph is older than HEAD: commits made since it was written are walked \
              without it. Rewriting it covers them."
         }
         (HealthFinding::CommitGraphStale, Lang::Ja) => {
-            "commit-graph が HEAD より古く、その後のコミットは commit-graph なしで走査されます。書き直すと対象になります。"
+            "commit-graph が HEAD より古く、その後の commit は commit-graph なしで走査されます。書き直すと対象になります。"
         }
         (HealthFinding::FsmonitorUnset, Lang::En) => {
             "core.fsmonitor is not set: every status scans the whole working tree. git's \
              built-in filesystem monitor watches it for changes instead."
         }
         (HealthFinding::FsmonitorUnset, Lang::Ja) => {
-            "core.fsmonitor が未設定のため、status のたびに作業ツリー全体を走査しています。git 組み込みのファイルシステムモニターが代わりに変更を監視します。"
+            "core.fsmonitor が未設定のため、status のたびに working tree 全体を走査しています。git 組み込みのファイルシステムモニターが代わりに変更を監視します。"
         }
     }
 }
@@ -92,7 +92,7 @@ pub fn checking_text() -> &'static str {
 pub fn note_ja(note: &MaintenanceNote) -> String {
     match note {
         MaintenanceNote::NoCommits => {
-            "このリポジトリにはまだコミットがないため、commit-graph に書く履歴がありません。"
+            "このリポジトリにはまだ commit がないため、commit-graph に書く履歴がありません。"
                 .to_string()
         }
         MaintenanceNote::FsmonitorAlreadySet { value } => format!(
@@ -103,7 +103,7 @@ pub fn note_ja(note: &MaintenanceNote) -> String {
                 .to_string()
         }
         MaintenanceNote::FsmonitorStartsDaemon => {
-            "git がこの作業ツリーの変更を監視するバックグラウンドの daemon を起動し、status が全ファイルを走査しなくなります。"
+            "git がこの working tree の変更を監視するバックグラウンドの daemon を起動し、status が全ファイルを走査しなくなります。"
                 .to_string()
         }
     }

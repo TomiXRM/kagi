@@ -20,6 +20,39 @@ pub fn ui_font() -> Font {
     ui
 }
 
+/// Renderer-fed inherited fonts for native acceptance, never a configured-font mirror.
+#[cfg(feature = "gui-e2e")]
+pub mod e2e {
+    use gpui::{AnyElement, Font, IntoElement as _, Styled as _, WindowId};
+    use std::{cell::RefCell, collections::HashMap};
+
+    thread_local! {
+        static FONTS: RefCell<HashMap<(WindowId, &'static str), Font>> = RefCell::default();
+    }
+
+    /// Zero-size, out-of-flow probe inside the actual styled text container.
+    pub fn probe(name: &'static str) -> AnyElement {
+        gpui::canvas(
+            move |_, window, _| {
+                FONTS.with(|fonts| {
+                    fonts.borrow_mut().insert(
+                        (window.window_handle().window_id(), name),
+                        window.text_style().font(),
+                    );
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0()
+        .into_any_element()
+    }
+
+    pub fn take(window: WindowId, name: &'static str) -> Option<Font> {
+        FONTS.with(|fonts| fonts.borrow_mut().remove(&(window, name)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,7 +76,7 @@ mod tests {
             include_bytes!("../../../assets/fonts/NotoSansJP-Bold.ttf").as_slice(),
         ] {
             let face = ttf_parser::Face::parse(bytes, 0).expect("Noto Sans JP must stay parseable");
-            for ch in ['日', '本', '語', '漢', '字', 'あ', 'ア'] {
+            for ch in ['日', '本', '語', '直', '骨', '誤', '漢', '字', 'あ', 'ア'] {
                 assert!(face.glyph_index(ch).is_some(), "missing bundled glyph {ch}");
             }
         }
@@ -83,58 +116,150 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_cosmic_text_uses_bundled_fallback_for_regular_and_bold() {
+    mod linux {
+        use super::*;
+        use gpui::{
+            px, FontId, FontWeight, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem,
+        };
+        use gpui_wgpu::CosmicTextSystem;
         use std::{borrow::Cow, sync::Arc};
 
-        use gpui::{px, FontId, FontWeight, TextRun, TextSystem, WindowTextSystem};
-        use gpui_wgpu::CosmicTextSystem;
-
-        let platform = Arc::new(CosmicTextSystem::new_without_system_fonts(UI_FONT));
-        let text_system = Arc::new(TextSystem::new(platform));
-        text_system
-            .add_fonts(vec![
+        fn text_system(
+            extra: Vec<Cow<'static, [u8]>>,
+            platform: CosmicTextSystem,
+        ) -> WindowTextSystem {
+            let system = Arc::new(TextSystem::new(Arc::new(platform)));
+            let mut fonts = vec![
                 Cow::Borrowed(include_bytes!("../../../assets/fonts/Inter-Regular.ttf").as_slice()),
                 Cow::Borrowed(include_bytes!("../../../assets/fonts/Inter-Bold.ttf").as_slice()),
+                Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf").as_slice(),
+                ),
+                Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf").as_slice(),
+                ),
                 Cow::Borrowed(
                     include_bytes!("../../../assets/fonts/NotoSansJP-Regular.ttf").as_slice(),
                 ),
                 Cow::Borrowed(
                     include_bytes!("../../../assets/fonts/NotoSansJP-Bold.ttf").as_slice(),
                 ),
-            ])
-            .expect("bundled fonts must load into cosmic-text");
-        let window_text_system = WindowTextSystem::new(text_system);
+            ];
+            fonts.extend(extra);
+            system.add_fonts(fonts).expect("test fonts must load");
+            WindowTextSystem::new(system)
+        }
 
-        let text = "ABC日本語";
-        let mut jp_font_ids: Vec<FontId> = Vec::new();
-        for weight in [FontWeight::NORMAL, FontWeight::BOLD] {
-            let mut font = ui_font();
-            font.weight = weight;
+        fn face(system: &WindowTextSystem, text: &str, font: Font) -> FontId {
             let run = TextRun {
                 len: text.len(),
                 font,
                 ..TextRun::default()
             };
-            let layout = window_text_system.layout_line(text, px(16.0), &[run], None);
-            assert_eq!(
-                layout.runs.len(),
-                2,
-                "{weight:?} must shape Inter Latin and Noto Japanese separately"
+            let layout = system.layout_line(text, px(16.0), &[run], None);
+            assert_eq!(layout.runs.len(), 1, "reference must use one explicit face");
+            assert!(!layout.runs[0].glyphs.is_empty());
+            assert!(
+                layout.runs[0].glyphs.iter().all(|glyph| glyph.id.0 != 0),
+                "reference must not contain missing-glyph boxes"
             );
-            assert_ne!(layout.runs[0].font_id, layout.runs[1].font_id);
-            jp_font_ids.push(layout.runs[1].font_id);
+            layout.runs[0].font_id
         }
 
-        // Regression guard for the "thin Japanese on Linux" bug: with the old
-        // *variable* fallback, cosmic-text had a single Noto face and rendered
-        // both weights at the font's default axis (Thin/wght=100), so the
-        // Japanese run resolved to the *same* font id for NORMAL and BOLD. The
-        // static Regular/Bold pair must resolve to two *distinct* faces, so the
-        // requested weight actually reaches the glyphs.
-        assert_ne!(
-            jp_font_ids[0], jp_font_ids[1],
-            "NORMAL and BOLD Japanese must resolve to distinct static faces, not one thin variable face"
-        );
+        fn assert_fallback(system: &WindowTextSystem, primary: &str) {
+            let text = "ABC日本語直骨誤";
+            let mut japanese_faces = Vec::new();
+            for weight in [FontWeight::NORMAL, FontWeight::BOLD] {
+                let mut requested = ui_font();
+                requested.family = primary.to_owned().into();
+                requested.weight = weight;
+                let mut reference = font(CJK_FONT);
+                reference.weight = weight;
+                let japanese = face(system, "日本語直骨誤", reference);
+                let latin = face(system, "ABC", requested.clone());
+                assert_ne!(latin, japanese, "ASCII must retain {primary}");
+                let run = TextRun {
+                    len: text.len(),
+                    font: requested,
+                    ..TextRun::default()
+                };
+                let layout = system.layout_line(text, px(16.0), &[run], None);
+                for (index, ch) in text.char_indices() {
+                    let (run, glyph) = layout
+                        .runs
+                        .iter()
+                        .find_map(|run| {
+                            run.glyphs
+                                .iter()
+                                .find(|glyph| glyph.index == index)
+                                .map(|glyph| (run, glyph))
+                        })
+                        .unwrap_or_else(|| panic!("missing shaped glyph {ch}"));
+                    assert_ne!(glyph.id.0, 0, "missing glyph {ch} in {primary}");
+                    assert_eq!(
+                        run.font_id,
+                        if ch.is_ascii() { latin } else { japanese },
+                        "{primary} {weight:?} {ch} selected the wrong face"
+                    );
+                }
+                eprintln!("{primary} {weight:?}: ASCII={latin:?}, Japanese={japanese:?}");
+                japanese_faces.push(japanese);
+            }
+            assert_ne!(
+                japanese_faces[0], japanese_faces[1],
+                "Japanese Regular/Bold must select distinct bundled static faces"
+            );
+        }
+
+        #[test]
+        fn linux_cosmic_text_uses_bundled_fallback_for_regular_and_bold() {
+            let system = text_system(
+                Vec::new(),
+                CosmicTextSystem::new_without_system_fonts(UI_FONT),
+            );
+            assert_fallback(&system, UI_FONT);
+            assert_fallback(&system, MONO_FONT);
+        }
+
+        // Explicit acceptance lane: never silently pass without a real Nerd font.
+        #[test]
+        #[ignore = "requires KAGI_TEST_NERD_FONT_REGULAR and KAGI_TEST_NERD_FONT_BOLD"]
+        fn linux_cosmic_text_nerd_primary_preserves_icons_and_japanese_fallback() {
+            let files = ["KAGI_TEST_NERD_FONT_REGULAR", "KAGI_TEST_NERD_FONT_BOLD"];
+            let fonts = files
+                .map(|key| {
+                    let path =
+                        std::env::var(key).expect("supply a real JetBrainsMono Nerd Font Mono");
+                    Cow::Owned(std::fs::read(path).expect("Nerd font must be readable"))
+                })
+                .into();
+            let system = text_system(fonts, CosmicTextSystem::new_without_system_fonts(UI_FONT));
+            let primary = "JetBrainsMono Nerd Font Mono";
+            assert_fallback(&system, primary);
+            let mut requested = ui_font();
+            requested.family = primary.into();
+            assert_eq!(
+                face(&system, "\u{e0b0}", requested.clone()),
+                face(&system, "ABC", requested),
+                "Nerd powerline icon must retain its primary face"
+            );
+        }
+
+        #[test]
+        #[ignore = "requires isolated Linux fontconfig with system Noto Sans CJK SC and JP"]
+        fn linux_cosmic_text_system_fonts_preserve_explicit_japanese_fallback() {
+            let platform = CosmicTextSystem::new(UI_FONT);
+            let names = platform.all_font_names();
+            for required in ["Noto Sans CJK SC", "Noto Sans CJK JP"] {
+                assert!(
+                    names.iter().any(|name| name == required),
+                    "missing {required}"
+                );
+            }
+            eprintln!("LANG={:?}", std::env::var("LANG"));
+            let system = text_system(Vec::new(), platform);
+            assert_fallback(&system, UI_FONT);
+            assert_fallback(&system, MONO_FONT);
+        }
     }
 }

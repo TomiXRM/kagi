@@ -23,10 +23,27 @@
 //! header toolbar button.
 
 mod blame;
+#[cfg(feature = "gui-e2e")]
+pub use blame::BlameProbe;
 mod bottom_panel;
 pub mod markdown;
+mod named_button;
+mod pane_selectors;
 mod panes;
+pub use pane_selectors::EditorPaneSelectors;
+#[cfg(feature = "gui-e2e")]
+mod tab_probes;
+#[cfg(feature = "gui-e2e")]
+pub use tab_probes::EditorTabProbe;
 mod save_binding;
+mod snapshot;
+mod tabs;
+use tabs::render_tab_strip;
+mod tree_layout;
+#[cfg(feature = "gui-e2e")]
+mod tree_probes;
+#[cfg(feature = "gui-e2e")]
+pub use tree_probes::{EditorTreeCellProbe, EditorTreeRowProbe};
 mod watcher;
 
 pub use bottom_panel::EditorWorkspaceElement;
@@ -41,20 +58,24 @@ use gpui::{
     div, px, rgb, uniform_list, AnyElement, Context, Entity, EventEmitter, MouseButton,
     ScrollStrategy, SharedString, UniformListScrollHandle, Window,
 };
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
-use gpui_component::Sizable as _;
+use gpui_component::{Selectable as _, Sizable as _};
 use kagi_domain::file_history::{FileHistory, FileSnapshotContent};
 use kagi_domain::load_request::RequestSlot;
 use kagi_domain::status::{ChangeKind, WorkingTreeStatus};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::file_tree::{self, status_badge, TreeRow};
+use kagi_ui_core::find;
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
+use kagi_ui_core::motion::{self, Easing, KeyedTransition, RowSplice};
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::tree_a11y;
+use kagi_ui_core::variable_list::VariableListState;
 
-pub(crate) use panes::{render_history_pane, render_snapshot_pane};
+pub(crate) use panes::render_history_pane;
 use save_binding::{deliver, dirty_after_save, SaveDelivery};
 
 /// What the Editor Workspace asks of the host app (ADR-0121 C4). Everything
@@ -76,6 +97,8 @@ pub enum EditorWorkspaceEvent {
     SaveBlocked,
     /// The background save write failed → host toasts + footer.
     SaveFailed { path: PathBuf, error: String },
+    /// The saved bytes have been applied to their owning buffer.
+    Saved,
     /// Load the working-tree file list for `source` (needs `Backend`); seed
     /// the result via `seed_files(generation, …)`.
     FilesRequested { generation: u64, source: TreeSource },
@@ -132,6 +155,7 @@ pub struct EditorHooks {
     /// `render_hunks`, over a second opaque field so the WIP hunks diff and
     /// the History diff never clobber each other.
     pub render_history_diff: RenderHunksFn,
+    pub pane_selectors: Box<dyn EditorPaneSelectors>,
 }
 
 /// Boxed diff-pane renderer (see [`EditorHooks::render_hunks`] /
@@ -292,6 +316,7 @@ enum SaveOutcome {
 pub struct EditorWorkspaceView {
     /// Host hooks (ADR-0121 C4) — see [`EditorHooks`].
     hooks: EditorHooks,
+    window_activation_subscription: Option<gpui::Subscription>,
     /// Repo root. Constant for the entity's life; the owning `TabUiState`
     /// retains it across activation changes and drops it on tab close.
     pub repo_path: PathBuf,
@@ -304,7 +329,7 @@ pub struct EditorWorkspaceView {
     /// arrow-key stepping (bug report) the moment a user had clicked into the
     /// text pane even once. `set_right_tab` / `select_history_commit`
     /// reclaim it explicitly.
-    root_focus: gpui::FocusHandle,
+    pub root_focus: gpui::FocusHandle,
 
     /// Which files `files`/`tree` are currently listing (T-WS-EDITOR-004).
     pub source: TreeSource,
@@ -319,10 +344,13 @@ pub struct EditorWorkspaceView {
     pub tree_w: f32,
     /// Right hunks-pane width (drag-resizable, T-WS-EDITOR-004).
     pub hunks_w: f32,
-    /// Collapsed directory rows, keyed by their index into `tree` (stable per
-    /// load — `tree` is only rebuilt by `start_load`, which clears this).
-    /// Children of a collapsed dir are filtered out by `visible_tree_indices`.
+    /// Collapsed directory rows, keyed by their index into `tree`. An accepted
+    /// file-list replacement resets these indices to the source's default;
+    /// superseded reads leave both the tree and its layout untouched.
     pub collapsed: HashSet<usize>,
+    /// Same entity owns the input revisions and the derived display mapping.
+    tree_layout: tree_layout::TreeLayoutCache,
+    tree_motion: EditorTreeMotion,
     /// `true` while the working-tree file-list load is in flight.
     pub loading: bool,
     /// Set if the file-list load failed.
@@ -350,6 +378,10 @@ pub struct EditorWorkspaceView {
     /// active+cache swap pattern as `KagiApp.active_view`/`tab_cache`
     /// (ADR-0075), so the render/loader code keeps reading the flat fields.
     pub open_tabs: Vec<PathBuf>,
+    tab_scroll: gpui::ScrollHandle,
+    tab_presentation: tabs::TabPresentation,
+    #[cfg(feature = "gui-e2e")]
+    tab_probes: tab_probes::TabProbes,
     /// Stashed per-file state for the INACTIVE tabs, keyed by path.
     tab_cache: HashMap<PathBuf, EditorBufferState>,
     /// `true` while the selected file's content + diff load is in flight.
@@ -399,9 +431,20 @@ pub struct EditorWorkspaceView {
     pub right_tab: RightPaneTab,
     /// This file's commit history, seeded by the bin ([`seed_history`]
     /// (Self::seed_history)) once `right_tab` first switches to `History`.
-    /// `None` while loading or before the tab has ever been opened for this
-    /// file.
-    pub history: Option<FileHistory>,
+    /// Shared with the virtualized list so redraws retain the loaded entries
+    /// without copying them. `None` while loading or before the tab has ever
+    /// been opened for this file.
+    pub history: Option<Arc<FileHistory>>,
+    /// Accepted read failure for the current file, separate from an empty history.
+    pub history_error: Option<String>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_presentation: std::cell::RefCell<String>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_retry_focused: bool,
+    #[cfg(feature = "gui-e2e")]
+    pub history_error_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_retry_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     /// The in-flight History load, owned by its own request key
     /// (`(file_req, path)`) rather than by a bare bool — see
     /// [`kagi_domain::load_request`] and [`Self::history_loading`] (#489).
@@ -425,7 +468,8 @@ pub struct EditorWorkspaceView {
     history_diff_req: RequestSlot<(u64, String)>,
     /// Scroll state for `history_diff`'s list — separate from `diff_scroll`
     /// (the WIP hunks pane), which the History diff never shares.
-    pub history_diff_scroll: gpui::ListState,
+    pub history_diff_scroll: VariableListState,
+    pub history_diff_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// The selected commit's full file content, seeded by the bin
     /// ([`seed_snapshot`](Self::seed_snapshot)). Plain `kagi_domain` data —
     /// no downcast needed, unlike the diff views above.
@@ -439,20 +483,17 @@ pub struct EditorWorkspaceView {
     /// selected so switching to History immediately sees the latest images.
     /// Only snapshot changes notify this entity; empty maps keep initial circles.
     pub avatars: std::sync::Arc<kagi_ui_core::avatar::AvatarImages>,
-    /// The Snapshot tab's OWN `InputState`, independent of the WIP `editor`
-    /// below — same `code_editor(lang).line_number(true)` recipe (bug
-    /// report: a hand-rolled `uniform_list` of styled divs had none of that
-    /// widget's font/line-number/selection behavior). Lazily created by
-    /// `sync_snapshot_editor`, mirroring `sync_editor`'s pattern for
-    /// `editor`. No dirty-tracking subscription — nothing reads back an
-    /// edit here (there's nowhere to save a historical commit's content
-    /// to); gpui-component has no read-only-but-selectable mode distinct
-    /// from `disabled` (which also blocks focus/selection), so an
-    /// unobserved-edits editable input is the closest available.
-    pub snapshot_editor: Option<Entity<InputState>>,
-    /// Hash of the last `(path, content)` pushed into `snapshot_editor` —
-    /// same guard shape as `pushed_sig`/`content_sig` for `editor`.
-    snapshot_pushed_sig: u64,
+    /// Selectable historical text has no editing or dirty/save owner.
+    snapshot_text: Option<Entity<gpui_component::text::TextViewState>>,
+    /// Renderer-measured snapshot surface for native input regressions.
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_indicator: Option<snapshot::SnapshotControl>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_current: Option<snapshot::SnapshotControl>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_tooltip_shown: Option<SharedString>,
 
     /// The code viewer `InputState`, created lazily on first render (needs a
     /// `Window`, only available there — see `sync_editor`).
@@ -468,14 +509,10 @@ pub struct EditorWorkspaceView {
     /// the Cmd-S save gate, and the unsaved-changes guard on file/source
     /// switch and close.
     ///
-    /// The subscription compares the editor's current text against
-    /// `content` rather than using a synchronous "am I mid-push" flag: a
-    /// gpui-component `set_value` push ALSO fires `InputEvent::Change`, but
-    /// `cx.emit` queues it as a deferred effect (`Context::emit` pushes onto
-    /// `pending_effects`) — it is delivered after `sync_editor` returns, by
-    /// which point a plain bool flag set/cleared synchronously around the
-    /// push would already be back to its resting value. Comparing text is
-    /// immune to that ordering.
+    /// Compare current text with the saved snapshot so a queued Change after
+    /// tab switching or saving is booked against the current buffer state.
+    /// The pinned component's `set_value` load is silent; user replacement,
+    /// typing, paste, cut and undo emit Change.
     pub dirty: bool,
     /// `true` when the FS watcher observed a working-tree change while
     /// `dirty` was set (T-WS-EDITOR-002 §4) — the buffer was NOT
@@ -501,10 +538,14 @@ pub struct EditorWorkspaceView {
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
-    /// T-DIFF-WRAP-001: `ListState` (variable-height) for the right hunks
-    /// list — see `render_helpers::render_diff_list` for the item-count
-    /// sync/reset lifecycle.
-    pub diff_scroll: gpui::ListState,
+    #[cfg(feature = "gui-e2e")]
+    tree_probes: tree_probes::TreeProbes,
+    /// Explicit platform activation for hidden native paint fixtures.
+    #[cfg(feature = "gui-e2e")]
+    pub window_active_override: Option<bool>,
+    /// Kagi-owned variable-height measurements for the right hunks list.
+    pub diff_scroll: VariableListState,
+    pub diff_layout: kagi_ui_core::diff_list::DiffListLayout,
 
     /// Whether the left tree pane renders (T-WS-EDITOR-005 finding #3).
     /// Pushed by `render_body` from `workspace::resolve_workspace`'s
@@ -533,6 +574,16 @@ pub struct EditorWorkspaceView {
     /// file is never blamed eagerly. Not tab-cached (recomputed on switch;
     /// same ponytail reasoning as the History panel).
     pub blame: Option<kagi_domain::blame::BlameResult>,
+    /// HEAD text and its cached mapping to the live buffer, never the saved
+    /// worktree snapshot (which may itself contain uncommitted edits).
+    blame_head: Option<std::sync::Arc<str>>,
+    blame_line_map: Vec<Option<usize>>,
+    blame_map_revision: u64,
+    blame_map_task: Option<gpui::Task<()>>,
+    #[cfg(feature = "gui-e2e")]
+    blame_map_computations: u64,
+    #[cfg(feature = "gui-e2e")]
+    pub blame_probe: std::rc::Rc<std::cell::RefCell<Option<BlameProbe>>>,
     /// `true` while the blame load is in flight.
     pub blame_loading: bool,
 
@@ -548,10 +599,217 @@ pub struct EditorWorkspaceView {
     pub(crate) bottom_panel: Option<AnyElement>,
 }
 
+/// The revision-cached tree owns presentation, not virtual row mounts.
+/// Indices locate immutable content; only stable paths key transitions.
+#[derive(Default)]
+struct EditorTreeMotion {
+    keys: Vec<PathBuf>,
+    order: HashMap<PathBuf, usize>,
+    splice: RowSplice<PathBuf>,
+    ghosts: Vec<EditorTreeGhost>,
+    selection: HashMap<PathBuf, KeyedTransition<bool>>,
+    selected: Option<PathBuf>,
+    initialized: bool,
+    #[cfg(feature = "gui-e2e")]
+    painted: std::rc::Rc<std::cell::RefCell<Vec<EditorTreeMotionProbe>>>,
+    #[cfg(feature = "gui-e2e")]
+    foreground_painted: std::rc::Rc<std::cell::RefCell<Vec<EditorTreeForegroundProbe>>>,
+}
+
+struct EditorTreeGhost {
+    key: PathBuf,
+    index: usize,
+    stripe: usize,
+    after: Option<usize>,
+    between: Vec<PathBuf>,
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct EditorTreeForegroundProbe {
+    pub path: PathBuf,
+    pub background: gpui::Hsla,
+    pub name: gpui::Hsla,
+    pub badge: gpui::Hsla,
+    pub dirty: gpui::Hsla,
+    pub dirty_visible: bool,
+    pub wash: f32,
+    pub window_active: bool,
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+}
+
+/// Samples recorded inside the subtree receiving displacement and opacity.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct EditorTreeMotionProbe {
+    pub path: PathBuf,
+    pub ghost: bool,
+    pub fringe: bool,
+    pub opacity: f32,
+    pub offset: gpui::Pixels,
+    pub selection: f32,
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+}
+
 impl EditorWorkspaceView {
+    fn reset_tree_motion(&mut self) {
+        self.tree_motion = EditorTreeMotion::default();
+        self.tree_motion.keys =
+            self.tree
+                .iter()
+                .enumerate()
+                .map(|(index, row)| match row {
+                    TreeRow::Dir { .. } => dir_path_for_tree_index(&self.tree, index)
+                        .expect("directory has a stable path"),
+                    TreeRow::File { file_index, .. } => self.files[*file_index].path.clone(),
+                })
+                .collect();
+        self.tree_motion.order = self
+            .tree_motion
+            .keys
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, key)| (key, index))
+            .collect();
+    }
+
+    /// Owner visibility cutovers show the destination presentation immediately.
+    pub fn settle_tree_motion(&mut self) {
+        self.tree_motion.splice = RowSplice::default();
+        self.tree_motion.ghosts.clear();
+        self.tree_motion.selected = None;
+        self.tree_motion.selection.clear();
+        self.tree_motion.initialized = false;
+    }
+
+    fn splice_tree_visibility(&mut self) {
+        let before = self.tree_layout.visible.clone();
+        self.tree_layout.collapse_changed();
+        self.refresh_tree_layout();
+        let now = motion::now();
+        let inserted: Vec<_> = self
+            .tree_layout
+            .visible
+            .iter()
+            .filter(|index| before.binary_search(index).is_err())
+            .copied()
+            .collect();
+        let removed: Vec<_> = before
+            .iter()
+            .filter(|index| self.tree_layout.visible.binary_search(index).is_err())
+            .copied()
+            .collect();
+        // A multi-screen disclosure is navigation, not a long animation.
+        let instant = motion::instant() || inserted.len() + removed.len() > 40;
+        let state = &mut self.tree_motion;
+        let settled = state.splice.splice(
+            inserted.iter().map(|&index| state.keys[index].clone()),
+            removed.iter().map(|&index| state.keys[index].clone()),
+            now,
+            instant,
+        );
+        if settled {
+            state.ghosts.clear();
+            return;
+        }
+        state.ghosts.retain(|ghost| {
+            self.tree_layout
+                .visible
+                .binary_search(&ghost.index)
+                .is_err()
+        });
+        for index in removed {
+            if !state.ghosts.iter().any(|ghost| ghost.index == index) {
+                state.ghosts.push(EditorTreeGhost {
+                    key: state.keys[index].clone(),
+                    index,
+                    stripe: before.binary_search(&index).expect("removed visible row"),
+                    after: None,
+                    between: Vec::new(),
+                });
+            }
+        }
+        state.ghosts.sort_by_key(|ghost| ghost.index);
+        // Re-anchor earlier removals too when batches overlap.
+        for i in 0..state.ghosts.len() {
+            let index = state.ghosts[i].index;
+            let position = self.tree_layout.visible.partition_point(|&row| row < index);
+            let after = position.checked_sub(1).map(|p| self.tree_layout.visible[p]);
+            let between = state.ghosts[..i]
+                .iter()
+                .filter(|ghost| after.is_none_or(|anchor| ghost.index > anchor))
+                .map(|ghost| ghost.key.clone())
+                .collect();
+            state.ghosts[i].after = after;
+            state.ghosts[i].between = between;
+        }
+        state.splice.advance(now, false);
+    }
+
+    fn sync_tree_motion(&mut self) -> bool {
+        let now = motion::now();
+        let instant = motion::instant() || !self.show_tree || self.loading;
+        let state = &mut self.tree_motion;
+        let mut moving = state.splice.advance(now, instant);
+        state.ghosts.retain(|ghost| {
+            state
+                .splice
+                .ghost(
+                    &ghost.key,
+                    ghost.after.map(|index| &state.keys[index]),
+                    ghost.between.iter(),
+                    theme::scaled_px(20.),
+                    now,
+                )
+                .is_some()
+        });
+        let selected = self
+            .selected
+            .and_then(|index| self.files.get(index))
+            .map(|file| &file.path);
+        let selection_instant = instant || !state.initialized;
+        state.initialized = true;
+        if state.selected.as_ref() != selected {
+            if let Some(path) = selected {
+                state
+                    .selection
+                    .entry(path.clone())
+                    .or_insert_with(|| KeyedTransition::new(false, 0.));
+            }
+            state.selected = selected.cloned();
+        }
+        state.selection.retain(|path, transition| {
+            let on = Some(path) == selected;
+            transition.retarget(
+                on,
+                if on { 1. } else { 0. },
+                now,
+                motion::TRANSITION,
+                Easing::OutCubic,
+                selection_instant,
+            );
+            let sample = transition.sample(now);
+            moving |= !sample.done;
+            on || !sample.done
+        });
+        moving
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn tree_motion_probes_for_e2e(&self) -> Vec<EditorTreeMotionProbe> {
+        self.tree_motion.painted.borrow().clone()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn tree_foreground_probes_for_e2e(&self) -> Vec<EditorTreeForegroundProbe> {
+        self.tree_motion.foreground_painted.borrow().clone()
+    }
+
     pub fn new(repo_path: PathBuf, hooks: EditorHooks, root_focus: gpui::FocusHandle) -> Self {
         Self {
             hooks,
+            window_activation_subscription: None,
             repo_path,
             root_focus,
             source: TreeSource::default(),
@@ -560,12 +818,20 @@ impl EditorWorkspaceView {
             tree_w: TREE_PANE_DEFAULT_W,
             hunks_w: HUNKS_PANE_DEFAULT_W,
             collapsed: HashSet::new(),
+            tree_layout: Default::default(),
+            tree_motion: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            tree_probes: Default::default(),
             loading: false,
             error: None,
             generation: 0,
             selected: None,
             open_path: None,
             open_tabs: Vec::new(),
+            tab_scroll: gpui::ScrollHandle::new(),
+            tab_presentation: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            tab_probes: Default::default(),
             tab_cache: HashMap::new(),
             file_loading: false,
             content: None,
@@ -580,18 +846,35 @@ impl EditorWorkspaceView {
             file_req: 0,
             right_tab: RightPaneTab::default(),
             history: None,
+            history_error: None,
+            #[cfg(feature = "gui-e2e")]
+            history_presentation: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            history_retry_focused: false,
+            #[cfg(feature = "gui-e2e")]
+            history_error_bounds: None,
+            #[cfg(feature = "gui-e2e")]
+            history_retry_bounds: None,
             history_req: RequestSlot::new(),
             selected_history_commit: None,
             middle_tab: MiddlePaneTab::default(),
             history_diff: None,
             history_diff_req: RequestSlot::new(),
             history_diff_scroll: new_diff_list_state(),
+            history_diff_layout: Default::default(),
             snapshot: None,
             snapshot_req: RequestSlot::new(),
             history_scroll: UniformListScrollHandle::new(),
             avatars: Default::default(),
-            snapshot_editor: None,
-            snapshot_pushed_sig: 0,
+            snapshot_text: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_bounds: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_indicator: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_current: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_tooltip_shown: None,
             editor: None,
             pushed_sig: 0,
             dirty: false,
@@ -600,12 +883,23 @@ impl EditorWorkspaceView {
             next_buf_gen: 1,
             probe_req: 0,
             tree_scroll: UniformListScrollHandle::new(),
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             diff_scroll: new_diff_list_state(),
+            diff_layout: Default::default(),
             show_tree: true,
             tree_menu: None,
             show_blame: kagi_ui_core::settings::Settings::load().blame_inline(),
             blame: None,
+            blame_head: None,
+            blame_line_map: Vec::new(),
+            blame_map_revision: 0,
+            blame_map_task: None,
+            #[cfg(feature = "gui-e2e")]
+            blame_map_computations: 0,
             blame_loading: false,
+            #[cfg(feature = "gui-e2e")]
+            blame_probe: Default::default(),
             preview_markdown: false,
             mermaid: HashMap::new(),
             bottom_panel: None,
@@ -654,9 +948,11 @@ impl EditorWorkspaceView {
                     TreeSource::Changes => HashSet::new(),
                     TreeSource::All => all_dir_indices(&self.tree),
                 };
+                self.tree_layout.tree_changed();
                 klog!("editor-ws: files {}", files.len());
                 let was_empty = files.is_empty();
                 self.files = files;
+                self.reset_tree_motion();
 
                 // T-WS-EDITOR-004 user feedback #1: a clean worktree
                 // has nothing to show in Changes mode on the initial
@@ -872,6 +1168,8 @@ impl EditorWorkspaceView {
         self.file_loading = false;
         self.diff = None;
         self.blame = None;
+        self.blame_head = None;
+        self.invalidate_blame_map();
         self.blame_loading = false;
     }
 
@@ -888,6 +1186,36 @@ impl EditorWorkspaceView {
     /// must cover backgrounded tabs too.
     pub fn any_dirty(&self) -> bool {
         self.dirty || self.tab_cache.values().any(|b| b.dirty)
+    }
+
+    pub fn dirty_buffer_count(&self) -> usize {
+        usize::from(self.dirty)
+            + self
+                .tab_cache
+                .values()
+                .filter(|buffer| buffer.dirty)
+                .count()
+    }
+
+    /// Save the next unsaved file using the ordinary conflict-aware save path.
+    /// Retained tabs already own their Input; no disk reload replaces their text.
+    pub fn save_next_dirty(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.dirty {
+            let Some(path) = self
+                .open_tabs
+                .iter()
+                .find(|path| self.tab_dirty(path))
+                .cloned()
+            else {
+                return false;
+            };
+            self.activate_tab(path, cx);
+        }
+        if self.open_path.is_none() || self.editor.is_none() {
+            return false;
+        }
+        self.save(cx);
+        true
     }
 
     /// Whether any dirty open tab would be closed by deleting `path`.
@@ -953,6 +1281,8 @@ impl EditorWorkspaceView {
         // no longer line up with it (issue #350). Re-requested (if the
         // toggle is on) once the fresh content lands below.
         self.blame = None;
+        self.blame_head = None;
+        self.invalidate_blame_map();
         self.blame_loading = false;
         let file_req = self.file_req;
         let repo_path = self.repo_path.clone();
@@ -1045,20 +1375,20 @@ impl EditorWorkspaceView {
     }
 
     /// The bin's answer to [`EditorWorkspaceEvent::DiffRequested`]: `path`'s
-    /// WIP diff, already built into the bin's `MainDiffView` (opaque here —
-    /// `hooks.render_hunks` downcasts it). Same staleness guard the old
-    /// in-crate marshal-back applied to the content+diff pair.
-    pub fn seed_diff(
+    /// WIP diff. Admission precedes the host's typed installation, so it can
+    /// adopt an unchanged read without losing native measurements or scroll.
+    pub fn seed_diff<D: Any>(
         &mut self,
         req: u64,
         path: &Path,
-        diff: Option<Box<dyn Any>>,
+        diff: Option<D>,
+        install: impl FnOnce(&mut Option<Box<dyn Any>>, Option<D>),
         cx: &mut Context<Self>,
     ) {
         if self.file_req != req || self.dirty || self.open_path.as_deref() != Some(path) {
             return;
         }
-        self.diff = diff;
+        install(&mut self.diff, diff);
         cx.notify();
     }
 
@@ -1072,16 +1402,22 @@ impl EditorWorkspaceView {
     /// if `right_tab` is still `History` after this reset.
     fn reset_history_panel(&mut self) {
         self.history = None;
+        self.history_error = None;
         self.history_req.clear();
         self.selected_history_commit = None;
         // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
         // preference — not reset here. See `select_history_commit`.
         self.clear_selected_commit_views();
-        // Drop the InputState too, not just its content — otherwise it
-        // lingers (unrendered but alive) for every file ever snapshotted in
-        // the session.
-        self.snapshot_editor = None;
-        self.snapshot_pushed_sig = 0;
+    }
+
+    /// Historical content remains read-only regardless of root/header focus.
+    pub fn showing_history_commit(&self) -> bool {
+        self.right_tab == RightPaneTab::History && self.selected_history_commit.is_some()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn snapshot_text_state(&self) -> Option<Entity<gpui_component::text::TextViewState>> {
+        self.snapshot_text.clone()
     }
 
     /// Drop the selected commit's Diff/Snapshot content **and** whatever load
@@ -1092,6 +1428,7 @@ impl EditorWorkspaceView {
         self.history_diff = None;
         self.history_diff_req.clear();
         self.snapshot = None;
+        self.snapshot_text = None;
         self.snapshot_req.clear();
     }
 
@@ -1142,7 +1479,10 @@ impl EditorWorkspaceView {
     /// must refresh it instead of silently showing the old file's list, or
     /// nothing at all).
     fn maybe_load_history(&mut self, cx: &mut Context<Self>) {
-        if self.right_tab != RightPaneTab::History || self.history.is_some() {
+        if self.right_tab != RightPaneTab::History
+            || self.history.is_some()
+            || self.history_error.is_some()
+        {
             return;
         }
         let Some(path) = self.open_path.clone() else {
@@ -1160,6 +1500,15 @@ impl EditorWorkspaceView {
         });
     }
 
+    pub fn retry_history(&mut self, cx: &mut Context<Self>) {
+        if self.history_loading() || self.history_error.is_none() {
+            return;
+        }
+        self.history_error = None;
+        self.maybe_load_history(cx);
+        cx.notify();
+    }
+
     /// The bin's answer to [`EditorWorkspaceEvent::HistoryRequested`].
     pub fn seed_history(
         &mut self,
@@ -1172,7 +1521,16 @@ impl EditorWorkspaceView {
         {
             return;
         }
-        self.history = result.ok();
+        match result {
+            Ok(history) => {
+                self.history = Some(Arc::new(history));
+                self.history_error = None;
+            }
+            Err(error) => {
+                self.history = None;
+                self.history_error = Some(error);
+            }
+        }
         cx.notify();
     }
 
@@ -1190,6 +1548,7 @@ impl EditorWorkspaceView {
             Some(if self.show_blame { "true" } else { "false" }),
         );
         self.maybe_load_blame(cx);
+        self.refresh_blame_map(cx);
         cx.notify();
     }
 
@@ -1217,6 +1576,7 @@ impl EditorWorkspaceView {
         req: u64,
         path: &Path,
         result: Option<kagi_domain::blame::BlameResult>,
+        head: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if self.file_req != req || self.open_path.as_deref() != Some(path) {
@@ -1231,6 +1591,8 @@ impl EditorWorkspaceView {
             );
         }
         self.blame = result;
+        self.blame_head = head.map(std::sync::Arc::from);
+        self.refresh_blame_map(cx);
         cx.notify();
     }
 
@@ -1401,6 +1763,7 @@ impl EditorWorkspaceView {
             return;
         }
         self.snapshot = result;
+        self.snapshot_text = None;
         cx.notify();
     }
 
@@ -1421,19 +1784,14 @@ impl EditorWorkspaceView {
             let state = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor(self.content_lang)
+                    .search_labels(find::labels())
                     .line_number(true)
             });
-            // T-WS-EDITOR-002: track user edits for the dirty indicator/
-            // guard/save-gate. `InputState` emits `InputEvent::Change` (see
-            // gpui-component 0.5.1 `src/input/state.rs::replace_text_in_range`)
-            // on every keystroke/paste/cut/undo AND on our own `set_value`
-            // push below — see `dirty`'s doc comment for why the handler
-            // compares text against `content` instead of a synchronous
-            // "am I mid-push" flag. Detached rather than stored: same
-            // pattern as the theme-select `Confirm` subscription in
-            // `mod.rs`'s `open_main_window` (holds a weak ref internally, so
-            // a dropped entity — workspace closed — just makes the callback
-            // a no-op).
+            // Track user edits for dirty/save guards and the HEAD blame map.
+            // The component's load-time set_value is silent (mapped below),
+            // while typing, paste, cut, undo and replace_all emit Change.
+            // Detached subscriptions hold a weak owner; closing the workspace
+            // makes their deferred callbacks harmless.
             cx.subscribe(&state, |this: &mut Self, state, event: &InputEvent, cx| {
                 if !matches!(event, InputEvent::Change) {
                     return;
@@ -1441,6 +1799,7 @@ impl EditorWorkspaceView {
                 let current = state.read(cx).value();
                 if this.editor.as_ref() == Some(&state) {
                     let dirty = this.content.as_deref() != Some(current.as_ref());
+                    this.update_blame_map(current, cx);
                     if this.dirty != dirty {
                         this.dirty = dirty;
                         cx.notify();
@@ -1477,6 +1836,9 @@ impl EditorWorkspaceView {
             .detach();
             self.editor = Some(state);
         }
+        if let Some(editor) = &self.editor {
+            editor.update(cx, |state, cx| state.set_search_labels(find::labels(), cx));
+        }
         if self.content_sig == self.pushed_sig {
             return;
         }
@@ -1490,37 +1852,26 @@ impl EditorWorkspaceView {
                 s.set_highlighter(lang, cx);
                 s.set_value(content, window, cx);
             });
+            // A HEAD reply can precede this silent programmatic file push.
+            let buffer = editor.read(cx).value();
+            self.update_blame_map(buffer, cx);
         }
     }
 
-    /// Lazily create the Snapshot tab's `InputState` and push the loaded
-    /// commit content into it — same recipe as `sync_editor` above, minus
-    /// the dirty-tracking subscription (see `snapshot_editor`'s doc
-    /// comment). No-ops while there's nothing loaded yet.
-    fn sync_snapshot_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.clone()) else {
+    /// Prepare literal historical text once per accepted snapshot. This view
+    /// owns selection/copy only; it never registers an input mutation handler.
+    fn sync_snapshot_text(&mut self, cx: &mut Context<Self>) {
+        if self.snapshot_text.is_some() {
+            return;
+        }
+        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.as_deref()) else {
             return;
         };
-        if self.snapshot_editor.is_none() {
-            let state = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .code_editor(self.content_lang)
-                    .line_number(true)
-            });
-            self.snapshot_editor = Some(state);
-        }
-        let sig = buffer_sig(self.open_path.as_deref().unwrap_or(Path::new("")), &text);
-        if self.snapshot_pushed_sig == sig {
-            return;
-        }
-        self.snapshot_pushed_sig = sig;
-        let lang = self.content_lang;
-        if let Some(editor) = self.snapshot_editor.clone() {
-            editor.update(cx, |s, cx| {
-                s.set_highlighter(lang, cx);
-                s.set_value(text, window, cx);
-            });
-        }
+        let source = snapshot::literal_source(text, self.content_lang);
+        self.snapshot_text =
+            Some(cx.new(|cx| {
+                gpui_component::text::TextViewState::markdown(&source, cx).selectable(true)
+            }));
     }
 
     /// Step the file selection up/down (root ↑/↓ handler, T-WS-EDITOR-001
@@ -1528,22 +1879,19 @@ impl EditorWorkspaceView {
     /// subtrees skipped) so the selection never lands on a hidden file, and
     /// scrolls the tree to keep the selected row on screen.
     pub fn step_selection(&mut self, delta: i32, cx: &mut Context<Self>) {
-        let visible = visible_tree_indices(&self.tree, &self.collapsed);
-        // (position in the visible list, file_index) for every visible file row.
-        let file_rows: Vec<(usize, usize)> = visible
-            .iter()
-            .enumerate()
-            .filter_map(|(vis_pos, &ti)| match self.tree.get(ti) {
-                Some(TreeRow::File { file_index, .. }) => Some((vis_pos, *file_index)),
-                _ => None,
-            })
-            .collect();
+        self.refresh_tree_layout();
+        let visible = &self.tree_layout.visible;
+        let file_rows = &self.tree_layout.file_rows;
         if file_rows.is_empty() {
             return;
         }
-        let cur = self
-            .selected
-            .and_then(|sel| file_rows.iter().position(|&(_, fi)| fi == sel));
+        let cur = self.selected.and_then(|sel| {
+            self.tree_layout
+                .file_row_indices
+                .get(sel)
+                .copied()
+                .flatten()
+        });
         let next = match cur {
             Some(p) => (p as i64 + i64::from(delta)).clamp(0, file_rows.len() as i64 - 1) as usize,
             None => {
@@ -1552,12 +1900,14 @@ impl EditorWorkspaceView {
                 // so we can step from where it *would* be instead of
                 // teleporting to an end (T-WS-EDITOR-005 finding #7).
                 let hidden_base_index = self.selected.and_then(|sel| {
-                    self.tree.iter().position(
-                        |r| matches!(r, TreeRow::File { file_index, .. } if *file_index == sel),
-                    )
+                    self.tree_layout
+                        .file_base_indices
+                        .get(sel)
+                        .copied()
+                        .flatten()
                 });
                 match hidden_base_index {
-                    Some(base) => nearest_visible_file_row(&visible, &file_rows, base, delta),
+                    Some(base) => nearest_visible_file_row(visible, file_rows, base, delta),
                     // No selection at all yet: ↓ starts at the top, ↑ at the bottom.
                     None if delta >= 0 => 0,
                     None => file_rows.len() - 1,
@@ -1581,21 +1931,34 @@ impl EditorWorkspaceView {
     /// Toggle a directory row's collapsed state (Zed-style chevron click).
     /// `tree_index` keys into `self.tree` (the unfiltered base rows).
     pub fn toggle_dir(&mut self, tree_index: usize, cx: &mut Context<Self>) {
+        self.refresh_tree_layout();
         if !self.collapsed.remove(&tree_index) {
             self.collapsed.insert(tree_index);
         }
+        self.splice_tree_visibility();
         cx.notify();
     }
 
     /// Expand every directory (the ⌄⌄ button in the chip row).
     pub fn expand_all(&mut self, cx: &mut Context<Self>) {
+        if self.collapsed.is_empty() {
+            return;
+        }
+        self.refresh_tree_layout();
         self.collapsed.clear();
+        self.splice_tree_visibility();
         cx.notify();
     }
 
     /// Collapse every directory (the ⌃⌃ button in the chip row).
     pub fn collapse_all(&mut self, cx: &mut Context<Self>) {
-        self.collapsed = all_dir_indices(&self.tree);
+        let collapsed = all_dir_indices(&self.tree);
+        if self.collapsed == collapsed {
+            return;
+        }
+        self.refresh_tree_layout();
+        self.collapsed = collapsed;
+        self.splice_tree_visibility();
         cx.notify();
     }
 
@@ -1734,6 +2097,7 @@ impl EditorWorkspaceView {
                     // highlight-only, so the diff refresh runs explicitly in
                     // `apply_saved`).
                     v.start_load(cx);
+                    cx.emit(EditorWorkspaceEvent::Saved);
                     cx.notify();
                 }
                 SaveOutcome::Conflict => {
@@ -2077,10 +2441,8 @@ fn nearest_visible_file_row(
     hidden_base_index: usize,
     delta: i32,
 ) -> usize {
-    let insert_pos = file_rows
-        .iter()
-        .position(|&(vis_pos, _)| visible[vis_pos] >= hidden_base_index)
-        .unwrap_or(file_rows.len());
+    let insert_pos =
+        file_rows.partition_point(|&(vis_pos, _)| visible[vis_pos] < hidden_base_index);
     if delta >= 0 {
         insert_pos.min(file_rows.len() - 1)
     } else {
@@ -2231,8 +2593,18 @@ impl EditorWorkspaceView {
 
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
         self.sync_editor(window, cx);
-        self.sync_snapshot_editor(window, cx);
+        self.sync_snapshot_text(cx);
+        self.hooks.pane_selectors.release_hidden(self, window, cx);
+        if self.show_tree && !self.loading && self.error.is_none() {
+            self.refresh_tree_layout();
+        }
+        let moving = self.sync_tree_motion();
+        motion::request_frame(window, moving);
         if self.preview_markdown {
             self.ensure_preview_mermaids(cx);
         }
@@ -2318,43 +2690,101 @@ fn render_editor_workspace(
     // does the actual width math per `DividerKind`.
     let tree_divider = div()
         .id("ews-divider-tree")
+        .group("ews-divider-tree")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("ews-divider-tree", |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>("ews-divider-tree", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::EditorTree {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(
             DividerDrag {
                 kind: DividerKind::EditorTree,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, true));
+            el
+        });
     let hunks_divider = div()
         .id("ews-divider-hunks")
+        .group("ews-divider-hunks")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("ews-divider-hunks", |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>("ews-divider-hunks", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::EditorHunks {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(
             DividerDrag {
                 kind: DividerKind::EditorHunks,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, false));
+            el
+        });
 
     // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
     // the resolver's `layout.left`) hides the tree pane AND its divider —
     // View → Toggle Sidebar now actually hides the file tree in Editor mode.
+    let (tree_width, hunks_width) = tabs::pane_widths(view, view.pane_bounds(window).size.width);
     let body = div()
+        .relative()
         .flex()
         .flex_row()
         .flex_1()
+        .min_w(px(0.))
         .min_h(px(0.))
         .when(view.show_tree, |el| {
-            el.child(render_tree_pane(view, cx)).child(tree_divider)
+            el.child(render_tree_pane(view, tree_width, cx))
+                .child(tree_divider)
         })
         .child(
             div()
@@ -2367,7 +2797,8 @@ fn render_editor_workspace(
                 .children(bottom_panel),
         )
         .child(hunks_divider)
-        .child(render_hunks_pane(view, cx));
+        .child(render_hunks_pane(view, hunks_width, cx))
+        .child(tabs::measure_pane_bounds(view, cx));
 
     div()
         .id("editor-workspace")
@@ -2403,16 +2834,16 @@ fn render_source_chip(
         .rounded_sm()
         .cursor_pointer()
         .text_xs()
-        .text_color(rgb(if active {
-            theme().text_main
+        .text_color(if active {
+            rgb(theme().text_main)
         } else {
-            theme().text_muted
-        }))
-        .bg(rgb(if active {
-            theme().selected
+            rgb(theme().text_muted)
+        })
+        .bg(if active {
+            theme().segment_selected_bg()
         } else {
-            theme().panel
-        }))
+            rgb(theme().panel).into()
+        })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
         .on_click(click)
         .child(SharedString::from(label))
@@ -2501,8 +2932,15 @@ fn render_source_chips(
 /// working-tree file tree.
 fn render_tree_pane(
     view: &EditorWorkspaceView,
+    width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    view.tree_probes.0.borrow_mut().clear();
+    #[cfg(feature = "gui-e2e")]
+    view.tree_motion.painted.borrow_mut().clear();
+    #[cfg(feature = "gui-e2e")]
+    view.tree_motion.foreground_painted.borrow_mut().clear();
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
     // whole pane while loading/empty) opens the menu targeting the repo root
     // (New File… / New Folder…). File/dir rows below stop propagation on
@@ -2511,7 +2949,7 @@ fn render_tree_pane(
         this.open_tree_menu(TreeMenuTarget::Root, e.position, cx);
     });
     let mut pane = div()
-        .w(theme::scaled_px(view.tree_w))
+        .w(width)
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -2536,18 +2974,9 @@ fn render_tree_pane(
 
     // Zed-style collapse: the uniform_list virtualizes the *visible* rows;
     // the processor maps a visible position back to its base tree index.
-    // Accessibility levels and sibling positions are computed once per
-    // render from the same visible rows, so they follow the current
-    // collapse state (#354).
-    let visible = visible_tree_indices(&view.tree, &view.collapsed);
-    let levels: Vec<usize> = visible
-        .iter()
-        .map(|&i| match &view.tree[i] {
-            TreeRow::Dir { depth, .. } | TreeRow::File { depth, .. } => depth + 1,
-        })
-        .collect();
-    let positions = tree_a11y::sibling_positions(&levels);
-    let row_count = visible.len();
+    // Like Commit Panel, cache the full display/AX mapping by input revisions;
+    // warm redraws and per-scroll processors only index the entity-owned layout.
+    let row_count = view.tree_layout.visible.len();
     let scroll_handle = view.tree_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
     let tree_root = tree_a11y::tree(
@@ -2567,17 +2996,28 @@ fn render_tree_pane(
             uniform_list(
                 "ews-tree-list",
                 row_count,
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
                     // `i` is the visible/uniform_list position — passed through
                     // for zebra striping (T-WS-EDITOR-005 finding #8), which must
                     // key on visible position, not the base `tree` index.
+                    let first_visible = range.start;
+                    let visible_end = range.end;
+                    let window_active = window.is_window_active();
+                    #[cfg(feature = "gui-e2e")]
+                    let window_active = this.window_active_override.unwrap_or(window_active);
                     range
                         .filter_map(|i| {
-                            let a11y = TreeRowA11y {
-                                level: *levels.get(i)?,
-                                position: *positions.get(i)?,
-                            };
-                            render_tree_row(this, i, *visible.get(i)?, a11y, cx)
+                            let a11y = *this.tree_layout.a11y.get(i)?;
+                            render_tree_motion_row(
+                                this,
+                                i,
+                                first_visible,
+                                visible_end,
+                                *this.tree_layout.visible.get(i)?,
+                                a11y,
+                                window_active,
+                                cx,
+                            )
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -2603,6 +3043,260 @@ struct TreeRowA11y {
     position: (usize, usize),
 }
 
+#[allow(clippy::too_many_arguments)] // Virtual range and AX metadata stay borrowed at the row paint boundary.
+fn render_tree_motion_row(
+    view: &EditorWorkspaceView,
+    visible_pos: usize,
+    first_visible: usize,
+    visible_end: usize,
+    index: usize,
+    a11y: TreeRowA11y,
+    window_active: bool,
+    cx: &mut Context<EditorWorkspaceView>,
+) -> Option<AnyElement> {
+    let now = motion::now();
+    // UniformList publishes the snapped content size before calling its processor.
+    // Keep the intrinsic slot height unsnapped so zoom can remeasure it.
+    let height = view
+        .tree_scroll
+        .0
+        .borrow()
+        .last_item_size
+        .filter(|_| !view.tree_layout.visible.is_empty())
+        .map_or(theme::scaled_px(20.), |size| {
+            size.contents.height / view.tree_layout.visible.len() as f32
+        });
+    let key = view.tree_motion.keys.get(index)?;
+    let sample = view.tree_motion.splice.row(key, height, now, |changed| {
+        view.tree_motion
+            .order
+            .get(changed)
+            .is_some_and(|&order| order < index)
+    });
+    let content = render_tree_row(view, visible_pos, index, a11y, window_active, false, cx)?;
+    let mut slot = div()
+        .relative()
+        .w_full()
+        .h(theme::scaled_px(20.))
+        .flex_shrink_0()
+        .child(tree_motion_content(
+            view,
+            index,
+            false,
+            false,
+            sample.offset,
+            sample.opacity,
+            div().relative().w_full().child(content),
+        ));
+    if visible_pos == first_visible {
+        // Only neighboring final slots displaced into the viewport are painted.
+        // They reuse normal content without handlers/AX, never a whole-list copy.
+        let fringe = (0..first_visible)
+            .rev()
+            .take_while(|&position| {
+                let index = view.tree_layout.visible[position];
+                let extra = view.tree_motion.splice.row(
+                    &view.tree_motion.keys[index],
+                    height,
+                    now,
+                    |changed| {
+                        view.tree_motion
+                            .order
+                            .get(changed)
+                            .is_some_and(|&order| order < index)
+                    },
+                );
+                height * (position as f32 - visible_pos as f32) + extra.offset + height > px(0.)
+            })
+            .chain(visible_end..view.tree_layout.visible.len());
+        for position in fringe {
+            let head = position < first_visible;
+            let extra_index = view.tree_layout.visible[position];
+            let extra = view.tree_motion.splice.row(
+                &view.tree_motion.keys[extra_index],
+                height,
+                now,
+                |changed| {
+                    view.tree_motion
+                        .order
+                        .get(changed)
+                        .is_some_and(|&order| order < extra_index)
+                },
+            );
+            let top = height * (position as f32 - visible_pos as f32) + extra.offset;
+            if head && top + height <= px(0.) {
+                continue;
+            }
+            if !head && top >= height * (visible_end - first_visible) as f32 {
+                break;
+            }
+            if let Some(content) = render_tree_row(
+                view,
+                position,
+                extra_index,
+                view.tree_layout.a11y[position],
+                window_active,
+                true,
+                cx,
+            ) {
+                slot = slot.child(tree_motion_content(
+                    view,
+                    extra_index,
+                    false,
+                    true,
+                    top,
+                    extra.opacity,
+                    div().absolute().left_0().w_full().child(content),
+                ));
+            }
+        }
+    }
+    for ghost in &view.tree_motion.ghosts {
+        let anchor_position = ghost
+            .after
+            .and_then(|anchor| view.tree_layout.visible.binary_search(&anchor).ok());
+        let attach_here = ghost.after == Some(index)
+            || (visible_pos == first_visible
+                && anchor_position.is_none_or(|position| position < first_visible));
+        if !attach_here {
+            continue;
+        }
+        let Some(removed) = view.tree_motion.splice.ghost(
+            &ghost.key,
+            ghost.after.map(|anchor| &view.tree_motion.keys[anchor]),
+            ghost.between.iter(),
+            height,
+            now,
+        ) else {
+            continue;
+        };
+        let offset = if let Some(anchor) = ghost.after {
+            let anchor_sample = view.tree_motion.splice.row(
+                &view.tree_motion.keys[anchor],
+                height,
+                now,
+                |changed| {
+                    view.tree_motion
+                        .order
+                        .get(changed)
+                        .is_some_and(|&order| order < anchor)
+                },
+            );
+            height * (anchor_position? as f32 - visible_pos as f32)
+                + anchor_sample.offset
+                + removed.offset
+        } else {
+            removed.offset - height * visible_pos as f32
+        };
+        if let Some(content) = render_tree_row(
+            view,
+            ghost.stripe,
+            ghost.index,
+            a11y,
+            window_active,
+            true,
+            cx,
+        ) {
+            slot = slot.child(tree_motion_content(
+                view,
+                ghost.index,
+                true,
+                false,
+                offset,
+                removed.opacity,
+                div().absolute().left_0().w_full().child(content),
+            ));
+        }
+    }
+    Some(slot.into_any_element())
+}
+
+fn tree_motion_content(
+    _view: &EditorWorkspaceView,
+    _index: usize,
+    _ghost: bool,
+    _fringe: bool,
+    offset: gpui::Pixels,
+    opacity: f32,
+    element: gpui::Div,
+) -> AnyElement {
+    // These exact applied values also feed the native paint observer below.
+    let element = element
+        .top(offset)
+        .opacity(opacity)
+        .when(_ghost || _fringe, |element| {
+            // Presentation-only rows must not fall through to the blank-tree
+            // context menu, even though their file/directory handlers are gone.
+            element.on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        });
+    #[cfg(feature = "gui-e2e")]
+    let element = {
+        let painted = _view.tree_motion.painted.clone();
+        let path = _view.tree_motion.keys[_index].clone();
+        let selection = _view
+            .tree_motion
+            .selection
+            .get(&path)
+            .map_or(0., |transition| transition.sample(motion::now()).value);
+        element.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, _, _, _| {
+                    painted.borrow_mut().push(EditorTreeMotionProbe {
+                        path: path.clone(),
+                        ghost: _ghost,
+                        fringe: _fringe,
+                        opacity,
+                        offset,
+                        selection,
+                        bounds,
+                    });
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+    };
+    element.into_any_element()
+}
+
+fn tree_selection_foreground(
+    normal: gpui::Hsla,
+    background: gpui::Hsla,
+    window_active: bool,
+    wash: f32,
+) -> gpui::Hsla {
+    if wash <= 0. || !theme().selection_uses_on_accent(true, window_active) {
+        return normal;
+    }
+    let luminance = |color: gpui::Hsla| {
+        let color = color.to_rgb();
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    };
+    let bg = luminance(background);
+    let contrast = |color| {
+        let fg = luminance(color);
+        (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05)
+    };
+    let accent = theme().selection_foreground(window_active);
+    // Keep both preexisting endpoints unchanged. During the wash, switch all
+    // row roles together once on-accent meets the existing 3:1 UI threshold.
+    if wash >= 1. || contrast(accent) >= 3. {
+        accent
+    } else {
+        normal
+    }
+}
+
 /// One row in the left file tree (dir label or a clickable file row).
 /// `visible_pos` is the row's position in the uniform_list's visible range
 /// (used for zebra striping — T-WS-EDITOR-005 finding #8); `index` is its base
@@ -2612,6 +3306,8 @@ fn render_tree_row(
     visible_pos: usize,
     index: usize,
     a11y: TreeRowA11y,
+    window_active: bool,
+    ghost: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<gpui::AnyElement> {
     let row = view.tree.get(index)?.clone();
@@ -2621,6 +3317,8 @@ fn render_tree_row(
             let indent = (depth as f32) * 12.0;
             let is_collapsed = view.collapsed.contains(&index);
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                // The translated row can overlap a sibling's final slot.
+                cx.stop_propagation();
                 this.toggle_dir(index, cx);
             });
             let right_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -2635,32 +3333,57 @@ fn render_tree_row(
                 .flex_row()
                 .items_center()
                 .pl(theme::scaled_px(8.0 + indent))
-                .py_px()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(click)
-                .on_mouse_down(MouseButton::Right, right_click)
+                .h(theme::scaled_px(20.))
+                .py_0()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(gpui::relative(1.2))
+                .when(!ghost, |el| {
+                    el.cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme().surface)))
+                        .on_click(click)
+                        .on_mouse_down(MouseButton::Right, right_click)
+                })
                 .child(
                     div()
-                        .w(theme::scaled_px(12.))
+                        .w(theme::scaled_px(16.))
                         .flex_shrink_0()
-                        .text_xs()
                         .text_color(rgb(theme().text_muted))
                         .child(SharedString::from(if is_collapsed {
                             "\u{25b8}" // ▸
                         } else {
                             "\u{25be}" // ▾
-                        })),
+                        }))
+                        .when(!ghost && cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Badge,
+                            ));
+                            el
+                        }),
                 )
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_xs()
                         .text_color(rgb(theme().change_dir))
                         .truncate()
-                        .child(name),
+                        .child(name)
+                        .when(!ghost && cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Name,
+                            ));
+                            el
+                        }),
                 );
+            // Generic content only: no AX role, focus stop, or hitbox.
+            if ghost {
+                return Some(el.into_any_element());
+            }
             Some(
                 tree_a11y::tree_item(
                     TREE_A11Y_ID,
@@ -2672,6 +3395,15 @@ fn render_tree_row(
                     None,
                     a11y.position,
                 )
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el.relative().child(tree_probes::measure(
+                        &view.tree_probes,
+                        index,
+                        tree_probes::Part::Row,
+                    ));
+                    el
+                })
                 .into_any_element(),
             )
         }
@@ -2684,16 +3416,29 @@ fn render_tree_row(
             let indent = (depth as f32) * 12.0;
             let (badge, badge_color, _) = status_badge(change.as_ref(), false);
             let is_selected = view.selected == Some(file_index);
+            // Foreground follows the painted wash, not immediate logical/AX selection.
             // T-WS-EDITOR-005 finding #8: stripe by visible position, not the
             // base tree index — collapsing a directory must not leave the
             // remaining visible rows with a broken (skip-a-beat) checkerboard.
-            let row_bg = if is_selected {
-                theme().selected
-            } else if visible_pos % 2 == 1 {
-                theme().bg_row_alt
+            let row_bg: gpui::Hsla = if visible_pos % 2 == 1 {
+                rgb(theme().bg_row_alt).into()
             } else {
-                theme().panel
+                rgb(theme().panel).into()
             };
+            let wash = view
+                .tree_motion
+                .selection
+                .get(&view.tree_motion.keys[index])
+                .map_or(if is_selected { 1. } else { 0. }, |transition| {
+                    transition.sample(motion::now()).value
+                });
+            let selected_bg = theme().selected_for_window(window_active);
+            let visual_bg = row_bg.blend(selected_bg.alpha(selected_bg.a * wash));
+            let foreground =
+                |normal| tree_selection_foreground(normal, visual_bg, window_active, wash);
+            let name_foreground = foreground(rgb(theme().text_main).into());
+            let badge_foreground = foreground(rgb(badge_color).into());
+            let dirty_foreground = foreground(rgb(theme().color_warning).into());
             // T-WS-EDITOR-002 §2 + editor tabs: any row whose file is open
             // in a tab with unsaved edits gets the dot, active or not.
             let show_dirty_dot = view
@@ -2716,6 +3461,7 @@ fn render_tree_row(
                 label.push_str(Msg::A11yFileTreeUnsaved.t());
             }
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                cx.stop_propagation();
                 this.select(file_index, cx);
             });
             let right_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -2725,44 +3471,107 @@ fn render_tree_row(
             let el = div()
                 .id(("ews-file", file_index))
                 .w_full()
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
                 .pl(theme::scaled_px(8.0 + indent))
                 .pr(theme::scaled_px(4.0))
-                .py_px()
-                .bg(rgb(row_bg))
-                .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-                .on_click(click)
-                .on_mouse_down(MouseButton::Right, right_click)
-                .cursor_pointer()
+                .h(theme::scaled_px(20.))
+                .py_0()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(gpui::relative(1.2))
+                .bg(row_bg)
+                .when(!ghost, |el| {
+                    el.when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
+                        .on_click(click)
+                        .on_mouse_down(MouseButton::Right, right_click)
+                        .cursor_pointer()
+                })
                 .child(
                     div()
-                        .w(theme::scaled_px(12.))
+                        .absolute()
+                        .size_full()
+                        .top_0()
+                        .left_0()
+                        .bg(theme().selected_for_window(window_active))
+                        .opacity(wash),
+                )
+                .child(
+                    div()
+                        .w(theme::scaled_px(16.))
                         .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(badge_color))
-                        .child(SharedString::from(badge)),
+                        .text_color(badge_foreground)
+                        .child(SharedString::from(badge))
+                        .when(!ghost && cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Badge,
+                            ));
+                            el
+                        }),
                 )
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_xs()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(name_foreground)
                         .truncate()
-                        .child(name),
+                        .child(name)
+                        .when(!ghost && cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Name,
+                            ));
+                            el
+                        }),
                 )
                 .when(show_dirty_dot, |el| {
                     el.child(
                         div()
                             .flex_shrink_0()
                             .pl(theme::scaled_px(4.))
-                            .text_xs()
-                            .text_color(rgb(theme().color_warning))
+                            .text_color(dirty_foreground)
                             .child(SharedString::from("\u{25cf}")),
                     )
+                })
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = {
+                        let painted = view.tree_motion.foreground_painted.clone();
+                        let path = view.tree_motion.keys[index].clone();
+                        el.child(
+                            gpui::canvas(
+                                |_, _, _| {},
+                                move |bounds, _, _, _| {
+                                    painted.borrow_mut().push(EditorTreeForegroundProbe {
+                                        window_active,
+                                        path: path.clone(),
+                                        background: visual_bg,
+                                        name: name_foreground,
+                                        badge: badge_foreground,
+                                        dirty: dirty_foreground,
+                                        wash,
+                                        bounds,
+                                        dirty_visible: show_dirty_dot,
+                                    });
+                                },
+                            )
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full(),
+                        )
+                    };
+                    el
                 });
+            if ghost {
+                return Some(el.into_any_element());
+            }
             Some(
                 tree_a11y::tree_item(
                     TREE_A11Y_ID,
@@ -2774,107 +3583,19 @@ fn render_tree_row(
                     Some(is_selected),
                     a11y.position,
                 )
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el.relative().child(tree_probes::measure(
+                        &view.tree_probes,
+                        index,
+                        tree_probes::Part::Row,
+                    ));
+                    el
+                })
                 .into_any_element(),
             )
         }
     }
-}
-
-/// Center pane: the selected file's editable code viewer, or a placeholder.
-/// The editor tab strip (user request): one chip per open buffer — file
-/// name, `●` when dirty, and a × close button (dirty close routes through
-/// the unsaved-changes guard). `None` when no tabs are open.
-///
-/// ponytail: no horizontal scrolling — many tabs just shrink/truncate.
-/// Add an overflow scroll if real usage ever opens that many.
-fn render_tab_strip(
-    view: &EditorWorkspaceView,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> Option<gpui::AnyElement> {
-    if view.open_tabs.is_empty() {
-        return None;
-    }
-    let mut strip = div()
-        .id("ews-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .w_full()
-        .bg(rgb(theme().panel));
-    for (i, path) in view.open_tabs.iter().enumerate() {
-        let is_active = view.open_path.as_ref() == Some(path);
-        let dirty = view.tab_dirty(path);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        let activate_path = path.clone();
-        let close_path = path.clone();
-        let activate = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            this.activate_tab(activate_path.clone(), cx);
-        });
-        let close = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            // Don't also fire the chip's activate handler underneath.
-            cx.stop_propagation();
-            this.request_close_tab(close_path.clone(), cx);
-        });
-        strip = strip.child(
-            div()
-                .id(("ews-tab", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .py_px()
-                .max_w(theme::scaled_px(180.))
-                .min_w(px(0.))
-                .cursor_pointer()
-                .text_xs()
-                .bg(rgb(if is_active {
-                    theme().bg_base
-                } else {
-                    theme().panel
-                }))
-                .when(!is_active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-                .on_click(activate)
-                .when(dirty, |el| {
-                    el.child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(theme().color_warning))
-                            .child(SharedString::from("\u{25cf}")),
-                    )
-                })
-                .child(
-                    div()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(if is_active {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(SharedString::from(name)),
-                )
-                .child(
-                    div()
-                        .id(("ews-tab-x", i))
-                        .flex_shrink_0()
-                        .px_1()
-                        .rounded_sm()
-                        .text_color(rgb(theme().text_muted))
-                        .hover(|s| {
-                            s.bg(rgb(theme().selected))
-                                .text_color(rgb(theme().text_main))
-                        })
-                        .on_click(close)
-                        .child(SharedString::from("\u{00d7}")),
-                ),
-        );
-    }
-    Some(strip.into_any_element())
 }
 
 fn render_center_pane(
@@ -2916,7 +3637,7 @@ fn render_center_pane(
                     pane.child(placeholder_text(msg))
                 }
             },
-            MiddlePaneTab::Snapshot => pane.child(render_snapshot_pane(view, cx)),
+            MiddlePaneTab::Snapshot => pane.child(snapshot::render(view, cx)),
         };
         return pane.into_any_element();
     }
@@ -3076,26 +3797,23 @@ fn render_center_pane(
             ));
         }
     }
-    let blame_on = view.show_blame;
+    let name: SharedString = Msg::EditorWorkspaceBlame.t().into();
+    let button = Button::new("ews-blame-toggle")
+        .ghost()
+        .small()
+        .compact()
+        .selected(view.show_blame)
+        .label(name.clone())
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_blame(cx)));
     chips = chips.child(
-        div()
-            .id("ews-blame-toggle")
-            .px_2()
-            .py_px()
-            .rounded_sm()
-            .cursor_pointer()
-            .text_xs()
-            .bg(rgb(if blame_on {
-                theme().selected
+        named_button::NamedButton(button)
+            .role(gpui::Role::Button)
+            .aria_toggled(if view.show_blame {
+                gpui::Toggled::True
             } else {
-                theme().surface
-            }))
-            .text_color(rgb(theme().text_main))
-            .hover(|s| s.bg(rgb(theme().selected)))
-            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-                this.toggle_blame(cx);
-            }))
-            .child(Msg::EditorWorkspaceBlame.t()),
+                gpui::Toggled::False
+            })
+            .aria_label(name),
     );
     if is_md {
         let previewing = view.preview_markdown;
@@ -3154,6 +3872,8 @@ fn render_center_pane(
                 // (user-reported). `appearance(false)` / `bordered(false)`
                 // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
+                    .context_menu(kagi_ui_core::input::context_menu(&editor, false))
+                    .aria_label(Msg::A11yEditorFileContents.t())
                     .appearance(false)
                     .bordered(false)
                     .h_full(),
@@ -3167,10 +3887,11 @@ fn render_center_pane(
 /// selected file's WIP hunks (unchanged v1 behaviour) or its commit history.
 fn render_hunks_pane(
     view: &EditorWorkspaceView,
+    width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
-        .w(theme::scaled_px(view.hunks_w))
+        .w(width)
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -3242,11 +3963,11 @@ fn buffer_sig(path: &Path, result: &str) -> u64 {
     h
 }
 
-/// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item
+/// Construct a fresh owner-retained diff list (item
 /// count 0 — the bin's `render_diff_list` syncs it). `px(1000.)` overdraw
 /// matches the bin's `render_helpers::new_diff_list_state`.
-fn new_diff_list_state() -> gpui::ListState {
-    gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.))
+fn new_diff_list_state() -> VariableListState {
+    VariableListState::new(0, px(1000.))
 }
 
 /// Vertical-scrollbar wrapper (same shape as the bin's
@@ -3275,13 +3996,13 @@ fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
 mod tests {
     use super::*;
 
-    fn dir(depth: usize, name: &str) -> TreeRow {
+    pub(super) fn dir(depth: usize, name: &str) -> TreeRow {
         TreeRow::Dir {
             depth,
             name: SharedString::from(name.to_string()),
         }
     }
-    fn file(depth: usize, name: &str, file_index: usize) -> TreeRow {
+    pub(super) fn file(depth: usize, name: &str, file_index: usize) -> TreeRow {
         TreeRow::File {
             depth,
             name: SharedString::from(name.to_string()),
@@ -3291,7 +4012,7 @@ mod tests {
     }
 
     /// src/(a.rs, ui/(b.rs)), root.rs — the shape `build_file_tree` emits.
-    fn sample_tree() -> Vec<TreeRow> {
+    pub(super) fn sample_tree() -> Vec<TreeRow> {
         vec![
             dir(0, "src"),         // 0
             file(1, "a.rs", 0),    // 1

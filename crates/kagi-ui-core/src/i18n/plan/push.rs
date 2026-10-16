@@ -18,7 +18,7 @@ pub(crate) const ADVICE_PUSH_NO_UPSTREAM_NO_REMOTES: &str =
 pub(crate) const ADVICE_PUSH_UPSTREAM_FORMAT_INVALID: &str =
     "upstream は origin/main のような remote branch 名で指定してください。";
 pub(crate) const ADVICE_PUSH_UPSTREAM_NOT_PRESENT_LOCALLY: &str =
-    "この remote-tracking branch はローカルにありませんが、設定はできます。\nbranch `{}`";
+    "この remote-tracking branch はローカルにありません。upstream を設定する前に fetch してください。\nbranch `{}`";
 
 /// Japanese rendering of one push note.
 pub fn note_ja(note: &PushNote) -> String {
@@ -81,7 +81,7 @@ pub fn recovery_ja(recovery: &PushRecovery) -> String {
             "push には branch が必要です。\n  git checkout <branch>".to_string()
         }
         PushRecovery::PushBranch => {
-            "push は remote へ commit を送るだけで、作業ツリーは変更しません。\
+            "push は remote へ commit を送るだけで、working tree は変更しません。\
              拒否された場合は先に fetch か pull してから再度プランしてください。"
                 .to_string()
         }

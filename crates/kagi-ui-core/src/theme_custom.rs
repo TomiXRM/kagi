@@ -3,7 +3,9 @@
 //! A file is one JSON object. `slug` and `name` are required; every other key
 //! is a [`Theme`] field name. `"extends": "<built-in slug>"` inherits the
 //! remaining fields from that built-in theme (`syntax` merges per key);
-//! without it every field is required. Colours are `"#rrggbb"` strings, the
+//! without it every field except `link` and `inactive_selected` is required
+//! (defaulting to the file's `color_branch` and `surface`, respectively).
+//! Colours are `"#rrggbb"` strings, the
 //! one RGBA value is `term_selection: {"color": "#rrggbb", "alpha": 0..255}`,
 //! `lane_hsl` is eight `[h, s, l]` triples and `avatar_*` are scalars, all in
 //! `0..=1`. Anything else — unknown keys, wrong types, malformed colours,
@@ -366,11 +368,19 @@ macro_rules! theme_fields {
             }
 
             fn build(
-                self,
+                mut self,
                 slug: Cow<'static, str>,
                 name: Cow<'static, str>,
                 base: Option<&Theme>,
             ) -> Result<Theme, String> {
+                // Pre-link standalone files keep their original link foreground;
+                // inherited themes instead retain the base's independent token.
+                if base.is_none() && self.link.is_none() {
+                    self.link = self.color_branch;
+                }
+                if base.is_none() && self.inactive_selected.is_none() {
+                    self.inactive_selected = self.surface;
+                }
                 let mut missing: Vec<&'static str> = Vec::new();
                 let syntax = match self.syntax {
                     Some(s) => SyntaxPalette {
@@ -433,8 +443,8 @@ macro_rules! theme_fields {
 
 theme_fields! {
     rgb: [
-        bg_base, bg_row_alt, surface, selected, panel, sidebar, modal, modal_overlay,
-        text_main, text_sub, text_muted, text_label,
+        bg_base, bg_row_alt, surface, selected, inactive_selected, panel, sidebar, modal, modal_overlay,
+        text_main, text_sub, text_muted, text_label, link,
         color_head, color_branch, color_remote, color_tag, selection_tint,
         color_success, color_warning, color_blocker, color_blocker_muted,
         diff_added_bg, diff_removed_bg, diff_hunk,
@@ -519,6 +529,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_standalone_theme_defaults_body_link_to_its_own_branch_color() {
+        let mut file = file_json(&THEMES[0], "legacy", "Legacy");
+        let fields = file.as_object_mut().unwrap();
+        fields.remove("link");
+        fields.insert("color_branch".into(), "#773399".into());
+        let theme = parse_theme(&file.to_string()).expect("pre-link standalone theme still loads");
+        assert_eq!(theme.link, 0x773399);
+        assert_eq!(theme.color_branch, 0x773399);
+    }
+
+    #[test]
+    fn inactive_selection_inherits_overrides_and_defaults_for_legacy_files() {
+        let inherited =
+            parse_theme(r#"{"slug":"mine","name":"Mine","extends":"apple-light"}"#).unwrap();
+        assert_eq!(inherited.inactive_selected, 0xd3d3d3);
+        let explicit = parse_theme(r##"{"slug":"mine","name":"Mine","extends":"apple-light","inactive_selected":"#dddddd"}"##).unwrap();
+        assert_eq!(explicit.inactive_selected, 0xdddddd);
+        let mut file = file_json(&THEMES[0], "legacy", "Legacy");
+        file.as_object_mut().unwrap().remove("inactive_selected");
+        let legacy = parse_theme(&file.to_string()).unwrap();
+        assert_eq!(legacy.inactive_selected, legacy.surface);
+    }
+
+    #[test]
     fn without_extends_every_missing_field_is_named() {
         let mut v = file_json(&THEMES[0], "mine", "Mine");
         let map = v.as_object_mut().unwrap();
@@ -558,6 +592,21 @@ mod tests {
         assert_eq!(t.text_main, base.text_main);
         assert_eq!(t.lane_hsl, base.lane_hsl);
         assert_eq!(t.dark, base.dark);
+    }
+
+    #[test]
+    fn body_link_token_inherits_and_overrides_independently() {
+        let inherited = parse_theme(
+            r##"{"slug":"my-light","name":"My Light","extends":"apple-light","color_branch":"#ff9900"}"##,
+        ).expect("link inherits without following the filled accent");
+        assert_eq!(inherited.link, 0x0066cc);
+        assert_eq!(inherited.color_branch, 0xff9900);
+        let explicit = parse_theme(
+            r##"{"slug":"my-link","name":"My Link","extends":"apple-light","link":"#773399"}"##,
+        )
+        .expect("body-link override parses");
+        assert_eq!(explicit.link, 0x773399);
+        assert_eq!(explicit.color_branch, 0x0088ff);
     }
 
     #[test]

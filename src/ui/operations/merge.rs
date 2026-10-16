@@ -9,13 +9,12 @@ use crate::ui::*;
 /// `plan_merge_into_branch` would operate on. The exact local name wins, just
 /// as it does in the backend, because a branch named `origin/feature` is valid.
 fn worktree_target_name(target: &str, branches: &[(String, bool)], remotes: &[String]) -> String {
-    if branches.iter().any(|(branch, _)| branch == target) {
-        return target.to_string();
-    }
-    if remotes.iter().any(|remote| remote == target) {
-        return default_tracking_branch_name(target);
-    }
-    target.to_string()
+    kagi_domain::refs::merge_into_target_name(
+        target,
+        branches.iter().any(|(branch, _)| branch == target),
+        remotes.iter().any(|remote| remote == target),
+    )
+    .to_string()
 }
 
 impl KagiApp {
@@ -38,7 +37,9 @@ impl KagiApp {
             return;
         };
         self.planning = Some("merge-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from("Planning merge…"),
+        ));
         klog!("async: merge plan started for {}", target);
         let bg_owner = owner.clone();
         let bg_target = target.clone();
@@ -112,6 +113,16 @@ impl KagiApp {
     /// thesis: drop is a trigger; `plan_merge_branch` remains authoritative for
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
+        if !self.merge_drag_target_valid(
+            &source,
+            self.view()
+                .branches
+                .iter()
+                .find(|(_, head)| *head)
+                .map_or("", |(name, _)| name),
+        ) {
+            return;
+        }
         let remotes: Vec<String> = self
             .view()
             .remote_branches
@@ -156,7 +167,9 @@ impl KagiApp {
             return;
         };
         self.planning = Some("merge-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from("Planning merge…"),
+        ));
         klog!(
             "async: merge-into plan started for {} -> {}",
             source,
@@ -207,6 +220,9 @@ impl KagiApp {
         target: String,
         cx: &mut Context<Self>,
     ) {
+        if !self.merge_drag_target_valid(&source, &target) {
+            return;
+        }
         let remotes: Vec<String> = self
             .view()
             .remote_branches
@@ -348,7 +364,9 @@ impl KagiApp {
     ) {
         let repo_path = modal.owner.path.clone();
         self.clear_merge_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyMerge.t()),
+        ));
         klog!("async: merge started");
 
         let plan = modal.plan.clone();

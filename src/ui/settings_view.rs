@@ -1,7 +1,7 @@
 //! T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window.
 //!
-//! A thin view over the existing preference storage (`theme.rs`'s
-//! `read_setting`/`write_setting` and the `theme::*` / `i18n::*` apply paths). It
+//! A thin view over the existing preference storage (`settings::`) and the
+//! `theme::*` / `i18n::*` apply paths. It
 //! never touches the repository (ADR-0078 — the settings view makes no git calls,
 //! so the `src/ui/` repo-access grep gate stays at 0).
 //!
@@ -21,21 +21,37 @@
 //! `cx.notify()` — so the whole UI repaints immediately and the choice survives a
 //! restart. No new persistence layer is introduced.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, rgb, AnyElement, AppContext as _, Context, Entity, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _,
     Styled as _, Window,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
-use gpui_component::{FocusTrapElement as _, IndexPath, Sizable as _};
+use gpui_component::{Disableable as _, FocusTrapElement as _, IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
+#[cfg(feature = "gui-e2e")]
+pub use super::keyboard_nav::recorded_switch_help;
 use super::theme::{self, theme};
+#[cfg(feature = "gui-e2e")]
+pub use super::theme_select::{appearance_ax_for_e2e, take_theme_option_ax_for_e2e};
 use super::{settings, KagiApp};
+
+/// Native scenarios opt into the macOS host; the portable suite keeps testing
+/// the non-macOS overlay implementation on the native renderer.
+#[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+#[derive(Default)]
+pub struct SettingsHostForE2e {
+    pub native: bool,
+}
+#[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+impl gpui::Global for SettingsHostForE2e {}
 
 impl KagiApp {
     /// Lazily build the multiline `analyze_ignore` editor input, seeded from the
@@ -52,7 +68,14 @@ impl KagiApp {
                 .multi_line(true)
                 .auto_grow(8, 22)
         });
+        self.settings_controls.saved_ignore = Some(content.clone());
         input.update(cx, |s, cx| s.set_value(content, window, cx));
+        cx.subscribe(&input, |_, _, event, cx| {
+            if matches!(event, gpui_component::input::InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
         self.analyze_ignore_input = Some(input);
     }
 }
@@ -78,8 +101,31 @@ impl SelectItem for ThemeOption {
         // SelectState keeps its options across language changes. Resolve the
         // display name at render time so both the trigger and dropdown switch.
         theme::theme_by_slug(&self.slug)
-            .map(|theme| SharedString::from(theme.display_name().to_string()))
+            .map(|theme| {
+                SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+                    theme.display_name(),
+                ))
+            })
             .unwrap_or_else(|| self.name.clone())
+    }
+
+    fn render(&self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
+        let name = self.title();
+        #[cfg(feature = "gui-e2e")]
+        super::theme_select::record_ax(
+            &format!("theme-option:{}", self.slug),
+            gpui::Role::ListBoxOption,
+            &name,
+            &self.slug,
+            None,
+            false,
+        );
+        div()
+            .id(self.slug.clone())
+            .role(gpui::Role::ListBoxOption)
+            .aria_label(name.clone())
+            .aria_value(self.slug.clone())
+            .child(name)
     }
 
     fn value(&self) -> &Self::Value {
@@ -93,7 +139,9 @@ pub fn theme_options() -> Vec<ThemeOption> {
         .into_iter()
         .map(|t| ThemeOption {
             slug: SharedString::from(t.slug.clone()),
-            name: SharedString::from(t.display_name().to_string()),
+            name: SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+                t.display_name(),
+            )),
         })
         .collect()
 }
@@ -112,7 +160,7 @@ pub fn current_theme_index() -> IndexPath {
 // Each piece of state is passed in because this renders during KagiApp's own
 // update and must not `app.read(cx)` (see the parameter comments).
 #[allow(clippy::too_many_arguments)]
-pub fn render_settings_overlay(
+pub(super) fn render_settings_overlay(
     app: Entity<KagiApp>,
     // The appearance-section theme picker's SelectState entity, passed in by the
     // caller (which holds `&self`) — we must NOT `app.read(cx)` here because this
@@ -131,16 +179,22 @@ pub fn render_settings_overlay(
     // the same reason (no `app.read(cx)` during render). Built lazily via
     // `KagiApp::ensure_analyze_ignore_input` when the overlay opens.
     analyze_ignore_input: Option<Entity<InputState>>,
+    controls: &super::settings_controls::SettingsControls,
+    analyze_dirty: bool,
+    reset: Option<super::settings_analyze::AnalyzeResetAlert>,
+    scroll: gpui::ScrollHandle,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
-    let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+    let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
         this.menu_overlay = None;
+        this.clear_settings_smart_consent(window.window_handle().window_id());
         cx.stop_propagation();
         cx.notify();
     });
-    let close_click = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
+    let close_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
         this.menu_overlay = None;
+        this.clear_settings_smart_consent(window.window_handle().window_id());
         cx.notify();
     });
 
@@ -159,9 +213,10 @@ pub fn render_settings_overlay(
         .overflow_hidden()
         .rounded(px(12.0))
         .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().panel))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .shadow_lg()
+        .child(super::e2e::measure_inside("settings-frame"))
         // swallow clicks inside the panel so they don't dismiss via the scrim
         .on_mouse_down(MouseButton::Left, |_, _w, cx| cx.stop_propagation())
         // ── Title bar ──────────────────────────────────────────────
@@ -174,7 +229,8 @@ pub fn render_settings_overlay(
                 .px_4()
                 .py_3()
                 .border_b_1()
-                .border_color(rgb(theme().selected))
+                .border_color(rgb(theme().elevated_border(theme().surface)))
+                .child(super::e2e::measure_inside("settings-titlebar"))
                 .child(
                     div()
                         .text_color(rgb(theme().text_main))
@@ -190,26 +246,62 @@ pub fn render_settings_overlay(
                         .on_click(close_click),
                 )),
         )
-        // ── Scrollable content: Appearance + Language + Smart Commit ─────
-        // `overflow_y_scroll` (not hidden): when zoomed in the sections grow
-        // taller than the panel, so the lower ones (Smart Commit / LLM) must
-        // stay reachable by scrolling rather than being clipped.
+        // One persistent scroll owner for the whole body; the kit owns thumb
+        // drag/visibility state under the stable scrollbar element id.
         .child(
             div()
-                .id("settings-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .px_5()
-                .py_4()
+                .relative()
                 .flex()
                 .flex_col()
-                .gap_6()
-                .child(appearance_section(&app, theme_select, &switches, cx))
-                .child(language_section(&app))
-                .child(smart_commit_section(&app, &smart, &switches, cx))
-                .child(analyze_ignore_section(&app, analyze_ignore_input)),
+                .flex_1()
+                .min_h_0()
+                .child(super::render_helpers::with_system_vertical_scrollbar(
+                    "settings-scrollbar",
+                    &scroll,
+                    div()
+                        .id("settings-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll)
+                        .px_5()
+                        .py_4()
+                        .flex()
+                        .flex_col()
+                        .gap_6()
+                        .child(appearance_section(&app, theme_select, &switches, cx))
+                        .child(language_section(&app))
+                        .child(smart_commit_section(
+                            &app,
+                            &smart,
+                            &switches,
+                            controls,
+                            trap.clone(),
+                            cx,
+                        ))
+                        .child(analyze_ignore_section(
+                            &app,
+                            analyze_ignore_input,
+                            analyze_dirty,
+                            controls.ignore_error.as_deref(),
+                        )),
+                    cx,
+                ))
+                // Keep the host's header close button and outer backdrop available.
+                .when_some(controls.smart_consent.clone(), |el, alert| {
+                    el.child(super::settings_controls::smart_consent_alert(
+                        &app, alert, cx,
+                    ))
+                }),
         );
+    controls.repair_focus(
+        true,
+        matches!(smart.provider, super::smart_commit::SmartProvider::Ollama)
+            && !smart.detected_models.is_empty(),
+        trap.as_ref(),
+        window,
+        cx,
+    );
 
     // Scrim + centred panel.
     div()
@@ -237,9 +329,12 @@ pub fn render_settings_overlay(
         )
         .child(match trap {
             // gpui-component's Root keeps Tab / Shift+Tab inside a trap while
-            // the focus is in it; `open_settings_overlay` puts it there.
+            // the focus is in it; the portable `open_settings` path puts it there.
             Some(trap) => panel.focus_trap("settings-trap", &trap).into_any_element(),
             None => panel.into_any_element(),
+        })
+        .when_some(reset, |el, reset| {
+            el.child(super::settings_analyze::reset_alert(&app, reset, cx))
         })
         .into_any_element()
 }
@@ -248,23 +343,44 @@ pub fn render_settings_overlay(
 // Section / row helpers
 // ────────────────────────────────────────────────────────────
 
-fn section_header(title: SharedString) -> impl IntoElement {
+fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
     div()
-        .text_sm()
+        .text_size(super::theme::scaled_px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme().color_branch))
+        .text_color(rgb(theme().text_sub))
         .pb_1()
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .child(super::e2e::measure_inside(name))
         .child(title)
+}
+
+/// One passive grouped-form surface, never a second scroll owner.
+fn settings_group(name: &'static str) -> gpui::Div {
+    div()
+        .relative()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .px_3()
+        .rounded(px(8.))
+        .bg(rgb(theme().bg_base))
+        .child(super::e2e::measure_inside(name))
 }
 
 /// One setting row: label + description (left) and a control (right).
 fn setting_row(
+    first: bool,
     title: SharedString,
     description: SharedString,
     control: AnyElement,
-) -> impl IntoElement {
+) -> gpui::Div {
+    #[cfg(feature = "gui-e2e")]
+    let control = super::e2e::measure_control(format!("settings-control-{title}"), control);
+    #[cfg(feature = "gui-e2e")]
+    let description_name = format!("settings-description-{title}");
     div()
         .w_full()
         .flex()
@@ -273,6 +389,10 @@ fn setting_row(
         .justify_between()
         .gap_4()
         .py_2()
+        .when(!first, |row| {
+            row.border_t_1()
+                .border_color(rgb(theme().elevated_border(theme().surface)))
+        })
         .child(
             div()
                 .flex()
@@ -288,19 +408,86 @@ fn setting_row(
                 .child(div().text_color(rgb(theme().text_main)).child(title))
                 .child(
                     div()
+                        .when(cfg!(feature = "gui-e2e"), |description| {
+                            #[cfg(feature = "gui-e2e")]
+                            let description =
+                                description.child(super::e2e::measure_inside(description_name));
+                            description
+                        })
                         .text_sm()
                         .text_color(rgb(theme().text_sub))
                         .child(description),
                 ),
         )
-        .child(div().flex_shrink_0().child(control))
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(gpui::relative(0.48))
+                .min_w_0()
+                .flex()
+                .justify_end()
+                .child(control),
+        )
+}
+
+fn setting_row_with_help(
+    first: bool,
+    id: &'static str,
+    title: Msg,
+    summary: Msg,
+    detail: Msg,
+    control: AnyElement,
+) -> impl IntoElement {
+    let help = div()
+        .text_sm()
+        .text_color(rgb(theme().text_sub))
+        .child(detail.t());
+    #[cfg(feature = "gui-e2e")]
+    let help = help.child(super::e2e::measure_inside(format!("{id}-text")));
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .pb_2()
+        .child(setting_row(
+            first,
+            title.t().into(),
+            summary.t().into(),
+            control,
+        ))
+        .child(help)
+        .child(super::e2e::measure_inside(id))
+        .id(id)
+        .role(gpui::Role::Group)
+        .aria_label(title.t())
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            record_settings_help(id, detail.t());
+            gpui_component::tooltip::Tooltip::new(detail.t()).build(window, cx)
+        })
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SETTINGS_HELP: std::cell::RefCell<std::collections::HashMap<&'static str, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn record_settings_help(id: &'static str, text: &str) {
+    SETTINGS_HELP.with(|help| help.borrow_mut().insert(id, text.to_string()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_settings_help_for_e2e(id: &str) -> Option<String> {
+    SETTINGS_HELP.with(|help| help.borrow_mut().remove(id))
 }
 
 // ────────────────────────────────────────────────────────────
 // Appearance
 // ────────────────────────────────────────────────────────────
 
-fn appearance_section(
+pub(super) fn appearance_section(
     app: &Entity<KagiApp>,
     theme_select: Option<Entity<ThemeSelectState>>,
     switches: &super::keyboard_nav::FocusSlots,
@@ -314,11 +501,28 @@ fn appearance_section(
     // back to a static label so the row still renders.
     let theme_dropdown = match theme_select {
         Some(state) => {
-            let select = Select::new(&state)
-                .menu_width(px(220.0))
-                .small()
-                .w(px(220.0));
-            super::e2e::measure_control("settings-theme-select", select)
+            let expanded = state.read(cx).is_open();
+            let value = kagi_domain::text_safety::sanitize_control_bytes(theme().display_name());
+            #[cfg(feature = "gui-e2e")]
+            super::theme_select::record_ax(
+                "settings-theme-select",
+                gpui::Role::ComboBox,
+                Msg::SettingsTheme.t(),
+                &value,
+                Some(expanded),
+                false,
+            );
+            super::e2e::measure_control(
+                "settings-theme-select",
+                Select::new(&state)
+                    .role(gpui::Role::ComboBox)
+                    .aria_label(Msg::SettingsTheme.t())
+                    .aria_value(value)
+                    .aria_expanded(expanded)
+                    .menu_width(px(220.0))
+                    .small()
+                    .w(px(220.0)),
+            )
         }
         None => div()
             .text_sm()
@@ -331,37 +535,68 @@ fn appearance_section(
     let zoom = theme::zoom();
     let zoom_label = format!("{:.0}%", zoom * 100.0);
     #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(
+        "zoom-value",
+        gpui::Role::Status,
+        &i18n::settings_zoom_value(&zoom_label),
+        &zoom_label,
+        None,
+        false,
+    );
+    #[cfg(feature = "gui-e2e")]
     super::e2e::record_settings_zoom_label(&zoom_label);
-    let app_minus = app.clone();
+    let app_minus = app.downgrade();
     let dec = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
         theme::set_zoom(theme::step_zoom(theme::zoom(), false));
-        app_minus.update(cx, |app, cx| {
+        theme::sync_gpui_component_theme(cx);
+        cx.refresh_windows();
+        let _ = app_minus.update(cx, |app, cx| {
             app.apply_terminal_config(cx);
             cx.notify();
         });
     };
-    let app_plus = app.clone();
+    let app_plus = app.downgrade();
     let inc = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
         theme::set_zoom(theme::step_zoom(theme::zoom(), true));
-        app_plus.update(cx, |app, cx| {
+        theme::sync_gpui_component_theme(cx);
+        cx.refresh_windows();
+        let _ = app_plus.update(cx, |app, cx| {
             app.apply_terminal_config(cx);
             cx.notify();
         });
     };
+    let increase_name = i18n::settings_zoom_action(true, &zoom_label);
     let zoom_ctl = div()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .child(stepper_btn("zoom-dec", "−", dec))
+        .child(stepper_btn(
+            "zoom-dec",
+            "−",
+            i18n::settings_zoom_action(false, &zoom_label),
+            theme::step_zoom(zoom, false) == zoom,
+            false,
+            dec,
+        ))
         .child(
             div()
+                .id("zoom-value")
+                .role(gpui::Role::Status)
+                .aria_label(i18n::settings_zoom_value(&zoom_label))
                 .min_w(px(56.0))
                 .text_center()
                 .text_color(rgb(theme().text_main))
                 .child(SharedString::from(zoom_label)),
         )
-        .child(stepper_btn("zoom-inc", "+", inc))
+        .child(stepper_btn(
+            "zoom-inc",
+            "+",
+            increase_name,
+            theme::step_zoom(zoom, true) == zoom,
+            true,
+            inc,
+        ))
         .into_any_element();
 
     // The five switches reach the keyboard and assistive technology through
@@ -370,14 +605,15 @@ fn appearance_section(
     let title = |msg: Msg| SharedString::from(msg.t());
 
     // ── Compact graph toggle ──
-    let app_c = app.clone();
+    let app_c = app.downgrade();
     let compact_ctl = switch(
         "compact-toggle",
         switches.get(0, cx),
         title(Msg::SettingsCompact),
+        title(Msg::SettingsCompactDesc),
         theme::compact_graph(),
         move |on, _w, cx| {
-            app_c.update(cx, |app, cx| {
+            let _ = app_c.update(cx, |app, cx| {
                 app.graph_compact = on;
                 theme::set_compact_graph(on);
                 cx.notify();
@@ -390,14 +626,15 @@ fn appearance_section(
     // padding). The lane *layout* is always `Stable` (ADR-0122) and does not
     // depend on this flag; `reload()` re-snapshots so rebuilt rows pick the
     // visual change up immediately.
-    let app_lc = app.clone();
+    let app_lc = app.downgrade();
     let lane_compact_ctl = switch(
         "lane-compact-toggle",
         switches.get(1, cx),
         title(Msg::SettingsLaneCompact),
+        title(Msg::SettingsLaneCompactDesc),
         theme::graph_lane_compact(),
         move |on, _w, cx| {
-            app_lc.update(cx, |app, cx| {
+            let _ = app_lc.update(cx, |app, cx| {
                 theme::set_graph_lane_compact(on);
                 app.reload(cx);
                 cx.notify();
@@ -406,14 +643,15 @@ fn appearance_section(
     );
 
     // ── Auto-fetch toggle ──
-    let app_f = app.clone();
+    let app_f = app.downgrade();
     let auto_fetch_ctl = switch(
         "auto-fetch-toggle",
         switches.get(2, cx),
         title(Msg::SettingsAutoFetch),
+        title(Msg::SettingsAutoFetchDesc),
         theme::auto_fetch(),
         move |on, _w, cx| {
-            app_f.update(cx, |_app, cx| {
+            let _ = app_f.update(cx, |_app, cx| {
                 theme::set_auto_fetch(on);
                 cx.notify();
             });
@@ -421,14 +659,15 @@ fn appearance_section(
     );
 
     // ── Reduce-motion toggle (issue #354 / ADR-0173) ──
-    let app_rm = app.clone();
+    let app_rm = app.downgrade();
     let reduce_motion_ctl = switch(
         "reduce-motion-toggle",
         switches.get(3, cx),
         title(Msg::SettingsReduceMotion),
-        theme::reduce_motion(),
+        title(Msg::SettingsReduceMotionDesc),
+        theme::app_reduce_motion(),
         move |on, _w, cx| {
-            app_rm.update(cx, |_app, cx| {
+            let _ = app_rm.update(cx, |_app, cx| {
                 theme::set_reduce_motion(on);
                 cx.notify();
             });
@@ -436,14 +675,15 @@ fn appearance_section(
     );
 
     // ── Terminal auto-lock toggle (#772 / ADR-0208, default off) ──
-    let app_al = app.clone();
+    let app_al = app.downgrade();
     let auto_lock_ctl = switch(
         "terminal-auto-lock-toggle",
         switches.get(4, cx),
         title(Msg::SettingsTerminalAutoLock),
+        title(Msg::SettingsTerminalAutoLockDesc),
         crate::ui::settings::terminal_auto_lock(),
         move |on, _w, cx| {
-            app_al.update(cx, |_app, cx| {
+            let _ = app_al.update(cx, |_app, cx| {
                 crate::ui::settings::set_terminal_auto_lock(on);
                 cx.notify();
             });
@@ -456,7 +696,7 @@ fn appearance_section(
     let cur_target = settings::read_setting("graph_copy_target");
     let cur_target = cur_target.as_deref().unwrap_or("hash");
     let copy_selected = COPY_TARGETS.iter().position(|(k, _)| *k == cur_target);
-    let app_gc = app.clone();
+    let app_gc = app.downgrade();
     let copy_target_ctl = RadioGroup::horizontal("settings-graph-copy")
         .children(COPY_TARGETS.map(|(_, label)| SharedString::from(label)))
         .selected_index(copy_selected)
@@ -464,85 +704,265 @@ fn appearance_section(
             move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
                 if let Some((key, _)) = COPY_TARGETS.get(*index) {
                     settings::write_setting("graph_copy_target", Some(key));
-                    app_gc.update(cx, |_a, cx| cx.notify());
+                    let _ = app_gc.update(cx, |_a, cx| cx.notify());
                 }
             },
         )
         .into_any_element();
 
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsAppearance.t(),
-        )))
+    let app_toolbar = app.downgrade();
+    let toolbar_ctl = RadioGroup::horizontal("settings-toolbar-display")
+        .children(
+            [Msg::ToolbarIconAndText, Msg::ToolbarIconOnly].map(|msg| SharedString::from(msg.t())),
+        )
+        .selected_index(Some(
+            if settings::toolbar_display(&theme().slug) == settings::ToolbarDisplay::IconOnly {
+                1
+            } else {
+                0
+            },
+        ))
+        .on_click(move |index: &usize, _, cx| {
+            settings::set_toolbar_display(if *index == 1 {
+                settings::ToolbarDisplay::IconOnly
+            } else {
+                settings::ToolbarDisplay::IconAndText
+            });
+            super::commands::publish_menus(cx);
+            let _ = app_toolbar.update(cx, |_, cx| cx.notify());
+        })
+        .into_any_element();
+
+    let appearance = settings_group("settings-appearance-group")
         .child(setting_row(
+            true,
             SharedString::from(Msg::SettingsTheme.t()),
             SharedString::from(Msg::SettingsThemeDesc.t()),
             theme_dropdown.into_any_element(),
         ))
+        .when(
+            cfg!(target_os = "macos") && matches!(&*theme().slug, "apple-light" | "apple-dark"),
+            |section| {
+                let owner = app.downgrade();
+                section.child(setting_row(
+                    false,
+                    Msg::SettingsAccent.t().into(),
+                    theme::detected_system_accent().detected_label().into(),
+                    RadioGroup::horizontal("settings-accent")
+                        .children([
+                            SharedString::from(Msg::SettingsAccentSystem.t()),
+                            SharedString::from(Msg::SettingsAccentTheme.t()),
+                        ])
+                        .selected_index(Some(usize::from(!theme::follows_system_accent())))
+                        .on_click(move |index: &usize, _, cx| {
+                            theme::set_follows_system_accent(*index == 0);
+                            theme::sync_gpui_component_theme(cx);
+                            cx.refresh_windows();
+                            let _ = owner.update(cx, |_, cx| cx.notify());
+                        })
+                        .into_any_element(),
+                ))
+            },
+        )
         .child(super::settings_theme_folder::section(app))
         .child(setting_row(
+            false,
+            SharedString::from(Msg::SettingsToolbarDisplay.t()),
+            SharedString::from(Msg::SettingsToolbarDisplayDesc.t()),
+            toolbar_ctl,
+        ))
+        .child(setting_row(
+            false,
             SharedString::from(Msg::SettingsZoom.t()),
             SharedString::from(Msg::SettingsZoomDesc.t()),
             zoom_ctl,
-        ))
+        ));
+    let graph = settings_group("settings-graph-group")
         .child(setting_row(
+            true,
             SharedString::from(Msg::SettingsCompact.t()),
             SharedString::from(Msg::SettingsCompactDesc.t()),
             compact_ctl,
         ))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsLaneCompact.t()),
-            SharedString::from(Msg::SettingsLaneCompactDesc.t()),
+        .child(setting_row_with_help(
+            false,
+            "settings-avatar-help",
+            Msg::SettingsLaneCompact,
+            Msg::SettingsLaneCompactSummary,
+            Msg::SettingsLaneCompactDesc,
             lane_compact_ctl,
-        ))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsAutoFetch.t()),
-            SharedString::from(Msg::SettingsAutoFetchDesc.t()),
-            auto_fetch_ctl,
-        ))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsGraphCopy.t()),
-            SharedString::from(Msg::SettingsGraphCopyDesc.t()),
+        ));
+    let network = settings_group("settings-network-group").child(setting_row_with_help(
+        true,
+        "settings-fetch-help",
+        Msg::SettingsAutoFetch,
+        Msg::SettingsAutoFetchSummary,
+        Msg::SettingsAutoFetchDesc,
+        auto_fetch_ctl,
+    ));
+    let behaviour = settings_group("settings-behaviour-group")
+        .child(setting_row_with_help(
+            true,
+            "settings-copy-help",
+            Msg::SettingsGraphCopy,
+            Msg::SettingsGraphCopySummary,
+            Msg::SettingsGraphCopyDesc,
             copy_target_ctl,
         ))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsReduceMotion.t()),
-            SharedString::from(Msg::SettingsReduceMotionDesc.t()),
+        .child(setting_row_with_help(
+            false,
+            "settings-motion-help",
+            Msg::SettingsReduceMotion,
+            Msg::SettingsReduceMotionSummary,
+            Msg::SettingsReduceMotionDesc,
             reduce_motion_ctl,
         ))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsTerminalAutoLock.t()),
-            SharedString::from(Msg::SettingsTerminalAutoLockDesc.t()),
+        .child(setting_row_with_help(
+            false,
+            "settings-terminal-lock-help",
+            Msg::SettingsTerminalAutoLock,
+            Msg::SettingsTerminalAutoLockSummary,
+            Msg::SettingsTerminalAutoLockDesc,
             auto_lock_ctl,
-        ))
+        ));
+    div()
+        .flex()
+        .flex_col()
+        .gap_6()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(section_header(
+                    "settings-appearance-heading",
+                    Msg::SettingsAppearance.t().into(),
+                ))
+                .child(appearance),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(section_header(
+                    "settings-graph-heading",
+                    Msg::SettingsGraph.t().into(),
+                ))
+                .child(graph),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(section_header(
+                    "settings-network-heading",
+                    Msg::SettingsNetwork.t().into(),
+                ))
+                .child(network),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(section_header(
+                    "settings-behaviour-heading",
+                    Msg::SettingsBehaviour.t().into(),
+                ))
+                .child(behaviour),
+        )
 }
 
 fn stepper_btn(
     id: &'static str,
     label: &'static str,
+    name: String,
+    disabled: bool,
+    increase: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
-    Button::new(id)
-        .label(label)
-        .outline()
-        .small()
-        .on_click(on_click)
+    #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(id, gpui::Role::Button, &name, "", None, disabled);
+    let button = super::button_style::named_disabled_button(
+        Button::new(id)
+            .child(label)
+            .outline()
+            .small()
+            .disabled(disabled),
+        name,
+        disabled,
+    );
+    super::e2e::measure_control(
+        id,
+        ZoomStepperButton {
+            id,
+            button,
+            increase,
+            on_click,
+        },
+    )
+}
+
+/// Reuse the kit Button's keyed focus owner, without adding a second stop.
+#[derive(IntoElement)]
+struct ZoomStepperButton<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
+    id: &'static str,
+    button: Button,
+    increase: bool,
+    on_click: F,
+}
+
+impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::RenderOnce
+    for ZoomStepperButton<F>
+{
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        let Self {
+            id,
+            button,
+            increase,
+            on_click,
+        } = self;
+        // Button::render uses this same public keyed-state API under the same
+        // element namespace. Capture its existing owner before installing the
+        // listener; no extra handle/entity is allocated.
+        let focus = window
+            .use_keyed_state(gpui::ElementId::from(id), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let button = button.on_click(move |event, window, cx| {
+            on_click(event, window, cx);
+            let bound = if increase {
+                theme::ZOOM_MAX
+            } else {
+                theme::ZOOM_MIN
+            };
+            if theme::zoom() == bound && focus.is_focused(window) {
+                // Both stepper stops still exist in this frame. Hand focus to
+                // the opposite direction before the clicked Button retires.
+                if increase {
+                    window.focus_prev(cx);
+                } else {
+                    window.focus_next(cx);
+                }
+            }
+        });
+        gpui::RenderOnce::render(button, window, cx)
+    }
 }
 
 // ────────────────────────────────────────────────────────────
 // Language
 // ────────────────────────────────────────────────────────────
 
-fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
+pub(super) fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
     // Two-way segmented choice → gpui-component RadioGroup (stateless). The
     // on_click index maps back to the Lang ordering below.
     const LANGS: [(Lang, &str); 2] = [(Lang::En, "English"), (Lang::Ja, "日本語")];
     let cur = i18n::lang();
     let selected = LANGS.iter().position(|(l, _)| *l == cur);
-    let app2 = app.clone();
+    let app2 = app.downgrade();
     let chips = RadioGroup::horizontal("settings-language")
         .children(LANGS.map(|(_, label)| SharedString::from(label)))
         .selected_index(selected)
@@ -550,7 +970,7 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
             move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
                 if let Some((lang, _)) = LANGS.get(*index) {
                     let lang = *lang;
-                    app2.update(cx, |app, cx| app.set_lang(lang, cx));
+                    let _ = app2.update(cx, |app, cx| app.set_lang(lang, cx));
                 }
             },
         );
@@ -559,47 +979,46 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsLanguage.t(),
-        )))
-        .child(setting_row(
+        .child(section_header(
+            "settings-language-heading",
+            SharedString::from(Msg::SettingsLanguage.t()),
+        ))
+        .child(settings_group("settings-language-group").child(setting_row(
+            true,
             SharedString::from(Msg::SettingsInterfaceLang.t()),
             SharedString::from(Msg::SettingsInterfaceLangDesc.t()),
             chips.into_any_element(),
-        ))
+        )))
 }
 
 // ────────────────────────────────────────────────────────────
 // Smart Commit (ADR-0090): pick the local LLM model used for commit messages.
 // ────────────────────────────────────────────────────────────
 
-fn smart_commit_section(
+pub(super) fn smart_commit_section(
     app: &Entity<KagiApp>,
     smart: &super::smart_commit::SmartCommitState,
     switches: &super::keyboard_nav::FocusSlots,
+    controls: &super::settings_controls::SettingsControls,
+    pointer_focus: Option<gpui::FocusHandle>,
     cx: &gpui::App,
 ) -> impl IntoElement {
     let current = smart.model.clone();
     let models = smart.detected_models.clone();
 
     // ── Enable Smart Commit (LLM) toggle ──
-    // Wired to SmartCommitState::set_enabled (persists `smart_commit_llm_enabled`).
-    // Turning it on also re-probes Ollama so the model picker below populates
-    // without needing to open the commit panel first. The sixth switch of
-    // Settings, after Appearance's five (#970).
-    let app_en = app.clone();
+    // Initial ON is a pending host-owned approval, not an enabled preference.
+    // Re-enable after consent keeps the existing capability refresh behavior.
+    let app_en = app.downgrade();
     let enabled_ctl = super::keyboard_nav::switch(
         "smart-commit-enabled",
         switches.get(5, cx),
         SharedString::from(Msg::SettingsSmartEnable.t()),
+        SharedString::from(Msg::SettingsSmartEnableDesc.t()),
         smart.llm_enabled,
-        move |on, _w, cx| {
-            app_en.update(cx, |app, cx| {
-                app.smart_commit.set_enabled(on);
-                if on {
-                    app.refresh_smart_commit_detection(cx);
-                }
-                cx.notify();
+        move |on, window, cx| {
+            let _ = app_en.update(cx, |app, cx| {
+                app.request_settings_smart_enabled(on, window, cx)
             });
         },
     );
@@ -609,71 +1028,9 @@ fn smart_commit_section(
     // selectable when detected on $PATH; undetected ones are shown disabled with
     // a "not found on PATH" hint.
     let provider = smart.provider;
-    let provider_chips = {
-        use super::smart_commit::SmartProvider;
-        let mut row = div().flex().flex_row().flex_wrap().gap_2().justify_end();
-        // (label, this-provider, available)
-        let entries: Vec<(String, SmartProvider, bool)> = {
-            let mut v = vec![("Ollama".to_string(), SmartProvider::Ollama, true)];
-            for p in kagi_git::message_gen::CliProvider::ALL {
-                v.push((
-                    p.display_name().to_string(),
-                    SmartProvider::Cli(p),
-                    smart.cli_available_for(p),
-                ));
-            }
-            v
-        };
-        for (label, this, available) in entries {
-            let selected = provider == this;
-            let (bg, fg, border) = if selected {
-                (theme().selected, theme().text_main, theme().color_branch)
-            } else if available {
-                (theme().bg_base, theme().text_sub, theme().selected)
-            } else {
-                // Disabled: dim, no selection affordance.
-                (theme().bg_base, theme().text_sub, theme().selected)
-            };
-            let hint = if available {
-                label.clone()
-            } else {
-                i18n::provider_not_found_hint(&label)
-            };
-            let mut chip = div()
-                .id(SharedString::from(format!("sc-provider-{}", this.slug())))
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(border))
-                .bg(rgb(bg))
-                .text_sm()
-                .text_color(rgb(fg))
-                .child(SharedString::from(hint));
-            if available {
-                let app2 = app.clone();
-                let handler =
-                    move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-                        app2.update(cx, |app, cx| {
-                            app.smart_commit.set_provider(this);
-                            cx.notify();
-                        });
-                    };
-                chip = chip
-                    .hover(|s| {
-                        s.bg(rgb(theme().selected))
-                            .text_color(rgb(theme().text_main))
-                            .cursor_pointer()
-                    })
-                    .on_click(handler);
-            } else {
-                // Visually communicate "disabled".
-                chip = chip.opacity(0.5);
-            }
-            row = row.child(chip);
-        }
-        row.into_any_element()
-    };
+    let provider_chips =
+        super::settings_controls::provider_chips(app, smart, controls, pointer_focus.clone(), cx)
+            .into_any_element();
 
     // ── Prominent warning when a CLI provider is selected (ADR-0099) ──
     // The user explicitly asked for an unmissable warning about cost / quota /
@@ -718,80 +1075,53 @@ fn smart_commit_section(
             .child(SharedString::from(note))
             .into_any_element()
     } else {
-        let mut chips = div().flex().flex_row().flex_wrap().gap_2().justify_end();
-        for m in models {
-            let selected = current.as_deref() == Some(m.as_str());
-            let (bg, fg, border) = if selected {
-                (theme().selected, theme().text_main, theme().color_branch)
-            } else {
-                (theme().bg_base, theme().text_sub, theme().selected)
-            };
-            let app2 = app.clone();
-            let m_for_handler = m.clone();
-            let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-                let model = m_for_handler.clone();
-                app2.update(cx, |app, cx| {
-                    app.smart_commit.set_model(model);
-                    cx.notify();
-                });
-            };
-            chips = chips.child(
-                div()
-                    .id(SharedString::from(format!("sc-model-{}", m)))
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(border))
-                    .bg(rgb(bg))
-                    .text_sm()
-                    .text_color(rgb(fg))
-                    .hover(|s| {
-                        s.bg(rgb(theme().selected))
-                            .text_color(rgb(theme().text_main))
-                            .cursor_pointer()
-                    })
-                    .on_click(handler)
-                    .child(SharedString::from(m.clone())),
-            );
-        }
-        chips.into_any_element()
+        super::settings_controls::model_chips(app, smart, controls, pointer_focus, cx)
+            .into_any_element()
     };
 
     // The Ollama model picker is only relevant when Ollama is the provider.
     let show_model_row = matches!(provider, super::smart_commit::SmartProvider::Ollama);
 
-    let mut section = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsSmartCommit.t(),
-        )))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsSmartEnable.t()),
-            SharedString::from(Msg::SettingsSmartEnableDesc.t()),
+    let mut section = settings_group("settings-smart-group")
+        .child(setting_row_with_help(
+            true,
+            "settings-smart-enable-help",
+            Msg::SettingsSmartEnable,
+            Msg::SettingsSmartEnableSummary,
+            Msg::SettingsSmartEnableDesc,
             enabled_ctl,
         ))
-        .child(setting_row(
-            SharedString::from(Msg::SettingsSmartProvider.t()),
-            SharedString::from(Msg::SettingsSmartProviderDesc.t()),
+        .child(setting_row_with_help(
+            false,
+            "settings-provider-help",
+            Msg::SettingsSmartProvider,
+            Msg::SettingsSmartProviderSummary,
+            Msg::SettingsSmartProviderDesc,
             provider_chips,
         ));
 
     if let Some(warning) = cli_warning {
-        section = section.child(warning);
+        section = section.child(div().py_2().child(warning));
     }
 
     if show_model_row {
         section = section.child(setting_row(
+            false,
             SharedString::from(Msg::SettingsSmartModel.t()),
             SharedString::from(Msg::SettingsSmartModelDesc.t()),
             control,
         ));
     }
 
-    section
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(section_header(
+            "settings-smart-heading",
+            Msg::SettingsSmartCommit.t().into(),
+        ))
+        .child(section)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -799,13 +1129,17 @@ fn smart_commit_section(
 // the Analyze view, persisted to the sibling `analyze_ignore` file.
 // ────────────────────────────────────────────────────────────
 
-fn analyze_ignore_section(
+pub(super) fn analyze_ignore_section(
     app: &Entity<KagiApp>,
     input: Option<Entity<InputState>>,
+    dirty: bool,
+    error: Option<&str>,
 ) -> impl IntoElement {
     // Multiline editor (or a fallback note pre-window / headless).
     let editor: AnyElement = match input.clone() {
         Some(state) => Input::new(&state)
+            .context_menu(kagi_ui_core::input::context_menu(&state, false))
+            .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
             .appearance(true)
             .bordered(true)
             .into_any_element(),
@@ -818,61 +1152,126 @@ fn analyze_ignore_section(
 
     // ── Save: write the editor's current text to the analyze_ignore file ──
     let save_btn = {
-        let input = input.clone();
-        let app = app.clone();
+        let app = app.downgrade();
         Button::new("analyze-ignore-save")
             .label(Msg::SettingsAnalyzeIgnoreSave.t())
             .primary()
             .small()
-            .on_click(move |_, _w, cx| {
-                if let Some(state) = &input {
-                    let text = state.read(cx).value().to_string();
-                    settings::write_analyze_ignore(&text);
-                    app.update(cx, |_a, cx| cx.notify());
-                }
+            .disabled(!dirty)
+            .on_click(move |_, window, cx| {
+                let _ = app.update(cx, |app, cx| app.save_analyze_ignore(false, window, cx));
             })
     };
+    let save_btn =
+        super::button_style::named_button(save_btn, Msg::SettingsAnalyzeIgnoreSave.t(), None);
 
     // ── Reset: restore the documented defaults (both editor + file) ──
     let reset_btn = {
-        let input = input.clone();
-        let app = app.clone();
+        let app = app.downgrade();
         Button::new("analyze-ignore-reset")
             .label(Msg::SettingsAnalyzeIgnoreReset.t())
             .outline()
             .small()
             .on_click(move |_, window, cx| {
-                if let Some(state) = &input {
-                    state.update(cx, |s, cx| {
-                        s.set_value(settings::DEFAULT_ANALYZE_IGNORE, window, cx)
-                    });
-                    settings::write_analyze_ignore(settings::DEFAULT_ANALYZE_IGNORE);
-                    app.update(cx, |_a, cx| cx.notify());
-                }
+                let _ = app.update(cx, |app, cx| app.request_analyze_reset(window, cx));
             })
     };
+    let reset_btn =
+        super::button_style::named_button(reset_btn, Msg::SettingsAnalyzeIgnoreReset.t(), None);
 
     div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsAnalyzeIgnore.t(),
-        )))
+        .child(section_header(
+            "settings-analyze-heading",
+            SharedString::from(Msg::SettingsAnalyze.t()),
+        ))
         .child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(Msg::SettingsAnalyzeIgnoreDesc.t())),
-        )
-        .child(editor)
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .justify_end()
-                .child(reset_btn)
-                .child(save_btn),
+            settings_group("settings-analyze-group").child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .py_2()
+                    .child(
+                        div()
+                            .text_color(rgb(theme().text_main))
+                            .child(super::e2e::measure_inside("settings-analyze-label"))
+                            .child(SharedString::from(Msg::SettingsAnalyzeIgnore.t())),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .id("settings-analyze-help")
+                            .text_color(rgb(theme().text_sub))
+                            .child(super::e2e::measure_inside("settings-analyze-description"))
+                            .child(SharedString::from(Msg::SettingsAnalyzeIgnoreSummary.t()))
+                            .hover_tooltip_builder("settings-analyze-hover-help", |window, cx| {
+                                #[cfg(feature = "gui-e2e")]
+                                record_settings_help(
+                                    "settings-analyze-help",
+                                    Msg::SettingsAnalyzeIgnoreDesc.t(),
+                                );
+                                gpui_component::tooltip::Tooltip::new(
+                                    Msg::SettingsAnalyzeIgnoreDesc.t(),
+                                )
+                                .build(window, cx)
+                            }),
+                    )
+                    .child(super::e2e::measure_control(
+                        "settings-analyze-editor",
+                        editor,
+                    ))
+                    .child(super::e2e::measure_control(
+                        "settings-analyze-help-text",
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().text_sub))
+                            .child(Msg::SettingsAnalyzeIgnoreDesc.t()),
+                    ))
+                    .when(dirty, |el| {
+                        el.child(super::e2e::measure_control(
+                            "settings-analyze-dirty",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().text_sub))
+                                .child(Msg::SettingsAnalyzeIgnoreUnsaved.t()),
+                        ))
+                    })
+                    .when(!dirty, |el| {
+                        el.child(super::e2e::measure_control(
+                            "settings-analyze-saved",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().text_sub))
+                                .child(Msg::SettingsAnalyzeIgnoreClean.t()),
+                        ))
+                    })
+                    .when_some(error, |el, error| {
+                        el.child(super::e2e::measure_control(
+                            "settings-analyze-error",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().color_blocker))
+                                .child(SharedString::from(error.to_string())),
+                        ))
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .justify_end()
+                            .child(super::e2e::measure_control(
+                                "settings-analyze-reset",
+                                reset_btn,
+                            ))
+                            .child(super::e2e::measure_control(
+                                "settings-analyze-save",
+                                save_btn,
+                            )),
+                    ),
+            ),
         )
 }

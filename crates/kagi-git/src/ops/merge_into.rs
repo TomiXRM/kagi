@@ -95,12 +95,7 @@ fn resolve_target(repo: &Repository, target: &str) -> Result<ResolvedTarget, Git
     }
     // Not a local branch — try it as a remote-tracking ref.
     if let Ok(rb) = repo.find_branch(target, BranchType::Remote) {
-        // `origin/feature` → `feature`. `split_once` (not `rsplit_once`): a
-        // branch name may itself contain slashes, the remote name may not.
-        let local = target
-            .split_once('/')
-            .map(|(_, rest)| rest.to_string())
-            .unwrap_or_else(|| target.to_string());
+        let local = kagi_domain::refs::merge_into_target_name(target, false, true).to_string();
         let tip = rb.get().target();
         return Ok(ResolvedTarget {
             create_at: local_branch_oid(repo, &local)
@@ -135,6 +130,7 @@ pub fn plan_merge_into_branch(
     };
     let mut warnings: Vec<PlanNote> = Vec::new();
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
 
     let current_branch = match &head {
         Head::Attached { branch, .. } => branch.clone(),
@@ -169,6 +165,9 @@ pub fn plan_merge_into_branch(
     };
 
     let blocked = |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>| OperationPlan {
+        rebase_scope: None,
+        tag_push_identity: None,
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: title.clone(),
         current: current.clone(),
@@ -182,6 +181,7 @@ pub fn plan_merge_into_branch(
         head_at_plan: head.clone(),
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -324,6 +324,9 @@ pub fn plan_merge_into_branch(
 
     Ok((
         OperationPlan {
+            rebase_scope: None,
+            tag_push_identity: None,
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title,
             current: current.clone(),
@@ -335,6 +338,7 @@ pub fn plan_merge_into_branch(
             head_at_plan: head,
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -356,6 +360,7 @@ pub(crate) fn execute_merge_into_branch(
     source: &str,
     target: &str,
 ) -> Result<CommitId, GitError> {
+    let sig = build_signature(repo)?;
     // Re-derive rather than trusting the plan: between plan and execute either
     // branch may have moved.
     let (plan, kind) = plan_merge_into_branch(repo, source, target)?;
@@ -405,7 +410,6 @@ pub(crate) fn execute_merge_into_branch(
             let tree = repo
                 .find_tree(tree)
                 .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-            let sig = build_signature(repo)?;
             repo.commit(
                 // No ref update here: the ref moves last, on its own.
                 None,

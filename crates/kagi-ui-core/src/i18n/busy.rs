@@ -77,6 +77,7 @@ const LABELS: &[(&str, &str, &str)] = &[
         "Pushing branch…",
         "branch を push 中…",
     ),
+    ("rebase-plan", "Planning rebase…", "rebase を計画中…"),
     ("rebase", "Rebasing…", "rebase 中…"),
     ("replay-onto", "Replaying commits…", "commit を replay 中…"),
     ("op-revert", "Reverting operation…", "操作を取り消し中…"),
@@ -134,17 +135,17 @@ const LABELS: &[(&str, &str, &str)] = &[
     (
         "conflict-save",
         "Saving resolution…",
-        "競合の解決内容を保存中…",
+        "conflict の解決内容を保存中…",
     ),
     (
         "conflict-dir-file:keep-directory",
         "Resolving conflict…",
-        "競合を解決中…",
+        "conflict を解決中…",
     ),
     (
         "conflict-dir-file:keep-file",
         "Resolving conflict…",
-        "競合を解決中…",
+        "conflict を解決中…",
     ),
     (
         "conflict-continue",

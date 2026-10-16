@@ -118,9 +118,19 @@ pub enum UntrackedCtx {
     Untouched,
 }
 
+/// The worktree semantics that a force checkout cannot preserve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseCheckoutKind {
+    Cone,
+    NonCone,
+    SkipWorktree,
+}
+
 /// Cross-op notes (ADR-0129 appendix §A).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommonNote {
+    /// A user-visible writer cannot resolve the effective Git identity.
+    GitIdentityUnavailable,
     /// §A1 — blocker: conflicted files must be resolved first.
     ConflictedFiles { count: usize, before: OpPhrase },
     /// §A2 — blocker: dirty working tree blocks the op.
@@ -139,10 +149,17 @@ pub enum CommonNote {
     /// the working tree on purpose. Staging it would record a deletion the user
     /// never made — Git refuses the same operation.
     SparseExcludedPath { path: String },
-    /// blocker (#842): the hunk a Stage / Unstage hunk click named is no
-    /// longer in the re-read diff — the index or the file moved since it was
-    /// drawn. Acting on a neighbouring hunk instead would stage lines the user
-    /// never chose.
+    /// #1136: named clean/smudge filters are not executed by libgit2.
+    ExternalFilter { path: String, filter: String },
+    /// #1137: filter refusal for Sync, with checkout-specific guidance.
+    ExternalFilterSync { path: String, filter: String },
+    /// #1137: force checkout does not preserve sparse index/worktree semantics.
+    SparseCheckoutUnsupported { kind: SparseCheckoutKind },
+    /// #1137: nested work cannot be retained by a superproject blob backup.
+    SubmoduleCheckoutUnsupported { path: String, uninitialized: bool },
+    /// blocker (#842, #1131): the displayed hunk's range or raw patch content
+    /// no longer matches the live diff. Never substitute new content at the
+    /// same range, or a neighbouring hunk the user did not choose.
     HunkChanged { path: String },
     /// §A12 — blocker: HEAD is detached (per-op sentence).
     HeadDetached { op: PlanOp },
@@ -176,6 +193,7 @@ impl CommonNote {
     /// Byte-identical to the legacy producer strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
+            CommonNote::GitIdentityUnavailable => "This operation needs a Git identity. Set user.name and user.email before continuing.".to_string(),
             CommonNote::ConflictedFiles { count, before } => format!(
                 crate::advice_template_en!(CommonConflictedFiles),
                 count,
@@ -225,6 +243,42 @@ impl CommonNote {
             ),
             CommonNote::SparseExcludedPath { path } => {
                 format!(crate::advice_template_en!(CommonSparseExcludedPath), path)
+            }
+            CommonNote::ExternalFilter { path, filter } => {
+                format!(
+                    crate::advice_template_en!(CommonExternalFilter),
+                    path, filter
+                )
+            }
+            CommonNote::ExternalFilterSync { path, filter } => {
+                format!(
+                    crate::advice_template_en!(CommonExternalFilterSync),
+                    path, filter
+                )
+            }
+            CommonNote::SparseCheckoutUnsupported { kind } => {
+                format!(
+                    crate::advice_template_en!(CommonSparseCheckoutUnsupported),
+                    match kind {
+                        SparseCheckoutKind::Cone => "cone sparse-checkout",
+                        SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                        SparseCheckoutKind::SkipWorktree => "skip-worktree entries",
+                    }
+                )
+            }
+            CommonNote::SubmoduleCheckoutUnsupported {
+                path,
+                uninitialized,
+            } => {
+                format!(
+                    crate::advice_template_en!(CommonSubmoduleCheckoutUnsupported),
+                    if *uninitialized {
+                        "an uninitialized"
+                    } else {
+                        "a dirty"
+                    },
+                    path
+                )
             }
             CommonNote::HunkChanged { path } => {
                 format!(crate::advice_template_en!(CommonHunkChanged), path)
@@ -292,6 +346,53 @@ impl CommonNote {
             CommonNote::MergeConflictWarning => {
                 crate::advice_template_en!(CommonMergeConflictWarning).to_string()
             }
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CommonNote::PartialCloneObjectMissing { detail } => format!(
+                crate::advice_template_display_en!(CommonPartialCloneObjectMissing),
+                detail
+            ),
+            CommonNote::ExternalFilter { path, filter } => {
+                format!(
+                    crate::advice_template_display_en!(CommonExternalFilter),
+                    path, filter
+                )
+            }
+            CommonNote::ExternalFilterSync { path, filter } => {
+                format!(
+                    crate::advice_template_display_en!(CommonExternalFilterSync),
+                    path, filter
+                )
+            }
+            CommonNote::SparseCheckoutUnsupported { kind } => {
+                format!(
+                    crate::advice_template_display_en!(CommonSparseCheckoutUnsupported),
+                    match kind {
+                        SparseCheckoutKind::Cone => "cone sparse-checkout",
+                        SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                        SparseCheckoutKind::SkipWorktree => "skip-worktree entries",
+                    }
+                )
+            }
+            CommonNote::SubmoduleCheckoutUnsupported {
+                path,
+                uninitialized,
+            } => {
+                format!(
+                    crate::advice_template_display_en!(CommonSubmoduleCheckoutUnsupported),
+                    if *uninitialized {
+                        "an uninitialized"
+                    } else {
+                        "a dirty"
+                    },
+                    path
+                )
+            }
+            _ => self.message_en(),
         }
     }
 }

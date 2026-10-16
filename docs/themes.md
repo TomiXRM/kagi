@@ -296,8 +296,8 @@ handling to the pinned gpui-component Button. No new control is introduced.
 | `NeutralTinted` | `text_sub` | Neutral tinted chip (editor navigation / external editor action). |
 
 Nagi renders the four tinted roles as the kit's existing Default buttons:
-neutral interaction fills with semantic resting text. The pinned Custom
-variant forces a 40% pressed tint, which would wash out the restrained ink.
+neutral interaction fills and native normal/disabled labels. The pinned Custom
+variant forces a 40% pressed tint, which would wash out restrained semantic ink.
 Primary, destructive-confirm and side-choice filled roles are unchanged;
 handlers, focus and safety gates still belong to the existing Button.
 

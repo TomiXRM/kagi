@@ -157,16 +157,29 @@ fn nagi_filled_labels_reuse_production_foreground_and_interaction_helpers() {
         );
         // Nagi's semantic secondary actions use the existing Default variant,
         // not Custom's fixed 40% pressed tint. Cover its actual neutral states.
-        for ink in [
-            t.color_success,
-            t.color_warning,
-            t.color_blocker,
-            t.text_sub,
-        ] {
-            for bg in [t.surface, t.selected] {
-                readable(t, "semantic Default state", ink, bg, 4.5);
-            }
+        let mut component = gpui_component::Theme::default();
+        apply_gpui_component_theme(t, &mut component);
+        let c = component.colors;
+        for bg in [c.button, c.button_hover, c.button_active] {
+            readable(
+                t,
+                "secondary action",
+                rgb24(c.button_foreground),
+                rgb24(bg),
+                4.5,
+            );
         }
+        for track in [c.switch, c.primary] {
+            readable(t, "switch thumb", rgb24(c.switch_thumb), rgb24(track), 3.0);
+            readable(t, "switch track", rgb24(track), t.panel, 3.0);
+        }
+        readable(
+            t,
+            "switch off/on distinction",
+            rgb24(c.switch),
+            rgb24(c.primary),
+            1.5,
+        );
     }
 }
 

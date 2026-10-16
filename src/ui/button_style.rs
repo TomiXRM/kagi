@@ -154,9 +154,8 @@ pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
             let palette = theme();
             if matches!(&*palette.slug, "nagi-light" | "nagi-dark") {
                 // Custom's fixed 40% pressed tint washes out subdued semantic ink.
-                // Keep the kit's neutral interaction fills and the operation label.
+                // Keep native neutral fills and labels, including disabled ink.
                 btn.with_variant(ButtonVariant::Default)
-                    .text_color(rgb(role.accent(&palette)))
             } else {
                 btn.custom(tinted_action_variant(role.accent(&palette), cx))
             }

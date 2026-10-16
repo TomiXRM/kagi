@@ -253,7 +253,7 @@ pub(crate) fn complete_component_palette(k: &Theme, c: &mut gpui_component::them
     c.progress_bar = c.primary;
     c.slider_bar = c.primary;
     c.slider_thumb = c.primary_foreground;
-    c.switch = c.primary;
+    c.switch = c.input;
     c.switch_thumb = c.primary_foreground;
     c.drop_target = c.primary.alpha(0.12);
     c.chart_1 = k.lane_color(0);

@@ -132,7 +132,7 @@ Git writes, modal slots, focus handles, animations or confirmation routes.
 The pinned Custom Button derives a 40% pressed tint and ignores its foreground
 override; subdued semantic ink on that tint can fall below 4.5:1. Nagi's
 Success/Warning/Danger/NeutralTinted roles therefore use the existing Default
-variant's neutral state fills with semantic resting text. Filled Primary,
+variant's neutral state fills and native normal/disabled labels. Filled Primary,
 Destructive and Current/Incoming roles remain distinct and contrast-aware.
 This is presentation of explicit roles, not RGB-based inference of an operation.
 

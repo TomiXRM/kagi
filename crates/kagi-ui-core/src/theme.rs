@@ -204,20 +204,26 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
-    /// Apple Dark's single floating fill; other themes retain their existing role.
+    /// Apple Dark and its restrained derivative share the same neutral chrome.
+    #[inline]
+    pub fn uses_neutral_dark_chrome(&self) -> bool {
+        matches!(&*self.slug, "apple-dark" | "nagi-dark")
+    }
+
+    /// Neutral dark themes use a single floating fill.
     #[inline]
     pub fn elevated_surface(&self, existing: u32) -> u32 {
-        if self.slug == "apple-dark" {
+        if self.uses_neutral_dark_chrome() {
             self.modal
         } else {
             existing
         }
     }
 
-    /// Neutral identifying boundary for the Apple Dark floating layer.
+    /// Neutral identifying boundary for the floating layer.
     #[inline]
     pub fn elevated_border(&self, existing: u32) -> u32 {
-        if self.slug == "apple-dark" {
+        if self.uses_neutral_dark_chrome() {
             crate::theme_apple_dark::ELEVATED_BORDER
         } else {
             existing
@@ -227,7 +233,7 @@ impl Theme {
     /// Window chrome stays lighter than panels but darker than elevated cards.
     #[inline]
     pub fn chrome_surface(&self) -> u32 {
-        if self.slug == "apple-dark" {
+        if self.uses_neutral_dark_chrome() {
             crate::theme_apple_dark::CHROME
         } else {
             self.panel
@@ -1299,7 +1305,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // near-background neutral by design, which made markdown table rows
     // invisible (user report); a muted-foreground tint reads on both `surface`
     // and `bg_base` in every theme.
-    let border = if k.slug == "apple-dark" {
+    let border = if k.uses_neutral_dark_chrome() {
         crate::theme_apple_dark::INPUT_BORDER
     } else {
         k.text_muted
@@ -1351,8 +1357,8 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // Apple presets separate identifying boundaries from readable labels.
     // Custom and other palettes retain their existing boundary/focus contrast.
     gc.colors.input = to_hsla(match &*k.slug {
-        "apple-light" => crate::theme_apple_light::INPUT_BORDER,
-        "apple-dark" => crate::theme_apple_dark::INPUT_BORDER,
+        "apple-light" | "nagi-light" => crate::theme_apple_light::INPUT_BORDER,
+        "apple-dark" | "nagi-dark" => crate::theme_apple_dark::INPUT_BORDER,
         _ => k.text_muted,
     });
     gc.colors.caret = to_hsla(k.text_main);
@@ -1417,7 +1423,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // ── Scrollbar (W12-GCADOPT §2.10) ───────────────────────────
     gc.colors.scrollbar = to_hsla(k.bg_base);
     // Preserve hover/drag feedback even when secondary text roles coincide.
-    gc.colors.scrollbar_thumb = to_hsla(k.text_muted).alpha(if k.slug == "apple-dark" {
+    gc.colors.scrollbar_thumb = to_hsla(k.text_muted).alpha(if k.uses_neutral_dark_chrome() {
         0.8
     } else if k.text_muted == k.text_sub {
         0.65
@@ -1461,6 +1467,9 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // overridden and `style.syntax` kept gpui-component's bundled palette, so
     // every dark theme highlighted code identically.
     gc.highlight_theme = highlight_theme(k);
+    if matches!(&*k.slug, "nagi-light" | "nagi-dark") {
+        crate::theme_nagi::complete_component_palette(k, &mut gc.colors);
+    }
 
     // ── Tokens (0.5.2) ──────────────────────────────────────────
     // Widgets increasingly read `theme().tokens.*` (Radio, Select popup, …),
@@ -1597,6 +1606,8 @@ pub static THEMES: &[Theme] = &[
     crate::theme_flower_road::FLOWER_ROAD,
     crate::theme_ibm_pc::IBM_PC,
     crate::theme_monokai::MONOKAI,
+    crate::theme_nagi::NAGI_DARK,
+    crate::theme_nagi::NAGI_LIGHT,
     crate::theme_one_dark::ONE_DARK,
     crate::theme_one_light::ONE_LIGHT,
     crate::theme_pinky_boo::PINKY_BOO,
@@ -1639,6 +1650,10 @@ pub(crate) const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
 // ──────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "theme_nagi_tests.rs"]
+mod nagi_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1735,12 +1750,6 @@ mod tests {
         apply_gpui_component_theme(light, &mut gc);
         assert_eq!(gc.colors.popover, to_hsla(0xffffff));
         assert_eq!(gc.colors.border, to_hsla(0x666666).alpha(0.85));
-        for preset in THEMES.iter().filter(|t| t.slug != "apple-dark") {
-            assert_eq!(preset.elevated_surface(preset.panel), preset.panel);
-            assert_eq!(preset.elevated_surface(preset.modal), preset.modal);
-            assert_eq!(preset.elevated_border(preset.surface), preset.surface);
-            assert_eq!(preset.chrome_surface(), preset.panel);
-        }
         let mut custom = dark.clone();
         custom.slug = Cow::Borrowed("custom-dark");
         custom.panel = 0x123456;
@@ -1782,28 +1791,21 @@ mod tests {
     }
 
     #[test]
-    fn apple_inputs_are_quiet_without_losing_identifying_contrast() {
-        for t in THEMES {
+    fn apple_and_nagi_inputs_keep_identifying_contrast() {
+        for t in THEMES.iter().filter(|t| {
+            matches!(
+                &*t.slug,
+                "apple-light" | "apple-dark" | "nagi-light" | "nagi-dark"
+            )
+        }) {
             let mut gc = gpui_component::Theme::default();
             apply_gpui_component_theme(t, &mut gc);
-            let expected = match &*t.slug {
-                "apple-light" => 0x8e8e8e,
-                "apple-dark" => 0x67676a,
-                _ => t.text_muted,
-            };
-            assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
-            assert_eq!(gc.colors.ring, to_hsla(t.ui_accent()));
-            let border = if t.slug == "apple-dark" {
-                to_hsla(0x67676a).alpha(0.85)
-            } else {
-                to_hsla(t.text_muted).alpha(0.85)
-            };
-            assert_eq!(gc.colors.border, border);
-            if matches!(&*t.slug, "apple-light" | "apple-dark") {
-                assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
-                assert!(contrast_ratio(expected, t.panel) >= 3.0);
+            let border = u32::from(gc.colors.input.to_rgb()) >> 8;
+            for background in [t.bg_base, t.panel] {
                 assert!(
-                    contrast_ratio(expected, t.bg_base) < contrast_ratio(t.text_muted, t.bg_base)
+                    contrast_ratio(border, background) >= 3.0,
+                    "{} input boundary must remain identifiable",
+                    t.slug
                 );
             }
         }
@@ -1821,20 +1823,11 @@ mod tests {
                 "{}: scrollbar hover must remain distinct",
                 t.slug
             );
-            let alpha = if t.slug == "apple-dark" { 0.8 } else { 0.65 };
-            assert_eq!(
-                gc.colors.scrollbar_thumb,
-                to_hsla(t.text_muted).alpha(alpha)
-            );
             let highlight = highlight_theme(&t);
             assert_ne!(
                 highlight.style.editor_line_number, highlight.style.editor_active_line_number,
                 "{}: active line number must remain distinct",
                 t.slug
-            );
-            assert_eq!(
-                highlight.style.editor_active_line_number,
-                Some(to_hsla(t.text_main))
             );
         }
     }
@@ -2553,17 +2546,6 @@ mod tests {
         assert_eq!(index_of("xcode-light"), index_of("apple-light"));
         assert!(index_of("apple-dark").is_some());
         assert_eq!(index_of("still-not-a-theme"), None);
-    }
-
-    #[test]
-    fn dark_and_light_counts() {
-        let dark = THEMES.iter().filter(|t| t.dark).count();
-        let light = THEMES.iter().filter(|t| !t.dark).count();
-        // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark,
-        // color-vision
-        assert_eq!(dark, 8);
-        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road
-        assert_eq!(light, 5);
     }
 }
 

@@ -81,7 +81,13 @@ pub fn toolbar_display(theme_slug: &str) -> ToolbarDisplay {
     match TOOLBAR_DISPLAY.load(std::sync::atomic::Ordering::Relaxed) {
         1 => ToolbarDisplay::IconOnly,
         2 => ToolbarDisplay::IconAndText,
-        _ if matches!(theme_slug, "apple-light" | "apple-dark") => ToolbarDisplay::IconOnly,
+        _ if matches!(
+            theme_slug,
+            "apple-light" | "apple-dark" | "nagi-light" | "nagi-dark"
+        ) =>
+        {
+            ToolbarDisplay::IconOnly
+        }
         _ => ToolbarDisplay::IconAndText,
     }
 }

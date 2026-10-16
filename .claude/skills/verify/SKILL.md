@@ -57,6 +57,19 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1635 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette'`
+with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
+selecting both Nagi presets, checks native focus-ring and graph-selection
+pixels, neutral active/inactive fills and retained selected identity.
+Pair this with the `nagi_` palette/contrast tests in `kagi-ui-core`.
+Tier B compares Apple versus Nagi on the same graph/diff/change fixture in
+Light/Dark, EN/JA, 100%/167% and wide/compact windows. Inspect semantic action
+buttons at rest, hover and held press; release outside to avoid a Git write.
+Capture Settings/palette switching and saved-theme relaunch. Copy the plain
+production binary to the evidence directory before building `gui-e2e`:
+the feature build replaces `target/debug/kagi` with a harness-only shell.
+Native screenshots and color simulation are not CUD certification.
+
 For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
 This includes wide, compact and frozen-clock directory motion scenarios.
 Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,

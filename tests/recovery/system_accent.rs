@@ -327,6 +327,79 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS system_accent_chrome: Apple Dark default yellow, Light default system, explicit System/Theme accent primary/ring/graph pixels for five injected colours; fixed geometry and retained inactive selection");
 }
 
+pub fn scenario_nagi_fixed_accent(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme"]);
+    let before = theme::theme().slug.to_string();
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.select_headless(0);
+        app.set_window_active_for_e2e(true, cx);
+    });
+    for slug in ["nagi-light", "nagi-dark"] {
+        for accent in [theme::SystemAccent::Purple, theme::SystemAccent::Red] {
+            let _injected = theme::AccentInjection::new(accent, Some(true));
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx));
+            })
+            .unwrap();
+            cx.simulate_keystrokes(window, "f19");
+            draw(cx, window);
+            let bounds = e2e::control_bounds(window.window_id(), "sidebar-mode-graph")
+                .expect("drawn mode cell");
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(bounds.center().x),
+                    f32::from(bounds.top()) - 1.,
+                ),
+                theme::theme().color_branch,
+            );
+            let selected = cx.read(|cx| app.read(cx).ui().selected);
+            for active in [true, false] {
+                app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+                draw(cx, window);
+                let row = e2e::control_bounds(window.window_id(), "graph-commit-row")
+                    .expect("selected commit row remains drawn");
+                let bar = e2e::control_bounds(window.window_id(), "graph-selection-bar")
+                    .expect("selection has a geometric indicator");
+                let palette = theme::theme();
+                assert_rgb(
+                    pixel(
+                        cx,
+                        window,
+                        f32::from(row.right()) - 2.,
+                        f32::from(row.top()) + 1.,
+                    ),
+                    if active {
+                        palette.selected
+                    } else {
+                        palette.inactive_selected
+                    },
+                );
+                if active {
+                    assert_rgb(
+                        pixel(
+                            cx,
+                            window,
+                            f32::from(bar.center().x),
+                            f32::from(bar.center().y),
+                        ),
+                        palette.color_branch,
+                    );
+                }
+                assert_eq!(cx.read(|cx| app.read(cx).ui().selected), selected);
+            }
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+        }
+    }
+    app.update(cx, |app, cx| app.set_theme(&before, cx));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS nagi_fixed_accent: fixed focus/selection pixels despite OS accent, neutral active/inactive fills, retained selected identity");
+}
+
 fn graph_wash(accent: u32, background: u32) -> u32 {
     [0, 8, 16].into_iter().fold(0, |rgb, shift| {
         let fg = ((accent >> shift) & 255) as f32;

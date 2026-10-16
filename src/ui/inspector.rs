@@ -1098,7 +1098,7 @@ impl gpui::Render for HashTooltip {
             .py_1()
             .rounded_sm()
             .bg(rgb(theme().elevated_surface(theme().surface)))
-            .when(theme().slug == "apple-dark", |tooltip| {
+            .when(theme().uses_neutral_dark_chrome(), |tooltip| {
                 tooltip
                     .border_1()
                     .border_color(rgb(theme().elevated_border(theme().surface)))

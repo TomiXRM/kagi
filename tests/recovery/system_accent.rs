@@ -358,7 +358,8 @@ pub fn scenario_nagi_fixed_accent(cx: &mut VisualTestAppContext) {
                 theme::theme().color_branch,
             );
             let selected = cx.read(|cx| app.read(cx).ui().selected);
-            for active in [true, false] {
+            let mut selection_pixels = [0; 2];
+            for (state, active) in [true, false].into_iter().enumerate() {
                 app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
                 draw(cx, window);
                 let row = e2e::control_bounds(window.window_id(), "graph-commit-row")
@@ -366,13 +367,16 @@ pub fn scenario_nagi_fixed_accent(cx: &mut VisualTestAppContext) {
                 let bar = e2e::control_bounds(window.window_id(), "graph-selection-bar")
                     .expect("selection has a geometric indicator");
                 let palette = theme::theme();
+                let fill = pixel(
+                    cx,
+                    window,
+                    f32::from(row.right()) - 2.,
+                    f32::from(row.top()) + 1.,
+                );
+                selection_pixels[state] =
+                    (u32::from(fill[0]) << 16) | (u32::from(fill[1]) << 8) | u32::from(fill[2]);
                 assert_rgb(
-                    pixel(
-                        cx,
-                        window,
-                        f32::from(row.right()) - 2.,
-                        f32::from(row.top()) + 1.,
-                    ),
+                    fill,
                     if active {
                         palette.selected
                     } else {
@@ -392,12 +396,20 @@ pub fn scenario_nagi_fixed_accent(cx: &mut VisualTestAppContext) {
                 }
                 assert_eq!(cx.read(|cx| app.read(cx).ui().selected), selected);
             }
+            // Compare rendered fills, not just unequal tokens: tiny gray shifts
+            // preserve identity/contrast but do not establish activation state.
+            let separation =
+                kagi_ui_core::color_vision::delta_e(selection_pixels[0], selection_pixels[1], None);
+            assert!(
+                separation >= 10.0,
+                "{slug}: rendered active/inactive selection ΔE {separation:.2} < 10"
+            );
             app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
         }
     }
     app.update(cx, |app, cx| app.set_theme(&before, cx));
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS nagi_fixed_accent: fixed focus/selection pixels despite OS accent, neutral active/inactive fills, retained selected identity");
+    eprintln!("[gui-e2e] PASS nagi_fixed_accent: fixed focus/selection pixels despite OS accent, perceptually distinct blue active/neutral inactive fills, retained selected identity");
 }
 
 fn graph_wash(accent: u32, background: u32) -> u32 {

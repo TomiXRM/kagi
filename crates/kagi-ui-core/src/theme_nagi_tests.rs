@@ -250,7 +250,7 @@ fn nagi_ansi_slots_and_default_text_read_on_terminal_selection() {
 }
 
 #[test]
-fn nagi_all_palette_tokens_stay_neutral_or_in_four_restrained_families() {
+fn nagi_all_palette_tokens_stay_neutral_or_in_four_families() {
     fn check(t: &Theme, role: &str, color: u32) {
         let c: Hsla = rgb(color).into();
         let channels = [(color >> 16) & 255, (color >> 8) & 255, color & 255];
@@ -258,7 +258,6 @@ fn nagi_all_palette_tokens_stay_neutral_or_in_four_restrained_families() {
         if span <= 8 {
             return; // Near-neutral quantized tints do not introduce a hue family.
         }
-        assert!(c.s <= 0.35, "{} {role}: saturation {}", t.slug, c.s);
         let hue = c.h * 360.0;
         assert!(
             [8.0_f32, 38.0, 150.0, 205.0].into_iter().any(|family| {
@@ -314,7 +313,6 @@ fn nagi_all_palette_tokens_stay_neutral_or_in_four_restrained_families() {
             t.sidebar,
             t.surface,
             t.modal,
-            t.selected,
             t.inactive_selected,
         ] {
             let c: Hsla = rgb(bg).into();
@@ -324,6 +322,92 @@ fn nagi_all_palette_tokens_stay_neutral_or_in_four_restrained_families() {
                 t.slug
             );
         }
+    }
+}
+
+#[test]
+fn nagi_graph_metadata_and_ordinary_code_reserve_color_for_structure_and_state() {
+    for t in palettes() {
+        for (role, color) in [
+            ("remote", t.color_remote),
+            ("tag", t.color_tag),
+            ("string", t.syntax.string),
+            ("function", t.syntax.function),
+            ("number", t.syntax.number),
+            ("variable", t.syntax.variable),
+            ("comment", t.syntax.comment),
+            ("operator", t.syntax.operator),
+            ("punctuation", t.syntax.punctuation),
+            ("attribute", t.syntax.attribute),
+        ] {
+            let color = to_hsla(color);
+            assert!(
+                color.s < f32::EPSILON,
+                "{} {role} spends a chromatic role",
+                t.slug
+            );
+        }
+        for color in [
+            t.ui_accent(),
+            t.color_head,
+            t.syntax.keyword,
+            t.syntax.type_name,
+        ] {
+            let color = to_hsla(color);
+            assert!(
+                (color.h * 360.0 - 205.0).abs() <= 8.0 && color.s > 0.2,
+                "{} interaction/structure must remain visibly blue",
+                t.slug
+            );
+        }
+        for i in 0..t.lane_hsl.len() {
+            let color = t.lane_color(i);
+            assert!(
+                color.s < f32::EPSILON || (color.h * 360.0 - 205.0).abs() <= 8.0,
+                "{} lane {i} borrows a semantic hue",
+                t.slug
+            );
+        }
+    }
+}
+
+#[test]
+fn nagi_active_selection_and_diff_surfaces_remain_visibly_distinct() {
+    // ΔE >= 10 is a deliberate visibility floor, not an accessibility or CVD
+    // certification. It prevents almost-gray active selection and barely tinted
+    // diff rows without prescribing literal colors. The independent 4.5:1 ink
+    // and 3:1 stroke contracts still apply; labels and +/- remain necessary.
+    for t in palettes() {
+        let active = rgb24(t.selected_for_window(true));
+        let inactive = rgb24(t.selected_for_window(false));
+        let color = to_hsla(active);
+        assert!(
+            (color.h * 360.0 - 205.0).abs() <= 8.0 && color.s > 0.2,
+            "{} active selection must be visibly blue",
+            t.slug
+        );
+        let difference = delta_e(active, inactive, None);
+        assert!(
+            difference >= 10.0,
+            "{} active/inactive selection ΔE {difference:.2}",
+            t.slug
+        );
+        for context in [t.bg_base, t.bg_row_alt] {
+            for (role, surface) in [
+                ("active selection/context", active),
+                ("added/context", t.diff_added_bg),
+                ("removed/context", t.diff_removed_bg),
+            ] {
+                let difference = delta_e(surface, context, None);
+                assert!(difference >= 10.0, "{} {role} ΔE {difference:.2}", t.slug);
+            }
+        }
+        let difference = delta_e(t.diff_added_bg, t.diff_removed_bg, None);
+        assert!(
+            difference >= 10.0,
+            "{} added/removed ΔE {difference:.2}",
+            t.slug
+        );
     }
 }
 

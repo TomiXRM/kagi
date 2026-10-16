@@ -36,39 +36,47 @@ NumberInput and DatePicker; these are not separate token overrides.
 Choose **Nagi Light / Nagi Dark** in the existing theme picker, command palette
 or View → Theme menu. Both languages use these names. Their stable slugs are
 `nagi-light` and `nagi-dark`. Apple Light / Dark and the default theme remain
-unchanged. Nagi inherits Apple's neutral chrome and density, with gray row
-selections and a fixed, subdued blue interaction accent. It intentionally does
-not follow the Mac accent: a system purple or pink must not add another family.
+unchanged. Nagi inherits Apple's neutral chrome and density. Active selection
+is visibly blue; inactive selection is neutral. Both retain normal text and
+semantic ink through the existing selection helpers. The fixed blue interaction
+accent intentionally does not follow the Mac accent: system purple or pink
+must not add another family.
 
-| Family | Meaning | Light ink | Dark ink |
-|---|---|---|---|
-| Blue | Interaction, links, rename | `#354d5f` | `#b2c4d2` |
-| Green | Success, added content | `#375345` | `#b3ccbf` |
-| Ochre | Warning, modified content | `#5a4a30` | `#d6c9b3` |
-| Brick | Danger, deleted content | `#653f39` | `#d7bbb7` |
+The restraint is in **where colour appears**, not a universal saturation cap.
+Keep at most four chromatic families, with clear interaction and semantic cues:
 
-Graph lanes reuse these four families and grays instead of eight unrelated
-hues. Syntax keeps identifiers, punctuation and comments neutral; structural
-tokens reuse the same palette. Generated initial avatars are grayscale.
-The ANSI palette also reuses these families (magenta becomes brick, cyan green).
-Photos, external images and application-supplied terminal truecolor are not
-recoloured; those can still contain other hues.
+| Family | Reserved roles |
+|---|---|
+| Blue | Interaction, links, local branch/HEAD, rename, syntax keywords/types |
+| Green | Success and added content |
+| Amber | Warnings and modified-content status |
+| Red | Danger and deleted content |
+
+Graph lanes use only blue and neutral strokes; remote/tag metadata is neutral.
+Ordinary functions, strings, numbers, variables, comments, operators and
+punctuation stay neutral rather than decorating every token. Generated initial
+avatars are grayscale. Added/deleted rows retain distinct green/red cues, and
+amber is reserved for semantic warnings/status, not decorative graph or syntax
+colour. The ANSI palette reuses the four families (magenta becomes red, cyan
+green). Photos, external images and application-supplied terminal truecolor are
+not recoloured; those can still contain other hues.
 
 The design follows [CUDO's three points](https://cudo.jp/?page_id=86),
 [Apple HIG Color](https://developer.apple.com/design/human-interface-guidelines/color)
 and WCAG's [use of color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html),
 [text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
 and [non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html).
-Low saturation is not permission to fade text: palette regressions require
-4.5:1 for ordinary labels and code on their tested surfaces, and 3:1 for
-graph strokes and focus rings.
+Palette regressions still require 4.5:1 for ordinary labels and code on their
+tested surfaces, and 3:1 for essential graph strokes and focus rings. These
+ratios cannot replace visual distinction checks: active/inactive selection and
+added/deleted rows must remain perceptually distinguishable, not merely readable.
 
 **Limits:** this is a restrained visual theme, not CUD certification or a
-replacement for **Color Vision (Blue/Orange)**. Green/brick and pale diff fills
-are difficult to distinguish under red–green color-vision simulations.
+replacement for **Color Vision (Blue/Orange)**. Green/red semantic cues can
+remain difficult to distinguish under red–green color-vision simulations.
 Read the `A/M/D/R`, `+/-`, icons, operation names, ref labels and graph geometry;
-do not describe an operation only by its colour. Neutral selection fills alone
-are below 3:1, so the existing selection/focus indicators remain important.
+do not describe an operation only by its colour. Selection fills are not the
+sole identifying cue: retain the existing geometric selection/focus indicators.
 Simulation and token ratios do not establish whole-application WCAG compliance
 or replace evaluation by people with different visual abilities.
 
@@ -297,7 +305,7 @@ handling to the pinned gpui-component Button. No new control is introduced.
 
 Nagi renders the four tinted roles as the kit's existing Default buttons:
 neutral interaction fills and native normal/disabled labels. The pinned Custom
-variant forces a 40% pressed tint, which would wash out restrained semantic ink.
+variant forces a 40% pressed tint that can compromise readable semantic ink.
 Primary, destructive-confirm and side-choice filled roles are unchanged;
 handlers, focus and safety gates still belong to the existing Button.
 

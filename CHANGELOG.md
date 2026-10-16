@@ -8,7 +8,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - Expand and collapse individual directories in the commit changed-file Tree, in both the wide Inspector and compact Changes view. Nested disclosure survives parent toggles and Path/Tree switches; file clicks still open their original diff. Shared accordion motion respects Reduce Motion, while keyboard navigation and accessibility immediately exclude hidden descendants. (#1628)
-- Add Nagi Light / Nagi Dark: Apple-derived neutral chrome with four subdued color families across refs, graph lanes, syntax and terminal ANSI colors, grayscale generated avatars, readable semantic ink and fixed blue accents. Existing themes and defaults remain unchanged. Document universal-color-design guidance and color-vision limitations. (#1635)
+- Add Nagi Light / Nagi Dark: Apple-derived neutral chrome with a limited semantic color palette, grayscale generated avatars, readable text and fixed blue accents. Existing themes and defaults remain unchanged. Document universal-color-design guidance and color-vision limitations. (#1635)
+
+### Fixed
+
+- Correct Nagi's washed-out colour hierarchy by limiting chromatic roles rather than globally reducing saturation: blue/neutral graph lanes, neutral remote/tag metadata and ordinary syntax, clear green/red diff cues and semantic amber, visibly blue active selection and neutral inactive selection. Keep readable text and essential-stroke contrast, native neutral/disabled button paint, existing themes and defaults unchanged. (#1637)
 
 ## [0.45.0] - 2026-10-16
 

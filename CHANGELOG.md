@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Expand and collapse individual directories in the commit changed-file Tree, in both the wide Inspector and compact Changes view. Nested disclosure survives parent toggles and Path/Tree switches; file clicks still open their original diff. Shared accordion motion respects Reduce Motion, while keyboard navigation and accessibility immediately exclude hidden descendants. (#1628)
+
 ## [0.45.0] - 2026-10-16
 
 ### Changed

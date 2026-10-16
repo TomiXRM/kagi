@@ -640,6 +640,10 @@ pub fn scenario_compact_layout_geometry_tall_zoom167(cx: &mut VisualTestAppConte
     geometry_matrix(cx, 1000., 1.67);
 }
 
+pub fn scenario_compact_inspector_directory_accordion(cx: &mut VisualTestAppContext) {
+    crate::inspector_file_rows::directory_accordion(cx, true);
+}
+
 // Each native process retains all EN/JA × Light/Dark cells for one viewport/zoom,
 // bounding the expensive rail interactions without extending the 120s deadline.
 fn geometry_matrix(cx: &mut VisualTestAppContext, height: f32, zoom: f32) {

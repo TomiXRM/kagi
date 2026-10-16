@@ -3622,6 +3622,10 @@ mod macos {
             ("changes_inline_pointer_focus", Box::new(crate::file_row_input::inline_pointer_focus)),
             ("inspector_file_motion", Box::new(crate::inspector_motion::scenario)),
             ("inspector_generated_viewport_motion", Box::new(crate::inspector_motion::scenario_generated_viewport)),
+            (
+                "inspector_directory_accordion_motion",
+                Box::new(crate::inspector_motion::scenario_directory_accordion_motion),
+            ),
             ("inspector_more_motion", Box::new(crate::file_row_input::inspector_more)),
             ("modal_disclosure_motion", Box::new(crate::modal_motion::scenario_modal_disclosure_motion)),
             (
@@ -4757,6 +4761,14 @@ mod macos {
             (
                 "inspector_file_row_hit",
                 Box::new(crate::inspector_file_rows::scenario),
+            ),
+            (
+                "inspector_directory_accordion",
+                Box::new(crate::inspector_file_rows::scenario_directory_accordion),
+            ),
+            (
+                "compact_inspector_directory_accordion",
+                Box::new(crate::compact_layout::scenario_compact_inspector_directory_accordion),
             ),
             (
                 "graph_subject_identity",

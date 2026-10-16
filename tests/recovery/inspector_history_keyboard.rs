@@ -107,7 +107,15 @@ fn inspector_case(cx: &mut VisualTestAppContext, fixture: &tempfile::TempDir, tr
         focused(cx, &app, window).is_some(),
         "Inspector files must be keyboard-enterable before any diff is shown"
     );
-    keys(cx, window, "home down");
+    keys(
+        cx,
+        window,
+        if tree {
+            "home down down down"
+        } else {
+            "home down"
+        },
+    );
     draw(cx, window);
     assert_eq!(focused(cx, &app, window).as_deref(), Some("b/file.txt"));
     let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
@@ -142,6 +150,7 @@ fn inspector_case(cx: &mut VisualTestAppContext, fixture: &tempfile::TempDir, tr
     draw(cx, window);
     assert_eq!(focused(cx, &app, window).as_deref(), Some("Cargo.lock"));
     keys(cx, window, "space");
+    list_a11y::clear_recorded_lists();
     draw(cx, window);
     let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
     assert_eq!(

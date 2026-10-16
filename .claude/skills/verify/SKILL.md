@@ -57,6 +57,21 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
+This includes wide, compact and frozen-clock directory motion scenarios.
+Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,
+Enter/Space/Left/Right, hidden keyboard/AX membership, unchanged leaf diff,
+Generated independence, moving live hit targets and inert exit paint.
+Keep neighboring `inspector_files_keyboard`, `inspector_generated_`,
+`inspector_overflow_keyboard`, `inspector_more_motion`, `inspector_file_row_hit`
+and compact Inspector scenarios. Tier B compares Finder list disclosure with
+the real wide Inspector and compact Changes in Apple Light/Dark, using an
+isolated repository with nested and long EN/JA paths. Capture normal-motion
+intermediate and settled frames and an app-private Reduce Motion endpoint;
+do not change the owner's OS preference. Stable directory probes use
+`inspector-directory-<full-repository-relative-path>`; compressed chains retain
+the full path, and source-index file/ghost probes remain unchanged.
+
 For #1479-S4 use
 `KAGI_GUI_E2E_ONLY='sidebar_,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_'`
 with KEEP_GOING and a 300-second scenario timeout. Activate the native adapter

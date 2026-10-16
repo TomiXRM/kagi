@@ -160,8 +160,17 @@ impl InspectorModel {
         if self.files.as_ref().is_some_and(|(key, _)| *key == source) {
             return;
         }
+        let compare_changed = matches!(source, FilesSource::Compare { .. })
+            || self
+                .files
+                .as_ref()
+                .is_some_and(|(old, _)| matches!(old, FilesSource::Compare { .. }));
         self.files = Some((source, derive().map(Rc::new)));
-        self.keyboard.invalidate();
+        if compare_changed {
+            self.keyboard.reset_directories();
+        } else {
+            self.keyboard.invalidate();
+        }
     }
 
     /// Re-derive the message HTML iff it was built for another commit.
@@ -169,6 +178,9 @@ impl InspectorModel {
         if self.message.as_ref().is_some_and(|(key, _)| key == sha) {
             return;
         }
+        // Directory disclosure belongs to this immutable commit, not row numbers.
+        // Same-commit diffstat/classification refreshes retain the user's folds.
+        self.keyboard.reset_directories();
         // Hard-wrapped bodies (git's 72-col convention) are reflowed first —
         // otherwise the soft wrap stacks on the hard breaks and orphan
         // fragments flap in and out while resizing. HTML, not Markdown: the

@@ -889,6 +889,10 @@ mod squash_evidence_owner;
 mod squash_publish_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/squash_graph_routing.rs"]
+mod squash_graph_routing;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
 mod worktree_graph;
 
@@ -4225,6 +4229,10 @@ mod macos {
                 Box::new(
                     crate::squash_publish_owner::scenario_squash_evidence_publish_generation,
                 ),
+            ),
+            (
+                "squash_graph_routing",
+                Box::new(crate::squash_graph_routing::scenario_squash_graph_routing),
             ),
             (
                 "conflict_detector_owner_guard",

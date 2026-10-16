@@ -77,6 +77,112 @@ pub fn take_paint_trace(window: gpui::WindowId) -> PaintTrace {
     PAINT_TRACE.with(|traces| std::mem::take(traces.borrow_mut().entry(window).or_default()))
 }
 
+/// Commands forwarded verbatim to the endpoint's real `PathBuilder`.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PaintedGraphPathCommand {
+    Move(gpui::Point<Pixels>),
+    Line(gpui::Point<Pixels>),
+    Curve {
+        to: gpui::Point<Pixels>,
+        control: gpui::Point<Pixels>,
+    },
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct PaintedGraphEndpoint {
+    pub bounds: Bounds<Pixels>,
+    pub kind: EdgeKind,
+    pub color: gpui::Hsla,
+    pub commands: Vec<PaintedGraphPathCommand>,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static ENDPOINT_TRACE: std::cell::RefCell<std::collections::HashMap<
+        gpui::WindowId, std::collections::VecDeque<PaintedGraphEndpoint>
+    >> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Scoped opt-in to full squash endpoint recording. Dropping the guard disarms
+/// the window and releases both endpoint and legacy node/dash observations.
+/// Existing `take_paint_trace` callers retain their independent arm/drain API.
+#[cfg(feature = "gui-e2e")]
+#[must_use]
+pub struct GraphPaintRecording(gpui::WindowId);
+
+#[cfg(feature = "gui-e2e")]
+pub fn record_graph_paints(window: gpui::WindowId) -> GraphPaintRecording {
+    ENDPOINT_TRACE.with(|traces| {
+        let mut traces = traces.borrow_mut();
+        assert!(
+            !traces.contains_key(&window),
+            "graph paint recording already armed"
+        );
+        traces.insert(window, Default::default());
+    });
+    GraphPaintRecording(window)
+}
+
+#[cfg(feature = "gui-e2e")]
+impl Drop for GraphPaintRecording {
+    fn drop(&mut self) {
+        ENDPOINT_TRACE.with(|traces| traces.borrow_mut().remove(&self.0));
+        PAINT_TRACE.with(|traces| traces.borrow_mut().remove(&self.0));
+    }
+}
+
+/// Drain at most 2048 successful endpoint paints without arming an unowned
+/// window. Commands are allocated only while `record_graph_paints` is alive.
+#[cfg(feature = "gui-e2e")]
+pub fn take_endpoint_paint_trace(window: gpui::WindowId) -> Vec<PaintedGraphEndpoint> {
+    ENDPOINT_TRACE.with(|traces| {
+        traces
+            .borrow_mut()
+            .get_mut(&window)
+            .map(|trace| trace.drain(..).collect())
+            .unwrap_or_default()
+    })
+}
+
+#[cfg(not(feature = "gui-e2e"))]
+type EdgePathBuilder = PathBuilder;
+
+// Only GUI tests intercept commands; normal builds still use PathBuilder
+// directly, with no extra storage, allocations or branches.
+#[cfg(feature = "gui-e2e")]
+struct EdgePathBuilder {
+    builder: PathBuilder,
+    record: bool,
+    commands: Vec<PaintedGraphPathCommand>,
+}
+
+#[cfg(feature = "gui-e2e")]
+impl EdgePathBuilder {
+    fn move_to(&mut self, to: gpui::Point<Pixels>) {
+        self.builder.move_to(to);
+        if self.record {
+            self.commands.push(PaintedGraphPathCommand::Move(to));
+        }
+    }
+
+    fn line_to(&mut self, to: gpui::Point<Pixels>) {
+        self.builder.line_to(to);
+        if self.record {
+            self.commands.push(PaintedGraphPathCommand::Line(to));
+        }
+    }
+
+    fn curve_to(&mut self, to: gpui::Point<Pixels>, control: gpui::Point<Pixels>) {
+        self.builder.curve_to(to, control);
+        if self.record {
+            self.commands
+                .push(PaintedGraphPathCommand::Curve { to, control });
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────
 // Layout constants
 // ──────────────────────────────────────────────────────────────
@@ -145,7 +251,7 @@ pub fn lanes_for_width(width_px: f32) -> usize {
 /// - horizontal segment: `(x_node ± R, mid_y)` → `(x_node, mid_y)`
 ///
 /// The `R` value is clamped so neither half-segment underflows.
-fn draw_into_node(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_node: f32, mid_y: f32) {
+fn draw_into_node(builder: &mut EdgePathBuilder, x_from: f32, y_top: f32, x_node: f32, mid_y: f32) {
     let dx = (x_node - x_from).abs();
     // Available vertical from y_top to mid_y.
     let avail_v = (mid_y - y_top).max(0.0);
@@ -186,7 +292,7 @@ fn draw_into_node(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_node: f3
 /// Path:  `(x_node, mid_y)` → horizontal → quadratic Bézier arc → `(x_to, y_bot)` ↓
 ///
 /// Mirror image of [`draw_into_node`].
-fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f32, y_bot: f32) {
+fn draw_out_of_node(builder: &mut EdgePathBuilder, x_node: f32, mid_y: f32, x_to: f32, y_bot: f32) {
     let dx = (x_to - x_node).abs();
     let avail_v = (y_bot - mid_y).max(0.0);
     // W28: corner radius scales with zoom; clamp bounds as in `draw_into_node`.
@@ -221,7 +327,7 @@ fn draw_out_of_node(builder: &mut PathBuilder, x_node: f32, mid_y: f32, x_to: f3
 /// Path: vertical down at `x_from` → rounded corner → horizontal at mid-row →
 /// rounded corner → vertical down at `x_to`.  An S-step, mirroring the corner
 /// style of [`draw_into_node`] / [`draw_out_of_node`].
-fn draw_shift(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_to: f32, y_bot: f32) {
+fn draw_shift(builder: &mut EdgePathBuilder, x_from: f32, y_top: f32, x_to: f32, y_bot: f32) {
     let dx = (x_to - x_from).abs();
     let mid_y = (y_top + y_bot) / 2.0;
     let avail_v = (mid_y - y_top).min(y_bot - mid_y).max(0.0);
@@ -482,7 +588,20 @@ pub fn graph_canvas(
                         }
                     }
 
+                    #[cfg(not(feature = "gui-e2e"))]
                     let mut builder = PathBuilder::stroke(theme::scaled_px(EDGE_W));
+                    #[cfg(feature = "gui-e2e")]
+                    let mut builder = EdgePathBuilder {
+                        builder: PathBuilder::stroke(theme::scaled_px(EDGE_W)),
+                        record: edge.color == GHOST_COLOR
+                            && edge.kind != EdgeKind::Pass
+                            && ENDPOINT_TRACE.with(|traces| {
+                                traces
+                                    .borrow()
+                                    .contains_key(&window.window_handle().window_id())
+                            }),
+                        commands: Vec::new(),
+                    };
 
                     match edge.kind {
                         EdgeKind::Pass => {
@@ -522,8 +641,34 @@ pub fn graph_canvas(
                         }
                     }
 
+                    #[cfg(feature = "gui-e2e")]
+                    let EdgePathBuilder {
+                        builder,
+                        record,
+                        commands,
+                    } = builder;
+
                     if let Ok(path) = builder.build() {
                         window.paint_path(path, color);
+                        #[cfg(feature = "gui-e2e")]
+                        if record {
+                            ENDPOINT_TRACE.with(|traces| {
+                                if let Some(trace) = traces
+                                    .borrow_mut()
+                                    .get_mut(&window.window_handle().window_id())
+                                {
+                                    if trace.len() == 2048 {
+                                        trace.pop_front();
+                                    }
+                                    trace.push_back(PaintedGraphEndpoint {
+                                        bounds,
+                                        kind: edge.kind.clone(),
+                                        color,
+                                        commands,
+                                    });
+                                }
+                            });
+                        }
                     }
                 }
 

@@ -133,18 +133,21 @@ pub(crate) fn modal_probe(name: impl Into<String>) -> impl IntoElement {
 pub(crate) fn modal_list_max_h(rows: usize) -> gpui::Pixels {
     let rows = rows.max(1) as f32;
     let content = theme::scaled_px(rows * MODAL_LIST_ROW_H);
+    let floor = theme::scaled_px(rows.min(MODAL_LIST_MIN_ROWS) * MODAL_LIST_ROW_H);
+    content.min(modal_panel_max_h()).max(floor)
+}
+
+fn modal_panel_max_h() -> gpui::Pixels {
     // The window height is already in real pixels; only rows are zoom-scaled.
     let ceiling = match theme::viewport_h() {
         Some(h) => gpui::px(h * MODAL_LIST_VIEWPORT_FRAC),
         None => theme::scaled_px(MODAL_LIST_FALLBACK_ROWS * MODAL_LIST_ROW_H),
     };
-    let ceiling = if modal_compact() {
+    if modal_compact() {
         ceiling.min(theme::scaled_px(MODAL_COMPACT_LIST_ROWS * MODAL_LIST_ROW_H))
     } else {
         ceiling
-    };
-    let floor = theme::scaled_px(rows.min(MODAL_LIST_MIN_ROWS) * MODAL_LIST_ROW_H);
-    content.min(ceiling).max(floor)
+    }
 }
 
 /// The shared modal card shell: a height-capped column that does **not**
@@ -297,6 +300,27 @@ pub(crate) fn modal_scroll_body() -> gpui::Stateful<gpui::Div> {
         .flex_col()
         .gap_3()
         .when(modal_compact(), |body| body.gap_1())
+}
+
+/// Mandatory notes remain expanded. Their group scrolls beside target panels,
+/// or yields scrolling to an already-scrolling body; never nest scroll owners.
+pub(crate) fn modal_note_panel(
+    id: &'static str,
+    content: impl IntoElement,
+    body_scrolls: bool,
+) -> gpui::AnyElement {
+    let panel = div()
+        .id(id)
+        .flex()
+        .flex_col()
+        .min_h(gpui::px(0.))
+        .when(body_scrolls, |panel| panel.flex_shrink_0())
+        .when(!body_scrolls, |panel| {
+            panel.max_h(modal_panel_max_h()).overflow_y_scroll()
+        })
+        .child(content);
+    // An in-content absolute probe scrolls away; measure the viewport itself.
+    super::e2e::measure_leaf(id, panel)
 }
 
 /// Is section `id` expanded, given the renderer's default?
@@ -968,31 +992,23 @@ pub(crate) fn note_path_list(
     }
 }
 
-/// #454: the path list under a note summary. The plan card's body does not
-/// scroll any more, so this list carries its own capped scroll region — one
-/// scroller per panel, never one inside another (see [`modal_body`]).
+/// Paths stay with their note in the shared note-panel or body scroller.
+/// An independent path-list scroller would trap input inside that owner.
 pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
-    let mut col = div()
-        .id("note-path-list")
-        .flex()
-        .flex_col()
-        .gap_px()
-        .pl_4()
-        .min_h(gpui::px(0.))
-        .max_h(modal_list_max_h(files.len()))
-        .overflow_y_scroll();
+    let mut col = div().flex_shrink_0().flex().flex_col().gap_px().pl_4();
     for f in files {
-        col = col.child(
-            div()
-                .flex_shrink_0()
-                .h(theme::scaled_px(MODAL_LIST_ROW_H))
-                .w_full()
-                .flex()
-                .items_center()
-                // Same dir/name split as the file lists: muted directory,
-                // file name in the main colour (see `modal_path_text`).
-                .child(modal_path_text(SharedString::from(f.clone()))),
-        );
+        let row = div()
+            .flex_shrink_0()
+            .h(theme::scaled_px(MODAL_LIST_ROW_H))
+            .w_full()
+            .flex()
+            .items_center()
+            // Same dir/name split as the file lists: muted directory,
+            // file name in the main colour (see `modal_path_text`).
+            .child(modal_path_text(SharedString::from(f.clone())));
+        #[cfg(feature = "gui-e2e")]
+        let row = super::e2e::measure_leaf(format!("plan-note-path-{f}"), row);
+        col = col.child(row);
     }
     col.into_any_element()
 }

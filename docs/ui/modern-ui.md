@@ -179,6 +179,15 @@ against the **composed pill background**, including its containing panel, rather
 than comparing theme tokens in isolation. Disclosure hover/collapse must retain
 the same readable count; semantic chips keep their existing role colours.
 
+Shared plan-card warnings and blockers stay expanded in bounded note panels
+(#1633). The shell supplies the same viewport/compact height ceiling used by
+target panels; fixed actions and sibling target lists retain their own space.
+When the card already uses a scrolling body, that body owns scrolling instead.
+Structured note paths belong to their note's owner, never a nested scroller.
+Test reachability separately from containment: a capped card with pinned buttons
+can still clip all but the first notes. Measure scroll viewports from outside
+their scrolling content; an absolute in-content probe moves with the rows.
+
 ## In an issue for UI work
 
 Add three lines instead of a style table: **role(s)**, **reference state**

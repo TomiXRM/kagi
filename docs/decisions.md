@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-16
+> **Last updated:** 2026-10-17
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,8 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-17 | #1633: single-reference destructive confirmation actions explicitly count one branch | #454 requires counted footer actions as well as named targets. Preserve the short heading/chip design from #994 and existing two-stage approval; add the single affected branch count to Reset, local branch deletion and force-with-lease labels in EN/JA, including armed labels. Real Apple Light/EN/100% and Apple Dark/JA/167% windows at 1000×700 keep all six footer states visible; arm then cancel leaves local and remote fixture refs unchanged. |
+| 2026-10-17 | #1633: shared plan warnings/blockers scroll as bounded sibling panels, or defer to an already-scrolling body | The explicit 200-note native case reached only 8 notes despite a contained card and pinned actions. Reuse the shell's viewport/compact ceiling; keep mandatory notes expanded and target panels independent. Structured note paths become plain content inside that same owner, eliminating nested scrolling. Test-only viewport measurements use `measure_leaf`, since an absolute child probe follows the content offset and can misdirect subsequent wheel input. No approval, execution, wording or palette change. |
 | 2026-10-16 | #1640: compact membership uses configured rem × current root rem, not fixed 1000px | Default 70rem, integer 40–160 in Appearance, flat-string persistence through the existing store and typed hot reads. Logical coordinates already account for OS scale. Live threshold/zoom changes retain the existing compact lifecycle and session/input owners; desktop-only stress fixtures preserve narrow geometry with an isolated supported 40rem setting where needed. Supersedes the fixed breakpoint in [ADR-0224](adr/0224-compact-layout.md). |
 | 2026-10-16 | Compact Commit popup hugs short drafts and keeps an independent height ceiling | A real 1080px compact window left about 90px below Commit with an empty body. Remove compact-only full-height constraints; measure painted popup height solely for existing anchored flip/clamp placement, without duplicating input sizing or cloning drafts. Short→long→short must release height again; [ADR-0224](adr/0224-compact-layout.md#pinned-wip-composer). |
 | 2026-10-16 | #1617 Changes/Inspector: selection-fade text uses contrast-safe transient ink, not RGB interpolation | Actual active-window frame38 and native glyph pixels exposed 1.943:1 gray-on-blue text. Preserve exact wash0/1 label styles; choose one opaque primary/status/diffstat foreground against the composited in-flight wash using the existing on-accent3:1 policy. Logical selection and Git bar colours are unchanged. [ADR-0225](adr/0225-motion-system.md) |

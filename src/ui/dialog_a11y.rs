@@ -20,6 +20,8 @@ use std::rc::Rc;
 use gpui::{
     AccessibleAction, App, Div, Role, SharedString, Stateful, StatefulInteractiveElement, Window,
 };
+#[cfg(feature = "gui-e2e")]
+use gpui::{ParentElement as _, Styled as _};
 use kagi_ui_core::i18n::Msg;
 
 /// Custom action id for Confirm.
@@ -194,6 +196,10 @@ pub(crate) fn apply_note(
     text: &str,
 ) -> Stateful<Div> {
     record_note(&id, note_role(blocker), text);
+    #[cfg(feature = "gui-e2e")]
+    let el = el
+        .relative()
+        .child(super::e2e::measure_inside(id.to_string()));
     el.role(note_role(blocker))
         .aria_label(SharedString::from(text))
 }

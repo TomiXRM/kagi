@@ -401,6 +401,7 @@ pub(crate) fn measure_leaf(
         measured_leaf::MeasuredLeaf {
             name: name.into(),
             control: control.into_any_element(),
+            confirm: false,
         }
         .into_any_element()
     }
@@ -469,25 +470,15 @@ mod measure_inside_tests {
 
 pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElement {
     #[cfg(feature = "gui-e2e")]
-    use gpui::{IntoElement as _, ParentElement as _};
+    use gpui::IntoElement as _;
     #[cfg(feature = "gui-e2e")]
     {
-        gpui::div()
-            .relative()
-            .child(
-                gpui::canvas(
-                    |bounds, window, _| {
-                        record_confirm_bounds(window.window_handle().window_id(), bounds)
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            )
-            .child(button)
-            .into_any_element()
+        measured_leaf::MeasuredLeaf {
+            name: "plan-confirm".into(),
+            control: button.into_any_element(),
+            confirm: true,
+        }
+        .into_any_element()
     }
     #[cfg(not(feature = "gui-e2e"))]
     {

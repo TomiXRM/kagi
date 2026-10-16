@@ -145,11 +145,11 @@ pub fn oplog_outcome_from(
                 head: predicted.head.clone(),
                 dirty: match work_backup {
                     Some(work) => format!(
-                        "synced '{branch}' {from}→{to}; {removed_untracked} untracked removed; restore tip: git update-ref refs/heads/{branch} {tip_backup}; restore work: git stash apply --index {}",
+                        "synced '{branch}' {from}→{to}; {removed_untracked} untracked removed; restore tip: git update-ref refs/heads/{branch} {tip_backup}; restore checkout: git read-tree -m -u {tip_backup}; restore work: git stash apply --index {}",
                         work.reference
                     ),
                     None => format!(
-                        "synced '{branch}' {from}→{to}; restore tip: git update-ref refs/heads/{branch} {tip_backup}"
+                        "synced '{branch}' {from}→{to}; restore tip: git update-ref refs/heads/{branch} {tip_backup}; restore checkout: git read-tree -m -u {tip_backup}"
                     ),
                 },
             },

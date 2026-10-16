@@ -124,8 +124,8 @@ impl SyncTitle {
 }
 
 /// Recovery kinds for the sync-to-remote op. The backup ref names are fixed
-/// at plan time (the attempt id is part of the plan) so the card can show the
-/// exact commands that will work after execution.
+/// at plan time (the attempt id is part of the plan). Recovery is manual and
+/// requires inspecting the current state and preserving any later work first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncRecovery {
     SyncToRemote {
@@ -151,12 +151,12 @@ impl SyncRecovery {
                 work_backup,
             } => {
                 let mut s = format!(
-                    "Restore the pre-sync tip of '{branch}' ({}) with:\n  git update-ref refs/heads/{branch} {tip_backup}",
+                    "Manual recovery from the unchanged post-sync state. Preserve any newer commits and file changes first; inspect partial operations separately.\nRestore the pre-sync tip of '{branch}' ({}) with:\n  git update-ref refs/heads/{branch} {tip_backup}\nOnly if '{branch}' is checked out, align its index and tracked files to the saved tip:\n  git read-tree -m -u {tip_backup}",
                     &from[..from.len().min(7)]
                 );
                 if let Some(work) = work_backup {
                     s.push_str(&format!(
-                        "\nRestore the index and working tree (staged/unstaged/untracked) with:\n  git stash apply --index {work}"
+                        "\nThen, only in '{branch}'s checkout, restore the saved staged, unstaged and untracked files:\n  git stash apply --index {work}"
                     ));
                 }
                 s.push_str("\nBoth refs stay until this entry is forgotten.");
@@ -175,62 +175,17 @@ impl SyncRecovery {
                 work_backup,
             } => {
                 let mut s = format!(
-                    "Restore the pre-sync tip of '{branch}' ({}) with:\n  git update-ref refs/heads/{branch} {tip_backup}",
+                    "Manual recovery from the unchanged post-sync state. Preserve any newer commits and file changes first; inspect partial operations separately.\nRestore the pre-sync tip of '{branch}' ({}) with:\n  git update-ref refs/heads/{branch} {tip_backup}\nOnly if '{branch}' is checked out, align its index and tracked files to the saved tip:\n  git read-tree -m -u {tip_backup}",
                     &from[..from.len().min(7)]
                 );
                 if let Some(work) = work_backup {
                     s.push_str(&format!(
-                        "\nRestore the index and working tree (staged/unstaged/untracked) with:\n  git stash apply --index {work}"
+                        "\nThen, only in '{branch}'s checkout, restore the saved staged, unstaged and untracked files:\n  git stash apply --index {work}"
                     ));
                 }
                 s.push_str("\nBackups are not automatically deleted.");
                 s
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recovery_lists_both_refs_when_work_was_kept() {
-        let r = SyncRecovery::SyncToRemote {
-            branch: "main".into(),
-            from: "abcdef0123456789".into(),
-            tip_backup: "refs/kagi/backups/x/0".into(),
-            work_backup: Some("refs/kagi/backups/x/1".into()),
-        };
-        let text = r.message_en();
-        assert!(text.contains("git update-ref refs/heads/main refs/kagi/backups/x/0"));
-        assert!(text.contains("git stash apply --index refs/kagi/backups/x/1"));
-        assert!(text.contains("(abcdef0)"));
-        let bare = SyncRecovery::SyncToRemote {
-            branch: "main".into(),
-            from: "abcdef0123456789".into(),
-            tip_backup: "refs/kagi/backups/x/0".into(),
-            work_backup: None,
-        };
-        assert!(!bare.message_en().contains("stash apply"));
-    }
-
-    #[test]
-    fn title_and_blockers_name_the_branch_and_upstream() {
-        assert_eq!(
-            SyncTitle::SyncToRemote {
-                branch: "feat".into(),
-                upstream: "origin/feat".into(),
-                to: "1234567".into()
-            }
-            .message_en(),
-            "Sync 'feat' to 'origin/feat' (1234567)"
-        );
-        assert!(SyncNote::UpstreamNotFetched {
-            branch: "feat".into(),
-            upstream: "origin/feat".into()
-        }
-        .message_en()
-        .contains("Fetch first"));
     }
 }

@@ -7,6 +7,7 @@ use gpui::{
 pub(super) struct MeasuredLeaf {
     pub name: String,
     pub control: AnyElement,
+    pub confirm: bool,
 }
 
 impl IntoElement for MeasuredLeaf {
@@ -48,6 +49,9 @@ impl Element for MeasuredLeaf {
     ) {
         self.control.prepaint(window, cx);
         super::record_control_bounds(window.window_handle().window_id(), &self.name, bounds);
+        if self.confirm {
+            super::record_confirm_bounds(window.window_handle().window_id(), bounds);
+        }
     }
 
     fn paint(

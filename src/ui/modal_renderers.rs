@@ -1061,7 +1061,7 @@ fn render_plan_modal_card_styled(
         // Cancel button (always present — safe default). #462: measured, so a
         // scenario can assert the footer's own controls are on screen rather
         // than inferring it from the card.
-        .child(super::e2e::measure_control(
+        .child(super::e2e::measure_leaf(
             "plan-cancel",
             modal_button(
                 "plan-cancel",
@@ -1122,26 +1122,7 @@ fn render_plan_modal_card_styled(
             cx,
         )
     };
-    #[cfg(feature = "gui-e2e")]
-    let button = div()
-        .relative()
-        .child(
-            gpui::canvas(
-                move |bounds, window, _| {
-                    crate::ui::e2e::record_confirm_bounds(
-                        window.window_handle().window_id(),
-                        bounds,
-                    );
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full(),
-        )
-        .child(super::modal_shell::modal_probe("plan-confirm"))
-        .child(button);
+    let button = super::e2e::measure_confirm(button);
     button_row = button_row.child(button);
 
     // #462: the footer is the block a compact card must never push off the

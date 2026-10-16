@@ -512,8 +512,24 @@ fn recovery_commands(text: &str, language: Lang) -> Option<String> {
     for part in text.split("; ") {
         let (label, command) = if let Some(command) = part.strip_prefix("restore tip: ") {
             (choose(language, "Restore branch", "branch を復元"), command)
+        } else if let Some(command) = part.strip_prefix("restore checkout: ") {
+            (
+                choose(
+                    language,
+                    "Align index/tracked files only if the branch being restored is checked out",
+                    "復元対象の branch が checkout 中の場合に限り、index / tracked ファイルを揃える",
+                ),
+                command,
+            )
         } else if let Some(command) = part.strip_prefix("restore work: ") {
-            (choose(language, "Restore files", "ファイルを復元"), command)
+            (
+                choose(
+                    language,
+                    "Restore saved files only in the checkout of the branch being restored",
+                    "復元対象の branch の checkout でのみ保存済みのファイルを復元",
+                ),
+                command,
+            )
         } else if let Some(command) = part.strip_prefix("restore: ") {
             (choose(language, "Restore", "復元"), command)
         } else {
@@ -572,8 +588,8 @@ fn recovery_state(text: &str, language: Lang) -> Option<String> {
         };
         let recovery = recovery_commands(commands, language)?;
         let mut out = match language {
-            Lang::En => format!("Synced '{branch}': {from} → {to}."),
-            Lang::Ja => format!("'{branch}' を同期しました: {from} → {to}。"),
+            Lang::En => format!("Synced '{branch}': {from} → {to}. Manual recovery from the unchanged post-sync state. Preserve any newer commits and file changes first; inspect partial operations separately."),
+            Lang::Ja => format!("'{branch}' を同期しました: {from} → {to}。同期直後の状態から手動で復元する手順です。その後の commit やファイル変更は先に保全し、部分実行の場合は個別に状態を確認してください。"),
         };
         if let Some(count) = removed {
             out.push_str(&match language {
@@ -589,8 +605,8 @@ fn recovery_state(text: &str, language: Lang) -> Option<String> {
         let recovery = recovery_commands(&format!("restore tip: {commands}"), language)?;
         let error = super::diagnostic(error);
         return Some(match language {
-            Lang::En => format!("Could not confirm the sync result: {error}.{recovery}"),
-            Lang::Ja => format!("同期の結果を確認できませんでした: {error}。{recovery}"),
+            Lang::En => format!("Could not confirm the sync result: {error}. Inspect the partial state and preserve any newer work before manual recovery; these commands are not an automatic rollback.{recovery}"),
+            Lang::Ja => format!("同期の結果を確認できませんでした: {error}。手動で復元する前に部分実行の状態を確認し、その後の作業を保全してください。以下は自動 rollback ではありません。{recovery}"),
         });
     }
     None

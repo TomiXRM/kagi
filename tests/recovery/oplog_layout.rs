@@ -41,10 +41,10 @@ pub fn scenario_oplog_row_167_result_visible(cx: &mut VisualTestAppContext) {
                     app.update(cx, |app, cx| {
                         app.set_lang(language, cx);
                         app.set_theme(slug, cx);
+                        app.select(0);
                         app.bottom_panel_open = true;
                         app.bottom_tab = BottomTab::OperationLog;
                         app.bottom_panel_height = 360.;
-                        app.select(0);
                         cx.notify();
                     });
                     let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
@@ -86,8 +86,15 @@ pub fn scenario_oplog_row_167_result_visible(cx: &mut VisualTestAppContext) {
                         .iter()
                         .enumerate()
                     {
-                        let row = cx
-                            .read(|cx| panel.read(cx).scroll_handle().bounds_for_item(i).unwrap());
+                        // Compact windows own a smaller viewport independently
+                        // of bottom_panel_height; reveal every virtualized row.
+                        cx.read(|cx| panel.read(cx).scroll_handle().scroll_to_reveal_item(i));
+                        paint(cx, window);
+                        let row = cx.read(|cx| {
+                            panel.read(cx).scroll_handle().bounds_for_item(i)
+                        }).unwrap_or_else(|| {
+                            panic!("row {i} must be visible: {language:?} {zoom} {slug} {dimensions:?}")
+                        });
                         let status = bounds(window, &format!("oplog-status-{i}-{status}"));
                         let copy = bounds(window, &format!("oplog-copy-{i}"));
                         assert!(

@@ -192,6 +192,9 @@ fn finish(
             shell_quote(&format!("refs/heads/{branch}")),
             shell_quote(&tip_backup)
         )];
+        if is_head {
+            commands.push(format!("git read-tree -m -u {}", shell_quote(&tip_backup)));
+        }
         if let Some(work) = &work_backup {
             commands.push(format!("git stash apply --index {}", shell_quote(work)));
         }
@@ -488,7 +491,9 @@ pub(crate) fn execute_sync_to_remote(
         None
     };
     let restore_hint = |work: &Option<SyncWorkBackup>| {
-        let mut s = format!("restore tip: git update-ref refs/heads/{branch} {tip_backup}");
+        let mut s = format!(
+            "restore tip: git update-ref refs/heads/{branch} {tip_backup}; restore checkout: git read-tree -m -u {tip_backup}"
+        );
         if let Some(w) = work {
             s.push_str(&format!(
                 "; restore work: git stash apply --index {}",

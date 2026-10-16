@@ -11,6 +11,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Keep neutral confirmation-dialog target and section counts readable over their composed pill backgrounds in Nagi and Apple Light/Dark. Preserve the existing tint, geometry, semantic warning/danger chips and operation routes. (#1638)
 - Keep long confirmation warning/blocker collections reachable in bounded scroll panels while preserving pinned actions and target lists. Structured note paths share their note's scroll owner instead of creating nested scrollers. (#1633)
   - Show the single affected branch count on Reset, local branch deletion and force-with-lease confirmation buttons in both confirmation stages, preserving named targets and existing safety checks.
+- Include the saved-tip checkout-alignment step in Sync-to-remote recovery instructions, so recorded commands restore the original index and working tree before applying retained changes. Cover dirty and clean checked-out branches while leaving ref-only recovery's active checkout untouched; clarify manual recovery conditions in English and Japanese. (#1630)
+- Keep Cancel visible when a long confirmation action cannot fit beside it: shared dialog footers wrap, and full action captions can grow onto multiple lines instead of overflowing. Preserve native button semantics, the safe cancellation path and two-stage confirmation. (#1646)
 
 ## [0.46.0] - 2026-10-17
 

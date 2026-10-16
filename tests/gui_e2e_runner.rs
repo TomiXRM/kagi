@@ -234,6 +234,10 @@ mod tab_strip;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/sync_layout.rs"]
+mod sync_layout;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/update_notice.rs"]
 mod update_notice;
 
@@ -2151,6 +2155,10 @@ mod macos {
             (
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
+            ),
+            (
+                "sync_footer_cancel_visible",
+                Box::new(crate::sync_layout::scenario_sync_footer_cancel_visible),
             ),
             ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
             (

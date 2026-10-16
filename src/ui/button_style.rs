@@ -343,13 +343,20 @@ fn record_modal_button(id: &'static str, label: &SharedString, reason: Option<&S
 #[inline]
 fn record_modal_button(_id: &'static str, _label: &SharedString, _reason: Option<&SharedString>) {}
 
-/// Fixed, right-aligned dialog footer. Callers append Cancel first and the
-/// default action last; button sizing and semantics stay in `modal_button`.
+/// Pinned, right-aligned dialog footer. Callers append Cancel first and the
+/// default action last. When space runs out, Cancel wraps below the action;
+/// construction order and button semantics stay unchanged.
 pub(crate) fn modal_button_row() -> gpui::Div {
-    div().flex().flex_row().gap_2().justify_end()
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap_reverse()
+        .flex_shrink_0()
+        .gap_2()
+        .justify_end()
 }
 
-/// Dialog actions share the small (24px) control, regardless of operation.
+/// Dialog actions share the small (24px) minimum; full captions may wrap taller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModalButtonKind {
     Cancel,
@@ -454,23 +461,23 @@ fn render_modal_button(
         ModalButtonKind::Primary => ButtonRole::Primary,
         ModalButtonKind::Destructive => ButtonRole::Destructive,
     };
-    let button = if let Some(description) = &description {
-        button_accessibility(
-            apply_role(
-                Button::new(id).child(modal_caption(label.clone(), true)),
-                role,
-                cx,
-            ),
-            label,
-            None,
-            Some(description.clone()),
-            false,
-        )
-    } else {
-        KagiButton::styled(id, label, role, cx)
-    };
+    let bounded = description.is_some();
+    let button = button_accessibility(
+        apply_role(
+            Button::new(id).child(modal_caption(label.clone(), bounded)),
+            role,
+            cx,
+        ),
+        label,
+        None,
+        description.clone(),
+        false,
+    );
     let button = button
         .small()
+        .min_w_0()
+        .max_w_full()
+        .when(!bounded, |button| button.h_auto().min_h_6().py_1())
         .tab_stop(tab_stop)
         .on_key_down(move |event, window, cx| {
             #[cfg(feature = "gui-e2e")]
@@ -517,6 +524,9 @@ fn unavailable_modal_button(
         .items_center()
         .justify_center()
         .h_6()
+        .min_w_0()
+        .max_w_full()
+        .when(!bounded, |button| button.h_auto().min_h_6().py_1())
         .px_3()
         .text_xs()
         .rounded(cx.theme().radius)
@@ -535,7 +545,14 @@ fn unavailable_modal_button(
 
 fn modal_caption(label: SharedString, bounded: bool) -> gpui::AnyElement {
     if !bounded {
-        return label.into_any_element();
+        return div()
+            .min_w_0()
+            .max_w_full()
+            .whitespace_normal()
+            .line_height(gpui::relative(1.))
+            .text_center()
+            .child(label)
+            .into_any_element();
     }
     div()
         .max_w(super::theme::scaled_px(160.))

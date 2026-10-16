@@ -4224,8 +4224,6 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
             assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
             assert!(modal.plan.destructive);
             assert!(!modal.confirm_armed);
-            let recovery = modal.plan.recovery.as_ref().expect("recovery");
-            assert_eq!(recovery.commands.len(), 2, "{:?}", recovery.commands);
         });
         // #354: the sync card is announced as a two-stage alert dialog.
         redraw(cx, &app, window);

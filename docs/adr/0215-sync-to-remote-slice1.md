@@ -1,6 +1,6 @@
 # ADR-0215: sync-to-remote slice 1 — git2 だけで「保全してから揃える」
 
-- Status: **Accepted**（slice 1 = backend。UI は slice 2、CLI / MCP 露出なし）
+- Status: **Accepted**（backend / UI 実装済み。CLI / MCP 露出なし）
 - Date: 2026-10-02
 - Related: [#536](https://github.com/TomiXRM/kagi/issues/536)、[ADR-0203](0203-sync-to-remote.md)（設計 draft。本 ADR はその保全方針を実装可能な最小形に絞る）、ADR-0104（pipeline）、ADR-0023（destructive = 二段 confirm）、#523 / ADR-0179（`refs/kagi/backups/`）、ADR-0154（snapshot は必須保全に使わない）
 - 不変条件 3: `reset --hard` / `git clean` / `push --force` の文字列はコードにも文書にも出さない（CI gate）。本操作はそれらの代替であり、どれも使わない。
@@ -17,10 +17,11 @@
 
 - 対象: ローカル branch `B`（HEAD でもそうでなくてもよい）と、その upstream `R`（取得済み remote-tracking ref）の tip `T`。
 - 結果: `B = T`。`B` が HEAD なら index と tracked WT も `T` に一致し、staged / unstaged は空。
-- 保全（必須、設定に依らない）: `refs/kagi/backups/<op>/0` = 旧 tip `H`。`B` が HEAD で dirty なら `refs/kagi/backups/<op>/1` = **git stash と同じ形の commit**（tree = WT 全体、親 1 = `H`、親 2 = index commit）。復元は標準 git だけで行える:
-  - `git update-ref refs/heads/<B> refs/kagi/backups/<op>/0`
-  - `git stash apply --index refs/kagi/backups/<op>/1`
-  テストはこの 2 コマンドだけで status（`A`/`MM`/`D `+`??`/`??`）、index entries、WT 内容が完全に元に戻ることを確認する。
+- 保全（必須、設定に依らない）: `refs/kagi/backups/<op>/0` = 旧 tip `H`。`B` が HEAD で dirty なら `refs/kagi/backups/<op>/1` = **git stash と同じ形の commit**（tree = WT 全体、親 1 = `H`、親 2 = index commit）。同期直後の状態からの手動復元は標準 git で行える。その後の commit / ファイル変更は先に保全し、部分実行の場合は個別に状態を確認する:
+  1. `git update-ref refs/heads/<B> refs/kagi/backups/<op>/0`
+  2. `B` の checkout を復元する場合: `git read-tree -m -u refs/kagi/backups/<op>/0`
+  3. work backup がある場合、その `B` の checkout で: `git stash apply --index refs/kagi/backups/<op>/1`
+  HEAD の plan は 2 を含み、dirty なら 3 も含む。非 HEAD の ref-only plan は 1 のみで、別 branch の index / WT に触れない。テストは **receipt に記録されたコマンドそのもの**を実行し、HEAD、status（`A`/`MM`/`D `+`??`/`??`）、index entries、WT 内容の復元と ref-only 時の checkout 不変を確認する。
 - **untracked（非 ignore）は backup/1 に取り込んだ上で WT から取り除く。ignored には一切触らない。** 取り除くのは「現在のファイル内容の hash が backup/1 の tree の blob と一致する」と検証できたパスだけで、1 ファイルずつ `remove_file` する。一括掃除はしない。ignored ファイルが target のパスと衝突する場合は checkout が拒否し（`overwrite_ignored(false)`）、ref は動かない。
 - ネットワークは使わない。`T` は plan 時点で取得済みの値。plan 後に `R` が動けば preflight が拒否する。
 
@@ -45,9 +46,9 @@ PM 案は「(3) ref 更新 → (4) checkout」だったが、**checkout を先**
 - **ref を先に動かす**: §2。
 - **ignored も削除 / 退避**: 要望（#536）どおり触らない。
 
-## 4. 未達・次 slice
+## 4. 現在の範囲・制約
 
-- UI（Advanced / Dangerous menu → card → 二段 confirm）は slice 2。card では `PreservesWork` / `AbandonsCommits` / `KeepsIgnored` の warning と recovery 2 コマンドを表示する。
+- UI（Advanced / Dangerous menu → card → 二段 confirm）は実装済み。card は `PreservesWork` / `AbandonsCommits` / `KeepsIgnored` の warning と、対象に応じた上記の recovery commands を表示する。
 - CLI / MCP 露出なし。
 - HEAD の Sync は sparse checkout（cone／non-cone、config・patterns・skip-worktree）、dirty／uninitialized submodule、変更対象の外部 filter／LFS を plan と preflight で拒否する（2026-10-11、#1137 amendment）。非 HEAD branch の ref-only Sync は WT に触れないためこの制限を適用しない。
 - 空ディレクトリは untracked 削除後に残る（git も空ディレクトリを扱わない）。
@@ -81,3 +82,16 @@ non-HEAD branch is unchanged. The read-only detection helper is reusable by othe
 force-checkout writers; snapshot restore, conflict abort and directory/file
 resolution do not gain the sparse/submodule guard in this change. Discard's
 target-filter guard is separately implemented by #1136.
+
+## Amendment — 2026-10-17: executable recovery instructions (#1630)
+
+実画面の受入確認で、従来の `update-ref` → `stash apply --index` だけでは、
+index / WT が同期先の tree のままなので patch 適用に失敗した。保全データの欠損ではない。
+従来の round-trip test は間に `read-tree` を手で補っていたため、表示された手順の不足を検出しなかった。
+
+新しい plan / receipt は、HEAD の復元時に保存済み tip への `read-tree -m -u` を記録する。
+clean な HEAD の同期にもこの手順が必要。EN / JA の案内と receipt の checkout 手順は、
+復元対象 branch の checkout に限る条件と、その後の作業を先に保全する前提を示す。
+非 HEAD の ref-only recovery に checkout command は追加しない。
+古い receipt の履歴・保存済み command list は書き換えないため、旧手順を使う場合も上記の整合手順が必要。
+これは手動復元案内の修正であり、自動 rollback、CLI / MCP 操作、保全形式の変更ではない。

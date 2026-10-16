@@ -113,6 +113,27 @@ Retain target/required-warning visibility, default-closed supporting commands,
 and separate note/body scroll ownership. Tier B must inspect real narrow
 windows, reach the final file, exercise optional disclosure and compare both
 Apple themes/locales/zooms; never execute a stress plan to validate presentation.
+
+For #1646 use `KAGI_GUI_E2E_ONLY='sync_footer_cancel_visible,modal_compact,modal_scale_notes,modal_scale_targets,sync_to_remote_armed,modal_polish_editor_fs,modal_polish_remote,modal_polish_stash_after,primary_button_states,create_branch_warnings,branch_rename_neutral_state,stash_entry_identity,pull_fetch_preserves_conflict_blocker'`.
+`sync_footer_cancel_visible` covers Apple Light/Dark × EN/JA × 100%/167%
+at 1000×700 and 940×700. Both confirmation stages must keep positive,
+nonoverlapping Cancel/Confirm bounds inside the footer, including expanded
+recovery. It clicks Cancel, rather than using Escape to bypass an invisible
+control, and checks repository/receipt state. Use transparent leaf probes for
+these buttons: auto-width measurement wrappers change percentage sizing.
+Tier B must show the full armed caption and clickable Cancel in the real
+narrow window; compare the same language, theme, zoom and fixture before/after.
+
+For #1630, retain a real divergent Sync fixture with staged, unstaged,
+untracked and ignored files. Record Cancel and first-stage no-write snapshots,
+the successful operation's persisted receipt and every backup object, then
+restore using only its recorded `recovery_plan.commands`—no unrecorded
+checkout-alignment command. Check HEAD, staged blobs/modes, all working-tree
+bytes, config and remote refs. Separately exercise stale tracking refs and
+sparse/submodule/filter refusals without a repository write or false success.
+Capture EN/JA × Apple Light/Dark × 100%/167% narrow-window presentation.
+Keep the issue open until its separate human screenshot review is recorded.
+
 Menu behavior uses `branch_menu_compact,context_menu_keys_short,context_menu_keys_sidebar`.
 Run the separate `inventory:57-CommitMenu` through `inventory:62-WorktreeMenu`,
 plus `inventory:67-EditorTreeMenu`, `inventory:70-FileMenu` and

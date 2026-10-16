@@ -57,7 +57,7 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
-For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_select'`
+For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_detail_select_copy'`
 with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
 selecting both Nagi presets, checks native focus-ring and graph-selection
 pixels, visibly blue active versus neutral inactive fills with rendered

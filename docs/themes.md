@@ -56,6 +56,8 @@ Keep at most four chromatic families, with clear interaction and semantic cues:
 Graph lanes cycle **blue, green and amber** rather than adding more hues or
 alternating blue with gray. Dark lane bands and ref chips are brighter; opaque
 chip fills keep their white labels readable even over a selected row.
+This stronger paint is specific to Graph badges and their drag ghost;
+confirmation badges retain their lighter tint and semantic label colours.
 Remote/tag metadata and ordinary functions, strings, numbers, variables,
 comments, operators and punctuation stay neutral. Generated initial avatars
 are grayscale. Added/deleted rows retain green/red cues. Expanded Dark operation

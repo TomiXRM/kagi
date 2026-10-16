@@ -117,7 +117,7 @@ impl KagiApp {
                     cx.stop_propagation();
                     cx.notify();
                 });
-                let (cb, cbd, ct) = theme::badge_style(stash_color);
+                let (cb, cbd, ct) = theme::graph_badge_style(stash_color);
                 super::list_a11y::list_option(
                     "commit-list",
                     div().id(("stash-graph-row", index)),
@@ -319,7 +319,7 @@ impl KagiApp {
         // of the selected row beneath it. Other presets retain their WIP tint.
         let (chip_bg, chip_border, chip_text): (gpui::Hsla, gpui::Hsla, gpui::Hsla) =
             if theme().slug.as_ref() == "nagi-dark" {
-                let (fill, border, text) = theme::badge_style(u32::from(color.to_rgb()) >> 8);
+                let (fill, border, text) = theme::graph_badge_style(u32::from(color.to_rgb()) >> 8);
                 (
                     gpui::rgba(fill).into(),
                     gpui::rgba(border).into(),

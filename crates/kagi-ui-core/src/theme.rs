@@ -608,15 +608,24 @@ pub fn take_theme_load_errors() -> Vec<ThemeLoadError> {
 
 /// GitKraken-style ref-badge styling (user request).
 ///
-/// Most presets use low-alpha ref fill with a stronger border. Nagi Dark
-/// precomposites a stronger tint over its base into an opaque chip so selected
-/// rows cannot wash out its white labels. Dark themes use white text; light
-/// themes use their main near-black ink, preserving ADR-0126's light treatment.
+/// Low-alpha ref fill with a stronger border. Dark themes use white text;
+/// light themes use their main near-black ink, preserving ADR-0126's treatment.
+/// Non-graph semantic chips may retain their own foreground instead.
 ///
 /// Returns `(bg_rgba, border_rgba, text_rgb)` for use with
 /// `gpui::rgba` / `gpui::rgb`.
 #[inline]
 pub fn badge_style(color: u32) -> (u32, u32, u32) {
+    let t = theme();
+    // 0x33 ≈ 20% fill, 0x66 ≈ 40% border (rgitui grammar).
+    let text = if t.dark { 0xffffff } else { t.text_main };
+    ((color << 8) | 0x33, (color << 8) | 0x66, text)
+}
+
+/// Graph badges need an opaque Nagi Dark fill to prevent selected-row tint
+/// stacking. Generic semantic chips retain [`badge_style`]'s subtle fill.
+#[inline]
+pub fn graph_badge_style(color: u32) -> (u32, u32, u32) {
     let t = theme();
     if t.slug == "nagi-dark" {
         // An opaque base-anchored chip cannot stack its tint over selection.
@@ -624,9 +633,7 @@ pub fn badge_style(color: u32) -> (u32, u32, u32) {
         let fill = u32::from(fill.to_rgb());
         return (fill, (color << 8) | 0xff, 0xffffff);
     }
-    // 0x33 ≈ 20% fill, 0x66 ≈ 40% border (rgitui grammar).
-    let text = if t.dark { 0xffffff } else { t.text_main };
-    ((color << 8) | 0x33, (color << 8) | 0x66, text)
+    badge_style(color)
 }
 
 /// Fill + border for an inset panel inside a modal card (#454 section panels).

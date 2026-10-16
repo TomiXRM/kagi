@@ -196,7 +196,7 @@ fn nagi_ref_badges_are_readable_without_tint_stacking_on_selected_rows() {
             t.color_remote,
             t.color_tag,
         ]) {
-            let (fill, border, ink) = badge_style(color);
+            let (fill, border, ink) = graph_badge_style(color);
             let fill_color: Hsla = gpui::rgba(fill).into();
             let border_color: Hsla = gpui::rgba(border).into();
             if t.dark {
@@ -219,6 +219,36 @@ fn nagi_ref_badges_are_readable_without_tint_stacking_on_selected_rows() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn nagi_dark_non_graph_chips_keep_semantic_ink_readable_on_modal_and_surface() {
+    let _guard = ACTIVE_THEME_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    struct Restore(ThemeHandle);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            registry_mut().activate(self.0.clone());
+        }
+    }
+    let _restore = Restore(theme());
+    let t = &NAGI_DARK;
+    registry_mut().activate(ThemeHandle::builtin(index_of(&t.slug).unwrap()));
+    // Modal/title/plan chips keep their semantic foreground instead of the
+    // returned badge label. Test that actual composition, not white graph ink.
+    for surface in [t.elevated_surface(t.panel), t.surface] {
+        for ink in [
+            t.ui_accent(),
+            t.color_success,
+            t.color_warning,
+            t.color_blocker,
+        ] {
+            let (fill, _, _) = badge_style(ink);
+            let background = rgb24(to_hsla(surface).blend(gpui::rgba(fill).into()));
+            readable(t, "non-graph semantic chip", ink, background, 4.5);
         }
     }
 }

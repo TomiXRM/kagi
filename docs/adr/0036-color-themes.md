@@ -138,6 +138,10 @@ Nagi Light, inactive rows and other presets retain their existing ink policy.
 Dark graph bands are stronger, and opaque tinted ref-chip backgrounds prevent
 selection from washing out their white labels. Expanded operation-log details
 are neutral content surfaces rather than active-selection surfaces.
+Keep that opaque paint in `graph_badge_style`, including the lifted branch
+badge. The generic `badge_style` still serves confirmation/plan chips whose
+callers draw semantic foregrounds; strengthening their fill would reduce text
+contrast instead of improving Graph visibility.
 Disabled controls retain native disabling. Loading, empty and error behavior
 is unchanged; only their existing semantic tokens differ. There are no new
 Git writes, modal slots, focus handles, animations or confirmation routes.

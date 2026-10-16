@@ -98,7 +98,7 @@ pub fn scenario_graph_selection_wash(cx: &mut VisualTestAppContext) {
                         Hsla::from(gpui::rgb(palette.text_sub))
                     );
                     let lane = cx.read(|cx| app.read(cx).view().rows[0].node_color);
-                    let (_, _, ink) = theme::badge_style(theme::lane_color_u32(lane));
+                    let (_, _, ink) = theme::graph_badge_style(theme::lane_color_u32(lane));
                     assert_eq!(
                         e2e::control_paint(window.window_id(), "graph-selected-badge-label")
                             .unwrap()

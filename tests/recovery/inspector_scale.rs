@@ -188,8 +188,11 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
                 cx.update(theme::sync_gpui_component_theme);
-                // The desktop Inspector starts at 1000px; 940px now draws compact Changes.
-                for (width, height) in [(1392., 883.), (1000., 720.)] {
+                // This density oracle requires independent desktop Inspector frames.
+                let desktop_width =
+                    (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+                for (width, height) in [(1392_f32.max(desktop_width), 883.), (desktop_width, 720.)]
+                {
                     let (app, window) = mount(cx, fixture.path());
                     app.update(cx, |app, cx| {
                         app.inspector_visible = true;
@@ -205,7 +208,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                     let header = bounds(window, "inspector-header");
                     let offset = f32::from(first.top() - header.top());
                     eprintln!("[gui-e2e] inspector_scale {preset} {lang:?} {zoom} {width}x{height}: row={:?}, first_y={offset}, estimate={:?}", first.size.height, KagiApp::inspector_row_height_for_e2e());
-                    measurements.push((zoom, width, offset, first.size.height));
+                    measurements.push((zoom, width, height, offset, first.size.height));
                     assert_row(window, "inspector-file-1", zoom);
                     inspect_rows(cx, &app, window, width, height, zoom);
                     unmount(cx, app, window);
@@ -221,7 +224,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         theme::scaled_px(20.),
         "Inspector uniform extent must match the sidebar's 20 reference pixels (old: 24)"
     );
-    for (zoom, width, offset, height) in measurements {
+    for (zoom, width, viewport_height, offset, height) in measurements {
         theme::set_zoom(zoom);
         assert!(
             (height - theme::scaled_px(20.)).abs() <= px(0.1),
@@ -233,8 +236,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 "high-zoom hit target must remain at least 20 logical pixels"
             );
         }
-        if width == 1000. {
-            // Native 1000×720 density ceilings, identical across languages/themes.
+        if viewport_height == 720. {
+            // Desktop-threshold ×720 density ceilings, identical across languages/themes.
             // Allow rows to move up; unrelated chrome improvements must not fail this oracle.
             let expected = if zoom == 1. { 340. } else { 433.5 };
             assert!(
@@ -242,7 +245,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 "desktop-breakpoint density must not regress: {offset} vs {expected} at {width}/{zoom}"
             );
         } else {
-            // Frozen pre-density measurements at the unchanged 1392×883 viewport.
+            // Frozen pre-density ceilings for the larger desktop viewport.
             let old_offset = if zoom == 1. { 416.5 } else { 487.5 };
             assert!(
                 offset < old_offset - 1.,

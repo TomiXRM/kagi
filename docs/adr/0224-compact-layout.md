@@ -27,15 +27,26 @@ pinned gpui-kit `Popover`; do not hand-build parallel controls or state owners.
 
 ## Decision
 
-### One breakpoint, unchanged wide layout
+### One configurable rem breakpoint (#1640)
 
-Use one central compact predicate: **logical window width < `px(1000.)`**, shared
-across all presets and independent of product zoom. At exactly 1000 logical px
-and above, retain the existing wide layout with no visual change from this
-feature. This supersedes the initial `theme::scaled_px(1000.)` proposal: Kagi's
-100% base would make that threshold 900 logical px and exclude the accepted
-940px compact viewport; 167% would incorrectly make the accepted 1392px desktop
-compact. Breakpoint membership is a viewport decision, not a control-size token.
+Use one central compact predicate: **logical window width < configured rem ×
+current root rem size**. The default is **70rem** (1008 logical px at 100% zoom);
+equality stays wide. This supersedes the original fixed 1000px, zoom-independent
+decision below and in historical verification records. Enlarging UI text now
+increases the width needed for the wide presentation. OS display scaling is
+already accounted for by logical window coordinates and must not be multiplied
+into the predicate again.
+
+Settings → Appearance exposes an integer threshold from **40 to 160rem**, in
+1rem steps, alongside its current logical-pixel conversion. Changes apply to open
+windows immediately and survive restart. The existing settings store persists
+`compact_threshold_rem` as a flat string; absent, invalid, fractional or
+out-of-range values use 70rem. A process-local typed value serves render-time
+reads; rendering does not read the settings file. Use the current theme root rem
+size rather than a window's potentially stale rem value during a zoom event.
+
+There is no separate force-compact mode, monitor-orientation heuristic or second
+layout owner. At or above the configured boundary retain the wide presentation.
 The rail remains `theme::scaled_px(44.)`; popup geometry and spacing continue to
 scale through existing theme helpers.
 
@@ -44,14 +55,13 @@ open gpui-kit Popovers containing the **existing** sidebar sections and filters.
 Navigation selection, filtering, empty/loading/error states and their operation
 callbacks remain owned by the existing navigator/session models.
 
-The eight `remote_group_header_fit*` desktop-oracle appearances mount the exact
-1000×660 logical-pixel breakpoint, not the former 940×660 inline navigator.
-They retain 120/240/340-reference-pixel sidebar widths, six long local/remote
-group identities, 0/1/1000 counts, nonoverlapping fixed disclosure/count columns,
-name-only ellipsis, full hover/keyboard reveals, accessibility hierarchy and
-targeted toggles with no Git writes. Requiring those inline rows before opening
-a rail Popover at 940px contradicts this approved cutover; compact navigator
-behavior remains covered by the dedicated rail scenarios below.
+Desktop-only fit oracles use widths at or above the configured boundary. Where
+the original narrow geometry is itself the stress condition, an isolated,
+supported 40rem preference retains that geometry and explicitly asserts the
+inline Sidebar/Inspector rather than silently testing compact chrome. Restore
+the preference after each scenario. Dedicated compact scenarios retain actual
+rail interaction, resize/zoom/setting transitions, input and session identity,
+draft/focus preservation and unchanged Git state.
 
 Keep `toolbar_display`, both toolbar presentations and the existing overflow
 fitting/menu contract. Compact layout must not force Icon Only or introduce a
@@ -76,6 +86,16 @@ without deleting the draft; reopening resumes that same draft. Repositioning,
 resize, threshold transitions and surface dismissal are presentation changes,
 not input recreation or draft resets. Preserve the existing focus/IME and
 commit-plan routing; the compact composer is not a new confirmation-modal slot.
+
+The compact popup fits its actual content rather than forcing a 360-reference-pixel
+height: short drafts must not leave an empty region below Commit. That existing
+height remains a ceiling, further capped by the viewport. Retain the shared
+composer's shrinking inputs and visible footer; do not recreate inputs or
+duplicate their height calculation. Compact state records only painted popup
+height for the existing below/above anchor placement. A changed measurement
+requests one corrective layout frame; the measured value never caps subsequent
+growth. The pinned kit Popover exposes edge snapping, not the required
+above-anchor flip with a gap, so its snapping alone cannot replace this placement.
 
 ### Changes in the bottom panel
 
@@ -341,7 +361,7 @@ Commit Panel chrome test, not a parallel English-only message family.
 
 [#1484](https://github.com/TomiXRM/kagi/issues/1484) extends the existing Changes
 tab rather than adding another Inspector tab or selection owner. Below the
-unchanged **1000 logical px** breakpoint, a selected non-WIP commit presents
+central compact breakpoint (now the configured rem boundary, #1640), a selected non-WIP commit presents
 two side-by-side columns: **Inspector metadata on the left**, **changed files
 on the right**. Metadata reuses title/message, author, date, hash, ref chips,
 Branch here and Cherry-pick rendering and actions. Files reuse the normal
@@ -368,6 +388,11 @@ render their own synchronized file snapshot and comparison title; file activatio
 must resolve the exact file from that same snapshot, never a commit-file index
 against a comparison owner.
 
+#1640 review: successful PR Peek is explicit inspection, so it activates and
+opens compact Changes after publishing Compare even when its fetched head is
+outside the loaded Graph and no `select` call occurs. It keeps the attachment
+guard and retained draft/entity; ordinary return from PR mode remains unchanged.
+
 Explicit WIP activation retains the existing CommitPanel-before-Compare
 precedence: its active staging owner draws Unstaged/Staged even if a suspended
 Compare entity is retained. Compare-before-Inspector applies to the read surface
@@ -383,7 +408,7 @@ on compact exit.
 
 Native Graph pointer-focus coverage must target the drawn navigator: at compact
 widths open the rail Popover before its filter; desktop Cmd-F/filter coverage
-uses widths at or above 1000px. Pointer selection then restores Graph focus
+uses widths at or above the configured rem boundary. Pointer selection then restores Graph focus
 without changing filter text. Copy-receipt assertions measure a local boundary
 inside the bounded contract-log tail rather than treating that tail as a
 monotonically growing event count.
@@ -423,8 +448,9 @@ controls and kit Popover rather than a parallel overflow navigation model.
 Its seven controls retain their natural heights; the rail scrolls when the
 workspace is short and reveals the actual keyboard-focused trigger once per
 focus transition. Leaving the rail resets that reveal owner; subsequent wheel
-scrolling is never pinned to the retained keyboard focus. Tall-window spacing,
-the 1000-logical-pixel breakpoint and restored window-size policy stay unchanged.
+scrolling is never pinned to the retained keyboard focus. Tall-window spacing
+and restored window-size policy stay unchanged; #1640 later replaces the fixed
+breakpoint with the central configurable rem boundary.
 
 Cmd-F in compact Graph opens the current Graph navigator through the same rail
 owner and focuses the existing sidebar Input only once its Popover is rendered.
@@ -449,6 +475,11 @@ shared filter Input and chip focus slots. The PR dashboard and Issue feed
 suspend their duplicate strips until dismissal; otherwise one focused handle
 would produce two real AX nodes and simultaneous Input projections. The filter
 value is never copied.
+
+#1640 review: a PR card's context-menu action dismisses the compact navigator
+through its existing selection-dismiss lifecycle before publishing `pr_menu`.
+The kit's deferred Popover must not remain above the ordinary root menu and
+intercept its clicks. Reuse existing owners rather than adding z-order priorities.
 
 ## Amendment — 2026-10-14: shared Inspector segments and bulk hover (#1495, #1496)
 
@@ -479,7 +510,7 @@ keyboard navigation never calls the transition for the current row. Refresh and
 reconcile retain selection directly and must not activate Changes. A manually
 chosen Terminal, Operation Log or Activity tab stays chosen until the next actual
 row selection. WIP retains its existing open-commit-panel path and working-tree
-Changes projection. At exactly 1000 logical pixels and above, selection and the
+Changes projection. At or above the configured rem boundary, selection and the
 suspended desktop bottom-tab/open-state restoration remain unchanged.
 
 Tier A `compact_select_changes` covers EN/JA × 100%/167%, actual row clicks,
@@ -509,7 +540,7 @@ and both final plain-build application launches quit normally.
 ## Amendment — 2026-10-14: Graph return and final Escape (#1543)
 
 The historical commit detail/files bottom projection exists only below the
-1000 logical-pixel breakpoint: `render_bottom` exposes Changes only in compact,
+configured compact boundary: `render_bottom` exposes Changes only in compact,
 and `render_body` renders the desktop Inspector in the right slot. Do not move
 desktop details to the bottom or activate its absent Changes selector.
 

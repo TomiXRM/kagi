@@ -58,13 +58,16 @@ not the stored preference, so the compressed GRAPH still paints and scrolls lane
 Lane allocation, row density, selection, Git reads and operation safety are unchanged.
 
 Native `graph_columns_fit` pins the old 1392×883/100% x positions and requires
-positive subject width plus contained author/time bounds at both the exact
-1000×660/167% desktop breakpoint and compact 940×660/167%, EN/JA.
+positive subject width plus contained author/time bounds at desktop
+1000×660/167% and compact 940×660/167%, EN/JA. An isolated supported 40rem
+threshold preserves these original stress geometries after #1640; explicit
+chrome assertions distinguish desktop and compact.
 The `graph_` neighbor selection retains divider drag and history interactions.
-`graph_columns_compressed_drag` attempts positive native drags on both capped
-dividers at 1000px/167%, keeps preferences/settings unchanged and restores original wide x
-positions. `graph_columns_inspector_fit` covers the relaxed subject floor and
-contained metadata at 1440px/167% with sidebar 240px and Inspector 360px, EN/JA.
+`graph_columns_compressed_drag` uses that same threshold for positive native
+drags on both capped dividers at 1000px/167%, keeps preferences/settings
+unchanged and restores original wide x positions. `graph_columns_inspector_fit`
+retains the inline Inspector at 1440px/167% with sidebar 240px and Inspector
+360px, EN/JA, covering the relaxed subject floor and contained metadata.
 
 ## Amendment — 2026-10-14: Graph keyboard entry (#1532)
 

@@ -551,10 +551,19 @@ pub fn scenario_sidebar_keyboard_collapse_card(cx: &mut VisualTestAppContext) {
         ],
     );
     let before = Witness::read(fixture.path());
-    for dimensions in [(1000., 720.), (1392., 883.)] {
+    for dimensions in [(1000_f32, 720.), (1392., 883.)] {
         for zoom in [1., 1.67] {
             for language in [Lang::En, Lang::Ja] {
-                let (app, window) = mount_dimensions(cx, fixture.path(), dimensions);
+                // Worktree inspection cards are a desktop-only interaction;
+                // compact activation intentionally selects the worktree instead.
+                theme::set_zoom(zoom);
+                let desktop = (
+                    dimensions
+                        .0
+                        .max((theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil()),
+                    dimensions.1,
+                );
+                let (app, window) = mount_dimensions(cx, fixture.path(), desktop);
                 appearance(cx, &app, window, language, "apple-light", zoom, 2);
                 card_left(cx, &app, window);
                 unmount(cx, app, window);

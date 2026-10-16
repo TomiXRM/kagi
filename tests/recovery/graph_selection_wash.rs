@@ -1,7 +1,7 @@
 //! #1485: Graph selection preserves stripes/lane tints and normal ink.
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::{AnyWindowHandle, Hsla, Modifiers, VisualTestAppContext};
-use kagi::ui::e2e;
+use gpui::{AnyWindowHandle, Entity, Hsla, Modifiers, VisualTestAppContext};
+use kagi::ui::{e2e, KagiApp};
 use kagi_ui_core::theme;
 
 pub fn scenario_graph_selection_wash(cx: &mut VisualTestAppContext) {
@@ -168,6 +168,7 @@ pub fn scenario_graph_selection_wash(cx: &mut VisualTestAppContext) {
                 palette.inactive_selected,
                 "inactive WIP grey",
             );
+            close_wip_presentation(cx, &app, window);
             app.update(cx, |app, cx| {
                 app.select_headless(0);
                 app.set_window_active_for_e2e(true, cx);
@@ -231,7 +232,9 @@ pub fn scenario_graph_wip_hover_wash(cx: &mut VisualTestAppContext) {
                 theme::set_zoom(zoom as f32 / 1000.);
                 app.update(cx, |app, cx| {
                     app.set_theme(slug, cx);
-                    app.select_headless(0);
+                    if app.ui().selected != Some(0) {
+                        app.select_headless(0);
+                    }
                     app.set_window_active_for_e2e(true, cx);
                     cx.notify();
                 });
@@ -280,6 +283,7 @@ pub fn scenario_graph_wip_hover_wash(cx: &mut VisualTestAppContext) {
                         .text_color,
                     ink
                 );
+                close_wip_presentation(cx, &app, window);
             }
         }
     }
@@ -778,7 +782,46 @@ fn graph_node_pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: 
     .unwrap()
 }
 
+fn close_wip_presentation(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    // A pinned compact popup survives commit selection; a desktop WIP panel
+    // becomes pinned when the next appearance enters compact. Retire both
+    // projections through their real controls before changing theme or zoom.
+    let owner = cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id());
+    e2e::clear_control_bounds(window.window_id(), "compact-popup-close");
+    draw(cx, window);
+    if let Some(close) = e2e::control_bounds(window.window_id(), "compact-popup-close") {
+        cx.simulate_click(window, close.center(), Modifiers::none());
+        cx.run_until_parked();
+        e2e::clear_control_bounds(window.window_id(), "compact-composer");
+        e2e::clear_control_bounds(window.window_id(), "compact-popup-close");
+        draw(cx, window);
+        assert!(
+            e2e::control_bounds(window.window_id(), "compact-composer").is_none(),
+            "the previous paint appearance must release its pinned composer"
+        );
+    }
+    if cx.read(|cx| app.read(cx).ui().commit_panel_open) {
+        let row = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+        cx.simulate_click(window, row.center(), Modifiers::none());
+        cx.run_until_parked();
+    }
+    e2e::clear_control_bounds(window.window_id(), "cp-body-input");
+    draw(cx, window);
+    assert!(!cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    assert!(e2e::control_bounds(window.window_id(), "cp-body-input").is_none());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+        owner,
+        "closing a paint projection must retain the shared draft owner"
+    );
+}
+
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    e2e::clear_control_bounds(window.window_id(), "compact-composer");
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -788,6 +831,7 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 
 pub(crate) fn pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> u32 {
     let row = e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| panic!("missing {id}"));
+    let window_id = window.window_id();
     cx.update_window(window, |_, window, _| {
         let image = window.render_to_image().expect("native Graph wash capture");
         let scale = window.scale_factor();
@@ -800,6 +844,26 @@ pub(crate) fn pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: 
         } else {
             (f32::from(row.right()) - 4., f32::from(row.center().y))
         };
+        if id.starts_with("graph-lane-band-") || id == "graph-wip-row" {
+            let sample = gpui::point(gpui::px(x), gpui::px(y));
+            let viewport =
+                e2e::control_bounds(window_id, "commit-list-viewport").unwrap();
+            eprintln!(
+                "[gui-e2e] Graph wash probe {id}: theme={} zoom={} sample={sample:?} row={row:?} viewport={viewport:?} composer={:?}",
+                theme::theme().slug,
+                theme::zoom(),
+                e2e::control_bounds(window_id, "compact-composer"),
+            );
+            assert!(
+                row.contains(&sample) && viewport.contains(&sample),
+                "{id}: sample {sample:?} must lie inside its painted band/row {row:?} and visible Graph {viewport:?}"
+            );
+            assert!(
+                e2e::control_bounds(window_id, "compact-composer")
+                    .is_none_or(|composer| !composer.contains(&sample)),
+                "{id}: sample {sample:?} must not be covered by a pinned composer"
+            );
+        }
         let p = image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
         ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32
     })

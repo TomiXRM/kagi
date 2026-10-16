@@ -147,7 +147,7 @@ impl CommitPanelView {
                 * (usize::from(self.smart_status.is_some()) + usize::from(has_unstaged_warning))
                     as f32;
         div()
-            .when(compact, |el| el.w_full().h_full())
+            .when(compact, |el| el.w_full())
             .flex_shrink(1.)
             .min_h(footer_min_height)
             .overflow_hidden()

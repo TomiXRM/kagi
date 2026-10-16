@@ -247,7 +247,7 @@ fn wide_tab_toggle(
     win: AnyWindowHandle,
     height: f32,
 ) {
-    resize(cx, win, (1392., height));
+    resize(cx, win, (desktop_width(), height));
     assert_eq!(
         cx.read(|cx| app.read(cx).bottom_tab),
         BottomTab::Terminal,

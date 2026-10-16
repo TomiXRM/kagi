@@ -382,8 +382,10 @@ pub fn scenario_inspector_full_message(cx: &mut VisualTestAppContext) {
             i18n::set_lang(lang);
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
-                // Keep the independent desktop message/files frames mounted at the breakpoint.
-                for dimensions in [(1000., 720.), (1392., 883.)] {
+                // Keep independent desktop message/files frames mounted at each zoom.
+                let desktop_width =
+                    (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+                for dimensions in [(desktop_width, 720.), (1392_f32.max(desktop_width), 883.)] {
                     resize(cx, window, dimensions);
                     for (row, original) in messages.iter().enumerate() {
                         assert_message(cx, &app, window, original, row);

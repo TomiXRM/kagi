@@ -27,7 +27,7 @@
 
 use std::borrow::Cow;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use gpui::{hsla, rgb, App, Hsla};
@@ -848,6 +848,36 @@ pub fn init_zoom() {
         UI_ZOOM_PERMILLE.store((z * 1000.0).round() as usize, Ordering::Relaxed);
     }
     klog!("zoom: {:.2}x", zoom());
+}
+
+// Compact layout shares zoom's startup/persisted-preference ownership, but its
+// render-time read must not snapshot the settings document or touch the disk.
+static COMPACT_THRESHOLD_REM: AtomicU32 =
+    AtomicU32::new(kagi_domain::compact::DEFAULT_THRESHOLD_REM);
+
+/// Active compact-layout switch width in whole root rem. Allocation-/I/O-free.
+#[inline]
+pub fn compact_threshold_rem() -> u32 {
+    COMPACT_THRESHOLD_REM.load(Ordering::Relaxed)
+}
+
+/// Set and persist the compact switch width, clamped to the supported range.
+/// Returns the usable whole-rem value that is now active.
+pub fn set_compact_threshold_rem(threshold: u32) -> u32 {
+    let threshold = threshold.clamp(
+        kagi_domain::compact::MIN_THRESHOLD_REM,
+        kagi_domain::compact::MAX_THRESHOLD_REM,
+    );
+    COMPACT_THRESHOLD_REM.store(threshold, Ordering::Relaxed);
+    write_setting("compact_threshold_rem", Some(&threshold.to_string()));
+    threshold
+}
+
+/// Restore the compact switch width once at startup. Invalid or missing saved
+/// values use the default without rewriting the user's settings document.
+pub fn init_compact_threshold_rem() {
+    COMPACT_THRESHOLD_REM.store(Settings::load().compact_threshold_rem(), Ordering::Relaxed);
+    klog!("compact_threshold_rem: {}", compact_threshold_rem());
 }
 
 // ──────────────────────────────────────────────────────────────────────────

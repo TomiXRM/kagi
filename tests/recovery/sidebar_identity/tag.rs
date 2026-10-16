@@ -84,6 +84,8 @@ fn activate_tag(
     window: AnyWindowHandle,
     keyboard: bool,
 ) {
+    paint(cx, app, window);
+    reveal_pane(cx, app, window, TAGS);
     if keyboard {
         focus(cx, app, window, TAGS, &format!("tag:{TAG}"));
         keys(cx, window, "enter");
@@ -140,6 +142,8 @@ fn tag_metadata(
     language: Lang,
     loaded: bool,
 ) {
+    paint(cx, app, window);
+    reveal_pane(cx, app, window, TAGS);
     let id = format!("sidebar-tag-{TAG}");
     let tokens = kagi_ui_core::theme::theme();
     let color = if loaded {

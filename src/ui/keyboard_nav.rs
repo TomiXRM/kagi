@@ -149,6 +149,7 @@ impl FocusSlots {
 pub(crate) fn switch(
     id: &'static str,
     focus: FocusHandle,
+    scroll: gpui::ScrollHandle,
     label: SharedString,
     help: SharedString,
     checked: bool,
@@ -172,7 +173,7 @@ pub(crate) fn switch(
     let wrapper = with_ring(
         gpui::div()
             .id(SharedString::from(format!("{id}-key")))
-            .track_focus(&focus.tab_index(0).tab_stop(true)),
+            .track_focus(&focus.clone().tab_index(0).tab_stop(true)),
     )
     .m(-gpui::px(RING))
     .rounded_full()
@@ -187,7 +188,38 @@ pub(crate) fn switch(
         }
     })
     .child(inner);
-    super::e2e::measure_control(format!("{id}-key"), wrapper)
+    super::e2e::measure_control(
+        format!("{id}-key"),
+        RevealingSwitch {
+            id,
+            wrapper,
+            focus,
+            scroll,
+        },
+    )
+}
+
+/// Render-time access to the existing switch and scroll owners, without another
+/// element or focus target around the switch's keyboard wrapper.
+#[derive(IntoElement)]
+struct RevealingSwitch {
+    id: &'static str,
+    wrapper: Stateful<Div>,
+    focus: FocusHandle,
+    scroll: gpui::ScrollHandle,
+}
+
+impl gpui::RenderOnce for RevealingSwitch {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        super::button_style::reveal_on_focus(
+            self.wrapper,
+            self.id.into(),
+            self.focus,
+            self.scroll,
+            window,
+            cx,
+        )
+    }
 }
 
 // The switches as last drawn: id → (label, checked), for Tier A (#970).

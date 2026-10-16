@@ -70,6 +70,16 @@ fn height(pane: (f32, f32)) -> f32 {
 }
 
 fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    // This fixture measures all five inline panes and their shared dividers,
+    // rather than the single-pane compact popover.
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    let width = f32::from(viewport.width)
+        .max((theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil());
+    if px(width) != viewport.width {
+        crate::pr_detail_adaptive::resize(cx, window, (width, f32::from(viewport.height)));
+    }
     list_a11y::clear_recorded_lists();
     app.update(cx, |_, cx| cx.notify());
     cx.update_window(window, |_, window, cx| {

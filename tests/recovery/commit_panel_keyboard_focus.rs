@@ -258,7 +258,11 @@ pub(super) fn hidden_bulk_focus(cx: &mut VisualTestAppContext) {
                 cx.notify();
             });
             paint(cx, window);
-            let retained = case.dimensions.0 < 1000. && id == "cp-stage-all";
+            let retained = kagi_domain::compact::is_compact(
+                case.dimensions.0,
+                theme::rem_size_px(),
+                theme::compact_threshold_rem(),
+            ) && id == "cp-stage-all";
             assert_focus(cx, window, if retained { id } else { "cp-view-list" });
             if retained {
                 assert_eq!(labels::accessible_disabled(id), Some(true));
@@ -372,7 +376,11 @@ fn after_bulk_focus(
     repo: &std::path::Path,
     staged: bool,
 ) {
-    if case.dimensions.0 < 1000. {
+    if kagi_domain::compact::is_compact(
+        case.dimensions.0,
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    ) {
         // Compact headers keep empty-column actions visible and inert; wide
         // headers hide them and retain their original selected-tab fallback.
         let id = if staged {
@@ -425,7 +433,11 @@ pub(super) fn open_changes(
     case: Case,
 ) -> (Entity<KagiApp>, AnyWindowHandle) {
     let (app, window) = open(cx, repo, case);
-    if case.dimensions.0 < 1000. {
+    if kagi_domain::compact::is_compact(
+        case.dimensions.0,
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    ) {
         let owner = cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id());
         bounds(window, "compact-composer");
         // Exercise Changes headers independently of the pinned composer.

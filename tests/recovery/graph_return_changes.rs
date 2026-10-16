@@ -36,7 +36,11 @@ pub fn scenario_graph_return_reopens_changes(cx: &mut VisualTestAppContext) {
                 cx.update(theme::sync_gpui_component_theme);
                 let (app, win) = mount_state(cx, state);
                 resize(cx, win, width);
-                let compact = width < 1000.;
+                let compact = kagi_domain::compact::is_compact(
+                    width,
+                    theme::rem_size_px(),
+                    theme::compact_threshold_rem(),
+                );
                 // Both departure routes must retain a closed bottom pane on return.
                 for issues in [false, true] {
                     app.update(cx, |app, cx| {
@@ -181,6 +185,9 @@ fn assert_projection(
 pub fn scenario_graph_return_input_escape(cx: &mut VisualTestAppContext) {
     use gpui::Focusable as _;
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    // Only this desktop Input-Escape oracle needs the inline Commit Panel.
+    // The neighboring return/selection matrices retain the default breakpoint.
+    theme::set_compact_threshold_rem(40);
     let _offline = crate::gui_isolation::OfflineNetwork::install();
     let fixture = build_fixture();
     std::fs::write(fixture.path().join("README.md"), "unsent WIP\n").unwrap();
@@ -200,6 +207,11 @@ pub fn scenario_graph_return_input_escape(cx: &mut VisualTestAppContext) {
             })
             .unwrap();
             settle(cx, win);
+            assert!(
+                e2e::control_bounds(win.window_id(), "right-pane-clip").is_some(),
+                "the Input-Escape oracle requires the drawn desktop Commit Panel"
+            );
+            assert!(e2e::control_bounds(win.window_id(), "compact-composer").is_none());
             let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
             for body in [true, false] {
                 let input = cx.read(|cx| {

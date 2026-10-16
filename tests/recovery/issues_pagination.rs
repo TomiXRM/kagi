@@ -65,7 +65,9 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
     theme::set_zoom(1.);
     let repo = fixture.path().canonicalize().unwrap();
     let (app, win) = mount(cx, &repo);
-    crate::pr_detail_adaptive::resize(cx, win, (1000., 720.));
+    // The sidebar category-header pagination oracle requires the desktop navigator.
+    let desktop_width = (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+    crate::pr_detail_adaptive::resize(cx, win, (desktop_width, 720.));
     KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..2, None))));
     app.update(cx, |app, cx| {
         app.seed_issue_composer_for_e2e(cx);

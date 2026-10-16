@@ -1,5 +1,6 @@
 //! #1617: frozen native Inspector selection washes and generated-row splices.
-use crate::macos::{git, mount, repo_fingerprint, unmount};
+use crate::inspector_file_rows::mount_desktop as mount;
+use crate::macos::{git, repo_fingerprint, unmount};
 use gpui::{point, px, AnyWindowHandle, Bounds, Entity, Pixels, VisualTestAppContext};
 use kagi::ui::{e2e, list_a11y, theme, KagiApp};
 use kagi_ui_core::motion;

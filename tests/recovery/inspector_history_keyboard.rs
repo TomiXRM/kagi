@@ -1,6 +1,7 @@
 //! #1375 / #1376: keyboard entry and return without a pointer or Git writes.
+use crate::inspector_file_rows::mount_desktop as mount;
 use crate::keyboard_nav::keys;
-use crate::macos::{git, mount, repo_fingerprint, unmount};
+use crate::macos::{git, repo_fingerprint, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{i18n, list_a11y, theme, KagiApp};
 use kagi_ui_file_history::FileHistoryView;
@@ -338,7 +339,11 @@ fn sparse_inspector(cx: &mut VisualTestAppContext, count: usize, generated: bool
     );
     let before = repo_fingerprint(fixture.path());
     let (app, window) = mount(cx, fixture.path());
-    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
+    // Sparse Inspector keyboard routing requires its independent desktop frame.
+    let desktop_width = (kagi_ui_core::theme::rem_size_px()
+        * kagi_ui_core::theme::compact_threshold_rem() as f32)
+        .ceil();
+    crate::pr_detail_adaptive::resize(cx, window, (desktop_width, 720.));
     app.update(cx, |app, cx| {
         app.inspector_tree_view = false;
         app.inspector_generated_expanded = false;

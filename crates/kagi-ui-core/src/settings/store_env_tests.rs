@@ -80,6 +80,110 @@ fn public_scale_migration_child() {
 }
 
 #[test]
+fn compact_threshold_uses_the_live_settings_store_and_restores_after_restart() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("settings.json"),
+        r#"{"compact_threshold_rem":"80","session_repos":"/a","future":{"preserve":true}}"#,
+    )
+    .expect("seed");
+    run_child("compact_threshold_persistence_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["compact_threshold_rem"], "160");
+    assert_eq!(saved["session_repos"], "/a");
+    assert_eq!(saved["future"]["preserve"], true);
+    run_child("compact_threshold_restart_child", tmp.path());
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn compact_threshold_persistence_child() {
+    use crate::settings::{flush, settings_path, Settings};
+    use crate::theme::{
+        compact_threshold_rem, init_compact_threshold_rem, set_compact_threshold_rem,
+    };
+    use kagi_domain::compact::{MAX_THRESHOLD_REM, MIN_THRESHOLD_REM};
+
+    let path = settings_path().expect("settings path");
+    let original = std::fs::read(&path).expect("seeded settings");
+    init_compact_threshold_rem();
+    assert_eq!(compact_threshold_rem(), 80);
+    assert_eq!(std::fs::read(&path).expect("settings"), original);
+
+    for (requested, expected) in [
+        (0, MIN_THRESHOLD_REM),
+        (MIN_THRESHOLD_REM - 1, MIN_THRESHOLD_REM),
+        (MIN_THRESHOLD_REM, MIN_THRESHOLD_REM),
+        (80, 80),
+        (MAX_THRESHOLD_REM, MAX_THRESHOLD_REM),
+        (MAX_THRESHOLD_REM + 1, MAX_THRESHOLD_REM),
+        (u32::MAX, MAX_THRESHOLD_REM),
+    ] {
+        assert_eq!(set_compact_threshold_rem(requested), expected);
+        assert_eq!(compact_threshold_rem(), expected);
+        assert_eq!(Settings::load().compact_threshold_rem(), expected);
+        flush();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("settings")).expect("json");
+        assert_eq!(
+            saved["compact_threshold_rem"].as_str(),
+            Some(expected.to_string().as_str())
+        );
+        assert_eq!(saved["session_repos"], "/a");
+        assert_eq!(saved["future"]["preserve"], true);
+    }
+}
+
+#[test]
+fn compact_threshold_initialization_leaves_missing_or_invalid_preferences_untouched() {
+    for document in [
+        r#"{"ui_zoom":"1250","future":"preserve"}"#,
+        r#"{"compact_threshold_rem":"invalid","future":"preserve"}"#,
+        r#"{"compact_threshold_rem":"70.5","future":"preserve"}"#,
+        r#"{"compact_threshold_rem":"161","future":"preserve"}"#,
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("settings.json"), document).expect("seed");
+        run_child("compact_threshold_default_child", tmp.path());
+        assert_eq!(settings_text(tmp.path()), document);
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let document = r#"{"compact_threshold_rem":80,"future":"preserve"}"#;
+    std::fs::write(tmp.path().join("settings.json"), document).expect("seed");
+    run_child("compact_threshold_legacy_integer_child", tmp.path());
+    assert_eq!(settings_text(tmp.path()), document);
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn compact_threshold_default_child() {
+    assert_compact_threshold_initialization(70);
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn compact_threshold_legacy_integer_child() {
+    assert_compact_threshold_initialization(80);
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn compact_threshold_restart_child() {
+    assert_compact_threshold_initialization(160);
+}
+
+fn assert_compact_threshold_initialization(expected: u32) {
+    use crate::settings::settings_path;
+    use crate::theme::{compact_threshold_rem, init_compact_threshold_rem};
+
+    let path = settings_path().expect("settings path");
+    let original = std::fs::read(&path).expect("seeded settings");
+    init_compact_threshold_rem();
+    assert_eq!(compact_threshold_rem(), expected);
+    assert_eq!(std::fs::read(&path).expect("settings"), original);
+}
+
+#[test]
 fn accent_source_migration_uses_the_live_settings_store() {
     for (document, expected) in [
         (

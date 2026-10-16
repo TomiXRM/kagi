@@ -78,7 +78,12 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str, dx: 
             MouseButton::Left,
             Modifiers::none(),
         );
-        settle(cx, window, 1000., 660.);
+        settle(
+            cx,
+            window,
+            (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
+            660.,
+        );
     }
     cx.simulate_mouse_up(
         window,
@@ -86,7 +91,12 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str, dx: 
         MouseButton::Left,
         Modifiers::none(),
     );
-    settle(cx, window, 1000., 660.);
+    settle(
+        cx,
+        window,
+        (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
+        660.,
+    );
 }
 
 pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
@@ -94,6 +104,9 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
     let previous_motion = theme::reduce_motion();
     theme::set_reduce_motion(true);
+    // Preserve the original1000px/167% two-pane pressure with a supported,
+    // explicitly isolated desktop threshold and ordinary user preferences.
+    theme::set_compact_threshold_rem(40);
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
     app.update(cx, |app, cx| {
@@ -110,7 +123,6 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
     for lang in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(lang);
         theme::set_zoom(1.67);
-        // The pane budget applies at and above the compact breakpoint.
         settle(cx, window, 1000., 660.);
         assert_diff(cx, &app, 1000.);
         let left = bounds(window, "sidebar-clip");
@@ -131,12 +143,16 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
         theme::set_zoom(1.);
         settle(cx, window, 1392., 883.);
         assert_diff(cx, &app, 1392.);
+        assert_eq!(
+            cx.read(|cx| (app.read(cx).sidebar.width, app.read(cx).panel_width)),
+            prefs
+        );
         // Existing 100% geometry, including both scaled 4px separators.
         assert_eq!(bounds(window, "sidebar-clip").right(), px(219.5));
         assert_eq!(bounds(window, "right-pane-clip").left(), px(1064.5));
         assert_eq!(
             cx.read(|cx| (app.read(cx).sidebar.width, app.read(cx).panel_width)),
-            prefs
+            (240., 360.)
         );
     }
     theme::set_zoom(1.67);
@@ -185,6 +201,7 @@ fn check_sidebar_anchor(cx: &mut VisualTestAppContext, worktree: bool) {
         cx.notify();
     });
     theme::set_zoom(1.67);
+    theme::set_compact_threshold_rem(40);
     settle(cx, window, 1000., 660.);
     let pane = if worktree { 2 } else { 0 };
     let key = if worktree {

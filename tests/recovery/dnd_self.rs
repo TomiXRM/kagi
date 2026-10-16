@@ -186,6 +186,18 @@ pub fn scenario_branch_drag_self_target(cx: &mut VisualTestAppContext) {
                 theme::set_zoom(zoom);
                 for (width, height) in [(1000., 720.), (1392., 883.)] {
                     let (app, window) = mount_at(cx, fixture.path(), width, height);
+                    let compact = kagi_domain::compact::is_compact(
+                        width,
+                        theme::rem_size_px(),
+                        theme::compact_threshold_rem(),
+                    );
+                    if compact {
+                        paint(cx, window);
+                        let trigger =
+                            e2e::control_bounds(window.window_id(), "compact-rail-local").unwrap();
+                        cx.simulate_click(window, trigger.center(), Modifiers::none());
+                        paint(cx, window);
+                    }
                     for (target_id, operand, valid) in [
                         ("sidebar-local-source", "source", false),
                         ("graph-remote-origin/source", "origin/source", false),
@@ -239,7 +251,9 @@ pub fn scenario_branch_drag_detached_target(cx: &mut VisualTestAppContext) {
     git(fixture.path(), &["branch", "source", "HEAD~1"]);
     git(fixture.path(), &["checkout", "--detach", "-q", "HEAD"]);
     let before = repo_fingerprint(fixture.path());
-    let (app, window) = mount_at(cx, fixture.path(), 1000., 720.);
+    // This cross-surface drag starts in the inline desktop sidebar.
+    let desktop_width = (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+    let (app, window) = mount_at(cx, fixture.path(), desktop_width, 720.);
     paint(cx, window);
     let neutral = fill(cx, window, "graph-head-HEAD");
     let target = drag_over(cx, window, "sidebar-local-source", "graph-head-HEAD");

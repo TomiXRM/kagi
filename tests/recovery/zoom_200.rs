@@ -215,7 +215,11 @@ pub fn scenario_zoom_200_operable(cx: &mut VisualTestAppContext) {
                         "choosing an overflow action dismisses the menu"
                     );
                 }
-                if width < 1000. {
+                if kagi_domain::compact::is_compact(
+                    width,
+                    theme::rem_size_px(),
+                    theme::compact_threshold_rem(),
+                ) {
                     usable(viewport, win, "compact-rail");
                     for id in [
                         "compact-rail-local",

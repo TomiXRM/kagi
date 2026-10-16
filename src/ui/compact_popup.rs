@@ -3,7 +3,7 @@ use gpui::{
     div, point, prelude::*, px, rgb, size, Anchor, AnyElement, App, Bounds, Context, IntoElement,
     Pixels, RenderOnce, Window,
 };
-use gpui_component::{popover::Popover, Selectable};
+use gpui_component::{popover::Popover, ElementExt, Selectable};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::{e2e, i18n::Msg, keyboard_nav, theme, KagiApp};
@@ -69,14 +69,31 @@ impl KagiApp {
         }
         let anchor = self.compact.wip_bounds.get()?;
         let composer = self.compact_surface(true, cx)?;
+        let viewport = window.viewport_size();
+        let margin = theme::scaled_px(8.).min(viewport.height / 2.);
+        let max_height = theme::scaled_px(360.).min((viewport.height - margin * 2.).max(px(0.)));
         let bounds = placement(
             anchor,
-            window.viewport_size(),
-            size(theme::scaled_px(520.), theme::scaled_px(360.)),
-            theme::scaled_px(8.),
+            viewport,
+            size(
+                theme::scaled_px(520.),
+                self.compact
+                    .popup_height
+                    .get()
+                    .unwrap_or(max_height)
+                    .min(max_height),
+            ),
+            margin,
             theme::scaled_px(4.),
         );
-        let popover = composer_popover(&self.compact, bounds, composer, cx.weak_entity());
+        let popover = composer_popover(
+            &self.compact,
+            bounds,
+            max_height,
+            composer,
+            cx.entity_id(),
+            cx.weak_entity(),
+        );
         Some(
             div()
                 .absolute()
@@ -93,13 +110,16 @@ impl KagiApp {
 fn composer_popover(
     state: &super::compact::CompactState,
     bounds: Bounds<Pixels>,
+    max_height: Pixels,
     composer: gpui::Entity<super::commit_panel_surfaces::CommitPanelSurfaceView>,
+    parent: gpui::EntityId,
     weak_app: gpui::WeakEntity<KagiApp>,
 ) -> Popover {
     let cache = state.popup_state.clone();
     let preserve_pin = state.preserve_pin.clone();
     let close_app = weak_app.clone();
     let owner = state.popup_owner;
+    let measured_height = state.popup_height.clone();
     Popover::new("compact-composer-popover")
         .anchor(Anchor::TopLeft)
         .trigger(ComposerAnchor)
@@ -123,9 +143,10 @@ fn composer_popover(
         .content(move |_, _, cx| {
             *cache.borrow_mut() = Some(cx.entity());
             div()
+                .id("compact-composer-content")
                 .relative()
                 .w(bounds.size.width)
-                .h(bounds.size.height)
+                .max_h(max_height)
                 .flex()
                 .flex_col()
                 .min_h(px(0.))
@@ -137,6 +158,19 @@ fn composer_popover(
                 .child(e2e::measure_inside("compact-composer"))
                 .child(composer_header(close_app.clone()))
                 .child(composer.clone())
+                .on_prepaint({
+                    let measured_height = measured_height.clone();
+                    move |bounds, window, cx| {
+                        if measured_height.replace(Some(bounds.size.height))
+                            != Some(bounds.size.height)
+                        {
+                            // Use the actual content height for below/above placement
+                            // on the next frame, without rendering a second input tree.
+                            cx.notify(parent);
+                            window.request_animation_frame();
+                        }
+                    }
+                })
         })
 }
 

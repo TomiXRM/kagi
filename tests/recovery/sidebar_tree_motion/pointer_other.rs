@@ -21,7 +21,7 @@ pub(super) fn mount(
     support::appearance(cx, &app, window, Lang::En, "apple-light", 1., pane);
     let t = Instant::now();
     drawn(cx, &app, window, t);
-    if compact {
+    if compact && e2e::control_bounds(window.window_id(), POPUP).is_none() {
         let rail = ["local", "remote", "worktrees", "tags", "stashes"][pane];
         super::click(cx, &app, window, &format!("compact-rail-{rail}"));
         drawn(cx, &app, window, t);

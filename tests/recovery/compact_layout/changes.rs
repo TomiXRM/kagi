@@ -17,7 +17,7 @@ pub fn scenario_compact_layout_changes(cx: &mut VisualTestAppContext) {
         selector_keys(cx, &panel, win);
         let before = draft(cx, &panel);
         let identity = panel.entity_id();
-        resize(cx, win, (1392., case.height));
+        resize(cx, win, (desktop_width(), case.height));
         resize(cx, win, case.dimensions());
         let returned = changes(cx, &app, win);
         assert_eq!(

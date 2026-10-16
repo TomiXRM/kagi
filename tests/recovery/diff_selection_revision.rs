@@ -132,11 +132,17 @@ pub fn scenario_diff_selection_revision(cx: &mut VisualTestAppContext) {
         crate::diff_split_unicode_badge::mount_size(cx, &repo, (1392., 883.), "apple-light");
     for split in [false, true] {
         theme::set_diff_split(split);
-        // #1479-S5C: widths below 1000px route away from standalone MainDiffPane.
-        for dimensions in [(1000., 720.), (1392., 883.)] {
-            crate::pr_detail_adaptive::resize(cx, window, dimensions);
+        // Standalone MainDiffPane belongs to desktop chrome at the current rem threshold.
+        for dimensions in [(1000_f32, 720.), (1392., 883.)] {
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
+                let desktop = (
+                    dimensions
+                        .0
+                        .max((theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil()),
+                    dimensions.1,
+                );
+                crate::pr_detail_adaptive::resize(cx, window, desktop);
                 for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
                     kagi::ui::i18n::set_lang(lang);
                     app.update(cx, |app, cx| app.set_theme("apple-light", cx));

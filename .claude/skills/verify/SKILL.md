@@ -35,16 +35,17 @@ skimming, so they are stated here as well as where they apply:
 | A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` (tab-strip scenarios take the foreground — see its pitfalls) |
 | Git states for safety-sensitive flows | Tier C fixtures |
 
-Published mise recipe (only after v0.44.0 is published; run on each named host):
-- macOS arm64: `mise install github:TomiXRM/kagi@0.44.0 && mise exec github:TomiXRM/kagi@0.44.0 -- kagi --version && codesign --verify --strict "$(mise where github:TomiXRM/kagi@0.44.0)/Kagi.app"`
-- Linux x86_64 and aarch64 (run separately on each): `mise install github:TomiXRM/kagi@0.44.0 && mise exec github:TomiXRM/kagi@0.44.0 -- kagi --version`
+Published mise recipe (only after v0.45.0 is published; run on each named host):
+- macOS arm64: `mise install github:TomiXRM/kagi@0.45.0 && mise exec github:TomiXRM/kagi@0.45.0 -- kagi --version && codesign --verify --strict "$(mise where github:TomiXRM/kagi@0.45.0)/Kagi.app"`
+- Linux x86_64 and aarch64 (run separately on each): `mise install github:TomiXRM/kagi@0.45.0 && mise exec github:TomiXRM/kagi@0.45.0 -- kagi --version`
 
 The macOS release tar must be named `kagi-<version>-arm64-macos.tar.gz`, never
 `aarch64-macos`: Linux aarch64 updaters through v0.43 could match the latter
-as a legacy Linux tar. For the first release shipping this change, check that
-Linux has both `kagi-<version>-<arch>-linux.tar.gz` and the old
-`kagi-<version>-<arch>.tar.gz`; the release workflow opts in to the old name
-with `--legacy-linux-name`. Remove that flag after publishing that release.
+as a legacy Linux tar. v0.44.0 published both the platform-qualified Linux tar
+and its transitional alias. From v0.45.0, require
+`kagi-<version>-<arch>-linux.tar.gz` and no platform-less alias. The workflow no
+longer opts into `--legacy-linux-name`. Inspect all 13 release assets and verify
+checksum coverage as described in `docs/RELEASING.md`.
 
 ## Tier A — native GUI E2E runner
 

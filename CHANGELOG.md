@@ -5,8 +5,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-16
+
 ### Changed
 
+- Retire the transitional platform-less Linux tar aliases after their v0.44.0 compatibility release. Linux archives keep the `-linux.tar.gz` names; macOS installer tar, DMG, Windows zip, AppImage and Debian packages remain available. Correct the release runbook to merge before tagging and verify the exact merged SHA's blocking CI. (ADR-0047)
 - Establish an internal shared motion foundation for selection, list insertion and accordion transitions, extending existing pane timing and Reduce Motion / deterministic GUI-test policy. User-visible behavior is unchanged; dependency pins are unchanged. (#1617)
   - Review: unify batched fixed-height row insertion and removal in `RowSplice`, including retained ghost placement and continuous overlapping/reversed splices. No UI surface is added.
   - Bound active row-splice motion to 64 keys; larger changes settle immediately, including prior active motion, so large fetches and directory collapses cannot cause unbounded per-frame scans.

@@ -39,8 +39,7 @@ jobs:
     name: build ${{ matrix.target }}
     needs: ci-green
     runs-on: ${{ matrix.os }}
-    # Per-leg opt-in: the linux-arm64 leg sets continue-on-error so a missing
-    # private-repo arm64 runner does not block the release (ADR-0047 追補).
+    # All four platform builds are required before creating the draft release.
     strategy:
       fail-fast: false
       matrix:
@@ -126,11 +125,10 @@ jobs:
         if: matrix.kind == 'linux'
         run: cargo build --release -p kagi
 
-      # Transitional alias for the first release shipping the new Linux tar
-      # names. Remove --legacy-linux-name after that release is published.
+      # v0.44.0 published the transitional aliases; use platform-qualified names.
       - name: Bundle Linux tar.gz
         if: matrix.kind == 'linux'
-        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi --legacy-linux-name
+        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi
 
       # ── Linux: AppImage zip (ADR-0047 追補, W21-APPIMAGE) ──────────────────
       # Fetch the matching appimagetool (FUSE-free via --appimage-extract-and-run,

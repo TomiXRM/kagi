@@ -3377,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "kagi"
-version = "0.44.0"
+version = "0.45.0"
 dependencies = [
  "block2 0.6.2",
  "chrono",

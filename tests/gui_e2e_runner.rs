@@ -198,6 +198,14 @@ mod primary_button;
 mod modal_count_contrast;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_scale.rs"]
+mod modal_scale;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/modal_note_paths.rs"]
+mod modal_note_paths;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/dark_elevation.rs"]
 mod dark_elevation;
 
@@ -1864,6 +1872,18 @@ mod macos {
             (
                 "modal_count_contrast",
                 Box::new(crate::modal_count_contrast::scenario_modal_count_contrast),
+            ),
+            (
+                "modal_scale_targets",
+                Box::new(crate::modal_scale::scenario_modal_scale_targets),
+            ),
+            (
+                "modal_scale_notes",
+                Box::new(crate::modal_scale::scenario_modal_scale_notes),
+            ),
+            (
+                "modal_scale_note_paths",
+                Box::new(crate::modal_note_paths::scenario_modal_scale_note_paths),
             ),
             (
                 "dark_elevation_palette",

@@ -95,6 +95,34 @@ fixture and viewport, with normal motion enabled; also inspect collapse/reopen.
 Cancel every plan. This checks neutral metadata, not semantic danger chips,
 VoiceOver or platform-wide accessibility certification.
 
+For #1633 use `KAGI_GUI_E2E_ONLY='modal_scale_,modal_compact,modal_sections,plan_recovery_commands,plan_recovery_noop,plan_recovery_ax,plan_equivalent_summary,unmerged_branch_delete_armed,dialog_a11y_roles,destructive_modal_return,modal_no_fallthrough,blocked_plan_command'`
+with KEEP_GOING. `modal_scale_targets` uses a real 500-file Discard plan and
+collects every row only when fully painted inside the list/clip, including the
+last path. `modal_scale_notes` deliberately supplies 200 typed warning/blocker
+notes as renderer stress input, not a claim about backend-generated counts.
+Its 940×660 matrix covers Apple Light/Dark, EN/JA, 100%/167%, inert blocked
+confirms and arm-only ready confirms, then cancels and verifies the fixture.
+`modal_scale_note_paths` traverses 200 unique structured paths and the adjacent
+mandatory notes, both inside an independently bounded note panel and inside a
+Merge card's shared body scroller, across the same theme/locale/zoom matrix.
+The injected Merge preview is renderer stress data too, not backend merge output.
+Footer bounds must remain stationary while either owner scrolls.
+Use `measure_leaf` for scroll viewport probes: an absolute child follows content
+offsets and can send subsequent wheel events outside the actual scroll region.
+Retain target/required-warning visibility, default-closed supporting commands,
+and separate note/body scroll ownership. Tier B must inspect real narrow
+windows, reach the final file, exercise optional disclosure and compare both
+Apple themes/locales/zooms; never execute a stress plan to validate presentation.
+Menu behavior uses `branch_menu_compact,context_menu_keys_short,context_menu_keys_sidebar`.
+Run the separate `inventory:57-CommitMenu` through `inventory:62-WorktreeMenu`,
+plus `inventory:67-EditorTreeMenu`, `inventory:70-FileMenu` and
+`inventory:71-InspectorFileMenu`, with `KAGI_INVENTORY_LANG=en,ja` and
+`KAGI_INVENTORY_THEME=light,dark` for native captures. These inventory cases
+include direct open methods, not proof of every real right-click gesture.
+Changes/Inspector file cards are not the shared MenuGroup renderer: Changes
+places its red Discard last without a separator; Inspector has no danger action.
+Branch Delete stays in the top-level management group by ADR-0049 / #1253.
+
 For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
 This includes wide, compact and frozen-clock directory motion scenarios.
 Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,

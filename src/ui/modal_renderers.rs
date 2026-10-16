@@ -861,7 +861,11 @@ fn render_plan_modal_card_styled(
                 }
             }
         }
-        body = body.child(warn_col.flex_shrink_0());
+        body = body.child(super::modal_shell::modal_note_panel(
+            "plan-warnings",
+            warn_col.flex_shrink_0(),
+            show_files,
+        ));
     }
     if let Some(extra) = extra {
         body = body.child(div().flex_shrink_0().child(extra.element));
@@ -1003,7 +1007,11 @@ fn render_plan_modal_card_styled(
                 }
             }
         }
-        body = body.child(block_col.flex_shrink_0());
+        body = body.child(super::modal_shell::modal_note_panel(
+            "plan-blockers",
+            block_col.flex_shrink_0(),
+            show_files,
+        ));
     }
 
     // Only structured commands supported by this shell are offered in the
@@ -1143,6 +1151,9 @@ fn render_plan_modal_card_styled(
     let button_row = button_row
         .relative()
         .child(super::modal_shell::modal_probe("modal-footer"));
+
+    #[cfg(feature = "gui-e2e")]
+    let body = super::e2e::measure_leaf("modal-body", body);
 
     let card = card.child(body).child(button_row.flex_shrink_0());
 

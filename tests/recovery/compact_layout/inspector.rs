@@ -257,11 +257,19 @@ fn keyboard_file(
         focused(cx).is_some(),
         "Tab enters the shared compact file RowList"
     );
-    for key in ["home", "down", "enter"] {
+    let tree = cx.read(|cx| app.read(cx).inspector_tree_view);
+    let navigation: &[&str] = if tree {
+        &["home", "down", "down", "down", "enter"]
+    } else {
+        &["home", "down", "enter"]
+    };
+    for key in navigation {
         press_key(cx, win, key);
     }
     assert_eq!(focused(cx).as_deref(), Some("b/file.txt"));
     assert_diff(cx, app, "b/file.txt", row, 1);
+    list_a11y::clear_recorded_lists();
+    settle(cx, win);
     let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
     assert_eq!(
         ax.rows.values().filter(|(_, selected)| *selected).count(),

@@ -5,7 +5,7 @@ use kagi::ui::{e2e, list_a11y, theme, KagiApp};
 use kagi_ui_core::motion;
 use std::time::{Duration, Instant};
 
-struct MotionRestore(bool);
+pub(crate) struct MotionRestore(pub(crate) bool);
 impl Drop for MotionRestore {
     fn drop(&mut self) {
         motion::set_clock_for_e2e(None);
@@ -699,4 +699,168 @@ pub fn scenario_generated_viewport(cx: &mut VisualTestAppContext) {
     motion::set_clock_for_e2e(None);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS inspector_generated_viewport_motion");
+}
+
+pub fn scenario_directory_accordion_motion(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _keys = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let _motion = MotionRestore(theme::reduce_motion());
+    theme::set_zoom(1.);
+    theme::set_reduce_motion(false);
+    cx.update(theme::sync_gpui_component_theme);
+    let repo = crate::inspector_file_rows::accordion_fixture();
+    for index in 0..40 {
+        std::fs::write(
+            repo.path().join(format!("zz-{index:02}.txt")),
+            "scroll filler\n",
+        )
+        .unwrap();
+    }
+    git(repo.path(), &["add", "."]);
+    git(
+        repo.path(),
+        &[
+            "commit",
+            "--amend",
+            "-qm",
+            "Directory disclosure with scroll",
+        ],
+    );
+    let before = repo_fingerprint(repo.path());
+    let (app, window) = mount(cx, repo.path());
+    app.update(cx, |app, cx| {
+        app.inspector_visible = true;
+        app.inspector_tree_view = true;
+        app.inspector_generated_expanded = false;
+        app.sidebar.width = 240.;
+        app.panel_width = 360.;
+        app.bottom_panel_open = false;
+        app.select(0);
+        app.close_main_diff();
+        cx.notify();
+    });
+    crate::pr_detail_adaptive::resize(cx, window, (1392., 883.));
+    draw(cx, window);
+    let a = index(cx, &app, "alpha/nested/a.txt");
+    let beta = "inspector-directory-beta/nested";
+    let alpha = "inspector-directory-alpha";
+    let root = index(cx, &app, "alpha/root.txt");
+    click(cx, window, &format!("inspector-file-{root}"));
+    draw(cx, window);
+    let diff_title = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .main_diff
+                .as_ref()
+                .map(|diff| diff.read(cx).view.title.to_string())
+        })
+    };
+    let t = Instant::now();
+    frame(cx, window, t);
+    let expanded = bounds(window, beta).top();
+    click(cx, window, alpha);
+    frame(cx, window, t);
+    let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
+    assert!(!ax
+        .rows
+        .values()
+        .any(|(name, _)| name.ends_with("alpha/nested/a.txt")));
+    near(
+        bounds(window, beta).top(),
+        expanded,
+        "closing has no first-frame jump",
+    );
+    // Exit-only paint remains visible but cannot open the removed leaf diff.
+    let ghost = bounds(window, &format!("inspector-file-ghost-{a}"));
+    cx.simulate_click(window, ghost.center(), gpui::Modifiers::none());
+    cx.simulate_mouse_move(window, point(px(1.), px(1.)), None, gpui::Modifiers::none());
+    frame(cx, window, t);
+    assert_eq!(diff_title(cx).as_deref(), Some("alpha/root.txt"));
+    // Scrolling the closing header away must not discard its still-visible exits.
+    frame(cx, window, t + Duration::from_millis(37));
+    let ghost = bounds(window, &format!("inspector-file-ghost-{a}"));
+    let live_pixels = |cx: &mut VisualTestAppContext| {
+        // Compare label ink/overlap, not the transient scrollbar at the right edge.
+        let row = bounds(window, beta);
+        cx.update_window(window, |_, window, _| {
+            let image = window.render_to_image().unwrap();
+            let scale = window.scale_factor();
+            image::imageops::crop_imm(
+                &image,
+                (f32::from(row.left() + px(2.)) * scale) as u32,
+                (f32::from(row.top() + px(1.)) * scale) as u32,
+                (f32::from(row.size.width.min(px(140.)) - px(4.)) * scale) as u32,
+                (f32::from(row.size.height - px(2.)) * scale) as u32,
+            )
+            .to_image()
+        })
+        .unwrap()
+    };
+    let before_scroll = live_pixels(cx);
+    let scroll = cx.read(|cx| app.read(cx).inspector_scroll_for_e2e());
+    let shift = KagiApp::inspector_row_height_for_e2e() * 1.25;
+    scroll
+        .0
+        .borrow()
+        .base_handle
+        .set_offset(point(px(0.), -shift));
+    e2e::clear_control_bounds(window.window_id(), &format!("inspector-file-ghost-{a}"));
+    frame(cx, window, t + Duration::from_millis(37));
+    near(
+        bounds(window, &format!("inspector-file-ghost-{a}")).top(),
+        ghost.top() - shift,
+        "visible exit survives an offscreen directory anchor",
+    );
+    assert!(
+        before_scroll == live_pixels(cx),
+        "virtualizing the anchor preserves live-over-ghost paint order"
+    );
+    scroll.scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+    frame(cx, window, t + Duration::from_millis(37));
+    frame(cx, window, t + Duration::from_millis(60));
+    let mid = bounds(window, beta).top();
+    // A live control must still hit its measured, moving location.
+    click(cx, window, beta);
+    frame(cx, window, t + Duration::from_millis(60));
+    assert!(!list_a11y::recorded_list("inspector-files-scroll")
+        .unwrap()
+        .rows
+        .values()
+        .any(|(name, _)| name.ends_with("beta/nested/a.txt")));
+    frame(cx, window, t + Duration::from_millis(360));
+    let collapsed = bounds(window, beta).top();
+    assert!(
+        collapsed < mid && mid < expanded,
+        "directory rows genuinely interpolate"
+    );
+    near(
+        expanded - collapsed,
+        KagiApp::inspector_row_height_for_e2e() * 4.,
+        "full nested subtree leaves four uniform slots",
+    );
+    click(cx, window, alpha);
+    frame(cx, window, t + Duration::from_millis(360));
+    near(
+        bounds(window, beta).top(),
+        collapsed,
+        "opening has no first-frame jump",
+    );
+    frame(cx, window, t + Duration::from_millis(660));
+    near(
+        bounds(window, beta).top(),
+        expanded,
+        "opening restores geometry",
+    );
+    theme::set_reduce_motion(true);
+    click(cx, window, alpha);
+    frame(cx, window, t + Duration::from_millis(660));
+    near(
+        bounds(window, beta).top(),
+        collapsed,
+        "Reduce Motion settles immediately",
+    );
+    assert_eq!(diff_title(cx).as_deref(), Some("alpha/root.txt"));
+    unmount(cx, app, window);
+    assert_eq!(before, repo_fingerprint(repo.path()));
 }

@@ -157,7 +157,8 @@ status publication settle without replaying a previous visit.
 
 Inspector extends its existing session-owned file-row presentation rather than
 creating another selection model. Its single historical/compare file list uses
-stable path identity; Generated fold children use fixed-height splice motion.
+stable path identity; Generated fold children and Tree directory descendants use
+fixed-height splice motion.
 Selection intent, focus reconciliation, AX selection and chevrons remain
 authoritative immediately, independently of the painted selection wash.
 On-accent filename, status and diffstat foregrounds follow the same wash progress
@@ -212,7 +213,7 @@ ghosts remain presentation-only and the shared splice cap bounds extra work.
 
 Changes uses the same leading-before-first/trailing-after-last placement order.
 Both lists give every real row kind a role-less parent boundary, including fold
-headers, non-collapsible directories and overflow notes. It consumes clicks after
+headers, directories and overflow notes. It consumes clicks after
 the row's own child actions, so compressed overlapping rows cannot both activate.
 Left mouse-down retains propagation. Changes resets a navigation-owner-local
 row claim in list capture, distinct from GPUI default prevention: an inline
@@ -482,4 +483,41 @@ takeovers and repository ownership changes without scanning sessions per frame.
 hides Graph behind PRs, Issues or Editor, accepts a real commit read while hidden,
 and returns without advancing the clock. It requires no ghost and exact endpoint
 wash/geometry on the first visible frame, then proves fresh WIP motion still runs.
+
+## Commit changed-file directory disclosure (#1628)
+
+The existing session-owned `InspectorModel::keyboard` also owns directory
+disclosure; wide Inspector and compact Changes use the same renderer. Directories
+start expanded. A collapsed-key set uses full repository-relative paths, including
+compressed chains, rather than row indices or directory basenames. Nested intent
+survives ancestor toggles and Path/Tree switches. Changing the selected commit or
+compare source resets it; refreshing the same commit's derived file data does not.
+An unavailable intermediate read is not evidence that a directory disappeared:
+prune absent keys only from an available tree, preserving folds across that gap.
+
+Directory rows join the existing RowList: pointer and Enter/Space toggle,
+Left closes, Right opens. Their TreeItem expanded state and visible keyboard
+membership change immediately. Collapsing a directory never replaces the open
+file diff. Generated disclosure remains independent.
+
+The existing Inspector splice now compares all visible logical entry keys,
+including directories, against one canonical full-tree order. Hidden descendants
+remain in that order but not in the interactive list. Removed file and directory
+content is retained only as inert paint, attached to its nearest surviving
+predecessor and displaced with that anchor. No second animation owner or variable
+height virtual list is introduced. Existing Reduce Motion, realization bounds
+and the 64-key immediate-settlement limit apply.
+Cache each ghost anchor's final index when membership changes. If scrolling
+virtualizes that anchor away, host its exit paint at the first realized slot,
+translating from the anchor's animated position. This preserves still-visible
+exits without scanning the full list each frame.
+Rehosted leading ghosts paint before that slot's live content; otherwise scrolling
+would reverse their overlap order. A frozen-clock native pixel comparison checks
+the surviving row before and after the anchor leaves the viewport.
+
+Native directory scenarios cover nested and compressed paths, independent equal
+basenames, pointer/keyboard navigation, diff preservation, Path/Tree round trips,
+Generated independence, both workspace widths, interpolated geometry, inert
+exit paint (including an offscreen anchor), moving live targets, same-commit
+unavailable/read-restored continuity and Reduce Motion.
 

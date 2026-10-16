@@ -57,6 +57,46 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_detail_select_copy'`
+with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
+selecting both Nagi presets, checks native focus-ring and graph-selection
+pixels, visibly blue active versus neutral inactive fills with rendered
+CIEDE2000 ΔE ≥ 10, selected label contrast through graph fades, and retained
+selected identity. The graph wash scenario also checks Nagi Dark WIP text/chips.
+Pair this with the `nagi_` palette/contrast tests in `kagi-ui-core`: retain 4.5:1
+ordinary text/code and 3:1 essential graph/focus strokes, at most four hue
+families and perceptually distinct selection/diff fills, not a saturation cap.
+Tier B compares Apple versus Nagi on the same graph/diff/change fixture in
+Light/Dark, EN/JA, 100%/167% and wide/compact windows. Check three blue/green/amber
+lane families, brighter Dark lane bands/ref chips, neutral remote/tag metadata
+and ordinary syntax (only keywords/types blue), and green/red additions/deletions.
+Compare bright blue active selection with neutral inactive selection, including
+WIP/commit/stash labels and secondary text. Inspect neutral expanded Dark oplog
+details. Contrast ratios alone do not establish visual distinction. Preserve
+`A/M/D/R`, `+/-`, labels, icons, lane geometry and focus indicators; no operation
+relies on colour alone. Inspect semantic action
+buttons' native neutral/disabled paint at rest, hover and held press; release
+outside to avoid a Git write.
+Capture Settings/palette switching and saved-theme relaunch. Copy the plain
+production binary to the evidence directory before building `gui-e2e`:
+the feature build replaces `target/debug/kagi` with a harness-only shell.
+Native screenshots and color simulation are not CUD certification.
+
+For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
+This includes wide, compact and frozen-clock directory motion scenarios.
+Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,
+Enter/Space/Left/Right, hidden keyboard/AX membership, unchanged leaf diff,
+Generated independence, moving live hit targets and inert exit paint.
+Keep neighboring `inspector_files_keyboard`, `inspector_generated_`,
+`inspector_overflow_keyboard`, `inspector_more_motion`, `inspector_file_row_hit`
+and compact Inspector scenarios. Tier B compares Finder list disclosure with
+the real wide Inspector and compact Changes in Apple Light/Dark, using an
+isolated repository with nested and long EN/JA paths. Capture normal-motion
+intermediate and settled frames and an app-private Reduce Motion endpoint;
+do not change the owner's OS preference. Stable directory probes use
+`inspector-directory-<full-repository-relative-path>`; compressed chains retain
+the full path, and source-index file/ghost probes remain unchanged.
+
 For #1479-S4 use
 `KAGI_GUI_E2E_ONLY='sidebar_,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_'`
 with KEEP_GOING and a 300-second scenario timeout. Activate the native adapter
@@ -156,6 +196,28 @@ expansion/copy/keyboard oracles and adds `oplog_row_typography` and
 `issues_row_secondary_text` (`tests/recovery/density_rest.rs`). Their paint-stage
 font and vertical glyph-mask assertions cover EN/JA, Apple Light/Dark and
 100%/167%. Tier B compares the live Operation Log and Issues navigator.
+
+For #1640 use `KAGI_GUI_E2E_ONLY='compact_,settings_'` with KEEP_GOING and
+`KAGI_GUI_E2E_TIMEOUT_SECS=300`. Compact membership is logical window width
+below configured rem × current root rem, default 70rem (1008px at 100%).
+`compact_rem_transitions` covers live preference/zoom/width changes and shared
+draft/input/session state. `settings_compact_threshold_ax` exercises bounds,
+persistence, native names, pointer activation and keyboard-first reveal in
+enlarged JA Settings; manual wheel scrolling must not snap back to focused controls.
+`smart_commit_settings_consent` reaches the real switch through Tab navigation
+and requires it inside the host's scroll body before Space; model pointer paths
+use wheel events instead of assigning the scroll offset. Native and portable
+hosts retain their explicit-consent, persistence and no-generation assertions.
+`pr_peek_visible_` retains table/sidebar, unloaded-head, dirty-editor and draft
+coverage across wide and compact rem widths. A successful compact Peek must open
+Changes and expose its real Compare file consumer, not merely publish hidden data.
+`compact_layout_content_fit` covers short→long→short composer sizing, reopen,
+viewport/zoom changes and retained input owners without a fixed empty footer.
+Desktop-only stress fixtures either resolve an actual wide width or explicitly
+isolate a supported 40rem threshold to preserve their original narrow geometry.
+Tier B: compare actual logical dimensions, persisted settings and zoom on macOS
+and Ubuntu X11/Wayland; distinguish output pixels from logical viewport size
+and verify OS scale is not multiplied into the breakpoint again.
 
 For #1225 compact layout integration, use
 `KAGI_GUI_E2E_ONLY='compact_layout_,commit_panel_,home_,toolbar_overflow,bottom_panel,analyze_a11y_,pr_detail_a11y_'`
@@ -415,8 +477,8 @@ the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
 and read live EN/JA adoption names in Accessibility Inspector. Do not Save
 while comparing buffer-only adoption with pointer behavior.
 For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
-`graph_columns_fit` covers both the exact 1000×660/167% desktop breakpoint and
-the 940×660/167% compact rail, requiring a scaled 120px subject minimum, contained author/time,
+`graph_columns_fit` uses an isolated 40rem threshold to retain desktop
+1000×660/167% and compact 940×660/167%, requiring a scaled 120px subject minimum, contained author/time,
 native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
 It pins the before x positions at 1392×883/100%, preserves saved width keys
 and preferred widths through resize/zoom, and leaves existing divider-drag,
@@ -435,8 +497,8 @@ back and forth, drag both column dividers, relaunch to check saved preferences,
 and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
 
 For #1355 use `KAGI_GUI_E2E_ONLY='pane_budget_'` with KEEP_GOING.
-The desktop fit and sidebar-anchor scenarios use the exact 1000px breakpoint
-at 167% after compact integration; the 700px leg requires a contained rail and
+The desktop fit and sidebar-anchor scenarios retain 1000px at 167% using an
+isolated 40rem threshold after #1640; the 700px leg requires a contained rail and
 no desktop side-pane clips, with preferred widths unchanged. Pure unit tests
 retain the sub-minimum non-collapsed fit cases.
 
@@ -643,10 +705,10 @@ For #1175/#1182 use `KAGI_GUI_E2E_ONLY='pr_dashboard_responsive,palette_viewport
 The dashboard measures Apple Light table/viewport bounds at two widths, EN/JA,
 100/167% and Scrolling/Hover/Always policies: Scrolling overlays with zero lane;
 non-auto-hide Hover/Always reserve 16 logical px and pin the table bar to Always.
-The 940px compact dashboard retains its rail while Cmd-B changes the shared
-Sidebar preference; the 1440px desktop dashboard toggles its inline Sidebar.
-Both zooms use the same 1000-logical-pixel breakpoint (ADR-0224), and neither
-viewport is substituted to satisfy the old inline-only oracle.
+The 940px dashboard retains its compact rail while Cmd-B changes the shared
+Sidebar preference. At 1440px, the default 70rem threshold gives inline Sidebar
+at 100% and compact rail at 167%; assertions follow the central rem predicate.
+Neither viewport is substituted to satisfy the old inline-only oracle.
 X/Y routing and trailing-column reachability stay intact. `e2e::chrome_border`
 records explicit rendered border styles for table
 rows/header and palette frame/divider; it is not a screenshot-pixel sample.

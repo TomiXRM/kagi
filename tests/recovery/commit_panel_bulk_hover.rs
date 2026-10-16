@@ -98,7 +98,11 @@ pub fn scenario_commit_panel_bulk_hover(cx: &mut VisualTestAppContext) {
                 true,
             );
             // Empty compact columns retain disabled Unstage; wide hides it by design.
-            if case.dimensions.0 < 1000. {
+            if kagi_domain::compact::is_compact(
+                case.dimensions.0,
+                theme::rem_size_px(),
+                theme::compact_threshold_rem(),
+            ) {
                 check(cx, &app, window, fixture.path(), &["cp-unstage-all"], true);
             }
             unmount(cx, app, window);

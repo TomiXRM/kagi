@@ -144,6 +144,9 @@ fn check(
 
 pub fn scenario_header_fit(cx: &mut VisualTestAppContext) {
     let restore = GlobalSettings::capture();
+    // Isolate the original narrow desktop header-pressure oracle at a supported
+    // threshold; default70rem would correctly present compact chrome here.
+    theme::set_compact_threshold_rem(40);
     let fixture = build_fixture();
     let repo = fixture.path();
     let file = repo.join(LONG_PATH);
@@ -168,18 +171,19 @@ pub fn scenario_header_fit(cx: &mut VisualTestAppContext) {
     let compact = check(cx, repo, (1920., 1080.), "en/1920x1080@1");
     assert!(!compact, "a wide header keeps its labels");
     drop(restore);
-    eprintln!("[gui-e2e] PASS header_fit: diff + File History header controls inside the window (EN/JA 1000x720@1.25, labels kept at 1920)");
+    eprintln!("[gui-e2e] PASS header_fit: diff + File History controls fit at1000px/40rem (EN/JA at125%, labels kept at1920)");
 }
 
 /// Inspect the native adapter, not renderer metadata: natural-width copies
 /// must never contribute a second accessible header control.
 pub fn scenario_diff_header_ax_unique(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
+    theme::set_compact_threshold_rem(40);
     let fixture = build_fixture();
     for locale in ["en", "ja"] {
         std::env::set_var("KAGI_LANG", locale);
         i18n::init_lang();
-        for dimensions in [(1000., 720.), (1920., 1080.)] {
+        for dimensions in [(1000_f32, 720.), (1920., 1080.)] {
             theme::set_zoom(if dimensions.0 == 1000. { 1.25 } else { 1. });
             let (app, win) = open_window(cx, fixture.path(), dimensions);
             app.update(cx, |app, cx| {

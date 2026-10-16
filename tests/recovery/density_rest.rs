@@ -63,7 +63,13 @@ fn inspect(cx: &mut VisualTestAppContext, log: bool) {
                         });
                     }
                     draw(cx, window);
-                    if !log && width < 1000. {
+                    if !log
+                        && kagi_domain::compact::is_compact(
+                            width,
+                            theme::rem_size_px(),
+                            theme::compact_threshold_rem(),
+                        )
+                    {
                         app.update(cx, |app, cx| app.show_graph_mode(cx));
                         draw(cx, window);
                         let trigger =

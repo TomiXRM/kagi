@@ -74,20 +74,45 @@ fn peek_from_row(
     e2e::clear_control_bounds(id, "pr-mode-center-pane");
     e2e::clear_control_bounds(id, control);
     paint(cx, window);
+    let compact = cx
+        .update_window(window, |_, window, _| {
+            kagi_domain::compact::is_compact(
+                f32::from(window.viewport_size().width),
+                theme::rem_size_px(),
+                theme::compact_threshold_rem(),
+            )
+        })
+        .unwrap();
+    if compact && control.starts_with("pr-mode-card-") {
+        let trigger = e2e::control_bounds(id, "compact-rail-prs").expect("compact PR navigator");
+        cx.simulate_click(window, trigger.center(), Modifiers::none());
+        cx.run_until_parked();
+        paint(cx, window);
+    }
     assert!(e2e::control_bounds(id, "pr-mode-center-pane").is_some());
     let row = e2e::control_bounds(id, control).expect("actual PR context row");
-    // Open away from the viewport edges; the menu's first row is Peek.
+    // Open the context menu on the actual PR row.
     let anchor = point(row.left() + px(30.), row.center().y);
     cx.simulate_mouse_down(window, anchor, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(window, anchor, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    let menu_anchor = cx.read(|cx| {
-        let (pr, pos) = app.read(cx).ui().pr_menu.as_ref().expect("PR context menu");
+    cx.read(|cx| {
+        let (pr, _) = app.read(cx).ui().pr_menu.as_ref().expect("PR context menu");
         assert_eq!(pr.number, 77);
-        *pos
     });
+    e2e::clear_control_bounds(id, "pr-menu-peek");
+    e2e::clear_control_bounds(id, "compact-sidebar-popover");
     paint(cx, window);
-    let peek = menu_anchor + point(theme::scaled_px(10.), theme::scaled_px(10.));
+    if compact && control.starts_with("pr-mode-card-") {
+        assert!(
+            e2e::control_bounds(id, "compact-sidebar-popover").is_none(),
+            "the navigator must hand pointer interaction to the PR context menu"
+        );
+    }
+    // The anchored overlay may snap away from its requested position.
+    let peek = e2e::control_bounds(id, "pr-menu-peek")
+        .expect("painted PR Peek menu item")
+        .center();
     cx.simulate_mouse_move(window, peek, None, Modifiers::none());
     cx.simulate_click(window, peek, Modifiers::none());
     cx.run_until_parked();
@@ -164,6 +189,25 @@ fn assert_compare_consumer(
         assert_eq!(view.files.len(), 1);
         assert_eq!(view.files[0].path, Path::new("peek.txt"));
     });
+    cx.update_window(window, |_, window, cx| {
+        if kagi_domain::compact::is_compact(
+            f32::from(window.viewport_size().width),
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        ) {
+            let app = app.read(cx);
+            assert_eq!(
+                app.bottom_tab,
+                kagi::ui::BottomTab::Changes,
+                "compact PR Peek activates the Compare consumer's Changes tab"
+            );
+            assert!(
+                app.bottom_panel_open,
+                "compact PR Peek reveals its Compare consumer"
+            );
+        }
+    })
+    .expect("inspect PR Peek presentation");
     e2e::clear_control_bounds(window.window_id(), "inspector-file-0");
     paint(cx, window);
     cx.advance_clock(std::time::Duration::from_millis(600));

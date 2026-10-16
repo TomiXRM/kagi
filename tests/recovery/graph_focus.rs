@@ -157,7 +157,13 @@ pub fn scenario_graph_pointer_focus(cx: &mut VisualTestAppContext) {
 
 fn pointer_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
     let compact = cx
-        .update_window(win, |_, window, _| window.viewport_size().width < px(1000.))
+        .update_window(win, |_, window, _| {
+            kagi_domain::compact::is_compact(
+                f32::from(window.viewport_size().width),
+                kagi_ui_core::theme::rem_size_px(),
+                kagi_ui_core::theme::compact_threshold_rem(),
+            )
+        })
         .unwrap();
     if compact {
         // #1481: the narrow navigator lives in its actual rail Popover; the

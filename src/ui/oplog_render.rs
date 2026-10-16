@@ -381,6 +381,16 @@ fn render_copy(
     super::e2e::measure_control(format!("oplog-copy-{i}"), button)
 }
 
+fn detail_background() -> u32 {
+    let palette = theme();
+    if palette.slug == "nagi-dark" {
+        // Expanded content is not an active selection; keep semantic text on a neutral surface.
+        palette.surface
+    } else {
+        palette.selected
+    }
+}
+
 /// The expanded detail block: every line of the entry, soft-wrapped (never
 /// truncated — the row is variable-height now) and drag-selectable. Leading /
 /// aligned spaces collapse on screen; the row's copy button keeps them.
@@ -395,7 +405,7 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
         .min_w(px(0.))
         .px_3()
         .py_1()
-        .bg(rgb(theme().selected))
+        .bg(rgb(detail_background()))
         .text_xs()
         .text_color(rgb(theme().text_sub))
         .whitespace_normal()
@@ -449,7 +459,7 @@ fn render_recovery(i: usize, entry: &OpLogEntry, lines: Vec<String>) -> gpui::An
             .min_w(px(0.))
             .px_3()
             .pb_1()
-            .bg(rgb(theme().selected))
+            .bg(rgb(detail_background()))
             .text_xs()
             .text_color(rgb(theme().text_sub))
             .whitespace_normal()
@@ -532,7 +542,7 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
         .w_full()
         .px_3()
         .pb_1()
-        .bg(rgb(theme().selected))
+        .bg(rgb(detail_background()))
         .text_xs()
         .text_color(rgb(theme().text_sub));
     let muted = |id: &str, text: String| {
@@ -609,7 +619,7 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
         .w_full()
         .px_3()
         .pb_1()
-        .bg(rgb(theme().selected))
+        .bg(rgb(detail_background()))
         .text_xs()
         .text_color(rgb(theme().text_sub))
         .child(
@@ -711,7 +721,7 @@ fn render_restore_actions(
         .w_full()
         .px_3()
         .pb_2()
-        .bg(rgb(theme().selected))
+        .bg(rgb(detail_background()))
         .child(
             div()
                 .flex()

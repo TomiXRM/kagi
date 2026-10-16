@@ -1882,6 +1882,10 @@ mod macos {
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
             ),
             (
+                "nagi_fixed_accent",
+                Box::new(crate::system_accent::scenario_nagi_fixed_accent),
+            ),
+            (
                 "system_reduce_motion",
                 Box::new(crate::system_accessibility::scenario_system_reduce_motion),
             ),
@@ -3119,6 +3123,10 @@ mod macos {
                 Box::new(crate::settings_appearance_ax::scenario_settings_zoom_stepper_ax),
             ),
             (
+                "settings_compact_threshold_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_compact_threshold_ax),
+            ),
+            (
                 "settings_analyze_ignore_feedback",
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
@@ -3622,6 +3630,10 @@ mod macos {
             ("changes_inline_pointer_focus", Box::new(crate::file_row_input::inline_pointer_focus)),
             ("inspector_file_motion", Box::new(crate::inspector_motion::scenario)),
             ("inspector_generated_viewport_motion", Box::new(crate::inspector_motion::scenario_generated_viewport)),
+            (
+                "inspector_directory_accordion_motion",
+                Box::new(crate::inspector_motion::scenario_directory_accordion_motion),
+            ),
             ("inspector_more_motion", Box::new(crate::file_row_input::inspector_more)),
             ("modal_disclosure_motion", Box::new(crate::modal_motion::scenario_modal_disclosure_motion)),
             (
@@ -3753,12 +3765,20 @@ mod macos {
                 Box::new(crate::compact_layout::popup::scenario_compact_layout_popup),
             ),
             (
+                "compact_layout_content_fit",
+                Box::new(crate::compact_layout::popup::scenario_compact_layout_content_fit),
+            ),
+            (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
             ),
             (
                 "compact_layout_state_tall",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state_tall),
+            ),
+            (
+                "compact_rem_transitions",
+                Box::new(crate::compact_layout::state::scenario_compact_rem_transitions),
             ),
             (
                 "compact_layout_lifecycle",
@@ -4757,6 +4777,14 @@ mod macos {
             (
                 "inspector_file_row_hit",
                 Box::new(crate::inspector_file_rows::scenario),
+            ),
+            (
+                "inspector_directory_accordion",
+                Box::new(crate::inspector_file_rows::scenario_directory_accordion),
+            ),
+            (
+                "compact_inspector_directory_accordion",
+                Box::new(crate::compact_layout::scenario_compact_inspector_directory_accordion),
             ),
             (
                 "graph_subject_identity",

@@ -269,7 +269,13 @@ pub(super) fn render_settings_overlay(
                         .flex()
                         .flex_col()
                         .gap_6()
-                        .child(appearance_section(&app, theme_select, &switches, cx))
+                        .child(appearance_section(
+                            &app,
+                            theme_select,
+                            &switches,
+                            &scroll,
+                            cx,
+                        ))
                         .child(language_section(&app))
                         .child(smart_commit_section(
                             &app,
@@ -277,6 +283,7 @@ pub(super) fn render_settings_overlay(
                             &switches,
                             controls,
                             trap.clone(),
+                            &scroll,
                             cx,
                         ))
                         .child(analyze_ignore_section(
@@ -491,6 +498,7 @@ pub(super) fn appearance_section(
     app: &Entity<KagiApp>,
     theme_select: Option<Entity<ThemeSelectState>>,
     switches: &super::keyboard_nav::FocusSlots,
+    scroll: &gpui::ScrollHandle,
     cx: &gpui::App,
 ) -> impl IntoElement {
     // ── Theme picker (gpui-component Select) ──
@@ -578,6 +586,8 @@ pub(super) fn appearance_section(
             theme::step_zoom(zoom, false) == zoom,
             false,
             dec,
+            |increase| theme::step_zoom(theme::zoom(), increase) == theme::zoom(),
+            scroll.clone(),
         ))
         .child(
             div()
@@ -596,6 +606,8 @@ pub(super) fn appearance_section(
             theme::step_zoom(zoom, true) == zoom,
             true,
             inc,
+            |increase| theme::step_zoom(theme::zoom(), increase) == theme::zoom(),
+            scroll.clone(),
         ))
         .into_any_element();
 
@@ -609,6 +621,7 @@ pub(super) fn appearance_section(
     let compact_ctl = switch(
         "compact-toggle",
         switches.get(0, cx),
+        scroll.clone(),
         title(Msg::SettingsCompact),
         title(Msg::SettingsCompactDesc),
         theme::compact_graph(),
@@ -630,6 +643,7 @@ pub(super) fn appearance_section(
     let lane_compact_ctl = switch(
         "lane-compact-toggle",
         switches.get(1, cx),
+        scroll.clone(),
         title(Msg::SettingsLaneCompact),
         title(Msg::SettingsLaneCompactDesc),
         theme::graph_lane_compact(),
@@ -647,6 +661,7 @@ pub(super) fn appearance_section(
     let auto_fetch_ctl = switch(
         "auto-fetch-toggle",
         switches.get(2, cx),
+        scroll.clone(),
         title(Msg::SettingsAutoFetch),
         title(Msg::SettingsAutoFetchDesc),
         theme::auto_fetch(),
@@ -663,6 +678,7 @@ pub(super) fn appearance_section(
     let reduce_motion_ctl = switch(
         "reduce-motion-toggle",
         switches.get(3, cx),
+        scroll.clone(),
         title(Msg::SettingsReduceMotion),
         title(Msg::SettingsReduceMotionDesc),
         theme::app_reduce_motion(),
@@ -679,6 +695,7 @@ pub(super) fn appearance_section(
     let auto_lock_ctl = switch(
         "terminal-auto-lock-toggle",
         switches.get(4, cx),
+        scroll.clone(),
         title(Msg::SettingsTerminalAutoLock),
         title(Msg::SettingsTerminalAutoLockDesc),
         crate::ui::settings::terminal_auto_lock(),
@@ -733,6 +750,89 @@ pub(super) fn appearance_section(
         })
         .into_any_element();
 
+    let threshold = theme::compact_threshold_rem();
+    let threshold_value = format!("{threshold}rem");
+    let threshold_conversion =
+        i18n::settings_compact_threshold_value(threshold, threshold as f32 * theme::rem_size_px());
+    #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(
+        "compact-threshold-value",
+        gpui::Role::Status,
+        &threshold_conversion,
+        &threshold_value,
+        None,
+        false,
+    );
+    let threshold_buttons = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .children([false, true].map(|increase| {
+            let owner = app.downgrade();
+            stepper_btn(
+                if increase {
+                    "compact-threshold-inc"
+                } else {
+                    "compact-threshold-dec"
+                },
+                if increase { "+" } else { "−" },
+                i18n::settings_compact_threshold_action(increase, threshold),
+                if increase {
+                    threshold == kagi_domain::compact::MAX_THRESHOLD_REM
+                } else {
+                    threshold == kagi_domain::compact::MIN_THRESHOLD_REM
+                },
+                increase,
+                move |_, _, cx| {
+                    let current = theme::compact_threshold_rem();
+                    theme::set_compact_threshold_rem(if increase {
+                        current + 1
+                    } else {
+                        current - 1
+                    });
+                    cx.refresh_windows();
+                    let _ = owner.update(cx, |_, cx| cx.notify());
+                },
+                |increase| {
+                    theme::compact_threshold_rem()
+                        == if increase {
+                            kagi_domain::compact::MAX_THRESHOLD_REM
+                        } else {
+                            kagi_domain::compact::MIN_THRESHOLD_REM
+                        }
+                },
+                scroll.clone(),
+            )
+        }));
+    let threshold_ctl = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .items_end()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .id("compact-threshold-value")
+                        .role(gpui::Role::Status)
+                        .aria_label(threshold_conversion.clone())
+                        .child(threshold_value),
+                )
+                .child(threshold_buttons),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .child(threshold_conversion),
+        )
+        .into_any_element();
+
     let appearance = settings_group("settings-appearance-group")
         .child(setting_row(
             true,
@@ -776,6 +876,12 @@ pub(super) fn appearance_section(
             SharedString::from(Msg::SettingsZoom.t()),
             SharedString::from(Msg::SettingsZoomDesc.t()),
             zoom_ctl,
+        ))
+        .child(setting_row(
+            false,
+            Msg::SettingsCompactThreshold.t().into(),
+            Msg::SettingsCompactThresholdDesc.t().into(),
+            threshold_ctl,
         ));
     let graph = settings_group("settings-graph-group")
         .child(setting_row(
@@ -875,6 +981,8 @@ pub(super) fn appearance_section(
         )
 }
 
+// Keep rendered button state separate from the live bound checked after activation.
+#[allow(clippy::too_many_arguments)]
 fn stepper_btn(
     id: &'static str,
     label: &'static str,
@@ -882,6 +990,8 @@ fn stepper_btn(
     disabled: bool,
     increase: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    at_limit: fn(bool) -> bool,
+    scroll: gpui::ScrollHandle,
 ) -> impl IntoElement {
     #[cfg(feature = "gui-e2e")]
     super::theme_select::record_ax(id, gpui::Role::Button, &name, "", None, disabled);
@@ -896,26 +1006,30 @@ fn stepper_btn(
     );
     super::e2e::measure_control(
         id,
-        ZoomStepperButton {
+        StepperButton {
             id,
             button,
             increase,
             on_click,
+            at_limit,
+            scroll,
         },
     )
 }
 
 /// Reuse the kit Button's keyed focus owner, without adding a second stop.
 #[derive(IntoElement)]
-struct ZoomStepperButton<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
+struct StepperButton<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
     id: &'static str,
     button: Button,
     increase: bool,
     on_click: F,
+    at_limit: fn(bool) -> bool,
+    scroll: gpui::ScrollHandle,
 }
 
 impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::RenderOnce
-    for ZoomStepperButton<F>
+    for StepperButton<F>
 {
     fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let Self {
@@ -923,6 +1037,8 @@ impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::Rend
             button,
             increase,
             on_click,
+            at_limit,
+            scroll,
         } = self;
         // Button::render uses this same public keyed-state API under the same
         // element namespace. Capture its existing owner before installing the
@@ -931,14 +1047,17 @@ impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::Rend
             .use_keyed_state(gpui::ElementId::from(id), cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
+        let button = super::button_style::reveal_on_focus(
+            button,
+            id.into(),
+            focus.clone(),
+            scroll,
+            window,
+            cx,
+        );
         let button = button.on_click(move |event, window, cx| {
             on_click(event, window, cx);
-            let bound = if increase {
-                theme::ZOOM_MAX
-            } else {
-                theme::ZOOM_MIN
-            };
-            if theme::zoom() == bound && focus.is_focused(window) {
+            if at_limit(increase) && focus.is_focused(window) {
                 // Both stepper stops still exist in this frame. Hand focus to
                 // the opposite direction before the clicked Button retires.
                 if increase {
@@ -1001,6 +1120,7 @@ pub(super) fn smart_commit_section(
     switches: &super::keyboard_nav::FocusSlots,
     controls: &super::settings_controls::SettingsControls,
     pointer_focus: Option<gpui::FocusHandle>,
+    scroll: &gpui::ScrollHandle,
     cx: &gpui::App,
 ) -> impl IntoElement {
     let current = smart.model.clone();
@@ -1013,6 +1133,7 @@ pub(super) fn smart_commit_section(
     let enabled_ctl = super::keyboard_nav::switch(
         "smart-commit-enabled",
         switches.get(5, cx),
+        scroll.clone(),
         SharedString::from(Msg::SettingsSmartEnable.t()),
         SharedString::from(Msg::SettingsSmartEnableDesc.t()),
         smart.llm_enabled,

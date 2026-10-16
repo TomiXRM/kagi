@@ -347,6 +347,7 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
 /// also saves `ui_zoom`, so the saved key is put back too (#516).
 pub(crate) struct GlobalSettings {
     zoom: f32,
+    compact_threshold: u32,
     language_env: Option<std::ffi::OsString>,
     language: i18n::Lang,
     _saved: crate::gui_isolation::SavedKeys,
@@ -356,9 +357,14 @@ impl GlobalSettings {
     pub(crate) fn capture() -> Self {
         Self {
             zoom: theme::zoom(),
+            compact_threshold: theme::compact_threshold_rem(),
             language_env: std::env::var_os("KAGI_LANG"),
             language: i18n::lang(),
-            _saved: crate::gui_isolation::SavedKeys::keep(&["ui_zoom", "lang"]),
+            _saved: crate::gui_isolation::SavedKeys::keep(&[
+                "ui_zoom",
+                "lang",
+                "compact_threshold_rem",
+            ]),
         }
     }
 }
@@ -366,6 +372,7 @@ impl GlobalSettings {
 impl Drop for GlobalSettings {
     fn drop(&mut self) {
         theme::set_zoom(self.zoom);
+        theme::set_compact_threshold_rem(self.compact_threshold);
         std::env::set_var("KAGI_LANG", self.language.slug());
         i18n::init_lang();
         match self.language_env.take() {
@@ -972,9 +979,13 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                     kagi::ui::commands::CommandState::Disabled(i18n::Msg::NoPrOpen.t()),
                     "dashboard must explain the unavailable reveal command"
                 );
-                // ADR-0224 keeps the compact rail at 940px; Cmd-B changes
-                // the shared preference, not an inline navigator below 1000px.
-                let compact = dimensions.0 < 1000.;
+                // Cmd-B changes the shared preference; compact membership
+                // still follows the current viewport/root-rem capacity.
+                let compact = kagi_domain::compact::is_compact(
+                    dimensions.0,
+                    theme::rem_size_px(),
+                    theme::compact_threshold_rem(),
+                );
                 for visible in [false, true] {
                     cx.update_window(win, |_, window, cx| {
                         app.update(cx, |app, cx| {

@@ -42,6 +42,7 @@ pub mod theme_dracula;
 pub mod theme_flower_road;
 pub mod theme_ibm_pc;
 pub mod theme_monokai;
+pub mod theme_nagi;
 pub mod theme_one_dark;
 pub mod theme_one_light;
 pub mod theme_pinky_boo;

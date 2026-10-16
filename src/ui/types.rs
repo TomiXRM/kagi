@@ -74,11 +74,12 @@ impl gpui::Render for BranchDragGhost {
         // T-DNDMERGE-001: the ghost must look like the LIFTED branch badge so the
         // chip "sticks" to the cursor (user request). Mirror the real branch
         // badge chip rendered in `render_badges_column` for `BadgeKind::Branch`:
-        // same `badge_style(color_branch)` tint, `rounded_sm`, `px_1`, `text_sm`.
+        // same `graph_badge_style(color_branch)` tint, `rounded_sm`, `px_1`, `text_sm`.
         // gpui renders this ghost entity at the cursor automatically, so we only
         // need it to LOOK like the lifted badge. Used by BOTH the graph-badge
         // drag and the sidebar drag (kept consistent).
-        let (badge_bg, badge_border, badge_text) = theme::badge_style(theme::theme().color_branch);
+        let (badge_bg, badge_border, badge_text) =
+            theme::graph_badge_style(theme::theme().color_branch);
         div()
             // Active drag views are separate GPUI roots, not descendants of Kit Root.
             .font(kagi_ui_core::fonts::ui_font())

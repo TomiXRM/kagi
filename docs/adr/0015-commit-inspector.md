@@ -194,6 +194,12 @@ without adding a container that stretches intrinsically sized rows only in tests
 The pre-fix right-edge click fails with `left: None` versus
 `right: Some("src/nested/a.txt")`.
 
+The following #1481 measurements describe the historical fixed-1000px boundary.
+After #1640, desktop-only Inspector fixtures resolve their width against the
+current configured rem threshold; they must not assert an inline Inspector in
+a window that now intentionally uses compact Changes. The original measured
+offsets remain historical evidence, not measurements of the wider rem fixtures.
+
 Desktop-oracle repair: #1481's compact breakpoint invalidates desktop-only
 message/files frames at 940px. `inspector_scale` and `inspector_full_message`
 now use 1000×720 for their small desktop leg; dedicated compact scenarios

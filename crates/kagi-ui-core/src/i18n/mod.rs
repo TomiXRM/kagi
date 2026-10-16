@@ -41,6 +41,22 @@ pub fn settings_zoom_value(value: &str) -> String {
     }
 }
 
+pub fn settings_compact_threshold_action(increase: bool, value: u32) -> String {
+    match (lang(), increase) {
+        (Lang::En, false) => format!("Decrease compact layout threshold ({value}rem)"),
+        (Lang::En, true) => format!("Increase compact layout threshold ({value}rem)"),
+        (Lang::Ja, false) => format!("コンパクト表示への切替幅を下げる ({value}rem)"),
+        (Lang::Ja, true) => format!("コンパクト表示への切替幅を上げる ({value}rem)"),
+    }
+}
+
+pub fn settings_compact_threshold_value(value: u32, logical_px: f32) -> String {
+    match lang() {
+        Lang::En => format!("{value}rem ≈ {logical_px:.0} logical px at current UI zoom"),
+        Lang::Ja => format!("{value}rem ≈ 現在の UI ズームで {logical_px:.0} logical px"),
+    }
+}
+
 // Lang + active-language atomic
 pub mod activity;
 pub mod analyze;
@@ -1058,6 +1074,9 @@ pub enum Msg {
     SettingsZoom,
     /// Appearance → UI Zoom row description.
     SettingsZoomDesc,
+    /// Appearance → relative compact layout threshold.
+    SettingsCompactThreshold,
+    SettingsCompactThresholdDesc,
     /// Appearance → Compact graph row title.
     SettingsCompact,
     /// Appearance → Compact graph row description.
@@ -3728,6 +3747,10 @@ impl Msg {
             (Ja, SettingsZoom) => "UI ズーム",
             (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–2.0×).",
             (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜2.0×)。",
+            (En, SettingsCompactThreshold) => "Compact layout threshold",
+            (Ja, SettingsCompactThreshold) => "コンパクト表示への切替幅",
+            (En, SettingsCompactThresholdDesc) => "Switch to compact below this width (40–160rem). rem is the root text size, not a literal character count; UI zoom changes the logical-pixel threshold.",
+            (Ja, SettingsCompactThresholdDesc) => "この幅未満でコンパクト表示に切り替えます (40〜160rem)。rem は基準文字サイズの倍率で、実際の文字数ではありません。UI ズームに応じて logical px 換算の切替幅も変わります。",
             // "graph" is a domain word and stays English in both arms (ADR-0048).
             (En, SettingsCompact) => "Compact graph",
             (Ja, SettingsCompact) => "graph をコンパクト表示",

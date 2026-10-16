@@ -246,12 +246,13 @@ fn rail_section(
 }
 
 fn rail_thresholds(cx: &mut VisualTestAppContext, win: AnyWindowHandle, height: f32) {
-    resize(cx, win, (999., height));
-    rail_graph(win, (999., height));
-    resize(cx, win, (1000., height));
+    let threshold = theme::compact_threshold_rem() as f32 * theme::rem_size_px();
+    resize(cx, win, (threshold.ceil() - 1., height));
+    rail_graph(win, (threshold.ceil() - 1., height));
+    resize(cx, win, (threshold.ceil(), height));
     assert!(
         e2e::control_bounds(win.window_id(), "compact-rail").is_none(),
-        "exactly 1000 logical px restores the unchanged desktop navigator"
+        "first integral width at or above the rem threshold restores desktop"
     );
     resize(cx, win, (WIDTH, height));
     rail_graph(win, (WIDTH, height));

@@ -385,7 +385,7 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
         let badge = e2e::control_paint(window.window_id(), "graph-selected-badge-label")
             .expect("selected transparent ref chip label painted");
         let lane = cx.read(|cx| app.read(cx).view().rows[0].node_color);
-        let (_, _, badge_ink) = theme::badge_style(theme::lane_color_u32(lane));
+        let (_, _, badge_ink) = theme::graph_badge_style(theme::lane_color_u32(lane));
         assert_eq!(badge.text_color, Hsla::from(gpui::rgb(badge_ink)));
         let badge_bounds =
             e2e::control_bounds(window.window_id(), "graph-selected-badge-label").unwrap();

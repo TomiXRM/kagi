@@ -63,6 +63,10 @@ impl KagiApp {
                     .is_some_and(|key| self.ui().graph_motion.selected(key));
                 let wash = theme().selection_wash(self.window_active);
                 let base: gpui::Hsla = rgb(theme().bg_base).into();
+                let row_bg = base.blend(wash.alpha(wash.a * selection));
+                let ink = graph_selection_ink(selection, self.window_active, row_bg);
+                let foreground =
+                    ink.map_or_else(|| rgb(stash_color).into(), |(primary, _)| primary);
                 let label = sr.label.clone();
                 let msg_for_menu = sr.label.to_string();
                 let mut edges: Vec<crate::graph::GraphEdge> = passing_lanes
@@ -113,7 +117,7 @@ impl KagiApp {
                     cx.stop_propagation();
                     cx.notify();
                 });
-                let (cb, cbd, ct) = theme::badge_style(stash_color);
+                let (cb, cbd, ct) = theme::graph_badge_style(stash_color);
                 super::list_a11y::list_option(
                     "commit-list",
                     div().id(("stash-graph-row", index)),
@@ -129,7 +133,7 @@ impl KagiApp {
                     )))
                 })
                 .when(selection > 0., |row| {
-                    row.bg(base.blend(wash.alpha(wash.a * selection))).child(
+                    row.bg(row_bg).child(
                         div()
                             .absolute()
                             .left_0()
@@ -153,7 +157,12 @@ impl KagiApp {
                 .on_click(peek)
                 .on_mouse_down(gpui::MouseButton::Right, menu)
                 .when(selection == 0., |row| {
-                    row.hover(|s| s.bg(rgb(theme().selected)))
+                    let hover = if theme().slug.as_ref() == "nagi-dark" {
+                        base.blend(gpui::Hsla::from(rgb(theme().ui_accent())).alpha(0.15))
+                    } else {
+                        rgb(theme().selected).into()
+                    };
+                    row.hover(move |s| s.bg(hover))
                 })
                 // Badge column: a yellow stash chip with an inbox icon.
                 .child(
@@ -260,7 +269,7 @@ impl KagiApp {
                         .flex_1()
                         .overflow_hidden()
                         .truncate()
-                        .text_color(rgb(stash_color))
+                        .text_color(foreground)
                         .child(label),
                 )
                 .into_any()
@@ -306,16 +315,23 @@ impl KagiApp {
         let is_selected = !ghost && key.is_some_and(|key| self.ui().graph_motion.selected(key));
         let selection = key.map_or(0., |key| self.ui().graph_motion.selection(key));
         let dark = theme().dark;
-        // Tinted chip built from the worktree's lane colour (badge_style only
-        // takes a packed u32; lane_color is Hsla, so build the tint directly).
-        // Stronger fill than a ref badge so the WIP rows read loudly.
-        let chip_bg = gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 });
-        let chip_border = gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 });
-        let chip_text: gpui::Hsla = if dark {
-            rgb(0xffffff).into()
-        } else {
-            rgb(theme().bg_base).into()
-        };
+        // Nagi's opaque ref-badge paint keeps this chip readable independently
+        // of the selected row beneath it. Other presets retain their WIP tint.
+        let (chip_bg, chip_border, chip_text): (gpui::Hsla, gpui::Hsla, gpui::Hsla) =
+            if theme().slug.as_ref() == "nagi-dark" {
+                let (fill, border, text) = theme::graph_badge_style(u32::from(color.to_rgb()) >> 8);
+                (
+                    gpui::rgba(fill).into(),
+                    gpui::rgba(border).into(),
+                    rgb(text).into(),
+                )
+            } else {
+                (
+                    gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 }),
+                    gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 }),
+                    rgb(if dark { 0xffffff } else { theme().bg_base }).into(),
+                )
+            };
         // Whole-row background: a subtle wash of the worktree colour so each WIP
         // row is distinguishable at a glance (user request), with a bold colour
         // stripe down the left edge for prominence.
@@ -373,24 +389,28 @@ impl KagiApp {
         .h(px(row_height(self.graph_compact)));
         let base: gpui::Hsla = rgb(theme().bg_base).into();
         let wash = theme().selection_wash(self.window_active);
-        row = row
-            .bg(base.blend(row_wash).blend(wash.alpha(wash.a * selection)))
-            .when(selection > 0., |row| {
-                row.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(2.))
-                        .bg(rgb(if self.window_active {
-                            theme().ui_accent()
-                        } else {
-                            theme().text_muted
-                        }))
-                        .opacity(selection),
-                )
-            });
+        let row_bg = base.blend(row_wash).blend(wash.alpha(wash.a * selection));
+        let ink = graph_selection_ink(selection, self.window_active, row_bg);
+        let secondary_foreground = ink.map_or_else(
+            || rgb(theme().text_muted).into(),
+            |(_, secondary)| secondary,
+        );
+        row = row.bg(row_bg).when(selection > 0., |row| {
+            row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(2.))
+                    .bg(rgb(if self.window_active {
+                        theme().ui_accent()
+                    } else {
+                        theme().text_muted
+                    }))
+                    .opacity(selection),
+            )
+        });
         if !ghost {
             row = self.render_compact_wip(row, &click, cx);
         }
@@ -585,7 +605,7 @@ impl KagiApp {
                     .child(
                         div()
                             .flex_1()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(secondary_foreground)
                             .overflow_hidden()
                             .truncate()
                             .when(is_commit_panel && cfg!(feature = "gui-e2e"), |el| {
@@ -596,7 +616,7 @@ impl KagiApp {
                     )
                     .children(self.render_compact_wip_affordance(is_commit_panel))
                     .when_some(diffstat, |el, stat| {
-                        let stat = render_wip_diffstat(stat);
+                        let stat = render_wip_diffstat(stat, ink.map(|(primary, _)| primary));
                         if self.compact.enabled && is_commit_panel {
                             el.child(
                                 div().flex_shrink_0().child(super::e2e::measure_control(

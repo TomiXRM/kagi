@@ -8,6 +8,57 @@ use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
 
+/// Reveal an existing focus target once per focus entry.
+/// The latch is reset on blur, so later wheel/thumb input is never pinned.
+pub(super) fn reveal_on_focus<E: ParentElement>(
+    element: E,
+    id: ElementId,
+    focus: gpui::FocusHandle,
+    scroll: gpui::ScrollHandle,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> E {
+    use gpui_component::ElementExt as _;
+    use std::cell::Cell;
+
+    let revealed = window.with_element_namespace(id, |window| {
+        window.use_keyed_state("button-focus-revealed", cx, |_, _| Cell::new(false))
+    });
+    element.on_prepaint(move |bounds, window, cx| {
+        if !focus.is_focused(window) {
+            revealed.read(cx).set(false);
+            return;
+        }
+        if revealed.read(cx).get() {
+            return;
+        }
+        let viewport = scroll.bounds();
+        let margin = gpui::px(2.);
+        let delta = if bounds.size.height > viewport.size.height - margin * 2.
+            || bounds.top() < viewport.top() + margin
+        {
+            viewport.top() + margin - bounds.top()
+        } else if bounds.bottom() > viewport.bottom() - margin {
+            viewport.bottom() - margin - bounds.bottom()
+        } else {
+            revealed.read(cx).set(true);
+            return;
+        };
+        let old = scroll.offset();
+        let mut offset = old;
+        offset.y = (old.y + delta).clamp(-scroll.max_offset().y, gpui::px(0.));
+        if offset != old {
+            // Parent prepaint still borrows this existing scroll owner.
+            window.defer(cx, move |window, _| {
+                scroll.set_offset(offset);
+                window.refresh();
+            });
+        } else {
+            revealed.read(cx).set(true);
+        }
+    })
+}
+
 /// A translucent, theme-tinted button variant for accent action buttons.
 ///
 /// The gpui-component filled `success`/`warning`/`danger` variants use their own
@@ -150,7 +201,16 @@ impl KagiButton {
 pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
     match role.filled_variant() {
         Some(variant) => btn.with_variant(variant),
-        None => btn.custom(tinted_action_variant(role.accent(&theme()), cx)),
+        None => {
+            let palette = theme();
+            if matches!(&*palette.slug, "nagi-light" | "nagi-dark") {
+                // Custom's fixed 40% pressed tint washes out subdued semantic ink.
+                // Keep native neutral fills and labels, including disabled ink.
+                btn.with_variant(ButtonVariant::Default)
+            } else {
+                btn.custom(tinted_action_variant(role.accent(&palette), cx))
+            }
+        }
     }
 }
 

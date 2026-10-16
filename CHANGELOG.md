@@ -5,6 +5,22 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-17
+
+### Added
+
+- Expand and collapse individual directories in the commit changed-file Tree, in both the wide Inspector and compact Changes view. Nested disclosure survives parent toggles and Path/Tree switches; file clicks still open their original diff. Shared accordion motion respects Reduce Motion, while keyboard navigation and accessibility immediately exclude hidden descendants. (#1628)
+- Add Nagi Light / Nagi Dark: Apple-derived neutral chrome with a limited semantic color palette, grayscale generated avatars, readable text and fixed blue accents. Existing themes and defaults remain unchanged. Document universal-color-design guidance and color-vision limitations. (#1635)
+- Make the compact-layout threshold configurable in Appearance, from 40 to 160rem with a 70rem default. Show its current logical-pixel equivalent, apply changes live and preserve them across restart. Compact layout now follows UI text zoom without double-counting OS display scaling. (#1640)
+
+### Fixed
+
+- Correct Nagi's washed-out colour hierarchy by limiting chromatic roles rather than globally reducing saturation: three blue/green/amber graph lane colours, neutral remote/tag metadata and ordinary syntax, and clear green/red diff cues. Brighten Dark selection, lane bands and ref chips; keep selected labels readable through row fades and inactive selection neutral. Expanded Dark operation-log details stay neutral. Preserve text and essential-stroke contrast, native neutral/disabled button paint, existing themes and defaults. (#1637)
+  - Keep stronger opaque chip paint specific to Graph and its drag ghost; preserve semantic-label contrast in confirmation and operation-plan badges.
+- Fit the compact Commit popup to its content instead of leaving empty space below the Commit button for short drafts. Keep long drafts bounded by the viewport and preserve the existing inputs, draft and anchor placement.
+- Reveal Settings steppers and switches when reached by keyboard at enlarged UI text sizes, without pinning subsequent manual scrolling to the focused control. Smart Commit consent retains its existing explicit confirmation and privacy boundaries. (#1640)
+- Reveal PR Peek's Compare files in compact Changes even when the fetched PR head is outside the loaded Graph. Hand off the compact PR navigator to its context menu so the popup cannot intercept menu clicks. Preserve retained commit drafts and the read-only Peek contract. (#1640)
+
 ## [0.45.0] - 2026-10-16
 
 ### Changed

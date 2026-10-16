@@ -1,5 +1,6 @@
 //! #1566: literal commit URLs have safe pointer and keyboard actions.
-use crate::macos::{git, mount, repo_fingerprint, unmount};
+use crate::inspector_file_rows::mount_desktop as mount;
+use crate::macos::{git, repo_fingerprint, unmount};
 use gpui::{px, ClipboardItem, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, theme};
 

@@ -22,6 +22,7 @@ pub mod branch_cleanup;
 pub mod checklist;
 pub mod codeowners;
 pub mod commit;
+pub mod compact;
 pub mod conflict_family;
 pub mod coupling_graph;
 pub mod diff;

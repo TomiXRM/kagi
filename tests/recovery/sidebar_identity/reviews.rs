@@ -131,12 +131,17 @@ fn tag_no_more_cell(cx: &mut VisualTestAppContext, language: Lang) {
 
 pub fn scenario_sidebar_group_reveal_lifetime(cx: &mut VisualTestAppContext) {
     let _settings = Settings::capture();
+    // Toggling the desktop Sidebar must unmount its focused reveal owner;
+    // the compact rail intentionally has a different visibility lifetime.
+    kagi_ui_core::theme::set_compact_threshold_rem(40);
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "aaa/one"]);
     git(fixture.path(), &["branch", "feat/a"]);
     git(fixture.path(), &["branch", "feat/b"]);
     let (app, window) = mount_dimensions(cx, fixture.path(), (1000., 720.));
     appearance(cx, &app, window, Lang::En, "apple-light", 1., 0);
+    bounds(window, "sidebar-clip");
+    assert!(e2e::control_bounds(window.window_id(), "compact-rail").is_none());
     group_reveal_arrows(cx, &app, window);
     focus(cx, &app, window, 0, "group:local:feat");
     keys(cx, window, "shift-f10");

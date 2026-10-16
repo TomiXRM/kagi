@@ -43,7 +43,11 @@ pub fn scenario_compact_wip_first_frame(cx: &mut VisualTestAppContext) {
                     "WIP dispatch must return before the first repository read"
                 );
                 assert!(app.ui().commit_panel_open);
-                if width < 1000. {
+                if kagi_domain::compact::is_compact(
+                    width,
+                    theme::rem_size_px(),
+                    theme::compact_threshold_rem(),
+                ) {
                     assert_eq!(app.bottom_tab, BottomTab::Changes);
                     assert!(app.bottom_panel_open);
                 }
@@ -55,7 +59,11 @@ pub fn scenario_compact_wip_first_frame(cx: &mut VisualTestAppContext) {
             e2e::control_bounds(win.window_id(), "cp-status-loading").is_some(),
             "the pane paints its placeholder while the real read is held"
         );
-        if width < 1000. {
+        if kagi_domain::compact::is_compact(
+            width,
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        ) {
             assert!(e2e::control_bounds(win.window_id(), "compact-composer").is_some());
         }
         release.send(());
@@ -72,7 +80,11 @@ pub fn scenario_compact_wip_first_frame(cx: &mut VisualTestAppContext) {
             let panel = app.read(cx).ui().commit_panel.as_ref().unwrap().read(cx);
             assert_eq!(panel.state.unstaged.len(), 200);
         });
-        let marker = if width < 1000. {
+        let marker = if kagi_domain::compact::is_compact(
+            width,
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        ) {
             "compact-changes-unstaged"
         } else {
             "right-pane-clip"
@@ -316,13 +328,17 @@ pub fn scenario_compact_select_changes(cx: &mut VisualTestAppContext) {
             // Close the pinned composer before testing the wide pointer path.
             focus_graph(cx, &app, win);
             key(cx, win, "escape");
-            resize(cx, win, 1000.);
+            resize(
+                cx,
+                win,
+                (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
+            );
             click(cx, win, "tab-terminal");
             click(cx, win, "graph-row-0");
             assert_eq!(
                 cx.read(|cx| app.read(cx).bottom_tab),
                 BottomTab::Terminal,
-                "desktop exact-1000px pointer selection is unchanged"
+                "first integral desktop width preserves pointer selection behavior"
             );
             focus_graph(cx, &app, win);
             key(cx, win, "down");

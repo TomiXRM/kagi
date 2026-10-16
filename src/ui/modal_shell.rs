@@ -224,7 +224,7 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
     // holds on every theme.
     let (_, border) = theme::panel_style();
     let t = current_theme();
-    let border: gpui::Hsla = if t.slug == "apple-dark" {
+    let border: gpui::Hsla = if t.uses_neutral_dark_chrome() {
         rgb(t.elevated_border(t.surface)).into()
     } else {
         gpui::rgba(border).into()

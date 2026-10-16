@@ -153,3 +153,153 @@ fn keyboard_reopen(
     escape(cx, app, win);
     closed(cx, app, panel, win, before);
 }
+
+fn content_fit_geometry(win: AnyWindowHandle, dimensions: (f32, f32)) -> Pixels {
+    popup_geometry(win, dimensions);
+    let popup = bounds(win, "compact-composer");
+    let commit = bounds(win, "cp-commit-action");
+    let trailing = popup.bottom() - commit.bottom();
+    assert!(
+        trailing >= px(0.) && trailing <= px(theme::rem_size_px() * 0.5 + 3.),
+        "popup must hug Commit plus footer padding, not retain a fixed empty floor: {trailing:?}",
+    );
+    assert!(
+        popup.size.height <= theme::scaled_px(360.) + px(1.),
+        "long drafts retain the existing bounded composer ceiling",
+    );
+    let anchor = bounds(win, "compact-wip-row");
+    let gap = theme::scaled_px(4.);
+    let margin = theme::scaled_px(8.);
+    if anchor.bottom() + gap + popup.size.height <= px(dimensions.1) - margin {
+        near(
+            popup.top(),
+            anchor.bottom() + gap,
+            "content-fitting popup retains anchor gap below",
+        );
+    } else if anchor.top() - gap - popup.size.height >= margin {
+        near(
+            popup.bottom(),
+            anchor.top() - gap,
+            "content-fitting popup retains anchor gap above",
+        );
+    }
+    popup.size.height
+}
+
+pub fn scenario_compact_layout_content_fit(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let fixture = fixture();
+    for locale in ["en", "ja"] {
+        for preset in ["apple-light", "apple-dark"] {
+            for zoom in [1., 1.67] {
+                let case = Case {
+                    height: 800.,
+                    zoom,
+                    locale,
+                    preset,
+                };
+                let (app, win) = mount(cx, fixture.path(), case);
+                theme::set_compact_threshold_rem(80);
+                let dimensions = (1080., 800.);
+                resize(cx, win, dimensions);
+                open_wip(cx, win);
+                let panel = cx
+                    .read(|cx| app.read(cx).ui().commit_panel.clone())
+                    .unwrap();
+                let (title, body) = cx.read(|cx| {
+                    let panel = panel.read(cx);
+                    (
+                        panel.title_input.clone().unwrap(),
+                        panel.body_input.clone().unwrap(),
+                    )
+                });
+                let ids = (panel.entity_id(), title.entity_id(), body.entity_id());
+                let owner = cx.read(|cx| app.read(cx).active_session());
+                let staged_index = index(fixture.path());
+                let long = "long retained template 本文\n".repeat(80);
+                let mut heights = Vec::new();
+                for text in ["", long.as_str(), ""] {
+                    cx.update_window(win, |_, window, cx| {
+                        title.update(cx, |input, cx| {
+                            input.set_value("retained subject", window, cx)
+                        });
+                        body.update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+                        body.focus_handle(cx).focus(window, cx);
+                    })
+                    .unwrap();
+                    settle(cx, win);
+                    heights.push(content_fit_geometry(win, dimensions));
+                    assert_eq!(draft(cx, &panel).0, "retained subject");
+                    assert_eq!(draft(cx, &panel).1, text);
+                    assert_eq!(cx.read(|cx| app.read(cx).active_session()), owner);
+                    assert_eq!(
+                        cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+                        ids.0
+                    );
+                    assert_eq!(
+                        cx.read(|cx| panel.read(cx).title_input.as_ref().unwrap().entity_id()),
+                        ids.1
+                    );
+                    assert_eq!(
+                        cx.read(|cx| panel.read(cx).body_input.as_ref().unwrap().entity_id()),
+                        ids.2
+                    );
+                    assert!(
+                        cx.update_window(win, |_, window, cx| {
+                            body.focus_handle(cx).is_focused(window)
+                        })
+                        .unwrap(),
+                        "content fitting must not move input focus"
+                    );
+                    assert_eq!(index(fixture.path()), staged_index);
+                }
+                assert!(
+                    heights[1] > heights[0] + theme::scaled_px(40.),
+                    "long draft must grow the popup"
+                );
+                near(
+                    heights[2],
+                    heights[0],
+                    "short→long→short releases excess height",
+                );
+                let before = draft(cx, &panel);
+                click(cx, win, "compact-popup-close");
+                open_wip(cx, win);
+                near(
+                    content_fit_geometry(win, dimensions),
+                    heights[0],
+                    "reopen fits the retained short draft",
+                );
+                assert_eq!(draft(cx, &panel), before);
+                cx.update_window(win, |_, window, cx| {
+                    body.update(cx, |input, cx| input.set_value(long.clone(), window, cx));
+                })
+                .unwrap();
+                settle(cx, win);
+                let long_before = draft(cx, &panel);
+                resize(cx, win, (600., 400.));
+                content_fit_geometry(win, (600., 400.));
+                assert_eq!(
+                    draft(cx, &panel),
+                    long_before,
+                    "viewport cap preserves the long draft"
+                );
+                theme::set_zoom(if zoom == 1. { 1.67 } else { 1. });
+                cx.update(theme::sync_gpui_component_theme);
+                settle(cx, win);
+                content_fit_geometry(win, (600., 400.));
+                assert_eq!(
+                    draft(cx, &panel),
+                    long_before,
+                    "live zoom remeasures without replacing inputs"
+                );
+                assert_eq!(
+                    cx.read(|cx| panel.read(cx).body_input.as_ref().unwrap().entity_id()),
+                    ids.2
+                );
+                drop((title, body, panel));
+                unmount(cx, app, win);
+            }
+        }
+    }
+}

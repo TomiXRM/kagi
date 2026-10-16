@@ -81,7 +81,7 @@ pub fn scenario_compact_inspector_columns(cx: &mut VisualTestAppContext) {
         }
         // Width restoration projects the same selection into the ordinary
         // right Inspector without recreating the WIP owner or writing Git.
-        resize(cx, win, (1392., 883.));
+        resize(cx, win, (desktop_width(), 883.));
         assert!(
             e2e::control_bounds(win.window_id(), "compact-inspector-details").is_none(),
             "compact columns unmount in wide layout"
@@ -257,11 +257,19 @@ fn keyboard_file(
         focused(cx).is_some(),
         "Tab enters the shared compact file RowList"
     );
-    for key in ["home", "down", "enter"] {
+    let tree = cx.read(|cx| app.read(cx).inspector_tree_view);
+    let navigation: &[&str] = if tree {
+        &["home", "down", "down", "down", "enter"]
+    } else {
+        &["home", "down", "enter"]
+    };
+    for key in navigation {
         press_key(cx, win, key);
     }
     assert_eq!(focused(cx).as_deref(), Some("b/file.txt"));
     assert_diff(cx, app, "b/file.txt", row, 1);
+    list_a11y::clear_recorded_lists();
+    settle(cx, win);
     let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
     assert_eq!(
         ax.rows.values().filter(|(_, selected)| *selected).count(),

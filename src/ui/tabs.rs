@@ -63,7 +63,7 @@ const TAB_MAX_W: f32 = 200.0;
 /// Document tabs use ordinary text on subtle selection fills, not accent-selected rows.
 fn tab_colors(palette: &theme::Theme, selected: bool) -> (gpui::Hsla, u32) {
     match palette.slug.as_ref() {
-        "apple-light" => (
+        "apple-light" | "nagi-light" => (
             rgb(if selected {
                 palette.bg_base
             } else {
@@ -72,7 +72,7 @@ fn tab_colors(palette: &theme::Theme, selected: bool) -> (gpui::Hsla, u32) {
             .into(),
             palette.text_main,
         ),
-        "apple-dark" => (
+        "apple-dark" | "nagi-dark" => (
             rgb(if selected {
                 palette.surface
             } else {
@@ -97,7 +97,10 @@ fn tab_colors(palette: &theme::Theme, selected: bool) -> (gpui::Hsla, u32) {
 }
 
 fn tab_has_rail(palette: &theme::Theme) -> bool {
-    !matches!(palette.slug.as_ref(), "apple-light" | "apple-dark")
+    !matches!(
+        palette.slug.as_ref(),
+        "apple-light" | "apple-dark" | "nagi-light" | "nagi-dark"
+    )
 }
 
 fn tab_rail(palette: &theme::Theme, window_active: bool) -> gpui::Div {

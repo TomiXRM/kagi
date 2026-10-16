@@ -274,7 +274,10 @@ fn render_pr_card(
     });
     let pr_menu = pr.clone();
     let menu = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
+        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, window, cx| {
+            // The kit navigator is deferred above ordinary root overlays.
+            // Retire it before handing interaction to the PR context menu.
+            super::compact_sidebar::dismiss_selection(window, cx);
             this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
             cx.stop_propagation();
             cx.notify();

@@ -28,6 +28,9 @@ fn graph_focused(
 }
 pub fn scenario_graph_tab_stop(cx: &mut VisualTestAppContext) {
     let _saved = crate::recovery_layout::GlobalSettings::capture();
+    // This traversal is the inline Sidebar → Graph → Inspector contract.
+    // Keep its original viewport pressure at both zooms.
+    theme::set_compact_threshold_rem(40);
     let _keys = crate::gui_isolation::SavedKeys::keep(&["lang", "theme", "ui_zoom"]);
     let fixture = build_fixture();
     for lang in [Lang::En, Lang::Ja] {
@@ -43,6 +46,13 @@ pub fn scenario_graph_tab_stop(cx: &mut VisualTestAppContext) {
                 crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
                 crate::native_ax::activate(cx);
                 draw(cx, window);
+                assert!(
+                    kagi::ui::e2e::control_bounds(window.window_id(), "sidebar-clip").is_some(),
+                    "the Tab-order oracle requires the drawn inline Sidebar"
+                );
+                assert!(
+                    kagi::ui::e2e::control_bounds(window.window_id(), "compact-rail").is_none()
+                );
                 let mut reached = false;
                 let mut sidebar_before = false;
                 for _ in 0..120 {

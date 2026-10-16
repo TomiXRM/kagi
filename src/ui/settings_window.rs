@@ -253,6 +253,7 @@ impl SettingsWindow {
                 owner,
                 app.theme_select.clone(),
                 &app.settings_switches,
+                &self.scroll,
                 cx,
             )
             .into_any_element(),
@@ -263,6 +264,7 @@ impl SettingsWindow {
                 &app.settings_switches,
                 &app.settings_controls,
                 Some(self.focus.clone()),
+                &self.scroll,
                 cx,
             )
             .into_any_element(),

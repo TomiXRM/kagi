@@ -1,7 +1,7 @@
 //! Settings' switches from the keyboard and to assistive technology (#970),
 //! Tier A: each is a Tab stop, in drawing order; Space and Enter flip it and
 //! save the setting; the checked state given to assistive technology
-//! follows; the pointer still flips it.
+//! follows; the pointer still flips it after real wheel input reveals it.
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::i18n::Msg;
 use kagi::ui::{e2e, settings, KagiApp};
@@ -60,6 +60,44 @@ fn saved(key: &str) -> Option<String> {
 
 fn on_off(on: bool) -> Option<String> {
     Some(if on { "true" } else { "false" }.to_string())
+}
+
+fn click_switch(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+    draw(cx, window);
+    let body = e2e::control_bounds(window.window_id(), "settings-scrollbar")
+        .expect("the Settings scroll viewport");
+    let measurement = format!("{id}-key");
+    let mut bounds =
+        e2e::control_bounds(window.window_id(), &measurement).expect("the switch is measured");
+    // Keyboard focus may have revealed a later switch. Layout bounds alone
+    // do not mean this pointer target is inside the scroll owner's clip.
+    for _ in 0..20 {
+        if bounds.top() >= body.top() && bounds.bottom() <= body.bottom() {
+            break;
+        }
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: body.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(
+                    gpui::px(0.),
+                    gpui::px(if bounds.top() < body.top() {
+                        300.
+                    } else {
+                        -300.
+                    }),
+                )),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        cx.run_until_parked();
+        draw(cx, window);
+        bounds = e2e::control_bounds(window.window_id(), &measurement).unwrap();
+    }
+    crate::recovery_layout::contained(body, bounds, "pointer switch is inside Settings");
+    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
 }
 
 pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
@@ -136,15 +174,10 @@ pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
     // keyboard wrapper), and a second click flips it back.
     let (id, key) = ("compact-toggle", "graph_compact");
     let start = toggled(cx, window, id);
-    let at = e2e::control_bounds(window.window_id(), &format!("{id}-key"))
-        .expect("the switch is measured")
-        .center();
-    cx.simulate_click(window, at, gpui::Modifiers::none());
-    cx.run_until_parked();
+    click_switch(cx, window, id);
     assert_eq!(saved(key), on_off(!start), "one click, one flip");
     assert_eq!(toggled(cx, window, id), !start);
-    cx.simulate_click(window, at, gpui::Modifiers::none());
-    cx.run_until_parked();
+    click_switch(cx, window, id);
     assert_eq!(saved(key), on_off(start));
 
     // The Switch's thumb springs to each new state; let those animations end

@@ -138,6 +138,30 @@ pub(super) fn appearance(
     });
     cx.run_until_parked();
     paint(cx, app, window);
+    reveal_pane(cx, app, window, pane);
+}
+
+pub(super) fn reveal_pane(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    pane: usize,
+) {
+    let compact = cx
+        .update_window(window, |_, window, _| {
+            kagi_domain::compact::is_compact(
+                f32::from(window.viewport_size().width),
+                theme::rem_size_px(),
+                theme::compact_threshold_rem(),
+            )
+        })
+        .unwrap();
+    let section = ["local", "remote", "worktrees", "tags", "stashes"][pane];
+    if compact && kagi::ui::list_a11y::recorded_list(&format!("sidebar-{section}")).is_none() {
+        let trigger = bounds(window, &format!("compact-rail-{section}"));
+        cx.simulate_click(window, trigger.center(), Modifiers::none());
+        paint(cx, app, window);
+    }
 }
 
 pub(super) fn focus(
@@ -147,6 +171,8 @@ pub(super) fn focus(
     pane: usize,
     key: &str,
 ) {
+    paint(cx, app, window);
+    reveal_pane(cx, app, window, pane);
     cx.update_window(window, |_, window, cx| {
         window.draw(cx).clear();
         app.update(cx, |app, cx| {

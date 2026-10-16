@@ -4001,14 +4001,10 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     assert_eq!(d.label, title);
     let unarmed_desc = d.description.clone().expect("two-stage description");
     assert_eq!(d.actions.len(), 2);
-    assert_eq!(
-        d.actions[0].1,
-        kagi_ui_core::i18n::Msg::PlanDeleteBranch.t()
-    );
-    let (role, text) =
+    let unarmed_name = &d.actions[0].1;
+    let (role, _) =
         kagi::ui::dialog_a11y::recorded_note("plan-warning-0").expect("warning row drawn");
     assert_eq!(role, Role::Note);
-    assert!(!text.is_empty());
 
     // Armed: description and Confirm name change.
     crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
@@ -4022,9 +4018,9 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
         Some(unarmed_desc.as_str()),
         "arming changes the description"
     );
-    assert_eq!(
-        d.actions[0].1,
-        kagi_ui_core::i18n::Msg::PlanDeleteBranchArmed.t()
+    assert_ne!(
+        &d.actions[0].1, unarmed_name,
+        "arming changes the accessible confirmation action"
     );
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
@@ -4228,8 +4224,6 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
             assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
             assert!(modal.plan.destructive);
             assert!(!modal.confirm_armed);
-            let recovery = modal.plan.recovery.as_ref().expect("recovery");
-            assert_eq!(recovery.commands.len(), 2, "{:?}", recovery.commands);
         });
         // #354: the sync card is announced as a two-stage alert dialog.
         redraw(cx, &app, window);

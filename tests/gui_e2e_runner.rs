@@ -194,6 +194,18 @@ mod tab_restore_active_identity;
 mod primary_button;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_count_contrast.rs"]
+mod modal_count_contrast;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/modal_scale.rs"]
+mod modal_scale;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/modal_note_paths.rs"]
+mod modal_note_paths;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/dark_elevation.rs"]
 mod dark_elevation;
 
@@ -220,6 +232,10 @@ mod tab_strip;
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/sync_layout.rs"]
+mod sync_layout;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/update_notice.rs"]
@@ -887,6 +903,10 @@ mod squash_evidence_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/squash_publish_owner.rs"]
 mod squash_publish_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/squash_graph_routing.rs"]
+mod squash_graph_routing;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
@@ -1854,6 +1874,22 @@ mod macos {
                 Box::new(crate::primary_button::scenario_primary_button_states),
             ),
             (
+                "modal_count_contrast",
+                Box::new(crate::modal_count_contrast::scenario_modal_count_contrast),
+            ),
+            (
+                "modal_scale_targets",
+                Box::new(crate::modal_scale::scenario_modal_scale_targets),
+            ),
+            (
+                "modal_scale_notes",
+                Box::new(crate::modal_scale::scenario_modal_scale_notes),
+            ),
+            (
+                "modal_scale_note_paths",
+                Box::new(crate::modal_note_paths::scenario_modal_scale_note_paths),
+            ),
+            (
                 "dark_elevation_palette",
                 Box::new(crate::dark_elevation::scenario_dark_elevation_palette),
             ),
@@ -2119,6 +2155,10 @@ mod macos {
             (
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
+            ),
+            (
+                "sync_footer_cancel_visible",
+                Box::new(crate::sync_layout::scenario_sync_footer_cancel_visible),
             ),
             ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
             (
@@ -4225,6 +4265,10 @@ mod macos {
                 Box::new(
                     crate::squash_publish_owner::scenario_squash_evidence_publish_generation,
                 ),
+            ),
+            (
+                "squash_graph_routing",
+                Box::new(crate::squash_graph_routing::scenario_squash_graph_routing),
             ),
             (
                 "conflict_detector_owner_guard",

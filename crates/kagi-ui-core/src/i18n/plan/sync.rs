@@ -69,12 +69,12 @@ pub fn recovery_ja(recovery: &SyncRecovery) -> String {
             work_backup,
         } => {
             let mut s = format!(
-                "sync 前の `{branch}` の先端（{}）を復元:\n  git update-ref refs/heads/{branch} {tip_backup}",
+                "同期直後の状態から手動で復元する手順です。その後の commit やファイル変更は先に保全し、部分実行の場合は個別に状態を確認してください。\nsync 前の `{branch}` の先端（{}）を復元:\n  git update-ref refs/heads/{branch} {tip_backup}\n`{branch}` が checkout 中の場合に限り、その index と tracked ファイルを保存済みの先端に揃える:\n  git read-tree -m -u {tip_backup}",
                 &from[..from.len().min(7)]
             );
             if let Some(work) = work_backup {
                 s.push_str(&format!(
-                    "\nindex と working tree（staged / unstaged / untracked）を復元:\n  git stash apply --index {work}"
+                    "\n次に、`{branch}` の checkout でのみ、保存済みの staged / unstaged / untracked を復元:\n  git stash apply --index {work}"
                 ));
             }
             s.push_str("\nバックアップは自動では削除されません。");

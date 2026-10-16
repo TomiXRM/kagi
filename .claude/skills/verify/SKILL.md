@@ -82,6 +82,68 @@ production binary to the evidence directory before building `gui-e2e`:
 the feature build replaces `target/debug/kagi` with a harness-only shell.
 Native screenshots and color simulation are not CUD certification.
 
+For #1638 use `KAGI_GUI_E2E_ONLY='modal_count_contrast,modal_sections,modal_compact'`
+with KEEP_GOING. `modal_count_contrast` opens the real local Commit Panel before
+planning Discard All, so the dialog receives its three target paths and warning.
+It measures native Metal count glyphs against the composed pill background in
+Nagi and Apple Light/Dark at 0.7×, 1× and 1.67×, at rest, hovered, collapsed and
+reopened; both target and section counts must remain at least 4.5:1. The count
+probes exist only in `gui-e2e`. Counts and chip geometry survive disclosure,
+and the fixture's HEAD, index/status and file contents remain unchanged.
+Tier B compares the released and fixed dialogs in all four themes on the same
+fixture and viewport, with normal motion enabled; also inspect collapse/reopen.
+Cancel every plan. This checks neutral metadata, not semantic danger chips,
+VoiceOver or platform-wide accessibility certification.
+
+For #1633 use `KAGI_GUI_E2E_ONLY='modal_scale_,modal_compact,modal_sections,plan_recovery_commands,plan_recovery_noop,plan_recovery_ax,plan_equivalent_summary,unmerged_branch_delete_armed,dialog_a11y_roles,destructive_modal_return,modal_no_fallthrough,blocked_plan_command'`
+with KEEP_GOING. `modal_scale_targets` uses a real 500-file Discard plan and
+collects every row only when fully painted inside the list/clip, including the
+last path. `modal_scale_notes` deliberately supplies 200 typed warning/blocker
+notes as renderer stress input, not a claim about backend-generated counts.
+Its 940×660 matrix covers Apple Light/Dark, EN/JA, 100%/167%, inert blocked
+confirms and arm-only ready confirms, then cancels and verifies the fixture.
+`modal_scale_note_paths` traverses 200 unique structured paths and the adjacent
+mandatory notes, both inside an independently bounded note panel and inside a
+Merge card's shared body scroller, across the same theme/locale/zoom matrix.
+The injected Merge preview is renderer stress data too, not backend merge output.
+Footer bounds must remain stationary while either owner scrolls.
+Use `measure_leaf` for scroll viewport probes: an absolute child follows content
+offsets and can send subsequent wheel events outside the actual scroll region.
+Retain target/required-warning visibility, default-closed supporting commands,
+and separate note/body scroll ownership. Tier B must inspect real narrow
+windows, reach the final file, exercise optional disclosure and compare both
+Apple themes/locales/zooms; never execute a stress plan to validate presentation.
+
+For #1646 use `KAGI_GUI_E2E_ONLY='sync_footer_cancel_visible,modal_compact,modal_scale_notes,modal_scale_targets,sync_to_remote_armed,modal_polish_editor_fs,modal_polish_remote,modal_polish_stash_after,primary_button_states,create_branch_warnings,branch_rename_neutral_state,stash_entry_identity,pull_fetch_preserves_conflict_blocker'`.
+`sync_footer_cancel_visible` covers Apple Light/Dark × EN/JA × 100%/167%
+at 1000×700 and 940×700. Both confirmation stages must keep positive,
+nonoverlapping Cancel/Confirm bounds inside the footer, including expanded
+recovery. It clicks Cancel, rather than using Escape to bypass an invisible
+control, and checks repository/receipt state. Use transparent leaf probes for
+these buttons: auto-width measurement wrappers change percentage sizing.
+Tier B must show the full armed caption and clickable Cancel in the real
+narrow window; compare the same language, theme, zoom and fixture before/after.
+
+For #1630, retain a real divergent Sync fixture with staged, unstaged,
+untracked and ignored files. Record Cancel and first-stage no-write snapshots,
+the successful operation's persisted receipt and every backup object, then
+restore using only its recorded `recovery_plan.commands`—no unrecorded
+checkout-alignment command. Check HEAD, staged blobs/modes, all working-tree
+bytes, config and remote refs. Separately exercise stale tracking refs and
+sparse/submodule/filter refusals without a repository write or false success.
+Capture EN/JA × Apple Light/Dark × 100%/167% narrow-window presentation.
+Keep the issue open until its separate human screenshot review is recorded.
+
+Menu behavior uses `branch_menu_compact,context_menu_keys_short,context_menu_keys_sidebar`.
+Run the separate `inventory:57-CommitMenu` through `inventory:62-WorktreeMenu`,
+plus `inventory:67-EditorTreeMenu`, `inventory:70-FileMenu` and
+`inventory:71-InspectorFileMenu`, with `KAGI_INVENTORY_LANG=en,ja` and
+`KAGI_INVENTORY_THEME=light,dark` for native captures. These inventory cases
+include direct open methods, not proof of every real right-click gesture.
+Changes/Inspector file cards are not the shared MenuGroup renderer: Changes
+places its red Discard last without a separator; Inspector has no danger action.
+Branch Delete stays in the top-level management group by ADR-0049 / #1253.
+
 For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
 This includes wide, compact and frozen-clock directory motion scenarios.
 Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,
@@ -1295,6 +1357,22 @@ The current suite covers:
   commit above a WIP HEAD, and enough older history to scroll. Capture both
   the top and WIP-offscreen states; retain screenshots in the PR and verify
   that another pane does not obscure the graph.
+- local squash ghost routing (`KAGI_GUI_E2E_ONLY=squash_graph_routing`,
+  `tests/recovery/squash_graph_routing.rs`, #1627): a real wide-history fixture
+  receives three links through the production scan callback. Check complete
+  submitted endpoint move/line/curve commands, local bounds and intervening
+  dashed segments in classic/avatar modes at 100%/167%, including overlapping
+  and disjoint intervals and horizontal/vertical wheel input. Compare movement
+  with actual nodes: GPUI's vertical-only list may also consume horizontal
+  deltas. Keep real history, WIP ownership, read revision and publish generation
+  unchanged; do not suppress scan scheduling. The compile-time `gui-e2e`
+  `graph_view::record_graph_paints` guard arms endpoint recording for one window;
+  drain `take_endpoint_paint_trace` around a real draw. Dropping the guard clears
+  and disarms recording; draining alone does not arm it.
+  Tier B: compare released/fixed windows on the same real patch-id squash
+  fixture with old wide history and a locally reclaimed tip lane. Capture both
+  styles and zooms, plus scrolling; retain screenshots in the PR and compare
+  refs, staged content and worktree status before/after read-only interaction.
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - Worktree occupancy and removal advisory (`KAGI_GUI_E2E_ONLY=worktree_inspection`,
   `tests/recovery/worktree_inspection.rs`): real pushed/dirty/locked/detached

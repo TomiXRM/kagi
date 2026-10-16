@@ -54,6 +54,9 @@
 
 use crate::commit::{Commit, CommitId};
 
+#[path = "graph_squash.rs"]
+pub mod squash;
+
 // ────────────────────────────────────────────────────────────
 // Public types
 // ────────────────────────────────────────────────────────────
@@ -195,7 +198,7 @@ pub fn layout(commits: &[Commit]) -> GraphLayout {
 }
 
 // ────────────────────────────────────────────────────────────
-// WIP → HEAD connector anchoring
+// Annotation occupancy and WIP → HEAD connector anchoring
 // ────────────────────────────────────────────────────────────
 
 /// Whether `lane`'s **top half** already carries a line in this row.

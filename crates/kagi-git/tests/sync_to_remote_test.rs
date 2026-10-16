@@ -5,7 +5,7 @@
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git, git_output, git_succeeds, init_repo, write_file};
+use git_fixture::{commit_all, git, git_command, git_output, git_succeeds, init_repo, write_file};
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 
@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use kagi_domain::plan_note::{PlanNote, SyncNote};
 use kagi_git::backend::ExecutionPolicy;
-use kagi_git::oplog::OpOutcome;
+use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::{Backend, Operation, OperationOutcome};
 use tempfile::TempDir;
 
@@ -108,6 +108,75 @@ fn status(dir: &Path) -> String {
     git_output(dir, &["status", "--porcelain", "--untracked-files=all"])
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CheckoutState {
+    head_ref: String,
+    head_oid: String,
+    index_entries: String,
+    staged_a: Vec<u8>,
+    status: String,
+    files: Vec<(&'static str, Option<Vec<u8>>)>,
+}
+
+fn checkout_state(local: &Path) -> CheckoutState {
+    let staged_a = git_command(local)
+        .args(["show", ":a.txt"])
+        .output()
+        .unwrap();
+    assert!(
+        staged_a.status.success(),
+        "{}",
+        String::from_utf8_lossy(&staged_a.stderr)
+    );
+    CheckoutState {
+        head_ref: git_output(local, &["symbolic-ref", "HEAD"]),
+        head_oid: tip(local, "HEAD"),
+        // Semantic entries (mode, blob, stage, path), not the index's stat cache.
+        index_entries: git_output(local, &["ls-files", "-s"]),
+        staged_a: staged_a.stdout,
+        status: status(local),
+        files: [
+            ".gitignore",
+            "a.txt",
+            "b.txt",
+            "c.txt",
+            "new.txt",
+            "sub/untracked.txt",
+            "ignored.log",
+        ]
+        .into_iter()
+        .map(|path| {
+            let bytes = match std::fs::read(local.join(path)) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("read {path}: {error}"),
+            };
+            (path, bytes)
+        })
+        .collect(),
+    }
+}
+
+fn restore_from_receipt(local: &Path, entry: &OpLogEntry) {
+    let recovery = entry
+        .recovery_plan
+        .as_ref()
+        .expect("recorded plan recovery");
+    for command in &recovery.commands {
+        // Git shell aliases use Git's own POSIX shell, including Git Bash on
+        // Windows. Keep fixture isolation and execute the advertised quoting
+        // unchanged rather than splitting it or constructing replacement args.
+        git(
+            local,
+            &[
+                "-c",
+                &format!("alias.kagi-recover=!{command}"),
+                "kagi-recover",
+            ],
+        );
+    }
+}
+
 /// Dirty every classification: staged edit + unstaged edit on the same file,
 /// an unstaged edit, a staged deletion, a staged new file, an untracked file
 /// in a subdirectory, and an ignored file (which must be left alone).
@@ -136,11 +205,9 @@ fn syncs_and_restores_everything_from_the_two_backups() {
     let _log = LogDir::new();
     let (_tmp, local) = fixture();
     make_dirty(&local);
-    let before_status = status(&local);
+    let before = checkout_state(&local);
     let before_tip = tip(&local, "main");
     let upstream = tip(&local, "origin/main");
-    let before_index = git_output(&local, &["ls-files", "-s"]);
-    let before_a_wt = std::fs::read_to_string(local.join("a.txt")).unwrap();
 
     let mut b = backend(&local);
     let plan = b.plan(&op()).expect("plan");
@@ -166,10 +233,8 @@ fn syncs_and_restores_everything_from_the_two_backups() {
         "{:?}",
         plan.warnings
     );
-    let recovery = plan.recovery.as_ref().expect("recovery");
-    assert_eq!(recovery.commands.len(), 2, "{:?}", recovery.commands);
     // Planning wrote nothing.
-    assert_eq!(status(&local), before_status);
+    assert_eq!(checkout_state(&local), before);
     assert!(!git_succeeds(
         &local,
         &["rev-parse", "--verify", "refs/kagi/backups"]
@@ -233,44 +298,11 @@ fn syncs_and_restores_everything_from_the_two_backups() {
         entry.backup_refs,
         vec![tip_backup.clone(), work.reference.clone()]
     );
-    assert_eq!(entry.recovery.len(), 2);
-    // The recovery commands from the plan are the real ones.
-    assert_eq!(
-        recovery.commands[0],
-        format!("git update-ref 'refs/heads/main' '{tip_backup}'")
-    );
-    assert_eq!(
-        recovery.commands[1],
-        format!("git stash apply --index '{}'", work.reference)
-    );
 
-    // Restore, exactly as the receipt says, with plain git.
-    git(&local, &["update-ref", "refs/heads/main", &tip_backup]);
-    git(&local, &["read-tree", "-m", "-u", "HEAD"]);
+    // Execute the durable plan's commands, without hidden checkout setup.
+    restore_from_receipt(&local, &entry);
     assert_eq!(tip(&local, "main"), before_tip);
-    git(&local, &["stash", "apply", "--index", &work.reference]);
-    assert_eq!(
-        status(&local),
-        before_status,
-        "every classification restored"
-    );
-    assert_eq!(
-        git_output(&local, &["ls-files", "-s"]),
-        before_index,
-        "index entries restored"
-    );
-    assert_eq!(
-        std::fs::read_to_string(local.join("a.txt")).unwrap(),
-        before_a_wt
-    );
-    assert_eq!(
-        std::fs::read_to_string(local.join("sub/untracked.txt")).unwrap(),
-        "untracked\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(local.join("ignored.log")).unwrap(),
-        "keep me\n"
-    );
+    assert_eq!(checkout_state(&local), before);
 }
 
 #[test]
@@ -281,6 +313,7 @@ fn clean_tree_keeps_only_the_tip_backup() {
     let _guard = ENV_LOCK.lock().unwrap();
     let _log = LogDir::new();
     let (_tmp, local) = fixture();
+    let before = checkout_state(&local);
     let before_tip = tip(&local, "main");
     let mut b = backend(&local);
     let plan = b.plan(&op()).expect("plan");
@@ -306,6 +339,42 @@ fn clean_tree_keeps_only_the_tip_backup() {
     assert_eq!(tip(&local, &tip_backup), before_tip);
     assert_eq!(tip(&local, "main"), tip(&local, "origin/main"));
     assert_eq!(status(&local), "");
+    restore_from_receipt(&local, report.recording.entry());
+    assert_eq!(tip(&local, "main"), before_tip);
+    assert_eq!(checkout_state(&local), before);
+}
+
+#[test]
+fn ref_only_recovery_preserves_the_active_dirty_checkout() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let _log = LogDir::new();
+    let (_tmp, local) = fixture();
+    // Exercise shell quoting in the restored ref, not only ordinary names.
+    let branch = "saved'branch";
+    git(&local, &["branch", branch]);
+    git(&local, &["branch", "--set-upstream-to=origin/main", branch]);
+    make_dirty(&local);
+    let before = checkout_state(&local);
+    let before_tip = tip(&local, branch);
+    let operation = Operation::SyncToRemote {
+        branch: branch.into(),
+    };
+    let mut b = backend(&local);
+    let plan = b.plan(&operation).expect("plan");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let report = b.run_recorded(&operation, &plan);
+    let OperationOutcome::SyncToRemote { work_backup, .. } = report.result.expect("run") else {
+        panic!("outcome");
+    };
+    assert!(work_backup.is_none());
+    assert_eq!(tip(&local, branch), tip(&local, "origin/main"));
+    assert_eq!(checkout_state(&local), before);
+
+    restore_from_receipt(&local, report.recording.entry());
+    assert_eq!(tip(&local, branch), before_tip);
+    assert_eq!(checkout_state(&local), before);
 }
 
 #[test]

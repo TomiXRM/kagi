@@ -1422,3 +1422,29 @@ controls: gpui-kit's Input Find controls still install managed tooltips and
 provide no public cleanup hook to Kagi. Their resolution belongs to the
 official managed implementation, not a fork or a private-API workaround.
 
+## Amendment — 2026-10-17: responsive confirmation actions (#1646)
+
+At Japanese / 167% / 1000×700, Sync's armed caption consumed the entire
+single-row footer and hid Cancel. The shared footer now reserves its height
+and wraps in reverse line order: confirmation above Cancel when they cannot
+fit beside each other. Construction and keyboard order stay Cancel first.
+This follows the stacked-action placement in
+[Apple's Alerts guidance](https://developer.apple.com/design/human-interface-guidelines/alerts)
+without changing Kagi's safe Return/Escape policy or its two-stage gate.
+
+Ordinary action captions retain their full text and native Button, using its
+existing child API and the shared explicit accessibility-name helper. They
+fit the available width and grow above the ordinary S-height minimum when
+text wraps. Existing bounded identity captions keep their middle ellipsis,
+full description and tooltip. No dependency fork or new interactive control
+is required. Hover, pressed, focus-visible and unavailable semantics remain
+the existing ones; only action layout changes.
+
+Native confirmation probes forward the actual Button layout through the
+existing measured-leaf element. An auto-width test-only wrapper prevented
+percentage width constraints from resolving as in the production footer;
+it must not turn a passing real layout into a different test layout.
+Containment/nonoverlap, actual Cancel activation and unchanged repository
+state are required in both confirmation stages, including expanded recovery.
+Native geometry is not a substitute for real-window or human visual review.
+

@@ -604,11 +604,13 @@ pub(crate) fn modal_section_chipped(
                 .child(title),
         );
     if let Some(chip) = chip {
-        header = header.child(
-            div()
-                .ml_auto()
-                .child(modal_chip(chip, current_theme().text_sub)),
-        );
+        // Count/metadata ink must contrast with both the panel and chip tints.
+        // Semantic chips elsewhere retain their meaning color.
+        let chip =
+            modal_chip(chip, current_theme().text_sub).text_color(rgb(current_theme().text_main));
+        #[cfg(feature = "gui-e2e")]
+        let chip = chip.relative().child(modal_probe(format!("{id}-count")));
+        header = header.child(div().ml_auto().child(chip));
     }
     #[cfg(feature = "gui-e2e")]
     let header = header.relative().child(modal_probe(id));
@@ -676,6 +678,12 @@ pub(crate) fn modal_list_panel(
     // remains present and scrollable rather than forcing fixed chrome out.
     const PANEL_FLOOR_ROWS: f32 = 8.;
     let compact = modal_compact();
+    let count_chip = modal_chip(count.to_string(), current_theme().text_sub)
+        .text_color(rgb(current_theme().text_main));
+    #[cfg(feature = "gui-e2e")]
+    let count_chip = count_chip
+        .relative()
+        .child(modal_probe("modal-target-count"));
     // Preserve the normal panel's existing minimum. The smaller compact floor
     // must reserve its tally separately or it consumes the promised file rows.
     let chrome_h = if compact {
@@ -727,7 +735,7 @@ pub(crate) fn modal_list_panel(
                         .flex_row()
                         .items_center()
                         .gap_1()
-                        .child(modal_chip(count.to_string(), current_theme().text_sub))
+                        .child(count_chip)
                         .children(copy),
                 ),
         )

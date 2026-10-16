@@ -194,6 +194,10 @@ mod tab_restore_active_identity;
 mod primary_button;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_count_contrast.rs"]
+mod modal_count_contrast;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/dark_elevation.rs"]
 mod dark_elevation;
 
@@ -1856,6 +1860,10 @@ mod macos {
             (
                 "primary_button_states",
                 Box::new(crate::primary_button::scenario_primary_button_states),
+            ),
+            (
+                "modal_count_contrast",
+                Box::new(crate::modal_count_contrast::scenario_modal_count_contrast),
             ),
             (
                 "dark_elevation_palette",

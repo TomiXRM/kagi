@@ -172,6 +172,13 @@ specific EN/JA reason; destructive confirms use the blocker colour. AFTER
 chips for Stash, history, switch, PR review/merge and maintenance show a short
 localized state, while AX and Copy all retain the complete backend prediction.
 
+Neutral target/section count chips use `text_main` for their small text while
+retaining the existing `text_sub` tint and border (#1638). These counts are
+metadata, not muted decoration or warning/danger status. Check at least 4.5:1
+against the **composed pill background**, including its containing panel, rather
+than comparing theme tokens in isolation. Disclosure hover/collapse must retain
+the same readable count; semantic chips keep their existing role colours.
+
 ## In an issue for UI work
 
 Add three lines instead of a style table: **role(s)**, **reference state**

@@ -82,6 +82,19 @@ production binary to the evidence directory before building `gui-e2e`:
 the feature build replaces `target/debug/kagi` with a harness-only shell.
 Native screenshots and color simulation are not CUD certification.
 
+For #1638 use `KAGI_GUI_E2E_ONLY='modal_count_contrast,modal_sections,modal_compact'`
+with KEEP_GOING. `modal_count_contrast` opens the real local Commit Panel before
+planning Discard All, so the dialog receives its three target paths and warning.
+It measures native Metal count glyphs against the composed pill background in
+Nagi and Apple Light/Dark at 0.7×, 1× and 1.67×, at rest, hovered, collapsed and
+reopened; both target and section counts must remain at least 4.5:1. The count
+probes exist only in `gui-e2e`. Counts and chip geometry survive disclosure,
+and the fixture's HEAD, index/status and file contents remain unchanged.
+Tier B compares the released and fixed dialogs in all four themes on the same
+fixture and viewport, with normal motion enabled; also inspect collapse/reopen.
+Cancel every plan. This checks neutral metadata, not semantic danger chips,
+VoiceOver or platform-wide accessibility certification.
+
 For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
 This includes wide, compact and frozen-clock directory motion scenarios.
 Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,

@@ -85,6 +85,28 @@ The #564 branch-menu scenario checks the selected-commit checkout fallback via
 both Enter and its registered action while a branch context menu is open. Its
 modal-state oracle follows `modal_no_fallthrough`; HEAD must remain unchanged.
 
+## Update 2026-10-17 — inventory teardown after weak input capture (#1632)
+
+The old inventory teardown replaced the captured view with an inputless
+`gpui_component::Root` and pumped another 30 native presentation/event cycles
+before the ordinary `unmount`. Its comment described the former strong
+`InputState` capture in next-frame callbacks, already fixed in the component
+dependency by #1185.
+
+With locked component revision `7a116a2019160e6d8091075f88f349a9fe9a2a7e`
+and GPUI revision `caf5007618c309a8ea66002d44a9c9ab629a2d35`, removing both
+workaround steps let `inventory:01-RemoteBrowse` produce its PNG and exit
+successfully through the normal runner with leak detection enabled. The
+capture path now uses shared `unmount` directly. No dependency patch, retained
+handle, detector exemption or replacement `Empty` root is needed.
+
+This does not remove native presentation from `shot`: those frames make the
+window image available to `screencapture`. Shared `unmount` also still pumps
+the native event loop to execute `MacWindow`'s deferred NSWindow close; the
+test dispatcher alone does not service that platform queue. PNG creation
+and successful teardown remain separate acceptance conditions. The canonical
+verification skill scopes the RemoteBrowse and neighboring Input matrix.
+
 ## 何を実証したか
 
 `gpui` の `test-support` feature が解禁する **`VisualTestAppContext`**（macOS 専用、

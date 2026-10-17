@@ -3886,6 +3886,23 @@ success, remove an individual queued successor, dismiss the popup, and verify
 fresh confirmation and retained unsubmitted work. Never hold a user's hook or
 add a write-cancellation route.
 
+For #1650 additionally run `KAGI_GUI_E2E_ONLY=queue_history_viewport`.
+Across EN/JA × Apple Light/Dark × 100%/167% at 940×660, two failed held
+predecessors produce 32 distinctly named cancellations. The scenario wheels
+through every actual row inside the viewport, keeps Graph and the status bar
+usable, and reaches the last Remove among 16 pending rows beside that history.
+Pinned Cancel all leaves the running lease held; Clear removes only history.
+The production strip uses one shared scroll viewport, capped at the lesser
+of scaled 240px and 20% of window height, with session-keyed scroll state.
+Tier B repeats the eight conditions at 1000×700 using an ordinary binary and
+private bounded failing pre-commit hooks, not the native hold seam. Capture
+32 cancellations, the scrolled tail and Clear; compare HEAD, refs, staged
+content, working files and failed receipts before/after. Also exercise
+individual Remove and pinned Cancel all with 32 history entries plus 16
+pending operations, observing that the admitted write continues until its
+own hook is released. Duplicate frozen commit messages in this real fixture
+are expected; the native case independently proves reachability of all 32 IDs.
+
 Stage 3b-2 adds `queue_replans_merge_after_predecessor` (held commit changes
 HEAD; live merge kind changes from fast-forward to merge commit),
 `queue_confirm_departure_requeues` (A's queued merge modal withdraws on

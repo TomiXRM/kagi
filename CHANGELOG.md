@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Keep Cancel visible when a long confirmation action cannot fit beside it: shared dialog footers wrap, and full action captions can grow onto multiple lines instead of overflowing. Preserve native button semantics, the safe cancellation path and two-stage confirmation. (#1646)
 - Remove obsolete inputless-root replacement and extra teardown frame pumping from native UI inventory captures. Use the shared window teardown with leak detection enabled; retain native presentation needed to produce screenshots. (#1632)
 - Preserve the compact Commit popup and input focus when an older commit finishes while a newer draft is being edited. Close only a consumed matching draft, keeping queued operations waiting for typing until the user dismisses the composer. (#1649)
+- Keep the operation queue and its 32-entry cancellation history in a bounded scroll area instead of pushing Graph and the status bar out of a compact window. Pin counts, Cancel all and Clear; preserve individual removal, session ownership and the prohibition on cancelling a running write. (#1650)
 
 ## [0.46.0] - 2026-10-17
 

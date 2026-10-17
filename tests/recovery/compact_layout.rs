@@ -20,6 +20,8 @@ pub mod inspector;
 pub mod lifecycle;
 #[path = "compact_layout/popup.rs"]
 pub mod popup;
+#[path = "compact_layout/queue_history.rs"]
+pub mod queue_history;
 #[path = "compact_layout/rail.rs"]
 pub mod rail;
 #[path = "compact_layout/state.rs"]

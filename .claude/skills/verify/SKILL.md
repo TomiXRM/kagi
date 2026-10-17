@@ -3908,6 +3908,37 @@ success, remove an individual queued successor, dismiss the popup, and verify
 fresh confirmation and retained unsubmitted work. Never hold a user's hook or
 add a write-cancellation route.
 
+For #1650 additionally run `KAGI_GUI_E2E_ONLY=queue_history_`.
+Across EN/JA × Apple Light/Dark × 100%/167% at 940×660, two failed held
+predecessors produce 32 distinctly named cancellations. The scenario wheels
+through every actual row inside the viewport, keeps Graph and the status bar
+usable, and reaches the last Remove among 16 pending rows beside that history.
+Pinned Cancel all leaves the running lease held; Clear removes only history.
+It also forces the native Always policy, wheels to a deep offset, drags the
+actual thumb to reveal the newest row, then clicks the lower track to return
+to the oldest. Wheel-only coverage misses a scrollbar attached to translated
+content: keep the bar on the unscrolled `with_vertical_scrollbar` wrapper.
+The production strip uses one shared scroll viewport, capped at the lesser
+of scaled 240px and 20% of window height, with session-keyed scroll state.
+`queue_history_drag_owner` gives two real repositories overflowing cancellation
+lists, presses A's thumb, switches through production `switch_repo` while the
+button stays held, then moves over B. B's newest row must remain at its original
+position and both repositories retain HEAD/index. Scope the entire strip's
+element subtree by session incarnation: separate handles alone do not isolate
+the kit scrollbar's retained drag state.
+Tier B repeats the eight conditions at 1000×700 using an ordinary binary and
+private bounded failing pre-commit hooks, not the native hold seam. Capture
+32 cancellations, the scrolled tail and Clear; compare HEAD, refs, staged
+content, working files and failed receipts before/after. Also exercise
+individual Remove and pinned Cancel all with 32 history entries plus 16
+pending operations, observing that the admitted write continues until its
+own hook is released. Duplicate frozen commit messages in this real fixture
+are expected; the native case independently proves reachability of all 32 IDs.
+Repeat thumb dragging and lower-track clicks in the ordinary app, using the
+owned PID/window and current screenshot coordinates. Its system auto-hide
+policy is separate from the native forced-Always assertion; process-local
+`AppleShowScrollBars` launch arguments do not prove the kit adopted that policy.
+
 Stage 3b-2 adds `queue_replans_merge_after_predecessor` (held commit changes
 HEAD; live merge kind changes from fast-forward to merge commit),
 `queue_confirm_departure_requeues` (A's queued merge modal withdraws on

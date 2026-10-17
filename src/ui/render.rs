@@ -968,7 +968,7 @@ impl Render for KagiApp {
         let root = root
             // ── Operation queue strip (#355) — the front tab's queued
             //    intents and cancel list, directly above the status bar. ──
-            .children(self.render_queue_strip(cx))
+            .children(self.render_queue_strip(window, cx))
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, window, cx));
         // The one collector Home also uses keeps popup/modal ordering intact.

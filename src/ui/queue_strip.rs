@@ -4,7 +4,7 @@
 //! Another tab's intents never appear here.
 use std::time::Instant;
 
-use gpui::{div, prelude::*, rgb, Context, SharedString};
+use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use kagi_ui_core::i18n::{queue_text, QueueText};
 use kagi_ui_core::slow_read::is_slow;
 
@@ -80,31 +80,110 @@ impl KagiApp {
         })
     }
 
-    pub(super) fn render_queue_strip(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub(super) fn render_queue_strip(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         let model = self.queue_strip_model(cx.background_executor().now())?;
-        let mut strip = div()
-            .id("queue-strip")
+        let owner = self.active_session()?;
+        let scroll = window
+            .use_keyed_state(("queue-strip-scroll", owner.incarnation), cx, |_, _| {
+                gpui::ScrollHandle::default()
+            })
+            .read(cx)
+            .clone();
+        let header = render_header(&model, cx);
+        let mut rows = div()
+            .id(("queue-strip-rows", owner.incarnation))
+            .relative()
+            .w_full()
+            .min_h(px(0.))
+            .flex_shrink(1.)
+            .overflow_y_scroll()
+            .track_scroll(&scroll)
             .flex()
             .flex_col()
-            // Right-aligned: the toast stack and busy snackbar float over the
-            // bottom-left corner above the status bar, exactly while a queue
-            // is waiting on a running write.
             .items_end()
-            .w_full()
-            .flex_shrink_0()
-            .px_3()
-            .py(theme::scaled_px(4.0))
-            .gap(theme::scaled_px(2.0))
-            .bg(rgb(theme().surface))
-            .border_t_1()
-            .border_color(rgb(theme().selected))
-            .text_xs()
-            .text_color(rgb(theme().text_main));
-        if !model.rows.is_empty() {
-            strip = strip.child(
+            // The pinned scrollbar's 16px rail must not cover Remove.
+            .pr(px(16.))
+            .gap(theme::scaled_px(2.));
+        for row in model.rows {
+            rows = rows.child(render_row(row, cx));
+        }
+        for (id, label, reason) in model.cancelled {
+            rows = rows.child(
                 div()
+                    .relative()
                     .flex()
                     .flex_row()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .text_color(rgb(theme().text_sub))
+                    .child(SharedString::from(label))
+                    .child(SharedString::from(reason))
+                    .when(cfg!(feature = "gui-e2e"), |row| {
+                        row.child(super::e2e::measure_inside(format!(
+                            "queue-strip-cancelled-{}",
+                            id.0
+                        )))
+                    }),
+            );
+        }
+        // Keep scrollbar geometry outside the rows' translated scroll content.
+        let viewport = super::render_helpers::with_vertical_scrollbar(
+            "queue-strip-scrollbar",
+            &scroll,
+            rows,
+            true,
+        )
+        .flex_initial()
+        .w_full();
+        Some(
+            div()
+                // Scope the scrollbar's own drag state, not just its handle.
+                .id(("queue-strip", owner.incarnation))
+                .relative()
+                .flex()
+                .flex_col()
+                .w_full()
+                .flex_shrink_0()
+                .min_h(px(0.))
+                .max_h(theme::scaled_px(240.).min(window.viewport_size().height * 0.2))
+                .overflow_hidden()
+                .px_3()
+                .py(theme::scaled_px(4.))
+                .gap(theme::scaled_px(2.))
+                .bg(rgb(theme().surface))
+                .border_t_1()
+                .border_color(rgb(theme().selected))
+                .text_xs()
+                .text_color(rgb(theme().text_main))
+                .child(header)
+                .child(super::e2e::measure_leaf("queue-strip-scroll", viewport))
+                .when(cfg!(feature = "gui-e2e"), |strip| {
+                    strip.child(super::e2e::measure_inside("queue-strip"))
+                })
+                .into_any_element(),
+        )
+    }
+}
+
+fn render_header(model: &StripModel, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    // Keep actions visible while the one shared row viewport scrolls. Align
+    // right so the floating busy snackbar and toast stack keep the left corner.
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .justify_end()
+        .flex_shrink_0()
+        .gap_3()
+        .when(!model.rows.is_empty(), |header| {
+            header.child(
+                div()
+                    .flex()
                     .items_center()
                     .gap_2()
                     .child(
@@ -116,8 +195,8 @@ impl KagiApp {
                                 model.count
                             ))),
                     )
-                    .when(model.count > 0, |el| {
-                        el.child(strip_button(
+                    .when(model.count > 0, |group| {
+                        group.child(strip_button(
                             "queue-strip-cancel-all",
                             queue_text(QueueText::CancelAll),
                             cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
@@ -125,16 +204,12 @@ impl KagiApp {
                             }),
                         ))
                     }),
-            );
-            for row in model.rows {
-                strip = strip.child(render_row(row, cx));
-            }
-        }
-        if !model.cancelled.is_empty() {
-            strip = strip.child(
+            )
+        })
+        .when(!model.cancelled.is_empty(), |header| {
+            header.child(
                 div()
                     .flex()
-                    .flex_row()
                     .items_center()
                     .gap_2()
                     .child(
@@ -154,47 +229,40 @@ impl KagiApp {
                             this.queue_dismiss_cancelled(cx)
                         }),
                     )),
-            );
-            for (id, label, reason) in model.cancelled {
-                strip = strip.child(super::e2e::measure_control(
-                    format!("queue-strip-cancelled-{}", id.0),
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(label))
-                        .child(SharedString::from(reason)),
-                ));
-            }
-        }
-        Some(super::e2e::measure_control("queue-strip", strip))
-    }
+            )
+        })
+        .into_any_element()
 }
 
 fn render_row(row: StripRow, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let id = row.id;
-    super::e2e::measure_control(
-        format!("queue-strip-row-{}", id.0),
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .child(SharedString::from(row.label))
-            .child(
-                div()
-                    .text_color(rgb(theme().text_sub))
-                    .child(SharedString::from(row.state)),
-            )
-            .when(row.removable, |el| {
-                el.child(strip_button(
-                    format!("queue-strip-remove-{}", id.0),
-                    queue_text(QueueText::Remove),
-                    cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.queue_remove(id, cx)),
-                ))
-            }),
-    )
+    div()
+        .relative()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .gap_2()
+        .child(SharedString::from(row.label))
+        .child(
+            div()
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(row.state)),
+        )
+        .when(row.removable, |el| {
+            el.child(strip_button(
+                format!("queue-strip-remove-{}", id.0),
+                queue_text(QueueText::Remove),
+                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.queue_remove(id, cx)),
+            ))
+        })
+        .when(cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside(format!(
+                "queue-strip-row-{}",
+                id.0
+            )))
+        })
+        .into_any_element()
 }
 
 /// Every row that has not started writing can be taken out: a queued or

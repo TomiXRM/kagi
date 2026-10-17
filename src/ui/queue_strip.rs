@@ -141,7 +141,8 @@ impl KagiApp {
         .w_full();
         Some(
             div()
-                .id("queue-strip")
+                // Scope the scrollbar's own drag state, not just its handle.
+                .id(("queue-strip", owner.incarnation))
                 .relative()
                 .flex()
                 .flex_col()

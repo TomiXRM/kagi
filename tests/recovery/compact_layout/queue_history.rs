@@ -22,32 +22,121 @@ pub fn scenario_queue_history_viewport(cx: &mut VisualTestAppContext) {
     }
 }
 
-fn history_case(cx: &mut VisualTestAppContext, case: Case) {
-    let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
-    for n in 0..32 {
-        git(&repo, &["branch", &format!("history-{n:02}")]);
+pub fn scenario_queue_history_drag_owner(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let fixtures = [history_fixture(16), history_fixture(16)];
+    let paths = fixtures
+        .each_ref()
+        .map(|fixture| fixture.path().canonicalize().unwrap());
+    let before = paths
+        .each_ref()
+        .map(|repo| (git_text(repo, &["rev-parse", "HEAD"]), index(repo)));
+    let (app, win) = mount(
+        cx,
+        &paths[0],
+        Case {
+            height: 660.,
+            zoom: 1.,
+            locale: "en",
+            preset: "apple-dark",
+        },
+    );
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(paths[1].clone(), cx))
+    });
+    let mut ids = Vec::new();
+    for (tab, repo) in paths.iter().enumerate() {
+        app.update(cx, |app, cx| app.switch_repo(tab, cx));
+        settle(cx, win);
+        ids.push(cancel_history_batch(cx, &app, win, repo, 0..16));
     }
+    cx.update(|cx| {
+        gpui_component::Theme::global_mut(cx).scrollbar_show =
+            gpui_component::scroll::ScrollbarShow::Always;
+    });
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    settle(cx, win);
+    let area = bounds(win, "queue-strip-scroll");
+    wheel(cx, win, area.center(), 100_000.);
+    let from = point(area.right() - px(8.), area.top() + px(24.));
+    cx.simulate_mouse_move(win, from, None, Modifiers::none());
+    frame(cx, win);
+    cx.simulate_mouse_down(win, from, MouseButton::Left, Modifiers::none());
+    frame(cx, win);
+
+    // A keyboard tab switch can occur while the pointer button stays held.
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    settle(cx, win);
+    let newest = format!("queue-strip-cancelled-{}", ids[1].last().unwrap());
+    let initial = bounds(win, &newest);
+    let area = bounds(win, "queue-strip-scroll");
+    contained(area, initial, "B starts at its own newest cancellation");
+    let to = point(area.right() - px(8.), area.bottom() - px(2.));
+    cx.simulate_mouse_move(win, to, MouseButton::Left, Modifiers::none());
+    e2e::clear_control_bounds(win.window_id(), &newest);
+    frame(cx, win);
+    let after = bounds(win, &newest);
+    cx.simulate_mouse_up(win, to, MouseButton::Left, Modifiers::none());
+    frame(cx, win);
+    assert_eq!(
+        after.origin.y, initial.origin.y,
+        "A's held thumb must not scroll B"
+    );
+    for (repo, (head, staged)) in paths.iter().zip(before) {
+        assert_eq!(git_text(repo, &["rev-parse", "HEAD"]), head);
+        assert_eq!(index(repo), staged);
+    }
+    unmount(cx, app, win);
+}
+
+fn history_fixture(count: usize) -> tempfile::TempDir {
+    let fixture = build_fixture();
+    for n in 0..count {
+        git(fixture.path(), &["branch", &format!("history-{n:02}")]);
+    }
+    fixture
+}
+
+fn cancel_history_batch(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    repo: &Path,
+    names: std::ops::Range<usize>,
+) -> Vec<u64> {
+    git(repo, &["branch", "anchor"]);
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("anchor", cx));
+    cx.run_until_parked();
+    for n in names {
+        app.update(cx, |app, cx| {
+            app.dblclick_checkout_branch(&format!("history-{n:02}"), cx)
+        });
+    }
+    cx.run_until_parked();
+    let ids = cx.read(|cx| app.read(cx).queue_ids_for_e2e());
+    git(repo, &["branch", "-D", "anchor"]);
+    release.send(());
+    wait_idle(cx, app, win);
+    ids
+}
+
+fn history_case(cx: &mut VisualTestAppContext, case: Case) {
+    let fixture = history_fixture(32);
+    let repo = fixture.path().canonicalize().unwrap();
     let before = index(&repo);
     let head_before = git_text(&repo, &["rev-parse", "HEAD"]);
     let (app, win) = mount(cx, &repo, case);
     let mut cancelled = Vec::new();
     for batch in 0..2 {
-        git(&repo, &["branch", "anchor"]);
-        let (hold, release) = crate::evidence_support::deferred::<()>(cx);
-        KagiApp::hold_next_run_for_e2e(hold);
-        app.update(cx, |app, cx| app.dblclick_checkout_branch("anchor", cx));
-        cx.run_until_parked();
-        for n in batch * 16..(batch + 1) * 16 {
-            app.update(cx, |app, cx| {
-                app.dblclick_checkout_branch(&format!("history-{n:02}"), cx)
-            });
-        }
-        cx.run_until_parked();
-        cancelled.extend(cx.read(|cx| app.read(cx).queue_ids_for_e2e()));
-        git(&repo, &["branch", "-D", "anchor"]);
-        release.send(());
-        wait_idle(cx, &app, win);
+        cancelled.extend(cancel_history_batch(
+            cx,
+            &app,
+            win,
+            &repo,
+            batch * 16..(batch + 1) * 16,
+        ));
     }
     let shown = cx
         .read(|cx| app.read(cx).queue_strip_for_e2e(std::time::Instant::now()))

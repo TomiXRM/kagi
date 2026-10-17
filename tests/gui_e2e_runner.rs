@@ -3817,6 +3817,10 @@ mod macos {
                 Box::new(crate::compact_layout::queue_history::scenario_queue_history_viewport),
             ),
             (
+                "queue_history_drag_owner",
+                Box::new(crate::compact_layout::queue_history::scenario_queue_history_drag_owner),
+            ),
+            (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
             ),

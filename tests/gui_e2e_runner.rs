@@ -3809,6 +3809,10 @@ mod macos {
                 Box::new(crate::compact_layout::popup::scenario_compact_layout_content_fit),
             ),
             (
+                "compact_commit_preserves_new_draft",
+                Box::new(crate::compact_layout::popup::scenario_compact_commit_preserves_new_draft),
+            ),
+            (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
             ),

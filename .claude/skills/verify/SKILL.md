@@ -3874,6 +3874,18 @@ The Commit Panel busy path releases title-input focus itself, so the clean
 `cargo test -p kagi-git staged_set_digest` additionally exercises gitlink
 mode and conflict index stage changes; `merge_in_progress_reads_external_state_after_conflicts_are_resolved`
 probes the resolved merge guard.
+
+For #1649 additionally run `KAGI_GUI_E2E_ONLY=compact_commit_preserves_new_draft`.
+The compact native scenario holds a real commit, queues checkout, edits and focuses
+the retained input, then releases the commit. Across EN/JA, Apple Light/Dark and
+100%/167%, the newer draft stays drawn and focused, checkout waits for typing,
+and dismissing the composer opens fresh confirmation. The matching consumed
+draft instead clears and closes normally. Tier B repeats with a private bounded
+pre-commit hook in an isolated repository: type again without refocusing after
+success, remove an individual queued successor, dismiss the popup, and verify
+fresh confirmation and retained unsubmitted work. Never hold a user's hook or
+add a write-cancellation route.
+
 Stage 3b-2 adds `queue_replans_merge_after_predecessor` (held commit changes
 HEAD; live merge kind changes from fast-forward to merge commit),
 `queue_confirm_departure_requeues` (A's queued merge modal withdraws on

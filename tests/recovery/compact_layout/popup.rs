@@ -303,3 +303,128 @@ pub fn scenario_compact_layout_content_fit(cx: &mut VisualTestAppContext) {
         }
     }
 }
+
+/// An older commit may consume its own draft, never the newer focused composer.
+pub fn scenario_compact_commit_preserves_new_draft(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    for locale in ["en", "ja"] {
+        for preset in ["apple-light", "apple-dark"] {
+            for zoom in [1., 1.67] {
+                for edited in [true, false] {
+                    commit_completion_draft(
+                        cx,
+                        Case {
+                            height: 660.,
+                            zoom,
+                            locale,
+                            preset,
+                        },
+                        edited,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn commit_completion_draft(cx: &mut VisualTestAppContext, case: Case, edited: bool) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "next"]);
+    std::fs::write(repo.join("anchor.txt"), "approved anchor\n").unwrap();
+    git(repo, &["add", "anchor.txt"]);
+    let (app, win) = mount(cx, repo, case);
+    open_wip(cx, win);
+    let panel = cx
+        .read(|cx| app.read(cx).ui().commit_panel.clone())
+        .unwrap();
+    set_draft(cx, &panel, win);
+    let frozen = draft(cx, &panel).2;
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    click(cx, win, "cp-commit-action");
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("next", cx));
+    std::fs::write(repo.join("README.md"), "unsubmitted working-tree change\n").unwrap();
+    let input = cx.read(|cx| panel.read(cx).title_input.clone()).unwrap();
+    cx.update_window(win, |_, window, cx| {
+        if edited {
+            input.update(cx, |input, cx| {
+                input.set_value("newer draft 日本語", window, cx)
+            });
+        }
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+    })
+    .unwrap();
+    settle(cx, win);
+    let retained = draft(cx, &panel);
+    release.send(());
+    for _ in 0..80 {
+        cx.advance_clock(Duration::from_millis(100));
+        settle(cx, win);
+        if !cx.read(|cx| app.read(cx).app_sessions.has_leases()) {
+            break;
+        }
+    }
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    let committed = Command::new("git")
+        .current_dir(repo)
+        .args(["log", "-1", "--format=%B"])
+        .output()
+        .unwrap();
+    assert!(committed.status.success());
+    assert_eq!(
+        String::from_utf8(committed.stdout).unwrap().trim(),
+        frozen.trim()
+    );
+    if edited {
+        popup_geometry(win, case.dimensions());
+        assert_eq!(
+            draft(cx, &panel),
+            retained,
+            "new draft survives the older commit"
+        );
+        assert!(
+            cx.update_window(win, |_, window, cx| {
+                input.read(cx).focus_handle(cx).is_focused(window)
+            })
+            .unwrap(),
+            "the newer input retains actual window focus"
+        );
+        let now = cx.background_executor.now();
+        let shown = cx.read(|cx| app.read(cx).queue_strip_for_e2e(now)).unwrap();
+        assert_eq!(shown.0, 1);
+        assert_eq!(
+            shown.1,
+            vec![(
+                "checkout next".into(),
+                kagi_ui_core::i18n::queue_text(kagi_ui_core::i18n::QueueText::WaitTyping).into(),
+            )]
+        );
+        assert!(!cx.read(|cx| e2e::active_modal_present(app.read(cx))));
+        click(cx, win, "compact-popup-close");
+    } else {
+        assert!(e2e::control_bounds(win.window_id(), "compact-composer").is_none());
+        assert_eq!(draft(cx, &panel).0, "", "the consumed title is cleared");
+        assert_eq!(draft(cx, &panel).1, "", "the consumed body is cleared");
+    }
+    for _ in 0..40 {
+        cx.advance_clock(Duration::from_millis(100));
+        settle(cx, win);
+        if cx.read(|cx| e2e::active_modal_present(app.read(cx))) {
+            break;
+        }
+    }
+    assert!(
+        cx.read(|cx| e2e::active_modal_present(app.read(cx))),
+        "after input dismissal the queue advances to fresh checkout confirmation"
+    );
+    escape(cx, &app, win);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("README.md")).unwrap(),
+        "unsubmitted working-tree change\n",
+        "declining checkout preserves unsubmitted work"
+    );
+    drop((input, panel));
+    unmount(cx, app, win);
+}

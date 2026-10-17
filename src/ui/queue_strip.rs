@@ -5,7 +5,6 @@
 use std::time::Instant;
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
-use gpui_component::scroll::ScrollableElement;
 use kagi_ui_core::i18n::{queue_text, QueueText};
 use kagi_ui_core::slow_read::is_slow;
 
@@ -103,7 +102,6 @@ impl KagiApp {
             .flex_shrink(1.)
             .overflow_y_scroll()
             .track_scroll(&scroll)
-            .vertical_scrollbar(&scroll)
             .flex()
             .flex_col()
             .items_end()
@@ -132,6 +130,15 @@ impl KagiApp {
                     }),
             );
         }
+        // Keep scrollbar geometry outside the rows' translated scroll content.
+        let viewport = super::render_helpers::with_vertical_scrollbar(
+            "queue-strip-scrollbar",
+            &scroll,
+            rows,
+            true,
+        )
+        .flex_initial()
+        .w_full();
         Some(
             div()
                 .id("queue-strip")
@@ -152,7 +159,7 @@ impl KagiApp {
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .child(header)
-                .child(super::e2e::measure_leaf("queue-strip-scroll", rows))
+                .child(super::e2e::measure_leaf("queue-strip-scroll", viewport))
                 .when(cfg!(feature = "gui-e2e"), |strip| {
                     strip.child(super::e2e::measure_inside("queue-strip"))
                 })

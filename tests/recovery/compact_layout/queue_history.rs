@@ -1,5 +1,6 @@
 //! #1650: operation history must not consume the workspace or clip its tail.
 use super::*;
+use gpui::MouseButton;
 use std::collections::BTreeSet;
 
 pub fn scenario_queue_history_viewport(cx: &mut VisualTestAppContext) {
@@ -67,6 +68,7 @@ fn history_case(cx: &mut VisualTestAppContext, case: Case) {
     );
     history_geometry(win, case);
     visit_all_cancelled(cx, win, &cancelled, case);
+    scrollbar_remains_usable(cx, win, &cancelled);
     pending_rows_remain_removable(cx, &app, win, &repo, case);
     click(cx, win, "queue-strip-clear");
     e2e::clear_control_bounds(win.window_id(), "queue-strip");
@@ -147,6 +149,57 @@ fn visit_all_cancelled(
     assert_eq!(
         seen, expected,
         "wheel reaches every actual cancellation, including the oldest"
+    );
+}
+
+fn scrollbar_remains_usable(cx: &mut VisualTestAppContext, win: AnyWindowHandle, ids: &[u64]) {
+    cx.update(|cx| {
+        gpui_component::Theme::global_mut(cx).scrollbar_show =
+            gpui_component::scroll::ScrollbarShow::Always;
+    });
+    frame(cx, win);
+    let area = bounds(win, "queue-strip-scroll");
+    wheel(cx, win, area.center(), -100_000.);
+    let oldest = format!("queue-strip-cancelled-{}", ids[0]);
+    let newest = format!("queue-strip-cancelled-{}", ids.last().unwrap());
+    contained(area, bounds(win, &oldest), "wheel starts at the real tail");
+
+    // The pinned kit's minimum thumb is 48px, as in surface_scrollbars::drag.
+    // Start after a deep scroll: a bar attached to translated rows is now gone.
+    let from = point(area.right() - px(8.), area.bottom() - px(24.));
+    let to = point(from.x, area.top() + px(1.));
+    cx.simulate_mouse_move(win, from, None, Modifiers::none());
+    frame(cx, win);
+    cx.simulate_mouse_down(win, from, MouseButton::Left, Modifiers::none());
+    frame(cx, win);
+    for n in 1..=5 {
+        cx.simulate_mouse_move(
+            win,
+            from + (to - from) * (n as f32 / 5.),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        frame(cx, win);
+    }
+    cx.simulate_mouse_up(win, to, MouseButton::Left, Modifiers::none());
+    e2e::clear_control_bounds(win.window_id(), &newest);
+    frame(cx, win);
+    contained(
+        area,
+        bounds(win, &newest),
+        "thumb drag from a deep offset reveals newest cancellation",
+    );
+
+    let lower_track = point(from.x, area.bottom() - px(2.));
+    cx.simulate_mouse_down(win, lower_track, MouseButton::Left, Modifiers::none());
+    frame(cx, win);
+    cx.simulate_mouse_up(win, lower_track, MouseButton::Left, Modifiers::none());
+    e2e::clear_control_bounds(win.window_id(), &oldest);
+    frame(cx, win);
+    contained(
+        area,
+        bounds(win, &oldest),
+        "lower track remains clickable after dragging to the top",
     );
 }
 

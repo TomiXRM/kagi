@@ -136,7 +136,8 @@ pub struct IntentQueue {
   上書きしない」規律と同じ）。
 - **strip 自体も有界にする（#1650）。** 高さは UI scale 適用後の 240px と window 高さの
   20% の小さい方まで。件数・Cancel all・Clear は上部に固定し、待機行と取消履歴は
-  既存 `ScrollableElement` の単一 viewport で縦 scroll する。行を縮めて収めず、
+  既存 `with_vertical_scrollbar` の単一 viewport で縦 scroll する。scrollbar は行ではなく
+  scroll しない外側の wrapper に置き、rail / thumb を内容と一緒に移動させない。行を縮めて収めず、
   scrollbar の rail と Remove を重ねない。scroll state の鍵は session incarnation とし、
   他 tab の offset を流用しない。32 件の保持上限・新しい順・取消理由・write の規律は変えない。
   これは副次的な履歴が Graph と status bar を押し出さないための表示制限であり、データの削除ではない。

@@ -472,6 +472,8 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
     実際の merge state を読んで取り消し、MERGE_HEAD と index を残す。Cancel は chain を trip する。
   - 完了時は投入時の branch の draft だけを、内容が凍結本文と同じ場合に消す。別 branch や
     後から編集された本文は残し、autosave の debounce も編集した branch に結びつける。
+    compact composer の開閉も同じ消費判定に従う。古い commit の完了で新しい draft の
+    popup や focus を奪わず、入力を閉じるまでは後続の `Waiting { Typing }` を維持する（#1649）。
   - dispatch tree に実際に描画されている text input が focus 中なら先頭は
     `Waiting { Typing }` に留め、modal も実行も始めない。ただし write / plan slot / reconcile
     の待機理由を優先して表示する。Commit ボタンで enqueue できたら focus を root に戻し、

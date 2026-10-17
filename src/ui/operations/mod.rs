@@ -688,14 +688,6 @@ impl KagiApp {
 
     fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
         if let Some((repo, message)) = presentation.consume_commit_message {
-            if self
-                .ui()
-                .commit_panel
-                .as_ref()
-                .is_some_and(|panel| panel.read(cx).repo_path == repo)
-            {
-                self.compact.popup_owner = None;
-            }
             match message {
                 Some((branch, frozen)) => {
                     let panel_matches = self.ui().commit_panel.as_ref().is_some_and(|panel| {
@@ -724,6 +716,7 @@ impl KagiApp {
                         panel_on_branch && !panel_matches,
                     );
                     if cleared && panel_matches {
+                        self.compact.popup_owner = None;
                         self.clear_commit_panel_message(cx);
                     } else {
                         // A pending debounce for the consumed text must not
@@ -738,7 +731,17 @@ impl KagiApp {
                         }
                     }
                 }
-                None => self.consume_commit_panel_message(&repo, cx),
+                None => {
+                    if self
+                        .ui()
+                        .commit_panel
+                        .as_ref()
+                        .is_some_and(|panel| panel.read(cx).repo_path == repo)
+                    {
+                        self.compact.popup_owner = None;
+                    }
+                    self.consume_commit_panel_message(&repo, cx);
+                }
             }
         }
         if let Some(failure) = presentation.commit_panel_failure {

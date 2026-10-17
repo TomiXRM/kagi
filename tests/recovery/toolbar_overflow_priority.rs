@@ -154,7 +154,7 @@ fn hidden_at_width(cx: &mut VisualTestAppContext, win: AnyWindowHandle, width: f
     hidden
 }
 
-fn offer_update(app: &mut KagiApp) {
+pub(crate) fn offer_update(app: &mut KagiApp) {
     let latest = Version::parse("1.0.1").unwrap();
     let asset = Asset {
         name: "Kagi-test.dmg".into(),

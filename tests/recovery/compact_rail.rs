@@ -3,6 +3,8 @@
 pub mod escape;
 #[path = "compact_rail/scroll.rs"]
 pub mod scroll;
+#[path = "compact_rail/section_click.rs"]
+pub mod section_click;
 
 use crate::macos::{build_fixture, git, unmount};
 use crate::recovery_layout::contained;

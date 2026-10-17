@@ -617,7 +617,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         id: "view.togglePrSwimlane",
-        label: "Toggle PR Swimlane",
+        label: "Toggle PR Graph",
         keystroke: Some("secondary-alt-l"),
         dangerous: false,
     },

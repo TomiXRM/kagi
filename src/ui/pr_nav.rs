@@ -171,7 +171,6 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> gpui:
         .then(|| app.pr_mode().map(|mode| &mode.navigator_scroll))
         .flatten();
     body = body.when_some(scroll, |body, scroll| body.track_scroll(scroll));
-    body = body.child(super::e2e::measure_inside("pr-sidebar-list-viewport"));
     if all.is_empty() {
         body = body.child(
             div()
@@ -205,12 +204,14 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> gpui:
                 stacked,
                 active_pr.as_ref(),
                 app.window_active,
-                compact.then_some(section),
+                section,
+                compact,
                 cx,
             ));
         }
     }
 
+    let body = super::e2e::measure_leaf("pr-sidebar-list-viewport", body);
     let body = if let Some(scroll) = scroll {
         super::with_vertical_scrollbar("compact-pr-list-scrollbar", scroll, body, true)
             .child(super::e2e::measure_inside("compact-pr-list-scrollbar"))
@@ -256,15 +257,26 @@ fn pr_provenance(pr: &PullRequest) -> Option<kagi_domain::provenance::Provenance
     kagi_domain::provenance::classify_provenance(&[], &author, &author, Some(pr.head.as_str()), &[])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_pr_card(
     pr: &PullRequest,
     bucket: PrAttention,
     stacked: bool,
     active_pr: Option<&kagi_domain::github::PrKey>,
     window_active: bool,
-    compact: Option<PrSection>,
+    section: PrSection,
+    compact: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    // Sections overlap: one PR needs independent interaction/AX state for
+    // each occurrence, in the regular navigator as well as the popup (#1652).
+    let row_id: SharedString = format!(
+        "pr-mode-card-{}-{}-{}",
+        section.index(),
+        pr.base_repo,
+        pr.number
+    )
+    .into();
     let is_active = active_pr.is_some_and(|key| pr.is(key));
     let on_accent = theme().selection_uses_on_accent(is_active, window_active);
     let accent = attention_color(bucket);
@@ -439,7 +451,7 @@ fn render_pr_card(
                 ),
         );
     let row = super::workspace_mode::sidebar_list_row(is_active, window_active)
-        .id(("pr-mode-card", pr.number as usize))
+        .id(row_id.clone())
         // The row fits its two lines and its padding - it is not given a fixed
         // height. A fixed 42px did fit two bare line boxes, but not once the
         // rows gained the mock's vertical padding: the text then overflowed
@@ -451,15 +463,9 @@ fn render_pr_card(
         .when(pr.is_draft && !on_accent, |el| el.opacity(0.7))
         .child(edge)
         .child(card);
-    let row = if let Some(section) = compact {
+    let row = if compact {
         super::compact_sidebar::Leaf {
-            id: format!(
-                "compact-pr-row-{}-{}-{}",
-                section.index(),
-                pr.base_repo,
-                pr.number
-            )
-            .into(),
+            id: row_id.into(),
             label: format!("#{} {}", pr.number, safe_text(&pr.title)),
             row,
             app: cx.weak_entity(),

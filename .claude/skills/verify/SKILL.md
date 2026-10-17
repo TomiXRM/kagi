@@ -313,6 +313,39 @@ shared filter Input/chip focus slots. Tier B: compare the provided plain baselin
 with an isolated plain build at 900×500 in Apple Light/Dark, including high zoom,
 scroll to Issues, and open Cmd-F; capture only the launched PID's window.
 
+For #1652 use
+`KAGI_GUI_E2E_ONLY='pr_section_pointer,pr_detail_,pr_lane_,compact_rail,compact_popover,compact_pr_popover_scroll,toolbar_pr_sidebar'`
+with KEEP_GOING. `pr_section_pointer` covers horizontal Started inside followed
+by Ended/Cancelled outside, including a sidebar hidden before the terminal;
+subsequent gestures and Mine disclosure must remain usable. Its overlapping PR
+sections retain distinct actual element/AccessKit identities. Pointer down and
+up straddle a drawn frame; bounded real wheel input reveals the complete Mine
+header before clicking. Record the scroll container with the layout-neutral
+`measure_leaf("pr-sidebar-list-viewport", body)`, not a `measure_inside` child
+that translates with its contents and makes a false viewport.
+`pr_detail_adaptive` activates Graph in every layout, the leading chrome sidebar
+toggle when noncompact, and the existing PR rail popup when compact.
+Its activated native AccessKit nodes must expose the current Show/Hide action
+name and toggled state, independently of the visible Graph caption. Do not use
+the pinned Button's `.label()` for these controls: it overwrites the AX name,
+even for an empty icon-only label.
+`toolbar_pr_sidebar` sweeps 580–1000 base widths at 100%/167%, EN/JA and both
+Apple themes, with both toolbar presentations and an offered update. It restores
+the temporary 40-rem compact threshold and checks every visible control against
+the toolbar viewport and its neighbors. Before the fix, the 596px / EN /
+IconAndText leg overlapped repository identity x=86.5..248.5 with Update
+x=230..326. Budget the opener's measured wrapper including its trailing padding;
+that wrapper has no focus border to add to the width.
+Tier B: reproduce outside termination in an isolated plain app, click Mine,
+hide/reopen the sidebar from the dashboard, then open a PR and toggle Graph.
+Compare the prior Navigator/Swimlane controls with the new placement in EN/JA,
+Apple Light/Dark and normal/high zoom. Native AX metadata is not VoiceOver speech.
+Do not equate direct `TouchPhase::Cancelled` coverage with native macOS phase
+delivery: the pinned backend converts NSEventPhaseCancelled to Moved (#1654).
+The real-window Ended recovery passes; native Cancelled recovery remains tracked
+there. Inactive windows intentionally suppress hover help; use the existing
+active-window native seam for tooltip construction, not a foreground takeover.
+
 For #1513 use `KAGI_GUI_E2E_ONLY='palette_'` with KEEP_GOING.
 `palette_rows_ax_action` shares the native NSView activation and AccessKit node
 inspection helper with the rail. It checks result-owned Click actions and sends

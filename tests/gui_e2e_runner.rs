@@ -595,6 +595,10 @@ mod toolbar_overflow;
 mod toolbar_overflow_priority;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_pr_sidebar.rs"]
+mod toolbar_pr_sidebar;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -3444,6 +3448,7 @@ mod macos {
             ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
+            ("toolbar_pr_sidebar", Box::new(crate::toolbar_pr_sidebar::scenario_toolbar_pr_sidebar)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             (
                 "toolbar_overflow_priority",
@@ -3722,6 +3727,7 @@ mod macos {
             ("compact_group_reveal_escape", Box::new(crate::compact_rail::escape::scenario_compact_group_reveal_escape)),
             ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
             ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
+            ("pr_section_pointer", Box::new(crate::compact_rail::section_click::scenario_pr_section_pointer)),
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
             ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (

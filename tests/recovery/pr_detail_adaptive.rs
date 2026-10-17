@@ -46,6 +46,16 @@ fn geometry(
     if feed {
         names.push("pr-mode-composer");
     }
+    let compact = kagi_domain::compact::is_compact(
+        dimensions.0,
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    );
+    names.push("pr-swimlane-toggle");
+    e2e::clear_control_bounds(win.window_id(), "pr-navigator-toggle");
+    if !compact {
+        names.push("pr-navigator-toggle");
+    }
     for name in &names {
         e2e::clear_control_bounds(win.window_id(), name);
     }
@@ -83,6 +93,37 @@ fn geometry(
             );
         }
     }
+}
+
+fn companion_ax(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
+    use i18n::Msg;
+    let (pane, drawer, show, hide) = if id == "pr-swimlane-toggle" {
+        (
+            "pr-mode-lane-pane",
+            "pr-companion-swimlane",
+            Msg::PrShowGraph,
+            Msg::PrHideGraph,
+        )
+    } else {
+        (
+            "pr-mode-left-pane",
+            "pr-companion-navigator",
+            Msg::PrShowNavigator,
+            Msg::PrHideNavigator,
+        )
+    };
+    let visible = e2e::control_bounds(win.window_id(), pane).is_some()
+        || e2e::control_bounds(win.window_id(), drawer).is_some();
+    let node = crate::native_ax::node(cx, win, id.to_owned().into());
+    assert_eq!(node["aria"]["role"], "Button");
+    assert_eq!(
+        node["aria"]["label"],
+        if visible { hide.t() } else { show.t() }
+    );
+    assert_eq!(
+        node["aria"]["toggled"],
+        if visible { "True" } else { "False" }
+    );
 }
 fn open(
     cx: &mut VisualTestAppContext,
@@ -184,12 +225,25 @@ fn retained(
         !before.opened_threads.is_empty() && before.top_item > 0,
         "a real thread and nonzero scroll must be retained"
     );
-    for id in [
-        "pr-swimlane-toggle",
-        "pr-swimlane-toggle",
-        "pr-navigator-toggle",
-        "pr-navigator-toggle",
-    ] {
+    let compact = kagi_domain::compact::is_compact(
+        dimensions.0,
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    );
+    let toggles: &[&str] = if compact {
+        &["pr-swimlane-toggle", "pr-swimlane-toggle"]
+    } else {
+        &[
+            "pr-swimlane-toggle",
+            "pr-swimlane-toggle",
+            "pr-navigator-toggle",
+            "pr-navigator-toggle",
+        ]
+    };
+    crate::native_ax::activate(cx);
+    geometry(cx, win, dimensions, false);
+    for &id in toggles {
+        companion_ax(cx, win, id);
         e2e::clear_control_bounds(win.window_id(), "pr-companion-drawer");
         let button = bounds(win, id);
         cx.simulate_click(win, button.center(), gpui::Modifiers::none());
@@ -205,6 +259,22 @@ fn retained(
             );
         }
         assert_eq!(snapshot(cx, app), before, "toggle {id} resets PR state");
+        companion_ax(cx, win, id);
+    }
+    if compact {
+        assert!(
+            e2e::control_bounds(win.window_id(), "pr-navigator-toggle").is_none(),
+            "compact uses one navigator launcher, not a competing chrome toggle"
+        );
+        let launcher = bounds(win, "compact-rail-prs");
+        cx.simulate_click(win, launcher.center(), gpui::Modifiers::none());
+        geometry(cx, win, dimensions, false);
+        bounds(win, "compact-sidebar-popover");
+        cx.simulate_keystrokes(win, "escape");
+        e2e::clear_control_bounds(win.window_id(), "compact-sidebar-popover");
+        geometry(cx, win, dimensions, false);
+        assert!(e2e::control_bounds(win.window_id(), "compact-sidebar-popover").is_none());
+        assert_eq!(snapshot(cx, app), before, "rail reveal resets PR state");
     }
     // Restore the View preference through its real registered action.
     if !cx.read(|cx| app.read(cx).sidebar.visible) {
@@ -222,10 +292,6 @@ fn retained(
             "Escape closing a drawer resets PR state"
         );
     }
-    assert!(
-        kagi::ui::commands::command("view.togglePrSwimlane").is_some(),
-        "palette registry must contain the reveal command"
-    );
     cx.update_window(win, |_, w, cx| {
         app.update(cx, |a, cx| {
             a.root_focus

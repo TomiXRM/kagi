@@ -381,6 +381,40 @@ fn adjacent_page_placeholder() -> gpui::AnyElement {
     )
 }
 
+/// Finish the existing gesture even after the pointer leaves the sidebar.
+/// Mount at the window root so hiding/unmounting a sidebar cannot lose its
+/// terminal. Observe without a hitbox or consuming another pane's scroll (#1652).
+pub(super) fn sidebar_gesture_end(app: &KagiApp, cx: &mut Context<KagiApp>) -> impl IntoElement {
+    let owner = app.active_session();
+    let mode = app.workspace_mode();
+    let on_end = cx.listener(move |this, event, window, cx| {
+        if this.active_session() == owner
+            && this.workspace_mode() == mode
+            && !this.sidebar.swipe.is_idle()
+            && !this.sidebar.swipe.is_settling()
+        {
+            this.sidebar_scroll(event, window, cx);
+        }
+    });
+    gpui::canvas(
+        |_, _, _| (),
+        move |_, _, window, _| {
+            window.on_mouse_event(move |event: &gpui::ScrollWheelEvent, phase, window, cx| {
+                if phase.capture()
+                    && matches!(
+                        event.touch_phase,
+                        gpui::TouchPhase::Ended | gpui::TouchPhase::Cancelled
+                    )
+                {
+                    on_end(event, window, cx);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size(px(0.))
+}
+
 /// The one sidebar renderer (ADR-0199).
 ///
 /// A stationary, fixed-width shell hosts the pinned page navigator and a
@@ -390,9 +424,8 @@ fn adjacent_page_placeholder() -> gpui::AnyElement {
 /// passes only its own page content, and the offset never leaves this module.
 ///
 /// The navigator stays outside the viewport so it remains clickable and
-/// anchored, and so the shell keeps receiving wheel phases after the
-/// translated page has moved out from under the pointer — `Ended` must always
-/// arrive, or a gesture could never be released.
+/// anchored. Gesture termination is observed at window scope: a release over
+/// the main pane must not leave the sidebar's occluding shield behind.
 pub(super) fn render_sidebar_pages(
     app: &KagiApp,
     mode: WorkspaceMode,
@@ -506,6 +539,14 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         use gpui::{ScrollDelta, TouchPhase};
+
+        // The window observer handles terminals before hit-tested bubble
+        // listeners. Once released/cancelled, do not release it a second time.
+        if matches!(event.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled)
+            && (self.sidebar.swipe.is_idle() || self.sidebar.swipe.is_settling())
+        {
+            return;
+        }
 
         if self.active_modal.is_some() {
             self.abandon_sidebar_gesture(cx);

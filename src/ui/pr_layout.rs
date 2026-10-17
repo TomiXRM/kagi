@@ -2,12 +2,12 @@
 //! Only presentation flags change. The session's PR tabs, inputs and lists stay
 //! mounted in the same center and no read is admitted by a layout transition.
 use super::{
-    button_style::{named_button, ButtonRole, KagiButton},
+    button_style::{apply_role, named_button, ButtonRole},
     i18n::Msg,
     theme, KagiApp,
 };
 use gpui::{div, prelude::*, px, rgb, Context, Window};
-use gpui_component::{Selectable as _, Sizable as _};
+use gpui_component::{button::Button, Icon, Selectable as _, Sizable as _};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(super) const CENTER_MIN: f32 = 420.;
@@ -138,9 +138,15 @@ fn companion_button(
     super::e2e::measure_control(
         id,
         named_button(
-            KagiButton::icon(id, icon, label, ButtonRole::Secondary, cx)
-                .small()
-                .selected(selected),
+            apply_role(
+                Button::new(id)
+                    .icon(Icon::empty().path(icon))
+                    .when(!label.is_empty(), |button| button.child(label)),
+                ButtonRole::Secondary,
+                cx,
+            )
+            .small()
+            .selected(selected),
             help,
             Some(selected),
         )

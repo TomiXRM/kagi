@@ -595,6 +595,10 @@ mod toolbar_overflow;
 mod toolbar_overflow_priority;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_pr_sidebar.rs"]
+mod toolbar_pr_sidebar;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -3444,6 +3448,7 @@ mod macos {
             ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
+            ("toolbar_pr_sidebar", Box::new(crate::toolbar_pr_sidebar::scenario_toolbar_pr_sidebar)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             (
                 "toolbar_overflow_priority",

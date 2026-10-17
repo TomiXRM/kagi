@@ -822,3 +822,35 @@ The heading must not present loaded-history intersections as a PR total.
 An explicit total supplied by PR data is authoritative; absent that data, the
 heading says `N loaded` / `N 読み込み済み`. No additional request is made just
 to count commits, and a potentially capped commit array is not a total.
+
+## Amendment — discoverable pane controls and section identity (#1652)
+
+The dense PR workspace calls its companion pane **Graph** in both languages.
+Its Secondary icon-and-label button has a visible border, actual visible/drawer
+state as its selected/AX toggled value, and Show/Hide Graph as next-action help.
+The sidebar toggle moves out of the reader's companion toolbar to the leading
+application chrome, before Refresh, with the standard left-panel icon and
+Show/Hide PR sidebar help. It remains available on the dashboard and while the
+sidebar is hidden. Compact windows retain the existing permanent PR rail
+launcher instead of gaining a second opener.
+
+Reference: [Notion's sidebar navigation](https://www.notion.com/help/navigate-with-the-sidebar).
+Adopt the separate, consistently placed open/close affordance and independent
+section disclosures, not a hover-only discovery requirement or a new shortcut.
+Existing KagiButton/`named_button` owns rest, hover, pressed, focus, keyboard and
+accessibility behavior; existing menu commands and session guards own dispatch.
+These synchronous presentation toggles have no loading/error state and perform
+no Git operation. Persistent command identifiers and shortcut bindings remain
+unchanged; this is not a new pane-state owner.
+
+A PR can legitimately appear in several sections. Its actual element/AccessKit
+identity now includes section, base repository and PR number, rather than PR
+number alone. The same stable identity feeds compact row navigation. Opening,
+context menus, filters and section membership retain their existing handlers.
+Interrupted horizontal gesture recovery is specified in ADR-0199.
+
+`pr_detail_adaptive` exercises Graph in every layout and the appropriate sidebar
+opener (chrome or rail), preserving detail inputs, selection and scroll state.
+`pr_section_pointer` drives separate pointer down/up frames at each header edge,
+real scrolling to reveal compact headers, Enter/Space and overlapping sections
+across themes, languages, zoom, resize, reopen and session transitions.

@@ -2,7 +2,7 @@
 //! Only presentation flags change. The session's PR tabs, inputs and lists stay
 //! mounted in the same center and no read is admitted by a layout transition.
 use super::{
-    button_style::{ButtonRole, KagiButton},
+    button_style::{named_button, ButtonRole, KagiButton},
     i18n::Msg,
     theme, KagiApp,
 };
@@ -98,35 +98,71 @@ impl KagiApp {
     }
 }
 
+/// The leading chrome control remains mounted when the sidebar is hidden.
+/// Compact windows already have one navigator launcher in the permanent rail.
+pub(super) fn navigator_toggle(
+    app: &KagiApp,
+    window: &Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let layout = Layout::for_window(app, window);
+    let selected = layout.navigator || layout.drawer == Some(Companion::Navigator);
+    companion_button(
+        app,
+        "pr-navigator-toggle",
+        "icons/panel-left.svg",
+        "",
+        if selected {
+            Msg::PrHideNavigator.t()
+        } else {
+            Msg::PrShowNavigator.t()
+        },
+        "view.toggleSidebar",
+        selected,
+        cx,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn companion_button(
+    app: &KagiApp,
+    id: &'static str,
+    icon: &'static str,
+    label: &'static str,
+    help: &'static str,
+    command: &'static str,
+    selected: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let owner = app.active_session();
+    super::e2e::measure_control(
+        id,
+        named_button(
+            KagiButton::icon(id, icon, label, ButtonRole::Secondary, cx)
+                .small()
+                .selected(selected),
+            help,
+            Some(selected),
+        )
+        .on_click(cx.listener(
+            move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+                if this.active_session() == owner {
+                    this.handle_menu_command(command, window, cx);
+                }
+            },
+        ))
+        .hover_tooltip((id, 0usize), help),
+    )
+    .into_any_element()
+}
+
 pub(super) fn toolbar(
     app: &KagiApp,
     window: &Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let owner = app.active_session();
     let layout = Layout::for_window(app, window);
-    let companion = app.pr_mode().and_then(|m| m.companion);
-    let button = |id,
-                  icon,
-                  label: &'static str,
-                  command: &'static str,
-                  selected: bool,
-                  cx: &mut Context<KagiApp>| {
-        super::e2e::measure_control(
-            id,
-            KagiButton::icon(id, icon, label, ButtonRole::Neutral, cx)
-                .small()
-                .selected(selected)
-                .on_click(cx.listener(
-                    move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-                        if this.active_session() == owner {
-                            this.handle_menu_command(command, window, cx);
-                        }
-                    },
-                ))
-                .hover_tooltip((id, 0usize), label),
-        )
-    };
+    let selected = layout.swimlane || layout.drawer == Some(Companion::Swimlane);
     div()
         .h(theme::scaled_px(TOOLBAR_H))
         .flex()
@@ -137,20 +173,18 @@ pub(super) fn toolbar(
         .py_1()
         .flex_shrink_0()
         .bg(rgb(theme::theme().panel))
-        .child(button(
-            "pr-navigator-toggle",
-            "icons/git-pull-request.svg",
-            Msg::PrNavigator.t(),
-            "view.toggleSidebar",
-            layout.navigator || (app.sidebar.visible && companion == Some(Companion::Navigator)),
-            cx,
-        ))
-        .child(button(
+        .child(companion_button(
+            app,
             "pr-swimlane-toggle",
             "icons/git-branch.svg",
             Msg::PrSwimlane.t(),
+            if selected {
+                Msg::PrHideGraph.t()
+            } else {
+                Msg::PrShowGraph.t()
+            },
             "view.togglePrSwimlane",
-            layout.swimlane || companion == Some(Companion::Swimlane),
+            selected,
             cx,
         ))
         .into_any_element()

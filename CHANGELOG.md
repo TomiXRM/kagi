@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Keep Cancel visible when a long confirmation action cannot fit beside it: shared dialog footers wrap, and full action captions can grow onto multiple lines instead of overflowing. Preserve native button semantics, the safe cancellation path and two-stage confirmation. (#1646)
 - Remove obsolete inputless-root replacement and extra teardown frame pumping from native UI inventory captures. Use the shared window teardown with leak detection enabled; retain native presentation needed to produce screenshots. (#1632)
 - Preserve the compact Commit popup and input focus when an older commit finishes while a newer draft is being edited. Close only a consumed matching draft, keeping queued operations waiting for typing until the user dismisses the composer. (#1649)
+- Restore PR sidebar clicks after a horizontal gesture ends outside the sidebar, including when the sidebar was hidden mid-gesture. Give repeated PR cards distinct section/repository identities. Rename the visible companion pane to Graph, use an outlined toggle with action-specific help, and move sidebar visibility to a persistent leading-chrome control; compact windows retain their existing PR rail launcher. (#1652)
 
 ## [0.46.0] - 2026-10-17
 

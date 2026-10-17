@@ -276,6 +276,7 @@ impl KagiApp {
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -747,6 +748,17 @@ impl KagiApp {
                         el.min_w(theme::scaled_px(toolbar_overflow::ICON_IDENTITY_MIN_WIDTH))
                     })
                     .when(!icon_only, |el| el.min_w(px(identity_width)))
+                    .when(
+                        mode == WorkspaceMode::Prs && !super::compact::for_window(window),
+                        |el| {
+                            el.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .mr_2()
+                                    .child(super::pr_layout::navigator_toggle(self, window, cx)),
+                            )
+                        },
+                    )
                     // ── LEFT: Refresh (user request: left of the repo title) ──
                     .child({
                         // Spin for one full turn after a click (user request).

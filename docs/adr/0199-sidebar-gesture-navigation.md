@@ -75,7 +75,7 @@ mid-gesture would claim the neighbour has nothing in it.
 **A horizontal gesture owns the wheel** (`SidebarSwipe::owns_wheel`), so a
 sideways swipe has no vertical component. A scrollable list is the innermost
 hitbox under the pointer and consumes the `y` delta itself, which no bubble-phase
-listener can undo — gpui exposes only bubble-phase `on_scroll_wheel`. So while
+listener can undo — the element-level `on_scroll_wheel` API is bubble-only. So while
 the gesture owns the wheel, one `occlude()`-ing layer covers the viewport and
 carries the same listener: `Hitbox::should_handle_scroll` is false for everything
 a `BlockMouse` hitbox covers, so the pages beneath stop scrolling entirely. It is
@@ -93,8 +93,8 @@ wheel for a frame after every list scroll.
 
 Cost of waiting: the first `AXIS_CLAIM_DISTANCE` of a horizontal swipe can still
 scroll the list under it. That is the right trade — a briefly-nudged list beats a
-list that stops scrolling — and closing it entirely would need a capture-phase
-wheel listener, which gpui does not offer.
+list that stops scrolling — the existing element-level wheel listener retains
+this tradeoff; terminal observation below does not consume movement events.
 
 Reduced motion (ADR-0173) skips the animation and runs the same terminal
 immediately, so the navigation still happens through one code path.
@@ -117,3 +117,26 @@ immediately, so the navigation still happens through one code path.
 - The `Pull Requests (N)` row was removed from the Graph sidebar in the same
   change: the pinned page navigator already names PRs, and the row was a second
   entry point to the same takeover.
+
+## Amendment — terminal delivery outside the sidebar (#1652)
+
+A horizontal `Started` inside the sidebar followed by `Ended` over the main pane
+left the state machine Tracking and its occluding shield mounted. PR section
+headers consequently stopped receiving clicks; their disclosure callback was
+not the cause.
+
+A zero-sized root canvas now observes `ScrollWheelEvent` terminals in the window
+capture phase, independent of hit testing and sidebar visibility. Only the
+current session/mode's Tracking gesture reaches the existing `sidebar_scroll`
+release/cancel path. The observer neither consumes input nor starts a gesture.
+Idle/Settling terminals are ignored, including the same event's later sidebar
+bubble delivery. Mounting this observer inside the sidebar would still lose the
+terminal when the sidebar was hidden mid-gesture.
+
+`pr_section_pointer` covers Ended/Cancelled outside the sidebar with it visible
+and hidden, followed by another gesture and usable disclosure. A real isolated
+app reproduced the stuck Mine header before the fix and accepted the same
+click after the fix, including hidden-sidebar Ended delivery. This does not
+prove the macOS backend translates a native cancelled phase into
+`TouchPhase::Cancelled`: the pinned backend maps that phase to Moved, a
+separate platform-delivery defect tracked in #1654 after a phased CGEvent repro.

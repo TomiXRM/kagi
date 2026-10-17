@@ -3722,6 +3722,7 @@ mod macos {
             ("compact_group_reveal_escape", Box::new(crate::compact_rail::escape::scenario_compact_group_reveal_escape)),
             ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
             ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
+            ("pr_section_pointer", Box::new(crate::compact_rail::section_click::scenario_pr_section_pointer)),
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
             ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (

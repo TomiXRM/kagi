@@ -719,6 +719,7 @@ impl Render for KagiApp {
                 el.on_scroll_wheel(|_, _, _| super::e2e::note_workspace_scroll())
             })
             .children(self.render_platform_titlebar(cx))
+            .child(super::workspace_mode::sidebar_gesture_end(self, cx))
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
@@ -904,7 +905,7 @@ impl Render for KagiApp {
             .child(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
             // ── Operation strip (#704) — while a merge / rebase / cherry-pick
             //    / revert is in progress AND the conflict editor is not up.
             //    Owner ruling over #707: the editor's dashboard already carries

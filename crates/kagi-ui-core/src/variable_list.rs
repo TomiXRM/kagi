@@ -214,7 +214,13 @@ impl VariableListState {
         }
         let (anchor, pending) = {
             let state = self.0.borrow();
-            (state.anchor, state.pending)
+            let maximum = state.maximum();
+            // A settled end has consumed Intent::End. Preserve that boundary
+            // too, rather than mapping its top row and losing the visible tail.
+            let pending = state.pending.or_else(|| {
+                (maximum > 0. && state.offset() >= maximum - 0.01).then_some(Intent::End)
+            });
+            (state.anchor, pending)
         };
         let mapped = remap(anchor.index).filter(|&index| index < count);
         let pending = match pending {

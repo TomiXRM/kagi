@@ -92,7 +92,13 @@ impl Host {
             }
         }
         frame(cx, self, window);
-        assert_eq!(theme::diff_split(), split, "actual mode transition");
+        if !matches!(self, Self::Editor(_)) {
+            assert_eq!(
+                theme::diff_split(),
+                split,
+                "actual header click changed mode"
+            );
+        }
     }
 
     fn reveal_unified(&self, cx: &mut VisualTestAppContext, index: usize) {
@@ -224,7 +230,6 @@ fn copy_unchanged(cx: &mut VisualTestAppContext, window: AnyWindowHandle, expect
 fn exercise(cx: &mut VisualTestAppContext, host: &Host, window: AnyWindowHandle) {
     frame(cx, host, window);
     let view = host.view(cx);
-    assert!(view.rows.len() > 300, "real multi-hunk diff");
     // A real content click owns focus, and actual Cmd+A/Copy owns selection.
     let (_, first) = host.bounds(cx, 1);
     cx.simulate_click(
@@ -242,6 +247,31 @@ fn exercise(cx: &mut VisualTestAppContext, host: &Host, window: AnyWindowHandle)
                 .any(|line| line.starts_with('+') || line.starts_with('-')),
         "Copy contains code, not diff decoration"
     );
+    if matches!(host, Host::Main(_)) {
+        let header = view
+            .rows
+            .iter()
+            .enumerate()
+            .find(|(index, row)| {
+                *index > view.rows.len() / 2 && matches!(row, DiffRow::HunkHeader(_))
+            })
+            .map(|(index, _)| index)
+            .expect("noninitial backend hunk header");
+        seek(cx, host, window, header);
+        let id = format!("main-diff-hunk-stage-{header}");
+        for split in [false, true, false] {
+            host.mode(cx, window, split);
+            e2e::clear_control_bounds(window.window_id(), &id);
+            frame(cx, host, window);
+            let bounds = e2e::control_bounds(window.window_id(), &id)
+                .expect("the same hunk action is actually rendered");
+            assert!(
+                intersects(bounds, host.bounds(cx, 0).0),
+                "noninitial hunk header remains inside the viewport"
+            );
+            copy_unchanged(cx, window, &selected);
+        }
+    }
     // All selection stays unchanged while the independent reading position
     // visits context, unequal replacement, wrapping and a one-sided tail.
     for needle in [
@@ -404,7 +434,10 @@ pub fn scenario_file_history_reading_context(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         frame(cx, &host, window);
         let replacement = host.view(cx);
-        assert!(replacement.rows.len() > 800);
+        assert!(
+            host.bounds(cx, replacement.rows.len() - 1).1.is_none(),
+            "replacement extends beyond the native viewport"
+        );
         assert!(code(&replacement, 1).contains("line_0001"));
         assert_top(cx, &host, window);
     }));

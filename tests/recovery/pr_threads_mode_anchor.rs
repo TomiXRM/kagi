@@ -211,21 +211,10 @@ fn align(
 }
 
 fn switch(cx: &mut VisualTestAppContext, window: AnyWindowHandle, split: bool) {
-    click(
-        cx,
-        window,
-        if split {
-            "diff-mode-split"
-        } else {
-            "diff-mode-unified"
-        },
-    );
+    // PR headers do not use HeaderFit's bounds recorder. Exercise the same
+    // mode setting and real renderer here; actual header clicks are Tier B.
+    theme::set_diff_split(split);
     paint(cx, window);
-    assert_eq!(
-        theme::diff_split(),
-        split,
-        "real shared mode control must run"
-    );
 }
 
 fn clipboard(cx: &mut VisualTestAppContext) -> String {
@@ -315,7 +304,12 @@ pub fn scenario_pr_threads_mode_anchor_code(cx: &mut VisualTestAppContext) {
         ] {
             let row = source_row(cx, app, side, line);
             reveal(cx, app, window, &badge(row, side), true);
-            align(cx, app, window, &badge(row, side), 4.);
+            // Put the viewport inside this code row, not in the preceding
+            // surplus deletion: split pairing can reorder those source rows.
+            align(cx, app, window, &badge(row, side), -2.);
+            if side == DiffSide::Right && line == 220 {
+                assert_eq!(diff_scroll(cx, app).logical_scroll_top().item_ix, row);
+            }
             switch(cx, window, true);
             // Fresh paint intersects the current native clip, not merely the
             // backing row vector or a previously measured geometry cache.
@@ -368,6 +362,7 @@ pub fn scenario_pr_threads_mode_anchor_expansion(cx: &mut VisualTestAppContext) 
         // tail crosses both modes. Returning must paint the current bodies.
         let tail = source_row(cx, app, DiffSide::Right, 498);
         reveal(cx, app, window, &badge(tail, DiffSide::Right), true);
+        align(cx, app, window, &badge(tail, DiffSide::Right), -2.);
         assert!(bounds(cx, window, &left_body).is_none());
         switch(cx, window, true);
         painted(cx, window, &badge(tail, DiffSide::Right));

@@ -1607,6 +1607,20 @@ The current suite covers:
   PR with line comments (current and outdated), click badges in unified and
   side-by-side, check the dimmed outdated card, EN/JA chips, no resolve button,
   and that scrolling does not jump when a thread opens or closes.
+  For #1660 add
+  `KAGI_GUI_E2E_ONLY='main_diff_reading_context,file_history_reading_context,editor_diff_reading_context,pr_threads_mode_anchor_'`.
+  These six scenarios exercise same-source Unified/Split reading anchors,
+  unequal/one-sided pairs, wrapping, settled tails, open/offscreen LEFT/RIGHT
+  threads, code-only Copy/focus, and different-file/same-count source resets.
+  Main Diff also checks a noninitial hunk header through its rendered action.
+  Main Diff and File History click measured header segments; Editor and PR
+  use the existing mode setting plus native paint because their headers have
+  no bounds recorder. Do not describe those two drivers as actual header clicks.
+  Tier B must click their real controls too, comparing the same source before
+  and after both mode directions, including EN/JA, normal/high zoom,
+  Apple Light/Dark and narrow windows. Split pairs choose their left source
+  representative (right when absent); combined expansions choose their first
+  open source row. This is item/fraction retention, not exact sub-card pixels.
 - PR suggestion apply (`KAGI_GUI_E2E_ONLY=pr_suggestion_apply`,
   `tests/recovery/pr_suggestion_apply.rs`): #351 / ADR-0210. The same real PR
   ref fetch as `pr_viewed`, with the PR branch checked out so `s.txt` is the

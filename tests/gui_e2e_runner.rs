@@ -3437,6 +3437,18 @@ mod macos {
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
             (
+                "main_diff_reading_context",
+                Box::new(crate::editor_diff_extent_reload::reading_context::scenario_main_diff_reading_context),
+            ),
+            (
+                "file_history_reading_context",
+                Box::new(crate::editor_diff_extent_reload::reading_context::scenario_file_history_reading_context),
+            ),
+            (
+                "editor_diff_reading_context",
+                Box::new(crate::editor_diff_extent_reload::reading_context::scenario_editor_diff_reading_context),
+            ),
+            (
                 "editor_tab_overflow",
                 Box::new(crate::editor_tabs::scenario_editor_tab_overflow),
             ),
@@ -3456,6 +3468,18 @@ mod macos {
             (
                 "pr_threads_projection_session_owner",
                 Box::new(crate::pr_threads_projection::scenario_pr_threads_projection_session_owner),
+            ),
+            (
+                "pr_threads_mode_anchor_code",
+                Box::new(crate::pr_threads_projection::scenario_pr_threads_mode_anchor_code),
+            ),
+            (
+                "pr_threads_mode_anchor_expansion",
+                Box::new(crate::pr_threads_projection::scenario_pr_threads_mode_anchor_expansion),
+            ),
+            (
+                "pr_threads_mode_anchor_replacement",
+                Box::new(crate::pr_threads_projection::scenario_pr_threads_mode_anchor_replacement),
             ),
             ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),

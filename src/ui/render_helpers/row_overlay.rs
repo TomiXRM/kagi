@@ -149,7 +149,7 @@ impl ProjectionCache {
     pub(crate) fn previous_mode(&self, path: &str, split: bool) -> Option<Rc<Projection>> {
         self.cached
             .as_ref()
-            .filter(|entry| entry.path == path && entry.split != split)
+            .filter(|entry| entry.split != split && entry.path == path)
             .map(|entry| entry.projection.clone())
     }
 

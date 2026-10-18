@@ -76,7 +76,10 @@ The shared renderer maps a same-source mode transition through unified source
 indices, not the old list index or pixel offset. `DiffListLayout` owns the
 source/mode distinction; `VariableListState` resets stale measurements while
 retaining the mapped anchor's intra-item fraction and meaningful pending
-End/Reveal intent. Other sources and owners still start at the beginning.
+End/Reveal intent. A scrollable list already settled at its end keeps that
+boundary, even after its pending End was consumed; a list fitting entirely
+inside the old viewport does not imply end navigation. Other sources and
+owners still start at the beginning.
 Unchanged rendering performs no mapping scan or new full-row allocation.
 
 A Split code pair uses its left source row, or its right row when left is

@@ -116,10 +116,14 @@ fn mode_remap_keeps_measured_reading_fraction_and_reveal_target() {
 }
 
 #[test]
-fn mode_remap_keeps_end_intent_but_empty_layout_retires_it() {
+fn mode_remap_keeps_pending_and_settled_end_but_empty_layout_retires_it() {
     let list = list(20_005);
     list.scroll_to_end();
     list.remap_layout(10_003, px(24.), |index| Some(index / 2));
+    assert!(matches!(list.0.borrow().pending, Some(Intent::End)));
+    list.0.borrow_mut().resolve_end();
+    assert_eq!(list.pixel_offset(), list.max_offset());
+    list.remap_layout(20_005, px(20.), |index| Some(index * 2));
     assert!(matches!(list.0.borrow().pending, Some(Intent::End)));
     list.0.borrow_mut().resolve_end();
     assert_eq!(list.pixel_offset(), list.max_offset());
@@ -128,6 +132,15 @@ fn mode_remap_keeps_end_intent_but_empty_layout_retires_it() {
     assert!(list.0.borrow().pending.is_none());
     assert_eq!(list.logical_scroll_top().item_ix, 0);
     assert_eq!(list.pixel_offset(), px(0.));
+}
+
+#[test]
+fn mode_remap_does_not_treat_a_fitting_list_as_tail_navigation() {
+    let list = list(4);
+    list.remap_layout(8, px(20.), |index| Some(index * 2));
+    assert!(list.0.borrow().pending.is_none());
+    assert_eq!(list.pixel_offset(), px(0.));
+    assert_eq!(list.max_offset(), px(60.));
 }
 
 #[test]

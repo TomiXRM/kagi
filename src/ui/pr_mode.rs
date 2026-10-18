@@ -582,6 +582,8 @@ impl KagiApp {
                         split,
                         false,
                         count,
+                        // Explicit navigation below replaces the reading anchor.
+                        |_, _, _| None,
                     );
                     t.conflict_scroll.scroll_to(gpui::ListOffset {
                         item_ix: target,

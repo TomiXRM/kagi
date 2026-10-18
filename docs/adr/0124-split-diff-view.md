@@ -39,7 +39,7 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
    区別できず、ペア列も毎 frame 再構築していたため置き換えた。
    派生レイアウトは選択範囲とは別 cache のまま保つ。2026-10-13 の下記 amendment
    で選択も title/count から既存の owner/content-source token へ移行する。
-   `ListState` のモード切替時の count-sync/reset は従来どおり。
+   モード切替では高さを再測定し、同一 source の読書位置は下記 #1660 の規則で移送する。
 
 ### 派生 cache の所有・上限
 
@@ -68,7 +68,28 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
 - 3 つの diff 埋め込み先すべてが 1 実装で両モード対応になる。
 - unified 行列が唯一のソースなので、今後の diff 機能(word-diff 等)は
   unified 側に足せば split にも波及する。
-- モード切替で ListState が reset され、スクロール位置は先頭に戻る(許容)。
+- source の置換では先頭へ戻す。同一 source のモード切替では読書位置を維持する。
+
+## Amendment — 2026-10-18: mode-switch reading context (#1660)
+
+The shared renderer maps a same-source mode transition through unified source
+indices, not the old list index or pixel offset. `DiffListLayout` owns the
+source/mode distinction; `VariableListState` resets stale measurements while
+retaining the mapped anchor's intra-item fraction and meaningful pending
+End/Reveal intent. A scrollable list already settled at its end keeps that
+boundary, even after its pending End was consumed; a list fitting entirely
+inside the old viewport does not imply end navigation. Other sources and
+owners still start at the beginning.
+Unchanged rendering performs no mapping scan or new full-row allocation.
+
+A Split code pair uses its left source row, or its right row when left is
+absent. An expansion uses the first open source row in left-to-right order;
+it remains an expansion in the destination, not its parent code row.
+Combined cards have only one list-item anchor: transferring that fraction
+does not promise exact paragraph/pixel retention inside a particular sub-card.
+Pairing and expansion indices reuse the existing derived projections; there
+is no additional persistent cache or per-pane mode setting. Selection, Copy
+and focus keep their existing owner/content identities.
 
 ## Amendment — 2026-10-13: visual keyboard order (#1373)
 

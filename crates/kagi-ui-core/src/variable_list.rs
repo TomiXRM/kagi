@@ -200,6 +200,48 @@ impl VariableListState {
         self.reset(count);
     }
 
+    /// Rebuild a presentation of the same source without converting a measured
+    /// intra-row fraction into pixels against the replacement estimate.
+    pub(crate) fn remap_layout(
+        &self,
+        count: usize,
+        height: Pixels,
+        mut remap: impl FnMut(usize) -> Option<usize>,
+    ) {
+        if count == 0 || self.item_count() == 0 {
+            self.reset_with_estimate(count, height);
+            return;
+        }
+        let (anchor, pending) = {
+            let state = self.0.borrow();
+            let maximum = state.maximum();
+            // A settled end has consumed Intent::End. Preserve that boundary
+            // too, rather than mapping its top row and losing the visible tail.
+            let pending = state.pending.or_else(|| {
+                (maximum > 0. && state.offset() >= maximum - 0.01).then_some(Intent::End)
+            });
+            (state.anchor, pending)
+        };
+        let mapped = remap(anchor.index).filter(|&index| index < count);
+        let pending = match pending {
+            Some(Intent::Reveal(index)) => {
+                let target = if index == anchor.index {
+                    mapped
+                } else {
+                    remap(index).filter(|&index| index < count)
+                };
+                target.map(Intent::Reveal)
+            }
+            other => other,
+        };
+        self.reset_with_estimate(count, height);
+        let mut state = self.0.borrow_mut();
+        state.anchor = mapped
+            .map(|index| Anchor { index, ..anchor })
+            .unwrap_or_default();
+        state.pending = pending;
+    }
+
     pub fn set_estimate(&self, height: Pixels) {
         let mut state = self.0.borrow_mut();
         let height = f64::from(height).max(0.01);

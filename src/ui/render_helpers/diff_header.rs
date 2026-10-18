@@ -24,6 +24,8 @@ pub(crate) struct DiffHeader {
     /// #351: per-row gutter markers and expansions the embedding adds to the
     /// list below the header (the PR diff's review threads).
     pub(crate) overlay: Option<std::rc::Rc<dyn super::row_overlay::RowOverlay>>,
+    /// Retiring PR layout, used only for a same-source mode transition.
+    pub(crate) previous_overlay: Option<std::rc::Rc<super::row_overlay::Projection>>,
 }
 
 impl DiffHeader {

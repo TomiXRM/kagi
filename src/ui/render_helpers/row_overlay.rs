@@ -99,6 +99,34 @@ impl Projection {
         }
         (rows, len)
     }
+
+    /// A list item represented by its source row and expansion/code identity.
+    pub(crate) fn source_anchor(&self, item: usize) -> Option<(usize, bool)> {
+        let (base, expansion) = match *self.items.get(item)? {
+            Item::Row(base) => (base, false),
+            Item::Expansion(base) => (base, true),
+        };
+        self.layout
+            .get(base)?
+            .iter()
+            .flatten()
+            .copied()
+            .find(|row| !expansion || self.expanded.contains(row))
+            .map(|row| (row, expansion))
+    }
+
+    pub(crate) fn item_for_source(&self, source: usize, expansion: bool) -> Option<usize> {
+        let base = self
+            .layout
+            .iter()
+            .position(|base| base.contains(&Some(source)))?;
+        let item = if expansion && self.expanded.contains(&source) {
+            Item::Expansion(base)
+        } else {
+            Item::Row(base)
+        };
+        self.items.iter().position(|candidate| *candidate == item)
+    }
 }
 
 struct ProjectionEntry {
@@ -116,6 +144,15 @@ pub(crate) struct ProjectionCache {
 }
 
 impl ProjectionCache {
+    /// Keep the retiring mode's existing snapshot alive through synchronization.
+    /// The list owner separately gates reuse by its content-source identity.
+    pub(crate) fn previous_mode(&self, path: &str, split: bool) -> Option<Rc<Projection>> {
+        self.cached
+            .as_ref()
+            .filter(|entry| entry.split != split && entry.path == path)
+            .map(|entry| entry.projection.clone())
+    }
+
     pub(crate) fn get(
         &mut self,
         path: &str,

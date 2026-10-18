@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Keep the reading position when switching the same diff between Unified and Split, including wrapped rows, open review threads and a settled end-of-list position. Preserve selection, code-only Copy and focus; a different file or source still starts at the beginning. (#1660)
 - Reuse review-thread overlay row mappings during unchanged PR diff redraws instead of rebuilding them for every scroll or selection update. Preserve thread anchors, split/unified numbering, copy selection and per-tab expansion state. (#1072)
 - Preserve normal merge-conflict results on Git 2.39 when disabling repository-selected merge drivers. Use a fixed fail-closed shell builtin instead of attempting an empty executable; untrusted driver commands remain blocked. (#1657)
 - Route squash-merge ghost connectors through nearby free graph lanes instead of detouring to the far-right width of unrelated older history. Keep overlapping connectors separate, reuse lanes for disjoint intervals, and preserve real parent lines, commit colors and WIP anchors. (#1627)

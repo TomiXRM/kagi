@@ -7,6 +7,9 @@ use kagi::ui::editor_workspace::EditorWorkspaceView;
 use kagi::ui::{DiffRow, MainDiffView};
 use kagi_ui_core::theme;
 
+#[path = "diff_reading_context.rs"]
+pub(crate) mod reading_context;
+
 const FILE: &str = "reading.rs";
 
 struct Restore {
@@ -21,7 +24,7 @@ impl Drop for Restore {
     }
 }
 
-fn fixture() -> (tempfile::TempDir, String) {
+pub(crate) fn fixture() -> (tempfile::TempDir, String) {
     let fixture = build_fixture();
     let mut base = String::new();
     let mut wip = String::new();
@@ -70,7 +73,7 @@ fn content(view: &MainDiffView) -> Vec<(String, String, Option<u32>, Option<u32>
         .collect()
 }
 
-fn wait_loaded(
+pub(crate) fn wait_loaded(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,

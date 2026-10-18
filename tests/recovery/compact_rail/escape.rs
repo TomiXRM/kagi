@@ -60,17 +60,23 @@ pub fn scenario_compact_pr_menu_escape(cx: &mut VisualTestAppContext) {
         );
         settle(cx, win);
         assert!(cx.read(|cx| app.read(cx).ui().pr_menu.is_some()));
+        // #1640 hands interaction to the root menu by retiring the navigator.
+        // Its deferred popup must not remain above the menu's hit targets.
+        closed(cx, win);
         press(cx, win, "escape");
         assert!(
             cx.read(|cx| app.read(cx).ui().pr_menu.is_none()),
             "first Escape retires the PR context menu"
         );
-        one_open(cx, win, 5, case);
-        assert_eq!(
-            crate::native_ax::focused(cx, win)["aria"]["label"],
-            opener,
-            "PR menu dismissal restores its opener"
+        closed(cx, win);
+        assert!(
+            cx.read(|cx| app.read(cx).pr_mode().is_some()),
+            "menu Escape must not leave the PR workspace"
         );
+        tab_to(cx, win, TRIGGERS[5], false);
+        press(cx, win, "enter");
+        one_open(cx, win, 5, case);
+        bounds(win, "pr-mode-card-7");
         press(cx, win, "escape");
         closed(cx, win);
         unmount(cx, app, win);

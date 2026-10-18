@@ -179,10 +179,13 @@ stops need not have a semantic AX node.
 The `compact_` gate includes `compact_layout_state` and
 `compact_layout_state_tall`: Escape in the co-author ListBox must retire its
 owner and restore `cp-coauthor`, not dismiss the containing composer.
-`compact_rail_nested_escape`, `compact_pr_menu_escape` and
-`compact_group_reveal_escape` check child-menu/reveal dismissal before the
-navigator, preserving opener focus. The complete Popover ancestry audit is in
-ADR-0014's #1479-S4 amendment.
+`compact_rail_nested_escape` and `compact_group_reveal_escape` check child-menu/
+reveal dismissal before the navigator, preserving opener focus. Since #1640,
+`compact_pr_menu_escape` instead verifies the explicit navigator-to-root-menu
+handoff: the navigator closes before the context menu, Escape leaves the PR
+workspace in place, and keyboard activation can reopen the PR rail afterward.
+Do not expect focus to return to a PR row in the retired popup. The complete
+Popover ancestry audit is in ADR-0014's #1479-S4 amendment.
 For #1479-S1 use `KAGI_GUI_E2E_ONLY='terminal_,status_bar_,relative_time_ja,cleanup_local_date,oplog_row_typography,issues_row_secondary_text,finder_scale_rest,home_heading,inspector_scale'`
 with KEEP_GOING. `terminal_font_fallback` checks real terminal configuration,
 font/zoom updates, session changes and restart, with Regular/Bold Japanese face
@@ -3765,6 +3768,27 @@ an unchanged capture under shared-screen frame-delivery stalls is not paint
 latency evidence. Use a native Tier A pane paint callback for first-frame timing;
 `simulate_click` can drain later background work before returning, so timing its
 whole return overstates the first frame. Temporary timing probes do not ship.
+
+### Fresh compact Changes activation (#1662)
+
+Tier A: `KAGI_GUI_E2E_ONLY=compact_changes_initial_file,compact_changes_deferred_file`.
+The first scenario mounts fresh compact windows without visiting the WIP row:
+both Staged and Unstaged must open their distinct index/worktree content through
+pointer, Enter or Space across EN/JA, Apple Light/Dark and 100%/167% zoom.
+The composer stays closed, and the same selected file and diff survive resize.
+The second holds the real MainDiff read: a valid current result must land, while
+another file, commit, Compare source, repository session or replacement worktree
+panel retires the old result. Assert destination content, not just absence of a
+panic. Normalize fixture repository paths when comparing macOS `/var` and
+`/private/var` aliases; keep panel-entity and session identity checks.
+
+Tier B: launch a fresh isolated ordinary app at 940×660, open Changes and click
+a file label **before opening WIP**. Cover first Staged in EN/Apple Light/100%
+and first Unstaged in JA/Apple Dark/167%, then switch to the other column.
+Verify the named file and actual staged/worktree lines in MainDiff with no
+composer. Resize the 100% case across the wide boundary and back; reopen Changes
+and verify the retained selected file. Capture before/after windows. Do not click
+Stage/Unstage/hunk actions merely to inspect a diff.
 
 ### WIP diffstat after staging (#996)
 

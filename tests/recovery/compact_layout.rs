@@ -14,6 +14,10 @@ use std::{cell::RefCell, path::Path, process::Command, rc::Rc, time::Duration};
 
 #[path = "compact_layout/changes.rs"]
 pub mod changes;
+#[path = "compact_layout/deferred_file.rs"]
+pub mod deferred_file;
+#[path = "compact_layout/initial_file.rs"]
+pub mod initial_file;
 #[path = "compact_layout/inspector.rs"]
 pub mod inspector;
 #[path = "compact_layout/lifecycle.rs"]

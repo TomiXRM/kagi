@@ -109,6 +109,15 @@ tooltip/AX text, and diff opening.
 The composer and Changes are separate surfaces over the same commit state, not
 a copied full Commit Panel squeezed into a bottom pane.
 
+Initial Staged/Unstaged file activation must also work before the composer has
+ever opened (#1662). A non-refresh WIP diff read may land while the desktop panel
+is open **or** compact Changes visibly owns the WIP file lists. Use the same
+source predicate for rendering and read admission: a selected commit or active
+Compare source must not count as WIP Changes. Do not fake composer visibility
+to admit the read. Keep the existing repository, panel-entity, session/visit,
+request, publication-generation and file-membership guards, along with the
+retained-pane refresh path.
+
 ### Ownership and safety
 
 There is **one existing `CommitPanelView` entity** owning title/body input entities,

@@ -3803,6 +3803,14 @@ mod macos {
                 Box::new(crate::compact_layout::changes::scenario_compact_layout_changes),
             ),
             (
+                "compact_changes_initial_file",
+                Box::new(crate::compact_layout::initial_file::scenario_compact_changes_initial_file),
+            ),
+            (
+                "compact_changes_deferred_file",
+                Box::new(crate::compact_layout::deferred_file::scenario_compact_changes_deferred_file),
+            ),
+            (
                 "compact_inspector_columns",
                 Box::new(crate::compact_layout::inspector::scenario_compact_inspector_columns),
             ),

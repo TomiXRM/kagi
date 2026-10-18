@@ -612,13 +612,10 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     let focus_key = list_layout.selection_owner().token();
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
-    let layout = overlay
+    let overlay_projection = overlay.as_ref().map(|overlay| overlay.projection());
+    let items = overlay_projection
         .as_ref()
-        .map(|_| Rc::new(row_overlay::layout(&view.rows, split)));
-    let items = overlay
-        .as_ref()
-        .zip(layout.as_ref())
-        .map(|(overlay, layout)| Rc::new(row_overlay::items(layout, &|row| overlay.expanded(row))));
+        .map(|projection| projection.items.clone());
     let row_count = match &items {
         Some(items) => items.len(),
         None => projection
@@ -696,12 +693,12 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     "main-diff-list-scroll",
                     &scrollbar_handle,
                     variable_list(scroll_handle, move |ix, window, cx| {
-                        let base = match (&items, &overlay, &layout) {
-                            (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
+                        let base = match (&overlay_projection, &overlay) {
+                            (Some(projection), Some(overlay)) => match projection.items.get(ix) {
                                 Some(row_overlay::Item::Row(b)) => *b,
                                 Some(row_overlay::Item::Expansion(b)) => {
-                                    let rows = row_overlay::expansion_rows(layout, *b, overlay);
-                                    return overlay.expansion(&rows, window, cx);
+                                    let (rows, len) = projection.expansion_rows(*b);
+                                    return overlay.expansion(&rows[..len], window, cx);
                                 }
                                 None => return div().into_any_element(),
                             },

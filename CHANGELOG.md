@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Reuse review-thread overlay row mappings during unchanged PR diff redraws instead of rebuilding them for every scroll or selection update. Preserve thread anchors, split/unified numbering, copy selection and per-tab expansion state. (#1072)
 - Preserve normal merge-conflict results on Git 2.39 when disabling repository-selected merge drivers. Use a fixed fail-closed shell builtin instead of attempting an empty executable; untrusted driver commands remain blocked. (#1657)
 - Route squash-merge ghost connectors through nearby free graph lanes instead of detouring to the far-right width of unrelated older history. Keep overlapping connectors separate, reuse lanes for disjoint intervals, and preserve real parent lines, commit colors and WIP anchors. (#1627)
 - Keep neutral confirmation-dialog target and section counts readable over their composed pill backgrounds in Nagi and Apple Light/Dark. Preserve the existing tint, geometry, semantic warning/danger chips and operation routes. (#1638)

@@ -19,7 +19,7 @@ use crate::macos::{build_fixture, git, mount, unmount};
 use crate::pr_fields_focus::OfflineGh;
 use crate::pr_viewed::{paint, pr_at, push_pr_head, wait_loaded};
 
-fn thread(side: DiffSide, line: Option<u32>, original: u32, body: &str) -> ReviewThread {
+pub(crate) fn thread(side: DiffSide, line: Option<u32>, original: u32, body: &str) -> ReviewThread {
     ReviewThread {
         path: "c.txt".into(),
         line,
@@ -36,7 +36,7 @@ fn thread(side: DiffSide, line: Option<u32>, original: u32, body: &str) -> Revie
     }
 }
 
-fn bounds(
+pub(crate) fn bounds(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
     id: &str,
@@ -47,14 +47,14 @@ fn bounds(
     e2e::control_bounds(window.window_id(), id)
 }
 
-fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     let at = bounds(cx, window, id).unwrap_or_else(|| panic!("{id} was not laid out"));
     cx.simulate_click(window, at.center(), gpui::Modifiers::none());
     cx.run_until_parked();
 }
 
 /// (diff rows, list items) of the active tab's diff.
-fn counts(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> (usize, usize) {
+pub(crate) fn counts(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> (usize, usize) {
     cx.read(|cx| {
         let mode = app.read(cx).pr_mode().expect("PR mode");
         let tab = mode

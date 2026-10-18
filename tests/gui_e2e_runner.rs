@@ -647,6 +647,10 @@ mod editor_find_hosts;
 mod pr_threads;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_threads_projection.rs"]
+mod pr_threads_projection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/github_text.rs"]
 mod github_text;
 
@@ -3445,6 +3449,14 @@ mod macos {
                 Box::new(crate::editor_find::scenario_editor_find_controls_a11y),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            (
+                "pr_threads_projection_invalidation",
+                Box::new(crate::pr_threads_projection::scenario_pr_threads_projection_invalidation),
+            ),
+            (
+                "pr_threads_projection_session_owner",
+                Box::new(crate::pr_threads_projection::scenario_pr_threads_projection_session_owner),
+            ),
             ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),

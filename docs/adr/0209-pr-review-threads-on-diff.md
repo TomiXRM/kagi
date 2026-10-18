@@ -83,3 +83,30 @@ expansion slot の実測 cache を失効させる。同じ item count は同じ 
 native `pr_diff_extent_threads` は既存の展開・幅/zoom reflow・collapse の oracle に
 画面外 card 更新を加える。画面外 cache は `measured_height`、現 frame の
 表示位置は `bounds_for_item` で別々に観測し、推定高さを実測と呼ばない。
+
+## 改訂 — 2026-10-18: warm overlay projection（#1072）
+
+PR tab の既存 `PrThreads` が、直近 1 件の overlay projection を保持する。
+key は source rows の `Weak` allocation identity、path、unified/split、
+開閉 revision。行数だけでは同じ長さの新しい diff を判別できない。
+`Weak` は source の寿命を延ばさず、address reuse と `Arc::make_mut` による
+同一 allocation の取り違えを防ぐ。process-wide cache や Entity owner は追加しない。
+
+不変 key の描画は、layout と list items の `Rc` を再利用する。
+selection も同じ items を共有し、全行 Vec や開閉集合を毎 frame 複製しない。
+開閉変更時は items を更新するが、source と表示 mode が同じなら layout は再利用する。
+左右の展開対象は最大 2 行の stack 配列で渡す。
+
+thread 本文の更新と projection の更新は別契約とする。取得後の placement 更新と
+画面外 expansion slot の再実測失効は上の S5C 契約を維持し、同じ開閉状態を
+理由に新しい本文の高さを再利用しない。`VariableListState::splice` と
+`DiffListLayout::sync` の source identity、selection、reading anchor は変更しない。
+
+native `pr_threads_projection_invalidation` は同じ行数の head 更新、本文/左右の更新、
+表示 mode と path の切替、wheel 後の開閉位置、異なる PrKey の分離を検証する。
+`pr_threads_projection_session_owner` は同じ PrKey を別 repository session で開き、
+本文・開閉状態・draft が各 owner に戻ることを検証する。
+既存 `pr_threads` / `pr_threads_via_gh` / `pr_diff_extent_*` と diff keyboard/copy の
+assertions は維持する。速度は通常ビルドの同じ大規模 fixture で別途測定し、
+element 構築時間を FPS や入力から画面反映までの latency と呼ばない。
+

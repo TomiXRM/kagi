@@ -69,7 +69,7 @@ working as intended.
 **worktree** level を一度だけ走査します。該当する各 key に対して、次の override
 を先頭に追加します。
 
-- `merge.<name>.driver=`
+- `merge.<name>.driver=exit 1`
 - `filter.<name>.clean=`、`.smudge=`、`.process=`
 - `filter.<name>.required=false`
 - `diff.<name>.command=`、`.textconv=`
@@ -78,6 +78,15 @@ override には元の key の表記を保持します。Kagi は `.gitattributes
 設定定義のない driver を属性が指定しても実行可能な command はなく、config scan は属性の
 表記にかかわらず全実行可能定義を見つけられるためです。global または system config
 だけで定義された設定は有効なままです。untrusted repository がそれを定義していません。
+
+`merge` driver の override は固定の shell builtin `exit 1` とする (#1657)。
+空文字は内蔵 driver への fallback ではなく空 executable の起動を試み、
+Git 2.39.5 では conflict (exit 1) を fatal (exit 128) に変えて tree 出力を失う。
+固定 command には repository 由来の文字列を補間せず、driver 本体を実行しないまま
+conflict tree を返す。Git 自身の POSIX shell を使い、`false` 等の別 executable を
+探索させない。Windows で Git が自身の `sh` を PATH から解決する既存の信頼境界は
+変えない。Git 2.39.5 / Linux と 2.50.1 / macOS の実 backend probe で、marker 非作成、
+読める conflict tree、HEAD/index/worktree 不変を確認した。Windows 実行は未検証。
 
 config inspection は security precondition です。local/worktree config が存在しない
 ことは正常ですが、それ以外の discovery、read、enumeration failure は child 開始前に

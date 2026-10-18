@@ -253,7 +253,9 @@ fn merge_driver_name(key: &str) -> Option<&str> {
 /// as Git does.
 fn dynamic_config_override(key: &str) -> Option<String> {
     if merge_driver_name(key).is_some() {
-        return Some(format!("{key}="));
+        // An empty executable is fatal on older Git, not a merge conflict.
+        // A fixed shell builtin fails closed without executing the repo's driver.
+        return Some(format!("{key}=exit 1"));
     }
 
     let lowercase = key.to_ascii_lowercase();

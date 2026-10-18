@@ -196,13 +196,12 @@ fn merge_driver_does_not_run_under_run_git() {
 
     let out = run_git(&repo, &["merge-tree", "--write-tree", "topic", "main"])
         .expect("run_git merge-tree");
-    assert_eq!(out.status, 1, "merge-tree must still report the conflict");
+    assert_eq!(
+        out.status, 1,
+        "merge-tree must still report the conflict: {}",
+        out.stderr
+    );
     assert!(!marker.exists(), "merge.evil.driver ran under run_git");
-
-    // The empty `-c merge.evil.driver=` override, not an incidental Git
-    // behavior difference, is the mechanism preventing execution.
-    let seen = run_git(&repo, &["config", "--get", "merge.evil.driver"]).unwrap();
-    assert_eq!(seen.stdout.trim(), "");
 }
 
 /// Config inspection is a hard precondition: an unreadable local config must

@@ -52,6 +52,7 @@ impl DiffListLayout {
         split: bool,
         gutter: bool,
         count: usize,
+        mut remap: impl FnMut(bool, bool, usize) -> Option<usize>,
     ) {
         let key = LayoutKey {
             source,
@@ -75,6 +76,11 @@ impl DiffListLayout {
                 } else if previous.gutter != gutter {
                     list.remeasure();
                 }
+            }
+            Some(previous) if previous.source == source => {
+                list.remap_layout(count, height, |index| {
+                    remap(previous.split, previous.gutter, index)
+                });
             }
             _ => list.reset_with_estimate(count, height),
         }
@@ -108,22 +114,29 @@ mod tests {
         let list = VariableListState::new(0, px(0.));
         let layout = DiffListLayout::default();
         let source = DiffListSource::default();
-        layout.sync(&list, source, false, false, 100);
+        layout.sync(&list, source, false, false, 100, |_, _, _| None);
         list.scroll_to(ListOffset {
             item_ix: 12,
             offset_in_item: px(3.),
         });
-        layout.sync(&list, source, false, false, 100);
+        layout.sync(&list, source, false, false, 100, |_, _, _| None);
         assert_eq!(list.logical_scroll_top().item_ix, 12);
-        layout.sync(&list, source, false, true, 100);
+        layout.sync(&list, source, false, true, 100, |_, _, _| None);
         assert_eq!(list.logical_scroll_top().item_ix, 12);
-        layout.sync(&list, DiffListSource::default(), false, true, 100);
+        layout.sync(
+            &list,
+            DiffListSource::default(),
+            false,
+            true,
+            100,
+            |_, _, _| None,
+        );
         assert_eq!(list.logical_scroll_top().item_ix, 0);
         list.scroll_to(ListOffset {
             item_ix: 12,
             offset_in_item: px(0.),
         });
-        layout.sync(&list, source, true, true, 100);
+        layout.sync(&list, source, true, true, 100, |_, _, _| None);
         assert_eq!(list.logical_scroll_top().item_ix, 0);
         layout.clear(&list);
         assert_eq!(list.item_count(), 0);
@@ -134,13 +147,13 @@ mod tests {
         let list = VariableListState::new(0, px(0.));
         let layout = DiffListLayout::default();
         let source = DiffListSource::default();
-        layout.sync(&list, source, false, true, 100);
+        layout.sync(&list, source, false, true, 100, |_, _, _| None);
         list.scroll_to(ListOffset {
             item_ix: 12,
             offset_in_item: px(3.),
         });
         list.splice(4..4, 1);
-        layout.sync(&list, source, false, true, 101);
+        layout.sync(&list, source, false, true, 101, |_, _, _| None);
         assert_eq!(list.logical_scroll_top().item_ix, 13);
         assert_eq!(list.logical_scroll_top().offset_in_item, px(3.));
     }

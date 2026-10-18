@@ -307,11 +307,20 @@ pub(super) fn diff_header(
         return DiffHeader::default();
     }
     let path = dv.title.as_ref();
+    let previous_overlay = tab
+        .threads
+        .projection
+        .borrow()
+        .previous_mode(path, theme::diff_split());
     let placed = tab.threads.placement(path, &dv.rows);
     if placed.is_empty() {
-        return DiffHeader::default();
+        return DiffHeader {
+            previous_overlay,
+            ..DiffHeader::default()
+        };
     }
     DiffHeader {
+        previous_overlay,
         overlay: Some(Rc::new(ThreadOverlay {
             threads: tab.threads.threads.clone(),
             placed,

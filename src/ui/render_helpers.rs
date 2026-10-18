@@ -612,6 +612,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     let focus_key = list_layout.selection_owner().token();
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
+    let previous_overlay = header.previous_overlay.take();
     let overlay_projection = overlay.as_ref().map(|overlay| overlay.projection());
     let items = overlay_projection
         .as_ref()
@@ -623,12 +624,44 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             .map(|projection| projection.rows.len())
             .unwrap_or_else(|| view.rows.len()),
     };
+    let retiring_split = std::cell::OnceCell::new();
     list_layout.sync(
         &scroll_handle,
         view.height_source,
         split,
         overlay.is_some(),
         row_count,
+        |previous_split, previous_gutter, item| {
+            // Only invoked on a same-source mode change. Reuse the already
+            // cached pairing even when the destination is Unified.
+            let split_rows = || {
+                &projection
+                    .as_ref()
+                    .unwrap_or_else(|| {
+                        retiring_split
+                            .get_or_init(|| super::diff_split::split_projection(&view.rows))
+                    })
+                    .rows
+            };
+            let (source, expansion) = if previous_gutter {
+                previous_overlay.as_ref()?.source_anchor(item)?
+            } else if previous_split {
+                let source = match split_rows().get(item)? {
+                    super::diff_split::SplitDiffRow::Full(row) => Some(*row),
+                    super::diff_split::SplitDiffRow::Pair { left, right } => left.or(*right),
+                }?;
+                (source, false)
+            } else {
+                (item, false)
+            };
+            if let Some(overlay) = &overlay_projection {
+                overlay.item_for_source(source, expansion)
+            } else if split {
+                super::diff_split::split_index_of(split_rows(), source)
+            } else {
+                Some(source)
+            }
+        },
     );
     let title = view.title.clone();
     let stats = view.stats.clone();

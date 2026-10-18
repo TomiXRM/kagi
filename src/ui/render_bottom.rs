@@ -272,10 +272,7 @@ impl KagiApp {
                 .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
             BottomTab::Activity => self.render_activity_body(window, cx),
-            BottomTab::Changes
-                if self.ui().selected.is_some()
-                    || (workspace::CompareItem.is_open(self) && !self.ui().commit_panel_open) =>
-            {
+            BottomTab::Changes if !self.changes_show_wip_files() => {
                 // Match the ordinary right slot: Compare owns the files even
                 // while its historical base commit remains selected.
                 let item: &dyn workspace::WorkspaceItem = if workspace::CompareItem.is_open(self) {

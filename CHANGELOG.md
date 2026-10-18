@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Open Staged and Unstaged diffs directly from compact Changes on a fresh session, without first opening the WIP composer. Preserve the shared file selection and reject delayed reads after a different file, commit, Compare source, session or panel owner takes over. (#1662)
 - Keep the reading position when switching the same diff between Unified and Split, including wrapped rows, open review threads and a settled end-of-list position. Preserve selection, code-only Copy and focus; a different file or source still starts at the beginning. (#1660)
 - Reuse review-thread overlay row mappings during unchanged PR diff redraws instead of rebuilding them for every scroll or selection update. Preserve thread anchors, split/unified numbering, copy selection and per-tab expansion state. (#1072)
 - Preserve normal merge-conflict results on Git 2.39 when disabling repository-selected merge drivers. Use a fixed fail-closed shell builtin instead of attempting an empty executable; untrusted driver commands remain blocked. (#1657)

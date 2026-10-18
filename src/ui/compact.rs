@@ -258,6 +258,21 @@ impl KagiApp {
         self.bottom_panel_open = true;
     }
 
+    /// The Changes source is independent of the composer visibility flag.
+    pub(super) fn changes_show_wip_files(&self) -> bool {
+        use super::workspace::WorkspaceItem as _;
+
+        self.ui().selected.is_none()
+            && (!super::workspace::CompareItem.is_open(self) || self.ui().commit_panel_open)
+    }
+
+    pub(super) fn compact_wip_files_visible(&self) -> bool {
+        self.compact.enabled
+            && self.bottom_panel_open
+            && self.bottom_tab == BottomTab::Changes
+            && self.changes_show_wip_files()
+    }
+
     pub(super) fn compact_surface(
         &mut self,
         composer: bool,

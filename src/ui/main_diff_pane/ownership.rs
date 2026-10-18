@@ -92,7 +92,9 @@ impl MainDiffRead {
                 if app.commit_panel_repo_path(cx).as_deref() != Some(repo) {
                     return false;
                 }
-                app.ui().commit_panel_open
+                // Compact Changes renders the same source without opening the
+                // composer; retiring that file surface still retires the read.
+                (app.ui().commit_panel_open || app.compact_wip_files_visible())
                     && app.ui().commit_panel.as_ref().is_some_and(|pane| {
                         let panel = &pane.read(cx).state;
                         let files = if *staged {

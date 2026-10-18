@@ -27,7 +27,10 @@ fn read_fixture() -> tempfile::TempDir {
         format!("{NAVIGATION_TEXT}\n"),
     )
     .unwrap();
-    git(fixture.path(), &["commit", "-qam", "compact deferred navigation"]);
+    git(
+        fixture.path(),
+        &["commit", "-qam", "compact deferred navigation"],
+    );
     std::fs::write(fixture.path().join(ALPHA), format!("{LOCAL_TEXT}\n")).unwrap();
     std::fs::write(fixture.path().join(BETA), format!("{STAGED_TEXT}\n")).unwrap();
     git(fixture.path(), &["add", BETA]);
@@ -72,12 +75,7 @@ fn valid_and_newer(cx: &mut VisualTestAppContext, repo: &Path, case: Case) {
     unmount(cx, app, win);
 }
 
-fn navigation_retires(
-    cx: &mut VisualTestAppContext,
-    repo: &Path,
-    case: Case,
-    compare: bool,
-) {
+fn navigation_retires(cx: &mut VisualTestAppContext, repo: &Path, case: Case, compare: bool) {
     let (app, win) = mount(cx, repo, case);
     let panel = changes(cx, &app, win);
     let release = hold_file(cx, &app, win, ALPHA);
@@ -158,11 +156,25 @@ fn session_retires(cx: &mut VisualTestAppContext, repo: &Path, case: Case) {
     assert_ne!(cx.read(|cx| current.read(cx).owner), owner);
     click_file(cx, &app, win, OTHER_FILE, false);
     assert_wip(
-        cx, &app, win, other.path(), OTHER_FILE, false, SESSION_TEXT, &[LOCAL_TEXT],
+        cx,
+        &app,
+        win,
+        other.path(),
+        OTHER_FILE,
+        false,
+        SESSION_TEXT,
+        &[LOCAL_TEXT],
     );
     release.send(());
     assert_wip(
-        cx, &app, win, other.path(), OTHER_FILE, false, SESSION_TEXT, &[LOCAL_TEXT],
+        cx,
+        &app,
+        win,
+        other.path(),
+        OTHER_FILE,
+        false,
+        SESSION_TEXT,
+        &[LOCAL_TEXT],
     );
     // Also inspect the old session after activation: rejecting a cross-tab
     // paint is insufficient if the stale read polluted its retained pane.
@@ -172,7 +184,16 @@ fn session_retires(cx: &mut VisualTestAppContext, repo: &Path, case: Case) {
     assert_no_diff(cx, &app, win);
     columns(win, case.dimensions());
     click_file(cx, &app, win, BETA, true);
-    assert_wip(cx, &app, win, repo, BETA, true, STAGED_TEXT, &[LOCAL_TEXT, SESSION_TEXT]);
+    assert_wip(
+        cx,
+        &app,
+        win,
+        repo,
+        BETA,
+        true,
+        STAGED_TEXT,
+        &[LOCAL_TEXT, SESSION_TEXT],
+    );
     drop(returned);
     drop(current);
     drop(original);
@@ -184,7 +205,15 @@ fn panel_retires(cx: &mut VisualTestAppContext, repo: &Path, case: Case) {
     let foreign_path = foreign.path().canonicalize().unwrap();
     git(
         repo,
-        &["worktree", "add", "-q", "-b", "compact-deferred-panel", foreign_path.to_str().unwrap(), "HEAD"],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "compact-deferred-panel",
+            foreign_path.to_str().unwrap(),
+            "HEAD",
+        ],
     );
     std::fs::write(foreign_path.join(ALPHA), format!("{FOREIGN_TEXT}\n")).unwrap();
     let (app, win) = mount(cx, repo, case);
@@ -195,7 +224,11 @@ fn panel_retires(cx: &mut VisualTestAppContext, repo: &Path, case: Case) {
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.open_commit_panel_for_worktree(
-                foreign_path.clone(), "compact-deferred-panel".into(), 0, window, cx,
+                foreign_path.clone(),
+                "compact-deferred-panel".into(),
+                0,
+                window,
+                cx,
             );
         });
     })
@@ -212,10 +245,21 @@ fn panel_retires(cx: &mut VisualTestAppContext, repo: &Path, case: Case) {
     // compact file click must work without borrowing the retired local read.
     click_file(cx, &app, win, ALPHA, false);
     assert_wip(
-        cx, &app, win, &foreign_path, ALPHA, false, FOREIGN_TEXT, &[LOCAL_TEXT],
+        cx,
+        &app,
+        win,
+        &foreign_path,
+        ALPHA,
+        false,
+        FOREIGN_TEXT,
+        &[LOCAL_TEXT],
     );
     assert_eq!(
-        cx.read(|cx| app.read(cx).repo_path.clone()),
+        cx.read(|cx| app
+            .read(cx)
+            .repo_path
+            .as_ref()
+            .map(|path| path.canonicalize().unwrap())),
         Some(repo.canonicalize().unwrap()),
         "replacing the panel must not change the active repository tab"
     );
@@ -251,12 +295,26 @@ fn click_file(
 ) {
     let index = cx.read(|cx| {
         let panel = app.read(cx).ui().commit_panel.as_ref().unwrap().read(cx);
-        let files = if staged { &panel.state.staged } else { &panel.state.unstaged };
-        files.iter().position(|file| file.path == Path::new(path)).unwrap()
+        let files = if staged {
+            &panel.state.staged
+        } else {
+            &panel.state.unstaged
+        };
+        files
+            .iter()
+            .position(|file| file.path == Path::new(path))
+            .unwrap()
     });
     let id = format!("cp-{}-file-label-{index}", if staged { "st" } else { "us" });
     contained(
-        bounds(win, if staged { "compact-changes-staged" } else { "compact-changes-unstaged" }),
+        bounds(
+            win,
+            if staged {
+                "compact-changes-staged"
+            } else {
+                "compact-changes-unstaged"
+            },
+        ),
         bounds(win, &id),
         "activate the actual visible compact Changes file label",
     );
@@ -266,7 +324,10 @@ fn click_file(
 fn assert_no_diff(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
     e2e::clear_control_bounds(win.window_id(), "main-diff-title");
     settle(cx, win);
-    assert!(main_view(cx, app).is_none(), "retired/held WIP read must not open MainDiff");
+    assert!(
+        main_view(cx, app).is_none(),
+        "retired/held WIP read must not open MainDiff"
+    );
     assert!(e2e::control_bounds(win.window_id(), "main-diff-title").is_none());
 }
 
@@ -283,16 +344,27 @@ fn assert_text(
     settle(cx, win);
     let shown = main_view(cx, app).expect("current compact file activation must show MainDiff");
     assert_eq!(shown.title.as_ref(), path);
-    assert!(shown.rows.iter().any(|row| {
-        matches!(row, DiffRow::Line { text, .. } if text.strip_prefix('+') == Some(added))
-    }), "visible diff must contain the actual requested repository content: {added}");
+    assert!(
+        shown.rows.iter().any(|row| {
+            matches!(row, DiffRow::Line { text, .. } if text.strip_prefix('+') == Some(added))
+        }),
+        "visible diff must contain the actual requested repository content: {added}"
+    );
     for stale in absent {
-        assert!(!shown.rows.iter().any(|row| {
-            matches!(row, DiffRow::Line { text, .. } if text.contains(*stale))
-        }), "retired content must not leak into {path}: {stale}");
+        assert!(
+            !shown
+                .rows
+                .iter()
+                .any(|row| { matches!(row, DiffRow::Line { text, .. } if text.contains(*stale)) }),
+            "retired content must not leak into {path}: {stale}"
+        );
     }
     let title = bounds(win, "main-diff-title");
-    contained(viewport((WIDTH, 660.)), title, "MainDiff title is actually rendered");
+    contained(
+        viewport((WIDTH, 660.)),
+        title,
+        "MainDiff title is actually rendered",
+    );
     assert!(title.size.width > px(0.) && title.size.height > px(0.));
     assert_eq!(e2e::diff_presentation::header().unwrap().displayed, path);
     shown
@@ -310,7 +382,10 @@ fn assert_wip_context(
         assert!(app.bottom_panel_open);
         assert!(app.ui().selected.is_none());
         assert!(app.ui().compare_view.is_none());
-        assert!(!app.ui().commit_panel_open, "Changes must not need the wide/composer visibility flag");
+        assert!(
+            !app.ui().commit_panel_open,
+            "Changes must not need the wide/composer visibility flag"
+        );
         let panel = app.ui().commit_panel.as_ref().unwrap().read(cx);
         assert_eq!(panel.repo_path, repo.canonicalize().unwrap());
         assert_eq!(Some(panel.owner), app.active_session());
@@ -330,11 +405,14 @@ fn assert_wip(
 ) {
     let shown = assert_text(cx, app, win, path, added, absent);
     assert_wip_context(cx, app, win, repo);
-    assert!(match &shown.source {
-        MainDiffSource::Staged { path: actual } => staged && actual == Path::new(path),
-        MainDiffSource::Unstaged { path: actual } => !staged && actual == Path::new(path),
-        _ => false,
-    }, "MainDiff must retain the authoritative staged/unstaged source and path");
+    assert!(
+        match &shown.source {
+            MainDiffSource::Staged { path: actual } => staged && actual == Path::new(path),
+            MainDiffSource::Unstaged { path: actual } => !staged && actual == Path::new(path),
+            _ => false,
+        },
+        "MainDiff must retain the authoritative staged/unstaged source and path"
+    );
     cx.read(|cx| {
         let panel = app.read(cx).ui().commit_panel.as_ref().unwrap().read(cx);
         let selected = panel.state.selected_file.as_ref().unwrap();
@@ -348,7 +426,11 @@ fn assert_wip(
                 &panel.state.unstaged[*index]
             }
         };
-        assert_eq!(file.path, Path::new(path), "visible file selection stays authoritative");
+        assert_eq!(
+            file.path,
+            Path::new(path),
+            "visible file selection stays authoritative"
+        );
     });
 }
 
@@ -365,19 +447,37 @@ fn await_panel(
         settle(cx, win);
         let panel = cx.read(|cx| {
             let app = app.read(cx);
-            app.ui().commit_panel.as_ref().filter(|panel| {
-                let panel = panel.read(cx);
-                panel.repo_path == repo
-                    && Some(panel.owner) == app.active_session()
-                    && panel.state.unstaged.iter().any(|file| file.path == Path::new(path))
-            }).cloned()
+            app.ui()
+                .commit_panel
+                .as_ref()
+                .filter(|panel| {
+                    let panel = panel.read(cx);
+                    panel.repo_path == repo
+                        && Some(panel.owner) == app.active_session()
+                        && panel
+                            .state
+                            .unstaged
+                            .iter()
+                            .any(|file| file.path == Path::new(path))
+                })
+                .cloned()
         });
         if let Some(panel) = panel {
             assert_wip_context(cx, app, win, &repo);
-            assert_eq!(cx.read(|cx| app.read(cx).repo_path.clone()), Some(repo));
+            assert_eq!(
+                cx.read(|cx| app
+                    .read(cx)
+                    .repo_path
+                    .as_ref()
+                    .map(|path| path.canonicalize().unwrap())),
+                Some(repo),
+            );
             return panel;
         }
-        assert!(std::time::Instant::now() < deadline, "visible Changes must load its active session's actual files");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "visible Changes must load its active session's actual files"
+        );
         cx.advance_clock(Duration::from_millis(100));
     }
 }

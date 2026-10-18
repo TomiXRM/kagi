@@ -38,6 +38,8 @@ pub struct PrThreads {
     open_path: String,
     /// Placement belongs to the immutable row allocation, not its count.
     placed: RefCell<Option<PlacedThreads>>,
+    projection: RefCell<row_overlay::ProjectionCache>,
+    expanded_revision: u64,
 }
 
 impl PrThreads {
@@ -105,13 +107,29 @@ impl PrThreads {
             BTreeSet::new()
         }
     }
+
+    fn projection(&self, path: &str, rows: &Arc<Vec<DiffRow>>) -> Rc<row_overlay::Projection> {
+        let closed = BTreeSet::new();
+        let expanded = if self.open_path == path {
+            &self.open
+        } else {
+            &closed
+        };
+        self.projection.borrow_mut().get(
+            path,
+            rows,
+            theme::diff_split(),
+            self.expanded_revision,
+            expanded,
+        )
+    }
 }
 
 /// The overlay the PR diff draws with: one snapshot per frame.
 struct ThreadOverlay {
     threads: Rc<Vec<ReviewThread>>,
     placed: Placement,
-    open: BTreeSet<usize>,
+    projection: Rc<row_overlay::Projection>,
     app: Entity<KagiApp>,
 }
 
@@ -175,8 +193,8 @@ impl RowOverlay for ThreadOverlay {
         Some(badge.into_any_element())
     }
 
-    fn expanded(&self, row: usize) -> bool {
-        self.open.contains(&row)
+    fn projection(&self) -> Rc<row_overlay::Projection> {
+        self.projection.clone()
     }
 
     fn expansion(&self, rows: &[usize], window: &mut Window, cx: &mut App) -> AnyElement {
@@ -288,8 +306,8 @@ pub(super) fn diff_header(
     if tab.selected_commit.is_some() {
         return DiffHeader::default();
     }
-    let path = dv.title.to_string();
-    let placed = tab.threads.placement(&path, &dv.rows);
+    let path = dv.title.as_ref();
+    let placed = tab.threads.placement(path, &dv.rows);
     if placed.is_empty() {
         return DiffHeader::default();
     }
@@ -297,7 +315,7 @@ pub(super) fn diff_header(
         overlay: Some(Rc::new(ThreadOverlay {
             threads: tab.threads.threads.clone(),
             placed,
-            open: tab.threads.open_rows(&path),
+            projection: tab.threads.projection(path, &dv.rows),
             app: cx.entity(),
         })),
         ..DiffHeader::default()
@@ -344,6 +362,7 @@ impl KagiApp {
         );
         tab.threads.open = after;
         tab.threads.open_path = path;
+        tab.threads.expanded_revision = tab.threads.expanded_revision.wrapping_add(1);
         cx.notify();
     }
 }

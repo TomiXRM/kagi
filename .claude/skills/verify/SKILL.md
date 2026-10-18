@@ -1591,6 +1591,18 @@ The current suite covers:
   fake `gh` on `PATH` answers two threads only if every field the parser reads
   is requested by its own name (else GraphQL `errors`, exit 1, as GitHub), and
   the tab must hold both; a failed read logs `[kagi] pr-threads: #N read failed:`.
+  For #1072 the same filter also runs both scenarios in
+  `tests/recovery/pr_threads_projection.rs`: same-count source replacement,
+  current body/side replacement, unified/split and file changes, wheel/open/close
+  reading anchors, and separate PrKey/repository-session owners. Pair with the
+  complete `pr_diff_extent_` group plus `diff_keyboard_selection,diff_hunk_buttons`;
+  offscreen expanded-body remeasurement must remain enabled.
+  Performance Tier B uses a 20,000-plus-line file with current inline anchors
+  and a similarly sized unanchored control in both modes. Keep the same build
+  profile, viewport, zoom and gesture sequence. Record actual diff-row count
+  separately from source-file length. Temporary synchronous construction probes
+  must cover both header and diff stages, then be removed before final gates;
+  their timings are not FPS, paint time or input-to-display latency.
   Tier B: open a
   PR with line comments (current and outdated), click badges in unified and
   side-by-side, check the dimmed outdated card, EN/JA chips, no resolve button,

@@ -12,7 +12,7 @@ use kagi_ui_file_history::{FileHistoryEvent, FileHistoryView};
 use crate::macos::{build_fixture, git, repo_fingerprint, unmount};
 use crate::recovery_layout::draw;
 
-fn open_history(
+pub(crate) fn open_history(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,

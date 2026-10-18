@@ -10,6 +10,13 @@ use crate::pr_fields_focus::OfflineGh;
 use crate::pr_threads::{bounds, click, counts, thread};
 use crate::pr_viewed::{paint, pr_at, push_pr_head, wait_loaded};
 
+#[path = "pr_threads_mode_anchor.rs"]
+mod mode_anchor;
+pub use mode_anchor::{
+    scenario_pr_threads_mode_anchor_code, scenario_pr_threads_mode_anchor_expansion,
+    scenario_pr_threads_mode_anchor_replacement,
+};
+
 // Moving one edit preserves the diff row count while relocating its notes.
 fn projection_text(first_edit: u32) -> String {
     (1..=500)
@@ -24,6 +31,17 @@ fn projection_text(first_edit: u32) -> String {
 }
 
 fn projection_fixture() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    tempfile::TempDir,
+    std::path::PathBuf,
+    String,
+) {
+    projection_fixture_with_text(&projection_text(40))
+}
+fn projection_fixture_with_text(
+    text: &str,
+) -> (
     tempfile::TempDir,
     std::path::PathBuf,
     tempfile::TempDir,
@@ -79,13 +97,8 @@ fn projection_fixture() -> (
             &["config", "--add", &format!("url.{file_url}.insteadOf"), url],
         );
     }
-    let text = projection_text(40);
-    let head = push_pr_head(
-        &repo,
-        &remote,
-        "main",
-        &[("c.txt", &text), ("d.txt", &text)],
-    );
+    // Share the real Git/remote fixture with focused mode-transition regressions.
+    let head = push_pr_head(&repo, &remote, "main", &[("c.txt", text), ("d.txt", text)]);
     (fixture, repo, remote_dir, remote, head)
 }
 

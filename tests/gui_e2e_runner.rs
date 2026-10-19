@@ -646,6 +646,10 @@ mod editor_pdf_keyboard;
 mod editor_pdf_scrollbars;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_details.rs"]
+mod editor_details;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_tabs.rs"]
 mod editor_tabs;
 
@@ -3462,6 +3466,18 @@ mod macos {
             (
                 "editor_pdf_scrollbar_drag",
                 Box::new(crate::editor_pdf_scrollbars::scenario_editor_pdf_scrollbar_drag),
+            ),
+            (
+                "editor_details_controls",
+                Box::new(crate::editor_details::scenario_editor_details_controls),
+            ),
+            (
+                "editor_details_documents",
+                Box::new(crate::editor_details::scenario_editor_details_documents),
+            ),
+            (
+                "editor_details_motion",
+                Box::new(crate::editor_details::scenario_editor_details_motion),
             ),
             (
                 "main_diff_reading_context",

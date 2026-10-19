@@ -19,6 +19,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Keep PDF error, loading and unsupported-diff explanations readable with the existing secondary body-text color; do not dim essential status like disabled controls. (#1665)
 - Keep Editor size-limit, binary and decoding explanations readable, and wrap placeholder messages inside their pane at narrow widths and enlarged UI sizes. (#1666)
 - Keep Markdown Preview Undo/Redo from opening unrelated Git history dialogs, while retaining keyboard Save for unsaved Markdown edits.
+- Render unsaved Markdown edits in Preview immediately, including images and Mermaid source, without an implicit save or loss of text Undo history when switching modes or tabs. (#1668)
 - Open Staged and Unstaged diffs directly from compact Changes on a fresh session, without first opening the WIP composer. Preserve the shared file selection and reject delayed reads after a different file, commit, Compare source, session or panel owner takes over. (#1662)
 - Keep the reading position when switching the same diff between Unified and Split, including wrapped rows, open review threads and a settled end-of-list position. Preserve selection, code-only Copy and focus; a different file or source still starts at the beginning. (#1660)
 - Reuse review-thread overlay row mappings during unchanged PR diff redraws instead of rebuilding them for every scroll or selection update. Preserve thread anchors, split/unified numbering, copy selection and per-tab expansion state. (#1072)

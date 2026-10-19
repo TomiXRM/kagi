@@ -475,6 +475,15 @@ The default-view scenario also opens Preview with both Git Undo and Redo
 available, focuses the workspace root, and sends Cmd+Z / Cmd+Shift+Z: no Git
 modal or history-cursor move is allowed. Repeat with a dirty Source buffer
 switched to Preview, then require Cmd+S to persist the exact draft bytes.
+For #1668, the same scenario compares native Metal pixels in the actual center
+pane: dirty Preview differs from the saved document and matches the explicitly
+saved draft. Tab round trips preserve that rendering; Source Undo/Redo retains
+the draft history, and neither round trip writes the file. Tier B additionally
+edits a heading, link, repo-relative image and Mermaid block without saving;
+verify that all reflect the draft while on-disk bytes and Git state stay intact.
+Mermaid needs both `mmdc` and its browser runtime. For an isolated proof, install
+the matching `chrome-headless-shell` with the existing Puppeteer CLI under a
+temporary `PUPPETEER_CACHE_DIR` and pass that variable only to the owned app.
 
 Pair PDF native coverage with `cargo test -p kagi-ui-editor`: exercise real
 parser/raster output, stale completion admission, bounded reads, page replacement,

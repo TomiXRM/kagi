@@ -465,6 +465,34 @@ compile-time GUI-only. Tier B uses a disposable
 repository copy and a real Git read failure, restores it, then retries in the
 same pane; screenshots and native AX are separate from renderer-fed text.
 
+For ADR-0226 use
+`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,graph_copy'`
+with KEEP_GOING, plus the neighboring `editor_,settings_` scenarios.
+Markdown coverage must open a fresh buffer for each default preference and keep
+existing manual modes and dirty text intact. Writer scenarios that edit Markdown
+must explicitly select Source: a hidden Input is not the default Preview surface.
+
+Pair PDF native coverage with `cargo test -p kagi-ui-editor`: exercise real
+parser/raster output, stale completion admission, bounded reads, page replacement,
+rotation and backing-scale-independent logical zoom. The Japanese fallback oracle
+compares individual glyph masks against font-free Noto outlines; dark pixels or
+successful ToUnicode extraction alone do not establish Japanese rendering.
+Committed embedded-font fixtures use OFL Noto only; encrypted geometry has no font.
+The native PDF scenario also mounts a 940×660 Japanese window at 167% UI zoom:
+with the bottom panel closed, its real scroll viewport must retain at least
+200 logical pixels of document height. Icon controls retain localized AX names
+and hover help, including the visually abbreviated `100%` reset action.
+Tier B compares actual Markdown preference persistence, multipage PDF navigation,
+zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
+PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather
+than index stat-cache bytes. PDFs remain read-only and have no diff presentation.
+
+`graph_copy_current_branch` checks current versus selected branch identity,
+unborn/detached HEAD, Unicode names and Input/Editor/Terminal/menu focus ownership.
+Keep the existing Cmd+C scenarios. Native tests use the private test clipboard;
+actual system clipboard integration belongs only in an isolated VM without a
+clipboard bridge, never the user's host clipboard.
+
 `inactive_selection` (#1176) measures selected repository-tab and conflict-row native
 Metal fills across key/non-key/reactivated presentation, with unchanged bounds,
 selected session and selected file. `KagiApp::set_window_active_for_e2e` overrides only the

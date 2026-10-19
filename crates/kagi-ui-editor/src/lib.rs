@@ -30,7 +30,10 @@ pub mod markdown;
 mod named_button;
 mod pane_selectors;
 mod panes;
+mod pdf;
 pub use pane_selectors::EditorPaneSelectors;
+#[cfg(feature = "gui-e2e")]
+pub use pdf::PdfProbe;
 #[cfg(feature = "gui-e2e")]
 mod tab_probes;
 #[cfg(feature = "gui-e2e")]
@@ -168,11 +171,9 @@ pub type RenderHunksFn =
 /// `code_editor` ~50K-line comfort zone). Shows the placeholder instead.
 const MAX_EDITOR_LINES: usize = 50_000;
 
-/// Files whose byte size exceeds this are skipped WITHOUT reading them at all
-/// (T-WS-EDITOR-005 finding #2 — OOM guard: the previous code read the whole
-/// file into memory before checking anything). Checked via `fs::metadata`
-/// first; `MAX_EDITOR_LINES` is still enforced afterward for files that pass
-/// this gate but are pathologically long-and-thin.
+/// Metadata rejects known oversized files before reading. The regular-file read
+/// also stops at this limit + 1, so growth after metadata cannot bypass the gate.
+/// `MAX_EDITOR_LINES` additionally bounds long-and-thin text files.
 const MAX_EDITOR_BYTES: u64 = 10 * 1024 * 1024;
 
 /// How many leading bytes of a file are probed for "looks binary" (NUL byte).
@@ -273,6 +274,7 @@ struct EditorBufferState {
     content_lang: &'static str,
     content_binary: bool,
     content_image: Option<std::sync::Arc<gpui::Image>>,
+    content_pdf: Option<pdf::PdfPreview>,
     content_too_large: bool,
     content_missing: bool,
     content_undecodable: bool,
@@ -282,6 +284,7 @@ struct EditorBufferState {
     dirty: bool,
     external_changed: bool,
     diff: Option<Box<dyn Any>>,
+    preview_markdown: bool,
 }
 
 /// Frozen save payload; only the pane constructs it, before asking the host.
@@ -398,6 +401,10 @@ pub struct EditorWorkspaceView {
     /// W-IMG: binary bytes sniffed as a supported image (png/jpeg/webp/gif) —
     /// the center pane renders the image instead of the binary placeholder.
     pub content_image: Option<std::sync::Arc<gpui::Image>>,
+    content_pdf: Option<pdf::PdfPreview>,
+    // One executing raster across tabs; newer requests coalesce in content_pdf.
+    pdf_render_in_flight: bool,
+    next_pdf_request: u64,
     /// The selected file's line count (or byte size) exceeds the guard
     /// consts. `content` is `None` when this is set.
     pub content_too_large: bool,
@@ -587,8 +594,8 @@ pub struct EditorWorkspaceView {
     /// `true` while the blame load is in flight.
     pub blame_loading: bool,
 
-    /// Markdown preview mode for the open buffer (context-menu "Preview
-    /// Markdown" / center-pane toggle). Cleared when switching files.
+    /// Whether the active Markdown buffer is previewed. Initialized from
+    /// Settings for a fresh buffer; retained with its tab after manual toggles.
     pub preview_markdown: bool,
     /// Rendered-mermaid cache: `editor_markdown::mermaid_key` → PNG state.
     /// Keyed by content+theme so re-previews and tab switches reuse renders.
@@ -838,6 +845,9 @@ impl EditorWorkspaceView {
             content_lang: "text",
             content_binary: false,
             content_image: None,
+            content_pdf: None,
+            pdf_render_in_flight: false,
+            next_pdf_request: 1,
             content_too_large: false,
             content_missing: false,
             content_undecodable: false,
@@ -1030,8 +1040,6 @@ impl EditorWorkspaceView {
         if self.open_path.as_ref() == Some(&path) {
             return;
         }
-        // Preview mode is per-open-action, not sticky across files.
-        self.preview_markdown = false;
         // T-WS-EDITOR-008: the History/Snapshot *content* is per-file and not
         // tab-cached (ponytail — nothing asked for per-tab persistence here),
         // so it resets on every actual file switch — but `right_tab` itself
@@ -1058,6 +1066,7 @@ impl EditorWorkspaceView {
             self.content_lang = buf.content_lang;
             self.content_binary = buf.content_binary;
             self.content_image = buf.content_image;
+            self.content_pdf = buf.content_pdf;
             self.content_too_large = buf.content_too_large;
             self.content_missing = buf.content_missing;
             self.content_undecodable = buf.content_undecodable;
@@ -1067,6 +1076,7 @@ impl EditorWorkspaceView {
             self.dirty = buf.dirty;
             self.external_changed = buf.external_changed;
             self.diff = buf.diff;
+            self.preview_markdown = buf.preview_markdown;
             self.open_path = Some(path);
             if clean {
                 // Refresh a clean buffer on activation: covers external
@@ -1077,9 +1087,14 @@ impl EditorWorkspaceView {
             }
         } else {
             self.reset_active_buffer();
+            self.preview_markdown = crate::markdown::is_markdown_path(&path)
+                && kagi_ui_core::settings::Settings::load().editor_markdown_default_view()
+                    == kagi_ui_core::settings::MarkdownDefaultView::Preview;
             self.open_path = Some(path);
             self.load_selected(cx);
         }
+        self.invalidate_pdf_request();
+        self.request_pdf_render(cx);
         self.maybe_load_history(cx);
         self.maybe_load_blame(cx);
         cx.notify();
@@ -1132,6 +1147,7 @@ impl EditorWorkspaceView {
             content_lang: self.content_lang,
             content_binary: self.content_binary,
             content_image: self.content_image.take(),
+            content_pdf: self.content_pdf.take(),
             content_too_large: self.content_too_large,
             content_missing: self.content_missing,
             content_undecodable: self.content_undecodable,
@@ -1141,6 +1157,7 @@ impl EditorWorkspaceView {
             dirty: self.dirty,
             external_changed: self.external_changed,
             diff: self.diff.take(),
+            preview_markdown: self.preview_markdown,
         };
         self.tab_cache.insert(path, buf);
         self.reset_active_buffer();
@@ -1157,6 +1174,7 @@ impl EditorWorkspaceView {
         self.content_lang = "text";
         self.content_binary = false;
         self.content_image = None;
+        self.content_pdf = None;
         self.content_too_large = false;
         self.content_missing = false;
         self.content_undecodable = false;
@@ -1167,6 +1185,7 @@ impl EditorWorkspaceView {
         self.external_changed = false;
         self.file_loading = false;
         self.diff = None;
+        self.preview_markdown = false;
         self.blame = None;
         self.blame_head = None;
         self.invalidate_blame_map();
@@ -1251,16 +1270,9 @@ impl EditorWorkspaceView {
         cx.emit(EditorWorkspaceEvent::DirtyGuardRequested(intent));
     }
 
-    /// Load the selected file's raw text (off-thread, guarded by
-    /// `MAX_EDITOR_BYTES` + `MAX_EDITOR_LINES` + a binary probe) and its WIP
-    /// diff (unstaged, falling back to staged — mirrors
-    /// `FileHistoryView::load_diff`).
-    ///
-    /// T-WS-EDITOR-005 finding #2: the size guard runs BEFORE any read (an
-    /// oversized file is never loaded into memory just to be told "too
-    /// large"), the binary probe only looks at the leading
-    /// `BINARY_PROBE_BYTES` of the raw bytes, and the line count is computed
-    /// here in the background task — the marshal-back below only assigns.
+    /// Read/classify a bounded regular file off-thread. PDF extension/signature
+    /// detection precedes binary/UTF-8 probing; parsing never creates an Input.
+    /// Non-PDF classification then admits the ordinary host-owned WIP diff.
     fn load_selected(&mut self, cx: &mut Context<Self>) {
         // Keyed off `open_path`, not the tree highlight (T-WS-EDITOR-002 spec
         // change) — the open file may not be listed in the current source.
@@ -1288,68 +1300,27 @@ impl EditorWorkspaceView {
         let repo_path = self.repo_path.clone();
         let bg_path = path.clone();
         let image_from_bytes = self.hooks.image_from_bytes;
-        // The WIP diff needs `Backend` — ask the host; it lands via
-        // `seed_diff`, guarded by the same `file_req`.
-        cx.emit(EditorWorkspaceEvent::DiffRequested {
-            req: file_req,
-            path: path.clone(),
-        });
-
+        // Classification (including PDF signatures) precedes Git diff admission.
+        // Retain the parsed document on an unchanged watcher read.
+        let previous_pdf = self.content_pdf.as_ref().map(|p| p.source.clone());
         let task = cx.background_spawn(async move {
-            let full_path = repo_path.join(&bg_path);
-
-            let too_big = std::fs::metadata(&full_path)
-                .map(|m| m.len() > MAX_EDITOR_BYTES)
-                .unwrap_or(false);
-
-            let (text, is_binary, image, missing, undecodable, too_many_lines) = if too_big {
-                (None, false, None, false, false, false)
-            } else {
-                match std::fs::read(&full_path) {
-                    Ok(bytes) => {
-                        // Binary probe on raw bytes, BEFORE any UTF-8
-                        // decoding, and only the leading slice.
-                        let probe_end = bytes.len().min(BINARY_PROBE_BYTES);
-                        let is_binary =
-                            kagi_domain::checklist::content_looks_binary(&bytes[..probe_end]);
-                        if is_binary {
-                            // W-IMG: sniff supported image formats and decode
-                            // for the center-pane preview.
-                            let image = image_from_bytes(bytes);
-                            (None, true, image, false, false, false)
-                        } else {
-                            match String::from_utf8(bytes) {
-                                Ok(t) => {
-                                    let too_many_lines = t.lines().count() > MAX_EDITOR_LINES;
-                                    if too_many_lines {
-                                        (None, false, None, false, false, true)
-                                    } else {
-                                        (Some(t), false, None, false, false, false)
-                                    }
-                                }
-                                Err(_) => (None, false, None, false, true, false),
-                            }
-                        }
-                    }
-                    Err(_) => (None, false, None, true, false, false),
-                }
-            };
-            let too_large = too_big || too_many_lines;
-            (text, is_binary, image, missing, undecodable, too_large)
+            pdf::read_file(&repo_path.join(&bg_path), image_from_bytes, previous_pdf)
         });
 
         cx.spawn(async move |view, acx| {
-            let (text, is_binary, image, missing, undecodable, too_large) = task.await;
+            let pdf::LoadedFile {
+                text,
+                is_binary,
+                image,
+                missing,
+                undecodable,
+                too_large,
+                pdf,
+            } = task.await;
             let _ = view.update(acx, |v, cx| {
-                // `file_req` alone guards staleness — the buffer is decoupled
-                // from the tree generation (T-WS-EDITOR-002 spec change: a
-                // source switch mid-load must not discard the content read).
-                // The `dirty` check closes a race: if the user typed while a
-                // watcher-driven clean re-read was in flight, dropping the
-                // result is the only option that doesn't clobber the edit.
-                // The `open_path` check keeps a load started for one tab from
-                // landing in another after a tab switch (editor tabs) — the
-                // switched-to tab re-triggers its own load, so nothing stalls.
+                // File identity is independent of the tree source. A newer
+                // read/tab or an edit during a clean watcher read rejects this
+                // result; PDF rasters additionally have their own request guard.
                 if v.file_req != file_req
                     || v.dirty
                     || v.open_path.as_deref() != Some(path.as_path())
@@ -1359,8 +1330,25 @@ impl EditorWorkspaceView {
                 v.file_loading = false;
                 v.content_binary = is_binary;
                 v.content_image = image;
+                v.accept_pdf(pdf);
+                if v.is_pdf() {
+                    // A file replaced text on disk: never retain its editable Input.
+                    v.editor = None;
+                    v.pushed_sig = 0;
+                    v.diff = None;
+                    v.history_diff = None;
+                    v.history_diff_req.clear();
+                } else {
+                    cx.emit(EditorWorkspaceEvent::DiffRequested {
+                        req: file_req,
+                        path: path.clone(),
+                    });
+                }
                 v.content_too_large = too_large;
                 v.content_missing = missing || deleted;
+                if v.content_missing || too_large {
+                    v.content_pdf = None;
+                }
                 v.content_undecodable = undecodable;
                 v.content_lang = (v.hooks.lang_for_path)(&path).unwrap_or("text");
                 // T-WS-EDITOR-005 finding #9: compute the content signature
@@ -1368,6 +1356,7 @@ impl EditorWorkspaceView {
                 v.content_sig = text.as_ref().map(|t| buffer_sig(&path, t)).unwrap_or(0);
                 v.content = text;
                 v.maybe_load_blame(cx);
+                v.request_pdf_render(cx);
                 cx.notify();
             });
         })
@@ -1385,7 +1374,11 @@ impl EditorWorkspaceView {
         install: impl FnOnce(&mut Option<Box<dyn Any>>, Option<D>),
         cx: &mut Context<Self>,
     ) {
-        if self.file_req != req || self.dirty || self.open_path.as_deref() != Some(path) {
+        if self.file_req != req
+            || self.dirty
+            || self.open_path.as_deref() != Some(path)
+            || self.is_pdf()
+        {
             return;
         }
         install(&mut self.diff, diff);
@@ -1695,6 +1688,9 @@ impl EditorWorkspaceView {
         // a *different* commit supersedes instead of being suppressed (#489).
         match self.middle_tab {
             MiddlePaneTab::Diff => {
+                if self.is_pdf() {
+                    return;
+                }
                 if self.history_diff.is_some()
                     || !self
                         .history_diff_req
@@ -2599,6 +2595,7 @@ impl Render for EditorWorkspaceView {
         }
         self.sync_editor(window, cx);
         self.sync_snapshot_text(cx);
+        self.prepare_pdf_render(window, cx);
         self.hooks.pane_selectors.release_hidden(self, window, cx);
         if self.show_tree && !self.loading && self.error.is_none() {
             self.refresh_tree_layout();
@@ -3626,6 +3623,9 @@ fn render_center_pane(
     if view.right_tab == RightPaneTab::History && view.selected_history_commit.is_some() {
         pane = pane.child(panes::render_middle_pane_tabs(view, cx));
         pane = match view.middle_tab {
+            MiddlePaneTab::Diff if view.is_pdf() => {
+                pane.child(pdf::status_message(Msg::EditorPdfNoDiff))
+            }
             MiddlePaneTab::Diff => match &view.history_diff {
                 Some(_) => pane.child((view.hooks.render_history_diff)(view, cx)),
                 None => {
@@ -3718,12 +3718,16 @@ fn render_center_pane(
         } else {
             Msg::EditorWorkspaceSelectFile.t()
         })
-    } else if view.file_loading && view.content.is_none() {
+    } else if view.file_loading
+        && view.content.is_none()
+        && view.content_pdf.is_none()
+        && view.content_image.is_none()
+    {
         Some(Msg::EditorWorkspaceLoading.t())
     } else if view.content_missing {
         Some(Msg::EditorWorkspaceDeleted.t())
-    } else if view.content_image.is_some() {
-        None // W-IMG: image preview renders below
+    } else if view.content_pdf.is_some() || view.content_image.is_some() {
+        None // Specialized read-only previews render below.
     } else if view.content_binary {
         Some(Msg::EditorWorkspaceBinary.t())
     } else if view.content_too_large {
@@ -3739,6 +3743,10 @@ fn render_center_pane(
     if let Some(msg) = placeholder {
         pane = pane.child(placeholder_text(msg));
         return pane.into_any_element();
+    }
+
+    if view.content_pdf.is_some() {
+        return pane.child(pdf::render_preview(view, cx)).into_any_element();
     }
 
     // W-IMG: image preview — binary bytes that sniffed as png/jpeg/webp/gif
@@ -3905,6 +3913,9 @@ fn render_hunks_pane(
     match view.right_tab {
         RightPaneTab::History => {
             pane = pane.child(render_history_pane(view, cx));
+        }
+        RightPaneTab::Diff if view.is_pdf() => {
+            pane = pane.child(pdf::status_message(Msg::EditorPdfNoDiff));
         }
         RightPaneTab::Diff => match &view.diff {
             Some(_) => {

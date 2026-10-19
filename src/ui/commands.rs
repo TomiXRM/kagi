@@ -108,6 +108,7 @@ actions!(
         CheckoutBranch,
         RenameBranch,
         DeleteBranch,
+        CopyCurrentBranchName,
         // Commit (operate on the selected commit; route via dispatch_commit_action)
         CopyCommitHash,
         CheckoutCommit,
@@ -185,6 +186,11 @@ pub struct OpenRecentRepository {
     pub path: std::path::PathBuf,
 }
 actions!(kagi_menu, [ClearRecentRepositories, FindInFocusedView]);
+
+/// Keyboard-only routing; explicit menu actions do not require Graph focus.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_menu, no_json)]
+pub(super) struct CopyGraphBranchName;
 
 #[derive(Default)]
 struct RecentMenuAvailable(bool);
@@ -408,6 +414,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("branch.checkout"),
             MenuNode::Command("branch.rename"),
             MenuNode::Command("branch.delete"),
+            MenuNode::Command("branch.copyCurrentName"),
         ],
     },
     // ── Commit ───────────────────────────────────────────────────────
@@ -730,6 +737,12 @@ pub const COMMANDS: &[Command] = &[
         dangerous: true,
     },
     Command {
+        id: "branch.copyCurrentName",
+        label: "Copy Current Branch Name",
+        keystroke: Some("secondary-shift-c"),
+        dangerous: false,
+    },
+    Command {
         id: "commit.copyHash",
         label: "Copy Commit Hash",
         keystroke: None,
@@ -998,6 +1011,20 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
             }
         }
 
+        "branch.copyCurrentName" => {
+            if !has_repo {
+                Disabled(Msg::NoRepoOpen.t())
+            } else if app.has_active_modal() {
+                Disabled(Msg::FinishDialogFirst.t())
+            } else if busy {
+                Disabled(Msg::OpInProgress.t())
+            } else if app.view().current_branch.is_none() {
+                Disabled(Msg::CmNoCurrentBranch.t())
+            } else {
+                Enabled
+            }
+        }
+
         // ── Repo required + not busy (state-changing git) ────────────────
         "repo.fetch" | "repo.pull" | "repo.push" | "repo.createSnapshot" | "branch.new"
         | "branch.checkout" | "branch.delete" | "branch.rename" => {
@@ -1132,6 +1159,7 @@ fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> Menu
         "branch.checkout" => MenuItem::action(label, CheckoutBranch),
         "branch.rename" => MenuItem::action(label, RenameBranch),
         "branch.delete" => MenuItem::action(label, DeleteBranch),
+        "branch.copyCurrentName" => MenuItem::action(label, CopyCurrentBranchName),
         // Commit
         "commit.copyHash" => MenuItem::action(label, CopyCommitHash),
         "commit.checkout" => MenuItem::action(label, CheckoutCommit),
@@ -1507,7 +1535,7 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
         "secondary-s",
         SaveEditorFile,
-        Some("!EditorSnapshot"),
+        Some("!EditorSnapshot && !EditorPdf"),
     )]);
     // ADR-0084: app-level Undo/Redo. Historical text is selectable, not an
     // input, but must never route text undo to repository operation history.
@@ -1519,12 +1547,12 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         KeyBinding::new(
             "secondary-z",
             HistoryUndo,
-            Some("!Input && !Terminal && !EditorSnapshot"),
+            Some("!Input && !Terminal && !EditorSnapshot && !EditorPdf"),
         ),
         KeyBinding::new(
             "secondary-shift-z",
             HistoryRedo,
-            Some("!Input && !Terminal && !EditorSnapshot"),
+            Some("!Input && !Terminal && !EditorSnapshot && !EditorPdf"),
         ),
     ]);
     // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
@@ -1667,6 +1695,15 @@ pub fn register_keybindings(cx: &mut App) {
         "window.previousTab" => PreviousTab,
         "window.nextTab" => NextTab,
     );
+    // Keyboard copy belongs only to the uncovered Graph's root focus.
+    // Explicit menu/palette actions remain available in other workspaces.
+    if let Some(ks) = effective_keystroke("branch.copyCurrentName") {
+        cx.bind_keys([KeyBinding::new(
+            &ks,
+            CopyGraphBranchName,
+            Some("!Terminal && !Input && !Editor && !EditorSnapshot && !KagiMenu"),
+        )]);
+    }
     // Fixed aliases match native normalization without changing registry display.
     cx.bind_keys([
         KeyBinding::new("secondary-+", ZoomIn, None),
@@ -2210,6 +2247,13 @@ impl KagiApp {
             "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout, window, cx),
             "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete, window, cx),
             "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename, window, cx),
+            "branch.copyCurrentName" => {
+                if is_enabled(self, id) {
+                    if let Some(name) = self.view().current_branch.clone() {
+                        super::branch_menu::copy_branch_name(self, name, cx);
+                    }
+                }
+            }
 
             // ── Commit (selected commit → dispatch_commit_action) ────
             "commit.copyHash"

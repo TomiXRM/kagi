@@ -30,7 +30,7 @@ subcommands:
   dmg-macos                build the distributable DMG (run bundle-macos first)
   bundle-linux [--bin P] [--legacy-linux-name]
                            assemble the Linux tar.gz layout (legacy name is transitional)
-  bundle-windows [--bin P]  zip kagi.exe (+ LICENSE) → kagi-<v>-x86_64-windows.zip (Windows)
+  bundle-windows [--bin P]  zip kagi.exe + legal notices → kagi-<v>-x86_64-windows.zip (Windows)
   bundle-appimage --bin P [--arch x86_64|aarch64]
                            assemble Kagi.AppDir, run appimagetool when present, and zip
 "

@@ -5,6 +5,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Choose whether newly opened Markdown files start in Preview or Source in Settings. Preview is the default; already-open buffers retain their chosen mode and unsaved edits.
+- View working-tree PDFs read-only in Editor, with page navigation, zoom, scrolling and display-density-aware rendering. Malformed and password-protected documents show localized errors; PDF diffs, password entry and universal font fidelity are not supported.
+- Copy the current branch name with Cmd+Shift+C while Graph has focus, or through the Branch menu and command palette. Preserve Cmd+C behavior and text/terminal input ownership; detached HEAD has no branch name to copy.
+
 ### Fixed
 
 - Open Staged and Unstaged diffs directly from compact Changes on a fresh session, without first opening the WIP composer. Preserve the shared file selection and reject delayed reads after a different file, commit, Compare source, session or panel owner takes over. (#1662)

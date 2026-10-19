@@ -421,6 +421,9 @@ mod home_recent_remove;
 mod home_tab;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/branch_copy.rs"]
+mod branch_copy;
+#[cfg(target_os = "macos")]
 #[path = "recovery/branch_menu_compact.rs"]
 mod branch_menu_compact;
 #[cfg(target_os = "macos")]
@@ -629,6 +632,10 @@ mod pr_diff_extent_same_selection;
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_diff_extent_reload.rs"]
 mod editor_diff_extent_reload;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_pdf.rs"]
+mod editor_pdf;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_tabs.rs"]
@@ -3437,6 +3444,10 @@ mod macos {
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
             (
+                "editor_pdf_readonly",
+                Box::new(crate::editor_pdf::scenario_editor_pdf_readonly),
+            ),
+            (
                 "main_diff_reading_context",
                 Box::new(crate::editor_diff_extent_reload::reading_context::scenario_main_diff_reading_context),
             ),
@@ -3455,6 +3466,10 @@ mod macos {
             (
                 "editor_toggle_keys",
                 Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
+            ),
+            (
+                "editor_markdown_default_view",
+                Box::new(crate::editor_tabs::scenario_editor_markdown_default_view),
             ),
             (
                 "editor_find_controls_a11y",
@@ -4724,6 +4739,7 @@ mod macos {
                 Box::new(crate::graph_column_divider::scenario_graph_columns_inspector_fit),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
+            ("graph_copy_current_branch", Box::new(crate::branch_copy::scenario_graph_copy_current_branch)),
             (
                 "graph_pointer_focus",
                 Box::new(crate::graph_focus::scenario_graph_pointer_focus),

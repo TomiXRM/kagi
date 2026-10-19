@@ -165,6 +165,8 @@ assets = [
     ["target/release/kagi", "usr/bin/", "755"],
     ["assets/linux/com.tomixrm.kagi.desktop", "usr/share/applications/com.tomixrm.kagi.desktop", "644"],
     ["assets/icon/icon_512x512.png", "usr/share/icons/hicolor/512x512/apps/kagi.png", "644"],
+    ["LICENSE", "usr/share/doc/kagi/LICENSE", "644"],
+    ["THIRD-PARTY-NOTICES.txt", "usr/share/doc/kagi/THIRD-PARTY-NOTICES.txt", "644"],
 ]
 
 # ── Dependency patches ─────────────────────────────────────────────────────

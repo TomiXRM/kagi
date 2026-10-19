@@ -19,8 +19,8 @@ pub(super) fn load_bundled_fonts(cx: &mut App) {
         // and Noto Sans JP's default is Thin (wght=100), so Japanese looked
         // thin. Two static faces let fontdb resolve the requested weight
         // directly, exactly like the bundled Inter/JetBrains pair. (ADR-0130.)
-        std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSansJP-Regular.ttf")),
-        std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/NotoSansJP-Bold.ttf")),
+        std::borrow::Cow::Borrowed(kagi_ui_core::fonts::japanese_font_data(false)),
+        std::borrow::Cow::Borrowed(kagi_ui_core::fonts::japanese_font_data(true)),
     ]) {
         klog!("fonts: add_fonts failed (UI may fall back): {e}");
         return;

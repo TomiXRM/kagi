@@ -706,6 +706,16 @@ impl Render for KagiApp {
             super::front_layer::Z_ORDER.last(),
             Some(&super::front_layer::LayerKind::PlatformMenu)
         );
+        // A PDF is an active read-only Editor surface even while tree/root
+        // focus remains outside its canvas. Gate keyboard bindings here, not
+        // by moving focus; explicit Git menu actions keep their own admission.
+        let editor_pdf = center == Some(super::workspace::CenterPane::Editor)
+            && !self.has_active_modal()
+            && self
+                .ui()
+                .editor_workspace
+                .as_ref()
+                .is_some_and(|editor| editor.read(cx).pdf_surface_visible());
         let root = div()
             .relative()
             .flex()
@@ -723,6 +733,7 @@ impl Render for KagiApp {
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
+            .when(editor_pdf, |el| el.key_context("EditorPdf"))
             // Block Tab in the menu's focus subtree if no binding handled it.
             // gpui-component's Root binds Tab before capture, so the matching
             // early interceptor in keyboard_nav handles that normal route.

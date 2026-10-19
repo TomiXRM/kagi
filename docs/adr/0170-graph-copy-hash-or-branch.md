@@ -70,3 +70,31 @@ and 100%/167%. `graph_copy_foreground` checks retained hidden selection, clipboa
 sentinel preservation across takeovers/front layers, foreground TextView copy,
 Graph return, focused diff Copy and retirement after closing its pane. Both
 assert unchanged Git state.
+
+## Amendment — 2026-10-19: copy the current branch independently
+
+Cmd+Shift+C (macOS) / Ctrl+Shift+C (elsewhere) copies the current checked-out
+branch name. It does not change Cmd+C or its existing `graph_copy_target`
+preference, and does not resolve a branch from the selected commit.
+
+`TabViewState.current_branch` is derived in `build_tab_view` from the accepted
+repository HEAD: Attached and Unborn retain the raw branch name; Detached has
+no branch to copy. This uses the session-owned read model, not a new Git read
+or the formatted status-bar label. A selected commit is not required.
+
+The keyboard-only action reuses `commit_list_has_focus` at dispatch time and
+propagates when Graph is not the live owner. Input, Terminal, Editor, historical
+snapshot and menu contexts are excluded. No render-time focus predicate or
+second branch resolver is introduced. The explicit `branch.copyCurrentName`
+command remains available from the Branch menu and command palette even while
+Editor is visible; both paths use the existing clipboard/toast helper.
+No repository, detached HEAD, Home, an active modal or a busy operation disables
+the command.
+
+`graph_copy_current_branch` covers distinct selected/current branches, Unicode
+and slash-containing names, an unborn branch, detached HEAD, no repository,
+foreground/input isolation and explicit menu dispatch. An isolated Linux X11
+application with no host clipboard bridge checks the actual system clipboard:
+the exact Unicode/slash branch, unchanged full-hash Copy, and preservation of a
+sentinel while the Editor source Input owns focus.
+

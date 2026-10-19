@@ -13,6 +13,16 @@ pub const MONO_FONT: &str = "JetBrains Mono";
 /// Bundled Japanese fallback used when Inter does not contain a glyph.
 pub const CJK_FONT: &str = "Noto Sans JP";
 
+/// Static Japanese faces shared by non-platform renderers (for example PDF).
+/// Keep asset ownership here rather than embedding another copy in each viewer.
+pub fn japanese_font_data(bold: bool) -> &'static [u8] {
+    if bold {
+        include_bytes!("../../../assets/fonts/NotoSansJP-Bold.ttf").as_slice()
+    } else {
+        include_bytes!("../../../assets/fonts/NotoSansJP-Regular.ttf").as_slice()
+    }
+}
+
 /// The deterministic UI font stack used by the gpui-component window root.
 pub fn ui_font() -> Font {
     let mut ui = font(UI_FONT);

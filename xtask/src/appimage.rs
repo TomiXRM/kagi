@@ -139,6 +139,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
 
     std::fs::copy(&bin, usr_bin.join(BIN_NAME)).map_err(|e| format!("copy bin: {e}"))?;
     make_executable(&usr_bin.join(BIN_NAME))?;
+    util::copy_distribution_notices(root, &appdir.join("usr/share/doc/kagi"))?;
 
     let apprun = appdir.join("AppRun");
     std::fs::write(&apprun, apprun_script()).map_err(|e| format!("write AppRun: {e}"))?;
@@ -193,6 +194,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
     let stage = dist.join("appimage-zip-stage");
     util::clean_dir(&stage)?;
     std::fs::create_dir_all(&stage).map_err(|e| format!("mkdir {}: {e}", stage.display()))?;
+    util::copy_distribution_notices(root, &stage)?;
 
     // Flat archive: the install script sits at the zip root next to the AppImage
     // and icon, so `SCRIPT_DIR` (the script's own dir) is exactly where the
@@ -205,6 +207,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
     make_executable(&stage.join("install_linux_desktop.sh"))?;
 
     let mut zip_entries: Vec<String> = vec!["kagi.png".into(), "install_linux_desktop.sh".into()];
+    zip_entries.extend(util::DISTRIBUTION_NOTICES.into_iter().map(String::from));
     if built {
         let name = appimage
             .file_name()
@@ -228,7 +231,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>, arch: &str) -> Result<(),
     println!("bundle-appimage: wrote {}", zip_path.display());
     if !built {
         println!(
-            "bundle-appimage: NOTE — zip contains the install script + icon only; \
+            "bundle-appimage: NOTE — zip contains the install script, icon and legal notices only; \
              the AppImage is produced on the Linux CI runner where appimagetool runs."
         );
     }

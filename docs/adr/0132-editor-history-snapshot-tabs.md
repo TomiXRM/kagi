@@ -62,10 +62,12 @@ plus a `selected_history_commit` equality check, so a rapid-fire commit
 selection can't let a stale load land after a newer one — no new counter
 types were needed for that.
 
-History/Snapshot state is not tab-cached (`EditorBufferState`/`tab_cache`) —
-it resets on every `open_tab` call, same lifetime as the preview-markdown
-flag right next to it. Per-tab persistence wasn't requested; this can be
-upgraded later the same way tab-cached WIP diffs already are, if asked for.
+History/Snapshot state is not tab-cached (`EditorBufferState`/`tab_cache`);
+it resets when another file is opened. Markdown's Source/Preview choice now
+lives in the existing per-buffer cache (ADR-0226), so switching between open
+tabs preserves a manual choice. The `editor_markdown_default_view` preference
+initializes only newly opened Markdown buffers and defaults to Preview.
+Changing that preference does not replace open Inputs or their unsaved text.
 
 ### History list request shape
 

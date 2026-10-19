@@ -750,6 +750,28 @@ pub(super) fn appearance_section(
         })
         .into_any_element();
 
+    let app_markdown = app.downgrade();
+    let markdown_ctl = RadioGroup::horizontal("settings-markdown-default-view")
+        .children(
+            [Msg::MarkdownDefaultPreview, Msg::MarkdownDefaultSource]
+                .map(|msg| SharedString::from(msg.t())),
+        )
+        .selected_index(Some(usize::from(
+            settings::Settings::load().editor_markdown_default_view()
+                == settings::MarkdownDefaultView::Source,
+        )))
+        .on_click(move |index: &usize, _, cx| {
+            let mode = if *index == 1 {
+                settings::MarkdownDefaultView::Source
+            } else {
+                settings::MarkdownDefaultView::Preview
+            };
+            settings::write_setting("editor_markdown_default_view", Some(mode.as_str()));
+            cx.refresh_windows();
+            let _ = app_markdown.update(cx, |_, cx| cx.notify());
+        })
+        .into_any_element();
+
     let threshold = theme::compact_threshold_rem();
     let threshold_value = format!("{threshold}rem");
     let threshold_conversion =
@@ -914,6 +936,12 @@ pub(super) fn appearance_section(
             Msg::SettingsGraphCopySummary,
             Msg::SettingsGraphCopyDesc,
             copy_target_ctl,
+        ))
+        .child(setting_row(
+            false,
+            Msg::SettingsMarkdownDefaultView.t().into(),
+            Msg::SettingsMarkdownDefaultViewDesc.t().into(),
+            markdown_ctl,
         ))
         .child(setting_row_with_help(
             false,

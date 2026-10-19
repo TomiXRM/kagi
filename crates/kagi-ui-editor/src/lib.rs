@@ -597,9 +597,10 @@ pub struct EditorWorkspaceView {
     /// Whether the active Markdown buffer is previewed. Initialized from
     /// Settings for a fresh buffer; retained with its tab after manual toggles.
     pub preview_markdown: bool,
-    /// Rendered-mermaid cache: `editor_markdown::mermaid_key` → PNG state.
-    /// Keyed by content+theme so re-previews and tab switches reuse renders.
+    /// Rendered diagrams keyed by source, theme and raster density.
     pub mermaid: HashMap<u64, crate::markdown::MermaidState>,
+    /// One CLI render at a time; completion wakes the latest visible preview.
+    mermaid_render_in_flight: bool,
     /// The host's bottom panel for the frame being laid out. Written only by
     /// [`EditorWorkspaceElement`] immediately before it lays out this entity,
     /// then taken by `render` — never held across frames.
@@ -912,6 +913,7 @@ impl EditorWorkspaceView {
             blame_probe: Default::default(),
             preview_markdown: false,
             mermaid: HashMap::new(),
+            mermaid_render_in_flight: false,
             bottom_panel: None,
         }
     }
@@ -2571,43 +2573,44 @@ impl EditorWorkspaceView {
         cx.notify();
     }
 
-    /// Schedule background `mmdc` renders for every mermaid block of the
-    /// previewed buffer that isn't in the cache yet. Called from `render`
-    /// while preview mode is on; each finished render notifies, so blocks
-    /// flip from source-with-note to diagram as PNGs land.
-    fn ensure_preview_mermaids(
-        &mut self,
-        segments: &[markdown::MdSegment],
-        cx: &mut Context<Self>,
-    ) {
-        use crate::markdown::{mermaid_key, render_mermaid_png, MdSegment, MermaidState};
-        let dark = theme().dark;
-        for seg in segments {
+    /// Render one missing diagram at a time. Completion schedules a new frame,
+    /// which prepares only the latest visible draft and density, not a zoom queue.
+    fn ensure_preview_mermaids(&mut self, preview: &markdown::Preview, cx: &mut Context<Self>) {
+        use crate::markdown::{render_mermaid_png, MdSegment, MermaidState};
+        if self.mermaid_render_in_flight {
+            return;
+        }
+        let dark = preview.dark;
+        let scale = preview.scale;
+        for seg in &preview.segments {
             let MdSegment::Mermaid(code) = seg else {
                 continue;
             };
-            let key = mermaid_key(code, dark);
+            let key = scale.cache_key(code, dark);
             if self.mermaid.contains_key(&key) {
                 continue;
             }
             self.mermaid.insert(key, MermaidState::Rendering);
+            self.mermaid_render_in_flight = true;
             let code = code.clone();
-            let task = cx.background_spawn(async move { render_mermaid_png(&code, dark) });
+            let task = cx.background_spawn(async move { render_mermaid_png(&code, dark, scale) });
             cx.spawn(async move |view, acx| {
                 let result = task.await;
                 let _ = view.update(acx, |v, cx| {
                     let state = match result {
-                        Ok(path) => {
+                        Ok(raster) => {
                             klog!("editor-ws: mermaid rendered {key:016x}");
-                            MermaidState::Ready(path)
+                            MermaidState::Ready(raster)
                         }
                         Err(state) => state,
                     };
+                    v.mermaid_render_in_flight = false;
                     v.mermaid.insert(key, state);
                     cx.notify();
                 });
             })
             .detach();
+            return;
         }
     }
 }
@@ -2631,15 +2634,16 @@ impl Render for EditorWorkspaceView {
         // once and share its segments between Mermaid preparation and rendering.
         let preview = self.markdown_preview_visible().then(|| {
             let draft = self.editor.as_ref().map(|input| input.read(cx).value());
-            markdown::split_mermaid(
+            markdown::Preview::new(
                 draft
                     .as_deref()
                     .or(self.content.as_deref())
                     .unwrap_or_default(),
+                window,
             )
         });
-        if let Some(segments) = &preview {
-            self.ensure_preview_mermaids(segments, cx);
+        if let Some(preview) = &preview {
+            self.ensure_preview_mermaids(preview, cx);
         }
         let bottom_panel = self.bottom_panel.take();
         render_editor_workspace(self, bottom_panel, preview, window, cx)
@@ -2658,7 +2662,7 @@ impl Render for EditorWorkspaceView {
 fn render_editor_workspace(
     view: &EditorWorkspaceView,
     bottom_panel: Option<AnyElement>,
-    preview: Option<Vec<markdown::MdSegment>>,
+    preview: Option<markdown::Preview>,
     window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
@@ -2827,7 +2831,7 @@ fn render_editor_workspace(
                 .flex_1()
                 .min_w(px(0.))
                 .min_h(px(0.))
-                .child(render_center_pane(view, preview, window, cx))
+                .child(render_center_pane(view, preview, cx))
                 .children(bottom_panel),
         )
         .child(hunks_divider)
@@ -3634,8 +3638,7 @@ fn render_tree_row(
 
 fn render_center_pane(
     view: &EditorWorkspaceView,
-    preview: Option<Vec<markdown::MdSegment>>,
-    window: &mut Window,
+    preview: Option<markdown::Preview>,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
@@ -3886,11 +3889,9 @@ fn render_center_pane(
         );
     }
     pane = pane.child(chips);
-    if let Some(segments) = preview {
+    if let Some(preview) = preview {
         return pane
-            .child(crate::markdown::render_markdown_preview(
-                view, segments, window, cx,
-            ))
+            .child(crate::markdown::render_markdown_preview(view, preview, cx))
             .into_any_element();
     }
 

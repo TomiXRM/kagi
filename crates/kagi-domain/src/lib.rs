@@ -44,6 +44,7 @@ pub mod issue_composer;
 pub mod list_filter;
 pub mod load_request;
 pub mod merge_state;
+pub mod mermaid;
 pub mod message;
 pub mod message_gen;
 pub mod message_template;

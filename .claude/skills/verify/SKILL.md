@@ -502,6 +502,24 @@ with the original PATH; require the actual diagram for the same source.
 Preserve source bytes, HEAD and staged path/OID/mode, then remove probe tools and
 the temporary browser cache after the owned apps exit.
 
+For #1672 pair `cargo test -p kagi-domain mermaid::` with the scoped
+`editor_markdown_default_view` native scenario. Pure coverage separates 1x/2x
+and fractional backing density from logical zoom and cache identity.
+Tier B uses the real `mmdc`/browser pair above at 100%, enlarged UI zoom and
+940×660. Record the owned window's logical bounds and physical screenshot size;
+do not claim unobserved display hardware. Compare the generated PNG's visible
+pixel bounds against the same diagram-only screenshot ROI, compositing
+transparency onto the actual pane background. A fitting diagram must not
+magnify the source raster merely because the display is Retina.
+An owned PATH wrapper may log start/end/arguments while invoking the real
+renderer unchanged: open several uncached diagrams, send a burst of Zoom In,
+and require nonoverlapping conversions for the latest density rather than
+every intermediate zoom. Return to a cached density while another conversion
+is running; its late completion must not change the current diagram's pixels.
+Scroll through every diagram and the final paragraph, verify an unsaved draft
+and a real renderer failure, and preserve source bytes/HEAD/staged content.
+Remove the owned wrapper, resize probe and temporary browser cache after exit.
+
 Pair PDF native coverage with `cargo test -p kagi-ui-editor`: exercise real
 parser/raster output, stale completion admission, bounded reads, page replacement,
 rotation and backing-scale-independent logical zoom. The Japanese fallback oracle

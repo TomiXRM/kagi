@@ -1774,6 +1774,7 @@ pub enum Msg {
     EditorWorkspaceMermaidRendering,
     EditorWorkspaceMermaidNeedsCli,
     EditorWorkspaceMermaidFailed,
+    EditorWorkspaceMermaidNoDetails,
     /// File row: jump to File History.
     EditorTreeHistory,
     /// File row: stage this file (index-only, non-destructive).
@@ -4503,6 +4504,12 @@ impl Msg {
             (En, EditorWorkspaceMermaidNeedsCli) => "Install mermaid-cli (mmdc) to render diagrams",
             (Ja, EditorWorkspaceMermaidFailed) => "図の描画に失敗しました",
             (En, EditorWorkspaceMermaidFailed) => "Diagram render failed",
+            (Ja, EditorWorkspaceMermaidNoDetails) => {
+                "図の描画に失敗しました。詳細なエラー情報はありません。"
+            }
+            (En, EditorWorkspaceMermaidNoDetails) => {
+                "Diagram rendering failed. No error details were provided."
+            }
             (Ja, EditorTreeRevealFile) => "ファイルマネージャで表示",
             (En, EditorTreeHistory) => "History",
             (Ja, EditorTreeHistory) => "履歴",

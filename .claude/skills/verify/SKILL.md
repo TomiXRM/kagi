@@ -488,6 +488,10 @@ then send Cmd+Z / Cmd+Shift+Z / Cmd+S while the classification is pending:
 no Git modal or save request may appear. Release the result and require the
 real document's page count. Without the `EditorLoading` root context, Cmd+Z
 opens Git Undo and this scenario fails.
+The same scenario renames active and cached dirty text buffers to `.pdf` through
+the production Rename confirmation, then sends Cmd+S and compares the actual
+new-path bytes with the retained draft. A filename-only PDF presentation check
+blocks that save; classify the retained buffer from its accepted content instead.
 Tier B compares actual Markdown preference persistence, multipage PDF navigation,
 zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
 PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather

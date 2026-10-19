@@ -66,6 +66,10 @@ PDF constructs and fonts remain renderer limitations.
   Before asynchronous classification finishes, `EditorLoading` also excludes
   these repository-level bindings: an extensionless document may be a PDF.
   This provisional keyboard context does not classify normal files as PDFs.
+  Once loaded, the accepted content owns its classification, not the current
+  filename suffix. Renaming an active or cached dirty text buffer to `.pdf`
+  preserves its text Input and keyboard Save until a later accepted read
+  classifies the on-disk file; rename must not strand unsaved edits.
 - Working-tree PDF viewing is the scope. Do not add PDF diffs or historical PDF
   snapshot rendering to the existing diff/history pipelines.
 - Password-required, invalid-file and unsupported-encryption errors are distinct.

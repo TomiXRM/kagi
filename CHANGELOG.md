@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Keep Editor Save/Undo/Redo from reaching unrelated Git operations while file classification is pending, including PDFs recognized by signature without a `.pdf` extension.
+- Preserve keyboard Save for active and cached unsaved text buffers renamed to `.pdf`; a filename change alone no longer reclassifies retained text as a read-only PDF.
 - Open Staged and Unstaged diffs directly from compact Changes on a fresh session, without first opening the WIP composer. Preserve the shared file selection and reject delayed reads after a different file, commit, Compare source, session or panel owner takes over. (#1662)
 - Keep the reading position when switching the same diff between Unified and Split, including wrapped rows, open review threads and a settled end-of-list position. Preserve selection, code-only Copy and focus; a different file or source still starts at the beginning. (#1660)
 - Reuse review-thread overlay row mappings during unchanged PR diff redraws instead of rebuilding them for every scroll or selection update. Preserve thread anchors, split/unified numbering, copy selection and per-tab expansion state. (#1072)

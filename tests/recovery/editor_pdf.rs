@@ -128,6 +128,9 @@ fn mount_compact(
 pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let _globals = crate::recovery_layout::GlobalSettings::capture();
+    for cached in [false, true] {
+        renamed_dirty_text_keeps_keyboard_save(cx, cached);
+    }
     for (lang, zoom) in [(Lang::En, 1.), (Lang::Ja, 1.), (Lang::Ja, 1.67)] {
         kagi_ui_core::theme::set_zoom(zoom);
         i18n::set_lang(lang);
@@ -493,5 +496,76 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
         if let Err(error) = result {
             std::panic::resume_unwind(error);
         }
+    }
+}
+
+fn renamed_dirty_text_keeps_keyboard_save(cx: &mut VisualTestAppContext, cached: bool) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join(NOTE), "original text\n").unwrap();
+    let (app, window) = mount(cx, &repo);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.update(cx, |app, cx| app.open_editor_workspace(cx));
+        let editor = cx
+            .read(|cx| app.read(cx).ui().editor_workspace.clone())
+            .unwrap();
+        editor.update(cx, |view, cx| {
+            view.set_source(TreeSource::All, cx);
+            view.open_tab(NOTE.into(), cx);
+        });
+        wait_for(cx, &editor, window, |view| {
+            !view.file_loading && view.editor.is_some()
+        });
+        let input = cx.read(|cx| editor.read(cx).editor.clone()).unwrap();
+        cx.update_window(window, |_, window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        })
+        .unwrap();
+        keys(cx, window, "cmd-a");
+        cx.simulate_keystrokes(window, "retained");
+        keys(cx, window, "space");
+        cx.simulate_keystrokes(window, "draft");
+        paint(cx, window);
+        cx.read(|cx| assert!(editor.read(cx).dirty));
+        if cached {
+            editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+            wait_for(cx, &editor, window, |view| !view.file_loading);
+        }
+        app.update(cx, |app, cx| {
+            app.open_editor_fs_prompt(
+                kagi::ui::EditorFsPromptKind::Rename,
+                NOTE.into(),
+                "renamed.pdf".into(),
+                cx,
+            );
+            app.confirm_editor_fs_prompt(cx);
+        });
+        assert!(!repo.join(NOTE).exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.join("renamed.pdf")).unwrap(),
+            "original text\n",
+            "rename does not write the unsaved draft"
+        );
+        if cached {
+            editor.update(cx, |view, cx| view.open_tab("renamed.pdf".into(), cx));
+        }
+        paint(cx, window);
+        cx.update_window(window, |_, window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        })
+        .unwrap();
+        keys(cx, window, "cmd-s");
+        wait_for(cx, &editor, window, |view| !view.dirty);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("renamed.pdf")).unwrap(),
+            "retained draft",
+            "a retained text buffer must keep keyboard Save after rename (cached={cached})"
+        );
+        drop(input);
+        drop(editor);
+    }));
+    unmount(cx, app, window);
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
     }
 }

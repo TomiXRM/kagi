@@ -320,7 +320,9 @@ impl EditorWorkspaceView {
     }
 
     pub(super) fn is_pdf(&self) -> bool {
-        self.content_pdf.is_some() || self.open_path.as_deref().is_some_and(is_pdf_path)
+        // The accepted buffer owns its kind. Rename preserves dirty text even
+        // when its new suffix is .pdf; pending reads use EditorLoading instead.
+        self.content_pdf.is_some()
     }
     /// Current PDF presentation (including its pending/error state), not a
     /// historical presentation displayed over the retained current document.

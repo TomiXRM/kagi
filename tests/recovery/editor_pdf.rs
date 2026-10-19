@@ -128,6 +128,7 @@ fn mount_compact(
 pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let _globals = crate::recovery_layout::GlobalSettings::capture();
+    oversized_pdf_keeps_readonly_shortcuts(cx);
     for cached in [false, true] {
         renamed_dirty_text_keeps_keyboard_save(cx, cached);
     }
@@ -630,6 +631,91 @@ fn dirty_watcher_read_keeps_keyboard_save(cx: &mut VisualTestAppContext) {
             drop(input);
         }
         drop(editor);
+    }));
+    unmount(cx, app, window);
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+fn oversized_pdf_keeps_readonly_shortcuts(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let path = repo.join("oversized.pdf");
+    std::fs::write(&path, PDF).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(10 * 1024 * 1024 + 1)
+        .unwrap();
+    let before = git_fixture::git_output(&repo, &["hash-object", "oversized.pdf"]);
+    let head = rev(&repo, "HEAD");
+    let parent = rev(&repo, "HEAD~1");
+    let (app, window) = mount(cx, &repo);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.update(cx, |app, cx| {
+            app.open_editor_workspace(cx);
+            for (kind, from, to) in [
+                (OperationKind::Commit, parent.clone(), head.clone()),
+                (OperationKind::UndoCommit, head.clone(), parent.clone()),
+            ] {
+                app.record_history(
+                    kind,
+                    "main",
+                    CommitId(from),
+                    CommitId(to),
+                    "Oversized PDF must not invoke Git history",
+                );
+            }
+            let ui = app.ui_mut().unwrap();
+            ui.operation_history.undo().unwrap();
+            ui.history_seed_attempted = true;
+        });
+        let editor = cx
+            .read(|cx| app.read(cx).ui().editor_workspace.clone())
+            .unwrap();
+        let saves = Rc::new(Cell::new(0));
+        let save_count = saves.clone();
+        let subscription = cx.update(|cx| {
+            cx.subscribe(&editor, move |_, event, _| {
+                if matches!(event, EditorWorkspaceEvent::SaveRequested(_)) {
+                    save_count.set(save_count.get() + 1);
+                }
+            })
+        });
+        editor.update(cx, |view, cx| view.open_tab("oversized.pdf".into(), cx));
+        wait_for(cx, &editor, window, |view| {
+            !view.file_loading && view.content_too_large
+        });
+        cx.update_window(window, |_, window, cx| {
+            editor.read(cx).root_focus.clone().focus(window, cx);
+        })
+        .unwrap();
+        for key in ["cmd-z", "cmd-shift-z", "cmd-s"] {
+            cx.read(|cx| {
+                let history = &app.read(cx).ui().operation_history;
+                assert!(history.can_undo() && history.can_redo());
+                assert!(editor.read(cx).editor.is_none());
+                assert!(editor.read(cx).pdf_probe().is_none());
+            });
+            keys(cx, window, key);
+            paint(cx, window);
+            cx.read(|cx| {
+                assert!(
+                    app.read(cx).active_modal.is_none(),
+                    "oversized read-only PDF opened a Git operation: {key}"
+                );
+                assert_eq!(app.read(cx).ui().operation_history.cursor(), 1);
+            });
+            assert_eq!(saves.get(), 0);
+        }
+        assert_eq!(rev(&repo, "HEAD"), head);
+        assert_eq!(
+            git_fixture::git_output(&repo, &["hash-object", "oversized.pdf"]),
+            before
+        );
+        drop(subscription);
     }));
     unmount(cx, app, window);
     if let Err(error) = result {

@@ -63,6 +63,9 @@ PDF constructs and fonts remain renderer limitations.
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.
+  Size-limit placeholders also own `EditorReadOnly`, even when the bounded read
+  stops before PDF classification. Protect the accepted read-only surface, not
+  merely a successfully constructed PDF document.
   During classification without an existing text Input, `EditorLoading` also
   excludes these repository-level bindings: an extensionless document may be
   a PDF. A retained text Input keeps keyboard Save during watcher refresh.

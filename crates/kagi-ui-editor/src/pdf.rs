@@ -621,7 +621,7 @@ pub(super) fn render_preview(
     }
     div()
         .id("ews-pdf")
-        .key_context("EditorPdf")
+        .key_context("EditorReadOnly")
         .flex_1()
         .min_h(px(0.))
         .min_w(px(0.))

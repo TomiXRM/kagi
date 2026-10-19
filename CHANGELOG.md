@@ -13,7 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Keep Editor Save/Undo/Redo from reaching unrelated Git operations while file classification is pending, including PDFs recognized by signature without a `.pdf` extension.
+- Keep Editor Save/Undo/Redo from reaching unrelated Git operations while file classification is pending or a size-limit placeholder is visible, including PDFs recognized by signature without a `.pdf` extension.
 - Preserve keyboard Save for active and cached unsaved text buffers renamed to `.pdf`; a filename change alone no longer reclassifies retained text as a read-only PDF. Keep keyboard navigation working when a later read replaces the focused text Input with a PDF surface.
 - Keep keyboard Save available while a text buffer refreshes in the background, and clear the current read's loading state when typing makes its result stale without clearing a newer request.
 - Open Staged and Unstaged diffs directly from compact Changes on a fresh session, without first opening the WIP composer. Preserve the shared file selection and reject delayed reads after a different file, commit, Compare source, session or panel owner takes over. (#1662)

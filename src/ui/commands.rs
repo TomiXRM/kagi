@@ -1526,6 +1526,9 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     // depth, so these scoped bindings must register after it to outrank it —
     // only while a cell, inside the list's context, holds the focus.
     super::keyboard_nav::bind_keys(cx);
+    // PDF body navigation outranks the fallback arrows only while its own
+    // viewport holds focus. Tree/history and the PDF toolbar remain separate.
+    kagi_ui_editor::bind_keys(cx);
     // #985: the menus' ↑/↓/Home/End outrank the app-wide arrows the same way.
     super::menu_keys::bind_keys(cx);
     super::commit_panel_coauthor::bind_keys(cx);

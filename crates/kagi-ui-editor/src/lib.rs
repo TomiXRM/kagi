@@ -31,6 +31,8 @@ mod named_button;
 mod pane_selectors;
 mod panes;
 mod pdf;
+mod pdf_keyboard;
+pub use pdf_keyboard::bind_keys;
 pub use pane_selectors::EditorPaneSelectors;
 #[cfg(feature = "gui-e2e")]
 pub use pdf::PdfProbe;
@@ -402,6 +404,8 @@ pub struct EditorWorkspaceView {
     /// the center pane renders the image instead of the binary placeholder.
     pub content_image: Option<std::sync::Arc<gpui::Image>>,
     content_pdf: Option<pdf::PdfPreview>,
+    /// Stable viewport focus, separate from the host root and PDF toolbar.
+    pdf_body_focus: Option<gpui::FocusHandle>,
     // One executing raster across tabs; newer requests coalesce in content_pdf.
     pdf_render_in_flight: bool,
     next_pdf_request: u64,
@@ -847,6 +851,7 @@ impl EditorWorkspaceView {
             content_binary: false,
             content_image: None,
             content_pdf: None,
+            pdf_body_focus: None,
             pdf_render_in_flight: false,
             next_pdf_request: 1,
             content_too_large: false,
@@ -2623,6 +2628,7 @@ impl Render for EditorWorkspaceView {
         }
         self.sync_editor(window, cx);
         self.sync_snapshot_text(cx);
+        self.prepare_pdf_focus(window, cx);
         self.prepare_pdf_render(window, cx);
         self.hooks.pane_selectors.release_hidden(self, window, cx);
         if self.show_tree && !self.loading && self.error.is_none() {

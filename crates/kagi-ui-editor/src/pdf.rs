@@ -605,18 +605,18 @@ pub(super) fn render_preview(
                 Msg::EditorPdfReadOnly.t()
             )),
     );
-    let mut body = div()
-        .id("ews-pdf-page-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .min_w(px(0.))
-        .overflow_scroll()
-        .track_scroll(&pdf.scroll)
-        .p_4()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|view, _, window, cx| view.root_focus.focus(window, cx)),
-        );
+    let mut body = super::pdf_keyboard::body(
+        div()
+            .id("ews-pdf-page-scroll")
+            .flex_1()
+            .min_h(px(0.))
+            .min_w(px(0.))
+            .overflow_scroll()
+            .track_scroll(&pdf.scroll)
+            .p_4(),
+        &pdf.scroll,
+        view.pdf_body_focus.as_ref().expect("visible PDF body focus"),
+    );
     if let Some(error) = pdf.error {
         body = body.child(status_message(error.message()));
     } else if let Some(image) = pdf.image.clone() {

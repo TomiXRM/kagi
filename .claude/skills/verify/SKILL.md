@@ -517,6 +517,13 @@ For #1665 compare PDF error/status text in Catppuccin Mocha and Apple/Nagi
 Light/Dark, including EN/JA and narrow high-zoom wrapping. Use source fg/bg
 contrast (at least 4.5:1 for normal text), not antialiased edge pixels; keep
 disabled toolbar controls distinct from required explanations.
+For #1666 also inspect the generic Editor placeholders with a valid UTF-8 file
+of 50,001 lines below 10 MiB, an over-10-MiB file, a NUL-containing binary and
+invalid UTF-8. Compare the five built-in themes and a custom `text_sub` override.
+At 940×660 / JA /167%, the entire size explanation must wrap inside the center
+pane rather than overlap the file tree. Selection, file bytes, HEAD and staged
+path/OID/mode stay unchanged by inspection. Pair with the scoped native scenarios
+`editor_pdf_readonly,editor_snapshot_readonly,editor_history_fetch_error,editor_toggle_keys`.
 
 `graph_copy_current_branch` checks current versus selected branch identity,
 unborn/detached HEAD, Unicode names and Input/Editor/Terminal/menu focus ownership.

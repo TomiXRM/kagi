@@ -484,7 +484,7 @@ pub(super) fn status_message(message: Msg) -> impl IntoElement {
         .min_w(px(0.))
         .p_3()
         .text_sm()
-        .text_color(rgb(theme().text_muted))
+        .text_color(rgb(theme().text_sub))
         .child(div().w_full().min_w(px(0.)).child(message.t()))
 }
 

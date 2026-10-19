@@ -1535,7 +1535,7 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
         "secondary-s",
         SaveEditorFile,
-        Some("!EditorSnapshot && !EditorPdf"),
+        Some("!EditorSnapshot && !EditorPdf && !EditorLoading"),
     )]);
     // ADR-0084: app-level Undo/Redo. Historical text is selectable, not an
     // input, but must never route text undo to repository operation history.
@@ -1547,12 +1547,12 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         KeyBinding::new(
             "secondary-z",
             HistoryUndo,
-            Some("!Input && !Terminal && !EditorSnapshot && !EditorPdf"),
+            Some("!Input && !Terminal && !EditorSnapshot && !EditorPdf && !EditorLoading"),
         ),
         KeyBinding::new(
             "secondary-shift-z",
             HistoryRedo,
-            Some("!Input && !Terminal && !EditorSnapshot && !EditorPdf"),
+            Some("!Input && !Terminal && !EditorSnapshot && !EditorPdf && !EditorLoading"),
         ),
     ]);
     // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to

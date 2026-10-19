@@ -482,6 +482,12 @@ The native PDF scenario also mounts a 940×660 Japanese window at 167% UI zoom:
 with the bottom panel closed, its real scroll viewport must retain at least
 200 logical pixels of document height. Icon controls retain localized AX names
 and hover help, including the visually abbreviated `100%` reset action.
+`hold_next_file_classification_for_e2e` holds the actual file-read result before
+publication. Open an extensionless PDF with root/tree focus and Git undo history,
+then send Cmd+Z / Cmd+Shift+Z / Cmd+S while the classification is pending:
+no Git modal or save request may appear. Release the result and require the
+real document's page count. Without the `EditorLoading` root context, Cmd+Z
+opens Git Undo and this scenario fails.
 Tier B compares actual Markdown preference persistence, multipage PDF navigation,
 zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
 PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather

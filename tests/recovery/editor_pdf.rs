@@ -134,6 +134,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         std::fs::write(repo.join(PDF_PATH), PDF).unwrap();
+        std::fs::write(repo.join("signature-only"), PDF).unwrap();
         std::fs::write(repo.join(NOTE), "original text\n").unwrap();
         std::fs::write(repo.join("c-broken.PDF"), b"valid UTF-8 but invalid PDF").unwrap();
         std::fs::write(
@@ -217,6 +218,33 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
                     _ => {}
                 })
             });
+            // Hold the real signature classification at its publication boundary:
+            // extensionless PDFs must be protected before their type is known.
+            let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+            EditorWorkspaceView::hold_next_file_classification_for_e2e(hold);
+            editor.update(cx, |view, cx| view.open_tab("signature-only".into(), cx));
+            paint(cx, window);
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert!(view.file_loading);
+                assert!(view.editor.is_none());
+                assert!(view.pdf_probe().is_none());
+            });
+            for key in ["cmd-z", "cmd-shift-z", "cmd-s"] {
+                keys(cx, window, key);
+                paint(cx, window);
+                cx.read(|cx| {
+                    assert!(
+                        app.read(cx).active_modal.is_none(),
+                        "unclassified document opened a Git operation: {key}"
+                    );
+                    assert!(app.read(cx).ui().operation_history.can_undo());
+                    assert!(editor.read(cx).file_loading);
+                });
+                assert_eq!(saves.get(), 0);
+            }
+            release.send(());
+            assert_eq!(wait_pdf(cx, &editor, window).page_count, 3);
             click_file(cx, &editor, window, PDF_PATH);
             for key in ["cmd-z", "cmd-shift-z", "cmd-s"] {
                 // Draw the key dispatch tree after the real tree click, without

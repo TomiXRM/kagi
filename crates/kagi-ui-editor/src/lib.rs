@@ -1306,6 +1306,9 @@ impl EditorWorkspaceView {
         let task = cx.background_spawn(async move {
             pdf::read_file(&repo_path.join(&bg_path), image_from_bytes, previous_pdf)
         });
+        #[cfg(feature = "gui-e2e")]
+        let classification_hold =
+            pdf::FILE_CLASSIFICATION_HOLD.with(|slot| slot.borrow_mut().take());
 
         cx.spawn(async move |view, acx| {
             let pdf::LoadedFile {
@@ -1317,6 +1320,10 @@ impl EditorWorkspaceView {
                 too_large,
                 pdf,
             } = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = classification_hold {
+                hold.await;
+            }
             let _ = view.update(acx, |v, cx| {
                 // File identity is independent of the tree source. A newer
                 // read/tab or an edit during a clean watcher read rejects this

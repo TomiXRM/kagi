@@ -305,7 +305,20 @@ impl RenderIdentity {
     }
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    pub(super) static FILE_CLASSIFICATION_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl EditorWorkspaceView {
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_file_classification_for_e2e(hold: gpui::Task<()>) {
+        FILE_CLASSIFICATION_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace(hold).is_none());
+        });
+    }
+
     pub(super) fn is_pdf(&self) -> bool {
         self.content_pdf.is_some() || self.open_path.as_deref().is_some_and(is_pdf_path)
     }

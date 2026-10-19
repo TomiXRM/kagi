@@ -63,6 +63,9 @@ PDF constructs and fonts remain renderer limitations.
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.
+  Before asynchronous classification finishes, `EditorLoading` also excludes
+  these repository-level bindings: an extensionless document may be a PDF.
+  This provisional keyboard context does not classify normal files as PDFs.
 - Working-tree PDF viewing is the scope. Do not add PDF diffs or historical PDF
   snapshot rendering to the existing diff/history pipelines.
 - Password-required, invalid-file and unsupported-encryption errors are distinct.

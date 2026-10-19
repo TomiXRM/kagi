@@ -174,11 +174,9 @@ pub fn render_mermaid_png(code: &str, dark: bool) -> Result<PathBuf, MermaidStat
         Err(e) => return Err(fail(false, e.to_string())),
     };
     if !output.status.success() || !out.exists() {
-        let detail = String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .last()
-            .unwrap_or("mmdc failed")
-            .to_string();
+        let detail =
+            kagi_domain::text_safety::diagnostic_summary(&String::from_utf8_lossy(&output.stderr))
+                .unwrap_or_default();
         return Err(fail(false, detail));
     }
     Ok(out)
@@ -445,6 +443,8 @@ fn render_mermaid_block(
         Some(MermaidState::Failed { needs_cli, detail }) => {
             let hint = if *needs_cli {
                 SharedString::from(Msg::EditorWorkspaceMermaidNeedsCli.t())
+            } else if detail.is_empty() {
+                SharedString::from(Msg::EditorWorkspaceMermaidNoDetails.t())
             } else {
                 SharedString::from(format!(
                     "{}: {}",
@@ -468,6 +468,7 @@ fn mermaid_code_block(ix: usize, code: &str, note: Option<SharedString>) -> AnyE
     let mut block = gpui::div()
         .id(("ews-mmd-code", ix))
         .w_full()
+        .min_w(px(0.))
         .flex()
         .flex_col()
         .gap_1()
@@ -487,8 +488,11 @@ fn mermaid_code_block(ix: usize, code: &str, note: Option<SharedString>) -> AnyE
     if let Some(note) = note {
         block = block.child(
             gpui::div()
+                .w_full()
+                .min_w(px(0.))
+                .whitespace_normal()
                 .text_xs()
-                .text_color(rgb(theme().text_muted))
+                .text_color(rgb(theme().text_sub))
                 .child(note),
         );
     }

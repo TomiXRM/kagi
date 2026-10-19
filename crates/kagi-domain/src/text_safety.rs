@@ -84,6 +84,17 @@ pub fn display_subject(subject: &str) -> String {
     safe
 }
 
+/// The first diagnostic line, not a trailing stack frame or blank line.
+/// Apply the same display-control escaping and UTF-8 bound as other subjects.
+/// No diagnostic is distinct from a renderer-provided explanation.
+pub fn diagnostic_summary(stderr: &str) -> Option<String> {
+    stderr
+        .trim_start()
+        .lines()
+        .next()
+        .map(|line| display_subject(line.trim_end()))
+}
+
 // ──────────────────────────────────────────────────────────────
 // Unsafe-Unicode detection (bidi + zero-width)
 // ──────────────────────────────────────────────────────────────
@@ -141,6 +152,28 @@ pub fn has_unsafe_unicode(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_summary_keeps_the_cause_before_stack_frames_and_blank_lines() {
+        for newline in ["\n", "\r\n"] {
+            let stderr = format!(
+                "{newline}Error: Could not find chrome-headless-shell.{newline}\
+                 Install the required browser.{newline}\
+                 at ChromeLauncher.launch (launcher.js:95){newline}{newline}"
+            );
+            assert_eq!(
+                diagnostic_summary(&stderr).as_deref(),
+                Some("Error: Could not find chrome-headless-shell.")
+            );
+        }
+        for stderr in ["", "\n\n", " \t\r\n  "] {
+            assert_eq!(diagnostic_summary(stderr), None);
+        }
+        assert_eq!(
+            diagnostic_summary("\nError: 図\x1b[31m\n\n").as_deref(),
+            Some("Error: 図\\x1B[31m")
+        );
+    }
 
     #[test]
     fn display_subject_keeps_complete_identity_until_utf8_byte_bound() {

@@ -37,6 +37,12 @@ replaced by a new file retains the Editor's existing replacement semantics; a
 subsequent fresh open uses the then-current preference. Non-Markdown files are
 unaffected. Existing Markdown rendering and image/network policies are unchanged.
 
+The current Markdown Preview owns document keyboard context even with tree/root
+focus. Its visibility predicate is shared by rendering and root dispatch:
+repository-level Undo/Redo are excluded, but keyboard Save remains available for
+the retained dirty text buffer. Historical panes and Source keep their own
+existing context; Preview does not turn the editable buffer into a read-only PDF.
+
 ### PDF
 
 Use the official `hayro` 0.8 Rust renderer, with its supported embedded base fonts

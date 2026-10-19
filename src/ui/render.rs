@@ -722,6 +722,8 @@ impl Render for KagiApp {
                 let editor = editor.read(cx);
                 if editor.file_loading && editor.editor.is_none() {
                     Some("EditorLoading")
+                } else if editor.markdown_preview_visible() {
+                    Some("EditorMarkdownPreview")
                 } else {
                     (editor.pdf_surface_visible() || editor.content_too_large)
                         .then_some("EditorReadOnly")

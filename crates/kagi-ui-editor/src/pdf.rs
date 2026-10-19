@@ -649,7 +649,22 @@ pub(super) fn render_preview(
         .when(pdf.partial, |el| {
             el.child(div().text_xs().px_2().child(Msg::EditorPdfPartial.t()))
         })
-        .child(body)
+        .child(
+            div()
+                .id("ews-pdf-page-area")
+                .relative()
+                .flex_1()
+                .min_h(px(0.))
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .child(body)
+                // Overlay the actual body without changing its padding or zoom
+                // anchor. The shared control owns visibility, theme and both axes.
+                .when(pdf.image.is_some() && pdf.error.is_none(), |area| {
+                    area.child(Scrollbar::new(&pdf.scroll))
+                }),
+        )
         .into_any_element()
 }
 

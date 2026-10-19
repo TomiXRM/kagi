@@ -4,6 +4,7 @@
 //!   bin/kagi
 //!   share/applications/com.tomixrm.kagi.desktop
 //!   share/icons/hicolor/512x512/apps/kagi.png
+//!   share/doc/kagi/{LICENSE,THIRD-PARTY-NOTICES.txt}
 //!
 //! On the CI ubuntu runner the binary is a real Linux build. On macOS (local
 //! verification) there is no Linux binary, so we substitute the macOS release
@@ -92,6 +93,7 @@ pub fn bundle(
     std::fs::write(apps_dir.join("com.tomixrm.kagi.desktop"), desktop_entry())
         .map_err(|e| format!("write desktop: {e}"))?;
     std::fs::copy(&icon, icon_dir.join("kagi.png")).map_err(|e| format!("copy icon: {e}"))?;
+    util::copy_distribution_notices(root, &stage.join("share/doc/kagi"))?;
 
     let tarball = dist.join(format!("{stem}-linux.tar.gz"));
     if tarball.exists() {

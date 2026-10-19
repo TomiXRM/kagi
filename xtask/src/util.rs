@@ -90,3 +90,18 @@ pub fn clean_dir(p: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Required legal materials for every binary distribution. Missing source
+/// notices are a packaging error, never an optional omission.
+pub const DISTRIBUTION_NOTICES: [&str; 2] = ["LICENSE", "THIRD-PARTY-NOTICES.txt"];
+
+pub fn copy_distribution_notices(root: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(destination)
+        .map_err(|e| format!("mkdir {}: {e}", destination.display()))?;
+    for name in DISTRIBUTION_NOTICES {
+        let source = root.join(name);
+        std::fs::copy(&source, destination.join(name))
+            .map_err(|e| format!("copy required notice {}: {e}", source.display()))?;
+    }
+    Ok(())
+}

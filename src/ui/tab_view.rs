@@ -95,6 +95,8 @@ pub struct TabViewState {
     /// are stale on a reload — an auto-fetch that only moves remote-tracking
     /// refs leaves this unchanged, so those overlays are kept as-is.
     pub head_oid: Option<String>,
+    /// Symbolic HEAD branch, including unborn branches; absent for detached HEAD.
+    pub current_branch: Option<String>,
 }
 
 /// W6-TABSPEED: build the pure [`TabViewState`] from a snapshot.
@@ -268,6 +270,10 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         head_oid: match &snap.head {
             Head::Attached { target, .. } | Head::Detached { target } => Some(target.clone()),
             Head::Unborn { .. } => None,
+        },
+        current_branch: match &snap.head {
+            Head::Attached { branch, .. } | Head::Unborn { branch } => Some(branch.clone()),
+            Head::Detached { .. } => None,
         },
     }
 }

@@ -13,7 +13,10 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();
@@ -144,9 +147,12 @@ pub fn scenario_editor_save_buffer_identity(cx: &mut VisualTestAppContext) {
 
     // Open a tab, wait for its buffer, focus it, and type one character so it
     // is dirty. Returns the buffer's edited text.
-    let mut open_and_edit = |cx: &mut VisualTestAppContext, path: &str, key: &str| -> String {
+    let open_and_edit = |cx: &mut VisualTestAppContext, path: &str, key: &str| -> String {
         let target = std::path::PathBuf::from(path);
-        editor.update(cx, |view, cx| view.open_tab(target.clone(), cx));
+        editor.update(cx, |view, cx| {
+            view.open_tab(target.clone(), cx);
+            view.set_markdown_preview(false, cx);
+        });
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             cx.run_until_parked();
@@ -263,7 +269,10 @@ pub fn scenario_editor_external_change_banner(cx: &mut VisualTestAppContext) {
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();
@@ -360,7 +369,10 @@ pub fn scenario_editor_banner_rename_and_save(cx: &mut VisualTestAppContext) {
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();

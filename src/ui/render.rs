@@ -706,6 +706,29 @@ impl Render for KagiApp {
             super::front_layer::Z_ORDER.last(),
             Some(&super::front_layer::LayerKind::PlatformMenu)
         );
+        // Protect document keyboard ownership even with tree/root focus. A
+        // pending file classification may still resolve to a signature-only PDF;
+        // do not admit Git Undo/Redo before its content type is known.
+        // Size-limit placeholders remain read-only even when classification
+        // stops before a PDF document can be constructed.
+        let editor_context = self
+            .ui()
+            .editor_workspace
+            .as_ref()
+            .filter(|_| {
+                center == Some(super::workspace::CenterPane::Editor) && !self.has_active_modal()
+            })
+            .and_then(|editor| {
+                let editor = editor.read(cx);
+                if editor.file_loading && editor.editor.is_none() {
+                    Some("EditorLoading")
+                } else if editor.markdown_preview_visible() {
+                    Some("EditorMarkdownPreview")
+                } else {
+                    (editor.pdf_surface_visible() || editor.content_too_large)
+                        .then_some("EditorReadOnly")
+                }
+            });
         let root = div()
             .relative()
             .flex()
@@ -723,6 +746,7 @@ impl Render for KagiApp {
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
+            .when_some(editor_context, |el, context| el.key_context(context))
             // Block Tab in the menu's focus subtree if no binding handled it.
             // gpui-component's Root binds Tab before capture, so the matching
             // early interceptor in keyboard_nav handles that normal route.

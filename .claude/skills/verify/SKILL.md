@@ -465,6 +465,61 @@ compile-time GUI-only. Tier B uses a disposable
 repository copy and a real Git read failure, restores it, then retries in the
 same pane; screenshots and native AX are separate from renderer-fed text.
 
+For ADR-0226 use
+`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,graph_copy'`
+with KEEP_GOING, plus the neighboring `editor_,settings_` scenarios.
+Markdown coverage must open a fresh buffer for each default preference and keep
+existing manual modes and dirty text intact. Writer scenarios that edit Markdown
+must explicitly select Source: a hidden Input is not the default Preview surface.
+The default-view scenario also opens Preview with both Git Undo and Redo
+available, focuses the workspace root, and sends Cmd+Z / Cmd+Shift+Z: no Git
+modal or history-cursor move is allowed. Repeat with a dirty Source buffer
+switched to Preview, then require Cmd+S to persist the exact draft bytes.
+
+Pair PDF native coverage with `cargo test -p kagi-ui-editor`: exercise real
+parser/raster output, stale completion admission, bounded reads, page replacement,
+rotation and backing-scale-independent logical zoom. The Japanese fallback oracle
+compares individual glyph masks against font-free Noto outlines; dark pixels or
+successful ToUnicode extraction alone do not establish Japanese rendering.
+Committed embedded-font fixtures use OFL Noto only; encrypted geometry has no font.
+The native PDF scenario also mounts a 940×660 Japanese window at 167% UI zoom:
+with the bottom panel closed, its real scroll viewport must retain at least
+200 logical pixels of document height. Icon controls retain localized AX names
+and hover help, including the visually abbreviated `100%` reset action.
+`hold_next_file_classification_for_e2e` holds the actual file-read result before
+publication. Open an extensionless PDF with root/tree focus and Git undo history,
+then send Cmd+Z / Cmd+Shift+Z / Cmd+S while the classification is pending:
+no Git modal or save request may appear. Release the result and require the
+real document's page count. Without the `EditorLoading` root context, Cmd+Z
+opens Git Undo and this scenario fails.
+Also open a real PDF over the 10 MiB read limit with both Git Undo and Redo
+available. After loading settles to the size-limit placeholder, the same keys
+must not open a Git modal or emit Save; HEAD and the document bytes stay intact.
+This case has no parsed PDF object and must retain `EditorReadOnly` ownership.
+The same scenario renames active and cached dirty text buffers to `.pdf` through
+the production Rename confirmation, then sends Cmd+S and compares the actual
+new-path bytes with the retained draft. A filename-only PDF presentation check
+blocks that save; classify the retained buffer from its accepted content instead.
+After saving, let the watcher reclassify the retained text as a PDF and use
+Cmd+Shift+G without clicking another control. Graph must open: removing a focused
+Input must not strand global keyboard shortcuts on its obsolete focus handle.
+Hold a clean buffer's watcher read, edit its retained Input, and release the read:
+the discarded result must clear its own loading flag and Cmd+S must save the
+draft. Repeat with Save before the held read is released: the retained Input
+must remain writable, and the late result must not overwrite the saved content.
+The Home branch-copy case also dispatches the explicit menu action against the
+private test clipboard, not only its graph shortcut; Home must leave it unchanged.
+Tier B compares actual Markdown preference persistence, multipage PDF navigation,
+zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
+PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather
+than index stat-cache bytes. PDFs remain read-only and have no diff presentation.
+
+`graph_copy_current_branch` checks current versus selected branch identity,
+unborn/detached HEAD, Unicode names and Input/Editor/Terminal/menu focus ownership.
+Keep the existing Cmd+C scenarios. Native tests use the private test clipboard;
+actual system clipboard integration belongs only in an isolated VM without a
+clipboard bridge, never the user's host clipboard.
+
 `inactive_selection` (#1176) measures selected repository-tab and conflict-row native
 Metal fills across key/non-key/reactivated presentation, with unchanged bounds,
 selected session and selected file. `KagiApp::set_window_active_for_e2e` overrides only the

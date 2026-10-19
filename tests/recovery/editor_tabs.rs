@@ -20,6 +20,9 @@ use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, git, unmount};
 use crate::pr_viewed::{paint, rev};
 
+#[path = "editor_markdown_keyboard.rs"]
+mod markdown_keyboard;
+
 const PATHS: [&str; 12] = [
     "src/a.rs",
     "tests/a.rs",
@@ -672,4 +675,154 @@ fn exercise_selector(
         keys(cx, window, "end");
         assert_selector(cx, editor, window, false, 1, commit, &initial);
     }
+}
+
+/// New Markdown buffers follow Settings; cached tabs retain their own mode and
+/// the real Input owner, including unsaved edits, across preference changes.
+pub fn scenario_editor_markdown_default_view(cx: &mut VisualTestAppContext) {
+    use gpui::Focusable as _;
+    use kagi::ui::{editor_tree_menu::EditorTreeAction, settings};
+
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["editor_markdown_default_view"]);
+    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    settings::write_setting("editor_markdown_default_view", None);
+    settings::flush();
+    markdown_keyboard::verify(cx);
+    let repo = build_fixture();
+    let readme_disk = std::fs::read(repo.path().join("README.md")).unwrap();
+    let (app, window) = crate::macos::mount(cx, repo.path());
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
+    wait_for(cx, &editor, window, loaded);
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).open_path.clone()),
+        Some(PathBuf::from("README.md")),
+        "the initial seed_files auto-selection opens Markdown without a click"
+    );
+    assert!(
+        cx.read(|cx| editor.read(cx).preview_markdown),
+        "missing preference opens Preview"
+    );
+    std::fs::write(repo.path().join("guide.markdown"), "# Guide\n").unwrap();
+    std::fs::write(repo.path().join("component.mdx"), "# Component\n").unwrap();
+    std::fs::write(repo.path().join("note.txt"), "plain text\n").unwrap();
+    let fingerprint = crate::macos::repo_fingerprint(repo.path());
+
+    editor.update(cx, |view, cx| view.set_markdown_preview(false, cx));
+    paint(cx, window);
+    let input = cx.read(|cx| editor.read(cx).editor.clone().unwrap());
+    let baseline = cx.read(|cx| editor.read(cx).content.clone());
+    cx.update_window(window, |_, window, cx| {
+        input.read(cx).focus_handle(cx).focus(window, cx);
+    })
+    .unwrap();
+    cx.simulate_input(window, "unsaved Markdown edit\n");
+    wait_for(cx, &editor, window, |view| view.dirty);
+    let edited = cx.read(|cx| input.read(cx).value().to_string());
+
+    editor.update(cx, |view, cx| view.open_tab("guide.markdown".into(), cx));
+    wait_for(cx, &editor, window, loaded);
+    assert!(cx.read(|cx| editor.read(cx).preview_markdown));
+    settings::write_setting("editor_markdown_default_view", Some("source"));
+    settings::flush();
+    assert_eq!(
+        settings::Settings::load().editor_markdown_default_view(),
+        settings::MarkdownDefaultView::Source
+    );
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| editor.read(cx).preview_markdown),
+        "changing preference does not mutate the active tab"
+    );
+
+    editor.update(cx, |view, cx| view.activate_tab("README.md".into(), cx));
+    wait_for(cx, &editor, window, loaded);
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert!(
+            !view.preview_markdown,
+            "manual Source survives cached activation"
+        );
+        assert!(view.dirty);
+        assert_eq!(view.editor.as_ref().unwrap().entity_id(), input.entity_id());
+        assert_eq!(input.read(cx).value().to_string(), edited);
+        assert_eq!(
+            view.content, baseline,
+            "preview switching never replaces the saved snapshot"
+        );
+    });
+    editor.update(cx, |view, cx| {
+        view.activate_tab("guide.markdown".into(), cx)
+    });
+    wait_for(cx, &editor, window, loaded);
+    assert!(
+        cx.read(|cx| editor.read(cx).preview_markdown),
+        "clean cached tabs keep Preview after refresh"
+    );
+
+    editor.update(cx, |view, cx| view.open_tab("component.mdx".into(), cx));
+    wait_for(cx, &editor, window, loaded);
+    assert!(
+        !cx.read(|cx| editor.read(cx).preview_markdown),
+        "new Markdown buffers honor Source"
+    );
+    let source_input = cx.read(|cx| editor.read(cx).editor.clone().unwrap());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.dispatch_editor_tree_action(
+                EditorTreeAction::PreviewMarkdown("component.mdx".into()),
+                window,
+                cx,
+            );
+        });
+    })
+    .unwrap();
+    paint(cx, window);
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert!(
+            view.preview_markdown,
+            "explicit Preview action overrides Source preference"
+        );
+        assert_eq!(
+            view.editor.as_ref().unwrap().entity_id(),
+            source_input.entity_id()
+        );
+    });
+    settings::write_setting("editor_markdown_default_view", Some("preview"));
+    editor.update(cx, |view, cx| view.open_tab("note.txt".into(), cx));
+    wait_for(cx, &editor, window, loaded);
+    assert!(
+        !cx.read(|cx| editor.read(cx).preview_markdown),
+        "non-Markdown files never enter Preview"
+    );
+    editor.update(cx, |view, cx| view.activate_tab("README.md".into(), cx));
+    wait_for(cx, &editor, window, loaded);
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert!(
+            !view.preview_markdown,
+            "cached manual Source also survives a Preview preference"
+        );
+        assert!(view.dirty);
+        assert_eq!(input.read(cx).value().to_string(), edited);
+    });
+    assert_eq!(
+        std::fs::read(repo.path().join("README.md")).unwrap(),
+        readme_disk
+    );
+    assert_eq!(crate::macos::repo_fingerprint(repo.path()), fingerprint);
+    drop(input);
+    drop(source_input);
+    drop(editor);
+    cx.update_window(window, |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            let empty = cx.new(|_| gpui::Empty);
+            gpui_component::Root::new(empty, window, cx)
+        });
+    })
+    .unwrap();
+    unmount(cx, app, window);
 }

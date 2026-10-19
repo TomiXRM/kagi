@@ -497,7 +497,10 @@ pub fn scenario_editor_save_panic(cx: &mut VisualTestAppContext) {
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();
@@ -603,7 +606,10 @@ pub fn scenario_editor_save_panic_after_close(cx: &mut VisualTestAppContext) {
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();

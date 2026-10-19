@@ -121,6 +121,23 @@ fn parse_ui_zoom(value: &serde_json::Value) -> Option<u32> {
     scalar_to_string(value)?.trim().parse::<u32>().ok()
 }
 
+/// Initial view for a newly opened Markdown buffer in the Editor workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MarkdownDefaultView {
+    #[default]
+    Preview,
+    Source,
+}
+
+impl MarkdownDefaultView {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Source => "source",
+        }
+    }
+}
+
 /// What Cmd+C copies from the selected Graph row (`graph_copy_target`;
 /// ADR-0170). Default [`CopyTarget::Hash`] — every commit has a hash, but not
 /// every row carries a branch.
@@ -238,6 +255,19 @@ impl Settings {
             Some("icon_only") => Some(ToolbarDisplay::IconOnly),
             Some("icon_and_text") => Some(ToolbarDisplay::IconAndText),
             _ => None,
+        }
+    }
+
+    /// Markdown opening mode (`"preview"` / `"source"`). Missing or invalid
+    /// values use Preview; changing this never changes an already-open buffer.
+    pub fn editor_markdown_default_view(&self) -> MarkdownDefaultView {
+        match self
+            .raw
+            .get("editor_markdown_default_view")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("source") => MarkdownDefaultView::Source,
+            _ => MarkdownDefaultView::Preview,
         }
     }
 
@@ -632,6 +662,45 @@ mod tests {
         assert_eq!(legacy.ui_zoom_permille(), Some(1250));
         let saved = serde_json::to_value(&legacy).expect("serialize");
         assert_eq!(saved["future"]["preserve"], true);
+    }
+
+    #[test]
+    fn editor_markdown_default_view_defaults_to_preview() {
+        assert_eq!(
+            Settings::default().editor_markdown_default_view(),
+            MarkdownDefaultView::Preview
+        );
+        for value in [
+            r#""invalid""#,
+            r#""""#,
+            r#""SOURCE""#,
+            "true",
+            "42",
+            "null",
+            "[]",
+            "{}",
+        ] {
+            let settings = parse(&format!(r#"{{"editor_markdown_default_view":{value}}}"#));
+            assert_eq!(
+                settings.editor_markdown_default_view(),
+                MarkdownDefaultView::Preview,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn editor_markdown_default_view_round_trips_flat_strings() {
+        for mode in [MarkdownDefaultView::Preview, MarkdownDefaultView::Source] {
+            let mut settings = parse(r#"{"future":{"preserve":true},"ui_zoom":"1250"}"#);
+            settings.set_str("editor_markdown_default_view", mode.as_str());
+            let serialized = serde_json::to_value(&settings).unwrap();
+            assert_eq!(serialized["editor_markdown_default_view"], mode.as_str());
+            assert_eq!(serialized["future"]["preserve"], true);
+            let reloaded: Settings = serde_json::from_value(serialized).unwrap();
+            assert_eq!(reloaded.editor_markdown_default_view(), mode);
+            assert_eq!(reloaded.ui_zoom_permille(), Some(1250));
+        }
     }
 
     #[test]

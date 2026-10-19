@@ -2,8 +2,8 @@
 //!
 //! The Windows binary embeds all of its assets (the icon allowlist + fonts are
 //! `include_bytes!`-compiled in), so the distributable is simply `kagi.exe`
-//! (plus `LICENSE`) zipped up — there is no asset directory to ship alongside
-//! it. Zipping is delegated to PowerShell's `Compress-Archive` so xtask stays
+//! (plus `LICENSE` and `THIRD-PARTY-NOTICES.txt`) zipped up — no asset directory.
+//! Zipping is delegated to PowerShell's `Compress-Archive` so xtask stays
 //! dependency-free; this command is meant to run on the `windows-latest` CI
 //! runner (x86_64).
 
@@ -35,7 +35,7 @@ fn resolve_bin(root: &Path, override_path: Option<&str>) -> Result<PathBuf, Stri
     Ok(p)
 }
 
-/// `bundle-windows [--bin <path>]`: stage `kagi.exe` (+ `LICENSE`) and zip it
+/// `bundle-windows [--bin <path>]`: stage `kagi.exe` and required legal notices
 /// into `target/dist/kagi-<version>-x86_64-windows.zip`.
 pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
     let version = util::kagi_version(root)?;
@@ -48,10 +48,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
     std::fs::create_dir_all(&stage).map_err(|e| format!("mkdir {}: {e}", stage.display()))?;
 
     std::fs::copy(&bin, stage.join(BIN_NAME)).map_err(|e| format!("copy bin: {e}"))?;
-    let license = root.join("LICENSE");
-    if license.exists() {
-        std::fs::copy(&license, stage.join("LICENSE")).map_err(|e| format!("copy license: {e}"))?;
-    }
+    util::copy_distribution_notices(root, &stage)?;
 
     let zip = dist.join(format!("{stem}.zip"));
     if zip.exists() {

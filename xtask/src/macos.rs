@@ -117,6 +117,7 @@ pub fn bundle(root: &Path) -> Result<(), String> {
     // Contents/Resources/AppIcon.icns
     std::fs::copy(&icns, resources_dir.join("AppIcon.icns"))
         .map_err(|e| format!("copy icns: {e}"))?;
+    util::copy_distribution_notices(root, &resources_dir)?;
     // PkgInfo (optional but conventional)
     std::fs::write(app.join("Contents/PkgInfo"), "APPL????")
         .map_err(|e| format!("write PkgInfo: {e}"))?;

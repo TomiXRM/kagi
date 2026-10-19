@@ -709,6 +709,8 @@ impl Render for KagiApp {
         // Protect document keyboard ownership even with tree/root focus. A
         // pending file classification may still resolve to a signature-only PDF;
         // do not admit Git Undo/Redo before its content type is known.
+        // Size-limit placeholders remain read-only even when classification
+        // stops before a PDF document can be constructed.
         let editor_context = self
             .ui()
             .editor_workspace
@@ -721,7 +723,8 @@ impl Render for KagiApp {
                 if editor.file_loading && editor.editor.is_none() {
                     Some("EditorLoading")
                 } else {
-                    editor.pdf_surface_visible().then_some("EditorPdf")
+                    (editor.pdf_surface_visible() || editor.content_too_large)
+                        .then_some("EditorReadOnly")
                 }
             });
         let root = div()

@@ -488,6 +488,10 @@ then send Cmd+Z / Cmd+Shift+Z / Cmd+S while the classification is pending:
 no Git modal or save request may appear. Release the result and require the
 real document's page count. Without the `EditorLoading` root context, Cmd+Z
 opens Git Undo and this scenario fails.
+Also open a real PDF over the 10 MiB read limit with both Git Undo and Redo
+available. After loading settles to the size-limit placeholder, the same keys
+must not open a Git modal or emit Save; HEAD and the document bytes stay intact.
+This case has no parsed PDF object and must retain `EditorReadOnly` ownership.
 The same scenario renames active and cached dirty text buffers to `.pdf` through
 the production Rename confirmation, then sends Cmd+S and compares the actual
 new-path bytes with the retained draft. A filename-only PDF presentation check

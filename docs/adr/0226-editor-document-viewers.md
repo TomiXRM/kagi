@@ -79,6 +79,17 @@ PDF constructs and fonts remain renderer limitations.
   the top; failures release any retained bitmap and show the existing error.
   The request identity remains the only admission rule for completed rasters;
   completion does not restore an older scroll position (#1678).
+- Give the PDF body its own localized, tabbable focus target and the existing
+  theme focus ring. Within `KagiPdfBody`, arrows scroll both axes, Page Up/Down
+  and Space/Shift+Space scroll a viewport with overlap, and Home/End or
+  Cmd+Up/Down reach the current page's boundaries. Clamp and consume these
+  actions at the bounds: reading never selects another file or changes pages.
+  Reuse the page's scroll handle without changing zoom or raster identity.
+  File Tree and toolbar keep their own key behavior; `EditorReadOnly` remains
+  the ancestor context. Release focus only when the PDF body owns it and its
+  surface is hidden or reclassified. Reuse the workspace's post-paint focus
+  membership guard when closing Editor removes the owner altogether; never
+  reclaim focus from another pane or modal (#1680).
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.

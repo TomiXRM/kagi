@@ -615,7 +615,9 @@ pub(super) fn render_preview(
             .track_scroll(&pdf.scroll)
             .p_4(),
         &pdf.scroll,
-        view.pdf_body_focus.as_ref().expect("visible PDF body focus"),
+        view.pdf_body_focus
+            .as_ref()
+            .expect("visible PDF body focus"),
     );
     if let Some(error) = pdf.error {
         body = body.child(status_message(error.message()));

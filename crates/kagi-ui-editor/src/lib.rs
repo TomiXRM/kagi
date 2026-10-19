@@ -32,10 +32,10 @@ mod pane_selectors;
 mod panes;
 mod pdf;
 mod pdf_keyboard;
-pub use pdf_keyboard::bind_keys;
 pub use pane_selectors::EditorPaneSelectors;
 #[cfg(feature = "gui-e2e")]
 pub use pdf::PdfProbe;
+pub use pdf_keyboard::bind_keys;
 #[cfg(feature = "gui-e2e")]
 mod tab_probes;
 #[cfg(feature = "gui-e2e")]

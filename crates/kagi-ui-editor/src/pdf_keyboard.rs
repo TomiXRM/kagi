@@ -1,12 +1,23 @@
 //! Keyboard ownership for the existing PDF viewport, not its toolbar or file tree.
 use crate::EditorWorkspaceView;
-use gpui::{actions, prelude::*, App, Div, FocusHandle, KeyBinding, ScrollHandle, Stateful, Window};
+use gpui::{
+    actions, prelude::*, App, Div, FocusHandle, KeyBinding, ScrollHandle, Stateful, Window,
+};
 use kagi_ui_core::{i18n::Msg, keyboard_nav::with_ring, theme::scaled_px};
 
 const CONTEXT: &str = "KagiPdfBody";
 actions!(
     kagi_pdf,
-    [PdfUp, PdfDown, PdfLeft, PdfRight, PdfPageUp, PdfPageDown, PdfTop, PdfBottom]
+    [
+        PdfUp,
+        PdfDown,
+        PdfLeft,
+        PdfRight,
+        PdfPageUp,
+        PdfPageDown,
+        PdfTop,
+        PdfBottom
+    ]
 );
 
 /// Register after the host's fallback file/graph navigation bindings.
@@ -36,10 +47,20 @@ impl EditorWorkspaceView {
     /// A modal, toolbar control or another pane keeps its independently owned focus.
     pub fn release_hidden_pdf_focus(&self, visible: bool, window: &mut Window, cx: &mut App) {
         if (!visible || !self.pdf_body_visible())
-            && self.pdf_body_focus.as_ref().is_some_and(|focus| focus.is_focused(window))
+            && self
+                .pdf_body_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
         {
             self.root_focus.focus(window, cx);
         }
+    }
+
+    /// Let the host's existing post-paint membership guard cover owner removal.
+    pub fn focused_pdf_body(&self, window: &Window) -> Option<&FocusHandle> {
+        self.pdf_body_focus
+            .as_ref()
+            .filter(|focus| focus.is_focused(window))
     }
 
     pub(super) fn prepare_pdf_focus(&mut self, window: &mut Window, cx: &mut App) {

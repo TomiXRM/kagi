@@ -1352,8 +1352,8 @@ pub struct KagiApp {
     pending_focus: Option<overlay_focus::PendingFocus>,
     /// Alert opener, kept separate from pending focus applied during rendering.
     alert_return_focus: Option<overlay_focus::AlertReturnFocus>,
-    /// A focus returned while a pane still animates closed; checked for
-    /// membership again on later frames when its control may have unmounted.
+    /// Focus whose control may unmount (an overlay return target or PDF body).
+    /// Checked again after paint; an unrelated new focus is never reclaimed.
     restored_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the

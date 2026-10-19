@@ -161,6 +161,24 @@ and error states are not separate chip states: existing buffer placeholders
 omit it, while blame read failures retain their existing presentation.
 No new read, settings owner, Git operation or modal is introduced.
 
+### Markdown mode action accessibility (2026-10-19, #1674)
+
+The dense Editor mode action reuses the adjacent Blame control's small compact
+ghost Button and NamedButton adapter. Its stable `ews-md-toggle` identity keeps
+keyboard focus across Source/Preview changes; the current EN/JA action caption
+also supplies the Button's accessible name. Enter, Space, pointer and AXPress
+share the existing `set_markdown_preview` path. It is an action with a changing
+verb, not an additional selected/pressed mode selector.
+The shared component owns rest, hover, pressed and focus-visible presentation.
+Existing loading/empty/error placeholders and historical snapshots omit it.
+The Input entity, unsaved draft, Undo/Redo, Save and per-tab mode remain owned
+by their existing paths; no new setting, Git write or dependency is introduced.
+The Markdown native scenario exercises traversal, repeated keyboard activation,
+native Press and draft identity before continuing its Undo/Redo/Save checks.
+Ordinary EN/Dark/100% and JA/Light/167% windows verify actual Tab/Shift-Tab,
+Enter/Space, AXButton names/AXPress, hover and narrow label fit. This is native
+AX API evidence, not a claim of VoiceOver speech verification.
+
 ## Consequences
 
 - ペイン内容の追加が「enum variant + render arm + open/close」の定型作業になり、

@@ -55,6 +55,7 @@ pub(super) fn verify(cx: &mut VisualTestAppContext) {
         let edited = cx.read(|cx| input.read(cx).value().to_string());
         editor.update(cx, |view, cx| view.set_markdown_preview(true, cx));
         paint(cx, window);
+        verify_mode_button(cx, &editor, window);
         assert_local_history_keys(cx, &app, &editor, window);
         assert!(cx.read(|cx| editor.read(cx).dirty));
         let draft_preview = preview_pixels(cx, &editor, window);
@@ -169,4 +170,59 @@ fn preview_pixels(
         pixels
     })
     .unwrap()
+}
+
+fn verify_mode_button(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    use crate::native_ax;
+    use kagi_ui_core::i18n::Msg;
+
+    let input = cx.read(|cx| editor.read(cx).editor.clone().unwrap());
+    let draft = cx.read(|cx| input.read(cx).value().to_string());
+    native_ax::activate(cx);
+    paint(cx, window);
+    native_ax::focus_named(cx, window, "Button", Msg::EditorWorkspacePreviewEdit.t());
+    keys(cx, window, "shift-tab");
+    keys(cx, window, "tab");
+    paint(cx, window);
+    let identity = format!("{:?}", gpui::ElementId::from("ews-md-toggle"));
+    assert_eq!(native_ax::focused(cx, window)["element_id"], identity);
+    for (key, previewing) in [
+        ("enter", false),
+        ("space", true),
+        ("space", false),
+        ("enter", true),
+    ] {
+        keys(cx, window, key);
+        paint(cx, window);
+        assert_eq!(cx.read(|cx| editor.read(cx).preview_markdown), previewing);
+        let focused = native_ax::focused(cx, window);
+        assert_eq!(focused["element_id"], identity, "mode changes retain focus");
+        assert_eq!(focused["aria"]["role"], "Button");
+        assert_eq!(
+            focused["aria"]["label"],
+            if previewing {
+                Msg::EditorWorkspacePreviewEdit.t()
+            } else {
+                Msg::EditorWorkspacePreviewShow.t()
+            }
+        );
+    }
+    for (name, previewing) in [
+        (Msg::EditorWorkspacePreviewEdit.t(), false),
+        (Msg::EditorWorkspacePreviewShow.t(), true),
+    ] {
+        assert!(native_ax::press(cx, window, name));
+        paint(cx, window);
+        assert_eq!(cx.read(|cx| editor.read(cx).preview_markdown), previewing);
+    }
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert!(view.dirty);
+        assert_eq!(view.editor.as_ref().unwrap().entity_id(), input.entity_id());
+        assert_eq!(input.read(cx).value().to_string(), draft);
+    });
 }

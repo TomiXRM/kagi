@@ -465,6 +465,20 @@ compile-time GUI-only. Tier B uses a disposable
 repository copy and a real Git read failure, restores it, then retries in the
 same pane; screenshots and native AX are separate from renderer-fed text.
 
+For #1674 use
+`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_snapshot_readonly,blame_toggle_a11y'`.
+The Markdown scenario traverses to the actual named mode Button, sends
+Shift-Tab/Tab and repeated Enter/Space, and delivers native Press in both
+directions while preserving the dirty Input entity and draft bytes. Existing
+Undo/Redo, Save and historical snapshot checks remain in place.
+Tier B: compare the same Markdown file in EN/Dark/100% and JA/Light/167% at
+940×660. Use real Tab/Shift-Tab, Enter/Space, pointer and AXPress; confirm that
+the action label changes without losing keyboard focus and inspect hover.
+Read the settled native AX tree, not the initially unpublished lazy tree:
+require one AXButton named Preview/Back to editor or プレビュー/編集に戻る
+with AXPress. The adjacent Blame control is a useful positive control.
+Record actual control bounds and screenshots; AX metadata is not VoiceOver speech.
+
 For ADR-0226 use
 `KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,graph_copy'`
 with KEEP_GOING, plus the neighboring `editor_,settings_` scenarios.

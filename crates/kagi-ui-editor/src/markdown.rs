@@ -187,12 +187,12 @@ pub fn render_mermaid_png(code: &str, dark: bool) -> Result<PathBuf, MermaidStat
 /// mode is on.
 pub fn render_markdown_preview(
     view: &EditorWorkspaceView,
+    segments: Vec<MdSegment>,
     _window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
     use gpui_component::ActiveTheme as _;
 
-    let content = view.content.clone().unwrap_or_default();
     let image_plugin = view.open_path.as_deref().map(|path| {
         kagi_ui_core::markdown::MarkdownImages::for_repo_file(view.repo_path.clone(), path)
     });
@@ -229,7 +229,7 @@ pub fn render_markdown_preview(
         // oversized vertical padding (user-reported). 1.5 keeps prose
         // readable while trimming the box.
         .line_height(gpui::relative(1.5));
-    for (ix, seg) in split_mermaid(&content).into_iter().enumerate() {
+    for (ix, seg) in segments.into_iter().enumerate() {
         match seg {
             MdSegment::Text(t) => {
                 // TextView's inner wrapper is `size_full()`, which sizes it

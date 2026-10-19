@@ -3866,26 +3866,24 @@ fn render_center_pane(
     );
     if is_md {
         let previewing = view.preview_markdown;
-        let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            this.set_markdown_preview(!previewing, cx);
-        });
+        let name: SharedString = if previewing {
+            Msg::EditorWorkspacePreviewEdit.t()
+        } else {
+            Msg::EditorWorkspacePreviewShow.t()
+        }
+        .into();
+        let button = Button::new("ews-md-toggle")
+            .ghost()
+            .small()
+            .compact()
+            .label(name.clone())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_markdown_preview(!previewing, cx);
+            }));
         chips = chips.child(
-            div()
-                .id("ews-md-toggle")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .cursor_pointer()
-                .text_xs()
-                .bg(rgb(theme().surface))
-                .text_color(rgb(theme().text_main))
-                .hover(|s| s.bg(rgb(theme().selected)))
-                .on_click(toggle)
-                .child(if previewing {
-                    Msg::EditorWorkspacePreviewEdit.t()
-                } else {
-                    Msg::EditorWorkspacePreviewShow.t()
-                }),
+            named_button::NamedButton(button)
+                .role(gpui::Role::Button)
+                .aria_label(name),
         );
     }
     pane = pane.child(chips);

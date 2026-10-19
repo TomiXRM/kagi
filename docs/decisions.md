@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-17
+> **Last updated:** 2026-10-19
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-19 | #1666: Editor placeholder explanations use secondary body text and bounded wrapping | Size-limit, binary and decoding explanations are required content, not disabled controls ([ADR-0125](adr/0125-apple-hig-themes.md)). Reuse `text_sub` without changing the palette. The existing centered helper constrains its text child to the pane, following the PDF status pattern: a real 940×660 / JA /167% window previously painted the size-limit sentence over the file tree. Preserve wording, file classification, selection and Git state. |
 | 2026-10-17 | #1633: single-reference destructive confirmation actions explicitly count one branch | #454 requires counted footer actions as well as named targets. Preserve the short heading/chip design from #994 and existing two-stage approval; add the single affected branch count to Reset, local branch deletion and force-with-lease labels in EN/JA, including armed labels. Real Apple Light/EN/100% and Apple Dark/JA/167% windows at 1000×700 keep all six footer states visible; arm then cancel leaves local and remote fixture refs unchanged. |
 | 2026-10-17 | #1633: shared plan warnings/blockers scroll as bounded sibling panels, or defer to an already-scrolling body | The explicit 200-note native case reached only 8 notes despite a contained card and pinned actions. Reuse the shell's viewport/compact ceiling; keep mandatory notes expanded and target panels independent. Structured note paths become plain content inside that same owner, eliminating nested scrolling. Test-only viewport measurements use `measure_leaf`, since an absolute child probe follows the content offset and can misdirect subsequent wheel input. No approval, execution, wording or palette change. |
 | 2026-10-16 | #1640: compact membership uses configured rem × current root rem, not fixed 1000px | Default 70rem, integer 40–160 in Appearance, flat-string persistence through the existing store and typed hot reads. Logical coordinates already account for OS scale. Live threshold/zoom changes retain the existing compact lifecycle and session/input owners; desktop-only stress fixtures preserve narrow geometry with an isolated supported 40rem setting where needed. Supersedes the fixed breakpoint in [ADR-0224](adr/0224-compact-layout.md). |

@@ -3957,18 +3957,26 @@ fn render_hunks_pane(
     pane.into_any_element()
 }
 
-/// A centered single-line placeholder message, reused by all three panes.
+/// A centered placeholder message that wraps within its pane.
 fn placeholder_text(msg: impl Into<SharedString>) -> impl IntoElement {
     div()
         .flex_1()
+        .min_w(px(0.))
         .h_full()
         .flex()
         .items_center()
         .justify_center()
         .p_3()
         .text_sm()
-        .text_color(rgb(theme().text_muted))
-        .child(msg.into())
+        .text_color(rgb(theme().text_sub))
+        .child(
+            div()
+                .w_full()
+                .min_w(px(0.))
+                .text_center()
+                .whitespace_normal()
+                .child(msg.into()),
+        )
 }
 
 // ── Local copies of tiny bin helpers (ADR-0121 C4) ────────────────────

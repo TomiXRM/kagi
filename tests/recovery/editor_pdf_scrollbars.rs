@@ -196,10 +196,23 @@ fn drag_endpoint(
     let bounds = initial.scroll.bounds();
     let from = thumb_center(initial, vertical);
     let before = assert_identity(cx, editor, initial);
+    let focus_owner = native_ax::focused(cx, window)["element_id"]
+        .as_str()
+        .expect("the focused PDF toolbar control must have an element identity")
+        .to_owned();
+    let assert_focus = |cx: &mut VisualTestAppContext| {
+        assert_eq!(
+            native_ax::focused(cx, window)["element_id"].as_str(),
+            Some(focus_owner.as_str()),
+            "{axis} scrollbar gesture must preserve the keyboard focus owner"
+        );
+    };
     cx.simulate_mouse_move(window, from, None, Modifiers::none());
     paint(cx, window);
+    assert_focus(cx);
     cx.simulate_mouse_down(window, from, MouseButton::Left, Modifiers::none());
     paint(cx, window);
+    assert_focus(cx);
     assert_eq!(
         initial.scroll.offset(),
         before,
@@ -245,6 +258,7 @@ fn drag_endpoint(
             Modifiers::none(),
         );
         paint(cx, window);
+        assert_focus(cx);
         let offset = assert_identity(cx, editor, initial);
         assert_eq!(
             if vertical { offset.x } else { offset.y },
@@ -264,6 +278,7 @@ fn drag_endpoint(
     std::thread::sleep(Duration::from_millis(20));
     cx.simulate_mouse_move(window, beyond, MouseButton::Left, Modifiers::none());
     paint(cx, window);
+    assert_focus(cx);
     assert_eq!(
         assert_identity(cx, editor, initial),
         reached,
@@ -271,6 +286,7 @@ fn drag_endpoint(
     );
     cx.simulate_mouse_up(window, beyond, MouseButton::Left, Modifiers::none());
     paint(cx, window);
+    assert_focus(cx);
     assert_eq!(
         assert_identity(cx, editor, initial),
         reached,

@@ -597,6 +597,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     owner: super::diff_selection::SelectionOwner,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
+    let presentation_only = header.presentation_only;
     super::diff_view::highlight::ensure_highlight(&view, cx);
     // ADR-0124: virtualize over shared paired indices. Unchanged row ownership
     // reuses both pairing and move detection across frames and embeddings.
@@ -772,7 +773,11 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     .min_h(px(0.)),
                     true,
                 ))
-                .map(|element| super::diff_selection::keyboard::Pane {
+                .map(|element| {
+                    if presentation_only {
+                        return element.into_any_element();
+                    }
+                    super::diff_selection::keyboard::Pane {
                     element,
                     key: sel_key,
                     focus_key,
@@ -794,6 +799,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                             })
                             .unwrap_or(base)
                     },
+                    }.into_any_element()
                 })
                 .into_any_element()
         })

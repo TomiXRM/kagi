@@ -79,6 +79,9 @@ impl KagiApp {
             let menu_state = super::window_menu::ViewMenuState {
                 sidebar_visible: this.sidebar.visible,
                 workspace_mode: (!this.home_in_front()).then(|| this.workspace_mode()),
+                editor_details_visible: this.workspace_mode()
+                    == super::workspace_mode::WorkspaceMode::Editor
+                    && this.ui().editor_workspace.as_ref().is_some_and(|view| view.read(cx).details_visible()),
                 ..super::window_menu::current_state(cx)
             };
             let checked = super::window_menu::checked(id, &menu_state);

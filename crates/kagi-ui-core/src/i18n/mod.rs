@@ -1707,6 +1707,10 @@ pub enum Msg {
     EditorWorkspaceBackToGraph,
     /// Editor Workspace header: the "Editor Workspace" title label.
     EditorWorkspaceTitle,
+    /// Editor's independent supplemental Diff/History pane.
+    EditorDetailsShow,
+    EditorDetailsHide,
+    EditorDetailsUnavailable,
 
     // ── Repository owner-trust prompt (ADR-0160 / issue #310) ────
     /// Trust-confirmation title: repo owned by another user (in-process
@@ -4421,6 +4425,12 @@ impl Msg {
             (Ja, EditorWorkspaceBackToGraph) => "\u{2190} グラフ",
             (En, EditorWorkspaceTitle) => "Editor Workspace",
             (Ja, EditorWorkspaceTitle) => "エディタワークスペース",
+            (En, EditorDetailsShow) => "Show Editor Diff/History",
+            (Ja, EditorDetailsShow) => "エディタの差分・変更履歴を表示",
+            (En, EditorDetailsHide) => "Hide Editor Diff/History",
+            (Ja, EditorDetailsHide) => "エディタの差分・変更履歴を非表示",
+            (En, EditorDetailsUnavailable) => "Open the Editor workspace first",
+            (Ja, EditorDetailsUnavailable) => "先にエディタワークスペースを開いてください",
 
             // ── Repository owner-trust prompt (ADR-0160) ──
             (En, TrustRepoTitle) => "This repository is owned by another user",
@@ -5269,6 +5279,7 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "view.togglePrSwimlane" => "PR Graph の表示切替",
         "view.toggleTerminal" => "ターミナルの表示切替",
         "view.toggleCommitDetails" => "commit 詳細の表示切替",
+        "view.toggleEditorDetails" => "エディタの差分・変更履歴の表示切替",
         "view.toggleDiffView" => "diff 表示の切替",
         "view.toggleEditorWorkspace" => "エディタワークスペースの切替",
         "view.togglePrMode" => "Pull Request モード",

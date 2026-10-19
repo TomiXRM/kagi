@@ -295,6 +295,9 @@ impl KagiApp {
                     return;
                 };
                 entity.update(cx, |v, cx| {
+                    if !v.show_tree || v.pane_widths_animating() {
+                        return;
+                    }
                     let bounds = v.pane_bounds(window);
                     let new_w = v
                         .pane_width_from_rendered(
@@ -315,6 +318,9 @@ impl KagiApp {
                     return;
                 };
                 entity.update(cx, |v, cx| {
+                    if !v.details_resizing_available() {
+                        return;
+                    }
                     let bounds = v.pane_bounds(window);
                     let new_w = v
                         .pane_width_from_rendered(

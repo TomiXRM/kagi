@@ -3,7 +3,7 @@
 
 use gpui::prelude::*;
 use gpui::{div, rgb, Context, SharedString};
-use gpui_component::Selectable as _;
+use gpui_component::{Disableable as _, Selectable as _};
 use kagi_ui_core::header_fit::{header_button, HeaderFit};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
@@ -26,6 +26,8 @@ pub(crate) struct DiffHeader {
     pub(crate) overlay: Option<std::rc::Rc<dyn super::row_overlay::RowOverlay>>,
     /// Retiring PR layout, used only for a same-source mode transition.
     pub(crate) previous_overlay: Option<std::rc::Rc<super::row_overlay::Projection>>,
+    /// Retain drawing during a pane close without exposing hidden keyboard controls.
+    pub(crate) presentation_only: bool,
 }
 
 impl DiffHeader {
@@ -49,12 +51,13 @@ impl DiffHeader {
             leading,
             trailing,
             mut labels,
+            presentation_only,
             ..
         } = self;
         // #809: without a fit (the editor / PR embeddings) the labels always
         // show.
         let compact = fit.as_ref().is_some_and(HeaderFit::compact);
-        let modes = mode_segments(fit.as_ref(), compact, &mut labels, cx);
+        let modes = mode_segments(fit.as_ref(), compact, presentation_only, &mut labels, cx);
         let stats_el = div()
             .text_sm()
             .text_color(rgb(theme().text_sub))
@@ -137,6 +140,7 @@ fn title_identity(title: SharedString) -> impl IntoElement {
 fn mode_segments<V: 'static>(
     fit: Option<&HeaderFit>,
     compact: bool,
+    presentation_only: bool,
     labels: &mut Vec<SharedString>,
     cx: &mut Context<V>,
 ) -> gpui::AnyElement {
@@ -160,8 +164,9 @@ fn mode_segments<V: 'static>(
         let button = header_button(id, label, icon, compact, |button| {
             button
                 .selected(selected)
+                .disabled(presentation_only)
                 .on_click(cx.listener(move |_this, _ev, _window, cx| {
-                    if super::theme::diff_split() != target {
+                    if !presentation_only && super::theme::diff_split() != target {
                         super::theme::set_diff_split(target);
                         klog!("diff-mode: {}", if target { "split" } else { "unified" });
                         cx.notify();

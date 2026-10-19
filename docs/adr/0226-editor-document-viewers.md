@@ -90,6 +90,13 @@ PDF constructs and fonts remain renderer limitations.
   surface is hidden or reclassified. Reuse the workspace's post-paint focus
   membership guard when closing Editor removes the owner altogether; never
   reclaim focus from another pane or modal (#1680).
+- Overlay the pinned shared both-axis `Scrollbar` on the PDF body's existing
+  scroll handle. Keep the body viewport, padding, focus target and zoom anchor
+  unchanged; do not add a second scroll owner or permanent gutters. The shared
+  component supplies overflow detection, theme colors, system visibility policy
+  and thumb dragging. Render the overlay only while a bitmap is displayed and
+  no error is shown, including the retained bitmap during same-page zoom.
+  Scrolling does not change the document, page, zoom or accepted raster (#1682).
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.

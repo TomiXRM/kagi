@@ -642,6 +642,10 @@ mod editor_pdf;
 mod editor_pdf_keyboard;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_pdf_scrollbars.rs"]
+mod editor_pdf_scrollbars;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_tabs.rs"]
 mod editor_tabs;
 
@@ -3454,6 +3458,10 @@ mod macos {
             (
                 "editor_pdf_keyboard",
                 Box::new(crate::editor_pdf_keyboard::scenario_editor_pdf_keyboard),
+            ),
+            (
+                "editor_pdf_scrollbar_drag",
+                Box::new(crate::editor_pdf_scrollbars::scenario_editor_pdf_scrollbar_drag),
             ),
             (
                 "main_diff_reading_context",

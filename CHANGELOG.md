@@ -19,6 +19,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Keep PDF error, loading and unsupported-diff explanations readable with the existing secondary body-text color; do not dim essential status like disabled controls. (#1665)
 - Preserve the PDF reading position when zooming in, out or resetting to 100%. Keep the current page visible during asynchronous rerasterization; navigating to another page still starts at its beginning. (#1678)
 - Keep PDF reading keys inside the focused document: arrows, Page Up/Down, Space and Home/End scroll the current page instead of selecting another file. Preserve File Tree and toolbar keyboard controls, and return focus safely when the PDF is hidden, replaced or closed. (#1680)
+- Show shared vertical and horizontal PDF scrollbars when content overflows, with the existing visibility policy and draggable position indicators. Preserve the viewport, reading position, keyboard controls and read-only document state. (#1682)
 - Keep Editor size-limit, binary and decoding explanations readable, and wrap placeholder messages inside their pane at narrow widths and enlarged UI sizes. (#1666)
 - Keep Markdown Preview Undo/Redo from opening unrelated Git history dialogs, while retaining keyboard Save for unsaved Markdown edits.
 - Render unsaved Markdown edits in Preview immediately, including images and Mermaid source, without an implicit save or loss of text Undo history when switching modes or tabs. (#1668)

@@ -109,6 +109,47 @@ fn assert_pixels(image: &gpui::RenderImage) {
     );
 }
 
+fn assert_zoom_reading_context(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    editor.update(cx, |view, cx| view.change_pdf_for_e2e(0, 2., false, cx));
+    let initial = wait_pdf(cx, editor, window);
+    let maximum = initial.scroll.max_offset();
+    initial
+        .scroll
+        .set_offset(gpui::point(-maximum.x / 2., -maximum.y / 2.));
+    paint(cx, window);
+    for action in [
+        Msg::EditorPdfZoomIn,
+        Msg::EditorPdfZoomOut,
+        Msg::EditorPdfResetZoom,
+    ] {
+        let before = cx.read(|cx| editor.read(cx).pdf_probe().unwrap());
+        let page_origin = before.scroll.bounds_for_item(0).unwrap().origin;
+        let document_point =
+            (before.scroll.bounds().center() - page_origin - before.scroll.offset()) / before.zoom;
+        assert!(native_ax::press(cx, window, action.t()));
+        let after = wait_pdf(cx, editor, window);
+        assert_eq!(after.page, before.page, "zoom must not change the page");
+        let page_origin = after.scroll.bounds_for_item(0).unwrap().origin;
+        let desired = after.scroll.bounds().center() - page_origin - document_point * after.zoom;
+        let maximum = after.scroll.max_offset();
+        let expected = gpui::point(
+            desired.x.clamp(-maximum.x, gpui::px(0.)),
+            desired.y.clamp(-maximum.y, gpui::px(0.)),
+        );
+        let actual = after.scroll.offset();
+        assert!(
+            (actual.x - expected.x).abs() < gpui::px(1.)
+                && (actual.y - expected.y).abs() < gpui::px(1.),
+            "same-page {} lost the viewport's document point: {actual:?}, expected {expected:?}",
+            action.t()
+        );
+    }
+}
+
 fn mount_compact(
     cx: &mut VisualTestAppContext,
     repo: &Path,
@@ -353,6 +394,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
             assert!(native_ax::press(cx, window, Msg::EditorPdfPrevious.t()));
             assert_eq!(wait_pdf(cx, &editor, window).page, 1);
             let unzoomed_scroll_height = second.scroll.max_offset().y;
+            assert_zoom_reading_context(cx, &editor, window);
             assert!(native_ax::press(cx, window, Msg::EditorPdfZoomIn.t()));
             let zoomed = wait_pdf(cx, &editor, window);
             assert_eq!(zoomed.zoom, 1.25);

@@ -72,6 +72,13 @@ PDF constructs and fonts remain renderer limitations.
 - Provide accessible previous/next-page and zoom controls using existing named
   Buttons, with localized loading, boundary and error states. Zoomed content is
   scrollable rather than immediately fitted back to the viewport.
+  Same-page zoom preserves the document point at the viewport center, with
+  ordinary layout clamping at the new scroll bounds. Retain the same page's
+  bitmap while its new raster is pending so a loading placeholder cannot
+  collapse scroll geometry. Page navigation clears the bitmap and starts at
+  the top; failures release any retained bitmap and show the existing error.
+  The request identity remains the only admission rule for completed rasters;
+  completion does not restore an older scroll position (#1678).
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.

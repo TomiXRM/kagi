@@ -404,13 +404,25 @@ impl EditorWorkspaceView {
         if page == pdf.page && zoom == pdf.zoom {
             return;
         }
+        if page != pdf.page {
+            pdf.image = None;
+            pdf.partial = false;
+            pdf.scroll.set_offset(gpui::point(px(0.), px(0.)));
+        } else if pdf.image.is_some() {
+            if let Some(page_bounds) = pdf.scroll.bounds_for_item(0) {
+                // Keep the viewport center on the same document point, excluding
+                // the unscaled page padding. Layout clamps to the new bounds.
+                let center = pdf.scroll.bounds().center() - page_bounds.origin;
+                let offset = center + (pdf.scroll.offset() - center) * (zoom / pdf.zoom);
+                pdf.scroll.set_offset(offset);
+            }
+            // Keep this page visible while its sharper raster is pending;
+            // a loading placeholder would collapse the scrollable geometry.
+        }
         pdf.page = page;
         pdf.zoom = zoom;
-        pdf.image = None;
         pdf.error = None;
-        pdf.partial = false;
         pdf.settled = false;
-        pdf.scroll.set_offset(gpui::point(px(0.), px(0.)));
         self.invalidate_pdf_request();
         self.request_pdf_render(cx);
         cx.notify();
@@ -465,7 +477,11 @@ impl EditorWorkspaceView {
                             pdf.image = Some(image);
                             pdf.partial = partial;
                         }
-                        Err(error) => pdf.error = Some(error),
+                        Err(error) => {
+                            pdf.image = None;
+                            pdf.partial = false;
+                            pdf.error = Some(error);
+                        }
                     }
                 }
                 // One executing job plus the latest active desired request. Never

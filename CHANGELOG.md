@@ -17,6 +17,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Preserve keyboard Save for active and cached unsaved text buffers renamed to `.pdf`; a filename change alone no longer reclassifies retained text as a read-only PDF. Keep keyboard navigation working when a later read replaces the focused text Input with a PDF surface.
 - Keep keyboard Save available while a text buffer refreshes in the background, and clear the current read's loading state when typing makes its result stale without clearing a newer request.
 - Keep PDF error, loading and unsupported-diff explanations readable with the existing secondary body-text color; do not dim essential status like disabled controls. (#1665)
+- Preserve the PDF reading position when zooming in, out or resetting to 100%. Keep the current page visible during asynchronous rerasterization; navigating to another page still starts at its beginning. (#1678)
 - Keep Editor size-limit, binary and decoding explanations readable, and wrap placeholder messages inside their pane at narrow widths and enlarged UI sizes. (#1666)
 - Keep Markdown Preview Undo/Redo from opening unrelated Git history dialogs, while retaining keyboard Save for unsaved Markdown edits.
 - Render unsaved Markdown edits in Preview immediately, including images and Mermaid source, without an implicit save or loss of text Undo history when switching modes or tabs. (#1668)

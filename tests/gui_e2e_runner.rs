@@ -638,6 +638,10 @@ mod editor_diff_extent_reload;
 mod editor_pdf;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_pdf_keyboard.rs"]
+mod editor_pdf_keyboard;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_tabs.rs"]
 mod editor_tabs;
 
@@ -3446,6 +3450,10 @@ mod macos {
             (
                 "editor_pdf_readonly",
                 Box::new(crate::editor_pdf::scenario_editor_pdf_readonly),
+            ),
+            (
+                "editor_pdf_keyboard",
+                Box::new(crate::editor_pdf_keyboard::scenario_editor_pdf_keyboard),
             ),
             (
                 "main_diff_reading_context",

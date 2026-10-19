@@ -357,6 +357,20 @@ impl Render for KagiApp {
         let main_issues = !self.home_in_front()
             && self.workspace_mode() == super::workspace_mode::WorkspaceMode::Issues;
         for (owner, ui) in &self.ui {
+            if let Some(editor) = &ui.editor_workspace {
+                let visible =
+                    Some(*owner) == active && center == Some(super::workspace::CenterPane::Editor);
+                editor.update(cx, |editor, cx| {
+                    editor.release_hidden_pdf_focus(visible, window, cx);
+                });
+                if let Some(focus) = editor.read(cx).focused_pdf_body(window) {
+                    // Closing the Editor removes it from `ui` before the next
+                    // render. The shared post-paint guard still retires its focus.
+                    if self.restored_focus.as_ref() != Some(focus) {
+                        self.restored_focus = Some(focus.clone());
+                    }
+                }
+            }
             if Some(*owner) != active || self.home_in_front() {
                 ui.inspector_model
                     .yield_focus(self.root_focus.as_ref(), window, cx);

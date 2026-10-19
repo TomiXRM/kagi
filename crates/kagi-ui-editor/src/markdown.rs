@@ -3,21 +3,40 @@
 //! Rendering strategy: GPUI has no webview, so the document is rendered
 //! natively with gpui-component's `TextView::markdown`. Mermaid code fences
 //! can't be rendered in pure Rust — when the `mmdc` CLI (mermaid-cli) is on
-//! PATH each ```mermaid block is rendered to a cached PNG (keyed by content
-//! hash + theme) and shown via `img()`; otherwise the block falls back to
+//! PATH each ```mermaid block is rendered to a cached PNG (keyed by content,
+//! theme and raster density) and shown via `img()`; otherwise the block falls back to
 //! plain code with an install hint. The document is split around mermaid
 //! fences and stacked as TextView / image segments in one scroll container.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use gpui::{img, prelude::*, px, rgb, AnyElement, Context, FontFeatures, SharedString, Window};
+use gpui::{
+    img, prelude::*, px, rgb, AnyElement, Context, FontFeatures, SharedString, StyledImage, Window,
+};
 use gpui_component::text::TextView;
 
 use crate::EditorWorkspaceView;
+use kagi_domain::mermaid::MermaidScale;
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::theme::theme;
+
+/// One frame's current draft and consistent diagram rendering inputs.
+pub struct Preview {
+    pub segments: Vec<MdSegment>,
+    pub dark: bool,
+    pub scale: MermaidScale,
+}
+
+impl Preview {
+    pub fn new(source: &str, window: &Window) -> Self {
+        Self {
+            segments: split_mermaid(source),
+            dark: theme().dark,
+            scale: MermaidScale::new(kagi_ui_core::theme::zoom(), window.scale_factor()),
+        }
+    }
+}
 
 /// Files the preview action is offered for.
 pub fn is_markdown_path(path: &Path) -> bool {
@@ -118,11 +137,11 @@ pub fn split_mermaid(src: &str) -> Vec<MdSegment> {
     out
 }
 
-/// State of one mermaid block's PNG, keyed by [`mermaid_key`].
+/// State of one diagram, keyed by [`MermaidScale::cache_key`].
 #[derive(Clone, Debug)]
 pub enum MermaidState {
     Rendering,
-    Ready(PathBuf),
+    Ready(MermaidRaster),
     /// `mmdc` missing (`needs_cli == true`) or render failure.
     Failed {
         needs_cli: bool,
@@ -130,12 +149,11 @@ pub enum MermaidState {
     },
 }
 
-/// Cache key: diagram source + theme (dark renders differently).
-pub fn mermaid_key(code: &str, dark: bool) -> u64 {
-    let mut h = DefaultHasher::new();
-    code.hash(&mut h);
-    dark.hash(&mut h);
-    h.finish()
+/// Pixel metadata is read once by the worker, never during UI rendering.
+#[derive(Clone, Debug)]
+pub struct MermaidRaster {
+    path: Arc<Path>,
+    pixels: (u32, u32),
 }
 
 fn mermaid_cache_dir() -> PathBuf {
@@ -144,25 +162,29 @@ fn mermaid_cache_dir() -> PathBuf {
 
 /// Render one mermaid block to a cached PNG. Blocking — run on the
 /// background executor.
-pub fn render_mermaid_png(code: &str, dark: bool) -> Result<PathBuf, MermaidState> {
-    let key = mermaid_key(code, dark);
+pub fn render_mermaid_png(
+    code: &str,
+    dark: bool,
+    scale: MermaidScale,
+) -> Result<MermaidRaster, MermaidState> {
+    let key = scale.cache_key(code, dark);
     let dir = mermaid_cache_dir();
     let out = dir.join(format!("{key:016x}.png"));
     if out.exists() {
-        return Ok(out);
+        return read_mermaid_raster(out);
     }
     let fail = |needs_cli: bool, detail: String| MermaidState::Failed { needs_cli, detail };
     std::fs::create_dir_all(&dir).map_err(|e| fail(false, e.to_string()))?;
     let input = dir.join(format!("{key:016x}.mmd"));
     std::fs::write(&input, code).map_err(|e| fail(false, e.to_string()))?;
     let mut cmd = std::process::Command::new("mmdc");
-    cmd.arg("-i").arg(&input).arg("-o").arg(&out).args([
-        "-b",
-        "transparent",
-        "--scale",
-        "2",
-        "--quiet",
-    ]);
+    cmd.arg("-i")
+        .arg(&input)
+        .arg("-o")
+        .arg(&out)
+        .args(["-b", "transparent", "--scale"])
+        .arg(scale.raster_scale().to_string())
+        .arg("--quiet");
     if dark {
         cmd.args(["-t", "dark"]);
     }
@@ -179,7 +201,18 @@ pub fn render_mermaid_png(code: &str, dark: bool) -> Result<PathBuf, MermaidStat
                 .unwrap_or_default();
         return Err(fail(false, detail));
     }
-    Ok(out)
+    read_mermaid_raster(out)
+}
+
+fn read_mermaid_raster(path: PathBuf) -> Result<MermaidRaster, MermaidState> {
+    let pixels = image::image_dimensions(&path).map_err(|error| MermaidState::Failed {
+        needs_cli: false,
+        detail: error.to_string(),
+    })?;
+    Ok(MermaidRaster {
+        path: path.into(),
+        pixels,
+    })
 }
 
 /// The preview body: stacked TextView / diagram segments in one scroll
@@ -187,8 +220,7 @@ pub fn render_mermaid_png(code: &str, dark: bool) -> Result<PathBuf, MermaidStat
 /// mode is on.
 pub fn render_markdown_preview(
     view: &EditorWorkspaceView,
-    segments: Vec<MdSegment>,
-    _window: &mut Window,
+    preview: Preview,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
     use gpui_component::ActiveTheme as _;
@@ -196,13 +228,11 @@ pub fn render_markdown_preview(
     let image_plugin = view.open_path.as_deref().map(|path| {
         kagi_ui_core::markdown::MarkdownImages::for_repo_file(view.repo_path.clone(), path)
     });
-    let dark = theme().dark;
-    // One text size for the whole preview, tracking kagi's zoom
-    // (`rem_size_px` = 16 × zoom). Out of the box the three size sources
-    // disagree: paragraphs inherit the window rem (16px×zoom), headings
-    // scale off a fixed 14px base, and code blocks use the gpui-component
-    // theme's fixed 13px mono size (user-reported mismatch). Pin body,
-    // heading base, and code blocks to the same zoom-tracking base.
+    let dark = preview.dark;
+    let scale = preview.scale;
+    // Keep all preview text tied to the current window rem. Otherwise paragraphs
+    // inherit rem, headings use a fixed 14px base, and code blocks use the
+    // component theme's fixed 13px mono size (user-reported mismatch).
     let base = px(kagi_ui_core::theme::rem_size_px() * 0.875);
     let tv_style = gpui_component::text::TextViewStyle {
         heading_base_font_size: base,
@@ -229,7 +259,7 @@ pub fn render_markdown_preview(
         // oversized vertical padding (user-reported). 1.5 keeps prose
         // readable while trimming the box.
         .line_height(gpui::relative(1.5));
-    for (ix, seg) in segments.into_iter().enumerate() {
+    for (ix, seg) in preview.segments.into_iter().enumerate() {
         match seg {
             MdSegment::Text(t) => {
                 // TextView's inner wrapper is `size_full()`, which sizes it
@@ -256,7 +286,7 @@ pub fn render_markdown_preview(
                 );
             }
             MdSegment::Mermaid(code) => {
-                col = col.child(render_mermaid_block(view, ix, &code, dark));
+                col = col.child(render_mermaid_block(view, ix, &code, dark, scale));
             }
         }
     }
@@ -430,16 +460,37 @@ fn render_mermaid_block(
     ix: usize,
     code: &str,
     dark: bool,
+    scale: MermaidScale,
 ) -> AnyElement {
-    let key = mermaid_key(code, dark);
+    let key = scale.cache_key(code, dark);
     match view.mermaid.get(&key) {
-        Some(MermaidState::Ready(path)) => gpui::div()
-            .id(("ews-mmd-img", ix))
-            .w_full()
-            .flex()
-            .justify_center()
-            .child(img(path.clone()).max_w_full())
-            .into_any_element(),
+        Some(MermaidState::Ready(raster)) => {
+            let (width, height) = scale.logical_size(raster.pixels);
+            gpui::div()
+                .id(("ews-mmd-img", ix))
+                .w_full()
+                .min_w(px(0.))
+                .flex()
+                .flex_shrink_0()
+                .justify_center()
+                .child(
+                    gpui::div()
+                        .relative()
+                        .w(px(width))
+                        .max_w_full()
+                        .min_w(px(0.))
+                        .aspect_ratio(width / height)
+                        .flex_shrink_0()
+                        .child(
+                            img(raster.path.clone())
+                                .absolute()
+                                .inset_0()
+                                .size_full()
+                                .object_fit(gpui::ObjectFit::Contain),
+                        ),
+                )
+                .into_any_element()
+        }
         Some(MermaidState::Failed { needs_cli, detail }) => {
             let hint = if *needs_cli {
                 SharedString::from(Msg::EditorWorkspaceMermaidNeedsCli.t())
@@ -533,13 +584,6 @@ mod tests {
     fn no_mermaid_is_single_text_segment() {
         let src = "# Just\n\ntext\n";
         assert_eq!(split_mermaid(src).len(), 1);
-    }
-
-    #[test]
-    fn key_differs_by_theme_and_content() {
-        assert_ne!(mermaid_key("a", true), mermaid_key("a", false));
-        assert_ne!(mermaid_key("a", true), mermaid_key("b", true));
-        assert_eq!(mermaid_key("a", true), mermaid_key("a", true));
     }
 
     #[test]

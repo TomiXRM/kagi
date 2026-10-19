@@ -1547,12 +1547,12 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         KeyBinding::new(
             "secondary-z",
             HistoryUndo,
-            Some("!Input && !Terminal && !EditorSnapshot && !EditorReadOnly && !EditorLoading"),
+            Some("!Input && !Terminal && !EditorSnapshot && !EditorReadOnly && !EditorLoading && !EditorMarkdownPreview"),
         ),
         KeyBinding::new(
             "secondary-shift-z",
             HistoryRedo,
-            Some("!Input && !Terminal && !EditorSnapshot && !EditorReadOnly && !EditorLoading"),
+            Some("!Input && !Terminal && !EditorSnapshot && !EditorReadOnly && !EditorLoading && !EditorMarkdownPreview"),
         ),
     ]);
     // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to

@@ -471,6 +471,10 @@ with KEEP_GOING, plus the neighboring `editor_,settings_` scenarios.
 Markdown coverage must open a fresh buffer for each default preference and keep
 existing manual modes and dirty text intact. Writer scenarios that edit Markdown
 must explicitly select Source: a hidden Input is not the default Preview surface.
+The default-view scenario also opens Preview with both Git Undo and Redo
+available, focuses the workspace root, and sends Cmd+Z / Cmd+Shift+Z: no Git
+modal or history-cursor move is allowed. Repeat with a dirty Source buffer
+switched to Preview, then require Cmd+S to persist the exact draft bytes.
 
 Pair PDF native coverage with `cargo test -p kagi-ui-editor`: exercise real
 parser/raster output, stale completion admission, bounded reads, page replacement,

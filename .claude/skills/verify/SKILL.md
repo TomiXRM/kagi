@@ -485,6 +485,23 @@ Mermaid needs both `mmdc` and its browser runtime. For an isolated proof, instal
 the matching `chrome-headless-shell` with the existing Puppeteer CLI under a
 temporary `PUPPETEER_CACHE_DIR` and pass that variable only to the owned app.
 
+For #1670 pair `cargo test -p kagi-domain text_safety` with the scoped
+`editor_markdown_default_view` native scenario. Domain coverage keeps the
+leading cause across LF/CRLF, trailing blanks and stack frames, distinguishes
+missing details and escapes display controls.
+Tier B starts with a unique, uncached Mermaid source and an empty dedicated
+`PUPPETEER_CACHE_DIR`: the real CLI's missing-browser cause must remain visible.
+Check EN/Apple Dark/100% and JA/Apple Light/167% at 940×660, scrolling the
+Preview to its final wrapped line without painting over neighboring panes.
+An owned PATH directory containing `mmdc` symlinked to `/usr/bin/false` exercises
+the empty-stderr fallback only; it is not a substitute for successful rendering.
+For genuine CLI absence, use an empty private `/.local/bin` PATH prefix plus
+system directories: a bare system PATH triggers startup login-shell restoration.
+Finally install the real matching browser into the dedicated cache and relaunch
+with the original PATH; require the actual diagram for the same source.
+Preserve source bytes, HEAD and staged path/OID/mode, then remove probe tools and
+the temporary browser cache after the owned apps exit.
+
 Pair PDF native coverage with `cargo test -p kagi-ui-editor`: exercise real
 parser/raster output, stale completion admission, bounded reads, page replacement,
 rotation and backing-scale-independent logical zoom. The Japanese fallback oracle

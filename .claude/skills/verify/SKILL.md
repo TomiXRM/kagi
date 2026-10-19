@@ -505,6 +505,10 @@ Tier B compares actual Markdown preference persistence, multipage PDF navigation
 zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
 PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather
 than index stat-cache bytes. PDFs remain read-only and have no diff presentation.
+For #1665 compare PDF error/status text in Catppuccin Mocha and Apple/Nagi
+Light/Dark, including EN/JA and narrow high-zoom wrapping. Use source fg/bg
+contrast (at least 4.5:1 for normal text), not antialiased edge pixels; keep
+disabled toolbar controls distinct from required explanations.
 
 `graph_copy_current_branch` checks current versus selected branch identity,
 unborn/detached HEAD, Unicode names and Input/Editor/Terminal/menu focus ownership.

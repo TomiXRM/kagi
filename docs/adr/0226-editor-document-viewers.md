@@ -82,6 +82,9 @@ PDF constructs and fonts remain renderer limitations.
 - Password-required, invalid-file and unsupported-encryption errors are distinct.
   Password entry is not part of this change; documents accepted with an empty
   password may open normally.
+  Error, loading and unsupported-diff explanations use the readable secondary
+  body role (`text_sub`), not a faint/disabled label role. Keep these essential
+  statuses legible without changing the theme palette or disabled controls (#1665).
 
 The renderer's standard-font substitutes do not provide universal Japanese
 fallback. Reuse Kagi's existing bundled Japanese-font owner where supported,

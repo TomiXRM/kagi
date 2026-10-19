@@ -320,7 +320,11 @@ impl KagiApp {
         );
         state.editor_details_visible = state.workspace_mode
             == Some(super::workspace_mode::WorkspaceMode::Editor)
-            && self.ui().editor_workspace.as_ref().is_some_and(|view| view.read(cx).details_visible());
+            && self
+                .ui()
+                .editor_workspace
+                .as_ref()
+                .is_some_and(|view| view.read(cx).details_visible());
         (state.find_input, state.find_sidebar) = self.find_menu_targets(window, cx);
         let handle = window.window_handle();
         let language = i18n::lang();

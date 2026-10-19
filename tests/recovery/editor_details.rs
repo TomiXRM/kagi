@@ -131,7 +131,17 @@ fn hidden(window: AnyWindowHandle) {
     }
 }
 
-fn focus_toggle(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+fn focus_toggle(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    // Enter navigation from the workspace, not from the code editor, where Tab indents.
+    cx.update_window(window, |_, window, cx| {
+        let root = editor.read(cx).root_focus.clone();
+        window.focus(&root, cx);
+    })
+    .unwrap();
     // Obtain the actual component's semantic label, not a duplicate localization oracle.
     let node = native_ax::node(cx, window, TOGGLE.into());
     assert_eq!(node["aria"]["role"], "Button");
@@ -297,7 +307,7 @@ pub fn scenario_editor_details_controls(cx: &mut VisualTestAppContext) {
                     "details disclosure increases document width even when the tree decompresses");
                     assert_eq!(cx.read(|cx| editor.read(cx).hunks_w), cached);
                     assert_eq!(cx.read(|cx| app.read(cx).inspector_visible), graph);
-                    focus_toggle(cx, window);
+                    focus_toggle(cx, &editor, window);
                     keys(cx, window, "enter");
                     draw(cx, window);
                     close(
@@ -310,13 +320,15 @@ pub fn scenario_editor_details_controls(cx: &mut VisualTestAppContext) {
                         before,
                         "restoration returns center geometry",
                     );
-                    focus_toggle(cx, window);
+                    focus_toggle(cx, &editor, window);
                     keys(cx, window, "space");
                     draw(cx, window);
                     hidden(window);
-                    // A hidden retained right selector must not participate in traversal.
+                    // Inspect the complete focus tree, including stops after the code editor,
+                    // without inserting indentation into that editor with repeated Tab keys.
                     for _ in 0..40 {
-                        keys(cx, window, "tab");
+                        cx.update_window(window, |_, window, cx| window.focus_next(cx))
+                            .unwrap();
                         draw(cx, window);
                         assert_no_right_focus(cx, &editor, window);
                     }

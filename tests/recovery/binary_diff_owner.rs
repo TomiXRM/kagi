@@ -44,6 +44,8 @@ fn panel_image_ref(
     path: &str,
     staged: bool,
 ) -> CommitPanelFileRef {
+    // Attaching a panel publishes an empty shell before its asynchronous status read.
+    cx.run_until_parked();
     cx.read(|cx| {
         let state = &kagi
             .read(cx)

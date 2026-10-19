@@ -778,28 +778,29 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                         return element.into_any_element();
                     }
                     super::diff_selection::keyboard::Pane {
-                    element,
-                    key: sel_key,
-                    focus_key,
-                    rows,
-                    scroll: selection_scroll,
-                    projection: selection_projection.clone(),
-                    items: selection_items.clone(),
-                    item_index: move |row| {
-                        let base = selection_projection
-                            .as_ref()
-                            .and_then(|p| super::diff_split::split_index_of(&p.rows, row))
-                            .unwrap_or(row);
-                        selection_items
-                            .as_ref()
-                            .and_then(|items| {
-                                items
-                                    .iter()
-                                    .position(|item| *item == row_overlay::Item::Row(base))
-                            })
-                            .unwrap_or(base)
-                    },
-                    }.into_any_element()
+                        element,
+                        key: sel_key,
+                        focus_key,
+                        rows,
+                        scroll: selection_scroll,
+                        projection: selection_projection.clone(),
+                        items: selection_items.clone(),
+                        item_index: move |row| {
+                            let base = selection_projection
+                                .as_ref()
+                                .and_then(|p| super::diff_split::split_index_of(&p.rows, row))
+                                .unwrap_or(row);
+                            selection_items
+                                .as_ref()
+                                .and_then(|items| {
+                                    items
+                                        .iter()
+                                        .position(|item| *item == row_overlay::Item::Row(base))
+                                })
+                                .unwrap_or(base)
+                        },
+                    }
+                    .into_any_element()
                 })
                 .into_any_element()
         })

@@ -90,8 +90,8 @@ impl EditorPaneSelectors for PaneSelectors {
             usize::from(view.right_tab == RightPaneTab::History)
         };
         // Keep closing labels at their real geometry without rebuilding a roving owner.
-        let list = (middle || view.details_visible())
-            .then(|| self.list(view, middle, selected, cx));
+        let list =
+            (middle || view.details_visible()).then(|| self.list(view, middle, selected, cx));
         let prefix = if middle {
             "ews-middle-tab"
         } else {
@@ -105,19 +105,23 @@ impl EditorPaneSelectors for PaneSelectors {
         } else {
             [Msg::EditorRightTabDiff.t(), Msg::EditorRightTabHistory.t()]
         };
-        let strip = div().id(if middle { "ews-middle-tabs" } else { "ews-right-tabs" });
+        let strip = div().id(if middle {
+            "ews-middle-tabs"
+        } else {
+            "ews-right-tabs"
+        });
         let mut strip = match &list {
             Some(list) => list.list(strip),
             None => strip,
         }
-            .flex()
-            .flex_row()
-            .items_center()
-            .flex_shrink_0()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .bg(rgb(theme::theme().panel));
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .bg(rgb(theme::theme().panel));
         for (slot, label) in labels.into_iter().enumerate() {
             let active = slot == selected;
             let chip = div()

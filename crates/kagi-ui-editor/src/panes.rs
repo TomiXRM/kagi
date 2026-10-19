@@ -73,7 +73,8 @@ impl EditorWorkspaceView {
             self.details_width = kagi_ui_core::theme::scaled_px(self.hunks_w)
                 * self.pane_width_fraction_with_details(self.pane_bounds(window).size.width, true);
         }
-        self.details_motion.sync(self.details_visible, now, kagi_ui_core::motion::instant());
+        self.details_motion
+            .sync(self.details_visible, now, kagi_ui_core::motion::instant());
         kagi_ui_core::motion::request_frame(window, self.details_motion.animating(now));
     }
 }
@@ -102,7 +103,11 @@ pub(crate) fn render_details_toggle(
     let button = NamedButton(button)
         .role(gpui::Role::Button)
         .aria_label(name.clone())
-        .aria_toggled(if view.details_visible { gpui::Toggled::True } else { gpui::Toggled::False })
+        .aria_toggled(if view.details_visible {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
         .hover_tooltip(("editor-details-toggle-help", 0usize), name)
         .into_any_element();
     #[cfg(feature = "gui-e2e")]
@@ -121,12 +126,19 @@ pub(crate) fn render_details(
         motion::{self, Anchor, Axis},
         theme,
     };
-    let sample = view.details_motion.sample(view.details_width, motion::now());
+    let sample = view
+        .details_motion
+        .sample(view.details_width, motion::now());
     if !sample.retain_content {
         return None;
     }
-    let width = if sample.done && view.details_visible { width } else { view.details_width };
+    let width = if sample.done && view.details_visible {
+        width
+    } else {
+        view.details_width
+    };
     let divider = div()
+        .id("ews-divider-hunks")
         .size_full()
         .bg(rgb(theme().panel))
         .flex()
@@ -137,7 +149,9 @@ pub(crate) fn render_details(
                 .hover(|style| style.bg(rgb(theme().ui_accent())))
                 .cursor_col_resize()
                 .on_drag(
-                    DividerDrag { kind: DividerKind::EditorHunks },
+                    DividerDrag {
+                        kind: DividerKind::EditorHunks,
+                    },
                     |_, _, _, cx| cx.new(|_| DividerGhost),
                 )
         });
@@ -173,7 +187,14 @@ pub(crate) fn render_details(
         let pane = pane.child(view.hooks.pane_selectors.measure("editor-details-pane"));
         pane
     });
-    Some(div().h_full().flex().flex_shrink_0().children([divider.into_any_element(), pane.into_any_element()]).into_any_element())
+    Some(
+        div()
+            .h_full()
+            .flex()
+            .flex_shrink_0()
+            .children([divider.into_any_element(), pane.into_any_element()])
+            .into_any_element(),
+    )
 }
 
 /// Bound untrusted stderr before sanitizing, then bound the escaped preview.

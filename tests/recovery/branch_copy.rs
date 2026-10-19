@@ -172,6 +172,20 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
     keys(cx, win, "cmd-t");
     cx.read(|cx| assert!(app.read(cx).home_in_front()));
     expect_unchanged(cx, win);
+    cx.read(|cx| {
+        assert!(matches!(
+            commands::command_state(app.read(cx), "branch.copyCurrentName"),
+            commands::CommandState::Disabled(_)
+        ));
+    });
+    cx.dispatch_action(win, commands::CopyCurrentBranchName);
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("clipboard sentinel"),
+        "an explicit Branch menu action must not copy from behind Home"
+    );
     keys(cx, win, "cmd-w");
 
     // The next owner has a symbolic branch but no commit/ref enumeration yet.

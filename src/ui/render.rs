@@ -718,7 +718,7 @@ impl Render for KagiApp {
             })
             .and_then(|editor| {
                 let editor = editor.read(cx);
-                if editor.file_loading {
+                if editor.file_loading && editor.editor.is_none() {
                     Some("EditorLoading")
                 } else {
                     editor.pdf_surface_visible().then_some("EditorPdf")

@@ -492,6 +492,15 @@ The same scenario renames active and cached dirty text buffers to `.pdf` through
 the production Rename confirmation, then sends Cmd+S and compares the actual
 new-path bytes with the retained draft. A filename-only PDF presentation check
 blocks that save; classify the retained buffer from its accepted content instead.
+After saving, let the watcher reclassify the retained text as a PDF and use
+Cmd+Shift+G without clicking another control. Graph must open: removing a focused
+Input must not strand global keyboard shortcuts on its obsolete focus handle.
+Hold a clean buffer's watcher read, edit its retained Input, and release the read:
+the discarded result must clear its own loading flag and Cmd+S must save the
+draft. Repeat with Save before the held read is released: the retained Input
+must remain writable, and the late result must not overwrite the saved content.
+The Home branch-copy case also dispatches the explicit menu action against the
+private test clipboard, not only its graph shortcut; Home must leave it unchanged.
 Tier B compares actual Markdown preference persistence, multipage PDF navigation,
 zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
 PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather

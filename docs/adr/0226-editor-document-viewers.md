@@ -63,13 +63,20 @@ PDF constructs and fonts remain renderer limitations.
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.
-  Before asynchronous classification finishes, `EditorLoading` also excludes
-  these repository-level bindings: an extensionless document may be a PDF.
+  During classification without an existing text Input, `EditorLoading` also
+  excludes these repository-level bindings: an extensionless document may be
+  a PDF. A retained text Input keeps keyboard Save during watcher refresh.
+  A current read discarded because typing made the buffer dirty clears its
+  own loading flag; a superseded read cannot clear a newer request's flag.
   This provisional keyboard context does not classify normal files as PDFs.
   Once loaded, the accepted content owns its classification, not the current
   filename suffix. Renaming an active or cached dirty text buffer to `.pdf`
   preserves its text Input and keyboard Save until a later accepted read
   classifies the on-disk file; rename must not strand unsaved edits.
+  Reclassification releases the obsolete text Input during Render, when its
+  focus can be returned to the workspace root. Only focus owned by that Input
+  is transferred; another pane or modal keeps its focus. Pending Input events
+  cannot dirty the newly accepted read-only PDF.
 - Working-tree PDF viewing is the scope. Do not add PDF diffs or historical PDF
   snapshot rendering to the existing diff/history pipelines.
 - Password-required, invalid-file and unsupported-encryption errors are distinct.

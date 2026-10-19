@@ -131,6 +131,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
     for cached in [false, true] {
         renamed_dirty_text_keeps_keyboard_save(cx, cached);
     }
+    dirty_watcher_read_keeps_keyboard_save(cx);
     for (lang, zoom) in [(Lang::En, 1.), (Lang::Ja, 1.), (Lang::Ja, 1.67)] {
         kagi_ui_core::theme::set_zoom(zoom);
         i18n::set_lang(lang);
@@ -561,7 +562,73 @@ fn renamed_dirty_text_keeps_keyboard_save(cx: &mut VisualTestAppContext, cached:
             "retained draft",
             "a retained text buffer must keep keyboard Save after rename (cached={cached})"
         );
+        editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+        wait_pdf(cx, &editor, window);
+        keys(cx, window, "cmd-shift-g");
+        cx.read(|cx| {
+            assert!(
+                app.read(cx).ui().editor_workspace.is_none(),
+                "reclassification must not strand keyboard focus on the removed Input"
+            );
+        });
         drop(input);
+        drop(editor);
+    }));
+    unmount(cx, app, window);
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+fn dirty_watcher_read_keeps_keyboard_save(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join(NOTE), "original text\n").unwrap();
+    let (app, window) = mount(cx, &repo);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.update(cx, |app, cx| app.open_editor_workspace(cx));
+        let editor = cx
+            .read(|cx| app.read(cx).ui().editor_workspace.clone())
+            .unwrap();
+        editor.update(cx, |view, cx| {
+            view.set_source(TreeSource::All, cx);
+            view.open_tab(NOTE.into(), cx);
+        });
+        wait_for(cx, &editor, window, |view| {
+            !view.file_loading && view.editor.is_some()
+        });
+        // Cover both a dirty result discarded before Save and Save while the
+        // older clean-buffer read is still pending. Neither may trap the draft.
+        for (save_while_pending, draft) in [(false, "first"), (true, "second")] {
+            let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+            let mut release = Some(release);
+            EditorWorkspaceView::hold_next_file_classification_for_e2e(hold);
+            editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+            paint(cx, window);
+            cx.read(|cx| assert!(editor.read(cx).file_loading));
+            let input = cx.read(|cx| editor.read(cx).editor.clone()).unwrap();
+            cx.update_window(window, |_, window, cx| {
+                input.read(cx).focus_handle(cx).focus(window, cx);
+            })
+            .unwrap();
+            keys(cx, window, "cmd-a");
+            cx.simulate_keystrokes(window, draft);
+            paint(cx, window);
+            cx.read(|cx| assert!(editor.read(cx).dirty));
+            if !save_while_pending {
+                release.take().unwrap().send(());
+                wait_for(cx, &editor, window, |view| !view.file_loading);
+            }
+            keys(cx, window, "cmd-s");
+            wait_for(cx, &editor, window, |view| !view.dirty);
+            assert_eq!(std::fs::read_to_string(repo.join(NOTE)).unwrap(), draft);
+            if let Some(release) = release {
+                release.send(());
+            }
+            wait_for(cx, &editor, window, |view| !view.file_loading);
+            cx.read(|cx| assert_eq!(editor.read(cx).content.as_deref(), Some(draft)));
+            drop(input);
+        }
         drop(editor);
     }));
     unmount(cx, app, window);

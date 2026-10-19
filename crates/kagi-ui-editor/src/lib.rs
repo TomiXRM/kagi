@@ -58,7 +58,7 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, rgb, uniform_list, AnyElement, Context, Entity, EventEmitter, MouseButton,
+    div, px, rgb, uniform_list, AnyElement, Context, Entity, EventEmitter, Focusable, MouseButton,
     ScrollStrategy, SharedString, UniformListScrollHandle, Window,
 };
 use gpui_component::button::{Button, ButtonVariants};
@@ -1328,20 +1328,21 @@ impl EditorWorkspaceView {
                 // File identity is independent of the tree source. A newer
                 // read/tab or an edit during a clean watcher read rejects this
                 // result; PDF rasters additionally have their own request guard.
-                if v.file_req != file_req
-                    || v.dirty
-                    || v.open_path.as_deref() != Some(path.as_path())
-                {
+                if v.file_req != file_req || v.open_path.as_deref() != Some(path.as_path()) {
                     return;
                 }
                 v.file_loading = false;
+                // This request still owns loading, even if typing made its
+                // contents stale. Never clear a newer request's loading state.
+                if v.dirty {
+                    cx.notify();
+                    return;
+                }
                 v.content_binary = is_binary;
                 v.content_image = image;
                 v.accept_pdf(pdf);
                 if v.is_pdf() {
-                    // A file replaced text on disk: never retain its editable Input.
-                    v.editor = None;
-                    v.pushed_sig = 0;
+                    // Render releases a retained Input with its owned focus.
                     v.diff = None;
                     v.history_diff = None;
                     v.history_diff_req.clear();
@@ -1780,6 +1781,15 @@ impl EditorWorkspaceView {
     /// `pushed_sig` and clones `content` when it actually needs to push,
     /// instead of cloning + rehashing the whole file on every render.
     fn sync_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_pdf() {
+            if let Some(input) = self.editor.take() {
+                if input.read(cx).focus_handle(cx).contains_focused(window, cx) {
+                    window.focus(&self.root_focus, cx);
+                }
+                self.pushed_sig = 0;
+            }
+            return;
+        }
         if self.content.is_none() {
             return;
         }
@@ -1796,7 +1806,11 @@ impl EditorWorkspaceView {
             // Detached subscriptions hold a weak owner; closing the workspace
             // makes their deferred callbacks harmless.
             cx.subscribe(&state, |this: &mut Self, state, event: &InputEvent, cx| {
-                if !matches!(event, InputEvent::Change) {
+                // A classified PDF retains the former Input only until Render
+                // can release its focus, not as an editable buffer.
+                if !matches!(event, InputEvent::Change)
+                    || (this.is_pdf() && this.editor.as_ref() == Some(&state))
+                {
                     return;
                 }
                 let current = state.read(cx).value();

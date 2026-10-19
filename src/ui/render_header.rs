@@ -207,6 +207,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ToggleSidebar, "view.toggleSidebar");
         let el = menu_act!(el, cmds::TogglePrSwimlane, "view.togglePrSwimlane");
         let el = menu_act!(el, cmds::ToggleCommitDetails, "view.toggleCommitDetails");
+        let el = menu_act!(el, cmds::ToggleEditorDetails, "view.toggleEditorDetails");
         let el = menu_act!(el, cmds::ToggleDiffView, "view.toggleDiffView");
         let el = menu_act!(
             el,

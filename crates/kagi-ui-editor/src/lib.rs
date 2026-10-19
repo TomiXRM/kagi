@@ -349,6 +349,11 @@ pub struct EditorWorkspaceView {
     pub tree_w: f32,
     /// Right hunks-pane width (drag-resizable, T-WS-EDITOR-004).
     pub hunks_w: f32,
+    /// Supplemental Diff/History visibility belongs to this Editor, not Graph.
+    details_visible: bool,
+    details_motion: motion::Reveal,
+    details_width: gpui::Pixels,
+    details_focus: Option<gpui::FocusHandle>,
     /// Collapsed directory rows, keyed by their index into `tree`. An accepted
     /// file-list replacement resets these indices to the source's default;
     /// superseded reads leave both the tree and its layout untouched.
@@ -829,6 +834,10 @@ impl EditorWorkspaceView {
             tree: Vec::new(),
             tree_w: TREE_PANE_DEFAULT_W,
             hunks_w: HUNKS_PANE_DEFAULT_W,
+            details_visible: true,
+            details_motion: Default::default(),
+            details_width: px(0.),
+            details_focus: None,
             collapsed: HashSet::new(),
             tree_layout: Default::default(),
             tree_motion: Default::default(),
@@ -2630,6 +2639,7 @@ impl Render for EditorWorkspaceView {
         self.sync_snapshot_text(cx);
         self.prepare_pdf_focus(window, cx);
         self.prepare_pdf_render(window, cx);
+        self.prepare_details(window, cx);
         self.hooks.pane_selectors.release_hidden(self, window, cx);
         if self.show_tree && !self.loading && self.error.is_none() {
             self.refresh_tree_layout();
@@ -2726,7 +2736,8 @@ fn render_editor_workspace(
                 .text_color(rgb(theme().text_sub))
                 .truncate()
                 .children(selected_path),
-        );
+        )
+        .child(panes::render_details_toggle(view, cx));
 
     // T-WS-EDITOR-004: drag-resizable, same shape as `divider1` in
     // `render_body.rs` — hover highlight + col-resize cursor + a
@@ -2773,47 +2784,6 @@ fn render_editor_workspace(
             let el = el.child(tab_probes::measure_divider(&view.tab_probes, true));
             el
         });
-    let hunks_divider = div()
-        .id("ews-divider-hunks")
-        .group("ews-divider-hunks")
-        .relative()
-        .w(theme::scaled_px(4.))
-        .flex_shrink_0()
-        .h_full()
-        .bg(rgb(theme().panel))
-        .flex()
-        .justify_center()
-        .child(
-            div()
-                .w(px(1.))
-                .h_full()
-                .flex_shrink_0()
-                .bg(rgb(theme().surface))
-                .group_hover("ews-divider-hunks", |s| s.bg(rgb(theme().ui_accent())))
-                .group_drag_over::<DividerDrag>("ews-divider-hunks", |s| {
-                    s.bg(rgb(theme().ui_accent()))
-                }),
-        )
-        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
-        .drag_over::<DividerDrag>(|style, drag, _, _| {
-            if drag.kind == DividerKind::EditorHunks {
-                style.bg(rgb(theme().ui_accent()))
-            } else {
-                style
-            }
-        })
-        .cursor_col_resize()
-        .on_drag(
-            DividerDrag {
-                kind: DividerKind::EditorHunks,
-            },
-            |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        )
-        .when(cfg!(feature = "gui-e2e"), |el| {
-            #[cfg(feature = "gui-e2e")]
-            let el = el.child(tab_probes::measure_divider(&view.tab_probes, false));
-            el
-        });
 
     // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
     // the resolver's `layout.left`) hides the tree pane AND its divider —
@@ -2836,12 +2806,17 @@ fn render_editor_workspace(
                 .flex_col()
                 .flex_1()
                 .min_w(px(0.))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el.child(view.hooks.pane_selectors.measure("editor-details-center"));
+                    el
+                })
                 .min_h(px(0.))
                 .child(render_center_pane(view, preview, cx))
                 .children(bottom_panel),
         )
-        .child(hunks_divider)
-        .child(render_hunks_pane(view, hunks_width, cx))
+        .children(panes::render_details(view, hunks_width, cx))
         .child(tabs::measure_pane_bounds(view, cx));
 
     div()
@@ -3949,6 +3924,9 @@ fn render_hunks_pane(
         .h_full()
         .flex()
         .flex_col()
+        .when(view.details_visible, |pane| {
+            pane.track_focus(view.details_focus.as_ref().expect("prepared details focus"))
+        })
         .bg(rgb(theme().panel));
 
     if view.open_path.is_some() {

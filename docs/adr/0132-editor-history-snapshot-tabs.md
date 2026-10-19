@@ -334,3 +334,37 @@ remain unchanged.
 The `editor_history_fetch_error` regression injects only the History transport
 task at `start_editor_history_load`; production dispatch and publication remain
 the real path. Its neighbors run with `editor_history,editor_`.
+
+## Amendment — optional Editor details (#1684)
+
+The right Diff/History pane is supplementary, not a mandatory part of the
+document canvas. `EditorWorkspaceView::details_visible` owns its visibility,
+initially shown; no setting, second document owner or Graph inspector state is
+introduced. The persistent header uses the shared named, compact ghost Button
+with a PanelRight icon, localized Show/Hide text and a native toggled state.
+The View menu and command palette expose `view.toggleEditorDetails`, with
+Cmd+Option+E on macOS. Admission requires the foreground Editor and no modal or
+conflict takeover; stale direct dispatch is rejected too. Graph's existing
+inspector command and shortcut remain independent.
+
+Hiding changes presentation only. Keep the open file, live Input and unsaved
+text, Markdown mode, image, PDF page/zoom/raster/scroll owner, selected History
+commit and Snapshot/Diff mode. Do not issue a new read, save, stage, reset a
+buffer or change the dirty close guard. A selected historical center view stays
+historical while its supplementary list is hidden.
+
+The existing `motion::Reveal` clips the retained right-pane content and its
+divider. Horizontal fitting interpolates the shown/hidden budgets without
+overwriting `hunks_w` or the File Tree's preferred width. Closing content is
+presentation-only: release its focus, remove selector traversal and reject
+History/header actions immediately, rather than leaving interactive controls
+behind a shrinking clip. Hidden History is excluded from root History stepping.
+Divider drags are rejected while their width budget is moving. Reversal uses
+the same motion owner; Reduce Motion settles immediately.
+
+Native regressions `editor_details_controls`, `editor_details_documents` and
+`editor_details_motion` cover real pointer/keyboard controls, compact/high-zoom
+fitting, retained document state and writes refused by existing guards, plus
+intermediate/reversed motion. The pre-fix control scenario fails because the
+visible restoration control is absent. Tab entry starts at the workspace root:
+Tab inside the code Input remains indentation, not a test traversal shortcut.

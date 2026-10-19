@@ -12,6 +12,8 @@ pub struct ViewMenuState {
     pub fullscreen: bool,
     pub input_focused: bool,
     pub workspace_mode: Option<super::workspace_mode::WorkspaceMode>,
+    /// Presentation snapshot derived from the active Editor entity.
+    pub editor_details_visible: bool,
     pub find_input: bool,
     pub find_sidebar: bool,
     pub undo_summary: Option<gpui::SharedString>,
@@ -24,6 +26,7 @@ impl Default for ViewMenuState {
             fullscreen: false,
             input_focused: false,
             workspace_mode: None,
+            editor_details_visible: false,
             find_input: false,
             find_sidebar: false,
             undo_summary: None,
@@ -99,6 +102,8 @@ pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
     let msg = match id {
         "view.toggleSidebar" if state.sidebar_visible => Msg::MenuHideSidebar,
         "view.toggleSidebar" => Msg::MenuShowSidebar,
+        "view.toggleEditorDetails" if state.editor_details_visible => Msg::EditorDetailsHide,
+        "view.toggleEditorDetails" => Msg::EditorDetailsShow,
         "view.fullScreen" if state.fullscreen => Msg::MenuExitFullScreen,
         "view.fullScreen" => Msg::MenuEnterFullScreen,
         "view.showGraph" => Msg::MenuWorkspaceGraph,
@@ -114,6 +119,10 @@ pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
 }
 
 pub fn checked(id: &str, state: &ViewMenuState) -> bool {
+    if id == "view.toggleEditorDetails" {
+        return state.workspace_mode == Some(super::workspace_mode::WorkspaceMode::Editor)
+            && state.editor_details_visible;
+    }
     use super::workspace_mode::WorkspaceMode;
     let mode = match id {
         "view.showGraph" => WorkspaceMode::Graph,
@@ -230,6 +239,7 @@ impl KagiApp {
             fullscreen,
             input_focused,
             workspace_mode: (!self.home_in_front()).then(|| self.workspace_mode()),
+            editor_details_visible: previous.editor_details_visible,
             find_input: false,
             find_sidebar: false,
             undo_summary: history
@@ -308,6 +318,13 @@ impl KagiApp {
             input,
             history_target,
         );
+        state.editor_details_visible = state.workspace_mode
+            == Some(super::workspace_mode::WorkspaceMode::Editor)
+            && self
+                .ui()
+                .editor_workspace
+                .as_ref()
+                .is_some_and(|view| view.read(cx).details_visible());
         (state.find_input, state.find_sidebar) = self.find_menu_targets(window, cx);
         let handle = window.window_handle();
         let language = i18n::lang();

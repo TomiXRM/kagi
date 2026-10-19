@@ -27,9 +27,30 @@ impl EditorWorkspaceView {
 
     /// Render-only compression shared with divider input's inverse conversion.
     pub fn pane_width_fraction(&self, available: gpui::Pixels) -> f32 {
+        let now = kagi_ui_core::motion::now();
+        let shown = self.pane_width_fraction_with_details(available, true);
+        let hidden = self.pane_width_fraction_with_details(available, false);
+        let fraction = if self.details_motion.target().is_some() {
+            self.details_motion.visible(now)
+        } else if self.details_visible() {
+            1.
+        } else {
+            0.
+        };
+        hidden + (shown - hidden) * fraction
+    }
+
+    pub(crate) fn pane_width_fraction_with_details(
+        &self,
+        available: gpui::Pixels,
+        details: bool,
+    ) -> f32 {
         let tree = if self.show_tree { self.tree_w } else { 0. };
-        let total = theme::scaled_px(tree + self.hunks_w);
-        let dividers = theme::scaled_px(if self.show_tree { 8. } else { 4. });
+        let hunks = if details { self.hunks_w } else { 0. };
+        let total = theme::scaled_px(tree + hunks);
+        let dividers = theme::scaled_px(
+            (if self.show_tree { 4. } else { 0. }) + if details { 4. } else { 0. },
+        );
         let budget = (available - theme::scaled_px(180.) - dividers).max(px(0.));
         if total > budget {
             f32::from(budget) / f32::from(total)
@@ -54,7 +75,12 @@ pub(crate) fn pane_widths(
     } else {
         px(0.)
     };
-    (tree, theme::scaled_px(view.hunks_w) * fraction)
+    let hunks = if view.details_visible() {
+        theme::scaled_px(view.hunks_w) * view.pane_width_fraction_with_details(available, true)
+    } else {
+        px(0.)
+    };
+    (tree, hunks)
 }
 
 struct TabIdentity {

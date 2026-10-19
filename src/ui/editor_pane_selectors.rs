@@ -42,6 +42,9 @@ impl PaneSelectors {
             move |slot, keyboard, window, cx| {
                 let focused = window.focused(cx);
                 let _ = entity.update(cx, |view, cx| {
+                    if !middle && !view.details_visible() {
+                        return;
+                    }
                     if middle {
                         view.set_middle_tab(
                             if slot == 0 {
@@ -86,7 +89,9 @@ impl EditorPaneSelectors for PaneSelectors {
         } else {
             usize::from(view.right_tab == RightPaneTab::History)
         };
-        let list = self.list(view, middle, selected, cx);
+        // Keep closing labels at their real geometry without rebuilding a roving owner.
+        let list =
+            (middle || view.details_visible()).then(|| self.list(view, middle, selected, cx));
         let prefix = if middle {
             "ews-middle-tab"
         } else {
@@ -100,20 +105,23 @@ impl EditorPaneSelectors for PaneSelectors {
         } else {
             [Msg::EditorRightTabDiff.t(), Msg::EditorRightTabHistory.t()]
         };
-        let mut strip = list
-            .list(div().id(if middle {
-                "ews-middle-tabs"
-            } else {
-                "ews-right-tabs"
-            }))
-            .flex()
-            .flex_row()
-            .items_center()
-            .flex_shrink_0()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .bg(rgb(theme::theme().panel));
+        let strip = div().id(if middle {
+            "ews-middle-tabs"
+        } else {
+            "ews-right-tabs"
+        });
+        let mut strip = match &list {
+            Some(list) => list.list(strip),
+            None => strip,
+        }
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .bg(rgb(theme::theme().panel));
         for (slot, label) in labels.into_iter().enumerate() {
             let active = slot == selected;
             let chip = div()
@@ -142,14 +150,17 @@ impl EditorPaneSelectors for PaneSelectors {
                     el.hover(|s| s.bg(rgb(theme::theme().surface)))
                 })
                 .child(label);
-            let cell = list.cell(slot, label, chip);
+            let cell = match &list {
+                Some(list) => list.cell(slot, label, chip),
+                None => chip.border_2().border_color(gpui::transparent_black()),
+            };
             strip = strip.child(segment_target(middle, slot, cell));
         }
         strip.into_any_element()
     }
 
     fn release_hidden(&self, view: &EditorWorkspaceView, window: &mut Window, cx: &mut App) {
-        if view.open_path.is_none() {
+        if view.open_path.is_none() || !view.details_visible() {
             self.right.sync(&[], cx);
         }
         if view.right_tab != RightPaneTab::History || view.selected_history_commit.is_none() {
@@ -159,6 +170,16 @@ impl EditorPaneSelectors for PaneSelectors {
             .release_closed(Some(&view.root_focus), window, cx);
         self.middle
             .release_closed(Some(&view.root_focus), window, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    fn measure(&self, id: &'static str) -> AnyElement {
+        super::e2e::measure_inside(id)
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    fn measure_toggle(&self, button: AnyElement) -> AnyElement {
+        super::e2e::measure_leaf("editor-details-toggle", button)
     }
 
     #[cfg(feature = "gui-e2e")]

@@ -89,6 +89,7 @@ actions!(
         ToggleSidebar,
         TogglePrSwimlane,
         ToggleCommitDetails,
+        ToggleEditorDetails,
         ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode.
         ToggleEditorWorkspace,
@@ -378,6 +379,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.togglePrSwimlane"),
             MenuNode::Command("view.toggleTerminal"),
             MenuNode::Command("view.toggleCommitDetails"),
+            MenuNode::Command("view.toggleEditorDetails"),
             MenuNode::Command("view.toggleDiffView"),
             MenuNode::Command("view.toggleEditorWorkspace"),
             MenuNode::Command("view.togglePrMode"),
@@ -638,6 +640,12 @@ pub const COMMANDS: &[Command] = &[
         id: "view.toggleCommitDetails",
         label: "Toggle Commit Details",
         keystroke: Some("secondary-alt-b"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.toggleEditorDetails",
+        label: "Toggle Editor Diff/History",
+        keystroke: Some("secondary-alt-e"),
         dangerous: false,
     },
     Command {
@@ -1066,6 +1074,19 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
                 Disabled(Msg::NoRepoOpen.t())
             }
         }
+        "view.toggleEditorDetails" => {
+            if !has_repo {
+                Disabled(Msg::NoRepoOpen.t())
+            } else if app.has_active_modal() {
+                Disabled(Msg::FinishDialogFirst.t())
+            } else if app.workspace_mode() == super::workspace_mode::WorkspaceMode::Editor
+                && !app.conflict_body_visible()
+            {
+                Enabled
+            } else {
+                Disabled(Msg::EditorDetailsUnavailable.t())
+            }
+        }
         "view.toggleDiffView" => {
             if diff_open && !app.home_in_front() {
                 Enabled
@@ -1139,6 +1160,8 @@ fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> Menu
         // "Toggle Terminal".
         "view.toggleTerminal" => MenuItem::action(label, ToggleBottomPanel),
         "view.toggleCommitDetails" => MenuItem::action(label, ToggleCommitDetails),
+        "view.toggleEditorDetails" => MenuItem::action(label, ToggleEditorDetails)
+            .checked(super::window_menu::checked(id, state)),
         "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
         "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace)
             .checked(super::window_menu::checked(id, state)),
@@ -1683,6 +1706,7 @@ pub fn register_keybindings(cx: &mut App) {
         "view.toggleSidebar" => ToggleSidebar,
         "view.togglePrSwimlane" => TogglePrSwimlane,
         "view.toggleCommitDetails" => ToggleCommitDetails,
+        "view.toggleEditorDetails" => ToggleEditorDetails,
         "view.toggleDiffView" => ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode (Cmd-Shift-E on
         // macOS / Ctrl-Shift-E elsewhere) — verified free of collisions
@@ -2217,6 +2241,13 @@ impl KagiApp {
             "view.toggleCommitDetails" => {
                 self.inspector_visible = !self.inspector_visible;
                 klog!("menu: inspector_visible={}", self.inspector_visible);
+            }
+            "view.toggleEditorDetails"
+                if matches!(command_state(self, id), CommandState::Enabled) =>
+            {
+                if let Some(editor) = self.ui().editor_workspace.clone() {
+                    editor.update(cx, |view, cx| view.toggle_details(window, cx));
+                }
             }
             "view.toggleDiffView" => {
                 if self.ui().main_diff.is_some() {

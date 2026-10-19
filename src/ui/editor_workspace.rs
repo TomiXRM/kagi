@@ -67,7 +67,10 @@ fn editor_hooks(owner: crate::app::SessionId) -> EditorHooks {
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
-                DiffHeader::default(),
+                DiffHeader {
+                    presentation_only: !view.details_visible(),
+                    ..DiffHeader::default()
+                },
                 view.diff_scroll.clone(),
                 &view.diff_layout,
                 None,
@@ -696,7 +699,7 @@ impl KagiApp {
     ) {
         if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| {
-                if v.right_tab == RightPaneTab::History {
+                if v.details_visible() && v.right_tab == RightPaneTab::History {
                     v.step_history_selection(delta, window, cx);
                 } else {
                     v.step_selection(delta, cx);

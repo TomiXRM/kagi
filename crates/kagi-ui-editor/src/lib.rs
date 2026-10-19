@@ -2545,6 +2545,17 @@ fn build_workspace_tree(files: &[WorkspaceFile]) -> Vec<TreeRow> {
 }
 
 impl EditorWorkspaceView {
+    /// The current Markdown preview, not history displayed over a retained buffer.
+    pub fn markdown_preview_visible(&self) -> bool {
+        self.preview_markdown
+            && self.content.is_some()
+            && self
+                .open_path
+                .as_deref()
+                .is_some_and(crate::markdown::is_markdown_path)
+            && !(self.right_tab == RightPaneTab::History && self.selected_history_commit.is_some())
+    }
+
     /// Toggle the markdown preview for the open buffer (context-menu
     /// "Preview Markdown" / center-pane chip).
     pub fn set_markdown_preview(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -3869,7 +3880,7 @@ fn render_center_pane(
         );
     }
     pane = pane.child(chips);
-    if is_md && view.preview_markdown {
+    if view.markdown_preview_visible() {
         return pane
             .child(crate::markdown::render_markdown_preview(view, window, cx))
             .into_any_element();

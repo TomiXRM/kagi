@@ -20,6 +20,9 @@ use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, git, unmount};
 use crate::pr_viewed::{paint, rev};
 
+#[path = "editor_markdown_keyboard.rs"]
+mod markdown_keyboard;
+
 const PATHS: [&str; 12] = [
     "src/a.rs",
     "tests/a.rs",
@@ -684,6 +687,7 @@ pub fn scenario_editor_markdown_default_view(cx: &mut VisualTestAppContext) {
     let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
     settings::write_setting("editor_markdown_default_view", None);
     settings::flush();
+    markdown_keyboard::verify(cx);
     let repo = build_fixture();
     let readme_disk = std::fs::read(repo.path().join("README.md")).unwrap();
     let (app, window) = crate::macos::mount(cx, repo.path());

@@ -43,6 +43,12 @@ repository-level Undo/Redo are excluded, but keyboard Save remains available for
 the retained dirty text buffer. Historical panes and Source keep their own
 existing context; Preview does not turn the editable buffer into a read-only PDF.
 
+Preview renders the current retained Input, including unsaved edits, rather than
+the loaded/saved `content` snapshot used for save-conflict checks. Each preview
+frame reads the Input once and shares one Markdown/Mermaid segment list between
+diagram preparation and body rendering. Mode/tab switches do not save or replace
+the Input and its Undo history; historical panes do not prepare the hidden draft.
+
 ### PDF
 
 Use the official `hayro` 0.8 Rust renderer, with its supported embedded base fonts

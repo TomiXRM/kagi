@@ -65,7 +65,11 @@ fn open_pdf(
 ) {
     editor.update(cx, |view, cx| view.set_source(TreeSource::All, cx));
     wait_for(cx, editor, window, |view| {
-        !view.loading && view.files.iter().any(|file| file.path == Path::new(PDF_PATH))
+        !view.loading
+            && view
+                .files
+                .iter()
+                .any(|file| file.path == Path::new(PDF_PATH))
     });
     let bounds = cx.read(|cx| {
         let view = editor.read(cx);
@@ -117,8 +121,18 @@ fn assert_identity(
         );
         let current = view.pdf_probe().expect("drag discarded the PDF");
         assert_eq!(
-            (current.page, current.page_count, current.zoom, current.request),
-            (initial.page, initial.page_count, initial.zoom, initial.request),
+            (
+                current.page,
+                current.page_count,
+                current.zoom,
+                current.request
+            ),
+            (
+                initial.page,
+                initial.page_count,
+                initial.zoom,
+                initial.request
+            ),
             "scrollbar drag must not change document/page/zoom/raster request"
         );
         assert!(current.settled && !current.in_flight && current.error.is_none());

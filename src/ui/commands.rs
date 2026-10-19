@@ -2242,7 +2242,9 @@ impl KagiApp {
                 self.inspector_visible = !self.inspector_visible;
                 klog!("menu: inspector_visible={}", self.inspector_visible);
             }
-            "view.toggleEditorDetails" => {
+            "view.toggleEditorDetails"
+                if matches!(command_state(self, id), CommandState::Enabled) =>
+            {
                 if let Some(editor) = self.ui().editor_workspace.clone() {
                     editor.update(cx, |view, cx| view.toggle_details(window, cx));
                 }

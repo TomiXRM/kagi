@@ -586,6 +586,10 @@ reads, sparse files, growth during reading, and index-error fallback refusal.
 Backend regressions cover internal/external/dangling symlinks and conflicted
 unstaged bases: ours, ancestor fallback, absence without a HEAD substitute, and
 exact byte-path matching even when distinct index paths are not valid UTF-8.
+The absent-base case must also report `ChangeKind::Added` and no old path in
+`unstaged_file_diff`, so PDF preparation preserves absence instead of showing a
+read error. Smoke the real main-diff worker against a stage-three-only conflict
+with a distinct HEAD PDF: old must be absent and new must use the working tree.
 Tier B compares the same outside-target symlink before/after in the ordinary
 app. For an actual add/add stash conflict, a backend smoke must identify the
 stage-two blob despite an absent HEAD path and distinct working-tree resolution.

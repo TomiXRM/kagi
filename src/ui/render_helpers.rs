@@ -667,6 +667,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     let title = view.title.clone();
     let stats = view.stats.clone();
     let images = view.images.clone();
+    let pdf_body = header.pdfs.as_ref().map(|viewers| viewers.render());
     // Already an `Arc` on the view — this is a refcount bump, not a copy.
     let rows = view.rows;
     let rows_for_list = rows.clone();
@@ -691,7 +692,9 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         // ── Header row (fixed height) ─────────────────────────────────────
         .child(header)
         // ── Diff body: full remaining space ──────────────────────────────
-        .child(if let Some(pair) = images {
+        .child(if let Some(body) = pdf_body {
+            body
+        } else if let Some(pair) = images {
             diff_state::image_panel(pair)
         } else {
             // The owned geometry handle implements the public ScrollbarHandle

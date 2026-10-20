@@ -183,36 +183,47 @@ pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, Gi
     patch_to_file_diff(repo, &diff, path)
 }
 
-/// The diff shown for a path with unresolved index conflicts: ours (stage 2)
-/// against the working tree. `Ok(None)` when the path is not conflicted.
-fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDiff>, GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+/// Outer `None` means no conflict for this path; `Some(None)` means a conflict
+/// without ours or ancestor. Such an added side must not fall back to HEAD.
+pub(crate) fn conflicted_base_oid(
+    index: &git2::Index,
+    path: &Path,
+) -> Result<Option<Option<git2::Oid>>, GitError> {
     if !index.has_conflicts() {
         return Ok(None);
     }
     let conflicts = index
         .conflicts()
         .map_err(|e| GitError::Other(format!("index.conflicts failed: {}", e.message())))?;
-    let entry = conflicts.flatten().find(|c| {
-        [&c.our, &c.their, &c.ancestor]
+    for conflict in conflicts {
+        let entry = conflict
+            .map_err(|e| GitError::Other(format!("index.conflicts failed: {}", e.message())))?;
+        if [&entry.our, &entry.their, &entry.ancestor]
             .into_iter()
             .flatten()
-            .any(|e| std::str::from_utf8(&e.path).ok() == path.to_str())
-    });
-    let Some(entry) = entry else {
+            .any(|entry| entry.path.as_slice() == path.as_os_str().as_encoded_bytes())
+        {
+            return Ok(Some(entry.our.or(entry.ancestor).map(|entry| entry.id)));
+        }
+    }
+    Ok(None)
+}
+
+/// The diff shown for a path with unresolved index conflicts: ours (stage 2)
+/// against the working tree. `Ok(None)` when the path is not conflicted.
+fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDiff>, GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    let Some(base_id) = conflicted_base_oid(&index, path)? else {
         return Ok(None);
     };
 
     // Ours (stage 2) is the user's side. A delete/modify conflict may lack it;
     // the ancestor is the next-best "before", and no entry at all means the
     // whole worktree file reads as added.
-    let base_bytes: Vec<u8> = entry
-        .our
-        .as_ref()
-        .or(entry.ancestor.as_ref())
-        .and_then(|e| repo.find_blob(e.id).ok())
+    let base_bytes: Vec<u8> = base_id
+        .and_then(|id| repo.find_blob(id).ok())
         .map(|b| b.content().to_vec())
         .unwrap_or_default();
 
@@ -225,9 +236,13 @@ fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDif
         .map_err(|e| GitError::Other(format!("Patch::from_buffers failed: {}", e.message())))?;
 
     Ok(Some(FileDiff {
-        old_path: Some(path.to_path_buf()),
+        old_path: base_id.map(|_| path.to_path_buf()),
         new_path: Some(path.to_path_buf()),
-        change: ChangeKind::Modified,
+        change: if base_id.is_some() {
+            ChangeKind::Modified
+        } else {
+            ChangeKind::Added
+        },
         hunks: patch_hunks(&patch)?,
         is_binary: false,
     }))

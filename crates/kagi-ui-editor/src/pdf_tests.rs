@@ -11,11 +11,7 @@ const PASSWORD: &[u8] = include_bytes!("../../../tests/fixtures/pdf/password.pdf
 const ROTATED: &[u8] = include_bytes!("../../../tests/fixtures/pdf/rotated.pdf");
 
 fn source(bytes: &[u8]) -> PdfSource {
-    let bytes = Arc::new(bytes.to_vec());
-    let document = Pdf::new(bytes.clone())
-        .map(Arc::new)
-        .map_err(PdfError::from);
-    PdfSource { bytes, document }
+    PdfSource::from_bytes(bytes.to_vec())
 }
 fn no_image(_: Vec<u8>) -> Option<Arc<gpui::Image>> {
     None
@@ -64,6 +60,12 @@ fn regular_file_byte_gate_remains_ten_mib_and_read_is_hard_bounded() {
     assert!(loaded.text.is_none());
     assert!(read_file(dir.path(), no_image, None).missing);
     assert!(read_file(&dir.path().join("missing.pdf"), no_image, None).missing);
+    let oversized = PdfSource::from_bytes(vec![0; MAX_EDITOR_BYTES as usize + 1]);
+    assert_eq!(oversized.document.err(), Some(PdfError::TooLarge));
+    assert!(
+        oversized.bytes.is_empty(),
+        "rejected source releases the oversized allocation"
+    );
 }
 
 #[test]
@@ -127,7 +129,27 @@ fn raster_dimensions_are_validated_before_hayro_u16_conversion() {
 }
 
 #[test]
-fn unchanged_reads_reuse_parsed_document_and_replacements_clamp_page() {
+fn viewport_pixel_budgets_render_every_page_without_exceeding_its_share() {
+    for (width, height) in [(612., 792.), (160., 8.), (4096., 4096.)] {
+        for budget in [1, 64, 1000, 1_000_000, MAX_PIXELS as usize] {
+            let (x_scale, y_scale) = raster_scales(width, height, 1., 2., budget).unwrap();
+            let (w, h) = (
+                (width * x_scale).floor() as usize,
+                (height * y_scale).floor() as usize,
+            );
+            assert!(w >= 1 && h >= 1);
+            assert!(w <= MAX_SIDE as usize && h <= MAX_SIDE as usize);
+            assert!(w * h <= budget);
+        }
+    }
+    assert_eq!(
+        raster_scales(612., 792., 1., 2., 0),
+        Err(PdfError::Dimensions)
+    );
+}
+
+#[test]
+fn unchanged_reads_reuse_parsed_document_and_replacements_use_new_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("document.pdf");
     std::fs::write(&path, MULTIPAGE).unwrap();
@@ -138,43 +160,11 @@ fn unchanged_reads_reuse_parsed_document_and_replacements_clamp_page() {
         old.document.as_ref().unwrap(),
         unchanged.document.as_ref().unwrap()
     ));
-    let original = PdfPreview::new(old.clone(), 99, 1.25);
-    assert_eq!(original.page, 2);
     std::fs::write(&path, JAPANESE_FALLBACK).unwrap();
     let replacement = read_file(&path, no_image, Some(old.clone())).pdf.unwrap();
     assert!(!Arc::ptr_eq(&old.bytes, &replacement.bytes));
-    let replaced = PdfPreview::new(replacement, original.page, original.zoom);
-    assert_eq!(replaced.page, 0);
-    assert_eq!(replaced.zoom, 1.25);
-    assert!(replaced.image.is_none());
-    assert!(!replaced.settled);
-}
-
-#[test]
-fn stale_completion_rejects_navigation_aba_switch_reopen_and_document_replacement() {
-    let source = source(MULTIPAGE);
-    let mut preview = PdfPreview::new(source.clone(), 0, 1.);
-    preview.request = 7;
-    let identity = RenderIdentity {
-        generation: 10,
-        path: "document.pdf".into(),
-        request: 7,
-        document: source.document.as_ref().unwrap().clone(),
-    };
-    assert!(identity.matches(10, Some(Path::new("document.pdf")), &preview));
-    // Same page and zoom after ABA must not admit the original page-1 job.
-    preview.page = 1;
-    preview.request = 8;
-    preview.page = 0;
-    preview.request = 9;
-    assert!(!identity.matches(10, Some(Path::new("document.pdf")), &preview));
-    preview.request = 7;
-    assert!(!identity.matches(10, Some(Path::new("other.pdf")), &preview));
-    assert!(!identity.matches(10, None, &preview));
-    assert!(!identity.matches(11, Some(Path::new("document.pdf")), &preview));
-    // A reparse of identical bytes is still a different document identity.
-    preview.source = self::source(MULTIPAGE);
-    assert!(!identity.matches(10, Some(Path::new("document.pdf")), &preview));
+    assert_eq!(replacement.dimensions.len(), 1);
+    assert_eq!(replacement.dimensions[0], (300., 300.));
 }
 
 #[test]

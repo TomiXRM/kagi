@@ -32,10 +32,13 @@ mod pane_selectors;
 mod panes;
 mod pdf;
 mod pdf_keyboard;
+mod pdf_viewer;
 pub use pane_selectors::EditorPaneSelectors;
 #[cfg(feature = "gui-e2e")]
 pub use pdf::PdfProbe;
+pub use pdf::PdfSource;
 pub use pdf_keyboard::bind_keys;
+pub use pdf_viewer::PdfViewer;
 #[cfg(feature = "gui-e2e")]
 mod tab_probes;
 #[cfg(feature = "gui-e2e")]
@@ -276,7 +279,7 @@ struct EditorBufferState {
     content_lang: &'static str,
     content_binary: bool,
     content_image: Option<std::sync::Arc<gpui::Image>>,
-    content_pdf: Option<pdf::PdfPreview>,
+    content_pdf: Option<Entity<PdfViewer>>,
     content_too_large: bool,
     content_missing: bool,
     content_undecodable: bool,
@@ -408,12 +411,9 @@ pub struct EditorWorkspaceView {
     /// W-IMG: binary bytes sniffed as a supported image (png/jpeg/webp/gif) —
     /// the center pane renders the image instead of the binary placeholder.
     pub content_image: Option<std::sync::Arc<gpui::Image>>,
-    content_pdf: Option<pdf::PdfPreview>,
+    content_pdf: Option<Entity<PdfViewer>>,
     /// Stable viewport focus, separate from the host root and PDF toolbar.
     pdf_body_focus: Option<gpui::FocusHandle>,
-    // One executing raster across tabs; newer requests coalesce in content_pdf.
-    pdf_render_in_flight: bool,
-    next_pdf_request: u64,
     /// The selected file's line count (or byte size) exceeds the guard
     /// consts. `content` is `None` when this is set.
     pub content_too_large: bool,
@@ -861,8 +861,6 @@ impl EditorWorkspaceView {
             content_image: None,
             content_pdf: None,
             pdf_body_focus: None,
-            pdf_render_in_flight: false,
-            next_pdf_request: 1,
             content_too_large: false,
             content_missing: false,
             content_undecodable: false,
@@ -1109,8 +1107,6 @@ impl EditorWorkspaceView {
             self.open_path = Some(path);
             self.load_selected(cx);
         }
-        self.invalidate_pdf_request();
-        self.request_pdf_render(cx);
         self.maybe_load_history(cx);
         self.maybe_load_blame(cx);
         cx.notify();
@@ -1318,7 +1314,10 @@ impl EditorWorkspaceView {
         let image_from_bytes = self.hooks.image_from_bytes;
         // Classification (including PDF signatures) precedes Git diff admission.
         // Retain the parsed document on an unchanged watcher read.
-        let previous_pdf = self.content_pdf.as_ref().map(|p| p.source.clone());
+        let previous_pdf = self
+            .content_pdf
+            .as_ref()
+            .map(|viewer| viewer.read(cx).source.clone());
         let task = cx.background_spawn(async move {
             pdf::read_file(&repo_path.join(&bg_path), image_from_bytes, previous_pdf)
         });
@@ -1356,7 +1355,7 @@ impl EditorWorkspaceView {
                 }
                 v.content_binary = is_binary;
                 v.content_image = image;
-                v.accept_pdf(pdf);
+                v.accept_pdf(pdf, cx);
                 if v.is_pdf() {
                     // Render releases a retained Input with its owned focus.
                     v.diff = None;
@@ -1380,7 +1379,6 @@ impl EditorWorkspaceView {
                 v.content_sig = text.as_ref().map(|t| buffer_sig(&path, t)).unwrap_or(0);
                 v.content = text;
                 v.maybe_load_blame(cx);
-                v.request_pdf_render(cx);
                 cx.notify();
             });
         })
@@ -2638,7 +2636,6 @@ impl Render for EditorWorkspaceView {
         self.sync_editor(window, cx);
         self.sync_snapshot_text(cx);
         self.prepare_pdf_focus(window, cx);
-        self.prepare_pdf_render(window, cx);
         self.prepare_details(window, cx);
         self.hooks.pane_selectors.release_hidden(self, window, cx);
         if self.show_tree && !self.loading && self.error.is_none() {
@@ -3767,8 +3764,8 @@ fn render_center_pane(
         return pane.into_any_element();
     }
 
-    if view.content_pdf.is_some() {
-        return pane.child(pdf::render_preview(view, cx)).into_any_element();
+    if let Some(viewer) = view.content_pdf.as_ref() {
+        return pane.child(viewer.clone()).into_any_element();
     }
 
     // W-IMG: image preview — binary bytes that sniffed as png/jpeg/webp/gif

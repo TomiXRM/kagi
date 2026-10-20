@@ -18,6 +18,7 @@ mod absorb;
 mod autolock;
 pub mod backups;
 pub mod conflict_ops;
+pub mod file_reads;
 mod policy;
 pub mod recording;
 mod reflog;

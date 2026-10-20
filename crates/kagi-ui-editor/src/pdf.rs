@@ -1,17 +1,16 @@
-//! Current working-tree PDF presentation, owned by the ordinary Editor buffer.
+//! Shared PDF source parsing and rasterization, used by Editor and commit previews.
 //! hayro is not a hostile-document sandbox: output caps do not bound decoded
-//! resources or synchronous interpreter time. No historical PDF renderer lives here.
+//! resources or synchronous interpreter time.
 use super::*;
-use gpui_component::Disableable as _;
 use hayro::hayro_interpret::{font::FontQuery, InterpreterSettings};
 use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
 use std::io::Read as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const MAX_SIDE: f64 = 4096.;
-const MAX_PIXELS: f64 = 16_000_000.;
-const MIN_ZOOM: f32 = 0.25;
-const MAX_ZOOM: f32 = 4.;
+pub(super) const MAX_SIDE: f64 = 4096.;
+pub(super) const MAX_PIXELS: f64 = 16_000_000.;
+pub(super) const MIN_ZOOM: f32 = 0.25;
+pub(super) const MAX_ZOOM: f32 = 4.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PdfError {
@@ -19,14 +18,16 @@ pub(super) enum PdfError {
     Password,
     Encryption,
     Dimensions,
+    TooLarge,
 }
 impl PdfError {
-    fn message(self) -> Msg {
+    pub(super) fn message(self) -> Msg {
         match self {
             Self::Invalid => Msg::EditorPdfInvalid,
             Self::Password => Msg::EditorPdfPassword,
             Self::Encryption => Msg::EditorPdfEncryption,
             Self::Dimensions => Msg::EditorPdfDimensions,
+            Self::TooLarge => Msg::EditorWorkspaceTooLarge,
         }
     }
 }
@@ -40,38 +41,45 @@ impl From<LoadPdfError> for PdfError {
     }
 }
 
+/// Immutable, background-prepared PDF input, including visible parse errors.
+///
+/// Call `from_bytes` on a background worker, never from a render/UI callback.
 #[derive(Clone)]
-pub(super) struct PdfSource {
-    bytes: Arc<Vec<u8>>,
-    document: Result<Arc<Pdf>, PdfError>,
+pub struct PdfSource {
+    pub(super) bytes: Arc<Vec<u8>>,
+    pub(super) document: Result<Arc<Pdf>, PdfError>,
+    pub(super) dimensions: Arc<[(f32, f32)]>,
 }
-pub(super) struct PdfPreview {
-    pub(super) source: PdfSource,
-    page: usize,
-    zoom: f32,
-    backing_scale: Option<f32>,
-    image: Option<Arc<gpui::RenderImage>>,
-    error: Option<PdfError>,
-    partial: bool,
-    request: u64,
-    settled: bool,
-    scroll: gpui::ScrollHandle,
-}
-impl PdfPreview {
-    fn new(source: PdfSource, page: usize, zoom: f32) -> Self {
-        let count = source.document.as_ref().map_or(0, |pdf| pdf.pages().len());
-        let error = source.document.as_ref().err().copied();
+impl PdfSource {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let too_large = bytes.len() as u64 > MAX_EDITOR_BYTES;
+        let bytes = Arc::new(if too_large { Vec::new() } else { bytes });
+        let document = if too_large {
+            Err(PdfError::TooLarge)
+        } else {
+            Pdf::new(bytes.clone())
+                .map_err(PdfError::from)
+                .and_then(|pdf| {
+                    if pdf.pages().is_empty() {
+                        Err(PdfError::Invalid)
+                    } else {
+                        Ok(Arc::new(pdf))
+                    }
+                })
+        };
+        let dimensions: Arc<[(f32, f32)]> = document.as_ref().map_or_else(
+            |_| Arc::from([]),
+            |pdf| {
+                pdf.pages()
+                    .iter()
+                    .map(|page| page.render_dimensions())
+                    .collect()
+            },
+        );
         Self {
-            source,
-            page: page.min(count.saturating_sub(1)),
-            zoom,
-            backing_scale: None,
-            image: None,
-            error,
-            partial: false,
-            request: 0,
-            settled: error.is_some(),
-            scroll: gpui::ScrollHandle::new(),
+            bytes,
+            document,
+            dimensions,
         }
     }
 }
@@ -136,17 +144,7 @@ pub(super) fn read_file(
             if let Some(previous) = previous.filter(|old| *old.bytes == bytes) {
                 previous
             } else {
-                let bytes = Arc::new(bytes);
-                let document = Pdf::new(bytes.clone())
-                    .map_err(PdfError::from)
-                    .and_then(|pdf| {
-                        if pdf.pages().is_empty() {
-                            Err(PdfError::Invalid)
-                        } else {
-                            Ok(Arc::new(pdf))
-                        }
-                    });
-                PdfSource { bytes, document }
+                PdfSource::from_bytes(bytes)
             },
         );
     } else if kagi_domain::checklist::content_looks_binary(
@@ -166,7 +164,12 @@ pub(super) fn read_file(
 
 // Validate before hayro's internal float -> u16 conversion. Logical page size
 // remains zoomed even when raster resolution is capped; scrolling is not contain-fit.
-fn raster_scale(width: f32, height: f32, zoom: f32, backing_scale: f32) -> Result<f32, PdfError> {
+pub(super) fn raster_scale(
+    width: f32,
+    height: f32,
+    zoom: f32,
+    backing_scale: f32,
+) -> Result<f32, PdfError> {
     if !width.is_finite()
         || !height.is_finite()
         || !zoom.is_finite()
@@ -201,16 +204,72 @@ fn raster_scale(width: f32, height: f32, zoom: f32, backing_scale: f32) -> Resul
     Ok(scale)
 }
 
+pub(super) fn raster_scales(
+    width: f32,
+    height: f32,
+    zoom: f32,
+    backing_scale: f32,
+    pixel_budget: usize,
+) -> Result<(f32, f32), PdfError> {
+    let maximum = raster_scale(width, height, zoom, backing_scale)?;
+    if pixel_budget == 0 {
+        return Err(PdfError::Dimensions);
+    }
+    let scale =
+        maximum.min((pixel_budget as f64 / (f64::from(width) * f64::from(height))).sqrt() as f32);
+    let mut raster_width = ((width * scale).floor() as usize).max(1);
+    let mut raster_height = ((height * scale).floor() as usize).max(1);
+    // Extreme aspect ratios can reach the one-pixel axis before exhausting the
+    // other axis. Independent pixel densities keep that page visible too; the
+    // image is still displayed at its unchanged logical page aspect ratio.
+    if raster_width * raster_height > pixel_budget {
+        if raster_width > raster_height {
+            raster_width = (pixel_budget / raster_height).max(1);
+        } else {
+            raster_height = (pixel_budget / raster_width).max(1);
+        }
+    }
+    let x_scale = (raster_width as f32 / width).next_up();
+    let y_scale = (raster_height as f32 / height).next_up();
+    let (actual_width, actual_height) = ((width * x_scale).floor(), (height * y_scale).floor());
+    if actual_width < 1.
+        || actual_height < 1.
+        || f64::from(actual_width) > MAX_SIDE
+        || f64::from(actual_height) > MAX_SIDE
+        || actual_width as usize * actual_height as usize > pixel_budget
+    {
+        return Err(PdfError::Dimensions);
+    }
+    Ok((x_scale, y_scale))
+}
+
+#[cfg(test)]
 fn render_page(
     document: Arc<Pdf>,
     page_index: usize,
     zoom: f32,
     backing_scale: f32,
 ) -> Result<(Arc<gpui::RenderImage>, bool), PdfError> {
+    render_page_with_budget(
+        document,
+        page_index,
+        zoom,
+        backing_scale,
+        MAX_PIXELS as usize,
+    )
+}
+
+pub(super) fn render_page_with_budget(
+    document: Arc<Pdf>,
+    page_index: usize,
+    zoom: f32,
+    backing_scale: f32,
+    pixel_budget: usize,
+) -> Result<(Arc<gpui::RenderImage>, bool), PdfError> {
     let pages = document.pages();
     let page = pages.get(page_index).ok_or(PdfError::Invalid)?;
     let (width, height) = page.render_dimensions();
-    let scale = raster_scale(width, height, zoom, backing_scale)?;
+    let (x_scale, y_scale) = raster_scales(width, height, zoom, backing_scale, pixel_budget)?;
     let mut settings = InterpreterSettings::default();
     let standard = settings.font_resolver.clone();
     settings.font_resolver = Arc::new(move |query| {
@@ -266,8 +325,8 @@ fn render_page(
         &settings,
         &Default::default(),
         &hayro::PixmapSettings {
-            x_scale: scale,
-            y_scale: scale,
+            x_scale,
+            y_scale,
             bg_color: hayro::vello_cpu::color::palette::css::WHITE,
         },
     );
@@ -282,27 +341,6 @@ fn render_page(
         Arc::new(gpui::RenderImage::new([image::Frame::new(buffer)])),
         partial.load(Ordering::Relaxed),
     ))
-}
-
-// Request identity is deliberately independent of page/zoom values: an ABA
-// navigation or leaving and returning to the same cached tab is still newer.
-struct RenderIdentity {
-    generation: u64,
-    path: PathBuf,
-    request: u64,
-    document: Arc<Pdf>,
-}
-impl RenderIdentity {
-    fn matches(&self, generation: u64, path: Option<&Path>, pdf: &PdfPreview) -> bool {
-        self.generation == generation
-            && path == Some(self.path.as_path())
-            && self.request == pdf.request
-            && pdf
-                .source
-                .document
-                .as_ref()
-                .is_ok_and(|doc| Arc::ptr_eq(doc, &self.document))
-    }
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -330,167 +368,42 @@ impl EditorWorkspaceView {
         self.is_pdf()
             && !(self.right_tab == RightPaneTab::History && self.selected_history_commit.is_some())
     }
-    pub(super) fn accept_pdf(&mut self, source: Option<PdfSource>) {
-        let Some(source) = source else {
-            self.content_pdf = None;
-            return;
-        };
-        if self
-            .content_pdf
+
+    pub(super) fn accept_pdf(&mut self, source: Option<PdfSource>, cx: &mut Context<Self>) {
+        match (self.content_pdf.as_ref(), source) {
+            (_, None) => self.content_pdf = None,
+            (Some(viewer), Some(source)) => {
+                viewer.update(cx, |viewer, cx| viewer.replace_source(source, cx));
+            }
+            (None, Some(source)) => {
+                self.content_pdf = Some(cx.new(|cx| PdfViewer::new(source, cx)));
+            }
+        }
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn pdf_probe(&self, cx: &gpui::App) -> Option<PdfProbe> {
+        self.content_pdf
             .as_ref()
-            .is_some_and(|old| Arc::ptr_eq(&old.source.bytes, &source.bytes))
-        {
-            return;
-        }
-        let (page, zoom) = self
-            .content_pdf
-            .as_ref()
-            .map_or((0, 1.), |old| (old.page, old.zoom));
-        self.content_pdf = Some(PdfPreview::new(source, page, zoom));
-        self.invalidate_pdf_request();
+            .map(|viewer| viewer.read(cx).pdf_probe())
     }
-    pub(super) fn invalidate_pdf_request(&mut self) {
-        if let Some(pdf) = self.content_pdf.as_mut() {
-            pdf.request = self.next_pdf_request;
-            self.next_pdf_request = self.next_pdf_request.wrapping_add(1);
-        }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn pdf_viewer_for_e2e(&self) -> Option<Entity<PdfViewer>> {
+        self.content_pdf.clone()
     }
-    pub(super) fn prepare_pdf_render(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if !self.pdf_surface_visible() {
-            return;
-        }
-        let Some(pdf) = self.content_pdf.as_mut() else {
-            return;
-        };
-        let backing_scale = window.scale_factor();
-        if pdf.backing_scale == Some(backing_scale) {
-            return;
-        }
-        pdf.backing_scale = Some(backing_scale);
-        if pdf.source.document.is_err() {
-            return;
-        }
-        // Raster pixels follow this window's display; page geometry and user
-        // zoom stay logical. Cached tabs also invalidate after a display move.
-        pdf.image = None;
-        pdf.error = None;
-        pdf.partial = false;
-        pdf.settled = false;
-        self.invalidate_pdf_request();
-        self.request_pdf_render(cx);
-    }
-    fn change_pdf(
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn change_pdf_for_e2e(
         &mut self,
-        page_delta: isize,
-        zoom_factor: f32,
+        delta: isize,
+        factor: f32,
         reset: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(pdf) = self.content_pdf.as_mut() else {
-            return;
-        };
-        let Ok(document) = &pdf.source.document else {
-            return;
-        };
-        let page = pdf
-            .page
-            .saturating_add_signed(page_delta)
-            .min(document.pages().len() - 1);
-        let zoom = if reset {
-            1.
-        } else {
-            (pdf.zoom * zoom_factor).clamp(MIN_ZOOM, MAX_ZOOM)
-        };
-        if page == pdf.page && zoom == pdf.zoom {
-            return;
+        if let Some(viewer) = &self.content_pdf {
+            viewer.update(cx, |viewer, cx| viewer.change_pdf(delta, factor, reset, cx));
         }
-        if page != pdf.page {
-            pdf.image = None;
-            pdf.partial = false;
-            pdf.scroll.set_offset(gpui::point(px(0.), px(0.)));
-        } else if pdf.image.is_some() {
-            if let Some(page_bounds) = pdf.scroll.bounds_for_item(0) {
-                // Keep the viewport center on the same document point, excluding
-                // the unscaled page padding. Layout clamps to the new bounds.
-                let center = pdf.scroll.bounds().center() - page_bounds.origin;
-                let offset = center + (pdf.scroll.offset() - center) * (zoom / pdf.zoom);
-                pdf.scroll.set_offset(offset);
-            }
-            // Keep this page visible while its sharper raster is pending;
-            // a loading placeholder would collapse the scrollable geometry.
-        }
-        pdf.page = page;
-        pdf.zoom = zoom;
-        pdf.error = None;
-        pdf.settled = false;
-        self.invalidate_pdf_request();
-        self.request_pdf_render(cx);
-        cx.notify();
-    }
-    pub(super) fn request_pdf_render(&mut self, cx: &mut Context<Self>) {
-        if self.pdf_render_in_flight {
-            return;
-        }
-        let Some(pdf) = self.content_pdf.as_ref().filter(|pdf| !pdf.settled) else {
-            return;
-        };
-        let Ok(document) = &pdf.source.document else {
-            return;
-        };
-        // Wait for the first visible render to supply the actual window scale.
-        let Some(backing_scale) = pdf.backing_scale else {
-            return;
-        };
-        let Some(path) = self.open_path.clone() else {
-            return;
-        };
-        let (document, request, page, zoom, generation) = (
-            document.clone(),
-            pdf.request,
-            pdf.page,
-            pdf.zoom,
-            self.buf_gen,
-        );
-        self.pdf_render_in_flight = true;
-        let identity = RenderIdentity {
-            generation,
-            path,
-            request,
-            document: document.clone(),
-        };
-        let task =
-            cx.background_spawn(async move { render_page(document, page, zoom, backing_scale) });
-        cx.spawn(async move |view, cx| {
-            let result = task.await;
-            let _ = view.update(cx, |view, cx| {
-                view.pdf_render_in_flight = false;
-                let generation = view.buf_gen;
-                let path = view.open_path.as_deref();
-                if let Some(pdf) = view
-                    .content_pdf
-                    .as_mut()
-                    .filter(|pdf| identity.matches(generation, path, pdf))
-                {
-                    pdf.settled = true;
-                    match result {
-                        Ok((image, partial)) => {
-                            pdf.image = Some(image);
-                            pdf.partial = partial;
-                        }
-                        Err(error) => {
-                            pdf.image = None;
-                            pdf.partial = false;
-                            pdf.error = Some(error);
-                        }
-                    }
-                }
-                // One executing job plus the latest active desired request. Never
-                // cancel a synchronous renderer and assume its CPU work stopped.
-                view.request_pdf_render(cx);
-                cx.notify();
-            });
-        })
-        .detach();
     }
 }
 
@@ -502,170 +415,6 @@ pub(super) fn status_message(message: Msg) -> impl IntoElement {
         .text_sm()
         .text_color(rgb(theme().text_sub))
         .child(div().w_full().min_w(px(0.)).child(message.t()))
-}
-
-pub(super) fn render_preview(
-    view: &EditorWorkspaceView,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> AnyElement {
-    let pdf = view
-        .content_pdf
-        .as_ref()
-        .expect("PDF presentation admission");
-    let count = pdf
-        .source
-        .document
-        .as_ref()
-        .map_or(0, |doc| doc.pages().len());
-    let mut toolbar = div()
-        .flex()
-        .items_center()
-        .flex_wrap()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .flex_shrink_0();
-    for (id, msg, icon, disabled, delta, factor, reset) in [
-        (
-            "ews-pdf-previous",
-            Msg::EditorPdfPrevious,
-            Some(gpui_component::IconName::ChevronLeft),
-            count == 0 || pdf.page == 0,
-            -1,
-            1.,
-            false,
-        ),
-        (
-            "ews-pdf-next",
-            Msg::EditorPdfNext,
-            Some(gpui_component::IconName::ChevronRight),
-            count == 0 || pdf.page + 1 >= count,
-            1,
-            1.,
-            false,
-        ),
-        (
-            "ews-pdf-zoom-out",
-            Msg::EditorPdfZoomOut,
-            Some(gpui_component::IconName::Minus),
-            count == 0 || pdf.zoom <= MIN_ZOOM,
-            0,
-            0.8,
-            false,
-        ),
-        (
-            "ews-pdf-zoom-in",
-            Msg::EditorPdfZoomIn,
-            Some(gpui_component::IconName::Plus),
-            count == 0 || pdf.zoom >= MAX_ZOOM,
-            0,
-            1.25,
-            false,
-        ),
-        (
-            "ews-pdf-reset",
-            Msg::EditorPdfResetZoom,
-            None,
-            count == 0 || pdf.zoom == 1.,
-            0,
-            1.,
-            true,
-        ),
-    ] {
-        let name: SharedString = msg.t().into();
-        let button = Button::new(id)
-            .ghost()
-            .small()
-            .compact()
-            .when_some(icon, |button, icon| button.icon(icon))
-            // Button::label would replace the localized accessible action name.
-            .when(reset, |button| button.child("100%"))
-            .disabled(disabled)
-            .on_click(cx.listener(move |view, _, _, cx| view.change_pdf(delta, factor, reset, cx)));
-        toolbar = toolbar.child(kagi_ui_core::tooltip::HoverTooltip::hover_tooltip(
-            named_button::NamedButton(button)
-                .role(gpui::Role::Button)
-                .aria_label(name.clone()),
-            (id, 0usize),
-            name,
-        ));
-    }
-    toolbar = toolbar.child(
-        div()
-            .w_full()
-            .min_w(px(0.))
-            .text_xs()
-            .whitespace_normal()
-            .child(format!(
-                "{} {} / {} · {}% · {}",
-                Msg::EditorPdfPage.t(),
-                if count == 0 { 0 } else { pdf.page + 1 },
-                count,
-                (pdf.zoom * 100.).round() as u32,
-                Msg::EditorPdfReadOnly.t()
-            )),
-    );
-    let mut body = super::pdf_keyboard::body(
-        div()
-            .id("ews-pdf-page-scroll")
-            .flex_1()
-            .min_h(px(0.))
-            .min_w(px(0.))
-            .overflow_scroll()
-            .track_scroll(&pdf.scroll)
-            .p_4(),
-        &pdf.scroll,
-        view.pdf_body_focus
-            .as_ref()
-            .expect("visible PDF body focus"),
-    );
-    if let Some(error) = pdf.error {
-        body = body.child(status_message(error.message()));
-    } else if let Some(image) = pdf.image.clone() {
-        if let Ok(document) = &pdf.source.document {
-            let pages = document.pages();
-            if let Some(page) = pages.get(pdf.page) {
-                let (width, height) = page.render_dimensions();
-                body = body.child(
-                    gpui::img(image)
-                        .w(px(width * pdf.zoom))
-                        .h(px(height * pdf.zoom))
-                        .flex_shrink_0(),
-                );
-            }
-        }
-    } else {
-        body = body.child(status_message(Msg::EditorPdfLoading));
-    }
-    div()
-        .id("ews-pdf")
-        .key_context("EditorReadOnly")
-        .flex_1()
-        .min_h(px(0.))
-        .min_w(px(0.))
-        .flex()
-        .flex_col()
-        .child(toolbar)
-        .when(pdf.partial, |el| {
-            el.child(div().text_xs().px_2().child(Msg::EditorPdfPartial.t()))
-        })
-        .child(
-            div()
-                .id("ews-pdf-page-area")
-                .relative()
-                .flex_1()
-                .min_h(px(0.))
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .child(body)
-                // Overlay the actual body without changing its padding or zoom
-                // anchor. The shared control owns visibility, theme and both axes.
-                .when(pdf.image.is_some() && pdf.error.is_none(), |area| {
-                    area.child(Scrollbar::new(&pdf.scroll))
-                }),
-        )
-        .into_any_element()
 }
 
 /// Native-test observation of the real document/raster and scroll owner.
@@ -680,39 +429,18 @@ pub struct PdfProbe {
     pub in_flight: bool,
     pub request: u64,
     pub scroll: gpui::ScrollHandle,
-}
-
-#[cfg(feature = "gui-e2e")]
-impl EditorWorkspaceView {
-    pub fn pdf_probe(&self) -> Option<PdfProbe> {
-        let pdf = self.content_pdf.as_ref()?;
-        Some(PdfProbe {
-            page: pdf.page,
-            page_count: pdf
-                .source
-                .document
-                .as_ref()
-                .map_or(0, |doc| doc.pages().len()),
-            zoom: pdf.zoom,
-            image: pdf.image.clone(),
-            error: pdf.error.map(|error| error.message().t()),
-            settled: pdf.settled,
-            in_flight: self.pdf_render_in_flight,
-            request: pdf.request,
-            scroll: pdf.scroll.clone(),
-        })
-    }
-
-    /// Batch rapid desired requests without advancing the native dispatcher.
-    pub fn change_pdf_for_e2e(
-        &mut self,
-        delta: isize,
-        factor: f32,
-        reset: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.change_pdf(delta, factor, reset, cx);
-    }
+    pub source_id: usize,
+    pub cached_pages: Vec<usize>,
+    pub cached_bytes: usize,
+    pub cache_entry_limit: usize,
+    pub rendered_pages: Vec<usize>,
+    pub raster_pixel_budget: usize,
+    pub visible_pages: std::ops::Range<usize>,
+    pub mounted_pages: std::ops::Range<usize>,
+    pub page_sizes: Vec<(f32, f32)>,
+    pub page_tops: Vec<f32>,
+    pub raster_jobs: usize,
+    pub raster_requests_started: usize,
 }
 
 #[cfg(test)]

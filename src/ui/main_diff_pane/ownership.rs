@@ -65,6 +65,7 @@ impl MainDiffRead {
                 base,
                 target,
                 file_index,
+                ..
             } => {
                 app.repo_path.as_deref() == Some(repo)
                     && app.ui().compare_view.as_ref().is_some_and(|pane| {
@@ -77,7 +78,9 @@ impl MainDiffRead {
                                 .is_some_and(|file| file.path == path)
                     })
             }
-            Self::Wip { staged, refresh } => {
+            Self::Wip {
+                staged, refresh, ..
+            } => {
                 if *refresh {
                     // The request already froze this retained pane's repository.
                     // Its empty source panel may disappear before the result lands.

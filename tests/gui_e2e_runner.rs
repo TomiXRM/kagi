@@ -531,6 +531,18 @@ mod diff_highlight;
 mod binary_diff_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_pdf.rs"]
+mod commit_pdf;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pdf_focus_retirement.rs"]
+mod pdf_focus_retirement;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pdf_media_bounds.rs"]
+mod pdf_media_bounds;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_viewports.rs"]
 mod modal_viewports;
 #[cfg(target_os = "macos")]
@@ -3084,6 +3096,42 @@ mod macos {
             (
                 "binary_diff_linked_empty_revisit",
                 Box::new(crate::binary_diff_owner::scenario_binary_diff_linked_empty_revisit),
+            ),
+            (
+                "commit_pdf_sources",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_sources),
+            ),
+            (
+                "commit_pdf_staged_rename",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_staged_rename),
+            ),
+            (
+                "commit_pdf_owners",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_owners),
+            ),
+            (
+                "commit_pdf_continuous_sides",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_continuous_sides),
+            ),
+            (
+                "pdf_focus_retirement",
+                Box::new(crate::pdf_focus_retirement::scenario_pdf_focus_retirement),
+            ),
+            (
+                "pdf_focus_retirement_preserves_input",
+                Box::new(crate::pdf_focus_retirement::scenario_pdf_focus_retirement_preserves_input),
+            ),
+            (
+                "pdf_media_sources",
+                Box::new(crate::pdf_media_bounds::scenario_pdf_media_sources),
+            ),
+            (
+                "pdf_media_bounds",
+                Box::new(crate::pdf_media_bounds::scenario_pdf_media_bounds),
+            ),
+            (
+                "pdf_media_symlink",
+                Box::new(crate::pdf_media_bounds::scenario_pdf_media_symlink),
             ),
             (
                 "conflict_save_boundary",

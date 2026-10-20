@@ -356,6 +356,7 @@ impl Render for KagiApp {
         let active = self.active_session();
         let main_issues = !self.home_in_front()
             && self.workspace_mode() == super::workspace_mode::WorkspaceMode::Issues;
+        let mut focused_pdf = None;
         for (owner, ui) in &self.ui {
             if let Some(editor) = &ui.editor_workspace {
                 let visible =
@@ -364,11 +365,12 @@ impl Render for KagiApp {
                     editor.release_hidden_pdf_focus(visible, window, cx);
                 });
                 if let Some(focus) = editor.read(cx).focused_pdf_body(window) {
-                    // Closing the Editor removes it from `ui` before the next
-                    // render. The shared post-paint guard still retires its focus.
-                    if self.restored_focus.as_ref() != Some(focus) {
-                        self.restored_focus = Some(focus.clone());
-                    }
+                    focused_pdf = Some(focus.clone());
+                }
+            }
+            if let Some(diff) = &ui.main_diff {
+                if let Some(focus) = diff.read(cx).focused_pdf_body(window, cx) {
+                    focused_pdf = Some(focus);
                 }
             }
             if Some(*owner) != active || self.home_in_front() {
@@ -388,6 +390,11 @@ impl Render for KagiApp {
                 ui.issue_rows
                     .yield_focus(self.root_focus.as_ref(), window, cx);
             }
+        }
+        if let Some(focus) = focused_pdf {
+            // All retained owners participate, not only the foreground pane.
+            // Closing/replacing either PDF surface may drop it before next render.
+            self.track_retiring_focus(focus, window, cx);
         }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);

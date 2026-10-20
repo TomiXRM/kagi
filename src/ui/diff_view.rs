@@ -10,6 +10,7 @@
 pub mod highlight;
 pub(crate) mod hunk_action;
 pub(crate) mod markers;
+pub(crate) mod pdf;
 
 use std::path::PathBuf;
 
@@ -821,8 +822,8 @@ impl KagiApp {
         }
     }
 
-    /// Install cached non-binary text or stage a headless commit diff.
-    /// Binary UI opens use the complete background preparation instead.
+    /// Install classified cached text or stage a headless commit diff.
+    /// Binary, PDF and unclassified UI opens use background preparation instead.
     pub(crate) fn set_commit_main_diff(
         &mut self,
         file_diff: &FileDiff,
@@ -886,6 +887,10 @@ impl KagiApp {
             base: view.base.clone(),
             target: view.target.clone(),
             file_index,
+            rename_from: match &file.change {
+                kagi_git::ChangeKind::Renamed { from } => Some(from.clone()),
+                _ => None,
+            },
         };
         self.read_main_diff(repo, file.path.clone(), read, cx);
     }
@@ -918,8 +923,13 @@ impl KagiApp {
             }
             commit_panel::CommitPanelFileRef::Staged { index } => (true, panel.staged.get(index)),
         };
-        let Some(path) = file.map(|f| f.path.clone()) else {
+        let Some(file) = file else {
             return;
+        };
+        let path = file.path.clone();
+        let rename_from = match &file.change {
+            kagi_git::ChangeKind::Renamed { from } => Some(from.clone()),
+            _ => None,
         };
         // Compact files outlive the main-diff presentation and move into the
         // desktop panel on resize; retain their existing owner-local selection.
@@ -931,6 +941,7 @@ impl KagiApp {
         }
         let read = super::main_diff_pane::MainDiffRead::Wip {
             staged,
+            rename_from,
             refresh: false,
         };
         self.read_main_diff(repo, path, read, cx);
@@ -959,8 +970,8 @@ impl KagiApp {
         self.open_main_diff_commit_inner(file_index, None);
     }
 
-    /// Open the main diff (UI path): cached text installs now; a cache miss or
-    /// cached binary prepares its complete view off-thread before publication.
+    /// Open the main diff (UI path): classified cached text installs now;
+    /// binary/PDF/unknown content prepares its complete view off-thread.
     pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
         self.open_main_diff_commit_inner(file_index, Some(cx));
     }
@@ -1000,6 +1011,10 @@ impl KagiApp {
 
         let id = CommitId(detail.full_sha.as_ref().to_string());
         let path = file_status.path.clone();
+        let rename_from = match &file_status.change {
+            kagi_git::ChangeKind::Renamed { from } => Some(from.clone()),
+            _ => None,
+        };
 
         // T-REARCH-031: per-(row, file) content cache. Clicking between two
         // commits to compare the same file previously recomputed the full git2
@@ -1011,19 +1026,20 @@ impl KagiApp {
             .get(&(selected, file_index))
             .cloned()
         {
-            if cached.is_binary {
+            if cached.diff.is_binary || cached.is_pdf != Some(false) || pdf::is_pdf_path(&path) {
                 if let Some(cx) = cx.as_deref_mut() {
                     let read = super::main_diff_pane::MainDiffRead::Commit {
                         commit: id,
                         row: selected,
                         file_index,
                         epoch: self.ui().cache_epoch,
-                        cached: Some(cached),
+                        rename_from,
+                        cached: Some(cached.diff),
                     };
                     return self.read_main_diff(repo_path, path, read, cx);
                 }
             }
-            self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
+            self.set_commit_main_diff(&cached.diff, &path, selected, file_index, cx.as_deref_mut());
             return;
         }
 
@@ -1037,6 +1053,7 @@ impl KagiApp {
                 row: selected,
                 file_index,
                 epoch: self.ui().cache_epoch,
+                rename_from,
                 cached: None,
             };
             return self.read_main_diff(repo_path, path, read, cx);
@@ -1052,7 +1069,7 @@ impl KagiApp {
             Ok(file_diff) => {
                 let arc = std::sync::Arc::new(file_diff);
                 let key = (selected, file_index);
-                self.with_ui(|ui| ui.diff_caches.file_content.insert(key, arc.clone()));
+                self.with_ui(|ui| ui.diff_caches.file_content.insert(key, arc.clone().into()));
                 self.set_commit_main_diff(&arc, &path, selected, file_index, None);
             }
             Err(e) => {

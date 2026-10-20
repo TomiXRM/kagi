@@ -24,6 +24,43 @@ impl MainDiffRead {
         )
         .then(|| backend.head_commit_id())
         .flatten();
+        // Reload restores retained diffs before refreshing the panel's lists.
+        // Recompute this side's rename identity here, never from the old pane
+        // or a still-stale panel (which may already have closed).
+        let refreshed_status = if matches!(self, Self::Wip { refresh: true, .. }) {
+            match backend.working_tree_status() {
+                Ok(status) => Some(status),
+                Err(error) => return Landed::Failed(error.to_string()),
+            }
+        } else {
+            None
+        };
+        let rename_from = match self {
+            Self::Wip {
+                staged,
+                rename_from,
+                ..
+            } => match &refreshed_status {
+                Some(status) => {
+                    let files = if *staged {
+                        &status.staged
+                    } else {
+                        &status.unstaged
+                    };
+                    files
+                        .iter()
+                        .find(|file| file.path == path)
+                        .and_then(|file| match &file.change {
+                            kagi_git::ChangeKind::Renamed { from } => Some(from.as_path()),
+                            _ => None,
+                        })
+                }
+                None => rename_from.as_deref(),
+            },
+            Self::Commit { rename_from, .. } | Self::Compare { rename_from, .. } => {
+                rename_from.as_deref()
+            }
+        };
         let (result, source, file_index) = match self {
             MainDiffRead::Compare {
                 base,
@@ -48,7 +85,9 @@ impl MainDiffRead {
                 };
                 (result.map(std::sync::Arc::new), source, *file_index)
             }
-            MainDiffRead::Wip { staged, refresh } => {
+            MainDiffRead::Wip {
+                staged, refresh, ..
+            } => {
                 let result = if *staged {
                     backend.staged_file_diff(path)
                 } else {
@@ -90,11 +129,6 @@ impl MainDiffRead {
         };
         match result {
             Ok(file_diff) => {
-                let rename_from = match self {
-                    MainDiffRead::Commit { rename_from, .. }
-                    | MainDiffRead::Compare { rename_from, .. } => rename_from.as_deref(),
-                    _ => None,
-                };
                 let (pdfs, images) = prepare_diff_media(
                     &backend,
                     &file_diff,

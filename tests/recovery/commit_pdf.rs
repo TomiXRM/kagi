@@ -2,11 +2,11 @@
 use crate::diff_highlight::{commit_image_index, main_view, settle};
 use crate::evidence_support::deferred;
 use crate::keyboard_nav::keys;
-use crate::macos::{build_fixture, git, mount, unmount};
+use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 use crate::native_ax;
 use crate::pr_viewed::{paint, rev};
 use gpui::{point, px, AnyWindowHandle, Entity, Focusable as _, Modifiers, VisualTestAppContext};
-use kagi::ui::{main_diff_pane::MainDiffPane, KagiApp};
+use kagi::ui::{commit_panel::CommitPanelFileRef, e2e, main_diff_pane::MainDiffPane, KagiApp};
 use kagi_git::{Backend, CommitId};
 use kagi_ui_core::i18n::{Lang, Msg};
 use kagi_ui_editor::{PdfProbe, PdfViewer};
@@ -334,6 +334,95 @@ pub fn scenario_commit_pdf_sources(cx: &mut VisualTestAppContext) {
     }
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS commit_pdf_sources");
+}
+
+pub fn scenario_commit_pdf_staged_rename(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let previous = document(3, 240, 480, "0.2 0.2 0.8");
+    let staged = document(4, 240, 480, "0.2 0.2 0.8");
+    let working = document(6, 240, 480, "0.2 0.2 0.8");
+    std::fs::write(repo.join("old.pdf"), &previous).unwrap();
+    git(&repo, &["add", "old.pdf"]);
+    git(&repo, &["commit", "-q", "-m", "staged PDF rename base"]);
+    git(&repo, &["mv", "old.pdf", "new.pdf"]);
+    std::fs::write(repo.join("new.pdf"), &staged).unwrap();
+    git(&repo, &["add", "new.pdf"]);
+    std::fs::write(repo.join("new.pdf"), &working).unwrap();
+    let before = repo_fingerprint(&repo);
+    let index_before = rev(&repo, ":new.pdf");
+    let (app, window) = mount(cx, &repo);
+    native_ax::activate(cx);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    settle(cx, window);
+    let index = cx.read(|cx| {
+        let panel = app.read(cx).ui().commit_panel.as_ref().unwrap().read(cx);
+        let index = panel
+            .state
+            .staged
+            .iter()
+            .position(|file| file.path == Path::new("new.pdf"))
+            .expect("staged rename is listed in the real Commit Panel");
+        assert_eq!(
+            panel.state.staged[index].change,
+            kagi_git::ChangeKind::Renamed {
+                from: "old.pdf".into()
+            },
+            "fixture must exercise a detected rename, not an added PDF"
+        );
+        index
+    });
+    app.update(cx, |app, cx| {
+        app.open_main_diff_wip(CommitPanelFileRef::Staged { index }, cx)
+    });
+    paint(cx, window);
+    let staged_pane = pane(cx, &app);
+    // Three distinct documents make either a missing old side or a worktree
+    // substitution fail against the actual parsed/rasterized viewer output.
+    assert_sides(cx, &staged_pane, window, Some(3), Some(4));
+    cx.read(|cx| {
+        let view = &staged_pane.read(cx).view;
+        assert!(view.rows.is_empty() && view.images.is_none() && view.lang.is_none());
+    });
+    assert_eq!(repo_fingerprint(&repo), before);
+    assert_eq!(rev(&repo, ":new.pdf"), index_before);
+    assert!(!repo.join("old.pdf").exists());
+    assert_eq!(std::fs::read(repo.join("new.pdf")).unwrap(), working);
+
+    // The same open pane must discard rename identity when a refresh changes
+    // the new path into an addition by restoring the original HEAD path.
+    std::fs::write(repo.join("old.pdf"), &previous).unwrap();
+    git(&repo, &["add", "old.pdf"]);
+    let refreshed_before = repo_fingerprint(&repo);
+    app.update(cx, |app, cx| app.reload(cx));
+    settle(cx, window);
+    let refreshed = pane(cx, &app);
+    assert_sides(cx, &refreshed, window, None, Some(4));
+
+    let index = cx.read(|cx| {
+        let panel = app.read(cx).ui().commit_panel.as_ref().unwrap().read(cx);
+        panel
+            .state
+            .unstaged
+            .iter()
+            .position(|file| file.path == Path::new("new.pdf"))
+            .expect("worktree edit remains on the unstaged side")
+    });
+    app.update(cx, |app, cx| {
+        app.open_main_diff_wip(CommitPanelFileRef::Unstaged { index }, cx)
+    });
+    paint(cx, window);
+    let unstaged_pane = pane(cx, &app);
+    assert_sides(cx, &unstaged_pane, window, Some(4), Some(6));
+    assert_eq!(repo_fingerprint(&repo), refreshed_before);
+    assert_eq!(rev(&repo, ":new.pdf"), index_before);
+    assert_eq!(std::fs::read(repo.join("old.pdf")).unwrap(), previous);
+    assert_eq!(std::fs::read(repo.join("new.pdf")).unwrap(), working);
+    drop((staged_pane, refreshed, unstaged_pane));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_pdf_staged_rename");
 }
 
 pub fn scenario_commit_pdf_owners(cx: &mut VisualTestAppContext) {

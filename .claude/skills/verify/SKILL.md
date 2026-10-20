@@ -576,6 +576,13 @@ the existing pathspec guard refuses such diffs before media preparation. Retenti
 uses the immutable commit and file index, not its display title. In Tier B, switch
 between supported PDFs with different page counts/content, then reopen the same
 file and require its zoom/page to survive; preserve HEAD, staged content and bytes.
+`commit_pdf_staged_rename` opens a detected rename through the real Commit Panel:
+HEAD old path / index new path / worktree new path contain 3 / 4 / 6 pages.
+The staged pair must show 3 / 4; restoring the old path and reloading changes the
+pair to absent / 4, then selecting the unstaged entry shows 4 / 6. Previewing
+preserves HEAD, staged blob and worktree bytes. Tier B compares a staged rename
+before/after in the ordinary app and verifies that the old side is not labeled
+as an added file and that the new side is not substituted with worktree content.
 The absent-base case must also report `ChangeKind::Added` and no old path in
 `unstaged_file_diff`, so PDF preparation preserves absence instead of showing a
 read error. Smoke the real main-diff worker against a stage-three-only conflict

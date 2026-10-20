@@ -3102,6 +3102,10 @@ mod macos {
                 Box::new(crate::commit_pdf::scenario_commit_pdf_sources),
             ),
             (
+                "commit_pdf_staged_rename",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_staged_rename),
+            ),
+            (
                 "commit_pdf_owners",
                 Box::new(crate::commit_pdf::scenario_commit_pdf_owners),
             ),

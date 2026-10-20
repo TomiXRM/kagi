@@ -7,8 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 use kagi_domain::plan_note::{
-    CommonNote, DirtyParts, PlanNote, PlanRecovery, PullNote, PullRecovery, RecoveryKind,
-    UntrackedCtx,
+    CommonNote, DirtyParts, OpPhrase, PlanNote, PlanRecovery, PullNote, PullRecovery, RecoveryKind,
 };
 
 mod settle;
@@ -115,16 +114,20 @@ impl KagiApp {
                                     ..
                                 } => {
                                     let preview = plan.preview.clone();
+                                    let modal = PullPlanModal {
+                                        plan: preview,
+                                        auto_stash: false,
+                                        error: None,
+                                        dirty_digest: None,
+                                        fetch_owner: None,
+                                    };
+                                    // SSH planning freezes the live identity,
+                                    // but does not predict fetched merge or
+                                    // checkout safety. Keep its explicit choice.
                                     app.offer_plan_from_async(
                                         AsyncPlanOffer::new(
                                             i18n::Op::Pull,
-                                            ActiveModal::Pull(PullPlanModal {
-                                                plan: preview,
-                                                auto_stash: false,
-                                                error: None,
-                                                dirty_digest: None,
-                                                fetch_owner: None,
-                                            }),
+                                            ActiveModal::Pull(modal),
                                         )
                                         .with_session_token(),
                                     );
@@ -236,10 +239,18 @@ impl KagiApp {
                         .visit(session)
                         .map(|visit| (session, visit))
                 });
-                self.offer_plan_from_async(AsyncPlanOffer::new(
+                let needs_choice =
+                    !modal.plan.blockers.is_empty() || !modal.plan.warnings.is_empty();
+                let offered = self.offer_plan_from_async(AsyncPlanOffer::new(
                     i18n::Op::Pull,
                     ActiveModal::Pull(modal),
-                ))
+                ));
+                if offered && !needs_choice {
+                    // The toolbar request is already the user's intent. Keep
+                    // the same approval/preflight path without painting a card.
+                    self.start_pull(cx);
+                }
+                offered
             }
             Ok(None) => {
                 self.push_toast(
@@ -338,36 +349,50 @@ impl KagiApp {
         {
             return Err(Msg::PullUpstreamChangedDuringFetch.t().to_string());
         }
-        let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
-        if auto_stash {
-            let status = &self.view().status_summary;
-            // Auto-stash makes the two generic dirty warnings wrong —
-            // kagi is about to stash, not refuse — so they are replaced
-            // by `AutoStash` below. Only those two: every other note
-            // stays, and `RestoreConflict` (#625) in particular must,
-            // since naming the colliding paths before the user confirms
-            // is the whole point of that note.
-            plan.warnings.retain(|note| {
-                !matches!(
-                    note,
-                    PlanNote::Pull(PullNote::DirtyPullGuard { .. })
-                        | PlanNote::Common(CommonNote::UntrackedRemain {
-                            ctx: UntrackedCtx::PullFetchMayTouch,
-                            ..
-                        })
-                )
-            });
-            plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
-                parts: DirtyParts {
-                    staged: status.staged,
-                    modified: status.unstaged,
-                },
-                untracked: status.untracked,
-            }));
-            plan.recovery = Some(PlanRecovery {
-                kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
-                commands: Vec::new(),
-            });
+        // Dirtiness alone is not a reason to stash. Only the backend's
+        // prediction of a local overwrite offers that explicit protection.
+        // History conflicts take the merge/conflict workflow instead: a stash
+        // cannot reconcile two committed histories.
+        let history_conflict = plan
+            .warnings
+            .iter()
+            .any(|note| matches!(note, PlanNote::Pull(PullNote::MergePrediction)));
+        let auto_stash = plan.blockers.is_empty()
+            && !history_conflict
+            && plan
+                .warnings
+                .iter()
+                .any(|note| matches!(note, PlanNote::Pull(PullNote::LocalChangesOverlap { .. })));
+        if auto_stash || history_conflict {
+            let status = repo
+                .working_tree_status()
+                .map_err(|error| i18n::op::op_plan_failed_contract(i18n::Op::Pull, error))?;
+            if Some(status.digest()) != plan.worktree_digest {
+                return Err(Msg::PullFilesChangedDuringPlanning.t().to_string());
+            }
+            if history_conflict && (!status.staged.is_empty() || !status.unstaged.is_empty()) {
+                plan.warnings
+                    .push(PlanNote::Common(CommonNote::DirtyBlocksOp {
+                        parts: DirtyParts {
+                            staged: status.staged.len(),
+                            modified: status.unstaged.len(),
+                        },
+                        before: OpPhrase::Merging,
+                    }));
+            }
+            if auto_stash {
+                plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
+                    parts: DirtyParts {
+                        staged: status.staged.len(),
+                        modified: status.unstaged.len(),
+                    },
+                    untracked: status.untracked.len(),
+                }));
+                plan.recovery = Some(PlanRecovery {
+                    kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
+                    commands: Vec::new(),
+                });
+            }
         }
         // No-op is local knowledge only. The Pull entry point must successfully
         // fetch before presenting it as up to date (ADR-0129 F-1: no title
@@ -381,14 +406,12 @@ impl KagiApp {
         {
             return Ok(None);
         }
+        let dirty_digest = plan.worktree_digest;
         Ok(Some(PullPlanModal {
             plan: std::sync::Arc::new(plan),
             auto_stash,
             error: None,
-            dirty_digest: repo
-                .working_tree_status()
-                .ok()
-                .map(|status| status.digest()),
+            dirty_digest,
             fetch_owner: None,
         }))
     }
@@ -447,6 +470,22 @@ impl KagiApp {
             }
             return;
         }
+        if modal.plan.blockers.is_empty()
+            && modal
+                .plan
+                .warnings
+                .iter()
+                .any(|note| matches!(note, PlanNote::Pull(PullNote::MergePrediction)))
+        {
+            if let Some(identity) = modal.plan.pull_identity.as_ref() {
+                let target = identity.upstream_ref.clone();
+                let branch = identity.branch.clone();
+                self.clear_pull_modal();
+                self.open_merge_modal(target, Some(branch), cx);
+                cx.notify();
+            }
+            return;
+        }
 
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -463,12 +502,6 @@ impl KagiApp {
             cx.notify();
             return;
         }
-
-        self.clear_pull_modal();
-        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
-            SharedString::from(Msg::BusyPull.t()),
-        ));
-        klog!("async: pull started");
         self.finish_pull(cx, modal, repo_path);
     }
 
@@ -518,12 +551,23 @@ impl KagiApp {
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
                     return;
                 }
+                let needs_choice = !plan.blockers.is_empty()
+                    || plan.warnings.iter().any(|note| {
+                        !matches!(
+                            note,
+                            PlanNote::Push(kagi_domain::plan_note::PushNote::NoForceUsed { .. })
+                        )
+                    });
                 self.set_push_modal(PushPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
-                // #817: Enter / Escape reach the plan through the root.
-                self.focus_root_for_modal();
+                if needs_choice {
+                    // #817: Enter / Escape reach the plan through the root.
+                    self.focus_root_for_modal();
+                } else {
+                    self.start_push(cx);
+                }
             }
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(

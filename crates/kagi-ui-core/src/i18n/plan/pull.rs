@@ -16,7 +16,7 @@ pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
-    "この pull は conflict する見込みです。remote が変わっていなければ、何も変更せずに安全に停止します。";
+    "commit 済みの履歴が conflict する見込みです。stash では解決できません。解決方法を確認してから、merge して Conflict Mode で解決するか、キャンセルできます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
     "stash を戻すときに次のファイルが conflict します:{}\n先に対象ファイルを commit か stash するか、pull 後に conflict を解決してください。どちらの場合も stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
@@ -88,6 +88,10 @@ pub fn note_ja(note: &PullNote) -> String {
             super::advice_text(Msg::AdvicePullNoUpstreamWithHint, &[branch, err])
         }
         PullNote::MergePrediction => super::advice_text(Msg::AdvicePullMergePrediction, &[]),
+        PullNote::LocalChangesOverlap { paths } => format!(
+            "incoming の変更が次のローカル変更に触れます:{}\n「StashしてPull」で変更を保存・復元するか、「変更を確認」で先に確認・編集・commit できます。",
+            path_block_ja(paths)
+        ),
         PullNote::RestoreConflict { paths } => {
             super::advice_text(Msg::AdvicePullRestoreConflict, &[&path_block_ja(paths)])
         }

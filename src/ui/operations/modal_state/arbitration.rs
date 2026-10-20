@@ -90,9 +90,24 @@ impl KagiApp {
             self.sidebar.swipe.cancel();
             self.modal_list_scroll = gpui::UniformListScrollHandle::new();
             self.reset_modal_sections();
-            let pr_merge = matches!(&modal, ActiveModal::PrMerge(_));
+            let owns_root_keys = match &modal {
+                ActiveModal::PrMerge(_) => true,
+                ActiveModal::Pull(pull) => {
+                    // Safe local Pull consumes this transient plan immediately;
+                    // only a retained card should take focus from the editor.
+                    !pull.plan.blockers.is_empty()
+                        || !pull.plan.warnings.is_empty()
+                        || matches!(
+                            &pull.plan.title,
+                            kagi_domain::plan_note::PlanTitle::Pull(
+                                kagi_domain::plan_note::PullTitle::PullRemote { .. }
+                            )
+                        )
+                }
+                _ => false,
+            };
             self.active_modal = Some(modal);
-            if pr_merge {
+            if owns_root_keys {
                 // #817: a keyboard opener must not retain Return behind the plan.
                 self.focus_root_for_modal();
             }

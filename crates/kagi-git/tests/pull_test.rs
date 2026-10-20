@@ -10,7 +10,7 @@
 //! | 3 | `test_pull_conflict_leaves_repo_untouched` | diverged with conflict → Err, HEAD/WT/index/state all untouched |
 //! | 4 | `test_pull_up_to_date` | equal tips → UpToDate |
 //! | 5 | `test_pull_ahead_only_up_to_date` | local ahead of upstream → UpToDate (nothing to merge) |
-//! | 6 | `test_plan_pull_dirty_warning_no_blocker` | dirty WT → warning; execute does path-overlap check |
+//! | 6 | `test_plan_pull_dirty_up_to_date_is_quiet` | dirty WT alone needs no stash or warning |
 //! | 7 | `test_plan_pull_no_upstream_blocker` | branch without upstream → blocker |
 //! | 8 | `test_pull_fetch_failure_untouched` | remote gone → Err mentions fetch, repo untouched |
 
@@ -275,7 +275,7 @@ fn test_pull_ahead_only_up_to_date() {
 }
 
 #[test]
-fn test_plan_pull_dirty_warning_no_blocker() {
+fn test_plan_pull_dirty_up_to_date_is_quiet() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -303,14 +303,11 @@ fn test_plan_pull_dirty_warning_no_blocker() {
         plan.blockers
     );
     assert!(plan.equivalent_command.is_none());
-    assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.message_en().contains("Working tree has")
-                && w.message_en().contains("fetched changes")),
-        "dirty WT should produce path-overlap warning, got: {:?}",
-        plan.warnings
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    assert!(matches!(
+        plan.disposition,
+        kagi_domain::plan_note::PlanDisposition::NoOp(_)
+    ));
 }
 
 #[test]
@@ -491,8 +488,14 @@ fn test_pull_ff_refuses_dirty_overlapping_staged_rename_source() {
     remote_commit(&r, "base.txt", "updated upstream\n", "edit base");
     git(&r.local, &["mv", "base.txt", "renamed-local.txt"]);
     let head_before = head_sha(&r.local);
+    git(&r.local, &["fetch", "-q", "origin"]);
 
     let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).unwrap();
+    assert_eq!(
+        local_overlap_paths(&plan),
+        Some(["base.txt".to_string()].as_slice())
+    );
     let err = execute_pull(&repo, &r.local).expect_err("pull must refuse staged rename overlap");
     let msg = format!("{}", err);
     assert!(
@@ -713,6 +716,12 @@ fn test_plan_pull_does_not_assert_conflict_for_an_automergeable_overlap() {
 
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_pull(&repo).expect("plan should succeed");
+    // A clean stash restore is not permission for checkout to replace local
+    // bytes: direct Pull still requires an explicit local-protection choice.
+    assert_eq!(
+        local_overlap_paths(&plan),
+        Some(["shared.txt".to_string()].as_slice())
+    );
 
     assert_eq!(
         restore_conflict_paths(&plan),
@@ -867,8 +876,7 @@ fn test_plan_pull_reports_binary_overlap_as_possible_only() {
     );
 }
 
-/// The mirror case: dirty, behind, but nothing in common. No conflict note, so
-/// the modal stays the plain Stash & Pull confirmation.
+/// Unrelated local edits require neither stash protection nor confirmation.
 #[test]
 fn test_plan_pull_without_overlap_has_no_restore_conflict_note() {
     if !crate::test_support::run_isolated() {
@@ -892,18 +900,8 @@ fn test_plan_pull_without_overlap_has_no_restore_conflict_note() {
         "no overlap must not warn: {:?}",
         plan.warnings
     );
-    // …and the plan still saw the dirt, so the absence is a real answer rather
-    // than a plan that never looked.
-    assert!(
-        plan.warnings.iter().any(|note| matches!(
-            note,
-            kagi_domain::plan_note::PlanNote::Pull(
-                kagi_domain::plan_note::PullNote::DirtyPullGuard { .. }
-            )
-        )),
-        "{:?}",
-        plan.warnings
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    assert!(working_tree_status(&repo).unwrap().is_dirty());
 }
 
 /// "Incoming" means `HEAD..upstream`. On a diverged branch, diffing HEAD
@@ -945,3 +943,427 @@ fn test_plan_pull_ignores_paths_only_local_commits_changed() {
 
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
+
+fn local_overlap_paths(plan: &kagi_git::OperationPlan) -> Option<&[String]> {
+    plan.warnings.iter().find_map(|note| match note {
+        kagi_domain::plan_note::PlanNote::Pull(
+            kagi_domain::plan_note::PullNote::LocalChangesOverlap { paths },
+        ) => Some(paths.as_slice()),
+        _ => None,
+    })
+}
+
+/// The direct path must preserve staged additions, deletions, renames and mode
+/// changes, not merely the bytes of an unstaged file. Literal incoming paths
+/// must not accidentally select a similarly named staged file.
+#[test]
+fn test_direct_pull_preserves_nonoverlapping_staged_identities_and_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for diverged in [false, true] {
+        let r = setup();
+        write_file(&r.local, "remove.txt", "remove me\n");
+        write_file(&r.local, "rename.txt", "rename me\n");
+        write_file(&r.local, "incoming1.txt", "unchanged committed blob\n");
+        write_file(&r.local, "incoming-delete.txt", "upstream removes this\n");
+        write_file(&r.local, "incoming-rename.txt", "upstream renames this\n");
+        commit_all(&r.local, "tracked local-change fixtures");
+        git(&r.local, &["push", "-q", "origin", "main"]);
+        git(&r.other, &["pull", "-q", "origin", "main"]);
+        if diverged {
+            write_file(&r.local, "committed-local.txt", "local history\n");
+            commit_all(&r.local, "local history");
+        }
+        git(&r.other, &["rm", "-q", "incoming-delete.txt"]);
+        git(
+            &r.other,
+            &["mv", "incoming-rename.txt", "incoming-moved.txt"],
+        );
+        remote_commit(
+            &r,
+            "incoming[1].txt",
+            "literal upstream path\n",
+            "upstream work",
+        );
+        git(&r.local, &["fetch", "-q", "origin"]);
+        write_file(&r.local, "base.txt", "staged base\n");
+        write_file(&r.local, "new.txt", "staged addition\n");
+        write_file(&r.local, "incoming1.txt", "staged sibling\n");
+        git(&r.local, &["add", "base.txt", "new.txt", "incoming1.txt"]);
+        git(&r.local, &["update-index", "--chmod=+x", "new.txt"]);
+        git(&r.local, &["rm", "-q", "remove.txt"]);
+        git(&r.local, &["mv", "rename.txt", "renamed.txt"]);
+        write_file(&r.local, "base.txt", "unstaged base on top\n");
+        write_file(&r.local, "new.txt", "unstaged addition on top\n");
+        write_file(&r.local, "untracked.txt", "untracked bytes\n");
+        let paths = [
+            "base.txt",
+            "new.txt",
+            "incoming1.txt",
+            "remove.txt",
+            "rename.txt",
+            "renamed.txt",
+        ];
+        let staged = |root: &Path| {
+            let mut args = vec!["ls-files", "--stage", "--"];
+            args.extend(paths);
+            git_output(root, &args)
+        };
+        let index_before = staged(&r.local);
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &r.local,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        let plan = backend.plan_pull().unwrap();
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        let outcome = backend.run(&kagi_git::Operation::Pull, &plan).unwrap();
+        assert!(matches!(
+            outcome,
+            kagi_git::OperationOutcome::Pull(PullOutcome::FastForward { .. })
+                | kagi_git::OperationOutcome::Pull(PullOutcome::Merged { .. })
+        ));
+        assert_eq!(staged(&r.local), index_before, "diverged={diverged}");
+        for (path, content) in [
+            ("base.txt", "unstaged base on top\n"),
+            ("new.txt", "unstaged addition on top\n"),
+            ("incoming1.txt", "staged sibling\n"),
+            ("renamed.txt", "rename me\n"),
+            ("untracked.txt", "untracked bytes\n"),
+            ("incoming[1].txt", "literal upstream path\n"),
+            ("incoming-moved.txt", "upstream renames this\n"),
+        ] {
+            assert_eq!(
+                read_file(&r.local, path),
+                content,
+                "{path}, diverged={diverged}"
+            );
+        }
+        assert!(!r.local.join("remove.txt").exists());
+        assert!(!r.local.join("rename.txt").exists());
+        assert!(!r.local.join("incoming-delete.txt").exists());
+        assert!(!r.local.join("incoming-rename.txt").exists());
+        assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+        let repo = Repository::open(&r.local).unwrap();
+        let tree = repo.head().unwrap().peel_to_tree().unwrap();
+        assert!(
+            tree.get_path(Path::new("new.txt")).is_err(),
+            "staged addition was committed"
+        );
+        assert!(
+            tree.get_path(Path::new("remove.txt")).is_ok(),
+            "staged deletion was committed"
+        );
+    }
+}
+
+/// Component-prefix collisions require the same explicit protection as exact
+/// overlaps. A local untracked directory must not be removed to install a file,
+/// and a local file must not be replaced by an incoming directory.
+#[test]
+fn test_pull_plan_and_execution_protect_directory_file_collisions() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for incoming_directory in [false, true] {
+        let r = setup();
+        let (incoming, local) = if incoming_directory {
+            ("collision/incoming.txt", "collision")
+        } else {
+            ("collision", "collision/local.txt")
+        };
+        remote_commit(&r, incoming, "upstream bytes\n", "incoming namespace");
+        write_file(&r.local, local, "local bytes\n");
+        git(&r.local, &["fetch", "-q", "origin"]);
+        let repo = Repository::open(&r.local).unwrap();
+        let plan = plan_pull(&repo).unwrap();
+        assert_eq!(
+            local_overlap_paths(&plan),
+            Some([local.to_string()].as_slice())
+        );
+        let before = head_sha(&r.local);
+        assert!(execute_pull(&repo, &r.local).is_err());
+        assert_eq!(head_sha(&r.local), before);
+        assert_eq!(read_file(&r.local, local), "local bytes\n");
+        assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn test_history_conflict_is_not_local_stash_protection() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(&r, "base.txt", "remote history\n", "remote history");
+    write_file(&r.local, "base.txt", "local history\n");
+    commit_all(&r.local, "local history");
+    write_file(&r.local, "unrelated.txt", "unrelated local bytes\n");
+    git(&r.local, &["add", "unrelated.txt"]);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).unwrap();
+    assert!(plan.warnings.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::Pull(kagi_domain::plan_note::PullNote::MergePrediction)
+    )));
+    assert!(local_overlap_paths(&plan).is_none());
+    assert!(restore_conflict_paths(&plan).is_none());
+    let before = head_sha(&r.local);
+    let index_before = git_output(&r.local, &["ls-files", "--stage"]);
+    assert!(execute_pull(&repo, &r.local).is_err());
+    assert_eq!(head_sha(&r.local), before);
+    assert_eq!(git_output(&r.local, &["ls-files", "--stage"]), index_before);
+    assert_eq!(
+        read_file(&r.local, "unrelated.txt"),
+        "unrelated local bytes\n"
+    );
+    assert_eq!(repo.state(), git2::RepositoryState::Clean);
+    assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+}
+
+/// A fresh fetch at execute must not turn a quiet approved Pull into an
+/// unapproved stash or overwrite when the remote has advanced onto local dirt.
+#[test]
+fn test_quiet_pull_refuses_new_remote_overlap_without_stashing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(&r, "incoming.txt", "safe upstream\n", "safe upstream");
+    git(&r.local, &["fetch", "-q", "origin"]);
+    write_file(&r.local, "base.txt", "staged local\n");
+    git(&r.local, &["add", "base.txt"]);
+    write_file(&r.local, "base.txt", "unstaged local\n");
+    let mut backend = kagi_git::Backend::open_with_policy(
+        &r.local,
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let plan = backend.plan_pull().unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    let head_before = head_sha(&r.local);
+    let index_before = git_output(&r.local, &["ls-files", "--stage"]);
+    remote_commit(&r, "base.txt", "late remote overlap\n", "late overlap");
+    assert!(backend.run(&kagi_git::Operation::Pull, &plan).is_err());
+    assert_eq!(head_sha(&r.local), head_before);
+    assert_eq!(git_output(&r.local, &["ls-files", "--stage"]), index_before);
+    assert_eq!(read_file(&r.local, "base.txt"), "unstaged local\n");
+    assert!(!r.local.join("incoming.txt").exists());
+    assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+}
+
+#[test]
+fn test_quiet_pull_refuses_late_dirty_set_change() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(&r, "incoming.txt", "upstream\n", "upstream work");
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let mut backend = kagi_git::Backend::open_with_policy(
+        &r.local,
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let plan = backend.plan_pull().unwrap();
+    assert!(plan.warnings.is_empty());
+    let before = head_sha(&r.local);
+    write_file(&r.local, "base.txt", "late local edit\n");
+    assert!(backend.run(&kagi_git::Operation::Pull, &plan).is_err());
+    assert_eq!(head_sha(&r.local), before);
+    assert_eq!(read_file(&r.local, "base.txt"), "late local edit\n");
+    assert!(!r.local.join("incoming.txt").exists());
+    assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+}
+
+/// Linux filesystems preserve raw path bytes (APFS rejects this fixture).
+/// Distinct paths with the same lossy display must never alias in the index.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_direct_pull_preserves_non_utf8_staged_sibling() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    let incoming = Path::new(OsStr::from_bytes(b"incoming\xfe.txt"));
+    let local = Path::new(OsStr::from_bytes(b"incoming\xff.txt"));
+    std::fs::write(r.other.join(incoming), b"raw upstream\n").unwrap();
+    commit_all(&r.other, "raw incoming path");
+    git(&r.other, &["push", "-q", "origin", "main"]);
+    std::fs::write(r.local.join(local), b"raw staged local\n").unwrap();
+    git(&r.local, &["add", "-A"]);
+    std::fs::write(r.local.join(local), b"raw unstaged local\n").unwrap();
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let entry_before = repo.index().unwrap().get_path(local, 0).unwrap();
+    let plan = plan_pull(&repo).unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    execute_pull(&repo, &r.local).unwrap();
+    let entry_after = repo.index().unwrap().get_path(local, 0).unwrap();
+    assert_eq!(entry_after.path, entry_before.path);
+    assert_eq!(entry_after.id, entry_before.id);
+    assert_eq!(entry_after.mode, entry_before.mode);
+    assert_eq!(
+        std::fs::read(r.local.join(local)).unwrap(),
+        b"raw unstaged local\n"
+    );
+    assert_eq!(
+        std::fs::read(r.local.join(incoming)).unwrap(),
+        b"raw upstream\n"
+    );
+}
+
+#[test]
+fn test_direct_pull_directory_file_transition_preserves_staged_bystander() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for incoming_directory in [false, true] {
+        let r = setup();
+        let old = if incoming_directory {
+            "node"
+        } else {
+            "node/old.txt"
+        };
+        write_file(&r.local, old, "old namespace\n");
+        commit_all(&r.local, "initial namespace");
+        git(&r.local, &["push", "-q", "origin", "main"]);
+        git(&r.other, &["pull", "-q", "origin", "main"]);
+        git(&r.other, &["rm", "-rq", "node"]);
+        let new = if incoming_directory {
+            "node/new.txt"
+        } else {
+            "node"
+        };
+        write_file(&r.other, new, "new namespace\n");
+        commit_all(&r.other, "change namespace");
+        git(&r.other, &["push", "-q", "origin", "main"]);
+        git(&r.local, &["fetch", "-q", "origin"]);
+        write_file(&r.local, "base.txt", "staged bystander\n");
+        git(&r.local, &["add", "base.txt"]);
+        let before = git_output(&r.local, &["ls-files", "--stage", "--", "base.txt"]);
+        let repo = Repository::open(&r.local).unwrap();
+        assert!(plan_pull(&repo).unwrap().warnings.is_empty());
+        execute_pull(&repo, &r.local).unwrap();
+        assert_eq!(read_file(&r.local, new), "new namespace\n");
+        assert_eq!(read_file(&r.local, "base.txt"), "staged bystander\n");
+        assert_eq!(
+            git_output(&r.local, &["ls-files", "--stage", "--", "base.txt"]),
+            before
+        );
+        assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn test_pull_empty_tree_delta_does_not_checkout_all_staged_paths() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(
+        &r.other,
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "empty upstream commit",
+        ],
+    );
+    git(&r.other, &["push", "-q", "origin", "main"]);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    write_file(&r.local, "base.txt", "staged local\n");
+    git(&r.local, &["add", "base.txt"]);
+    write_file(&r.local, "base.txt", "unstaged local\n");
+    let before = git_output(&r.local, &["ls-files", "--stage"]);
+    let repo = Repository::open(&r.local).unwrap();
+    assert!(plan_pull(&repo).unwrap().warnings.is_empty());
+    assert!(matches!(
+        execute_pull(&repo, &r.local).unwrap(),
+        PullOutcome::FastForward { .. }
+    ));
+    assert_eq!(git_output(&r.local, &["ls-files", "--stage"]), before);
+    assert_eq!(read_file(&r.local, "base.txt"), "unstaged local\n");
+    assert_eq!(head_sha(&r.local), head_sha(&r.other));
+}
+
+/// A real ref-transaction failure after checkout must retain the observed
+/// Partial receipt. An attempted checkout of an unchanged tree is not evidence
+/// of a mutation and remains Failed. No production fault hook is needed:
+/// a nonempty branch-reflog directory makes libgit2 reject the final ref write.
+#[test]
+fn test_pull_ref_write_failure_records_observed_checkout_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for (diverged, empty_delta) in [(false, false), (true, false), (false, true)] {
+        let r = setup();
+        if diverged {
+            write_file(&r.local, "local-history.txt", "local history\n");
+            commit_all(&r.local, "local history");
+        }
+        if empty_delta {
+            git(
+                &r.other,
+                &["commit", "-q", "--allow-empty", "-m", "empty upstream"],
+            );
+            git(&r.other, &["push", "-q", "origin", "main"]);
+        } else {
+            remote_commit(&r, "incoming.txt", "incoming bytes\n", "upstream work");
+        }
+        git(&r.local, &["fetch", "-q", "origin"]);
+        write_file(&r.local, "base.txt", "staged bystander\n");
+        git(&r.local, &["add", "base.txt"]);
+        write_file(&r.local, "base.txt", "unstaged bystander\n");
+        let before_head = head_sha(&r.local);
+        let before_index = git_output(&r.local, &["ls-files", "--stage"]);
+        let before_bystander = git_output(&r.local, &["ls-files", "--stage", "--", "base.txt"]);
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &r.local,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        let plan = backend.plan_pull().unwrap();
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        let repo = Repository::open(&r.local).unwrap();
+        let reflog = repo.path().join("logs/refs/heads/main");
+        std::fs::remove_file(&reflog).unwrap();
+        std::fs::create_dir(&reflog).unwrap();
+        // libgit2 removes empty obsolete namespace directories automatically.
+        std::fs::write(reflog.join("occupied"), b"preserve this namespace\n").unwrap();
+        let report = backend.run_recorded(&kagi_git::Operation::Pull, &plan);
+        assert!(report.result.is_err(), "ref write obstruction must fail");
+        let entry = report.recording.entry();
+        if empty_delta {
+            assert!(matches!(&entry.outcome, kagi_git::OpOutcome::Failed { .. }));
+            assert_eq!(git_output(&r.local, &["ls-files", "--stage"]), before_index);
+            assert!(!r.local.join("incoming.txt").exists());
+        } else {
+            let kagi_git::OpOutcome::Partial { after, .. } = &entry.outcome else {
+                panic!(
+                    "checkout landed but receipt did not report Partial: {:?}",
+                    entry.outcome
+                );
+            };
+            assert!(after.dirty.contains("checkout_changed=true"));
+            assert!(after.dirty.contains("checkout_target="));
+            assert_eq!(read_file(&r.local, "incoming.txt"), "incoming bytes\n");
+            assert_ne!(git_output(&r.local, &["ls-files", "--stage"]), before_index);
+        }
+        assert_eq!(head_sha(&r.local), before_head);
+        assert_eq!(read_file(&r.local, "base.txt"), "unstaged bystander\n");
+        assert_eq!(
+            git_output(&r.local, &["ls-files", "--stage", "--", "base.txt"]),
+            before_bystander
+        );
+        assert_eq!(repo.state(), git2::RepositoryState::Clean);
+        assert!(git_output(&r.local, &["stash", "list"]).is_empty());
+    }
+}

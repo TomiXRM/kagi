@@ -2499,6 +2499,30 @@ mod macos {
                 ),
             ),
             (
+                "pull_safe_dirty_intent",
+                Box::new(crate::pull_freshness::scenario_pull_safe_dirty_intent),
+            ),
+            (
+                "pull_safe_merge_intent",
+                Box::new(crate::pull_freshness::scenario_pull_safe_merge_intent),
+            ),
+            (
+                "pull_history_conflict_choice",
+                Box::new(crate::pull_freshness::scenario_pull_history_conflict_choice),
+            ),
+            (
+                "push_safe_intent",
+                Box::new(crate::pull_freshness::scenario_push_safe_intent),
+            ),
+            (
+                "pull_quiet_late_dirty_refuses",
+                Box::new(crate::pull_freshness::scenario_pull_quiet_late_dirty_refuses),
+            ),
+            (
+                "push_non_ff_refuses",
+                Box::new(crate::pull_freshness::scenario_push_non_ff_refuses),
+            ),
+            (
                 "pull_freshness_clean_updates",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
             ),

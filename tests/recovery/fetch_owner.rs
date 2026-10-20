@@ -54,14 +54,28 @@ pub fn scenario_fetch_same_owner_piggybacks(cx: &mut VisualTestAppContext) {
         );
     });
     cx.run_until_parked();
+    crate::recovery_operations::wait_idle(cx, &app);
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none(), "fetch terminalized");
         assert!(
-            app.pull_modal().is_some(),
-            "same-owner completion delivers the positive Pull effect"
+            app.pull_modal().is_none(),
+            "same-owner toolbar intent executes safe Pull without another prompt"
         );
     });
+    let backend = kagi_git::Backend::open(&repo).unwrap();
+    let plan = backend.plan_pull().unwrap();
+    assert!(matches!(
+        plan.disposition,
+        kagi_git::ops::PlanDisposition::NoOp(_)
+    ));
+    assert_eq!(
+        std::fs::read_to_string(repo.join("dirty.txt")).unwrap(),
+        "dirty\n"
+    );
+    let records = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(records.iter().filter(|entry| entry.op == "pull").count(), 1);
+    assert!(!records.iter().any(|entry| entry.op == "stash-push"));
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS fetch_same_owner_piggybacks");

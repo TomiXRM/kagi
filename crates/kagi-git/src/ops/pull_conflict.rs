@@ -1,73 +1,86 @@
 //! What a pull would collide with — plan-time preview and execute-time guard
 //! with one definition of locally dirty paths (#625 / ADR-0192).
 //!
-//! Invariant: [`dirty_paths`] is the only definition of local dirt. Plan-time
-//! prediction intersects it with the post-pull [`Incoming::changed_paths`];
-//! execute-time refusal intersects it with the fetched tree delta through
-//! [`pull_dirty_overlap`]. Those incoming calculations intentionally differ,
-//! but duplicating dirty-path collection lets the preview and refusal disagree.
+//! Invariant: [`dirty_paths`] is the only definition of local dirt. Preview and
+//! execute both compare it with HEAD → post-pull content, including directory /
+//! file collisions. Restore content conflicts are separate from direct-pull
+//! overwrite protection and from committed-history merge conflicts.
 //!
-//! Split out of `ops/pull.rs` (which was already over the 800-line target) on a
-//! feature boundary: everything here answers "would this pull run into what the
-//! user has locally?", and nothing here mutates the repository.
-//!
-//! The overlap that matters is *not* commit-to-commit. A fast-forward pull
-//! cannot conflict between commits; the collision is working-tree content
-//! against incoming content when the auto-stash is restored after the pull.
+//! Direct checkout refuses overlapping local paths even when a three-way stash
+//! restore could merge them. Only those paths require explicit local-change
+//! protection; unrelated edits and staged blobs stay in place.
 
 use super::remote_common::resolve_configured_upstream_oid;
 use super::*;
 
-/// Dirty paths that the tree change from `old_tree` to `new_tree` also touches.
-///
-/// Sorted and deduplicated, rendered for display. A rename contributes **both**
-/// of its paths on the dirty side, so a pull that renames a file the user is
-/// editing under either name is caught.
-pub(super) fn pull_dirty_overlap(
-    repo: &Repository,
-    old_tree: &git2::Tree<'_>,
-    new_tree: &git2::Tree<'_>,
-) -> Result<Vec<String>, GitError> {
-    let dirty = dirty_paths(repo)?;
-    if dirty.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut overlapping: Vec<String> = pull_changed_paths_between_trees(repo, old_tree, new_tree)?
-        .into_iter()
-        .filter(|path| dirty.contains(path))
+// Use path components, not string prefixes: `dir` collides with `dir/file`,
+// but `dir` and `directory` are unrelated. Return the local paths being saved.
+fn overlapping_dirty_paths(
+    dirty: &std::collections::HashSet<PathBuf>,
+    incoming: &[PathBuf],
+) -> Vec<String> {
+    let mut overlapping: Vec<String> = dirty
+        .iter()
+        .filter(|local| {
+            incoming
+                .iter()
+                .any(|path| local.starts_with(path) || path.starts_with(local))
+        })
         .map(|path| path.display().to_string())
         .collect();
     overlapping.sort();
     overlapping.dedup();
-    Ok(overlapping)
+    overlapping
 }
 
-/// Execute-time refusal: the pull must not overwrite what the user is editing.
-pub(super) fn ensure_pull_does_not_touch_dirty_paths(
+/// Update only the actual incoming delta. A full-tree checkout can replace
+/// unrelated staged entries with HEAD blobs; restricting literal paths retains
+/// their path/OID/mode, including staged additions and deletions.
+pub(super) fn checkout_pull_tree(
     repo: &Repository,
     old_tree: &git2::Tree<'_>,
     new_tree: &git2::Tree<'_>,
 ) -> Result<(), GitError> {
-    let overlapping = pull_dirty_overlap(repo, old_tree, new_tree)?;
-    if overlapping.is_empty() {
-        Ok(())
-    } else {
-        Err(GitError::Other(format!(
+    let paths = pull_changed_paths_between_trees(repo, old_tree, new_tree)?;
+    // An empty pathspec means "all paths", not "nothing".
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let overlapping = overlapping_dirty_paths(&dirty_paths(repo)?, &paths);
+    if !overlapping.is_empty() {
+        return Err(GitError::Other(format!(
             "pull would overwrite dirty path(s): {}. Stash or commit those paths, then pull again.",
             overlapping.join(", ")
-        )))
+        )));
     }
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.safe().disable_pathspec_match(true);
+    for path in &paths {
+        // Unix checkout accepts the original bytes. Other platforms must not
+        // substitute a lossy display path (CheckoutBuilder would panic).
+        #[cfg(not(unix))]
+        if path.to_str().is_none() {
+            return Err(GitError::Other(
+                "Pull cannot safely express an incoming checkout path on this platform".into(),
+            ));
+        }
+        checkout.path(path.as_path());
+    }
+    repo.checkout_tree(new_tree.as_object(), Some(&mut checkout))
+        .map_err(|error| {
+            GitError::Other(format!("checkout_tree (pull) failed: {}", error.message()))
+        })
 }
 
-/// What the auto-stash restore would do to the paths a pull touches (#625).
-///
-/// Two lists, because "changed on both sides" is not "conflicts": if the
-/// upstream edited the first line and the user the last, `git stash pop`
-/// merges them cleanly, and warning about it would be a prediction that does
-/// not come true. Only [`Self::conflicting`] is asserted.
+/// Direct-pull protection and explicit-stash restore advice are separate:
+/// overlap requires protecting local work even if its content could merge.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct RestorePrediction {
+    /// A committed-history conflict. Stashing cannot resolve this.
+    pub merge_conflict: bool,
+    /// Direct checkout would touch these local paths, even if stash restore
+    /// could merge their content cleanly.
+    pub overlapping: Vec<String>,
     /// The three-way content merge was run in memory and **fails**.
     pub conflicting: Vec<String>,
     /// Overlapping, but not decidable ahead of time: binary content, a mode
@@ -100,26 +113,24 @@ pub(super) struct RestorePrediction {
 /// wrote a loose object would wake the watcher and reload the confirmation this
 /// preview exists to fill (ADR-0192).
 ///
-/// Local knowledge, like [`predict_merge_conflict`] beside it — `plan_pull`
-/// does not fetch. The UI closes that freshness gap by fetching before it opens
-/// the dirty-pull confirmation (ADR-0192).
-///
-/// An unresolvable upstream, an unborn HEAD, an upstream equal to HEAD, or a
-/// commit-level merge conflict (the pull itself then refuses and nothing lands,
-/// so the restore is onto an unchanged tree) all mean "nothing incoming": an
-/// empty prediction rather than an error, because a preview that cannot be
-/// computed must not fail the plan.
+/// This is local knowledge; the caller fetches before planning. Failed object
+/// reads fail the plan closed. A history conflict is reported independently
+/// from local overwrite and restore-content risks.
 pub(super) fn plan_pull_restore_conflicts(
     repo: &Repository,
     branch_name: &str,
 ) -> Result<RestorePrediction, GitError> {
-    let Some(head_oid) = repo.head().ok().and_then(|head| head.target()) else {
-        return Ok(RestorePrediction::default());
-    };
-    let Ok(upstream_oid) = resolve_configured_upstream_oid(repo, branch_name) else {
-        return Ok(RestorePrediction::default());
-    };
-    if head_oid == upstream_oid {
+    let head_oid = repo
+        .head()
+        .and_then(|head| head.peel_to_commit())
+        .map_err(|error| GitError::Other(error.to_string()))?
+        .id();
+    let upstream_oid = resolve_configured_upstream_oid(repo, branch_name)?;
+    if head_oid == upstream_oid
+        || repo
+            .graph_descendant_of(head_oid, upstream_oid)
+            .map_err(|error| GitError::Other(error.to_string()))?
+    {
         return Ok(RestorePrediction::default());
     }
     let tree_of = |oid: git2::Oid| -> Result<git2::Tree<'_>, GitError> {
@@ -135,21 +146,25 @@ pub(super) fn plan_pull_restore_conflicts(
     let head_tree = tree_of(head_oid)?;
     let fast_forward = repo
         .graph_descendant_of(upstream_oid, head_oid)
-        .unwrap_or(false);
+        .map_err(|error| GitError::Other(error.to_string()))?;
     let incoming = if fast_forward {
         Incoming::Tree(tree_of(upstream_oid)?)
     } else {
-        let (Ok(head_commit), Ok(upstream_commit)) =
-            (repo.find_commit(head_oid), repo.find_commit(upstream_oid))
-        else {
-            return Ok(RestorePrediction::default());
-        };
+        let head_commit = repo
+            .find_commit(head_oid)
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let upstream_commit = repo
+            .find_commit(upstream_oid)
+            .map_err(|error| GitError::Other(error.to_string()))?;
         match repo.merge_commits(&head_commit, &upstream_commit, None) {
-            // A commit-level conflict means the pull refuses before writing
-            // anything, so the stash is restored onto an unchanged HEAD.
-            Ok(index) if index.has_conflicts() => return Ok(RestorePrediction::default()),
+            Ok(index) if index.has_conflicts() => {
+                return Ok(RestorePrediction {
+                    merge_conflict: true,
+                    ..RestorePrediction::default()
+                });
+            }
             Ok(index) => Incoming::Merged(index),
-            Err(_) => return Ok(RestorePrediction::default()),
+            Err(error) => return Err(GitError::Other(error.to_string())),
         }
     };
 
@@ -157,29 +172,26 @@ pub(super) fn plan_pull_restore_conflicts(
     if dirty.is_empty() {
         return Ok(RestorePrediction::default());
     }
-    let mut overlap: Vec<String> = incoming
-        .changed_paths(repo, &head_tree)?
-        .into_iter()
-        .filter(|path| dirty.contains(path))
-        .map(|path| path.display().to_string())
-        .collect();
-    overlap.sort();
-    overlap.dedup();
+    let overlap = overlapping_dirty_paths(&dirty, &incoming.changed_paths(repo, &head_tree)?);
 
     let Some(workdir) = repo.workdir().map(|dir| dir.to_path_buf()) else {
         // Bare repository: nothing is restorable, so nothing is predictable.
         return Ok(RestorePrediction {
-            conflicting: Vec::new(),
+            overlapping: overlap.clone(),
             unpredictable: overlap,
+            ..RestorePrediction::default()
         });
     };
 
-    let mut prediction = RestorePrediction::default();
-    for path in overlap {
-        match restore_verdict(repo, &head_tree, &incoming, &workdir, &path) {
+    let mut prediction = RestorePrediction {
+        overlapping: overlap,
+        ..RestorePrediction::default()
+    };
+    for path in &prediction.overlapping {
+        match restore_verdict(repo, &head_tree, &incoming, &workdir, path) {
             Verdict::Clean => {}
-            Verdict::Conflicts => prediction.conflicting.push(path),
-            Verdict::Unknown => prediction.unpredictable.push(path),
+            Verdict::Conflicts => prediction.conflicting.push(path.clone()),
+            Verdict::Unknown => prediction.unpredictable.push(path.clone()),
         }
     }
     Ok(prediction)
@@ -373,49 +385,4 @@ pub(super) fn pull_changed_paths_between_trees(
         }
     }
     Ok(paths)
-}
-
-/// Attempt an in-memory merge with the current upstream tip to predict conflicts.
-///
-/// Returns `Ok(true)` if a conflict is predicted, `Ok(false)` if the merge
-/// would be clean (or fast-forward), or `Err(...)` if the prediction itself
-/// failed (non-fatal — caller ignores and treats as no warning).
-pub(super) fn predict_merge_conflict(
-    repo: &Repository,
-    branch_name: &str,
-) -> Result<bool, GitError> {
-    let head_oid = repo.head().ok().and_then(|r| r.target());
-    let upstream_oid = resolve_configured_upstream_oid(repo, branch_name).ok();
-
-    let (head_oid, upstream_oid) = match (head_oid, upstream_oid) {
-        (Some(h), Some(u)) => (h, u),
-        _ => return Ok(false),
-    };
-
-    // If already fast-forward or up-to-date, no conflict possible.
-    if head_oid == upstream_oid {
-        return Ok(false);
-    }
-    if repo
-        .graph_descendant_of(head_oid, upstream_oid)
-        .unwrap_or(false)
-        || repo
-            .graph_descendant_of(upstream_oid, head_oid)
-            .unwrap_or(false)
-    {
-        return Ok(false);
-    }
-
-    let head_commit = repo
-        .find_commit(head_oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let upstream_commit = repo
-        .find_commit(upstream_oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-    let index = repo
-        .merge_commits(&head_commit, &upstream_commit, None)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-    Ok(index.has_conflicts())
 }

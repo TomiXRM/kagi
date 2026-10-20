@@ -15,6 +15,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Pull without an extra confirmation or stash when the fetched update can preserve local changes, including unrelated staged and unstaged edits. Show affected paths and explicit protection choices only for real overlap; route committed-history conflicts to Merge review instead of presenting stash as a cure. Recheck the approved checkout and upstream before writing. (#1690)
+- Close Pull confirmation immediately when Enter starts the background operation, and prevent repeated Return from reactivating the toolbar. Run ordinary safe Push directly while keeping refusal, failure and recovery details in the Operation Log. (#1690)
 - Bound historical and working-tree PDF reads before allocating preview bytes, without copying complete ordinary text files merely to classify them. Keep oversized/read-failed sides distinct from absent versions.
 - Preserve PDF comparison sources for symlinks and unresolved index conflicts: do not preview a working-tree symlink's target, and use conflict ours/ancestor rather than substituting HEAD for the unstaged base. Preserve a missing conflict base as an added side instead of a read failure.
 - Identify retained historical PDF viewers by commit and file identity rather than display titles, while preserving same-file reading state.

@@ -45,18 +45,19 @@ async: pull partially applied — Pull completed, but auto-stash restoration
 
 ### 1. 衝突しうるパスを plan の note として持つ
 
-`PullNote::RestoreConflict { paths: Vec<String> }` を追加する。件数ではなく**パス名**を
-持つ（件数だけでは事後と同じ驚きが残る）。`plan_pull` は blocker が無く upstream が
-解決できるときだけ、「dirty なパス」∩「HEAD..upstream で変わるパス」を計算して warning に
-積む。rename は from/to 両方を dirty 側に入れる。
+`PullNote::LocalChangesOverlap { paths }` は直接 checkout で保護が必要なローカルパス、
+`RestoreConflict` / `RestoreConflictPossible` は明示的に選んだ stash 復元の内容衝突を表す。
+履歴同士の merge conflict は別分類とし、stash で直るとは案内しない（#1690）。
+予測は HEAD と実際の post-pull 内容の差分を使う。乖離時は in-memory merge index を読み、
+plan で tree object を書かない。rename の両端と directory/file の重なりも検査する。
 
 表示は EN/JA 両方で 1 パス 1 行に分離する。`RESTORE_CONFLICT_PATH_LIMIT`（12）を超えたら
 残数を数える — plan note は確認の補助であってファイル一覧ではなく、無制限に並べると
 モーダルのボタンが画面外に出る。
 
-計算は `ops/pull_conflict.rs` に集約し、plan（事前提示）と execute（拒否）が同じ
-`pull_dirty_overlap` を読む。同じ判断が二箇所で drift しないことが要点で、`ops/pull.rs` が
-既に 800 行の目安を超えていた問題も feature 境界での分割で同時に解消する。
+計算は `ops/pull_conflict.rs` に集約する。plan の予測と execute の guard は同じ
+dirty-path と incoming-path の定義を使い、直接 checkout の保護と stash 復元の内容予測を
+混同しない。安全な dirty Pull は追加確認も stash も不要とする。
 
 ### 2. clean / dirty の両方で確認前に fetch する（#1087）
 
@@ -271,7 +272,7 @@ admit できなければ stale なローカル知識で Ready / 最新を案内�
 | 完了時の状態 | 配送 |
 |---|---|
 | fetch 失敗 | fetch 自体が oplog に一度だけ記録し、現在の visit にだけ短い toast を表示。modal は作らない |
-| 成功・要求元 tab の同じ visit が表示中・他の modal 無し | plan して確認モーダルを開く |
+| 成功・要求元 tab の同じ visit が表示中・他の modal 無し | 最新 plan が安全なら要求済み Pull を実行。実際の保護・conflict 選択が必要な場合だけ確認モーダルを開く |
 | 成功・要求元 tab が離脱済み／閉じられた | waiter を破棄し、帰還後も配送しない |
 | 成功・別の modal が開いている | 要求を取り消す（新しいユーザー操作が勝つ）|
 
@@ -303,8 +304,10 @@ identity は branch / local OID / remote 名 / 完全な tracking ref を比較�
 stash を行わず、既存の `Backend::run` preflight が承認済み identity を照合する。
 ただし incoming 更新で restore note が変わる場合は復元予測を再確認する。
 同じ upstream の新 commit を identity 変更扱いにはしない。
-plan 側の `worktree_digest` は使わない — あれは「execute 時に tree が動いていたら拒否」の
-意味で、stash-first の pull は意図的に tree を空にするため（checkout の preflight が誤発火した）。
+通常 Pull は plan の `worktree_digest` も凍結し、quiet 実行中に dirty set が変われば
+拒否する。明示 Stash & Pull だけは、承認済み identity / dirty digest / restore note を
+stash 前に照合したうえで、自分の stash が完了した後の digest に限って更新する。
+branch / local OID / remote / full upstream の承認を新しい対象へ置き換えない。
 
 2026-10-09 の native consumer 回帰検証では、同じ OID の別 tracking ref と同内容の別 remote
 の二ケースで、dirty digest / count / restore note を維持して実 UI の auto-stash 確認を
@@ -346,13 +349,31 @@ ff-only 計画、auto-stash 前の fresh plan はすべて `branch.upstream().ge
 Push / force-lease の既存 resolver は変えない。remote URL / fetch refspec の変更を承認に
 束縛する policy はこの変更の対象外とする。
 
+### 4. quiet intent と実行中の確認表示（#1690）
+
+通常の local current Pull / Push は、ユーザーのコマンドに対応する plan が安全な場合、
+二度目のポップアップ確認を挟まない。plan / preflight / execute / verify / oplog と
+session / visit / lease の境界は維持する。新しい危険が見つかった場合は拒否し、
+quiet intent を stash、conflict merge、force push の承認に広げない。
+
+Pull の retained choice だけが modal focus を取得する。toolbar に focus を残して
+Return が toolbar を再起動することを防ぎ、確定時は background operation の admission
+前に card を消す。無関係な foreground modal を終了通知で置き換えない。
+
+通常 Pull も strict ff-only と同じ actual-change observer で checkout 後の失敗を扱う。
+index / HEAD / status の変化を観測した場合だけ Partial、変化が無ければ Failed、
+観測不能なら TerminationUnknown として止める。後二者を推測した成功状態で埋めず、
+不確実な checkout に一時 stash を自動復元しない。
+
 ## Consequences
 
-- overlap fixture では確定前のモーダルに `shared.txt` が出る。safe fixture では衝突 note が
-  出ない。GUI E2E `pull_auto_stash_overlap_preview` が実 UI で両方を assert する。同 scenario は
-  **fetch を一切しない** repository で走るので、パス名が出ること自体が「UI が先に fetch した」
-  証拠になる。
-- clean / dirty ともに、確認または「すでに最新です」の表示までネットワーク往復が必要になる。
+- overlap fixture では確定前に対象パスが出る。`pull_auto_stash_overlap_preview` は
+  実 toolbar の keyboard focus、Return down/up、実行保留中の card 消失と
+  Return 連打による再実行防止を EN/JA で検証する。
+- `pull_safe_dirty_intent` / `pull_safe_merge_intent` は unrelated な staged content、
+  unstaged edits、untracked files を stash 無しで保持する。`push_safe_intent` は
+  quiet Push、`push_non_ff_refuses` は危険な Push の拒否を検証する。
+- clean / dirty ともに、実行・選択表示・「すでに最新です」の案内前に fetch 成功が必要。
   失敗・admission 拒否・別 owner の flight は最新の証拠にしない。
 - `ADR-0189` の reload 無効化は維持する。例外は既存の error / auto-stash 確認と、
   同じ session / visit・未変更 checkout に対する local fetch 由来の確認だけ。

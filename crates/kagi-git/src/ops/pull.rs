@@ -9,9 +9,7 @@
 //! remote pull plan (`plan_pull_remote`). The closely-related tracking-branch
 //! checkout and switch-to-latest flows live in the sibling `switch.rs`.
 
-use super::pull_conflict::{
-    ensure_pull_does_not_touch_dirty_paths, plan_pull_restore_conflicts, predict_merge_conflict,
-};
+use super::pull_conflict::{checkout_pull_tree, plan_pull_restore_conflicts};
 use super::remote_common::{capture_pull_identity, local_branch_oid, short_oid_string};
 use super::*;
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
@@ -159,8 +157,8 @@ pub fn plan_pull_remote(
 /// # Warnings
 ///
 /// - The behind count shown is local knowledge; fetch may reveal more commits.
-/// - Staged, unstaged, or untracked files exist. Pull may proceed, but execute
-///   refuses if the fetched update would touch any dirty path.
+/// - Locally changed paths overlap the incoming delta: explicitly stash/commit
+///   before pulling. Unrelated dirt needs no protection workflow.
 /// - Plan-time in-memory merge predicts a conflict (warning, not blocker —
 ///   re-evaluated after fetch).
 ///
@@ -223,27 +221,6 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         }));
     }
 
-    // Dirty working tree (staged / unstaged) — warning only. The exact pull
-    // target is known only after fetch, so execute re-checks dirty paths against
-    // the fetched tree and refuses only if they overlap.
-    if !status.staged.is_empty() || !status.unstaged.is_empty() {
-        warnings.push(PlanNote::Pull(PullNote::DirtyPullGuard {
-            parts: DirtyParts {
-                staged: status.staged.len(),
-                modified: status.unstaged.len(),
-            },
-        }));
-    }
-
-    // Untracked files — warning only, but execute refuses if pull would create
-    // or modify the same path.
-    if !status.untracked.is_empty() {
-        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
-            count: status.untracked.len(),
-            ctx: UntrackedCtx::PullFetchMayTouch,
-        }));
-    }
-
     // ── 4. Resolve upstream (only when HEAD is attached) ─────
     let (branch_name, remote_name, behind_count) = if let Head::Attached { branch, .. } = &head {
         match resolve_pull_upstream_info(repo, branch) {
@@ -261,37 +238,28 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         (String::new(), String::new(), 0usize)
     };
 
-    // ── 5. Plan-time in-memory conflict prediction ───────────
-    // Only if we have no blockers yet and upstream is resolvable.
+    // Both direct overwrite protection and stash-restore advice use the actual
+    // post-pull tree. History conflicts remain separate: a stash cannot cure
+    // incompatible committed changes.
     if blockers.is_empty() && !branch_name.is_empty() {
-        if let Ok(has_conflict) = predict_merge_conflict(repo, &branch_name) {
-            if has_conflict {
-                warnings.push(PlanNote::Pull(PullNote::MergePrediction));
-            }
+        let prediction = plan_pull_restore_conflicts(repo, &branch_name)?;
+        if prediction.merge_conflict {
+            warnings.push(PlanNote::Pull(PullNote::MergePrediction));
         }
-
-        // #625: the merge prediction above compares commits, so a
-        // fast-forward pull looks harmless to it — what collides is the
-        // working tree against the incoming content, and the user only found
-        // out when the auto-stash failed to restore *after* confirming. Name
-        // the paths here instead. Same local knowledge as the prediction
-        // beside it; the UI fetches first for a dirty pull (ADR-0192).
-        //
-        // Two notes, never merged into one: what kagi proved by running the
-        // three-way merge is asserted, what it could not decide only *may*
-        // conflict. A warning that does not come true is how a prediction
-        // feature loses the user.
-        if let Ok(prediction) = plan_pull_restore_conflicts(repo, &branch_name) {
-            if !prediction.conflicting.is_empty() {
-                warnings.push(PlanNote::Pull(PullNote::RestoreConflict {
-                    paths: prediction.conflicting,
-                }));
-            }
-            if !prediction.unpredictable.is_empty() {
-                warnings.push(PlanNote::Pull(PullNote::RestoreConflictPossible {
-                    paths: prediction.unpredictable,
-                }));
-            }
+        if !prediction.overlapping.is_empty() {
+            warnings.push(PlanNote::Pull(PullNote::LocalChangesOverlap {
+                paths: prediction.overlapping,
+            }));
+        }
+        if !prediction.conflicting.is_empty() {
+            warnings.push(PlanNote::Pull(PullNote::RestoreConflict {
+                paths: prediction.conflicting,
+            }));
+        }
+        if !prediction.unpredictable.is_empty() {
+            warnings.push(PlanNote::Pull(PullNote::RestoreConflictPossible {
+                paths: prediction.unpredictable,
+            }));
         }
     }
 
@@ -338,12 +306,10 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         stash_count_at_plan: 0,
         stash_identity: None,
         pull_identity,
-        // Deliberately None: `worktree_digest` on a plan means "refuse at
-        // execute if the tree moved" (see `preflight_check`), and a dirty pull
-        // empties the tree on purpose by stashing first. The confirmation's own
-        // promise is bound in the UI instead (`PullPlanModal::dirty_digest`,
-        // #625 / ADR-0192).
-        worktree_digest: None,
+        // Direct Pull freezes the dirty set just like checkout-aware strict FF.
+        // Explicit stash orchestration advances only this digest after its own
+        // verified stash, retaining the approved branch/upstream identity.
+        worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
@@ -366,25 +332,26 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 /// 3. Re-resolve the upstream tip after fetch.
 ///    If HEAD OID == upstream tip or HEAD is a descendant → `UpToDate`.
 /// 4. If HEAD is an ancestor of upstream tip (fast-forward possible):
-///    - Advance the branch ref to the upstream tip.
-///    - `checkout_tree` (safe) + `set_head` to sync the WT.
+///    - Safely check out only the incoming delta while HEAD is still the baseline.
+///    - Advance the locked branch ref, retaining unrelated staged content.
 ///      → `FastForward { to }`.
 /// 5. Otherwise (diverged):
 ///    - `repo.merge_commits(&head_commit, &upstream_commit, None)` — in-memory.
 ///    - If the index has conflicts → `GitError::Other("merge would conflict: …")`.
-///      **No MERGING state is set.  The repo is left completely untouched.**
-///    - Clean: `index.write_tree_to` → `repo.commit(…, parents=[head, upstream])`
-///      → `index.read_tree` + `index.write` → `checkout_head(safe, recreate_missing)`.
+///      No MERGING state is set; HEAD, index and worktree remain untouched.
+///    - Clean: write the merged tree and commit without moving HEAD, safely
+///      check out only its incoming delta, then advance the locked branch ref.
 ///      → `Merged { commit }`.
 ///
 /// # Errors
 ///
-/// Returns [`GitError::Other`] on any failure.  The repo is **never** left in a
-/// partial state: conflicts are detected before any write occurs.
+/// Returns [`GitError::Other`] on failure. History conflicts and local overwrite
+/// risks are refused before checkout; fetch may already have updated tracking refs.
 pub(crate) fn execute_pull(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,
+    checkout_target: &mut Option<CommitId>,
 ) -> Result<PullOutcome, GitError> {
     preflight_check(repo, plan)?;
     let committer = build_signature(repo)?;
@@ -412,6 +379,21 @@ pub(crate) fn execute_pull(
     }
 
     // Fetch may discover newer commits, but only from the approved upstream.
+    // Keep checkout/commit from racing a branch switch or ref move after the
+    // final identity check. Use the same HEAD/ref locks as strict-FF Pull.
+    let mut head_lock = repo
+        .transaction()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    head_lock
+        .lock_ref("HEAD")
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let refname = format!("refs/heads/{branch_name}");
+    let mut transaction = repo
+        .transaction()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    transaction
+        .lock_ref(&refname)
+        .map_err(|error| GitError::Other(error.to_string()))?;
     preflight_check(repo, plan)?;
     let upstream_oid = repo
         .refname_to_id(&identity.upstream_ref)
@@ -456,37 +438,23 @@ pub(crate) fn execute_pull(
             GitError::Other(format!("upstream tree lookup failed: {}", e.message()))
         })?;
 
-        ensure_pull_does_not_touch_dirty_paths(repo, &head_tree_for_safety, &upstream_tree)?;
+        preflight_check(repo, plan)?;
+        *checkout_target = Some(CommitId(upstream_oid.to_string()));
+        checkout_pull_tree(repo, &head_tree_for_safety, &upstream_tree)?;
 
-        // ORDER MATTERS: check out the upstream tree while HEAD/index still
-        // point at the OLD tree.  Safe checkout then sees old→new as the
-        // change set (updates modified files, creates new ones, writes the
-        // index).  Moving the branch ref first makes the baseline equal the
-        // target — checkout becomes a no-op and the WT silently goes stale
-        // (caught by pull tests).
-        let obj = upstream_commit.into_object();
-        let mut cb = git2::build::CheckoutBuilder::new();
-        cb.safe();
-        repo.checkout_tree(&obj, Some(&mut cb))
-            .map_err(|e| GitError::Other(format!("checkout_tree (FF) failed: {}", e.message())))?;
-
-        // Now advance the branch ref to the upstream tip (force=true only
-        // overwrites the ref we just validated as an ancestor — a safe FF).
-        let refname = format!("refs/heads/{}", branch_name);
-        repo.reference(
-            &refname,
-            upstream_oid,
-            true,
-            &format!(
-                "pull: fast-forward {} to {}",
-                branch_name,
-                &upstream_oid.to_string()[..8]
-            ),
-        )
-        .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
-
-        repo.set_head(&refname)
-            .map_err(|e| GitError::Other(format!("set_head (FF) failed: {}", e.message())))?;
+        transaction
+            .set_target(
+                &refname,
+                upstream_oid,
+                None,
+                &format!(
+                    "pull: fast-forward {} to {}",
+                    branch_name,
+                    &upstream_oid.to_string()[..8]
+                ),
+            )
+            .and_then(|()| transaction.commit())
+            .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
 
         return Ok(PullOutcome::FastForward {
             to: CommitId(upstream_oid.to_string()),
@@ -539,7 +507,8 @@ pub(crate) fn execute_pull(
         .find_tree(new_tree_oid)
         .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
 
-    ensure_pull_does_not_touch_dirty_paths(repo, &head_tree_for_safety, &new_tree)?;
+    // Recheck after the in-memory merge and before any observable mutation.
+    preflight_check(repo, plan)?;
 
     // ── 7. Build merge commit ─────────────────────────────────
     let author = committer.clone();
@@ -560,26 +529,23 @@ pub(crate) fn execute_pull(
         )
         .map_err(|e| GitError::Other(format!("merge commit creation failed: {}", e.message())))?;
 
-    // ── 8. Sync WT + index to the merge tree (old baseline) ──
-    let mut cb = git2::build::CheckoutBuilder::new();
-    cb.safe();
-    repo.checkout_tree(
-        repo.find_tree(new_tree_oid).unwrap().as_object(),
-        Some(&mut cb),
-    )
-    .map_err(|e| GitError::Other(format!("checkout_tree after merge failed: {}", e.message())))?;
+    // Only incoming paths are checked out; unrelated staged identities survive.
+    preflight_check(repo, plan)?;
+    *checkout_target = Some(CommitId(new_oid.to_string()));
+    checkout_pull_tree(repo, &head_tree_for_safety, &new_tree)?;
 
     // ── 9. Move the branch ref to the merge commit ────────────
-    let refname = format!("refs/heads/{}", branch_name);
-    repo.reference(
-        &refname,
-        new_oid,
-        true,
-        &format!("pull: merge {} into {}", remote_name, branch_name),
-    )
-    .map_err(|e| GitError::Other(format!("branch ref update (merge) failed: {}", e.message())))?;
-    repo.set_head(&refname)
-        .map_err(|e| GitError::Other(format!("set_head (merge) failed: {}", e.message())))?;
+    transaction
+        .set_target(
+            &refname,
+            new_oid,
+            None,
+            &format!("pull: merge {} into {}", remote_name, branch_name),
+        )
+        .and_then(|()| transaction.commit())
+        .map_err(|e| {
+            GitError::Other(format!("branch ref update (merge) failed: {}", e.message()))
+        })?;
 
     Ok(PullOutcome::Merged {
         commit: CommitId(new_oid.to_string()),
@@ -864,18 +830,10 @@ pub(crate) fn execute_pull_branch_ff(
         let upstream_tree = upstream_commit
             .tree()
             .map_err(|error| GitError::Other(error.to_string()))?;
-        ensure_pull_does_not_touch_dirty_paths(repo, &old_tree, &upstream_tree)?;
-        // As in ordinary Pull, checkout while HEAD still supplies the old
-        // baseline. Safe checkout updates the index and tracked files first.
-        let mut checkout = git2::build::CheckoutBuilder::new();
-        checkout.safe();
-        // This is an attempted checkout, not proof of a mutation. The
-        // backend compares the actual index and status after any failure.
+        // As in ordinary Pull, preserve staged content outside the incoming
+        // delta. Record the attempted target for the backend's partial observer.
         *checkout_target = Some(CommitId(upstream_oid.to_string()));
-        repo.checkout_tree(upstream_commit.as_object(), Some(&mut checkout))
-            .map_err(|error| {
-                GitError::Other(format!("checkout_tree (FF) failed: {}", error.message()))
-            })?;
+        checkout_pull_tree(repo, &old_tree, &upstream_tree)?;
     }
 
     transaction

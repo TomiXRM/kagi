@@ -20,15 +20,19 @@ pull must not overwrite local dirty paths.
 Local pull remains a Guarded operation, but dirty working-tree entries are no
 longer plan-time blockers by themselves.
 
-`plan_pull` reports staged, unstaged, and untracked entries as warnings. The
-execute phase fetches first, computes the exact tree that the pull would check
-out, diffs it against the current HEAD tree, and refuses only when that changed
-path set overlaps staged, unstaged, or untracked paths.
+`plan_pull` warns about actual overwrite risk, not the mere presence of staged,
+unstaged or untracked entries. It computes the incoming checkout tree, including
+the clean merge result for diverged history, and compares its changed paths with
+local dirty paths. The UI obtains a fresh upstream first (ADR-0192); execution
+fetches and repeats the safety checks before writing.
 
 If there is overlap, execution stops before checkout/ref movement and reports
-the paths that must be stashed or committed. If there is no overlap, pull may
-fast-forward or create a clean merge commit while preserving the unrelated
-dirty files.
+the paths that need protection. Without overlap, pull may fast-forward or create
+a clean merge commit. Checkout is restricted to the incoming tree's exact changed
+paths with literal path matching: unrelated index path / OID / mode and working
+files, including split staged/unstaged edits, remain intact. The approved worktree
+digest and typed upstream identity are rechecked; new risk refuses the operation
+instead of silently adding a stash workflow (#1690).
 
 Conflict state remains a blocker. Merge conflicts predicted by the in-memory
 merge remain non-writing failures.

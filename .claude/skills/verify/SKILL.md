@@ -2923,19 +2923,38 @@ The current suite covers:
   the same PR number) is dropped by the switch — `PrFields` is repo-scoped —
   so neither composer changes and no `pr-edit` is sent. The picker also
   carries its `owner`; Apply only touches that session;
-- dirty Pull auto-stash success and Pull-failure restoration, including a durable
-  Operation Log result without a dismiss-only error modal.
+- Risk-based Pull / Push (#1690): run
+  `KAGI_GUI_E2E_ONLY=pull_safe_dirty_intent,pull_safe_merge_intent,pull_history_conflict_choice,push_safe_intent,pull_quiet_late_dirty_refuses,push_non_ff_refuses,pull_auto_stash_`.
+  Safe current-branch Pull and Push execute from the user's command without a
+  second dialog. Compare unrelated staged path/OID/mode, split unstaged edits,
+  untracked bytes and stash entries, not just a clean status or new HEAD.
+  Actual overlap offers Review changes / Stash & Pull; committed-history
+  conflicts route to Merge review, never to stash as a cure. A late dirty-set
+  change refuses rather than silently stashing.
+  `pull_auto_stash_overlap_preview` starts with real toolbar focus and Return
+  keydown/keyup in EN/JA. Hold the admitted Pull, assert the rendered confirm
+  controls are gone while busy, then repeat Return and require no second Pull
+  or fetch. Keep failure/restoration details durable without a dismiss-only
+  error modal.
+  Tier B uses disposable clones and their own bare remote. Photograph quiet
+  dirty Pull and quiet Push completion; for overlap, set a fixture-only delayed
+  upload-pack after the choice is visible and capture Return → card gone while
+  Pull is still running. Restore the fixture config afterward. In Japanese,
+  inspect committed-conflict choice → Merge review → Cancel and verify unchanged
+  HEAD, index and working files. Never use the user's checkout for these writes.
 - Pull freshness (`tests/recovery/pull_freshness.rs`):
-  `KAGI_GUI_E2E_ONLY=pull_freshness_` exercises a real held fetch before a clean
-  confirmation, an advanced upstream unknown to the consumer, true synchronization,
-  fetch failure, and same-owner joining. Native toolbar activation follows
+  `KAGI_GUI_E2E_ONLY=pull_freshness_,pull_current_` exercises a real held fetch
+  before execution or a necessary choice, an advanced upstream unknown to the
+  consumer, true synchronization, fetch failure, and same-owner joining.
+  Native toolbar activation follows
   `keyboard_nav::keys` (keydown **and keyup**); toolbar ids are not bounds-registry
   controls.
   `pull_freshness_clean_updates` runs both that toolbar gesture and the actual
   current-branch context menu: right-click the measured `sidebar-local-main`
   row, then click its Pull item. Start each with cached zero and a separately
   advanced real origin; neither gesture may claim latest or change checkout
-  before its held fetch succeeds and the user confirms. Local row measurements
+  before its held fetch succeeds. Safe plans then execute without a second
+  confirmation. Local row measurements
   cover HEAD and non-HEAD rows only under `gui-e2e`, with no normal-build probe
   identifier allocation. Cached zero/unknown never disables healthy upstream
   Pull; busy/detached/remote/no-upstream guardrails remain intact.
@@ -2943,17 +2962,17 @@ The current suite covers:
   opt-in status refresh may repair stat metadata without staging a change
   (ADR-0193). Tier B uses two isolated clones and normal pushes to a dedicated
   remote: advance the producer without fetching in the consumer, click Pull in
-  the owned app window, photograph stale `↓0` → fresh confirmation → confirmed
-  new HEAD. Also photograph a genuine no-op only after fetch success and an
-  unreachable-remote fetch error; restore the fixture URL afterward. Before
-  confirmation and on fetch failure, HEAD / staged content / working files must
+  the owned app window, photograph stale `↓0` → fetched update → new HEAD without
+  a safe-case popup. Also photograph a genuine no-op only after fetch success and
+  an unreachable-remote fetch error; restore the fixture URL afterward. While
+  fetch is held and on fetch failure, HEAD / staged content / working files must
   be unchanged. A failed fetch must never produce an up-to-date toast.
   The external HEAD / working-tree and opened-then-closed modal scenarios exercise
   confirmation invalidation and displacement. `pull_freshness_captured_reload_drift`
   drains the existing GPUI test dispatcher in background-only mode (`tick(true)`)
   to capture a real snapshot before mutating the checkout, then accepts that old
   read on the foreground dispatcher. Both HEAD-only and working-tree-only drift
-  must invalidate the original clean approval; no new production seam is needed.
+  must invalidate the original retained risk choice; no new production seam is needed.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a
   Commit Panel file diff re-read (closed once nothing is left to show), and the

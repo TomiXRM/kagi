@@ -1657,17 +1657,14 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     let before = repo_fingerprint(repo);
 
     let (app, window) = mount(cx, repo);
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
     app.update(cx, |app, cx| app.open_push_modal(cx));
     cx.run_until_parked();
-    assert!(
-        cx.read(|cx| app
-            .read(cx)
-            .push_modal()
-            .is_some_and(|m| m.plan.blockers.is_empty())),
-        "the fixture must produce a clean push plan for the failure to be the executor's"
-    );
-
-    app.update(cx, |app, cx| app.start_push(cx));
+    cx.read(|cx| {
+        assert!(app.read(cx).push_modal().is_none());
+        assert!(app.read(cx).app_sessions.has_leases());
+    });
     app.update(cx, |app, cx| app.open_remote_browse(cx));
     paint(cx, window);
     cx.update_window(window, |_, window, cx| {
@@ -1676,6 +1673,7 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    release.send(());
     wait_idle(cx, &app);
     cx.read(|cx| {
         let app = app.read(cx);

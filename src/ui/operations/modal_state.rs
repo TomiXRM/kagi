@@ -291,6 +291,7 @@ impl KagiApp {
     #[inline]
     pub fn set_pull_modal(&mut self, m: PullPlanModal) {
         self.replace_modal_from_user(ActiveModal::Pull(m));
+        self.focus_root_for_modal();
     }
     #[inline]
     pub fn clear_pull_modal(&mut self) {

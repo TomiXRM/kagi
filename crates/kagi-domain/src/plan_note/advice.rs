@@ -742,7 +742,7 @@ macro_rules! advice_template_display_en {
         "If '{}' already exists on the remote pointing at a different commit, the remote rejects the push rather than moving it."
     };
     (PullMergePrediction) => {
-        "This pull will likely conflict with your branch. If the remote hasn't changed, it stops safely without changing anything."
+        "Committed changes on your branch and the upstream conflict. Stashing local edits cannot resolve this history conflict. Review conflict resolution to merge the upstream with Kagi's conflict tools, or cancel."
     };
     (PullRestoreConflict) => {
         "These files will conflict when your stashed changes are restored after this pull:{}\nCommit or stash those files yourself first, or resolve the conflict after the pull — the stash is kept either way."

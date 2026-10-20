@@ -342,7 +342,15 @@ impl KagiApp {
         } else if name == "pull" {
             klog!("async: remote pull started");
         }
+        #[cfg(feature = "gui-e2e")]
+        let hold = (name == "pull")
+            .then(crate::ui::op_queue::take_run_hold)
+            .flatten();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let started = std::time::Instant::now();
             let mut executed = started;
             job.run_with_events(|event| {

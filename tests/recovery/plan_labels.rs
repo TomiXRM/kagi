@@ -317,8 +317,15 @@ fn push_subject_case(
     expected: &[String],
 ) {
     let before = repo_fingerprint(repo);
-    app.update(cx, |app, cx| app.open_push_modal(cx));
-    crate::recovery_operations::wait_idle(cx, app);
+    // This scenario tests retained plan-card subject rendering/copy, not the
+    // toolbar's ordinary safe Push intent (which intentionally has no card).
+    let plan = kagi_git::Backend::open(repo).unwrap().plan_push().unwrap();
+    app.update(cx, |app, _| {
+        app.set_push_modal(kagi::ui::modals::PushPlanModal {
+            plan: std::sync::Arc::new(plan),
+            error: None,
+        });
+    });
     e2e::plan_subjects::clear();
     paint(cx, window);
     let plan = cx.read(|cx| app.read(cx).push_modal().unwrap().plan.clone());

@@ -137,18 +137,86 @@ pub(crate) fn render_pull_modal(
     overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let confirm_label = if modal.auto_stash {
+    let confirm_label = if modal.plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Pull(
+                kagi_domain::plan_note::PullNote::MergePrediction
+            )
+        )
+    }) {
+        Msg::PullReviewConflicts.t()
+    } else if modal.auto_stash {
         Msg::PullAutoStashConfirm.t()
     } else {
         "Pull"
     };
-    // W3-NOTIFY: confirm runs on a background thread (start/finish toasts).
-    render_plan_modal_wrapper_styled(
+    let save_local_changes = modal.plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Common(
+                kagi_domain::plan_note::CommonNote::DirtyBlocksOp {
+                    before: kagi_domain::plan_note::OpPhrase::Merging,
+                    ..
+                }
+            )
+        )
+    });
+    let extra = save_local_changes
+        .then(|| {
+            let stash = super::button_style::modal_button(
+                "pull-stash-changes",
+                Msg::InputStashTitle.t(),
+                super::button_style::ModalButtonKind::Secondary,
+                None,
+                cx.listener(|this, _, _window, cx| {
+                    if this.op_latched() || this.pull_modal().is_none() {
+                        return;
+                    }
+                    this.cancel_pull_modal();
+                    this.open_stash_push_modal(cx);
+                    cx.notify();
+                }),
+                cx,
+            );
+            PlanCardExtra {
+                element: super::e2e::measure_leaf("pull-stash-changes", stash),
+                clipboard: Msg::InputStashTitle.t().to_string(),
+            }
+        })
+        .or_else(|| {
+            modal.auto_stash.then(|| {
+                let review = super::button_style::modal_button(
+                    "pull-review-changes",
+                    Msg::PullReviewChanges.t(),
+                    super::button_style::ModalButtonKind::Secondary,
+                    None,
+                    cx.listener(|this, _, window, cx| {
+                        if this.op_latched() || this.pull_modal().is_none() {
+                            return;
+                        }
+                        this.cancel_pull_modal();
+                        this.open_commit_panel(window, cx);
+                        cx.notify();
+                    }),
+                    cx,
+                );
+                PlanCardExtra {
+                    element: super::e2e::measure_leaf("pull-review-changes", review),
+                    clipboard: Msg::PullReviewChanges.t().to_string(),
+                }
+            })
+        });
+    // A stash here only saves local work; the distinct merge choice below is
+    // still required to enter the existing committed-history conflict workflow.
+    render_plan_modal_wrapper_extra(
         modal.plan,
         modal.error,
         confirm_label,
         None,
         Some((IconName::ArrowDown.into(), theme().color_branch)),
+        super::dialog_a11y::ConfirmStage::Single,
+        extra,
         |this, _cx| this.cancel_pull_modal(),
         |this, cx| this.start_pull(cx),
         overrides,

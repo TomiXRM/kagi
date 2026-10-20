@@ -1,5 +1,5 @@
 //! #1682: native pointer drags must reach both ends of the real PDF viewport.
-//! Uses only baseline PdfProbe geometry: no scroll setters or new test seams.
+//! Uses actual viewport geometry and bounded raster observations, never scroll setters.
 use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, git, mount, unmount};
 use crate::native_ax;
@@ -16,7 +16,7 @@ use kagi_ui_core::{
     theme,
 };
 use kagi_ui_editor::{PdfProbe, TreeSource};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, time::Duration};
 
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
@@ -30,12 +30,12 @@ fn wait_for(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
-    ready: impl Fn(&EditorWorkspaceView) -> bool,
+    ready: impl Fn(&EditorWorkspaceView, &gpui::App) -> bool,
 ) {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         paint(cx, window);
-        if cx.read(|cx| ready(editor.read(cx))) {
+        if cx.read(|cx| ready(editor.read(cx), cx)) {
             paint(cx, window);
             return;
         }
@@ -52,10 +52,10 @@ fn wait_pdf(
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
 ) -> PdfProbe {
-    wait_for(cx, editor, window, |view| {
-        !view.file_loading && view.pdf_probe().is_some_and(|pdf| pdf.settled)
+    wait_for(cx, editor, window, |view, cx| {
+        !view.file_loading && view.pdf_probe(cx).is_some_and(|pdf| pdf.settled)
     });
-    cx.read(|cx| editor.read(cx).pdf_probe().unwrap())
+    cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap())
 }
 
 fn open_pdf(
@@ -64,7 +64,7 @@ fn open_pdf(
     window: AnyWindowHandle,
 ) {
     editor.update(cx, |view, cx| view.set_source(TreeSource::All, cx));
-    wait_for(cx, editor, window, |view| {
+    wait_for(cx, editor, window, |view, _| {
         !view.loading
             && view
                 .files
@@ -119,30 +119,28 @@ fn assert_identity(
             view.editor.is_none() && view.content.is_none() && !view.dirty,
             "PDF scrollbar interaction must retain the read-only presentation"
         );
-        let current = view.pdf_probe().expect("drag discarded the PDF");
+        let current = view.pdf_probe(cx).expect("drag discarded the PDF");
         assert_eq!(
             (
-                current.page,
+                current.source_id,
                 current.page_count,
                 current.zoom,
                 current.request
             ),
             (
-                initial.page,
+                initial.source_id,
                 initial.page_count,
                 initial.zoom,
                 initial.request
             ),
-            "scrollbar drag must not change document/page/zoom/raster request"
+            "scrollbar drag must not change document/zoom/raster generation"
         );
-        assert!(current.settled && !current.in_flight && current.error.is_none());
+        assert!(current.error.is_none());
         assert!(
-            Arc::ptr_eq(
-                current.image.as_ref().unwrap(),
-                initial.image.as_ref().unwrap()
-            ),
-            "scrollbar drag must preserve the accepted page bitmap"
+            current.cached_pages.len() <= current.cache_entry_limit
+                && current.cached_bytes <= 64_000_000
         );
+        assert!(current.raster_jobs <= 2);
         let offset = current.scroll.offset();
         let maximum = current.scroll.max_offset();
         assert!(

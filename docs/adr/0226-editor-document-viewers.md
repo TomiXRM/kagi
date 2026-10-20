@@ -18,10 +18,10 @@ Kagi. Inspection of the current Zed source tree did not identify a PDF viewer.
 
 ## Decision
 
-Extend `EditorWorkspaceView` and its existing per-buffer state. Do not create a
-second workspace, file watcher, settings store, renderer service or Git owner.
-Focused Editor sibling modules may hold PDF rendering and controls rather than
-growing the oversized `lib.rs`.
+Extend the existing Editor file and buffer lifecycle. `PdfSource` and the retained
+`PdfViewer` entity in `kagi-ui-editor` own PDF parsing, rendering and reading state
+for both Editor and Graph. Do not create a second workspace, file watcher,
+settings store, PDF engine or Git owner.
 
 ### Markdown
 
@@ -60,43 +60,45 @@ PDF constructs and fonts remain renderer limitations.
   document with the parser. Malformed `.pdf` files are not editable text.
 - Preserve the existing 10 MiB input policy. Bound the actual file read, not just
   its preceding metadata check. Reject unsuitable file types.
-- Keep the parsed document, current page, zoom and bitmap in the existing buffer
-  lifetime. Render only the current page off the UI thread. Validate dimensions
-  and cap raster output; avoid encoding a bitmap to PNG merely to decode it again.
-- Allow only one executing page raster per Editor owner and coalesce later
-  navigation requests. A superseded result must not replace a newer document,
-  page or zoom, including close/reopen and A-to-B-to-A transitions.
-- Reuse the existing watcher and buffer identity. Unchanged content should retain
-  its parsed document and image; changed content invalidates the old raster and
-  clamps the page selection to the new document.
-- Provide accessible previous/next-page and zoom controls using existing named
-  Buttons, with localized loading, boundary and error states. Zoomed content is
-  scrollable rather than immediately fitted back to the viewport.
-  Same-page zoom preserves the document point at the viewport center, with
-  ordinary layout clamping at the new scroll bounds. Retain the same page's
-  bitmap while its new raster is pending so a loading placeholder cannot
-  collapse scroll geometry. Page navigation clears the bitmap and starts at
-  the top; failures release any retained bitmap and show the existing error.
-  The request identity remains the only admission rule for completed rasters;
-  completion does not restore an older scroll position (#1678).
+- Keep the parsed document and retained `PdfViewer` in the existing buffer
+  lifetime. Lay out all page geometries as one continuous document, but mount
+  only visible pages and their immediate neighbors. Ordinary wheel scrolling
+  crosses page boundaries; previous/next controls scroll to existing pages.
+- Bound retained decoded pixels to 64,000,000 bytes per viewer. Every visible
+  page receives a share of that budget; adjacent prefetch uses at most 10%.
+  Cache entries follow the visible range plus at most two neighbors, not a fixed
+  page cap that could leave visible short pages permanently loading.
+  Each raster remains bounded to 4,096 pixels per axis and 16,000,000 pixels.
+- Permit at most two raster jobs globally and one pending raster or coalesced
+  admission retry per viewer. Completion/retry only notifies; visible rendering
+  schedules subsequent work. A cached hidden tab may finish its existing job
+  but cannot keep scheduling prefetch.
+- Admit results only for the same live viewer, source identity, generation,
+  page, zoom, backing scale and current page pixel budget. Superseded results
+  cannot replace a newer document, including close/reopen and zoom ABA.
+- Reuse the existing watcher and buffer identity. Unchanged content retains
+  its source, viewer and reading state; changed content invalidates rasters
+  and clamps the page selection to the new document.
+- Provide accessible page and zoom controls using existing named Buttons and
+  localized loading/error states. Zoom preserves a page-relative document point
+  at the viewport center, excluding unscaled spacing. Retain useful previous
+  rasters during replacement without collapsing document geometry.
 - Give the PDF body its own localized, tabbable focus target and the existing
   theme focus ring. Within `KagiPdfBody`, arrows scroll both axes, Page Up/Down
   and Space/Shift+Space scroll a viewport with overlap, and Home/End or
-  Cmd+Up/Down reach the current page's boundaries. Clamp and consume these
-  actions at the bounds: reading never selects another file or changes pages.
-  Reuse the page's scroll handle without changing zoom or raster identity.
+  Cmd+Up/Down reach the continuous document's boundaries. Clamp and consume
+  these actions at the bounds: reading never selects another file or commit.
+  Reuse the document's scroll handle without changing source or zoom.
   File Tree and toolbar keep their own key behavior; `EditorReadOnly` remains
   the ancestor context. Release focus only when the PDF body owns it and its
   surface is hidden or reclassified. Reuse the workspace's post-paint focus
   membership guard when closing Editor removes the owner altogether; never
   reclaim focus from another pane or modal (#1680).
-- Overlay the pinned shared both-axis `Scrollbar` on the PDF body's existing
-  scroll handle. Keep the body viewport, padding, focus target and zoom anchor
-  unchanged; do not add a second scroll owner or permanent gutters. The shared
-  component supplies overflow detection, theme colors, system visibility policy
-  and thumb dragging. Render the overlay only while a bitmap is displayed and
-  no error is shown, including the retained bitmap during same-page zoom.
-  Scrolling does not change the document, page, zoom or accepted raster (#1682).
+- Overlay the pinned shared both-axis `Scrollbar` on the document's existing
+  scroll handle. Keep one scroll owner; do not add permanent gutters. The
+  shared component supplies overflow detection, theme colors, system visibility
+  policy and thumb dragging. Scrolling updates the visible-page status and
+  raster demand without changing the source or zoom.
 - PDF presentation has no writable text Input, dirty state or save request.
   Keyboard Save/Undo/Redo must not fall through to unrelated Git operations from
   the foreground PDF surface. Explicit Git menu commands remain separate.
@@ -117,8 +119,10 @@ PDF constructs and fonts remain renderer limitations.
   focus can be returned to the workspace root. Only focus owned by that Input
   is transferred; another pane or modal keeps its focus. Pending Input events
   cannot dirty the newly accepted read-only PDF.
-- Working-tree PDF viewing is the scope. Do not add PDF diffs or historical PDF
-  snapshot rendering to the existing diff/history pipelines.
+- Git Graph commit diff shows two independent read-only PDF viewers: previous
+  version on the left, selected version on the right. This is a document
+  comparison, not computed differences or highlighted change regions. Editor's
+  separate History/snapshot presentation is not expanded by this change.
 - Password-required, invalid-file and unsupported-encryption errors are distinct.
   Password entry is not part of this change; documents accepted with an empty
   password may open normally.
@@ -148,6 +152,28 @@ names remain in accessibility labels and hover help. The reset action keeps its
 `100%` label. At 940×660 with Japanese UI text at 167%, controls must not consume
 the document viewport: with the bottom panel closed, retain at least 200 logical
 pixels of visible document height.
+
+### Historical PDF source ownership
+
+The existing `MainDiffRead` worker reads and parses each historical side. For a
+commit comparison, old bytes come from its first parent and new bytes from the
+selected commit, never a working-tree substitute. Capture Inspector rename-from
+metadata in the request: a path-filtered Git delta may otherwise look added and
+lose the old path. Added/deleted files show an explicit absent-side explanation;
+read and parse failures remain visible failures rather than absent versions.
+
+PDF path/signature recognition precedes ordinary image sniffing and text
+projection, including ASCII PDFs whose changed hunks omit their signature.
+Classification lives with the existing immutable diff-cache entry and shares
+its invalidation lifetime. Session, visit, request and source guards admit the
+prepared result before viewer entities are created. Render only reuses those
+entities. Reopening the same accepted immutable commit/path retains reading
+positions; mutable comparisons use newly accepted sources.
+
+PDF previews expose no text rows, hunk actions, fake line counts or Unified/Split
+mode controls. Existing image and text presentations retain their own behavior.
+The same read-only keyboard context and PDF body focus apply in both hosts.
+
 
 ## Distribution and limits
 
@@ -186,6 +212,17 @@ The signed macOS app and archive, Linux tar, Debian package, AppDir and companio
 ZIP preserve byte-identical license/notice files. Windows packaging and a
 completed AppImage are not locally exercised; the local AppDir/ZIP run had no
 `appimagetool` and is not an AppImage-runtime claim.
+
+The continuous-viewer amendment was exercised in ordinary macOS windows with
+generated historical PDFs (3-page previous, 5-page selected and distinct 7-page
+working-tree content), independently scrolled sides, added/deleted/renamed
+documents and continuous Editor reading. A private clone of the user-supplied
+Ritsumei repository verified an actual 32-page document at its first, middle and
+last pages, independent old/new commit previews, and navigation to pages 110/111
+of a longer document. Both fixtures retained HEAD, staged path/OID/mode and
+the inspected PDF bytes. Personal document screenshots are not public evidence.
+Native regressions additionally exercise many simultaneously visible short pages,
+bounded raster caches, hidden-viewer scheduling and stale source ownership.
 
 ## References
 

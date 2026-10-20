@@ -67,12 +67,12 @@ fn wait(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
-    ready: impl Fn(&EditorWorkspaceView) -> bool,
+    ready: impl Fn(&EditorWorkspaceView, &gpui::App) -> bool,
 ) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         paint(cx, window);
-        if cx.read(|cx| ready(editor.read(cx))) {
+        if cx.read(|cx| ready(editor.read(cx), cx)) {
             draw(cx, window);
             return;
         }
@@ -207,7 +207,7 @@ fn open(
     path: &str,
 ) {
     editor.update(cx, |view, cx| view.open_tab(path.into(), cx));
-    wait(cx, editor, window, |view| {
+    wait(cx, editor, window, |view, _| {
         !view.file_loading && view.open_path.as_deref() == Some(Path::new(path))
     });
 }
@@ -221,7 +221,7 @@ fn editor(
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    wait(cx, &editor, window, |view| !view.loading);
+    wait(cx, &editor, window, |view, _| !view.loading);
     editor
 }
 
@@ -428,7 +428,7 @@ pub fn scenario_editor_details_documents(cx: &mut VisualTestAppContext) {
             })
         })
         .unwrap();
-        wait(cx, &editor, window, |view| {
+        wait(cx, &editor, window, |view, _| {
             view.history.is_some() && !view.history_loading()
         });
         let history = cx.read(|cx| editor.read(cx).history.clone().unwrap());
@@ -445,7 +445,7 @@ pub fn scenario_editor_details_documents(cx: &mut VisualTestAppContext) {
             })
         })
         .unwrap();
-        wait(cx, &editor, window, |view| {
+        wait(cx, &editor, window, |view, _| {
             view.snapshot.is_some()
                 && !view.snapshot_loading()
                 && view.snapshot_text_state().is_some()
@@ -477,7 +477,7 @@ pub fn scenario_editor_details_documents(cx: &mut VisualTestAppContext) {
         command(cx, &app, window, "view.toggleEditorDetails");
         // Diff is a separate middle presentation, not a synonym for Snapshot.
         editor.update(cx, |view, cx| view.set_middle_tab(MiddlePaneTab::Diff, cx));
-        wait(cx, &editor, window, |view| {
+        wait(cx, &editor, window, |view, _| {
             view.history_diff.is_some() && !view.history_diff_loading()
         });
         click(cx, window);
@@ -499,29 +499,29 @@ pub fn scenario_editor_details_documents(cx: &mut VisualTestAppContext) {
         assert!(cx.read(|cx| editor.read(cx).markdown_preview_visible()));
         assert_eq!(cx.read(|cx| editor.read(cx).content.clone()), markdown);
         open(cx, &editor, window, "picture.png");
-        wait(cx, &editor, window, |view| view.content_image.is_some());
+        wait(cx, &editor, window, |view, _| view.content_image.is_some());
         let image = cx.read(|cx| editor.read(cx).content_image.clone().unwrap());
         click(cx, window);
         click(cx, window);
         assert!(cx.read(|cx| Arc::ptr_eq(editor.read(cx).content_image.as_ref().unwrap(), &image)));
         open(cx, &editor, window, PDF);
-        wait(cx, &editor, window, |view| {
-            view.pdf_probe().is_some_and(|pdf| pdf.settled)
+        wait(cx, &editor, window, |view, cx| {
+            view.pdf_probe(cx).is_some_and(|pdf| pdf.settled)
         });
         native_ax::focus_named(cx, window, "Button", Msg::EditorPdfNext.t());
         keys(cx, window, "space");
-        wait(cx, &editor, window, |view| {
-            view.pdf_probe()
+        wait(cx, &editor, window, |view, cx| {
+            view.pdf_probe(cx)
                 .is_some_and(|pdf| pdf.settled && pdf.page == 1)
         });
         native_ax::focus_named(cx, window, "Button", Msg::EditorPdfZoomIn.t());
         for _ in 0..4 {
             keys(cx, window, "space");
-            wait(cx, &editor, window, |view| {
-                view.pdf_probe().is_some_and(|pdf| pdf.settled)
+            wait(cx, &editor, window, |view, cx| {
+                view.pdf_probe(cx).is_some_and(|pdf| pdf.settled)
             });
         }
-        let pdf = cx.read(|cx| editor.read(cx).pdf_probe().unwrap());
+        let pdf = cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap());
         cx.simulate_event(
             window,
             gpui::ScrollWheelEvent {
@@ -536,7 +536,7 @@ pub fn scenario_editor_details_documents(cx: &mut VisualTestAppContext) {
         assert!(offset.y < px(0.), "PDF fixture has a real reading position");
         for _ in 0..2 {
             click(cx, window);
-            let now = cx.read(|cx| editor.read(cx).pdf_probe().unwrap());
+            let now = cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap());
             assert_eq!(
                 (now.page, now.zoom, now.request),
                 (pdf.page, pdf.zoom, pdf.request)

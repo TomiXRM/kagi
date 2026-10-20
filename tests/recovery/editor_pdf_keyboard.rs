@@ -29,12 +29,12 @@ fn wait_for(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
-    ready: impl Fn(&EditorWorkspaceView) -> bool,
+    ready: impl Fn(&EditorWorkspaceView, &gpui::App) -> bool,
 ) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         paint(cx, window);
-        if cx.read(|cx| ready(editor.read(cx))) {
+        if cx.read(|cx| ready(editor.read(cx), cx)) {
             paint(cx, window);
             return;
         }
@@ -51,10 +51,10 @@ fn wait_pdf(
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
 ) -> PdfProbe {
-    wait_for(cx, editor, window, |view| {
-        !view.file_loading && view.pdf_probe().is_some_and(|pdf| pdf.settled)
+    wait_for(cx, editor, window, |view, cx| {
+        !view.file_loading && view.pdf_probe(cx).is_some_and(|pdf| pdf.settled)
     });
-    cx.read(|cx| editor.read(cx).pdf_probe().unwrap())
+    cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap())
 }
 
 fn click_file(
@@ -114,7 +114,7 @@ fn click_body(
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
 ) {
-    let bounds = cx.read(|cx| editor.read(cx).pdf_probe().unwrap().scroll.bounds());
+    let bounds = cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap().scroll.bounds());
     cx.simulate_click(window, bounds.center(), Modifiers::none());
     paint(cx, window);
 }
@@ -135,8 +135,8 @@ fn assert_open(cx: &mut VisualTestAppContext, editor: &Entity<EditorWorkspaceVie
     });
 }
 
-// Every scrolling key must preserve the real document/page/raster request as
-// well as the highlighted and open file, including repeated boundary input.
+// Scrolling crosses pages but preserves the immutable document, zoom and raster
+// generation, as well as the highlighted/open file and read-only ownership.
 fn press_body(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
@@ -144,32 +144,41 @@ fn press_body(
     initial: &PdfProbe,
     key: &str,
 ) -> Point<Pixels> {
+    let before = cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap());
     keys(cx, window, key);
     paint(cx, window);
     assert_open(cx, editor, PDF_PATH);
-    let current = cx.read(|cx| editor.read(cx).pdf_probe().expect("body key discarded PDF"));
+    let current = wait_pdf(cx, editor, window);
     assert_eq!(
         (
-            current.page,
+            current.source_id,
             current.page_count,
             current.zoom,
             current.request
         ),
         (
-            initial.page,
+            initial.source_id,
             initial.page_count,
             initial.zoom,
             initial.request
         ),
-        "body key {key} changed document/page/zoom/request"
+        "body key {key} changed document/zoom/generation"
     );
+    assert!(current.image.is_some() && current.error.is_none());
     assert!(
-        Arc::ptr_eq(
-            current.image.as_ref().unwrap(),
-            initial.image.as_ref().unwrap()
-        ),
-        "scrolling must keep the accepted page bitmap"
+        current.cached_pages.len() <= current.cache_entry_limit
+            && current.cached_bytes <= 64_000_000
     );
+    assert!(current.raster_jobs <= 2);
+    if current.page == before.page && current.raster_pixel_budget == before.raster_pixel_budget {
+        assert!(
+            Arc::ptr_eq(
+                current.image.as_ref().unwrap(),
+                before.image.as_ref().unwrap()
+            ),
+            "scrolling within a retained page must keep its accepted bitmap"
+        );
+    }
     let offset = current.scroll.offset();
     let maximum = current.scroll.max_offset();
     assert!(
@@ -238,20 +247,20 @@ fn scroll_keys(
         assert_close(
             bottom.y,
             -initial.scroll.max_offset().y,
-            "End/Cmd+Down reaches current page bottom",
+            "End/Cmd+Down reaches the continuous document bottom",
         );
         for boundary in ["down", "pagedown", "space", "cmd-down", "end"] {
             assert_eq!(
                 press_body(cx, editor, window, initial, boundary),
                 bottom,
-                "bottom boundary key {boundary} must be consumed, not select another file/page"
+                "bottom boundary key {boundary} must be consumed, not select another file"
             );
         }
     }
     for key in ["home", "cmd-up"] {
         press_body(cx, editor, window, initial, "end");
         let top = press_body(cx, editor, window, initial, key);
-        assert_close(top.y, gpui::px(0.), "Home/Cmd+Up reaches current page top");
+        assert_close(top.y, gpui::px(0.), "Home/Cmd+Up reaches the document top");
         for boundary in ["up", "pageup", "shift-space", "cmd-up", "home"] {
             assert_eq!(
                 press_body(cx, editor, window, initial, boundary),
@@ -307,7 +316,7 @@ fn modal_and_reclassification(
     head: &str,
 ) {
     click_body(cx, editor, window);
-    let retained = cx.read(|cx| editor.read(cx).pdf_probe().unwrap());
+    let retained = cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap());
     let offset = retained.scroll.offset();
     app.update(cx, |app, cx| {
         app.open_create_branch_modal(kagi_git::CommitId(head.to_owned()), cx)
@@ -333,8 +342,8 @@ fn modal_and_reclassification(
     // root/body focus. Prove this by editing the actual modal field afterward.
     std::fs::write(repo.join(PDF_PATH), b"now ordinary text\n").unwrap();
     editor.update(cx, |view, cx| view.on_worktree_changed(cx));
-    wait_for(cx, editor, window, |view| {
-        !view.file_loading && view.pdf_probe().is_none() && view.editor.is_some()
+    wait_for(cx, editor, window, |view, cx| {
+        !view.file_loading && view.pdf_probe(cx).is_none() && view.editor.is_some()
     });
     let input = cx
         .read(|cx| {
@@ -377,8 +386,8 @@ fn modal_and_reclassification(
     click_body(cx, editor, window);
     std::fs::write(repo.join(PDF_PATH), b"now ordinary text again\n").unwrap();
     editor.update(cx, |view, cx| view.on_worktree_changed(cx));
-    wait_for(cx, editor, window, |view| {
-        !view.file_loading && view.pdf_probe().is_none() && view.editor.is_some()
+    wait_for(cx, editor, window, |view, cx| {
+        !view.file_loading && view.pdf_probe(cx).is_none() && view.editor.is_some()
     });
     keys(cx, window, "down");
     paint(cx, window);
@@ -461,7 +470,7 @@ pub fn scenario_editor_pdf_keyboard(cx: &mut VisualTestAppContext) {
                 .read(|cx| app.read(cx).ui().editor_workspace.clone())
                 .unwrap();
             editor.update(cx, |view, cx| view.set_source(TreeSource::All, cx));
-            wait_for(cx, &editor, window, |view| {
+            wait_for(cx, &editor, window, |view, _| {
                 !view.loading
                     && view
                         .files
@@ -504,10 +513,9 @@ pub fn scenario_editor_pdf_keyboard(cx: &mut VisualTestAppContext) {
                 second.page, 1,
                 "toolbar Space changes page, not PDF body scroll"
             );
-            assert_close(
-                second.scroll.offset().y,
-                gpui::px(0.),
-                "toolbar page navigation starts at top",
+            assert!(
+                second.scroll.offset().y < gpui::px(0.),
+                "toolbar navigation scrolls to page two in the retained document"
             );
             tab_to(cx, window, BODY);
             let body = native_ax::focused(cx, window);

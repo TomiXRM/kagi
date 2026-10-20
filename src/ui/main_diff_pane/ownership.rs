@@ -65,6 +65,7 @@ impl MainDiffRead {
                 base,
                 target,
                 file_index,
+                ..
             } => {
                 app.repo_path.as_deref() == Some(repo)
                     && app.ui().compare_view.as_ref().is_some_and(|pane| {

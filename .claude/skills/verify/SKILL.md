@@ -480,7 +480,7 @@ with AXPress. The adjacent Blame control is a useful positive control.
 Record actual control bounds and screenshots; AX metadata is not VoiceOver speech.
 
 For ADR-0226 use
-`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,graph_copy'`
+`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,commit_pdf_,graph_copy'`
 with KEEP_GOING, plus the neighboring `editor_,settings_` scenarios.
 Markdown coverage must open a fresh buffer for each default preference and keep
 existing manual modes and dirty text intact. Writer scenarios that edit Markdown
@@ -544,6 +544,20 @@ The native PDF scenario also mounts a 940×660 Japanese window at 167% UI zoom:
 with the bottom panel closed, its real scroll viewport must retain at least
 200 logical pixels of document height. Icon controls retain localized AX names
 and hover help, including the visually abbreviated `100%` reset action.
+`editor_pdf_readonly` also exercises continuous first/middle/last-page reading,
+more than six simultaneously visible short pages, and a cached hidden viewer
+that must not keep scheduling raster work. `EditorWorkspaceView::pdf_probe(cx)`
+now reads the retained `PdfViewer` entity; `PdfViewer::pdf_probe()` observes each
+historical side directly. Require actual rendered pages, not just cache entries
+(which can contain errors), and enforce the adaptive `cache_entry_limit`,
+64,000,000 decoded-byte cache bound and at most two global raster jobs.
+`commit_pdf_sources`, `commit_pdf_owners` and `commit_pdf_continuous_sides`
+exercise real Git old/new blobs versus different working-tree bytes, explicit
+added/deleted states, renamed old paths, parse failures, signature-only PDFs,
+source/session supersession and independent continuous scrolling. Final-page
+pixel markers must differ from first-page markers. Activate the native AX adapter
+before querying side labels. Keep neighboring `binary_diff_`, `diff_highlight`,
+`commit_diff_off_thread` and `editor_details` coverage.
 `hold_next_file_classification_for_e2e` holds the actual file-read result before
 publication. Open an extensionless PDF with root/tree focus and Git undo history,
 then send Cmd+Z / Cmd+Shift+Z / Cmd+S while the classification is pending:
@@ -567,10 +581,16 @@ draft. Repeat with Save before the held read is released: the retained Input
 must remain writable, and the late result must not overwrite the saved content.
 The Home branch-copy case also dispatches the explicit menu action against the
 private test clipboard, not only its graph shortcut; Home must leave it unchanged.
-Tier B compares actual Markdown preference persistence, multipage PDF navigation,
-zoom/scroll/reset, narrow wrapped errors and Retina sharpness. Verify foreground
-PDF Save/Undo/Redo cannot mutate the repository, using staged path/OID/mode rather
-than index stat-cache bytes. PDFs remain read-only and have no diff presentation.
+Tier B compares actual Markdown preference persistence, continuous PDF reading,
+zoom/scroll/reset, narrow wrapped errors and Retina sharpness. In Graph, open a
+modified PDF and independently scroll its left/previous and right/current sides
+past the first page; compare distinct historical content with an intentionally
+different working-tree file. Check added, deleted and renamed documents too.
+For supplied real repositories, work in a private clone and keep personal PDF
+contents out of public PR attachments; use generated documents for public proof.
+Verify foreground PDF Save/Undo/Redo cannot mutate the repository, using staged
+path/OID/mode rather than index stat-cache bytes. PDF previews remain read-only:
+side-by-side documents have no computed difference highlights.
 For #1665 compare PDF error/status text in Catppuccin Mocha and Apple/Nagi
 Light/Dark, including EN/JA and narrow high-zoom wrapping. Use source fg/bg
 contrast (at least 4.5:1 for normal text), not antialiased edge pixels; keep

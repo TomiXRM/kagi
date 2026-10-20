@@ -18,6 +18,8 @@ pub(crate) struct DiffHeader {
     pub(crate) fit: Option<HeaderFit>,
     pub(crate) leading: Option<gpui::AnyElement>,
     pub(crate) trailing: Option<gpui::AnyElement>,
+    /// Already-mounted document viewers, retained by the standalone diff owner.
+    pub(crate) pdfs: Option<super::super::diff_view::pdf::DiffPdfViewers>,
     /// Labels of the `leading` / `trailing` buttons, for the fit's labelled
     /// copy (the header adds both mode labels).
     pub(crate) labels: Vec<SharedString>,
@@ -51,13 +53,19 @@ impl DiffHeader {
             leading,
             trailing,
             mut labels,
+            pdfs,
             presentation_only,
             ..
         } = self;
         // #809: without a fit (the editor / PR embeddings) the labels always
         // show.
         let compact = fit.as_ref().is_some_and(HeaderFit::compact);
-        let modes = mode_segments(fit.as_ref(), compact, presentation_only, &mut labels, cx);
+        let document = pdfs.is_some();
+        let modes = if document {
+            div().into_any_element()
+        } else {
+            mode_segments(fit.as_ref(), compact, presentation_only, &mut labels, cx)
+        };
         let stats_el = div()
             .text_sm()
             .text_color(rgb(theme().text_sub))
@@ -96,7 +104,7 @@ impl DiffHeader {
             // History button (导线 #3)
             .when_some(trailing, |el, btn| el.child(btn))
             .child(modes)
-            .child(stats_el)
+            .when(!document, |el| el.child(stats_el))
             .children(probes.into_iter().flatten())
             .into_any_element()
     }

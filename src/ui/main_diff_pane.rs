@@ -26,6 +26,7 @@ use gpui::{prelude::*, Context, Entity, WeakEntity, Window};
 use kagi_ui_core::variable_list::VariableListState;
 
 use super::diff_view::highlight::DiffHighlightHost;
+use super::diff_view::pdf::{same_immutable_document, DiffPdfViewers, PreparedPdfPair};
 use super::diff_view::{
     build_main_diff_view, diff_line_counts, CompareTarget, CompareView, DiffImagePair,
     MainDiffSource, MainDiffView,
@@ -42,6 +43,8 @@ pub struct MainDiffPane {
     /// Kagi-owned variable-height measurements for this diff only.
     scroll: VariableListState,
     list_layout: kagi_ui_core::diff_list::DiffListLayout,
+    /// Mounted only after the worker result passes the session/visit/request guards.
+    pdfs: Option<DiffPdfViewers>,
     /// Parent handle for deferred header actions.
     app: WeakEntity<KagiApp>,
     /// Session that owns this retained pane.
@@ -57,10 +60,35 @@ impl MainDiffPane {
             view,
             scroll: new_diff_list_state(),
             list_layout: Default::default(),
+            pdfs: None,
             app,
             owner,
             fit: HeaderFit::default(),
         }
+    }
+
+    fn set_view(
+        &mut self,
+        view: MainDiffView,
+        pdfs: Option<PreparedPdfPair>,
+        cx: &mut Context<Self>,
+    ) {
+        let retain = self
+            .pdfs
+            .as_ref()
+            .zip(pdfs.as_ref())
+            .is_some_and(|(viewers, sources)| viewers.can_retain(sources))
+            && self.view.title == view.title
+            && same_immutable_document(&self.view.source, &view.source);
+        if !retain {
+            self.pdfs = pdfs.map(|sources| DiffPdfViewers::new(sources, cx));
+        }
+        self.view.adopt(view);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn pdf_viewer_for_e2e(&self, old: bool) -> Option<Entity<kagi_ui_editor::PdfViewer>> {
+        self.pdfs.as_ref()?.viewer(old)
     }
 
     /// The exact selection token used by the production list renderer.
@@ -204,6 +232,7 @@ impl Render for MainDiffPane {
                 fit: Some(self.fit.clone()),
                 leading: Some(leading),
                 trailing: Some(trailing),
+                pdfs: self.pdfs.clone(),
                 labels: vec![back_label, ext_label, history_label],
                 ..DiffHeader::default()
             },
@@ -232,11 +261,20 @@ impl KagiApp {
         view: MainDiffView,
         cx: &mut Context<Self>,
     ) -> Entity<MainDiffPane> {
+        self.show_prepared_main_diff(view, None, cx)
+    }
+
+    fn show_prepared_main_diff(
+        &mut self,
+        view: MainDiffView,
+        pdfs: Option<PreparedPdfPair>,
+        cx: &mut Context<Self>,
+    ) -> Entity<MainDiffPane> {
         self.bump_main_diff_req();
         match self.ui().main_diff.clone() {
             Some(pane) => {
                 pane.update(cx, |p, cx| {
-                    p.view.adopt(view);
+                    p.set_view(view, pdfs, cx);
                     cx.notify();
                 });
                 pane
@@ -246,7 +284,12 @@ impl KagiApp {
                 let owner = self
                     .active_session()
                     .expect("main diff requires an attached session");
-                let pane = cx.new(|_| MainDiffPane::new(view, weak, owner));
+                let pane = cx.new(|cx| {
+                    let pdfs = pdfs.map(|sources| DiffPdfViewers::new(sources, cx));
+                    let mut pane = MainDiffPane::new(view, weak, owner);
+                    pane.pdfs = pdfs;
+                    pane
+                });
                 if let Some(ui) = self.ui_mut() {
                     ui.main_diff = Some(pane.clone());
                 }
@@ -403,7 +446,7 @@ impl KagiApp {
         self.read_main_diff(repo, path, read, cx);
     }
 
-    /// Read the complete text/image view off-thread. Only the frozen session,
+    /// Read the complete text/image/PDF view off-thread. Only the frozen session,
     /// visit, request, published model and source owner may install its result.
     pub(crate) fn read_main_diff(
         &mut self,
@@ -477,7 +520,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let refresh = matches!(read, MainDiffRead::Wip { refresh: true, .. });
-        let (file_diff, view) = match landed {
+        let (file_diff, view, pdfs) = match landed {
             Landed::Show(shown) => *shown,
             Landed::Nothing if refresh => return self.close_main_diff(),
             Landed::Nothing => return,
@@ -505,7 +548,7 @@ impl KagiApp {
         } = &read
         {
             let key = (*row, *file_index);
-            return self.land_commit_diff(file_diff, view, path, commit, key, *epoch, cx);
+            return self.land_commit_diff(file_diff, view, pdfs, path, commit, key, *epoch, cx);
         }
         if !refresh {
             let (added, removed) = diff_line_counts(&file_diff);
@@ -533,7 +576,7 @@ impl KagiApp {
             );
         }
         log_diff_images(&view, path);
-        self.show_main_diff(view, cx);
+        self.show_prepared_main_diff(view, pdfs, cx);
     }
 }
 
@@ -564,6 +607,7 @@ impl KagiApp {
         &mut self,
         file_diff: std::sync::Arc<kagi_git::FileDiff>,
         mut view: MainDiffView,
+        pdfs: Option<PreparedPdfPair>,
         path: &std::path::Path,
         commit: &kagi_git::CommitId,
         (row, file_index): (usize, usize),
@@ -594,13 +638,17 @@ impl KagiApp {
         );
         if current {
             self.with_ui(|ui| {
-                ui.diff_caches
-                    .file_content
-                    .insert((row, file_index), file_diff.clone())
+                ui.diff_caches.file_content.insert(
+                    (row, file_index),
+                    super::diff_cache::CachedFileDiff {
+                        diff: file_diff.clone(),
+                        is_pdf: Some(pdfs.is_some()),
+                    },
+                )
             });
         }
         log_diff_images(&view, path);
-        self.show_main_diff(view, cx);
+        self.show_prepared_main_diff(view, pdfs, cx);
     }
 }
 
@@ -612,6 +660,7 @@ pub(crate) enum MainDiffRead {
         base: kagi_git::CommitId,
         target: CompareTarget,
         file_index: usize,
+        rename_from: Option<std::path::PathBuf>,
     },
     /// A Commit Panel file. `refresh`: re-reading an open diff after a
     /// reload, which closes the pane when nothing is left to show.
@@ -623,14 +672,22 @@ pub(crate) enum MainDiffRead {
         row: usize,
         file_index: usize,
         epoch: u64,
-        /// Reuse cached immutable text while gathering its image sides.
+        /// Frozen Inspector rename identity; a path-filtered delta can report Added.
+        rename_from: Option<std::path::PathBuf>,
+        /// Reuse cached immutable text while gathering its document/image sides.
         cached: Option<std::sync::Arc<kagi_git::FileDiff>>,
     },
 }
 
 /// What a [`MainDiffRead`] produced: the raw diff and complete prepared view.
 pub(crate) enum Landed {
-    Show(Box<(std::sync::Arc<kagi_git::FileDiff>, MainDiffView)>),
+    Show(
+        Box<(
+            std::sync::Arc<kagi_git::FileDiff>,
+            MainDiffView,
+            Option<PreparedPdfPair>,
+        )>,
+    ),
     /// Nothing to show: no HEAD to compare against, or (refresh) no change left.
     Nothing,
     OpenFailed(String),

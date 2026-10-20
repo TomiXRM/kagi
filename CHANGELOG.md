@@ -8,7 +8,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - Choose whether newly opened Markdown files start in Preview or Source in Settings. Preview is the default; already-open buffers retain their chosen mode and unsaved edits.
-- View working-tree PDFs read-only in Editor, with page navigation, zoom, scrolling and display-density-aware rendering. Malformed and password-protected documents show localized errors; PDF diffs, password entry and universal font fidelity are not supported.
+- View working-tree PDFs read-only in Editor as continuously scrollable pages, with page navigation, zoom and display-density-aware rendering. Rasterize visible pages on demand with bounded image memory and background work. Malformed and password-protected documents show localized errors; password entry and universal font fidelity are not supported.
+- Preview PDFs from Git Graph commit diffs side by side: previous version on the left, selected version on the right, with independent continuous scrolling and no computed diff highlighting. Preserve historical source identity, renamed paths and explicit added/deleted side states instead of substituting working-tree content.
 - Copy the current branch name with Cmd+Shift+C while Graph has focus, or through the Branch menu and command palette. Preserve Cmd+C behavior and text/terminal input ownership; detached HEAD has no branch name to copy.
 
 ### Fixed
@@ -17,8 +18,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Preserve keyboard Save for active and cached unsaved text buffers renamed to `.pdf`; a filename change alone no longer reclassifies retained text as a read-only PDF. Keep keyboard navigation working when a later read replaces the focused text Input with a PDF surface.
 - Keep keyboard Save available while a text buffer refreshes in the background, and clear the current read's loading state when typing makes its result stale without clearing a newer request.
 - Keep PDF error, loading and unsupported-diff explanations readable with the existing secondary body-text color; do not dim essential status like disabled controls. (#1665)
-- Preserve the PDF reading position when zooming in, out or resetting to 100%. Keep the current page visible during asynchronous rerasterization; navigating to another page still starts at its beginning. (#1678)
-- Keep PDF reading keys inside the focused document: arrows, Page Up/Down, Space and Home/End scroll the current page instead of selecting another file. Preserve File Tree and toolbar keyboard controls, and return focus safely when the PDF is hidden, replaced or closed. (#1680)
+- Preserve the PDF reading position when zooming in, out or resetting to 100%. Keep useful page images visible during asynchronous rerasterization; page buttons navigate within the continuous document. (#1678)
+- Keep PDF reading keys inside the focused document: arrows, Page Up/Down, Space and Home/End scroll the document instead of selecting another file. Preserve File Tree and toolbar keyboard controls, and return focus safely when the PDF is hidden, replaced or closed. (#1680)
 - Show shared vertical and horizontal PDF scrollbars when content overflows, with the existing visibility policy and draggable position indicators. Preserve the viewport, reading position, keyboard controls and read-only document state. (#1682)
 - Hide or restore Editor's supplementary Diff/History pane from its persistent header button, View menu, command palette or Cmd+Option+E. Recover document space without losing unsaved text, Markdown preview, PDF reading state or the selected historical view; preserve preferred pane widths and respect Reduce Motion. (#1684)
 - Keep Editor size-limit, binary and decoding explanations readable, and wrap placeholder messages inside their pane at narrow widths and enlarged UI sizes. (#1666)

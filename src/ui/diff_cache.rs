@@ -28,7 +28,7 @@ pub struct DiffCaches {
     /// `changed_files` only holds the file *list*; without this content cache,
     /// toggling between two commits recomputes the full git2 tree-diff + hunk
     /// extraction every time. Key is `(selected_row, file_index)`. (was `file_diff_cache`)
-    pub file_content: HashMap<(usize, usize), Arc<FileDiff>>,
+    pub file_content: HashMap<(usize, usize), CachedFileDiff>,
     /// Rows whose REMOTE changed-files load is in flight over SSH (ADR-0089
     /// Phase 2c), so the render trigger spawns it only once. (was `remote_diff_inflight`)
     pub remote_inflight: HashSet<usize>,
@@ -45,6 +45,20 @@ pub struct DiffCaches {
     generated: HashMap<usize, Vec<bool>>,
     /// Advanced by every write to the three row maps above.
     revision: u64,
+}
+
+/// Classification belongs to the immutable cached read, not a second row map.
+#[derive(Clone)]
+pub struct CachedFileDiff {
+    pub diff: Arc<FileDiff>,
+    /// Headless reads have not inspected the original blob signature yet.
+    pub(crate) is_pdf: Option<bool>,
+}
+
+impl From<Arc<FileDiff>> for CachedFileDiff {
+    fn from(diff: Arc<FileDiff>) -> Self {
+        Self { diff, is_pdf: None }
+    }
 }
 
 impl DiffCaches {
@@ -124,7 +138,8 @@ mod tests {
                 change: kagi_git::ChangeKind::Modified,
                 hunks: Vec::new(),
                 is_binary: false,
-            }),
+            })
+            .into(),
         );
 
         c.clear();

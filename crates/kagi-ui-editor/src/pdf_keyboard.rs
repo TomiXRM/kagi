@@ -1,7 +1,8 @@
 //! Keyboard ownership for the existing PDF viewport, not its toolbar or file tree.
 use crate::EditorWorkspaceView;
 use gpui::{
-    actions, prelude::*, App, Div, FocusHandle, KeyBinding, ScrollHandle, Stateful, Window,
+    actions, prelude::*, App, Div, FocusHandle, Focusable, KeyBinding, ScrollHandle, Stateful,
+    Window,
 };
 use kagi_ui_core::{i18n::Msg, keyboard_nav::with_ring, theme::scaled_px};
 
@@ -65,11 +66,22 @@ impl EditorWorkspaceView {
 
     pub(super) fn prepare_pdf_focus(&mut self, window: &mut Window, cx: &mut App) {
         self.release_hidden_pdf_focus(true, window, cx);
-        if self.pdf_body_visible() {
-            self.pdf_body_focus.get_or_insert_with(|| cx.focus_handle());
-        } else {
-            self.pdf_body_focus = None;
+        let focus = self.pdf_body_visible().then(|| {
+            self.content_pdf
+                .as_ref()
+                .expect("visible PDF viewer")
+                .read(cx)
+                .focus_handle(cx)
+        });
+        if self.pdf_body_focus != focus
+            && self
+                .pdf_body_focus
+                .as_ref()
+                .is_some_and(|old| old.is_focused(window))
+        {
+            self.root_focus.focus(window, cx);
         }
+        self.pdf_body_focus = focus;
     }
 }
 

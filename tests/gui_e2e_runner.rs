@@ -531,6 +531,10 @@ mod diff_highlight;
 mod binary_diff_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_pdf.rs"]
+mod commit_pdf;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_viewports.rs"]
 mod modal_viewports;
 #[cfg(target_os = "macos")]
@@ -3084,6 +3088,18 @@ mod macos {
             (
                 "binary_diff_linked_empty_revisit",
                 Box::new(crate::binary_diff_owner::scenario_binary_diff_linked_empty_revisit),
+            ),
+            (
+                "commit_pdf_sources",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_sources),
+            ),
+            (
+                "commit_pdf_owners",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_owners),
+            ),
+            (
+                "commit_pdf_continuous_sides",
+                Box::new(crate::commit_pdf::scenario_commit_pdf_continuous_sides),
             ),
             (
                 "conflict_save_boundary",

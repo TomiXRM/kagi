@@ -17,6 +17,7 @@ mod git_fixture;
 
 const PDF_PATH: &str = "b-document.PDF";
 const NOTE: &str = "a-note.txt";
+const SHORT_PDF_PATH: &str = "short-pages.pdf";
 const PDF: &[u8] = include_bytes!("../fixtures/pdf/document.pdf");
 const REPLACEMENT: &[u8] = include_bytes!("../fixtures/pdf/japanese-fallback.pdf");
 
@@ -24,12 +25,12 @@ fn wait_for(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
-    ready: impl Fn(&EditorWorkspaceView) -> bool,
+    ready: impl Fn(&EditorWorkspaceView, &gpui::App) -> bool,
 ) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         paint(cx, window);
-        if cx.read(|cx| ready(editor.read(cx))) {
+        if cx.read(|cx| ready(editor.read(cx), cx)) {
             paint(cx, window);
             return;
         }
@@ -45,10 +46,10 @@ fn wait_pdf(
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
 ) -> PdfProbe {
-    wait_for(cx, editor, window, |view| {
-        !view.file_loading && view.pdf_probe().is_some_and(|p| p.settled)
+    wait_for(cx, editor, window, |view, cx| {
+        !view.file_loading && view.pdf_probe(cx).is_some_and(|p| p.settled)
     });
-    cx.read(|cx| editor.read(cx).pdf_probe().unwrap())
+    cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap())
 }
 fn click_file(
     cx: &mut VisualTestAppContext,
@@ -109,6 +110,184 @@ fn assert_pixels(image: &gpui::RenderImage) {
     );
 }
 
+fn short_pages_pdf() -> Vec<u8> {
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        format!(
+            "<< /Type /Pages /Count 24 /Kids [{}] >>",
+            (0..24)
+                .map(|index| format!("{} 0 R", index * 2 + 3))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    ];
+    for index in 0..24 {
+        let stream = format!(
+            "{:.3} 0.35 0.75 rg 0 0 160 8 re f\n",
+            (index % 8 + 1) as f32 / 10.
+        );
+        objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 160 8] /Resources << >> /Contents {} 0 R >>", index * 2 + 4));
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{stream}endstream",
+            stream.len()
+        ));
+    }
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref = bytes.len();
+    bytes.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    bytes
+}
+
+fn assert_many_visible_pages_and_hidden_job_ownership(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    editor.update(cx, |view, cx| view.open_tab(SHORT_PDF_PATH.into(), cx));
+    wait_for(cx, editor, window, |view, cx| {
+        !view.file_loading && view.pdf_probe(cx).is_some()
+    });
+    editor.update(cx, |view, cx| view.change_pdf_for_e2e(0, 0.25, false, cx));
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let hidden = cx.read(|cx| editor.read(cx).pdf_viewer_for_e2e().unwrap());
+    let before = cx.read(|cx| hidden.read(cx).pdf_probe());
+    assert!(before.visible_pages.len() > 6 && !before.settled);
+    // NOTE is the retained dirty tab, so this genuinely caches the short PDF
+    // rather than replacing/dropping its entity.
+    editor.update(cx, |view, cx| view.activate_tab(NOTE.into(), cx));
+    editor.update(cx, |view, cx| view.open_tab(PDF_PATH.into(), cx));
+    let foreground = wait_pdf(cx, editor, window);
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: foreground.scroll.bounds().center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-100_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    assert_eq!(wait_pdf(cx, editor, window).page, 2);
+    let stopped = cx.read(|cx| hidden.read(cx).pdf_probe());
+    assert!(!stopped.in_flight);
+    assert_eq!(
+        stopped.raster_requests_started, before.raster_requests_started,
+        "hidden cached PDF must finish at most its existing work, not acquire more jobs"
+    );
+    assert!(stopped.cached_pages.len() <= before.cached_pages.len() + 1);
+    editor.update(cx, |view, cx| view.activate_tab(SHORT_PDF_PATH.into(), cx));
+    let visible = wait_pdf(cx, editor, window);
+    assert!(visible.visible_pages.len() > 6);
+    assert!(
+        visible
+            .visible_pages
+            .clone()
+            .all(|page| visible.rendered_pages.contains(&page)),
+        "every simultaneously visible short page must get real raster output"
+    );
+    assert!(
+        visible.cached_pages.len() <= visible.cache_entry_limit
+            && visible.cached_bytes <= 64_000_000
+    );
+    assert!(visible.raster_jobs <= 2);
+    editor.update(cx, |view, cx| view.activate_tab(PDF_PATH.into(), cx));
+    let restored = wait_pdf(cx, editor, window);
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: restored.scroll.bounds().center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(100_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    assert_eq!(wait_pdf(cx, editor, window).page, 0);
+}
+
+fn assert_continuous_scrolling(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+    first: &PdfProbe,
+) {
+    for (delta, expected_page) in [(-900., 1), (-100_000., 2), (100_000., 0)] {
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: first.scroll.bounds().center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(delta))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        let current = wait_pdf(cx, editor, window);
+        assert_eq!(
+            current.page, expected_page,
+            "ordinary wheel must reach first/middle/last pages"
+        );
+        assert_eq!(
+            (current.source_id, current.request, current.zoom),
+            (first.source_id, first.request, first.zoom)
+        );
+        assert!(current.mounted_pages.contains(&expected_page));
+        assert!(current.cached_pages.contains(&expected_page) && current.image.is_some());
+        assert!(
+            current.cached_pages.len() <= current.cache_entry_limit
+                && current.cached_bytes <= 64_000_000
+        );
+        assert!(current.raster_jobs <= 2);
+        if expected_page != 0 {
+            assert_ne!(
+                current.image.as_ref().unwrap().as_bytes(0),
+                first.image.as_ref().unwrap().as_bytes(0)
+            );
+        }
+    }
+    // A short last page may already fit above the bottom edge. Toolbar targets
+    // must remain reachable even when two pages share a clamped scroll offset.
+    editor.update(cx, |view, cx| view.change_pdf_for_e2e(0, 0.25, false, cx));
+    wait_pdf(cx, editor, window);
+    native_ax::activate(cx);
+    paint(cx, window);
+    for (action, page) in [
+        (Msg::EditorPdfNext, 1),
+        (Msg::EditorPdfNext, 2),
+        (Msg::EditorPdfPrevious, 1),
+    ] {
+        assert!(native_ax::press(cx, window, action.t()));
+        assert_eq!(wait_pdf(cx, editor, window).page, page);
+    }
+    assert!(native_ax::press(cx, window, Msg::EditorPdfResetZoom.t()));
+    let restored = wait_pdf(cx, editor, window);
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: restored.scroll.bounds().center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(100_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    assert_eq!((wait_pdf(cx, editor, window).page, restored.zoom), (0, 1.));
+}
+
 fn assert_zoom_reading_context(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
@@ -126,15 +305,23 @@ fn assert_zoom_reading_context(
         Msg::EditorPdfZoomOut,
         Msg::EditorPdfResetZoom,
     ] {
-        let before = cx.read(|cx| editor.read(cx).pdf_probe().unwrap());
+        let before = cx.read(|cx| editor.read(cx).pdf_probe(cx).unwrap());
         let page_origin = before.scroll.bounds_for_item(0).unwrap().origin;
-        let document_point =
-            (before.scroll.bounds().center() - page_origin - before.scroll.offset()) / before.zoom;
+        let center = before.scroll.bounds().center() - page_origin - before.scroll.offset();
+        let anchor = before
+            .page_tops
+            .partition_point(|top| *top <= f32::from(center.y))
+            .saturating_sub(1);
+        let within = (f32::from(center.y) - before.page_tops[anchor]) / before.zoom;
+        let x = center.x / before.zoom;
         assert!(native_ax::press(cx, window, action.t()));
         let after = wait_pdf(cx, editor, window);
-        assert_eq!(after.page, before.page, "zoom must not change the page");
         let page_origin = after.scroll.bounds_for_item(0).unwrap().origin;
-        let desired = after.scroll.bounds().center() - page_origin - document_point * after.zoom;
+        let document_point = gpui::point(
+            x * after.zoom,
+            gpui::px(after.page_tops[anchor] + within * after.zoom),
+        );
+        let desired = after.scroll.bounds().center() - page_origin - document_point;
         let maximum = after.scroll.max_offset();
         let expected = gpui::point(
             desired.x.clamp(-maximum.x, gpui::px(0.)),
@@ -180,6 +367,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         std::fs::write(repo.join(PDF_PATH), PDF).unwrap();
+        std::fs::write(repo.join(SHORT_PDF_PATH), short_pages_pdf()).unwrap();
         std::fs::write(repo.join("signature-only"), PDF).unwrap();
         std::fs::write(repo.join(NOTE), "original text\n").unwrap();
         std::fs::write(repo.join("c-broken.PDF"), b"valid UTF-8 but invalid PDF").unwrap();
@@ -216,7 +404,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
                 .read(|cx| app.read(cx).ui().editor_workspace.clone())
                 .unwrap();
             editor.update(cx, |view, cx| view.set_source(TreeSource::All, cx));
-            wait_for(cx, &editor, window, |view| {
+            wait_for(cx, &editor, window, |view, _| {
                 !view.loading
                     && view
                         .files
@@ -224,7 +412,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
                         .any(|file| file.path == Path::new(PDF_PATH))
             });
             click_file(cx, &editor, window, NOTE);
-            wait_for(cx, &editor, window, |view| {
+            wait_for(cx, &editor, window, |view, _| {
                 !view.file_loading && view.editor.is_some()
             });
             let input = cx.read(|cx| editor.read(cx).editor.clone()).unwrap();
@@ -274,7 +462,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
                 let view = editor.read(cx);
                 assert!(view.file_loading);
                 assert!(view.editor.is_none());
-                assert!(view.pdf_probe().is_none());
+                assert!(view.pdf_probe(cx).is_none());
             });
             for key in ["cmd-z", "cmd-shift-z", "cmd-s"] {
                 keys(cx, window, key);
@@ -311,6 +499,10 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
             let first = wait_pdf(cx, &editor, window);
             assert_eq!((first.page, first.page_count, first.zoom), (0, 3, 1.));
             assert_pixels(first.image.as_ref().unwrap());
+            assert_continuous_scrolling(cx, &editor, window, &first);
+            if lang == Lang::En {
+                assert_many_visible_pages_and_hidden_job_ownership(cx, &editor, window);
+            }
             if zoom > 1. {
                 let viewport = first.scroll.bounds();
                 assert!(
@@ -425,13 +617,12 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
             assert_eq!((restored.page, restored.zoom), (1, 1.25));
             assert!(Arc::ptr_eq(&image, restored.image.as_ref().unwrap()));
             editor.update(cx, |view, cx| {
-                let before = view.pdf_probe().unwrap().request;
+                let before = view.pdf_probe(cx).unwrap().request;
                 view.change_pdf_for_e2e(1, 1., false, cx);
-                assert!(view.pdf_probe().unwrap().in_flight);
                 view.change_pdf_for_e2e(-1, 1., false, cx);
                 view.change_pdf_for_e2e(0, 1.25, false, cx);
                 view.change_pdf_for_e2e(0, 0.8, false, cx);
-                assert!(view.pdf_probe().unwrap().request > before);
+                assert!(view.pdf_probe(cx).unwrap().request > before);
             });
             let latest = wait_pdf(cx, &editor, window);
             assert_eq!((latest.page, latest.zoom), (1, 1.25));
@@ -472,7 +663,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
                 });
             })
             .unwrap();
-            wait_for(cx, &editor, window, |view| view.history.is_some());
+            wait_for(cx, &editor, window, |view, _| view.history.is_some());
             cx.update_window(window, |_, window, cx| {
                 editor.update(cx, |view, cx| {
                     view.set_middle_tab(MiddlePaneTab::Diff, cx);
@@ -492,7 +683,7 @@ pub fn scenario_editor_pdf_readonly(cx: &mut VisualTestAppContext) {
             editor.update(cx, |view, cx| {
                 view.set_middle_tab(MiddlePaneTab::Snapshot, cx)
             });
-            wait_for(cx, &editor, window, |view| view.snapshot.is_some());
+            wait_for(cx, &editor, window, |view, _| view.snapshot.is_some());
             cx.read(|cx| assert!(editor.read(cx).snapshot.as_ref().unwrap().is_binary));
             cx.update_window(window, |_, window, cx| {
                 editor.update(cx, |view, cx| {
@@ -557,7 +748,7 @@ fn renamed_dirty_text_keeps_keyboard_save(cx: &mut VisualTestAppContext, cached:
             view.set_source(TreeSource::All, cx);
             view.open_tab(NOTE.into(), cx);
         });
-        wait_for(cx, &editor, window, |view| {
+        wait_for(cx, &editor, window, |view, _| {
             !view.file_loading && view.editor.is_some()
         });
         let input = cx.read(|cx| editor.read(cx).editor.clone()).unwrap();
@@ -573,7 +764,7 @@ fn renamed_dirty_text_keeps_keyboard_save(cx: &mut VisualTestAppContext, cached:
         cx.read(|cx| assert!(editor.read(cx).dirty));
         if cached {
             editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
-            wait_for(cx, &editor, window, |view| !view.file_loading);
+            wait_for(cx, &editor, window, |view, _| !view.file_loading);
         }
         app.update(cx, |app, cx| {
             app.open_editor_fs_prompt(
@@ -599,7 +790,7 @@ fn renamed_dirty_text_keeps_keyboard_save(cx: &mut VisualTestAppContext, cached:
         })
         .unwrap();
         keys(cx, window, "cmd-s");
-        wait_for(cx, &editor, window, |view| !view.dirty);
+        wait_for(cx, &editor, window, |view, _| !view.dirty);
         assert_eq!(
             std::fs::read_to_string(repo.join("renamed.pdf")).unwrap(),
             "retained draft",
@@ -637,7 +828,7 @@ fn dirty_watcher_read_keeps_keyboard_save(cx: &mut VisualTestAppContext) {
             view.set_source(TreeSource::All, cx);
             view.open_tab(NOTE.into(), cx);
         });
-        wait_for(cx, &editor, window, |view| {
+        wait_for(cx, &editor, window, |view, _| {
             !view.file_loading && view.editor.is_some()
         });
         // Cover both a dirty result discarded before Save and Save while the
@@ -660,15 +851,15 @@ fn dirty_watcher_read_keeps_keyboard_save(cx: &mut VisualTestAppContext) {
             cx.read(|cx| assert!(editor.read(cx).dirty));
             if !save_while_pending {
                 release.take().unwrap().send(());
-                wait_for(cx, &editor, window, |view| !view.file_loading);
+                wait_for(cx, &editor, window, |view, _| !view.file_loading);
             }
             keys(cx, window, "cmd-s");
-            wait_for(cx, &editor, window, |view| !view.dirty);
+            wait_for(cx, &editor, window, |view, _| !view.dirty);
             assert_eq!(std::fs::read_to_string(repo.join(NOTE)).unwrap(), draft);
             if let Some(release) = release {
                 release.send(());
             }
-            wait_for(cx, &editor, window, |view| !view.file_loading);
+            wait_for(cx, &editor, window, |view, _| !view.file_loading);
             cx.read(|cx| assert_eq!(editor.read(cx).content.as_deref(), Some(draft)));
             drop(input);
         }
@@ -727,7 +918,7 @@ fn oversized_pdf_keeps_readonly_shortcuts(cx: &mut VisualTestAppContext) {
             })
         });
         editor.update(cx, |view, cx| view.open_tab("oversized.pdf".into(), cx));
-        wait_for(cx, &editor, window, |view| {
+        wait_for(cx, &editor, window, |view, _| {
             !view.file_loading && view.content_too_large
         });
         cx.update_window(window, |_, window, cx| {
@@ -739,7 +930,7 @@ fn oversized_pdf_keeps_readonly_shortcuts(cx: &mut VisualTestAppContext) {
                 let history = &app.read(cx).ui().operation_history;
                 assert!(history.can_undo() && history.can_redo());
                 assert!(editor.read(cx).editor.is_none());
-                assert!(editor.read(cx).pdf_probe().is_none());
+                assert!(editor.read(cx).pdf_probe(cx).is_none());
             });
             keys(cx, window, key);
             paint(cx, window);

@@ -1,4 +1,4 @@
-//! Current checked-out branch copy is independent of selected graph commits.
+//! Branch-only copy follows the selected commit, never unrelated checked-out HEAD.
 use gpui::{AnyWindowHandle, ClipboardItem, Entity, VisualTestAppContext};
 use kagi::ui::{commands, settings, KagiApp};
 
@@ -28,7 +28,7 @@ fn expect_unchanged(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     );
 }
 
-pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
+pub fn scenario_graph_copy_selected_branch(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["graph_copy_target", "recent_repos"]);
     let _ports = crate::gui_isolation::PortStore::keep();
     let _shell = crate::gui_isolation::StandInShell::install();
@@ -37,10 +37,20 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
     );
     settings::write_setting("graph_copy_target", Some("hash"));
     let fixture = build_fixture();
+    git(
+        fixture.path(),
+        &["commit", "--allow-empty", "-qm", "copy selection tip"],
+    );
     let branch = "feature/日本語-copy";
     git(fixture.path(), &["branch", "-m", branch]);
     // The selected row's local branch differs from checked-out HEAD.
-    git(fixture.path(), &["branch", "selected-other", "HEAD~1"]);
+    let selected_branch = "selected/別の-branch";
+    git(fixture.path(), &["branch", selected_branch, "HEAD~1"]);
+    git(fixture.path(), &["tag", "selected-tag", "HEAD~2"]);
+    git(
+        fixture.path(),
+        &["update-ref", "refs/remotes/origin/only", "HEAD~2"],
+    );
     let before = repo_fingerprint(fixture.path());
     let (app, win) = mount(cx, fixture.path());
     let selected_sha = app.update(cx, |app, cx| {
@@ -54,7 +64,7 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
         cx.read_from_clipboard()
             .and_then(|item| item.text())
             .as_deref(),
-        Some(branch)
+        Some(selected_branch)
     );
     keys(cx, win, "cmd-c");
     assert_eq!(
@@ -68,13 +78,43 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     focus_root(cx, &app, win);
-    keys(cx, win, "cmd-shift-c");
+    expect_unchanged(cx, win);
+    cx.dispatch_action(win, commands::CopySelectedBranchName);
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text())
             .as_deref(),
-        Some(branch)
+        Some("clipboard sentinel"),
+        "no selection must not fall back to the checked-out branch"
     );
+    let unbranched_sha = app.update(cx, |app, cx| {
+        app.ui_mut().expect("active session").selected = Some(2);
+        cx.notify();
+        app.view().rows[2].id.0.clone()
+    });
+    focus_root(cx, &app, win);
+    settings::write_setting("graph_copy_target", Some("branch"));
+    expect_unchanged(cx, win);
+    cx.read(|cx| {
+        assert!(matches!(
+            commands::command_state(app.read(cx), "branch.copySelectedName"),
+            commands::CommandState::Disabled(_)
+        ))
+    });
+    keys(cx, win, "cmd-c");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some(unbranched_sha.as_str()),
+        "ordinary Cmd+C retains its configured hash fallback; branch-only copy does not"
+    );
+    settings::write_setting("graph_copy_target", Some("hash"));
+    app.update(cx, |app, cx| {
+        app.ui_mut().expect("active session").selected = Some(1);
+        cx.notify();
+    });
+    focus_root(cx, &app, win);
 
     // The palette's real Input, a context menu, and a modal own keyboard focus.
     keys(cx, win, "cmd-p");
@@ -91,7 +131,7 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
         cx.read_from_clipboard()
             .and_then(|item| item.text())
             .as_deref(),
-        Some(branch),
+        Some(selected_branch),
         "shortcut must work after palette returns focus without an explicit redraw"
     );
     app.update(cx, |app, cx| {
@@ -129,11 +169,11 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
     // An enabled native Branch menu action must still work from Editor.
     cx.read(|cx| {
         assert!(matches!(
-            commands::command_state(app.read(cx), "branch.copyCurrentName"),
+            commands::command_state(app.read(cx), "branch.copySelectedName"),
             commands::CommandState::Enabled
         ))
     });
-    cx.dispatch_action(win, commands::CopyCurrentBranchName);
+    cx.dispatch_action(win, commands::CopySelectedBranchName);
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text())
@@ -174,11 +214,11 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
     expect_unchanged(cx, win);
     cx.read(|cx| {
         assert!(matches!(
-            commands::command_state(app.read(cx), "branch.copyCurrentName"),
+            commands::command_state(app.read(cx), "branch.copySelectedName"),
             commands::CommandState::Disabled(_)
         ));
     });
-    cx.dispatch_action(win, commands::CopyCurrentBranchName);
+    cx.dispatch_action(win, commands::CopySelectedBranchName);
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text())
@@ -204,13 +244,13 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     focus_root(cx, &app, win);
-    keys(cx, win, "cmd-shift-c");
-    assert_eq!(
-        cx.read_from_clipboard()
-            .and_then(|item| item.text())
-            .as_deref(),
-        Some("new/未作成")
-    );
+    expect_unchanged(cx, win);
+    cx.read(|cx| {
+        assert!(matches!(
+            commands::command_state(app.read(cx), "branch.copySelectedName"),
+            commands::CommandState::Disabled(_)
+        ))
+    });
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
     focus_root(cx, &app, win);
@@ -236,10 +276,29 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
     focus_root(cx, &app, win);
     cx.read(|cx| {
         assert!(matches!(
-            commands::command_state(app.read(cx), "branch.copyCurrentName"),
+            commands::command_state(app.read(cx), "branch.copySelectedName"),
             commands::CommandState::Disabled(_)
         ))
     });
+    expect_unchanged(cx, win);
+    app.update(cx, |app, cx| {
+        app.ui_mut().expect("active session").selected = Some(0);
+        cx.notify();
+    });
+    focus_root(cx, &app, win);
+    keys(cx, win, "cmd-shift-c");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("main"),
+        "detached HEAD must not hide a local branch on the selected commit"
+    );
+    app.update(cx, |app, cx| {
+        app.ui_mut().expect("active session").selected = Some(1);
+        cx.notify();
+    });
+    focus_root(cx, &app, win);
     expect_unchanged(cx, win);
     assert_eq!(before, repo_fingerprint(detached.path()));
     unmount(cx, app, win);
@@ -247,11 +306,11 @@ pub fn scenario_graph_copy_current_branch(cx: &mut VisualTestAppContext) {
     let (app, win) = mount_state(cx, KagiApp::with_error(""));
     cx.read(|cx| {
         assert!(matches!(
-            commands::command_state(app.read(cx), "branch.copyCurrentName"),
+            commands::command_state(app.read(cx), "branch.copySelectedName"),
             commands::CommandState::Disabled(_)
         ))
     });
     expect_unchanged(cx, win);
     unmount(cx, app, win);
-    eprintln!("[gui-e2e] PASS graph_copy_current_branch current/unborn/detached/contexts");
+    eprintln!("[gui-e2e] PASS graph_copy_selected_branch selection/refs/unborn/detached/contexts");
 }

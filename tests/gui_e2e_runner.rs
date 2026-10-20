@@ -4819,7 +4819,7 @@ mod macos {
                 Box::new(crate::graph_column_divider::scenario_graph_columns_inspector_fit),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
-            ("graph_copy_current_branch", Box::new(crate::branch_copy::scenario_graph_copy_current_branch)),
+            ("graph_copy_selected_branch", Box::new(crate::branch_copy::scenario_graph_copy_selected_branch)),
             (
                 "graph_pointer_focus",
                 Box::new(crate::graph_focus::scenario_graph_pointer_focus),

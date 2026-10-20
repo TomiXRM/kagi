@@ -641,9 +641,12 @@ pane rather than overlap the file tree. Selection, file bytes, HEAD and staged
 path/OID/mode stay unchanged by inspection. Pair with the scoped native scenarios
 `editor_pdf_readonly,editor_snapshot_readonly,editor_history_fetch_error,editor_toggle_keys`.
 
-`graph_copy_current_branch` checks current versus selected branch identity,
-unborn/detached HEAD, Unicode names and Input/Editor/Terminal/menu focus ownership.
-Keep the existing Cmd+C scenarios. Native tests use the private test clipboard;
+`graph_copy_selected_branch` checks distinct selected/current branches, no
+selection, remote/tag-only refs, unborn repositories, detached HEAD with a local
+branch, Unicode names and Input/Editor/Terminal/menu focus ownership. Preserve
+the clipboard when the selected commit has no local branch; do not substitute
+the current branch or the SHA. Keep the existing Cmd+C scenarios and their
+configured hash fallback. Native tests use the private test clipboard;
 actual system clipboard integration belongs only in an isolated VM without a
 clipboard bridge, never the user's host clipboard.
 

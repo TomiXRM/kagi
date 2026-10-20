@@ -71,30 +71,36 @@ sentinel preservation across takeovers/front layers, foreground TextView copy,
 Graph return, focused diff Copy and retirement after closing its pane. Both
 assert unchanged Git state.
 
-## Amendment — 2026-10-19: copy the current branch independently
+## Amendment — 2026-10-20: copy the selected commit's branch independently
 
-Cmd+Shift+C (macOS) / Ctrl+Shift+C (elsewhere) copies the current checked-out
-branch name. It does not change Cmd+C or its existing `graph_copy_target`
-preference, and does not resolve a branch from the selected commit.
+Cmd+Shift+C (macOS) / Ctrl+Shift+C (elsewhere) copies the first local branch
+attached to the selected commit, using the same badge-order policy as Cmd+C's
+existing branch preference. It does not copy an unrelated checked-out branch.
+No selection, an unborn repository or a row with only remote/tag refs leaves
+the clipboard unchanged and disables the explicit command. A detached HEAD
+marker is not a branch; an actual local branch on that row remains copyable.
 
-`TabViewState.current_branch` is derived in `build_tab_view` from the accepted
-repository HEAD: Attached and Unborn retain the raw branch name; Detached has
-no branch to copy. This uses the session-owned read model, not a new Git read
-or the formatted status-bar label. A selected commit is not required.
+`graph_branch_name` borrows from the accepted row's badges without allocating
+during command availability checks. It strips the attached-HEAD and linked-
+worktree decorations, not arbitrary branch content. Cmd+C retains its existing
+hash/branch preference and full-hash fallback; this branch-only action has no
+hash fallback. No additional Git read or repository mutation is introduced.
 
 The keyboard-only action reuses `commit_list_has_focus` at dispatch time and
 propagates when Graph is not the live owner. Input, Terminal, Editor, historical
-snapshot and menu contexts are excluded. No render-time focus predicate or
-second branch resolver is introduced. The explicit `branch.copyCurrentName`
-command remains available from the Branch menu and command palette even while
-Editor is visible; both paths use the existing clipboard/toast helper.
-No repository, detached HEAD, Home, an active modal or a busy operation disables
-the command.
+snapshot and menu contexts remain excluded. The explicit
+`branch.copySelectedName` command is available from the Branch menu and command
+palette for the retained selection, including from Editor. Both paths use the
+existing clipboard/toast helper. No repository, Home, an active modal or a busy
+operation disables the command. The old current-branch action and command ID
+are removed rather than retained as aliases.
 
-`graph_copy_current_branch` covers distinct selected/current branches, Unicode
-and slash-containing names, an unborn branch, detached HEAD, no repository,
-foreground/input isolation and explicit menu dispatch. An isolated Linux X11
-application with no host clipboard bridge checks the actual system clipboard:
-the exact Unicode/slash branch, unchanged full-hash Copy, and preservation of a
-sentinel while the Editor source Input owns focus.
+`graph_copy_selected_branch` checks distinct selected/current branches, Unicode
+names, no selection, remote/tag-only rows, unborn repositories, detached HEAD,
+foreground/input isolation, explicit menu dispatch and unchanged Git state.
+Neighboring `graph_copy`, `graph_pointer_focus`, `graph_copy_foreground` and
+`editor_pdf_keyboard` scenarios pass. An ordinary Linux X11 app on a private VM
+display without a host clipboard bridge verifies the exact selected Unicode
+branch, unchanged full-hash Copy, clipboard preservation on a tag-only row and
+preservation of a sentinel while the Editor source Input owns focus.
 

@@ -95,14 +95,19 @@ impl RefBadge {
 
 /// The plain local-branch name a badge carries, or `None` if it is not a local
 /// branch (remotes and tags never satisfy the Cmd+C "copy branch" target).
-/// HEAD-branch badges strip the trailing `" ✓"`; linked-worktree branches strip
-/// the leading `"🌲 "` marker (mirrors `context_ref_name` in `mod.rs`).
-fn local_branch_name(badge: &RefBadge) -> Option<String> {
+/// Attached HEAD badges require their trailing `" ✓"`; the standalone detached
+/// HEAD marker is not a branch. Linked-worktree branches strip the leading `"🌲 "`.
+fn local_branch_name(badge: &RefBadge) -> Option<&str> {
     match badge.kind {
-        BadgeKind::HeadBranch => Some(badge.label.trim_end_matches(" ✓").trim_end().to_string()),
-        BadgeKind::Branch => Some(badge.label.trim_start_matches("🌲 ").to_string()),
+        BadgeKind::HeadBranch => badge.label.strip_suffix(" ✓").map(str::trim_end),
+        BadgeKind::Branch => Some(badge.label.trim_start_matches("🌲 ")),
         BadgeKind::Remote | BadgeKind::Tag | BadgeKind::Worktree => None,
     }
+}
+
+/// The selected row's first local branch, without a hash or current-branch fallback.
+pub fn graph_branch_name(badges: &[RefBadge]) -> Option<&str> {
+    badges.iter().find_map(local_branch_name)
 }
 
 /// Resolve the string Cmd+C copies from a selected Graph row (ADR-0170).
@@ -114,8 +119,8 @@ fn local_branch_name(badge: &RefBadge) -> Option<String> {
 ///   — the copy never yields nothing.
 pub fn graph_copy_value(badges: &[RefBadge], full_sha: &str, target: CopyTarget) -> String {
     if target == CopyTarget::Branch {
-        if let Some(name) = badges.iter().find_map(local_branch_name) {
-            return name;
+        if let Some(name) = graph_branch_name(badges) {
+            return name.to_owned();
         }
     }
     full_sha.to_string()

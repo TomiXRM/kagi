@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) const MAX_SIDE: f64 = 4096.;
 pub(super) const MAX_PIXELS: f64 = 16_000_000.;
+// Manual controls stop here; one-shot fitting may use any finite positive zoom.
 pub(super) const MIN_ZOOM: f32 = 0.25;
 pub(super) const MAX_ZOOM: f32 = 4.;
 
@@ -175,7 +176,8 @@ pub(super) fn raster_scale(
         || !zoom.is_finite()
         || width <= 0.
         || height <= 0.
-        || !(MIN_ZOOM..=MAX_ZOOM).contains(&zoom)
+        || zoom <= 0.
+        || zoom > MAX_ZOOM
         || !backing_scale.is_finite()
         || backing_scale <= 0.
     {
@@ -191,10 +193,12 @@ pub(super) fn raster_scale(
         .min(MAX_SIDE / h)
         .min((MAX_PIXELS / (w * h)).sqrt());
     let scale = scale as f32;
+    // Fitting can make a logical page subpixel. raster_scales gives each axis
+    // at least one output pixel without inflating the logical layout.
     let (rw, rh) = (width * scale, height * scale);
     if !scale.is_finite()
-        || rw < 1.
-        || rh < 1.
+        || rw <= 0.
+        || rh <= 0.
         || f64::from(rw.floor()) > MAX_SIDE
         || f64::from(rh.floor()) > MAX_SIDE
         || f64::from(rw.floor()) * f64::from(rh.floor()) > MAX_PIXELS

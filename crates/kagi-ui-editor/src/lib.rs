@@ -2701,7 +2701,7 @@ fn render_editor_workspace(
         .flex_row()
         .items_center()
         .flex_shrink_0()
-        .w_full()
+        .self_stretch()
         .px_3()
         .py_1()
         .gap_2()

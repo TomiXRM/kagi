@@ -544,6 +544,21 @@ The native PDF scenario also mounts a 940×660 Japanese window at 167% UI zoom:
 with the bottom panel closed, its real scroll viewport must retain at least
 200 logical pixels of document height. Icon controls retain localized AX names
 and hover help, including the visually abbreviated `100%` reset action.
+`editor_pdf_fit_width` and `commit_pdf_fit_width` exercise the real named Fit
+Width Button through pointer, Tab/Shift-Tab, Enter/Space and accessibility, in
+EN/JA including the compact 167% window. Use mixed-size PDF pages wider than the
+manual 25% floor, compare real raster pixels and measured content/viewport bounds,
+and require no horizontal clipping after Fit. Resize, disclose Details and replace
+the source: numeric zoom must remain unchanged until another explicit Fit.
+Previous/next must retain a sub-25% scale; Zoom In and 100% reset stay usable.
+After fitting mixed widths, resetting must leave the current narrower page on
+screen rather than anchoring the empty canvas beside it.
+Historical old/new sides retain independent zoom, scroll and immutable sources.
+Draw ordinary dirty views without forcing `window.refresh()` while awaiting PDF
+updates; otherwise the harness masks the header/Details displacement regression.
+Tier B compares the same generated mixed-page fixture before/after in English
+and Japanese, including both historical sides, and preserves HEAD/staged content.
+
 `editor_pdf_readonly` also exercises continuous first/middle/last-page reading,
 more than six simultaneously visible short pages, and a cached hidden viewer
 that must not keep scheduling raster work. `EditorWorkspaceView::pdf_probe(cx)`

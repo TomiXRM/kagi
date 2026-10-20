@@ -448,6 +448,7 @@ impl KagiApp {
         }
         let read = MainDiffRead::Wip {
             staged,
+            rename_from: None,
             refresh: true,
         };
         self.read_main_diff(repo, path, read, cx);
@@ -671,7 +672,12 @@ pub(crate) enum MainDiffRead {
     },
     /// A Commit Panel file. `refresh`: re-reading an open diff after a
     /// reload, which closes the pane when nothing is left to show.
-    Wip { staged: bool, refresh: bool },
+    Wip {
+        staged: bool,
+        /// Frozen panel identity for initial opens; refresh resolves current status off-thread.
+        rename_from: Option<std::path::PathBuf>,
+        refresh: bool,
+    },
     /// A file of the selected commit on a content-cache miss (#829). `row`
     /// and `epoch` key the cache it fills and go stale on a renumber.
     Commit {

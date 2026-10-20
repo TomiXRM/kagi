@@ -109,7 +109,7 @@ actions!(
         CheckoutBranch,
         RenameBranch,
         DeleteBranch,
-        CopyCurrentBranchName,
+        CopySelectedBranchName,
         // Commit (operate on the selected commit; route via dispatch_commit_action)
         CopyCommitHash,
         CheckoutCommit,
@@ -416,7 +416,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("branch.checkout"),
             MenuNode::Command("branch.rename"),
             MenuNode::Command("branch.delete"),
-            MenuNode::Command("branch.copyCurrentName"),
+            MenuNode::Command("branch.copySelectedName"),
         ],
     },
     // ── Commit ───────────────────────────────────────────────────────
@@ -745,8 +745,8 @@ pub const COMMANDS: &[Command] = &[
         dangerous: true,
     },
     Command {
-        id: "branch.copyCurrentName",
-        label: "Copy Current Branch Name",
+        id: "branch.copySelectedName",
+        label: "Copy Selected Branch Name",
         keystroke: Some("secondary-shift-c"),
         dangerous: false,
     },
@@ -918,6 +918,11 @@ pub fn command(id: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|c| c.id == id)
 }
 
+fn selected_branch_name(app: &KagiApp) -> Option<&str> {
+    let row = app.view().rows.get(app.ui().selected?)?;
+    super::commit_list::graph_branch_name(&row.badges)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // State machine — the one place enabled/disabled/hidden is decided (ADR-0029).
 // ──────────────────────────────────────────────────────────────────────────
@@ -1019,15 +1024,17 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
             }
         }
 
-        "branch.copyCurrentName" => {
+        "branch.copySelectedName" => {
             if !has_repo {
                 Disabled(Msg::NoRepoOpen.t())
             } else if app.has_active_modal() {
                 Disabled(Msg::FinishDialogFirst.t())
             } else if busy {
                 Disabled(Msg::OpInProgress.t())
-            } else if app.view().current_branch.is_none() {
-                Disabled(Msg::CmNoCurrentBranch.t())
+            } else if !has_selection {
+                Disabled(Msg::NoCommitSelected.t())
+            } else if selected_branch_name(app).is_none() {
+                Disabled(Msg::CmNoSelectedBranch.t())
             } else {
                 Enabled
             }
@@ -1182,7 +1189,7 @@ fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> Menu
         "branch.checkout" => MenuItem::action(label, CheckoutBranch),
         "branch.rename" => MenuItem::action(label, RenameBranch),
         "branch.delete" => MenuItem::action(label, DeleteBranch),
-        "branch.copyCurrentName" => MenuItem::action(label, CopyCurrentBranchName),
+        "branch.copySelectedName" => MenuItem::action(label, CopySelectedBranchName),
         // Commit
         "commit.copyHash" => MenuItem::action(label, CopyCommitHash),
         "commit.checkout" => MenuItem::action(label, CheckoutCommit),
@@ -1724,7 +1731,7 @@ pub fn register_keybindings(cx: &mut App) {
     );
     // Keyboard copy belongs only to the uncovered Graph's root focus.
     // Explicit menu/palette actions remain available in other workspaces.
-    if let Some(ks) = effective_keystroke("branch.copyCurrentName") {
+    if let Some(ks) = effective_keystroke("branch.copySelectedName") {
         cx.bind_keys([KeyBinding::new(
             &ks,
             CopyGraphBranchName,
@@ -2281,9 +2288,9 @@ impl KagiApp {
             "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout, window, cx),
             "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete, window, cx),
             "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename, window, cx),
-            "branch.copyCurrentName" => {
+            "branch.copySelectedName" => {
                 if is_enabled(self, id) {
-                    if let Some(name) = self.view().current_branch.clone() {
+                    if let Some(name) = selected_branch_name(self).map(str::to_owned) {
                         super::branch_menu::copy_branch_name(self, name, cx);
                     }
                 }

@@ -227,12 +227,12 @@ impl KagiApp {
         let el = menu_act!(el, cmds::CheckoutBranch, "branch.checkout");
         let el = menu_act!(el, cmds::RenameBranch, "branch.rename");
         let el = menu_act!(el, cmds::DeleteBranch, "branch.delete");
-        let el = menu_act!(el, cmds::CopyCurrentBranchName, "branch.copyCurrentName");
-        let el = el.when(cmds::is_enabled(self, "branch.copyCurrentName"), |el| {
+        let el = menu_act!(el, cmds::CopySelectedBranchName, "branch.copySelectedName");
+        let el = el.when(cmds::is_enabled(self, "branch.copySelectedName"), |el| {
             el.on_action(
                 cx.listener(|this, _: &cmds::CopyGraphBranchName, window, cx| {
                     if this.commit_list_has_focus(window, cx) {
-                        this.handle_menu_command("branch.copyCurrentName", window, cx);
+                        this.handle_menu_command("branch.copySelectedName", window, cx);
                     } else {
                         cx.propagate();
                     }

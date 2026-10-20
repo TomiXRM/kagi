@@ -10,7 +10,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Choose whether newly opened Markdown files start in Preview or Source in Settings. Preview is the default; already-open buffers retain their chosen mode and unsaved edits.
 - View working-tree PDFs read-only in Editor as continuously scrollable pages, with page navigation, zoom and display-density-aware rendering. Rasterize visible pages on demand with bounded image memory and background work. Malformed and password-protected documents show localized errors; password entry and universal font fidelity are not supported.
 - Preview PDFs from Git Graph commit diffs side by side: previous version on the left, selected version on the right, with independent continuous scrolling and no computed diff highlighting. Preserve historical source identity, renamed paths and explicit added/deleted side states instead of substituting working-tree content.
-- Copy the current branch name with Cmd+Shift+C while Graph has focus, or through the Branch menu and command palette. Preserve Cmd+C behavior and text/terminal input ownership; detached HEAD has no branch name to copy.
+- Copy the selected commit's local branch name with Cmd+Shift+C while Graph has focus, or through the Branch menu and command palette. Preserve Cmd+C behavior and text/terminal input ownership; without a selected local branch, leave the clipboard unchanged instead of copying the checked-out branch or a hash.
 
 ### Fixed
 

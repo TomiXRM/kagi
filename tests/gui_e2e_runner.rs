@@ -3126,6 +3126,10 @@ mod macos {
                 Box::new(crate::pdf_media_bounds::scenario_pdf_media_bounds),
             ),
             (
+                "pdf_media_symlink",
+                Box::new(crate::pdf_media_bounds::scenario_pdf_media_symlink),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),

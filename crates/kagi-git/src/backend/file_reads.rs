@@ -9,7 +9,7 @@ pub enum FileReadSource<'a> {
     Commit(&'a CommitId),
     Head,
     Index,
-    /// Unstaged diffs use the index, falling back only when its entry is absent.
+    /// Unstaged base: stage 0, then conflict ours/ancestor, otherwise HEAD.
     IndexOrHead,
     Workdir,
 }
@@ -94,9 +94,10 @@ impl Backend {
             .workdir()
             .ok_or_else(|| GitError::Other("No working directory".into()))?;
         let path = root.join(path);
+        // Do not follow symlinks: Git compares their link text, not their target.
         // Reject known special files before open (opening a FIFO could block).
-        // Check again on the opened handle in case the path was replaced.
-        match std::fs::metadata(&path) {
+        // Check the opened handle is also regular if the path was replaced.
+        match std::fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_file() => {}
             Ok(_) => return Err(GitError::Other("File side is not a regular file".into())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -130,6 +131,9 @@ impl Backend {
                 }
                 if matches!(source, FileReadSource::Index) {
                     return Ok(None);
+                }
+                if let Some(base) = crate::staging::conflicted_base_oid(&index, path)? {
+                    return Ok(base);
                 }
                 return self.file_blob_id(FileReadSource::Head, path);
             }

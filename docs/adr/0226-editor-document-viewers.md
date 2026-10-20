@@ -176,8 +176,13 @@ classify ordinary text. Worktree prefix reads use fixed stack storage; Git
 prefix checks borrow the blob. Once classified as PDF, `Backend::file_bytes`
 checks the 10 MiB limit before creating an application-owned byte vector.
 Worktree reads also reject growth past the limit during reading. Preserve
-commit/HEAD/index/worktree identity; index-to-HEAD fallback is allowed only for
-an absent stage-zero entry, never a read error. These limits do not bound
+commit/HEAD/index/worktree identity. An unstaged comparison uses stage zero or,
+for a conflicted path, ours then ancestor; no conflict base means an absent side.
+Share that conflict-base lookup with `unstaged_file_diff`. Fall back to HEAD only
+when neither a stage-zero entry nor a conflict exists for the path, never on a
+read error. Check symlink metadata before opening working-tree files: symlinks
+and special files are not PDF sources, and their targets must not substitute for
+Git's link contents. These checks do not sandbox filesystem races or bound
 libgit2's internal blob materialization or total process memory.
 
 PDF previews expose no text rows, hunk actions, fake line counts or Unified/Split

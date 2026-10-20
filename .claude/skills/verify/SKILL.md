@@ -562,9 +562,18 @@ before querying side labels. Keep neighboring `binary_diff_`, `diff_highlight`,
 using real page geometry and blue raster pixels. `pdf_media_bounds` checks
 exactly 10 MiB versus one byte over on both historical sides, plus an oversized
 signature-only working-tree PDF. Read failures must not become absent sides.
-Pair with `cargo test -p kagi-git --test file_reads_test` and
+`pdf_media_symlink` opens an untracked symlink to a real PDF outside the fixture:
+the new side must show a read failure, never its target, while the old side is
+absent. The fixture and target bytes remain unchanged.
+Pair with `cargo test -p kagi-git --test file_reads_test --test staging_test` and
 `cargo test -p kagi-git --lib backend::file_reads::tests` for bounded prefix
 reads, sparse files, growth during reading, and index-error fallback refusal.
+Backend regressions cover internal/external/dangling symlinks and conflicted
+unstaged bases: ours, ancestor fallback, absence without a HEAD substitute, and
+exact byte-path matching even when distinct index paths are not valid UTF-8.
+Tier B compares the same outside-target symlink before/after in the ordinary
+app. For an actual add/add stash conflict, a backend smoke must identify the
+stage-two blob despite an absent HEAD path and distinct working-tree resolution.
 `pdf_focus_retirement` clicks both historical PDF bodies, then closes/replaces
 or hides their owners and navigates Graph without another click.
 `pdf_focus_retirement_preserves_input` keeps typing in a sidebar/modal Input

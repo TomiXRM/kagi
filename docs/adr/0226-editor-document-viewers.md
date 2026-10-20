@@ -64,18 +64,24 @@ PDF constructs and fonts remain renderer limitations.
   lifetime. Lay out all page geometries as one continuous document, but mount
   only visible pages and their immediate neighbors. Ordinary wheel scrolling
   crosses page boundaries; previous/next controls scroll to existing pages.
-- Bound retained decoded pixels to 64,000,000 bytes per viewer. Every visible
-  page receives a share of that budget; adjacent prefetch uses at most 10%.
-  Cache entries follow the visible range plus at most two neighbors, not a fixed
-  page cap that could leave visible short pages permanently loading.
+- Bound retained decoded pixels to 64,000,000 bytes per viewer. Keep offscreen
+  images in an LRU rather than discarding them as soon as they leave the viewport.
+  Bound entry count to the larger of 32 and current demand, so many visible short
+  pages can all settle. Release evicted/replaced images from GPUI's atlas too.
   Each raster remains bounded to 4,096 pixels per axis and 16,000,000 pixels.
+- Render cold visible pages at at most 500,000 pixels first; retain useful images
+  while refining after 120 ms without motion. Use the executor clock for this
+  delay. Stable density tiers preserve native density whenever the working set
+  fits; do not cap zoomed pages at preview density. Prefetch up to three neighboring
+  previews within 1,500,000 pixels, after visible work.
 - Permit at most two raster jobs globally and one pending raster or coalesced
-  admission retry per viewer. Completion/retry only notifies; visible rendering
-  schedules subsequent work. A cached hidden tab may finish its existing job
-  but cannot keep scheduling prefetch.
+  admission retry per viewer. Skip obsolete queued demand before rasterization;
+  an executing synchronous Hayro render is not preemptible. Completion/retry only
+  notifies; hidden cached tabs cannot keep scheduling prefetch.
 - Admit results only for the same live viewer, source identity, generation,
-  page, zoom, backing scale and current page pixel budget. Superseded results
-  cannot replace a newer document, including close/reopen and zoom ABA.
+  page, zoom, backing scale and current density demand. A late preview must not
+  replace a finer cached image. Superseded results cannot replace a newer
+  document, including close/reopen and zoom ABA.
 - Reuse the existing watcher and buffer identity. Unchanged content retains
   its source, viewer and reading state; changed content invalidates rasters
   and clamps the page selection to the new document.
@@ -119,10 +125,17 @@ PDF constructs and fonts remain renderer limitations.
   focus can be returned to the workspace root. Only focus owned by that Input
   is transferred; another pane or modal keeps its focus. Pending Input events
   cannot dirty the newly accepted read-only PDF.
-- Git Graph commit diff shows two independent read-only PDF viewers: previous
-  version on the left, selected version on the right. This is a document
-  comparison, not computed differences or highlighted change regions. Editor's
-  separate History/snapshot presentation is not expanded by this change.
+- Git Graph commit diff shows two read-only PDF viewers: previous version on
+  the left, selected version on the right. Independent scrolling is the default;
+  a named header Button switches to synchronized scrolling. Synchronize page
+  index and page-relative position, plus horizontal overflow fraction, clamping
+  to each document's bounds. This is not content matching or computed differences.
+  The latest focus/scroll interaction leads when enabling synchronization;
+  applying a peer position neither emits another event nor takes focus.
+  Turning it off preserves both positions and never changes either zoom.
+  The immutable comparison owns mode and subscriptions; replacement retires
+  subscriptions even if an old render retains the entity. Absent/invalid sides
+  do not offer synchronization. Editor's separate History view is unchanged.
 - Password-required, invalid-file and unsupported-encryption errors are distinct.
   Password entry is not part of this change; documents accepted with an empty
   password may open normally.
@@ -293,6 +306,18 @@ replacement. Check historical sides independently and retain repository content.
 Draw dirty views without forcing a whole-window refresh so ancestor-layout
 regressions cannot be hidden by the test harness.
 
+For #1691, inspect GPUI PDF implementations for demand scheduling, retained
+images and explicit atlas release; reuse those design principles without copying
+their code or changing Hayro. Neither inspected external viewer was benchmarked.
+Test bounded LRU eviction, warm revisits without new raster admissions, obsolete
+queued work, preview/full publication ordering and native-density preservation.
+Native waits advance the executor clock as well as allowing real workers to run.
+Exercise independent/synchronized mode with wheel, keys and scrollbar dragging,
+unequal page sizes/counts, EN/JA controls, source replacement and retired peers.
+Ordinary-window proof uses generated PDFs for public attachments; private
+Ritsumei documents remain local. CPU raster measurements are not end-to-end
+scroll-latency claims.
+
 ## References
 
 - https://github.com/zed-industries/zed/tree/main/crates/image_viewer
@@ -302,3 +327,5 @@ regressions cannot be hidden by the test harness.
 - https://docs.rs/hayro-interpret/0.8.0/hayro_interpret/struct.InterpreterSettings.html
 - https://developer.apple.com/design/human-interface-guidelines/scroll-views
 - https://support.apple.com/en-lk/guide/preview/prvw11470/mac
+- https://docs.rs/crate/gpui-pdf/0.6.1/source/src/lib.rs
+- https://github.com/Lej77/pdf-reader-gpui

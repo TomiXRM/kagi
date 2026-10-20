@@ -75,11 +75,12 @@ fn click_body(
             .as_ref()
             .unwrap()
             .read(cx)
-            .pdf_viewer_for_e2e(old)
+            .pdf_viewer_for_e2e(old, cx)
             .expect("real historical PDF viewer")
     });
     let deadline = Instant::now() + Duration::from_secs(20);
     let bounds = loop {
+        cx.advance_clock(Duration::from_millis(16));
         paint(cx, window);
         let pdf = cx.read(|cx| viewer.read(cx).pdf_probe());
         if pdf.settled && pdf.image.is_some() {

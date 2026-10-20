@@ -74,6 +74,7 @@ fn wait_pdf(
 ) -> PdfProbe {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
+        cx.advance_clock(Duration::from_millis(16));
         // Exercise ordinary dirty-view drawing. A forced window.refresh()
         // masks ancestor layout invalidation when only PdfViewer changes.
         cx.run_until_parked();
@@ -428,6 +429,7 @@ fn replace_editor_source(
     editor.update(cx, |view, cx| view.on_worktree_changed(cx));
     let deadline = Instant::now() + Duration::from_secs(20);
     let replacement = loop {
+        cx.advance_clock(Duration::from_millis(16));
         paint(cx, window);
         let current = cx.read(|cx| editor.read(cx).pdf_probe(cx));
         if let Some(pdf) = current {
@@ -460,6 +462,7 @@ fn replace_editor_source(
     editor.update(cx, |view, cx| view.on_worktree_changed(cx));
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
+        cx.advance_clock(Duration::from_millis(16));
         paint(cx, window);
         if cx.read(|cx| {
             editor.read(cx).pdf_probe(cx).is_some_and(|pdf| {
@@ -578,8 +581,8 @@ fn historical_sides(
         let pane = app.read(cx).ui().main_diff.as_ref().unwrap().read(cx);
         assert!(pane.view.rows.is_empty() && pane.view.images.is_none());
         (
-            pane.pdf_viewer_for_e2e(true).unwrap(),
-            pane.pdf_viewer_for_e2e(false).unwrap(),
+            pane.pdf_viewer_for_e2e(true, cx).unwrap(),
+            pane.pdf_viewer_for_e2e(false, cx).unwrap(),
         )
     })
 }

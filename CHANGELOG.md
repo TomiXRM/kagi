@@ -5,6 +5,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-21
+
 ### Added
 
 - Choose whether newly opened Markdown files start in Preview or Source in Settings. Preview is the default; already-open buffers retain their chosen mode and unsaved edits.

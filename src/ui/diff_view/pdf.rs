@@ -185,13 +185,13 @@ fn status(label: &'static str, detail: Option<&SharedString>) -> gpui::AnyElemen
         .into_any_element()
 }
 
-/// Re-opening the same immutable commit must not discard its reading positions.
+/// Re-opening the same file in an immutable commit preserves reading positions.
 /// Mutable Compare/WIP sources must always use their newly accepted bytes.
 pub(crate) fn same_immutable_document(previous: &MainDiffSource, next: &MainDiffSource) -> bool {
     matches!((previous, next), (
-        MainDiffSource::Commit { commit: Some(previous), .. },
-        MainDiffSource::Commit { commit: Some(next), .. },
-    ) if previous == next)
+        MainDiffSource::Commit { commit: Some(previous), file_index: previous_file, .. },
+        MainDiffSource::Commit { commit: Some(next), file_index: next_file, .. },
+    ) if previous == next && previous_file == next_file)
 }
 
 pub(crate) fn is_pdf_path(path: &std::path::Path) -> bool {

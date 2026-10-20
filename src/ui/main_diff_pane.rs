@@ -78,7 +78,6 @@ impl MainDiffPane {
             .as_ref()
             .zip(pdfs.as_ref())
             .is_some_and(|(viewers, sources)| viewers.can_retain(sources))
-            && self.view.title == view.title
             && same_immutable_document(&self.view.source, &view.source);
         if !retain {
             self.pdfs = pdfs.map(|sources| DiffPdfViewers::new(sources, cx));

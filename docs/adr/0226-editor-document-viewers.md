@@ -167,8 +167,12 @@ projection, including ASCII PDFs whose changed hunks omit their signature.
 Classification lives with the existing immutable diff-cache entry and shares
 its invalidation lifetime. Session, visit, request and source guards admit the
 prepared result before viewer entities are created. Render only reuses those
-entities. Reopening the same accepted immutable commit/path retains reading
-positions; mutable comparisons use newly accepted sources.
+entities. Reopening the same accepted immutable commit/file retains reading
+positions: use the commit OID and its file index, never the display title, as
+the retention key. Mutable comparisons use newly accepted sources. This does
+not extend non-UTF-8 per-file diff support: the existing Git pathspec guard
+rejects those paths before media preparation, even though blob reads preserve
+exact byte paths.
 
 Recognize PDF suffixes before probing content. For signature-only files, use
 `Backend::file_has_prefix` rather than copying both complete sides merely to

@@ -128,8 +128,8 @@ impl MainDiffRead {
     }
 }
 
-/// Gather each side once while the selected read's Backend is open on the worker.
-/// PDF classification precedes both text projection and ordinary image sniffing.
+/// Classify by extension first, then bounded signatures. Ordinary text never
+/// gets additional full old/new byte vectors just to decide its presentation.
 fn prepare_diff_media(
     backend: &kagi_git::Backend,
     file_diff: &kagi_git::FileDiff,
@@ -138,108 +138,119 @@ fn prepare_diff_media(
     compare_head: Option<&kagi_git::CommitId>,
     rename_from: Option<&std::path::Path>,
 ) -> (Option<PreparedPdfPair>, Option<DiffImagePair>) {
+    use kagi_git::backend::file_reads::FileReadSource;
+    const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+
+    if matches!(
+        source,
+        MainDiffSource::Synthetic | MainDiffSource::Commit { commit: None, .. }
+    ) {
+        return (None, None);
+    }
     let (old_path, new_path) = side_paths(file_diff, path, rename_from);
-    let at = |commit: &kagi_git::CommitId, path: Option<&std::path::Path>| {
-        path.map(|path| {
-            backend
-                .blob_bytes_at(commit, path)
-                .map_err(|e| e.to_string())
-        })
-        .unwrap_or(Ok(None))
-    };
-    let workdir_bytes = || -> Result<Option<Vec<u8>>, String> {
-        let Some(path) = new_path else {
-            return Ok(None);
-        };
-        let root = backend
-            .workdir()
-            .ok_or_else(|| "No working directory".to_string())?;
-        std::fs::read(root.join(path))
-            .map(Some)
-            .map_err(|error| error.to_string())
-    };
-    let (old, new) = match source {
-        MainDiffSource::Synthetic | MainDiffSource::Commit { commit: None, .. } => {
-            return (None, None);
-        }
+    let pdf_extension =
+        is_pdf_path(path) || old_path.is_some_and(is_pdf_path) || new_path.is_some_and(is_pdf_path);
+    let parent = match source {
         MainDiffSource::Commit {
             commit: Some(commit),
             ..
-        } => {
-            let old = if old_path.is_some() {
-                backend
-                    .first_parent(commit)
-                    .map_err(|e| e.to_string())
-                    .and_then(|parent| {
-                        parent
-                            .as_ref()
-                            .map(|parent| at(parent, old_path))
-                            .unwrap_or(Ok(None))
-                    })
-            } else {
-                Ok(None)
-            };
-            (old, at(commit, new_path))
-        }
-        MainDiffSource::Compare { base, target, .. } => {
-            let new = match target {
-                CompareTarget::Head => compare_head
-                    .map(|head| at(head, new_path))
-                    .unwrap_or(Ok(None)),
-                CompareTarget::WorkingTree => workdir_bytes(),
-                CompareTarget::Commit(commit) => at(commit, new_path),
-            };
-            (at(base, old_path), new)
-        }
-        MainDiffSource::Unstaged { .. } => {
-            let old = old_path
-                .map(|path| {
-                    backend
-                        .blob_bytes_index(path)
-                        .map_err(|e| e.to_string())
-                        .and_then(|bytes| match bytes {
-                            Some(_) => Ok(bytes),
-                            None => backend.blob_bytes_head(path).map_err(|e| e.to_string()),
-                        })
-                })
-                .unwrap_or(Ok(None));
-            (old, workdir_bytes())
-        }
-        MainDiffSource::Staged { .. } => (
-            old_path
-                .map(|path| backend.blob_bytes_head(path).map_err(|e| e.to_string()))
-                .unwrap_or(Ok(None)),
-            new_path
-                .map(|path| backend.blob_bytes_index(path).map_err(|e| e.to_string()))
-                .unwrap_or(Ok(None)),
+        } if old_path.is_some() => backend
+            .first_parent(commit)
+            .map_err(|error| error.to_string()),
+        _ => Ok(None),
+    };
+    let side = |source, path| match (source, path) {
+        (Some(source), Some(path)) => MediaSide::File(source, path),
+        _ => MediaSide::Absent,
+    };
+    let (old, new) = match source {
+        MainDiffSource::Commit {
+            commit: Some(commit),
+            ..
+        } => (
+            match &parent {
+                Ok(parent) => side(parent.as_ref().map(FileReadSource::Commit), old_path),
+                Err(error) => MediaSide::Failed(error.clone()),
+            },
+            side(Some(FileReadSource::Commit(commit)), new_path),
         ),
+        MainDiffSource::Compare { base, target, .. } => (
+            side(Some(FileReadSource::Commit(base)), old_path),
+            side(
+                match target {
+                    CompareTarget::Head => compare_head.map(FileReadSource::Commit),
+                    CompareTarget::WorkingTree => Some(FileReadSource::Workdir),
+                    CompareTarget::Commit(commit) => Some(FileReadSource::Commit(commit)),
+                },
+                new_path,
+            ),
+        ),
+        MainDiffSource::Unstaged { .. } => (
+            side(Some(FileReadSource::IndexOrHead), old_path),
+            side(Some(FileReadSource::Workdir), new_path),
+        ),
+        MainDiffSource::Staged { .. } => (
+            side(Some(FileReadSource::Head), old_path),
+            side(Some(FileReadSource::Index), new_path),
+        ),
+        MainDiffSource::Synthetic | MainDiffSource::Commit { commit: None, .. } => unreachable!(),
     };
-    let signature = |bytes: &Result<Option<Vec<u8>>, String>| {
-        bytes
-            .as_ref()
-            .ok()
-            .and_then(|bytes| bytes.as_ref())
-            .is_some_and(|bytes| bytes.starts_with(b"%PDF-"))
+    let signature = |side: &MediaSide<'_>| {
+        matches!(
+            side.read(|source, path| backend.file_has_prefix(source, path, b"%PDF-")),
+            Ok(Some(true))
+        )
     };
-    let pdf = is_pdf_path(path)
-        || old_path.is_some_and(is_pdf_path)
-        || new_path.is_some_and(is_pdf_path)
-        || signature(&old)
-        || signature(&new);
-    if pdf {
+    if pdf_extension || signature(&old) || signature(&new) {
         return (
             Some(PreparedPdfPair {
-                old: PreparedPdfSide::from_read(old_path.is_some(), old),
-                new: PreparedPdfSide::from_read(new_path.is_some(), new),
+                old: PreparedPdfSide::from_read(
+                    old_path.is_some(),
+                    old.read(|source, path| backend.file_bytes(source, path, MAX_PDF_BYTES)),
+                ),
+                new: PreparedPdfSide::from_read(
+                    new_path.is_some(),
+                    new.read(|source, path| backend.file_bytes(source, path, MAX_PDF_BYTES)),
+                ),
             }),
             None,
         );
     }
-    let images = file_diff
-        .is_binary
-        .then(|| image_pair_from_bytes(old.ok().flatten(), new.ok().flatten()))
-        .flatten();
-    (None, images)
+    if !file_diff.is_binary {
+        return (None, None);
+    }
+    // Only the existing binary-image path needs unrestricted encoded bytes.
+    let bytes = |side: &MediaSide<'_>| {
+        side.read(|source, path| backend.file_bytes(source, path, usize::MAX))
+            .ok()
+            .flatten()
+    };
+    (None, image_pair_from_bytes(bytes(&old), bytes(&new)))
+}
+
+enum MediaSide<'a> {
+    Absent,
+    File(
+        kagi_git::backend::file_reads::FileReadSource<'a>,
+        &'a std::path::Path,
+    ),
+    Failed(String),
+}
+
+impl MediaSide<'_> {
+    fn read<T>(
+        &self,
+        read: impl FnOnce(
+            kagi_git::backend::file_reads::FileReadSource<'_>,
+            &std::path::Path,
+        ) -> Result<Option<T>, kagi_git::GitError>,
+    ) -> Result<Option<T>, String> {
+        match self {
+            Self::Absent => Ok(None),
+            Self::File(source, path) => read(*source, path).map_err(|error| error.to_string()),
+            Self::Failed(error) => Err(error.clone()),
+        }
+    }
 }
 
 /// Honor the actual delta's distinct paths, never look up a renamed old blob

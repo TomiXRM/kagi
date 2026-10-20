@@ -326,6 +326,21 @@ impl KagiApp {
         }
     }
 
+    /// Watch a focused surface that may disappear without a window-aware close.
+    /// Use the same exact-handle guard as overlay restoration, including a check
+    /// after this paint: the previous dispatch tree can still contain the body.
+    pub(super) fn track_retiring_focus(
+        &mut self,
+        focus: gpui::FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.restored_focus = Some(focus);
+        cx.defer_in(window, |this, window, cx| {
+            this.check_restored_focus(window, cx);
+        });
+    }
+
     /// The restored-focus check, against the frame drawn last. Returns
     /// whether the restored control is still being tracked.
     fn check_restored_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {

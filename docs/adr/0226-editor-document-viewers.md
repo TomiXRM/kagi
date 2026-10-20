@@ -170,9 +170,22 @@ prepared result before viewer entities are created. Render only reuses those
 entities. Reopening the same accepted immutable commit/path retains reading
 positions; mutable comparisons use newly accepted sources.
 
+Recognize PDF suffixes before probing content. For signature-only files, use
+`Backend::file_has_prefix` rather than copying both complete sides merely to
+classify ordinary text. Worktree prefix reads use fixed stack storage; Git
+prefix checks borrow the blob. Once classified as PDF, `Backend::file_bytes`
+checks the 10 MiB limit before creating an application-owned byte vector.
+Worktree reads also reject growth past the limit during reading. Preserve
+commit/HEAD/index/worktree identity; index-to-HEAD fallback is allowed only for
+an absent stage-zero entry, never a read error. These limits do not bound
+libgit2's internal blob materialization or total process memory.
+
 PDF previews expose no text rows, hunk actions, fake line counts or Unified/Split
 mode controls. Existing image and text presentations retain their own behavior.
 The same read-only keyboard context and PDF body focus apply in both hosts.
+Historical PDF bodies use the same root post-paint focus-retirement guard as
+Editor PDFs. Closing/replacing the pane or hiding its owner restores root focus
+only if that exact retired body still owns focus; another Input or modal wins.
 
 
 ## Distribution and limits

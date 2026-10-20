@@ -86,6 +86,14 @@ impl MainDiffPane {
         self.view.adopt(view);
     }
 
+    pub(crate) fn focused_pdf_body(
+        &self,
+        window: &Window,
+        cx: &gpui::App,
+    ) -> Option<gpui::FocusHandle> {
+        self.pdfs.as_ref()?.focused_body(window, cx)
+    }
+
     #[cfg(feature = "gui-e2e")]
     pub fn pdf_viewer_for_e2e(&self, old: bool) -> Option<Entity<kagi_ui_editor::PdfViewer>> {
         self.pdfs.as_ref()?.viewer(old)

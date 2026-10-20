@@ -586,6 +586,11 @@ reads, sparse files, growth during reading, and index-error fallback refusal.
 Backend regressions cover internal/external/dangling symlinks and conflicted
 unstaged bases: ours, ancestor fallback, absence without a HEAD substitute, and
 exact byte-path matching even when distinct index paths are not valid UTF-8.
+Do not mistake those backend byte-read checks for non-UTF-8 per-file diff support:
+the existing pathspec guard refuses such diffs before media preparation. Retention
+uses the immutable commit and file index, not its display title. In Tier B, switch
+between supported PDFs with different page counts/content, then reopen the same
+file and require its zoom/page to survive; preserve HEAD, staged content and bytes.
 The absent-base case must also report `ChangeKind::Added` and no old path in
 `unstaged_file_diff`, so PDF preparation preserves absence instead of showing a
 read error. Smoke the real main-diff worker against a stage-three-only conflict

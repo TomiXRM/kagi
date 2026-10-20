@@ -153,6 +153,35 @@ names remain in accessibility labels and hover help. The reset action keeps its
 the document viewport: with the bottom panel closed, retain at least 200 logical
 pixels of visible document height.
 
+### PDF width fitting
+
+The shared `PdfViewer` exposes the existing named Button pattern as **Fit Width**
+in English and **幅に合わせる** in Japanese. It is a one-shot zoom action, not a
+selected mode or a persisted preference. Editor and both historical sides use
+the same implementation; fitting one historical side never changes the other.
+
+Fit the widest finite, positive page geometry in the continuous document to
+the measured logical viewport, excluding its actual padding and focus border.
+Accumulate the widest page with the existing layout pass, not on every frame.
+Measurement readiness does not depend on finishing a raster job. Unavailable
+geometry or a nonpositive content width disables the action.
+
+Keep the 400% ceiling, but allow fitting below the manual 25% floor so very wide
+pages can actually fit a narrow pane. Page navigation retains this smaller
+scale, Zoom In grows it proportionally, and Zoom Out remains disabled at or
+below its manual floor. The existing 100% reset remains available; a positive
+scale below 1% is displayed as `<1%`, not zero.
+
+Pane disclosure, window resize and source-geometry changes retain the numeric
+zoom. Reapplying Fit measures the current viewport and accepted document again.
+Mixed portrait/landscape page navigation therefore does not change the zoom.
+Reuse the ordinary zoom path's page-relative center anchor, generation guards
+and raster budgets. If the viewport center falls outside a narrower page,
+recenter that page horizontally instead of anchoring empty canvas on zoom/reset.
+No new settings, Git writes, dependency or fork is needed.
+Keep the workspace header stretched across its host during PDF-only redraws;
+fitting must not move the persistent Details control to an intrinsic-width row.
+
 ### Historical PDF source ownership
 
 The existing `MainDiffRead` worker reads and parses each historical side. For a
@@ -237,6 +266,14 @@ the inspected PDF bytes. Personal document screenshots are not public evidence.
 Native regressions additionally exercise many simultaneously visible short pages,
 bounded raster caches, hidden-viewer scheduling and stale source ownership.
 
+For width fitting, verify pointer, Tab/Shift-Tab, Enter/Space and accessibility
+activation in EN/JA, including 940×660 at 167% UI zoom. Use mixed-page documents
+that require less than 25%, compare actual padded viewport/page bounds and
+pixels, and exercise explicit refitting after resize, pane disclosure and source
+replacement. Check historical sides independently and retain repository content.
+Draw dirty views without forcing a whole-window refresh so ancestor-layout
+regressions cannot be hidden by the test harness.
+
 ## References
 
 - https://github.com/zed-industries/zed/tree/main/crates/image_viewer
@@ -244,3 +281,5 @@ bounded raster caches, hidden-viewer scheduling and stale source ownership.
 - https://docs.rs/hayro-syntax/0.8.0/hayro_syntax/struct.Pdf.html
 - https://docs.rs/hayro-syntax/0.8.0/hayro_syntax/enum.LoadPdfError.html
 - https://docs.rs/hayro-interpret/0.8.0/hayro_interpret/struct.InterpreterSettings.html
+- https://developer.apple.com/design/human-interface-guidelines/scroll-views
+- https://support.apple.com/en-lk/guide/preview/prvw11470/mac

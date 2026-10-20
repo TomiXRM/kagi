@@ -100,7 +100,6 @@ fn raster_dimensions_are_validated_before_hayro_u16_conversion() {
         (100., 100., f32::NAN),
         (100., 100., 0.),
         (100., 100., 5.),
-        (0.1, 100., 1.),
     ] {
         assert_eq!(
             raster_scale(width, height, zoom, 1.),
@@ -115,14 +114,17 @@ fn raster_dimensions_are_validated_before_hayro_u16_conversion() {
     }
     for (width, height, zoom) in [
         (612., 792., 1.),
+        (0.1, 100., 1.),
+        (612., 792., 0.0001),
         (612., 792., 4.),
         (10000., 10000., 1.),
         (20000., 5000., 4.),
     ] {
         for backing_scale in [1., 2., 3.5] {
             let scale = raster_scale(width, height, zoom, backing_scale).unwrap();
+            assert!(scale > 0. && width * scale > 0. && height * scale > 0.);
             let (w, h) = ((width * scale) as u64, (height * scale) as u64);
-            assert!(w > 0 && h > 0 && w <= MAX_SIDE as u64 && h <= MAX_SIDE as u64);
+            assert!(w <= MAX_SIDE as u64 && h <= MAX_SIDE as u64);
             assert!(w * h <= MAX_PIXELS as u64);
         }
     }
@@ -146,6 +148,20 @@ fn viewport_pixel_budgets_render_every_page_without_exceeding_its_share() {
         raster_scales(612., 792., 1., 2., 0),
         Err(PdfError::Dimensions)
     );
+}
+
+#[test]
+fn fitted_subpixel_pages_still_produce_nonzero_bounded_rasters() {
+    let document = source(MULTIPAGE).document.unwrap();
+    for zoom in [0.1, 0.001, 0.0001] {
+        for page in 0..document.pages().len() {
+            let (image, _) = render_page_with_budget(document.clone(), page, zoom, 2., 64).unwrap();
+            let size = image.size(0);
+            let pixels = size.width.0 as usize * size.height.0 as usize;
+            assert!(size.width.0 >= 1 && size.height.0 >= 1);
+            assert!(pixels <= 64);
+        }
+    }
 }
 
 #[test]

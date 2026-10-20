@@ -535,6 +535,10 @@ mod binary_diff_owner;
 mod commit_pdf;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pdf_fit.rs"]
+mod pdf_fit;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pdf_focus_retirement.rs"]
 mod pdf_focus_retirement;
 
@@ -3110,6 +3114,10 @@ mod macos {
                 Box::new(crate::commit_pdf::scenario_commit_pdf_continuous_sides),
             ),
             (
+                "commit_pdf_fit_width",
+                Box::new(crate::pdf_fit::scenario_commit_pdf_fit_width),
+            ),
+            (
                 "pdf_focus_retirement",
                 Box::new(crate::pdf_focus_retirement::scenario_pdf_focus_retirement),
             ),
@@ -3498,6 +3506,10 @@ mod macos {
             (
                 "editor_pdf_readonly",
                 Box::new(crate::editor_pdf::scenario_editor_pdf_readonly),
+            ),
+            (
+                "editor_pdf_fit_width",
+                Box::new(crate::pdf_fit::scenario_editor_pdf_fit_width),
             ),
             (
                 "editor_pdf_keyboard",

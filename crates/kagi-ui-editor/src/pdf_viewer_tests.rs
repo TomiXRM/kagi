@@ -73,6 +73,51 @@ fn continuous_geometry_reaches_every_mixed_size_page_without_count_clamping() {
     );
     assert_eq!(layout.page_at(layout.height), 110);
 }
+
+#[test]
+fn fit_uses_widest_finite_positive_page_and_live_padding_not_current_zoom() {
+    let mut source = multipage(6);
+    source.dimensions = Arc::from([
+        (612., 792.),
+        (3000., 2000.),
+        (f32::INFINITY, 100.),
+        (10000., f32::NAN),
+        (20000., 0.),
+        (-50000., 100.),
+    ]);
+    for current_zoom in [0.001, 0.25, 1., 4.] {
+        let layout = PdfLayout::new(&source, current_zoom, 16.);
+        assert_eq!(layout.fit_width_zoom(632., 16.), Some(0.2));
+        assert_eq!(layout.fit_width_zoom(632., 32.), Some(568. / 3000.));
+        assert_eq!(layout.fit_width_zoom(20000., 16.), Some(MAX_ZOOM));
+        for width in [0., -1., 32., f32::NAN, f32::INFINITY] {
+            assert_eq!(layout.fit_width_zoom(width, 16.), None);
+        }
+        for padding in [-1., f32::NAN, f32::INFINITY] {
+            assert_eq!(layout.fit_width_zoom(632., padding), None);
+        }
+    }
+    source.dimensions = Arc::from([(0., 100.), (100., f32::NAN)]);
+    assert_eq!(
+        PdfLayout::new(&source, 1., 16.).fit_width_zoom(632., 16.),
+        None
+    );
+}
+
+#[test]
+fn fit_can_recover_oversized_geometry_and_keep_other_pages_subpixel() {
+    let mut source = multipage(2);
+    source.dimensions = Arc::from([(500000., 200000.), (160., 8.)]);
+    let initial = PdfLayout::new(&source, 1., 16.);
+    assert_eq!(initial.pages[0].error, Some(PdfError::Dimensions));
+    let zoom = initial.fit_width_zoom(232., 16.).unwrap();
+    assert!(zoom > 0. && zoom < MIN_ZOOM);
+    let fitted = PdfLayout::new(&source, zoom, 16.);
+    assert!((fitted.width - 200.).abs() < 0.001);
+    assert!(fitted.pages.iter().all(|page| page.error.is_none()));
+    assert!(fitted.pages[1].width < 1. && fitted.pages[1].height < 1.);
+    assert_eq!(fitted.fit_width_zoom(232., 16.), Some(zoom));
+}
 #[test]
 fn more_than_six_visible_short_pages_all_receive_actual_bounded_rasters() {
     let source = multipage_sized(24, true);

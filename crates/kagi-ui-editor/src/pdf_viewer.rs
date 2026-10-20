@@ -42,6 +42,7 @@ pub(super) struct PdfLayout {
     width: f32,
     height: f32,
     gap: f32,
+    widest_page: f32,
 }
 impl PdfLayout {
     pub(super) fn new(source: &PdfSource, zoom: f32, gap: f32) -> Self {
@@ -51,8 +52,12 @@ impl PdfLayout {
             width: 0.,
             height: 0.,
             gap,
+            widest_page: 0.,
         };
         for &(width, height) in source.dimensions.iter() {
+            if width.is_finite() && height.is_finite() && width > 0. && height > 0. {
+                result.widest_page = result.widest_page.max(width);
+            }
             let error = raster_scale(width, height, zoom, 1.).err();
             let (width, height) = if error.is_some() {
                 (300., 120.)
@@ -70,6 +75,19 @@ impl PdfLayout {
         }
         result.height = (result.height - gap).max(0.);
         result
+    }
+    fn fit_width_zoom(&self, viewport_width: f32, padding: f32) -> Option<f32> {
+        let available = viewport_width - 2. * padding;
+        if !viewport_width.is_finite()
+            || !padding.is_finite()
+            || padding < 0.
+            || available <= 0.
+            || self.widest_page <= 0.
+        {
+            return None;
+        }
+        let zoom = (available / self.widest_page).min(MAX_ZOOM);
+        (zoom.is_finite() && zoom > 0.).then_some(zoom)
     }
     pub(super) fn page_at(&self, y: f32) -> usize {
         self.pages
@@ -254,6 +272,16 @@ impl PdfViewer {
         self.scroll.bounds().center() - origin - self.scroll.offset()
     }
 
+    fn fit_width_zoom(&self) -> Option<f32> {
+        let viewport = self.scroll.bounds();
+        let document = self.scroll.bounds_for_item(0)?;
+        // The unscrolled inset includes both scaled padding and the focus ring.
+        self.layout.fit_width_zoom(
+            f32::from(viewport.size.width),
+            f32::from(document.left() - viewport.left()),
+        )
+    }
+
     pub(super) fn change_pdf(
         &mut self,
         delta: isize,
@@ -261,7 +289,7 @@ impl PdfViewer {
         reset: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.source.document.is_err() {
+        if self.source.document.is_err() || !factor.is_finite() || factor <= 0. {
             return;
         }
         let page = self
@@ -271,22 +299,14 @@ impl PdfViewer {
         let zoom = if reset {
             1.
         } else {
-            (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM)
+            // Below the manual floor, Fit's scale remains a valid navigation
+            // scale and Zoom In grows from it instead of jumping to 25%.
+            (self.zoom * factor).clamp(self.zoom.min(MIN_ZOOM), MAX_ZOOM)
         };
         if zoom != self.zoom {
-            self.navigation = None;
-            let center = self.document_center();
-            let anchor = self.layout.page_at(f32::from(center.y));
-            let within = f32::from(center.y) - self.layout.pages[anchor].top;
-            let ratio = zoom / self.zoom;
-            self.zoom = zoom;
-            self.layout = PdfLayout::new(&self.source, zoom, self.layout.gap);
-            let new_y = self.layout.pages[anchor].top + within * ratio;
-            let displacement = gpui::point(center.x * (ratio - 1.), px(new_y) - center.y);
-            self.scroll.set_offset(self.scroll.offset() - displacement);
-            self.generation = self.generation.wrapping_add(1);
+            self.apply_zoom(zoom, cx);
+            return;
         } else if page != self.page {
-            // Navigation reveals an existing page in the continuous document.
             let offset = gpui::point(
                 self.scroll.offset().x,
                 px(-self.layout.pages[page].top).clamp(-self.scroll.max_offset().y, px(0.)),
@@ -299,6 +319,41 @@ impl PdfViewer {
         } else {
             return;
         }
+        self.sync_viewport();
+        cx.notify();
+    }
+
+    fn apply_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        if !zoom.is_finite()
+            || zoom <= 0.
+            || zoom > MAX_ZOOM
+            || zoom == self.zoom
+            || self.layout.pages.is_empty()
+            || self.source.document.is_err()
+        {
+            return;
+        }
+        self.navigation = None;
+        let center = self.document_center();
+        let anchor = self.layout.page_at(f32::from(center.y));
+        let within = f32::from(center.y) - self.layout.pages[anchor].top;
+        // A mixed-width document's center can lie outside its narrower page.
+        let anchor_x = f32::from(center.x);
+        let anchor_x = if anchor_x > self.layout.pages[anchor].width {
+            self.layout.pages[anchor].width / 2.
+        } else {
+            anchor_x
+        };
+        let ratio = f64::from(zoom) / f64::from(self.zoom);
+        self.zoom = zoom;
+        self.layout = PdfLayout::new(&self.source, zoom, self.layout.gap);
+        // A tiny fitted scale must also safely survive a subsequent 100% reset.
+        let new_x = (f64::from(anchor_x) * ratio).clamp(0., f64::from(self.layout.width)) as f32;
+        let new_y = (f64::from(self.layout.pages[anchor].top) + f64::from(within) * ratio)
+            .clamp(0., f64::from(self.layout.height)) as f32;
+        let displacement = gpui::point(px(new_x), px(new_y)) - center;
+        self.scroll.set_offset(self.scroll.offset() - displacement);
+        self.generation = self.generation.wrapping_add(1);
         self.sync_viewport();
         cx.notify();
     }
@@ -450,7 +505,7 @@ impl PdfViewer {
         .detach();
     }
 
-    fn toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn toolbar(&self, fit_zoom: Option<f32>, cx: &mut Context<Self>) -> AnyElement {
         let count = self.source.dimensions.len();
         let mut toolbar = div()
             .flex()
@@ -527,6 +582,26 @@ impl PdfViewer {
                 name,
             ));
         }
+        let fit_name: SharedString = Msg::EditorPdfFitWidth.t().into();
+        toolbar = toolbar.child(kagi_ui_core::tooltip::HoverTooltip::hover_tooltip(
+            named_button::NamedButton(
+                Button::new("ews-pdf-fit-width")
+                    .ghost()
+                    .small()
+                    .compact()
+                    .child(fit_name.clone())
+                    .disabled(self.source.document.is_err() || fit_zoom.is_none())
+                    .on_click(cx.listener(|viewer, _, _, cx| {
+                        if let Some(zoom) = viewer.fit_width_zoom() {
+                            viewer.apply_zoom(zoom, cx);
+                        }
+                    })),
+            )
+            .role(gpui::Role::Button)
+            .aria_label(fit_name.clone()),
+            ("ews-pdf-fit-width", 0usize),
+            fit_name,
+        ));
         toolbar
             .child(
                 div()
@@ -535,11 +610,12 @@ impl PdfViewer {
                     .text_xs()
                     .whitespace_normal()
                     .child(format!(
-                        "{} {} / {} · {}% · {}",
+                        "{} {} / {} · {}{}% · {}",
                         Msg::EditorPdfPage.t(),
                         if count == 0 { 0 } else { self.page + 1 },
                         count,
-                        (self.zoom * 100.).round() as u32,
+                        if self.zoom < 0.01 { "<" } else { "" },
+                        ((self.zoom * 100.).round() as u32).max(1),
                         Msg::EditorPdfReadOnly.t()
                     )),
             )
@@ -639,7 +715,8 @@ impl Render for PdfViewer {
         }
         self.sync_viewport();
         self.request_render(cx);
-        let toolbar = self.toolbar(cx);
+        let fit_zoom = self.fit_width_zoom();
+        let toolbar = self.toolbar(fit_zoom, cx);
         let mut body = crate::pdf_keyboard::body(
             div()
                 .id("ews-pdf-page-scroll")
@@ -671,7 +748,9 @@ impl Render for PdfViewer {
                     let before = (viewer.visible.clone(), viewer.page);
                     viewer.sync_viewport();
                     viewer.request_render(cx);
-                    if before != (viewer.visible.clone(), viewer.page) {
+                    if before != (viewer.visible.clone(), viewer.page)
+                        || fit_zoom != viewer.fit_width_zoom()
+                    {
                         cx.notify();
                     }
                 });

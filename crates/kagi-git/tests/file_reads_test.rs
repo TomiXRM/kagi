@@ -386,6 +386,17 @@ fn conflicted_unstaged_sources_use_ours_then_ancestor_without_head_fallback() {
                 .unwrap(),
             None
         );
+        let diff = backend.unstaged_file_diff(path).unwrap();
+        assert_eq!(diff.old_path.as_deref(), expected.map(|_| path));
+        assert_eq!(
+            diff.change,
+            if expected.is_some() {
+                kagi_git::ChangeKind::Modified
+            } else {
+                kagi_git::ChangeKind::Added
+            },
+            "an absent conflict base remains absent for media preparation, even when HEAD has it"
+        );
     }
 }
 

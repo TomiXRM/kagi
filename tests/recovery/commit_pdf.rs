@@ -75,7 +75,7 @@ fn document(pages: usize, width: usize, height: usize, color: &str) -> Vec<u8> {
     bytes
 }
 
-fn fixture() -> tempfile::TempDir {
+pub(crate) fn fixture() -> tempfile::TempDir {
     let fixture = build_fixture();
     let repo = fixture.path();
     for (path, bytes) in [
@@ -128,23 +128,24 @@ fn pane(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Entity<MainDiff
             .expect("accepted main diff")
     })
 }
-fn viewer(
+pub(crate) fn viewer(
     cx: &mut VisualTestAppContext,
     pane: &Entity<MainDiffPane>,
     old: bool,
 ) -> Option<Entity<PdfViewer>> {
-    cx.read(|cx| pane.read(cx).pdf_viewer_for_e2e(old))
+    cx.read(|cx| pane.read(cx).pdf_viewer_for_e2e(old, cx))
 }
-fn probe(cx: &mut VisualTestAppContext, viewer: &Entity<PdfViewer>) -> PdfProbe {
+pub(crate) fn probe(cx: &mut VisualTestAppContext, viewer: &Entity<PdfViewer>) -> PdfProbe {
     cx.read(|cx| viewer.read(cx).pdf_probe())
 }
-fn wait_pdf(
+pub(crate) fn wait_pdf(
     cx: &mut VisualTestAppContext,
     viewer: &Entity<PdfViewer>,
     window: AnyWindowHandle,
 ) -> PdfProbe {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
+        cx.advance_clock(Duration::from_millis(16));
         paint(cx, window);
         let pdf = probe(cx, viewer);
         if pdf.settled && (pdf.error.is_some() || pdf.image.is_some()) {
@@ -160,7 +161,7 @@ fn wait_pdf(
         std::thread::sleep(Duration::from_millis(2));
     }
 }
-fn open(
+pub(crate) fn open(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -579,7 +580,12 @@ pub fn scenario_commit_pdf_owners(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_pdf_owners");
 }
 
-fn wheel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, pdf: &PdfProbe, delta: f32) {
+pub(crate) fn wheel(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    pdf: &PdfProbe,
+    delta: f32,
+) {
     cx.simulate_event(
         window,
         gpui::ScrollWheelEvent {
@@ -645,6 +651,19 @@ pub fn scenario_commit_pdf_continuous_sides(cx: &mut VisualTestAppContext) {
             "last page is retained in the viewport cache"
         );
         assert!(last.scroll.offset().y < px(0.));
+        // These real 3/5-page documents fit the 64MB budget at final density.
+        // Leaving the mount window must not evict useful reading history.
+        assert!(
+            last.cached_pages.contains(&0),
+            "warm history survives unmounting"
+        );
+        if count > 3 {
+            assert!(
+                !last.mounted_pages.contains(&0),
+                "the cache oracle must include an unmounted page"
+            );
+        }
+        let warm_requests = last.raster_requests_started;
         cx.simulate_click(window, last.scroll.bounds().center(), Modifiers::none());
         assert!(
             cx.update_window(window, |_, window, cx| {
@@ -665,9 +684,24 @@ pub fn scenario_commit_pdf_continuous_sides(cx: &mut VisualTestAppContext) {
         keys(cx, window, "home");
         let first = wait_pdf(cx, active, window);
         assert_eq!(first.scroll.offset().y, px(0.));
+        assert_eq!(
+            first.raster_requests_started, warm_requests,
+            "warm backtracking must not admit another raster"
+        );
+        assert!(
+            Arc::ptr_eq(
+                initial.image.as_ref().unwrap(),
+                first.image.as_ref().unwrap(),
+            ),
+            "warm backtracking must reuse the original final-density image"
+        );
         keys(cx, window, "end");
         let last = wait_pdf(cx, active, window);
         assert_eq!(last.page, count - 1, "End must show the actual final page");
+        assert_eq!(
+            last.raster_requests_started, warm_requests,
+            "returning to the settled last page must reuse its raster"
+        );
         assert!(
             last.error.is_none(),
             "a cache entry containing an error is not a rendered page"

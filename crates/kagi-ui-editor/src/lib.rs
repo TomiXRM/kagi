@@ -38,7 +38,7 @@ pub use pane_selectors::EditorPaneSelectors;
 pub use pdf::PdfProbe;
 pub use pdf::PdfSource;
 pub use pdf_keyboard::bind_keys;
-pub use pdf_viewer::PdfViewer;
+pub use pdf_viewer::{PdfScrollChanged, PdfScrollPosition, PdfViewer};
 #[cfg(feature = "gui-e2e")]
 mod tab_probes;
 #[cfg(feature = "gui-e2e")]

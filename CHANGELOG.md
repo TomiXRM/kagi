@@ -11,10 +11,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 - View working-tree PDFs read-only in Editor as continuously scrollable pages, with page navigation, zoom and display-density-aware rendering. Rasterize visible pages on demand with bounded image memory and background work. Malformed and password-protected documents show localized errors; password entry and universal font fidelity are not supported.
 - Preview PDFs from Git Graph commit diffs side by side: previous version on the left, selected version on the right, with independent continuous scrolling and no computed diff highlighting. Preserve historical source identity, renamed paths and explicit added/deleted side states instead of substituting working-tree content.
 - Fit PDF pages to the actual reading-pane width with an accessible English/Japanese action shared by Editor and historical previews. Fit the widest page in mixed-size documents, including below 25%; preserve manual zoom and reading position, and explicitly reapply after pane or window changes. (#1686)
+- Switch historical PDF comparisons between independent and synchronized scrolling. Synchronize page-relative positions in either direction without changing either zoom; retain independent reading positions when synchronization is turned off. (#1691)
 - Copy the selected commit's local branch name with Cmd+Shift+C while Graph has focus, or through the Branch menu and command palette. Preserve Cmd+C behavior and text/terminal input ownership; without a selected local branch, leave the clipboard unchanged instead of copying the checked-out branch or a hash.
 
 ### Fixed
 
+- Reduce PDF scrolling stalls with preview-first rendering, neighboring-page prefetch and a bounded reusable raster cache. Keep usable images during refinement, skip obsolete queued work and release evicted GPU images explicitly. (#1691)
 - Bound historical and working-tree PDF reads before allocating preview bytes, without copying complete ordinary text files merely to classify them. Keep oversized/read-failed sides distinct from absent versions.
 - Preserve PDF comparison sources for symlinks and unresolved index conflicts: do not preview a working-tree symlink's target, and use conflict ours/ancestor rather than substituting HEAD for the unstaged base. Preserve a missing conflict base as an added side instead of a read failure.
 - Identify retained historical PDF viewers by commit and file identity rather than display titles, while preserving same-file reading state.

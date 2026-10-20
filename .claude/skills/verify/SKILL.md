@@ -558,6 +558,23 @@ Draw ordinary dirty views without forcing `window.refresh()` while awaiting PDF
 updates; otherwise the harness masks the header/Details displacement regression.
 Tier B compares the same generated mixed-page fixture before/after in English
 and Japanese, including both historical sides, and preserves HEAD/staged content.
+For #1691, add `commit_pdf_sync_scrolling,commit_pdf_sync_lifecycle` to the
+scoped native selection. Exercise the real mode Button with pointer, Tab,
+Enter/Space and EN/JA accessibility names; wheel, page keys/buttons and scrollbar
+dragging must synchronize page-relative positions without changing zoom or
+focus. A wheel in the unfocused pane supersedes older focus history. Disabling
+sync preserves both positions; missing pages clamp without feedback, and
+replaced comparison entities retire their old subscriptions.
+`commit_pdf_continuous_sides` additionally verifies cached Home/End revisits
+reuse the same images without new raster admissions. Component tests cover
+byte-bounded LRU eviction, preview/full ordering and obsolete queued demand.
+PDF wait loops must advance the executor clock for the 120 ms refinement delay
+while still allowing real background workers to complete.
+Tier B compares independent and synchronized reading on generated unequal-size
+documents, then rapid forward/backward scrolling on a private real PDF.
+Do not publish private PDF screenshots or equate CPU raster timings with
+end-to-end scrolling latency.
+
 
 `editor_pdf_readonly` also exercises continuous first/middle/last-page reading,
 more than six simultaneously visible short pages, and a cached hidden viewer

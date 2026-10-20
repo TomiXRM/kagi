@@ -191,6 +191,14 @@ metadata in the request: a path-filtered Git delta may otherwise look added and
 lose the old path. Added/deleted files show an explicit absent-side explanation;
 read and parse failures remain visible failures rather than absent versions.
 
+Initial WIP requests likewise capture rename-from from the selected Commit Panel
+side. Staged media reads HEAD at the old path and the index at the new path.
+Retained-pane and post-hunk refreshes resolve rename identity from current status
+in the background worker: reload restores the pane before updating panel lists,
+so copying the old panel metadata would retain a rename that may no longer exist.
+Match the requested path on its own staged/unstaged side, and propagate status
+read failures rather than falling back to stale metadata.
+
 PDF path/signature recognition precedes ordinary image sniffing and text
 projection, including ASCII PDFs whose changed hunks omit their signature.
 Classification lives with the existing immutable diff-cache entry and shares

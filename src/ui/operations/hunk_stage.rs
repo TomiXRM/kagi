@@ -107,6 +107,7 @@ impl KagiApp {
         // when this side has nothing left.
         let read = MainDiffRead::Wip {
             staged,
+            rename_from: None,
             refresh: true,
         };
         self.read_main_diff(repo_path, path, read, cx);

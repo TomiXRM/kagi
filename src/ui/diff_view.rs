@@ -923,8 +923,13 @@ impl KagiApp {
             }
             commit_panel::CommitPanelFileRef::Staged { index } => (true, panel.staged.get(index)),
         };
-        let Some(path) = file.map(|f| f.path.clone()) else {
+        let Some(file) = file else {
             return;
+        };
+        let path = file.path.clone();
+        let rename_from = match &file.change {
+            kagi_git::ChangeKind::Renamed { from } => Some(from.clone()),
+            _ => None,
         };
         // Compact files outlive the main-diff presentation and move into the
         // desktop panel on resize; retain their existing owner-local selection.
@@ -936,6 +941,7 @@ impl KagiApp {
         }
         let read = super::main_diff_pane::MainDiffRead::Wip {
             staged,
+            rename_from,
             refresh: false,
         };
         self.read_main_diff(repo, path, read, cx);

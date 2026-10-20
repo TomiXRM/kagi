@@ -461,7 +461,9 @@ impl Backend {
                 .execute_switch_to_latest(plan, branch_name, remote_branch)
                 .map(|()| OperationOutcome::Unit),
             Operation::Revert { id } => self.execute_revert(id).map(OperationOutcome::Commit),
-            Operation::Pull => self.execute_pull(plan).map(OperationOutcome::Pull),
+            Operation::Pull => self
+                .execute_pull(plan, partial_after)
+                .map(OperationOutcome::Pull),
             Operation::Push => self.execute_push().map(OperationOutcome::Push),
             Operation::PullBranchFf { branch_name } => self
                 .execute_pull_branch_ff(plan, branch_name, partial_after)

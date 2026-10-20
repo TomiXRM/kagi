@@ -21,14 +21,14 @@ use crate::recovery_operations::{press_enter, wait_idle};
 mod git_fixture;
 use git_fixture::{git, git_output as output};
 
-struct SettingsGuard {
+pub(super) struct SettingsGuard {
     _saved: crate::gui_isolation::SavedKeys,
     language: Lang,
     auto_fetch: bool,
 }
 
 impl SettingsGuard {
-    fn install() -> Self {
+    pub(super) fn install() -> Self {
         let guard = Self {
             _saved: crate::gui_isolation::SavedKeys::keep(&["lang", "auto_fetch"]),
             language: i18n::lang(),
@@ -95,6 +95,21 @@ impl Origin {
         output(&self.other, &["rev-parse", "HEAD"])
     }
 
+    fn advance_protection(&self) -> String {
+        std::fs::write(
+            self.other.join("protection.txt"),
+            "incoming\n1\n2\n3\n4\n5\n6\n7\n8\nbottom\n",
+        )
+        .unwrap();
+        git(&self.other, &["add", "protection.txt"]);
+        git(
+            &self.other,
+            &["commit", "-qm", "incoming protection overlap"],
+        );
+        git(&self.other, &["push", "-q", "origin", "main"]);
+        output(&self.other, &["rev-parse", "HEAD"])
+    }
+
     fn advance_tree(&self) -> String {
         std::fs::write(self.other.join("README.md"), "updated tracked content\n").unwrap();
         std::fs::remove_file(self.other.join("pull-remove.txt")).unwrap();
@@ -120,14 +135,14 @@ impl Origin {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct Checkout {
+pub(super) struct Checkout {
     head: String,
     index: String,
     files: BTreeMap<PathBuf, Vec<u8>>,
 }
 
 impl Checkout {
-    fn read(repo: &Path) -> Self {
+    pub(super) fn read(repo: &Path) -> Self {
         fn files(root: &Path, dir: &Path, result: &mut BTreeMap<PathBuf, Vec<u8>>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -171,8 +186,9 @@ fn auto_stash_guard_drift(
     i18n::set_lang(language);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    crate::recovery_pull::protection_baseline(&repo);
     let origin = Origin::new(&repo);
-    let upstream = origin.advance();
+    let upstream = origin.advance_protection();
     git(&origin.other, &["push", "-q", "origin", "main:alternate"]);
     if matches!(drift, AutoStashGuardDrift::Remote) {
         let url = output(&repo, &["remote", "get-url", "origin"]);
@@ -189,6 +205,13 @@ fn auto_stash_guard_drift(
     std::fs::write(
         repo.join("identity-untracked.txt"),
         "approved untracked content\n",
+    )
+    .unwrap();
+    // Incoming and local edits touch opposite ends of a tracked path: direct
+    // Pull needs protection, but the approved stash restore is a clean merge.
+    std::fs::write(
+        repo.join("protection.txt"),
+        "top\n1\n2\n3\n4\n5\n6\n7\n8\nlocal\n",
     )
     .unwrap();
 
@@ -384,10 +407,6 @@ fn auto_stash_guard_drift(
             details.contains(reason),
             "Details retain the recorded cause"
         );
-        let summary = kagi::ui::oplog_panel::outcome_summary(&pulls[0]);
-        for internal in ["approved Pull target", "paths Kagi would stash"] {
-            assert!(!summary.contains(internal), "{summary}");
-        }
     });
     unmount(cx, app, window);
 }
@@ -431,8 +450,9 @@ pub fn scenario_pull_auto_stash_same_upstream_advancement(cx: &mut VisualTestApp
         i18n::set_lang(language);
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
+        crate::recovery_pull::protection_baseline(&repo);
         let origin = Origin::new(&repo);
-        let cached = origin.advance();
+        let cached = origin.advance_protection();
         std::fs::write(repo.join("README.md"), "older stash content\n").unwrap();
         git(&repo, &["stash", "push", "-q", "-m", "keep existing stash"]);
         std::fs::write(repo.join("README.md"), "approved staged content\n").unwrap();
@@ -441,6 +461,11 @@ pub fn scenario_pull_auto_stash_same_upstream_advancement(cx: &mut VisualTestApp
         std::fs::write(
             repo.join("identity-untracked.txt"),
             "approved untracked content\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("protection.txt"),
+            "top\n1\n2\n3\n4\n5\n6\n7\n8\nlocal\n",
         )
         .unwrap();
         let (app, window) = mount(cx, &repo);
@@ -554,16 +579,9 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     })
     .unwrap();
 }
-
-fn click_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+fn activate_toolbar(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &'static str) {
     draw(cx, window);
-    assert_eq!(
-        e2e::toolbar_unavailable("tb-pull"),
-        Some(false),
-        "cached ↓0 Pull remains actionable"
-    );
-    // Toolbar IDs record AX availability, not control_bounds. Use the same
-    // real focus traversal and harmless F19 probe as toolbar_keyboard.
+    assert_eq!(e2e::toolbar_unavailable(id), Some(false));
     for _ in 0..120 {
         cx.update_window(window, |_, window, cx| {
             window.focus_next(cx);
@@ -572,12 +590,322 @@ fn click_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
         .unwrap();
         let _ = e2e::take_focus_probe();
         cx.simulate_keystrokes(window, "f19");
-        if e2e::take_focus_probe() == Some("tb-pull") {
+        if e2e::take_focus_probe() == Some(id) {
             crate::keyboard_nav::keys(cx, window, "enter");
             return;
         }
     }
-    panic!("native Pull toolbar button is not keyboard reachable");
+    panic!("native toolbar button {id} is not keyboard reachable");
+}
+
+/// The toolbar intent itself approves a safe Pull, including a split staged/
+/// unstaged path. A stash/pop would lose this index OID even if bytes survived.
+pub fn scenario_pull_safe_dirty_intent(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for advance in [false, true] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let origin = Origin::new(&repo);
+        std::fs::write(repo.join("README.md"), "staged local content\n").unwrap();
+        git(&repo, &["add", "README.md"]);
+        git(&repo, &["update-index", "--chmod=+x", "README.md"]);
+        std::fs::write(repo.join("README.md"), "unstaged local content\n").unwrap();
+        std::fs::write(repo.join("scratch.txt"), "untracked local content\n").unwrap();
+        let staged = output(&repo, &["ls-files", "--stage", "--", "README.md"]);
+        let before = Checkout::read(&repo);
+        let (app, window) = mount(cx, &repo);
+        let expected = if advance {
+            origin.advance()
+        } else {
+            before.head.clone()
+        };
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_fetch_for_e2e(hold);
+        activate_toolbar(cx, window, "tb-pull");
+        assert_waiting(cx, &app, &repo, &before);
+        release.send(());
+        wait_idle(cx, &app);
+        cx.run_until_parked();
+        assert_eq!(output(&repo, &["rev-parse", "HEAD"]), expected);
+        assert_eq!(
+            output(&repo, &["ls-files", "--stage", "--", "README.md"]),
+            staged
+        );
+        let after = Checkout::read(&repo);
+        for (path, bytes) in &before.files {
+            assert_eq!(
+                after.files.get(path),
+                Some(bytes),
+                "preserved {}",
+                path.display()
+            );
+        }
+        if advance {
+            assert_eq!(
+                output(&repo, &["show", ":upstream.txt"]),
+                "fresh upstream content"
+            );
+        } else {
+            assert_eq!(after, before, "up-to-date dirty intent is not a write");
+        }
+        assert!(records(&repo, "stash-push").is_empty());
+        assert!(records(&repo, "stash-pop").is_empty());
+        let pulls = records(&repo, "pull");
+        assert_eq!(pulls.len(), usize::from(advance));
+        assert!(pulls
+            .iter()
+            .all(|entry| matches!(entry.outcome, OpOutcome::Success { .. })));
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(app.pull_modal().is_none());
+            assert!(!e2e::active_modal_present(app));
+            assert!(!app.app_sessions.has_leases());
+        });
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS pull_safe_dirty_intent");
+}
+
+pub fn scenario_pull_safe_merge_intent(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    std::fs::write(repo.join("local-commit.txt"), "local history\n").unwrap();
+    git(&repo, &["add", "local-commit.txt"]);
+    git(&repo, &["commit", "-qm", "noninterfering local commit"]);
+    let local = output(&repo, &["rev-parse", "HEAD"]);
+    let incoming = origin.advance();
+    let (app, window) = mount(cx, &repo);
+    activate_toolbar(cx, window, "tb-pull");
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    let parents = output(&repo, &["show", "-s", "--format=%P", "HEAD"]);
+    assert_eq!(parents, format!("{local} {incoming}"));
+    assert_eq!(
+        output(&repo, &["show", ":local-commit.txt"]),
+        "local history"
+    );
+    assert_eq!(
+        output(&repo, &["show", ":upstream.txt"]),
+        "fresh upstream content"
+    );
+    assert!(output(&repo, &["status", "--porcelain"]).is_empty());
+    assert!(records(&repo, "stash-push").is_empty());
+    let pulls = records(&repo, "pull");
+    assert_eq!(pulls.len(), 1);
+    assert!(matches!(pulls[0].outcome, OpOutcome::Success { .. }));
+    cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pull_safe_merge_intent");
+}
+
+pub fn scenario_push_safe_intent(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    git(
+        &repo,
+        &["commit", "-qm", "safe outgoing commit", "--allow-empty"],
+    );
+    std::fs::write(repo.join("README.md"), "staged local content\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    std::fs::write(repo.join("README.md"), "unstaged local content\n").unwrap();
+    let before = Checkout::read(&repo);
+    let remote_before = output(&origin.other, &["ls-remote", "origin", "refs/heads/main"]);
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    activate_toolbar(cx, window, "tb-push");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.app_sessions.has_leases(), "button intent admitted Push");
+        assert!(
+            app.push_modal().is_none(),
+            "safe Push has no extra approval"
+        );
+    });
+    assert_eq!(Checkout::read(&repo), before);
+    assert_eq!(
+        output(&origin.other, &["ls-remote", "origin", "refs/heads/main"]),
+        remote_before
+    );
+    release.send(());
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(Checkout::read(&repo), before);
+    assert_eq!(
+        output(&origin.other, &["ls-remote", "origin", "refs/heads/main"]),
+        format!("{}\trefs/heads/main", before.head)
+    );
+    let pushes = records(&repo, "push");
+    assert_eq!(pushes.len(), 1);
+    assert!(matches!(pushes[0].outcome, OpOutcome::Success { .. }));
+    cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS push_safe_intent");
+}
+
+/// Committed-history conflicts have a real Merge/Resolve route; stashing a
+/// clean checkout cannot cure the competing committed contents.
+pub fn scenario_pull_history_conflict_choice(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    std::fs::write(repo.join("upstream.txt"), "committed local side\n").unwrap();
+    git(&repo, &["add", "upstream.txt"]);
+    git(&repo, &["commit", "-qm", "competing local history"]);
+    let before = Checkout::read(&repo);
+    let incoming = origin.advance();
+    let (app, window) = mount(cx, &repo);
+    activate_toolbar(cx, window, "tb-pull");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let modal = app.read(cx).pull_modal().expect("history conflict choice");
+        assert!(
+            !modal.auto_stash,
+            "history conflict must never claim stash is its cure"
+        );
+    });
+    assert_eq!(Checkout::read(&repo), before);
+    assert!(records(&repo, "pull").is_empty());
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.pull_modal().is_none());
+        assert!(matches!(
+            app.merge_modal()
+                .expect("existing conflict resolution choice")
+                .kind,
+            kagi_git::MergeKind::Conflicts(_)
+        ));
+    });
+    assert_eq!(
+        Checkout::read(&repo),
+        before,
+        "review is not merge approval"
+    );
+    draw(cx, window);
+    let confirm = e2e::control_bounds(window.window_id(), "plan-confirm").unwrap();
+    cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(output(&repo, &["rev-parse", "HEAD"]), before.head);
+    assert_eq!(output(&repo, &["rev-parse", "MERGE_HEAD"]), incoming);
+    assert!(output(&repo, &["ls-files", "--unmerged"]).contains("upstream.txt"));
+    assert!(records(&repo, "stash-push").is_empty());
+    assert!(records(&repo, "stash-pop").is_empty());
+    assert_eq!(records(&repo, "merge").len(), 1);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.pull_modal().is_none());
+        assert!(app.merge_modal().is_none());
+        assert!(
+            app.ui().conflict.is_some(),
+            "existing Conflict Mode owns the real merge conflict"
+        );
+        assert!(!app.app_sessions.has_leases());
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pull_history_conflict_choice");
+}
+
+pub fn scenario_pull_quiet_late_dirty_refuses(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    let incoming = origin.advance();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    activate_toolbar(cx, window, "tb-pull");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.pull_modal().is_none());
+        assert!(app.app_sessions.has_leases());
+    });
+    std::fs::write(repo.join("upstream.txt"), "late unapproved local content\n").unwrap();
+    let changed = Checkout::read(&repo);
+    release.send(());
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(
+        Checkout::read(&repo),
+        changed,
+        "late dirty edit cannot be consumed"
+    );
+    assert_eq!(output(&repo, &["rev-parse", "origin/main"]), incoming);
+    assert!(
+        records(&repo, "stash-push").is_empty(),
+        "intent never approved stash"
+    );
+    assert!(records(&repo, "stash-pop").is_empty());
+    let pulls = records(&repo, "pull");
+    assert_eq!(
+        pulls.len(),
+        1,
+        "one admitted attempt, one refusal/failure receipt"
+    );
+    assert!(matches!(
+        pulls[0].outcome,
+        OpOutcome::Refused { .. } | OpOutcome::Failed { .. }
+    ));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!app.app_sessions.has_leases());
+        assert!(matches!(app.status_footer, FooterStatus::Failed(_)));
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pull_quiet_late_dirty_refuses");
+}
+
+pub fn scenario_push_non_ff_refuses(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    git(
+        &repo,
+        &[
+            "commit",
+            "-qm",
+            "outgoing divergent commit",
+            "--allow-empty",
+        ],
+    );
+    let before = Checkout::read(&repo);
+    let incoming = origin.advance();
+    let (app, window) = mount(cx, &repo);
+    activate_toolbar(cx, window, "tb-push");
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(Checkout::read(&repo), before);
+    assert_eq!(
+        output(&origin.other, &["ls-remote", "origin", "refs/heads/main"]),
+        format!("{incoming}\trefs/heads/main"),
+        "ordinary intent cannot force a remote tip"
+    );
+    let pushes = records(&repo, "push");
+    assert_eq!(pushes.len(), 1);
+    assert!(matches!(pushes[0].outcome, OpOutcome::Failed { .. }));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.push_modal().is_none());
+        assert!(!app.app_sessions.has_leases());
+        assert!(matches!(app.status_footer, FooterStatus::Failed(_)));
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS push_non_ff_refuses");
+}
+
+pub(super) fn click_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    activate_toolbar(cx, window, "tb-pull");
 }
 
 fn click_branch_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
@@ -715,12 +1043,15 @@ fn assert_fresh_confirm(
         assert!(!app.app_sessions.has_leases());
         let modal = app
             .pull_modal()
-            .expect("fresh upstream requires a real Pull confirmation");
-        assert!(!modal.auto_stash, "clean checkout stays a plain Pull");
+            .expect("predicted history conflict requires a choice");
+        assert!(
+            !modal.auto_stash,
+            "committed history is not repaired by stash"
+        );
         assert!(modal.error.is_none());
         assert!(
             modal.plan.blockers.is_empty(),
-            "fresh fast-forward is executable"
+            "history conflict review is available"
         );
         assert!(!matches!(
             modal.plan.disposition,
@@ -780,55 +1111,19 @@ fn clean_updates_from(
     click(cx, window);
     assert_waiting(cx, &app, &repo, &before);
     release.send(());
-    assert_fresh_confirm(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    cx.read(|cx| assert!(app.read(cx).pull_modal().is_none()));
     assert_eq!(
         output(&repo, &["rev-parse", "origin/main"]),
         expected,
         "the real fetch observed origin's new tip"
     );
     assert_eq!(
-        Checkout::read(&repo),
-        before,
-        "confirmation preserves HEAD, staged paths/OIDs/modes and working files"
+        latest_count(cx, &app),
+        0,
+        "fresh changes were pulled, not latest"
     );
-    assert!(records(&repo, "pull").is_empty());
-
-    // Model the watcher reads caused by this same fetch, not a synthetic modal.
-    for _ in 0..2 {
-        let (owner, revision) = cx.read(|cx| {
-            let app = app.read(cx);
-            let owner = app.active_session().unwrap();
-            (owner, app.reads.revision(owner))
-        });
-        app.update(cx, |app, cx| app.reload_external(cx));
-        cx.advance_clock(Duration::from_secs(1));
-        assert_fresh_confirm(cx, &app, window);
-        cx.read(|cx| {
-            let app = app.read(cx);
-            assert!(
-                app.reads.revision(owner) > revision,
-                "watcher reload began a new read"
-            );
-            assert!(
-                !app.reads.is_loading(owner),
-                "watcher reload was accepted before asserting preservation"
-            );
-            assert_eq!(
-                app.view().status_summary.behind,
-                Some(1),
-                "accepted reload has fresh counts"
-            );
-        });
-        assert_eq!(
-            Checkout::read(&repo),
-            before,
-            "reload cannot consume the user's approval"
-        );
-    }
-
-    press_enter(cx, &app, window);
-    wait_idle(cx, &app);
-    cx.run_until_parked();
     assert_eq!(output(&repo, &["rev-parse", "HEAD"]), expected);
     assert_eq!(
         output(&repo, &["show", ":upstream.txt"]),
@@ -970,49 +1265,21 @@ fn current_configured_upstream_updates(
         "ordinary current Pull completes its real fetch"
     );
     assert_eq!(output(&repo, &["rev-parse", &upstream_ref]), expected);
-    let mut expected_refs = refs();
-    let selected_remote_refs = format!("refs/remotes/{remote}/");
-    assert!(
-        expected_refs
-            .iter()
-            .filter(|(name, _)| !name.starts_with(&selected_remote_refs))
-            .eq(before_refs
-                .iter()
-                .filter(|(name, _)| !name.starts_with(&selected_remote_refs))),
-        "fetch leaves all local and other-remote refs unchanged"
-    );
-    assert_fresh_confirm(cx, &app, window);
-    cx.read(|cx| {
-        let app = app.read(cx);
-        assert!(
-            app.branch_plan_modal().is_none(),
-            "ordinary Pull is not branch strict FF"
-        );
-        let modal = app.pull_modal().unwrap();
-        assert!(matches!(
-            &modal.plan.title,
-            kagi_domain::plan_note::PlanTitle::Pull(kagi_domain::plan_note::PullTitle::Pull { .. })
-        ));
-        let identity = modal.plan.pull_identity.as_ref().unwrap();
-        assert_eq!(identity.branch, "main");
-        assert_eq!(identity.local_oid.0, before.head);
-        assert_eq!(identity.remote, remote);
-        assert_eq!(identity.upstream_ref, upstream_ref);
-        assert!(modal.fetch_owner.is_some());
-    });
-    assert_eq!(Checkout::read(&repo), before);
-    assert!(records(&repo, "pull").is_empty());
-    assert_eq!(fetches.len(), usize::from(!local_upstream));
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    let mut expected_refs = before_refs.clone();
+    // Fetch may create a remote HEAD alias; Pull owns the local branch update.
+    expected_refs.retain(|name, _| name.starts_with("refs/heads/"));
+    if !local_upstream {
+        assert_eq!(fetches.len(), 1);
+    }
     for _ in 0..2 {
         app.update(cx, |app, cx| app.reload_external(cx));
         cx.advance_clock(Duration::from_secs(1));
-        assert_fresh_confirm(cx, &app, window);
-        assert_eq!(Checkout::read(&repo), before);
-        assert_eq!(refs(), expected_refs);
+        cx.run_until_parked();
+        cx.read(|cx| assert!(app.read(cx).pull_modal().is_none()));
+        assert_eq!(Checkout::read(&repo), expected_checkout);
     }
-    press_enter(cx, &app, window);
-    wait_idle(cx, &app);
-    cx.run_until_parked();
     assert_eq!(
         Checkout::read(&repo),
         expected_checkout,
@@ -1021,9 +1288,10 @@ fn current_configured_upstream_updates(
     assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "main");
     assert!(output(&repo, &["status", "--porcelain"]).is_empty());
     expected_refs.insert("refs/heads/main".to_string(), expected);
+    let mut actual_local_refs = refs();
+    actual_local_refs.retain(|name, _| name.starts_with("refs/heads/"));
     assert_eq!(
-        refs(),
-        expected_refs,
+        actual_local_refs, expected_refs,
         "ordinary Pull changes only its selected local branch"
     );
     let durable = records(&repo, "pull");
@@ -1209,15 +1477,17 @@ pub fn scenario_pull_freshness_joins_held_fetch(cx: &mut VisualTestAppContext) {
     .unwrap();
     assert_waiting(cx, &app, &repo, &before);
     release.send(());
-    assert_fresh_confirm(cx, &app, window);
-    assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
-    assert_eq!(Checkout::read(&repo), before);
-    assert!(records(&repo, "pull").is_empty());
-    // Cancel through the real modal key path: joining is freshness, not approval.
-    crate::recovery_operations::press_key(cx, &app, window, "escape");
+    wait_idle(cx, &app);
     cx.run_until_parked();
+    assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
+    assert_eq!(output(&repo, &["rev-parse", "HEAD"]), expected);
+    assert_eq!(
+        records(&repo, "pull").len(),
+        1,
+        "joined requests execute once"
+    );
+    assert!(records(&repo, "stash-push").is_empty());
     cx.read(|cx| assert!(app.read(cx).pull_modal().is_none()));
-    assert_eq!(Checkout::read(&repo), before);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pull_freshness_joins_held_fetch");
 }
@@ -1277,9 +1547,11 @@ fn external_change_invalidates(cx: &mut VisualTestAppContext, head_change: bool)
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let origin = Origin::new(&repo);
+    std::fs::write(repo.join("upstream.txt"), "local committed side\n").unwrap();
+    git(&repo, &["add", "upstream.txt"]);
+    git(&repo, &["commit", "-qm", "conflicting local history"]);
     let (app, window) = mount(cx, &repo);
     let expected = origin.advance();
-    assert_cached_zero(cx, &app, &repo);
     let before = Checkout::read(&repo);
     fetch_and_confirm(cx, &app, window, &repo, &before);
     assert_eq!(Checkout::read(&repo), before);
@@ -1314,7 +1586,7 @@ fn external_change_invalidates(cx: &mut VisualTestAppContext, head_change: bool)
         assert_eq!(app.view().is_dirty, !head_change);
         assert_eq!(
             app.view().status_summary.ahead,
-            Some(usize::from(head_change))
+            Some(1 + usize::from(head_change))
         );
         assert_eq!(app.view().status_summary.behind, Some(1));
     });
@@ -1428,6 +1700,11 @@ pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppConte
                     &["branch", "--set-upstream-to=origin/main", "feature"],
                 );
             }
+            if !branch_ff {
+                std::fs::write(repo.join("upstream.txt"), "local committed side\n").unwrap();
+                git(&repo, &["add", "upstream.txt"]);
+                git(&repo, &["commit", "-qm", "conflicting local history"]);
+            }
             let (app, window) = mount(cx, &repo);
             let expected = origin.advance();
             if matches!(drift, Drift::Upstream) {
@@ -1508,7 +1785,10 @@ pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppConte
                     !app.view().is_dirty,
                     "accepted snapshot predates the live edit"
                 );
-                assert_eq!(app.view().status_summary.ahead, Some(0));
+                assert_eq!(
+                    app.view().status_summary.ahead,
+                    Some(usize::from(!branch_ff))
+                );
                 assert_eq!(app.view().status_summary.behind, Some(1));
                 assert!(
                     if branch_ff {

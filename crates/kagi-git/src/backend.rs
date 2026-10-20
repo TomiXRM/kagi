@@ -52,6 +52,15 @@ pub struct HunkReport {
     pub recording: recording::Recording,
 }
 
+// No subprocess is alive here: the in-process checkout/ref transaction has
+// returned. Its effects, however, could not be observed. Preserve Unknown (and
+// any explicit stash) without claiming either an untouched or a Partial state.
+fn unobserved_pull_checkout(original: &GitError, observation_error: &GitError) -> GitError {
+    GitError::TerminationUnknown(crate::Termination::stopped(format!(
+        "Pull stopped, but its checkout after-state could not be established: {observation_error}; original failure: {original}. Inspect HEAD, index and working tree before restoring saved changes."
+    )))
+}
+
 impl Backend {
     /// Read-only identity for admission, not authorization for Git writes.
     /// Plain editor saves do not require Git owner trust (ADR-0120).
@@ -1377,8 +1386,20 @@ impl Backend {
         ops::plan_pull(&self.repo)
     }
 
-    pub(crate) fn execute_pull(&self, plan: &OperationPlan) -> Result<PullOutcome, GitError> {
-        ops::execute_pull(&self.repo, &self.path, plan)
+    pub(crate) fn execute_pull(
+        &self,
+        plan: &OperationPlan,
+        partial_after: &mut Option<ops::StateSummary>,
+    ) -> Result<PullOutcome, GitError> {
+        let index_before = self.staged_set_digest()?;
+        let mut checkout_target = None;
+        let result = ops::execute_pull(&self.repo, &self.path, plan, &mut checkout_target);
+        if let (Err(original), Some(checkout_target)) = (&result, checkout_target) {
+            *partial_after = self
+                .observe_pull_checkout(plan, &index_before, &checkout_target)
+                .map_err(|error| unobserved_pull_checkout(original, &error))?;
+        }
+        result
     }
 
     pub fn fetch_remote(&self) -> Result<FetchOutcome, GitError> {
@@ -1546,55 +1567,56 @@ impl Backend {
         if let (Err(original), Some(index_before), Some(checkout_target)) =
             (&result, index_before, checkout_target)
         {
-            let observe = || -> Result<Option<ops::StateSummary>, GitError> {
-                let index_after = self.staged_set_digest();
-                let head_after = resolve_head(&self.repo);
-                let status_after = self.working_tree_status();
-                let index_changed = index_after
-                    .as_ref()
-                    .is_ok_and(|after| after != &index_before);
-                let head_changed = head_after
-                    .as_ref()
-                    .is_ok_and(|after| after != &plan.head_at_plan);
-                let status_changed = status_after.as_ref().is_ok_and(|after| {
-                    plan.worktree_digest
-                        .is_some_and(|before| before != after.digest())
-                });
-                if !index_changed && !head_changed && !status_changed {
-                    index_after?;
-                    head_after?;
-                    status_after?;
-                    return Ok(None);
-                }
-                // A later observation failure cannot erase an already
-                // observed mutation. Missing fields stay explicitly unknown.
-                let head = head_after
-                    .map(|head| head.display())
-                    .unwrap_or_else(|error| format!("HEAD unavailable: {error}"));
-                let mut dirty = status_after
-                    .map(|status| ops::status_summary_display(&status))
-                    .unwrap_or_else(|error| format!("status unavailable: {error}"));
-                if let Err(error) = index_after {
-                    dirty.push_str(&format!("; index observation failed: {error}"));
-                }
-                dirty.push_str(&format!(
-                    "; checkout_target={}; checkout_changed=true",
-                    checkout_target.0
-                ));
-                Ok(Some(ops::StateSummary { head, dirty }))
-            };
-            // Do not call an empty-tree checkout or a pre-checkout refusal
-            // Partial. A changed index/HEAD/status is observed, not predicted.
-            match observe() {
-                Ok(after) => *partial_after = after,
-                Err(observation_error) => {
-                    return Err(GitError::Other(format!(
-                        "{original}; unable to observe checkout after failure: {observation_error}"
-                    )));
-                }
-            }
+            *partial_after = self
+                .observe_pull_checkout(plan, &index_before, &checkout_target)
+                .map_err(|error| unobserved_pull_checkout(original, &error))?;
         }
         result
+    }
+
+    /// Receipt evidence shared by ordinary and strict-FF Pull. An attempted
+    /// checkout alone is not Partial: only observed semantic index, HEAD or
+    /// status changes count. Missing observations never become predicted state.
+    fn observe_pull_checkout(
+        &self,
+        plan: &OperationPlan,
+        index_before: &str,
+        checkout_target: &CommitId,
+    ) -> Result<Option<ops::StateSummary>, GitError> {
+        let index_after = self.staged_set_digest();
+        let head_after = resolve_head(&self.repo);
+        let status_after = self.working_tree_status();
+        let index_changed = index_after
+            .as_ref()
+            .is_ok_and(|after| after != index_before);
+        let head_changed = head_after
+            .as_ref()
+            .is_ok_and(|after| after != &plan.head_at_plan);
+        let status_changed = status_after.as_ref().is_ok_and(|after| {
+            plan.worktree_digest
+                .is_some_and(|before| before != after.digest())
+        });
+        if !index_changed && !head_changed && !status_changed {
+            index_after?;
+            head_after?;
+            status_after?;
+            return Ok(None);
+        }
+        // A later observation failure cannot erase an observed mutation.
+        let head = head_after
+            .map(|head| head.display())
+            .unwrap_or_else(|error| format!("HEAD unavailable: {error}"));
+        let mut dirty = status_after
+            .map(|status| ops::status_summary_display(&status))
+            .unwrap_or_else(|error| format!("status unavailable: {error}"));
+        if let Err(error) = index_after {
+            dirty.push_str(&format!("; index observation failed: {error}"));
+        }
+        dirty.push_str(&format!(
+            "; checkout_target={}; checkout_changed=true",
+            checkout_target.0
+        ));
+        Ok(Some(ops::StateSummary { head, dirty }))
     }
 
     pub fn plan_push_branch(
@@ -2189,5 +2211,37 @@ mod merge_state_tests {
         assert!(backend.merge_in_progress().unwrap());
         repo.cleanup_state().unwrap();
         assert!(!backend.merge_in_progress().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod pull_checkout_observation_tests {
+    use super::*;
+
+    #[test]
+    fn failed_checkout_observation_is_unknown_with_a_stopped_writer() {
+        let error = unobserved_pull_checkout(
+            &GitError::Other("ref update failed after checkout".into()),
+            &GitError::Other("index cannot be read".into()),
+        );
+        let GitError::TerminationUnknown(termination) = &error else {
+            panic!("unknown checkout state must not permit automatic restoration");
+        };
+        assert!(
+            termination.child_stopped(),
+            "the in-process writer returned"
+        );
+        let predicted = ops::StateSummary {
+            head: "predicted new HEAD".into(),
+            dirty: "predicted checkout".into(),
+        };
+        let result = Err(error);
+        let outcome = recording::oplog_outcome_from(&result, &predicted, None);
+        let crate::oplog::OpOutcome::Unknown { after, .. } = outcome else {
+            panic!("unobserved checkout must not be recorded as Failed or Partial");
+        };
+        assert_ne!(after, predicted, "never invent a predicted after-state");
+        assert_eq!(after.head, "unobserved");
+        assert_eq!(after.dirty, "unobserved");
     }
 }

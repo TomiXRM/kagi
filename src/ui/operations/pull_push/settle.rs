@@ -71,6 +71,14 @@ impl KagiApp {
             }
         };
         self.mark_write_busy("pull", cx);
+        // Admission consumes the decision. Keep the card on refusal, but never
+        // leave a runnable confirmation above an admitted background writer.
+        self.clear_pull_modal();
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyPull.t()),
+        ));
+        klog!("async: pull started");
+        cx.notify();
         let stamp = job.stamp();
         // Pull has a remote effect and no verify path: untracked (ADR-0204 決定 4).
         self.queue_untracked_write(Some(stamp.session), cx);
@@ -79,7 +87,15 @@ impl KagiApp {
         // may have happened — so it settles as `Unknown` through the same path
         // instead of clearing the busy mirror under a lease that stays held.
         let abandonment = job.abandonment();
-        let task = cx.background_spawn(async move { job.run() });
+        #[cfg(feature = "gui-e2e")]
+        let hold = crate::ui::op_queue::take_run_hold();
+        let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            job.run()
+        });
         cx.spawn(async move |this, acx| {
             let completion = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {

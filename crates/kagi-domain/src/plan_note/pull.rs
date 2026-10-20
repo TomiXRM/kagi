@@ -15,14 +15,17 @@ pub enum PullNote {
     /// warning (`plan_pull`): dirty working tree may block the pull if the
     /// fetched update touches the same paths.
     DirtyPullGuard { parts: DirtyParts },
+    /// Direct Pull would touch these locally changed paths. Explicitly save
+    /// them (stash or commit) before executing; this is not a history conflict.
+    LocalChangesOverlap { paths: Vec<String> },
     /// warning (`KagiApp` local pull orchestration): dirty work will be saved
     /// before pull and restored afterwards.
     AutoStash { parts: DirtyParts, untracked: usize },
     /// blocker (`plan_pull`): no upstream configured for the current branch,
     /// with the `git branch --set-upstream-to=…` hint.
     NoUpstreamWithHint { branch: String, err: String },
-    /// warning (`plan_pull`, via the `predict_merge_conflict` helper):
-    /// plan-time in-memory merge predicts a conflict with the upstream tip.
+    /// Committed-history merge conflict predicted in memory. Saving local
+    /// changes cannot resolve it; use the explicit merge-resolution workflow.
     MergePrediction,
     /// warning (`plan_pull`): paths whose auto-stash restore **will** conflict,
     /// named before the user confirms (#625).
@@ -127,6 +130,10 @@ impl PullNote {
             PullNote::DirtyPullGuard { parts } => format!(
                 crate::advice_template_en!(PullDirtyPullGuard),
                 parts.parts_en()
+            ),
+            PullNote::LocalChangesOverlap { paths } => format!(
+                "Incoming changes would overwrite local changes in:\n{}\nChoose Stash & Pull to save and restore your changes, or Review changes to inspect, edit, or commit them first.",
+                path_block_en(paths)
             ),
             PullNote::AutoStash { parts, untracked } => {
                 let mut changes = Vec::new();

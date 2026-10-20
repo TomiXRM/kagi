@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-09-08
 - Related: ADR-0009, ADR-0093, ADR-0176
+- Amended: 2026-10-21, #1690 (risk-based confirmation); failure presentation is
+  superseded by ADR-0196.
 
 ## Context
 
@@ -18,41 +20,52 @@ changes violates that requirement.
 
 ## Decision
 
-For a local current-branch Pull planned while the working tree is dirty, the
-existing Pull modal confirms one explicit workflow:
+For a local current-branch Pull, dirty state alone does not authorize or require
+a stash. After the owned freshness fetch, the plan classifies the actual incoming
+checkout (ADR-0100 / ADR-0192):
 
-1. stash staged, unstaged, and untracked changes;
-2. run the already-approved Pull through `Backend::run`;
-3. pop the newly created stash;
-4. keep that stash if reapplication conflicts.
+- No overwrite risk or predicted history conflict: the user's Pull command
+  authorizes the bounded operation without a second confirmation dialog. Preserve
+  unrelated staged content and working files; do not stash.
+- Incoming checkout overlaps dirty paths: show those paths and offer Cancel,
+  Review changes, or the explicit Stash & Pull workflow below.
+- Committed histories conflict: offer the existing Merge review / Conflict Mode
+  path or Cancel. Stashing does not resolve a committed-history conflict.
 
-Each mutation remains an existing planned Backend operation. The Pull UI owns
-only the sequential intent and presentation; it does not add a second stash or
-Pull implementation. The modal uses a structured Pull plan note and recovery
-text to state these steps before confirmation. Clean and remote Pull behavior is
-unchanged.
+The explicit Stash & Pull workflow stashes staged, unstaged and untracked changes,
+runs the approved Pull through `Backend::run`, and restores the newly created
+stash. Retain the stash when restoration conflicts. Each mutation remains an
+existing planned Backend operation; the UI owns only intent and presentation.
+Revalidate the approved identity and dirty digest before the first stash, and
+never silently broaden a quiet Pull into this workflow.
 
-A Pull modal containing an execution error survives repository reloads. Normal
-confirmation modals still close on reload. The user dismisses the failed Pull
-modal explicitly; retry remains guarded by Backend preflight.
+A displayed choice takes modal keyboard focus. Confirmation removes the card
+before admitting the background operation, including Return keydown/keyup from
+the toolbar; repeated Return cannot start a second Pull. Failures use the durable
+Operation Log and bounded notification policy in ADR-0196, not an automatically
+reopened dismiss-only error modal. Remote Pull keeps its existing explicit plan.
 
 ## Failure semantics
 
 - Stash failure: Pull does not start; report Failed.
-- Pull failure: attempt to pop the temporary stash before reporting Failed.
+- Pull fails before changing the checkout: restore the temporary stash before
+  reporting the failure. A partially changed or unobservable checkout must retain
+  the stash for recovery rather than blindly pop it into an uncertain state.
 - Pull succeeds and stash pop succeeds: report Success.
 - Pull succeeds but stash pop conflicts or fails: report Partial, keep/recover
-  the stash where Git permits, reload conflict state, and show a persistent
-  modal error.
+  the stash where Git permits, reload conflict state, and retain the complete
+  recovery detail in the Operation Log.
 - Pull fails and restoration conflicts or fails: report Partial because the
   repository no longer matches the pre-confirmation state.
 
 ## Consequences
 
-- Dirty current-branch Pull is deterministic from the first modal: confirmation
-  means auto-stash, Pull, then restore.
-- Staged state is restored according to the existing stash-pop behavior; no new
+- A safe dirty Pull preserves unrelated staged path / OID / mode and split
+  unstaged edits without a stash round trip.
+- Only the explicit protection choice means stash, Pull, then restore. Its
+  staged-state restoration still uses existing stash-pop behavior; no new
   `REINSTATE_INDEX` semantics are introduced.
-- The watcher can refresh fetched refs without erasing the failure explanation.
+- A watcher refresh cannot leave an already-confirmed Pull card over an executing
+  operation or erase the durable failure explanation.
 - The operation log records the constituent stash and Pull operations at their
   existing Backend execution boundaries.

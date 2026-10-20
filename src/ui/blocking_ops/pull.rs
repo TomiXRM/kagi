@@ -7,26 +7,24 @@ use super::{open_backend, verify_after_snapshot};
 use crate::app::{PullPresentation, PullReport, AUTO_STASH_MESSAGE};
 use crate::ui::i18n;
 
-/// The restore-prediction notes a pull plan carries, in plan order.
+/// Local-protection and restore predictions that the user explicitly approved.
 ///
-/// The comparison that decides whether a confirmation is still honest (#625):
-/// the dirty digest catches a path joining or leaving the set, and these notes
-/// catch the prediction itself changing — a path that was mergeable becoming a
-/// conflict. The UI's auto-stash rewrite replaces the two generic dirty
-/// warnings and leaves these untouched, so a UI-owned plan and a freshly built
-/// one are comparable here.
-fn restore_notes(plan: &OperationPlan) -> Vec<&kagi_domain::plan_note::PullNote> {
+/// Recheck them before stashing: stashing would otherwise hide a changed dirty
+/// set from direct Pull's guards, or run needlessly after a newly predicted
+/// committed-history conflict that a stash cannot resolve.
+fn protection_notes(
+    plan: &OperationPlan,
+) -> impl Iterator<Item = &kagi_domain::plan_note::PullNote> {
     use kagi_domain::plan_note::{PlanNote, PullNote};
-    plan.warnings
-        .iter()
-        .filter_map(|note| match note {
-            PlanNote::Pull(
-                inner @ (PullNote::RestoreConflict { .. }
-                | PullNote::RestoreConflictPossible { .. }),
-            ) => Some(inner),
-            _ => None,
-        })
-        .collect()
+    plan.warnings.iter().filter_map(|note| match note {
+        PlanNote::Pull(
+            inner @ (PullNote::LocalChangesOverlap { .. }
+            | PullNote::MergePrediction
+            | PullNote::RestoreConflict { .. }
+            | PullNote::RestoreConflictPossible { .. }),
+        ) => Some(inner),
+        _ => None,
+    })
 }
 
 /// A receipt for what did **not** run. The workflow can stop before any child
@@ -190,11 +188,25 @@ pub(crate) fn pull_blocking(
                     ))
                 }
             };
+            if !fresh.blockers.is_empty() {
+                return Ok(PullReport::settled(
+                    vec![refuse_blocked_pull(repo_path, &fresh)],
+                    PullPresentation::Failed {
+                        error: fresh
+                            .blockers
+                            .iter()
+                            .map(|note| note.message_en())
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                    },
+                    None,
+                ));
+            }
             let stale_reason = if fresh.pull_identity != plan.pull_identity {
                 Some(i18n::op::pull_identity_changed_contract(i18n::lang()))
             } else if promised_dirty != Some(now) {
                 Some(i18n::op::pull_files_changed_contract(i18n::lang()))
-            } else if restore_notes(&fresh) != restore_notes(plan) {
+            } else if !protection_notes(&fresh).eq(protection_notes(plan)) {
                 Some(i18n::op::pull_restore_changed_contract(i18n::lang()))
             } else {
                 None
@@ -240,7 +252,18 @@ pub(crate) fn pull_blocking(
     }
 
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    let pull = repo.run_recorded(&kagi_git::Operation::Pull, plan);
+    let pull = if stashed.is_some() {
+        // This workflow owns the confirmed stash transition, not a new Pull
+        // intent. Only the promised dirty snapshot changes to the expected
+        // clean one; identity, predictions and every other guard stay frozen.
+        // Preflight still refuses any unpromised dirt appearing after stash.
+        let mut after_stash = plan.clone();
+        after_stash.worktree_digest =
+            Some(kagi_domain::status::WorkingTreeStatus::default().digest());
+        repo.run_recorded(&kagi_git::Operation::Pull, &after_stash)
+    } else {
+        repo.run_recorded(&kagi_git::Operation::Pull, plan)
+    };
     let mut summary = None;
     let mut failure = None;
     match &pull.result {
@@ -254,10 +277,12 @@ pub(crate) fn pull_blocking(
         Ok(_) => failure = Some("pull: unexpected outcome".to_string()),
         Err(error) => failure = Some(i18n::op::op_failed_contract(i18n::Op::Pull, error)),
     }
-    // The pull's own place in the workflow: it decides when it fails and the
-    // restore then puts the work back.
+    // The pull's own place in the workflow: it decides when it fails. Restore
+    // only after an untouched refusal/failure; an observed partial checkout
+    // needs inspection before any stash is applied to its index/worktree.
     let pull_at = steps.len();
-    let may_restore = may_restore_after(&pull.result);
+    let may_restore = may_restore_after(&pull.result)
+        && !matches!(&pull.recording.entry().outcome, OpOutcome::Partial { .. });
     steps.push(pull);
 
     if let Some(error) = failure {

@@ -462,7 +462,7 @@ pub(crate) fn render_plan_modal_wrapper_staged(
 }
 
 /// [`render_plan_modal_wrapper_staged`] with one card-specific section drawn
-/// after the warnings (#334: the restore preview graph). Display only.
+/// after the warnings (#334: the restore preview graph; Pull's save-work action).
 /// `Copy all` copies its `clipboard` text too (#883 review).
 pub(crate) struct PlanCardExtra {
     pub element: gpui::AnyElement,
@@ -713,7 +713,7 @@ fn render_plan_modal_card_styled(
     create_branch_target: Option<CommitId>,
     accent: Option<PlanCardAccent>,
     stage: ConfirmStage,
-    // #334: a card-specific element after the warnings (display only).
+    // Card-specific content after the warnings.
     extra: Option<PlanCardExtra>,
     // #462: see [`render_plan_modal_wrapper_styled`].
     overrides: &super::modal_shell::ModalSections,

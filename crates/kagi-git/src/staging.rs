@@ -236,9 +236,13 @@ fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDif
         .map_err(|e| GitError::Other(format!("Patch::from_buffers failed: {}", e.message())))?;
 
     Ok(Some(FileDiff {
-        old_path: Some(path.to_path_buf()),
+        old_path: base_id.map(|_| path.to_path_buf()),
         new_path: Some(path.to_path_buf()),
-        change: ChangeKind::Modified,
+        change: if base_id.is_some() {
+            ChangeKind::Modified
+        } else {
+            ChangeKind::Added
+        },
         hunks: patch_hunks(&patch)?,
         is_binary: false,
     }))

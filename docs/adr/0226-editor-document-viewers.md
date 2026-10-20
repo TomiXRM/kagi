@@ -178,9 +178,11 @@ checks the 10 MiB limit before creating an application-owned byte vector.
 Worktree reads also reject growth past the limit during reading. Preserve
 commit/HEAD/index/worktree identity. An unstaged comparison uses stage zero or,
 for a conflicted path, ours then ancestor; no conflict base means an absent side.
-Share that conflict-base lookup with `unstaged_file_diff`. Fall back to HEAD only
-when neither a stage-zero entry nor a conflict exists for the path, never on a
-read error. Check symlink metadata before opening working-tree files: symlinks
+Share that conflict-base lookup with `unstaged_file_diff`. A missing conflict base
+also produces an added delta with no old path, so media preparation preserves its
+semantic absence rather than converting it into a read failure. Fall back to HEAD
+only when neither a stage-zero entry nor a conflict exists for the path, never on
+a read error. Check symlink metadata before opening working-tree files: symlinks
 and special files are not PDF sources, and their targets must not substitute for
 Git's link contents. These checks do not sandbox filesystem races or bound
 libgit2's internal blob materialization or total process memory.

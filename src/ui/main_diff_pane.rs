@@ -77,9 +77,12 @@ impl MainDiffPane {
             .pdfs
             .as_ref()
             .zip(pdfs.as_ref())
-            .is_some_and(|(viewers, sources)| viewers.can_retain(sources))
+            .is_some_and(|(viewers, sources)| viewers.can_retain(sources, cx))
             && same_immutable_document(&self.view.source, &view.source);
         if !retain {
+            if let Some(previous) = &self.pdfs {
+                previous.retire(cx);
+            }
             self.pdfs = pdfs.map(|sources| DiffPdfViewers::new(sources, cx));
         }
         self.view.adopt(view);
@@ -94,8 +97,17 @@ impl MainDiffPane {
     }
 
     #[cfg(feature = "gui-e2e")]
-    pub fn pdf_viewer_for_e2e(&self, old: bool) -> Option<Entity<kagi_ui_editor::PdfViewer>> {
-        self.pdfs.as_ref()?.viewer(old)
+    pub fn pdf_viewer_for_e2e(
+        &self,
+        old: bool,
+        cx: &gpui::App,
+    ) -> Option<Entity<kagi_ui_editor::PdfViewer>> {
+        self.pdfs.as_ref()?.viewer(old, cx)
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn pdf_scroll_synchronized_for_e2e(&self, cx: &gpui::App) -> bool {
+        self.pdfs.as_ref().is_some_and(|pdfs| pdfs.synchronized(cx))
     }
 
     /// The exact selection token used by the production list renderer.

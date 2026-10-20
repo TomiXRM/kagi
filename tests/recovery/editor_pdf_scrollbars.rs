@@ -34,6 +34,7 @@ fn wait_for(
 ) {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
+        cx.advance_clock(Duration::from_millis(16));
         paint(cx, window);
         if cx.read(|cx| ready(editor.read(cx), cx)) {
             paint(cx, window);

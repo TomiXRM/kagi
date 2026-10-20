@@ -6,12 +6,17 @@ use crate::pdf::{
 use gpui_component::Disableable as _;
 use std::collections::VecDeque;
 use std::ops::Range;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 // Caps include old-density images retained during zoom. No per-document bitmap.
 const MAX_CACHED_BYTES: usize = 64_000_000;
 const MAX_CACHED_PIXELS: usize = MAX_CACHED_BYTES / 4;
 const MAX_RASTER_JOBS: usize = 2;
+const MAX_PAGE_PIXELS: usize = MAX_CACHED_PIXELS * 9 / 10;
+const PREVIEW_PIXELS: usize = 500_000;
+const RETAINED_PAGE_ENTRIES: usize = 32;
+const REFINE_AFTER: Duration = Duration::from_millis(120);
 static RASTER_JOBS: AtomicUsize = AtomicUsize::new(0);
 
 struct RasterPermit;
@@ -116,44 +121,57 @@ impl PdfLayout {
         if visible.is_empty() {
             return;
         }
-        let neighbours =
-            usize::from(visible.start > 0) + usize::from(visible.end < self.pages.len());
-        // Every visible page gets output, never just the first fixed number.
-        // Prefetch shares at most 10% of the retained pixel budget.
-        let prefetch_pixels = if neighbours > 0 && visible.len() < MAX_CACHED_PIXELS / 2 {
-            MAX_CACHED_PIXELS / 10
-        } else {
-            0
-        };
-        let visible_budget = (MAX_CACHED_PIXELS - prefetch_pixels) / visible.len();
-        let demand = |page: usize, pixel_budget: usize| {
+        let prefetch = [
+            (visible.end < self.pages.len()).then_some(visible.end),
+            visible.start.checked_sub(1),
+            (visible.end + 1 < self.pages.len()).then_some(visible.end + 1),
+        ];
+        let prefetch_count = prefetch.iter().flatten().count();
+        let visible_budget = MAX_CACHED_PIXELS - prefetch_count * PREVIEW_PIXELS;
+        let demand = |page: usize, budget: usize| {
             let (width, height) = source.dimensions[page];
-            let full_pixels = raster_scale(width, height, zoom, scale)
-                .map_or(pixel_budget, |scale| {
-                    (width * scale).ceil() as usize * (height * scale).ceil() as usize
-                });
-            // Small pages already at native density should not reraster merely
-            // because a neighbour entering the viewport changes the allocation.
+            let full_pixels = raster_scale(width, height, zoom, scale).map_or(budget, |scale| {
+                ((width * scale).ceil() as usize)
+                    .saturating_mul((height * scale).ceil() as usize)
+                    .max(1)
+            });
             RasterDemand {
                 page,
-                pixel_budget: pixel_budget.min(full_pixels),
+                pixel_budget: budget.min(full_pixels),
             }
         };
         for page in std::iter::once(current)
             .filter(|page| visible.contains(page))
             .chain(visible.clone().filter(|page| *page != current))
         {
-            desired.push(demand(page, visible_budget));
+            desired.push(demand(page, MAX_CACHED_PIXELS));
         }
-        if prefetch_pixels > 0 {
-            for page in visible
-                .start
-                .checked_sub(1)
-                .into_iter()
-                .chain((visible.end < self.pages.len()).then_some(visible.end))
-            {
-                desired.push(demand(page, prefetch_pixels / neighbours));
-            }
+        // Measure native demand once into the reused Vec. Stable density tiers
+        // only apply under real pixel pressure, not merely a changed page count
+        // or a desire to retain more warm pages. Mixed small/large pages can use
+        // their full density whenever their complete visible working set fits.
+        let mut page_budget = if prefetch_count == 0 {
+            MAX_CACHED_PIXELS
+        } else {
+            MAX_PAGE_PIXELS
+        };
+        while page_budget > 1
+            && desired
+                .iter()
+                .map(|demand| demand.pixel_budget.min(page_budget))
+                .sum::<usize>()
+                > visible_budget
+        {
+            page_budget = (page_budget / 2).max(1);
+        }
+        for demand in desired.iter_mut() {
+            demand.pixel_budget = demand.pixel_budget.min(page_budget);
+        }
+        // Prefetch the same cheap preview shown by a cold visible page. It is
+        // immediately usable on entry, unlike the former tiny, disposable share.
+        // Keep both directions useful, with one extra page ahead.
+        for page in prefetch.into_iter().flatten() {
+            desired.push(demand(page, PREVIEW_PIXELS.min(page_budget)));
         }
     }
 }
@@ -172,6 +190,109 @@ struct CachedPage {
     error: Option<PdfError>,
     partial: bool,
     bytes: usize,
+}
+
+impl CachedPage {
+    fn satisfies(&self, demand: RasterDemand, generation: u64) -> bool {
+        self.page == demand.page
+            && self.generation == generation
+            && (self.error.is_some() || self.pixel_budget >= demand.pixel_budget)
+    }
+}
+
+fn next_raster(
+    desired: &[RasterDemand],
+    visible: &Range<usize>,
+    cache: &VecDeque<CachedPage>,
+    generation: u64,
+    refine: bool,
+) -> Option<RasterDemand> {
+    // All newly visible pages get a usable image before density refinement or
+    // speculative work. Old-density images stay visible until a settled refine.
+    for demand in desired
+        .iter()
+        .filter(|demand| visible.contains(&demand.page))
+    {
+        let entry = cache.iter().find(|entry| entry.page == demand.page);
+        if entry.is_none_or(|entry| {
+            entry.image.is_none() && (entry.generation != generation || entry.error.is_none())
+        }) {
+            return Some(RasterDemand {
+                page: demand.page,
+                pixel_budget: demand.pixel_budget.min(PREVIEW_PIXELS),
+            });
+        }
+    }
+    if refine {
+        if let Some(demand) = desired
+            .iter()
+            .filter(|demand| visible.contains(&demand.page))
+            .find(|demand| {
+                !cache
+                    .iter()
+                    .any(|entry| entry.satisfies(**demand, generation))
+            })
+        {
+            return Some(*demand);
+        }
+    }
+    desired
+        .iter()
+        .filter(|demand| !visible.contains(&demand.page))
+        .find(|demand| {
+            !cache
+                .iter()
+                .any(|entry| entry.satisfies(**demand, generation))
+        })
+        .copied()
+}
+
+fn insert_cached_page(
+    cache: &mut VecDeque<CachedPage>,
+    entry: CachedPage,
+    desired: &[RasterDemand],
+    generation: u64,
+    mut retire: impl FnMut(Arc<gpui::RenderImage>),
+) {
+    if let Some(index) = cache.iter().position(|old| old.page == entry.page) {
+        if let Some(image) = cache.remove(index).and_then(|old| old.image) {
+            retire(image);
+        }
+    }
+    let mut bytes = cache.iter().map(|old| old.bytes).sum::<usize>() + entry.bytes;
+    let limit = desired.len().max(RETAINED_PAGE_ENTRIES);
+    while bytes > MAX_CACHED_BYTES || cache.len() >= limit {
+        // LRU pages outside current demand go first. Obsolete or over-budget
+        // densities cannot evict the complete current set (which fits by design).
+        let index = cache
+            .iter()
+            .rposition(|old| !desired.iter().any(|demand| demand.page == old.page))
+            .or_else(|| cache.iter().rposition(|old| old.generation != generation))
+            .or_else(|| {
+                cache.iter().rposition(|old| {
+                    desired.iter().any(|demand| {
+                        demand.page == old.page && old.pixel_budget > demand.pixel_budget
+                    })
+                })
+            })
+            .unwrap_or_else(|| cache.len().saturating_sub(1));
+        let Some(old) = cache.remove(index) else {
+            break;
+        };
+        bytes -= old.bytes;
+        if let Some(image) = old.image {
+            retire(image);
+        }
+    }
+    cache.push_front(entry);
+}
+
+fn render_if_current<T>(
+    revision: &AtomicU64,
+    expected: u64,
+    render: impl FnOnce() -> T,
+) -> Option<T> {
+    (revision.load(Ordering::Acquire) == expected).then(render)
 }
 
 // Source pointer and explicit raster parameters defend replacement and zoom ABA.
@@ -196,11 +317,23 @@ impl RenderIdentity {
             && Arc::ptr_eq(&self.source, &source.bytes)
             && self.zoom == zoom
             && backing_scale == Some(self.backing_scale)
-            && desired.contains(&RasterDemand {
-                page: self.page,
-                pixel_budget: self.pixel_budget,
-            })
+            && desired
+                .iter()
+                .any(|demand| demand.page == self.page && self.pixel_budget <= demand.pixel_budget)
     }
+}
+
+/// A viewport-top anchor in logical page coordinates, independent of zoom/DPI.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PdfScrollPosition {
+    pub page: usize,
+    pub page_fraction: f32,
+    pub horizontal_fraction: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PdfScrollChanged {
+    pub position: PdfScrollPosition,
 }
 
 /// A retained, read-only PDF viewport shared by Editor and historical previews.
@@ -208,6 +341,7 @@ impl RenderIdentity {
 pub struct PdfViewer {
     pub(super) source: PdfSource,
     focus: gpui::FocusHandle,
+    focus_scope: gpui::FocusHandle,
     scroll: gpui::ScrollHandle,
     layout: PdfLayout,
     zoom: f32,
@@ -220,15 +354,32 @@ pub struct PdfViewer {
     desired: Vec<RasterDemand>,
     cache: VecDeque<CachedPage>,
     pending: bool,
+    demand_revision: Arc<AtomicU64>,
+    motion_offset: gpui::Point<gpui::Pixels>,
+    reported_offset: gpui::Point<gpui::Pixels>,
+    synchronized_position: Option<PdfScrollPosition>,
+    last_motion: Instant,
+    refinement_wake_pending: bool,
     #[cfg(feature = "gui-e2e")]
     raster_requests_started: usize,
 }
 impl PdfViewer {
     pub fn new(source: PdfSource, cx: &mut Context<Self>) -> Self {
         let layout = PdfLayout::new(&source, 1., f32::from(theme::scaled_px(16.)));
+        cx.on_release(|viewer, cx| {
+            viewer.demand_revision.fetch_add(1, Ordering::Release);
+            for entry in viewer.cache.drain(..) {
+                if let Some(image) = entry.image {
+                    // Defer until any currently updated Window is back in App.
+                    cx.defer(move |cx| cx.drop_image(image, None));
+                }
+            }
+        })
+        .detach();
         Self {
             source,
             focus: cx.focus_handle(),
+            focus_scope: cx.focus_handle(),
             scroll: gpui::ScrollHandle::new(),
             layout,
             zoom: 1.,
@@ -241,8 +392,87 @@ impl PdfViewer {
             desired: Vec::new(),
             cache: VecDeque::new(),
             pending: false,
+            demand_revision: Arc::new(AtomicU64::new(1)),
+            motion_offset: gpui::point(px(0.), px(0.)),
+            reported_offset: gpui::point(px(0.), px(0.)),
+            synchronized_position: None,
+            last_motion: cx.background_executor().now(),
+            refinement_wake_pending: false,
             #[cfg(feature = "gui-e2e")]
             raster_requests_started: 0,
+        }
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.layout.pages.len()
+    }
+
+    /// Focus subtree for a host that needs to remember the active comparison side.
+    /// The body retains its independent tabbable Focusable handle.
+    pub fn focus_scope_handle(&self) -> gpui::FocusHandle {
+        self.focus_scope.clone()
+    }
+
+    pub fn scroll_position(&self) -> PdfScrollPosition {
+        let top = -f32::from(self.scroll.offset().y);
+        let page = self.layout.page_at(top);
+        let page_fraction = self
+            .layout
+            .pages
+            .get(page)
+            .map_or(0., |page| ((top - page.top) / page.height).clamp(0., 1.));
+        let max_x = f32::from(self.scroll.max_offset().x);
+        PdfScrollPosition {
+            page,
+            page_fraction,
+            horizontal_fraction: if max_x > 0. {
+                (-f32::from(self.scroll.offset().x) / max_x).clamp(0., 1.)
+            } else {
+                0.
+            },
+        }
+    }
+
+    /// Apply a peer anchor without changing zoom, focus, or emitting an echo.
+    pub fn apply_scroll_position(&mut self, position: PdfScrollPosition, cx: &mut Context<Self>) {
+        if self.layout.pages.is_empty() {
+            return;
+        }
+        self.synchronized_position = Some(position);
+        self.apply_synchronized_position(position);
+        self.sync_viewport(cx);
+        cx.notify();
+    }
+
+    fn apply_synchronized_position(&mut self, position: PdfScrollPosition) {
+        let fraction = |value: f32| {
+            if value.is_finite() {
+                value.clamp(0., 1.)
+            } else {
+                0.
+            }
+        };
+        let index = position.page.min(self.layout.pages.len().saturating_sub(1));
+        let Some(page) = self.layout.pages.get(index) else {
+            return;
+        };
+        let max = self.scroll.max_offset();
+        let top = page.top + page.height * fraction(position.page_fraction);
+        self.navigation = None;
+        self.scroll.set_offset(gpui::point(
+            -max.x * fraction(position.horizontal_fraction),
+            px(-top).clamp(-max.y, px(0.)),
+        ));
+        self.reported_offset = self.scroll.offset();
+    }
+
+    fn publish_scroll(&mut self, cx: &mut Context<Self>) {
+        let offset = self.scroll.offset();
+        if offset != self.reported_offset {
+            self.reported_offset = offset;
+            cx.emit(PdfScrollChanged {
+                position: self.scroll_position(),
+            });
         }
     }
 
@@ -254,12 +484,19 @@ impl PdfViewer {
         self.source = source;
         self.layout = PdfLayout::new(&self.source, self.zoom, self.layout.gap);
         self.generation = self.generation.wrapping_add(1);
-        self.cache.clear();
+        self.demand_revision.fetch_add(1, Ordering::Release);
+        for entry in self.cache.drain(..) {
+            if let Some(image) = entry.image {
+                cx.defer(move |cx| cx.drop_image(image, None));
+            }
+        }
         self.page = page.min(self.layout.pages.len().saturating_sub(1));
         self.navigation = None;
         let top = self.layout.pages.get(self.page).map_or(0., |page| page.top);
         self.scroll.set_offset(gpui::point(px(0.), px(-top)));
-        self.sync_viewport();
+        self.reported_offset = self.scroll.offset();
+        self.synchronized_position = None;
+        self.sync_viewport(cx);
         cx.notify();
     }
 
@@ -319,7 +556,7 @@ impl PdfViewer {
         } else {
             return;
         }
-        self.sync_viewport();
+        self.sync_viewport(cx);
         cx.notify();
     }
 
@@ -354,11 +591,18 @@ impl PdfViewer {
         let displacement = gpui::point(px(new_x), px(new_y)) - center;
         self.scroll.set_offset(self.scroll.offset() - displacement);
         self.generation = self.generation.wrapping_add(1);
-        self.sync_viewport();
+        self.demand_revision.fetch_add(1, Ordering::Release);
+        self.sync_viewport(cx);
         cx.notify();
     }
 
-    fn sync_viewport(&mut self) {
+    fn sync_viewport(&mut self, cx: &mut Context<Self>) {
+        let previous_visible = self.visible.clone();
+        let offset = self.scroll.offset();
+        if offset != self.motion_offset {
+            self.motion_offset = offset;
+            self.last_motion = cx.background_executor().now();
+        }
         let top = -f32::from(self.scroll.offset().y);
         let height = f32::from(self.scroll.bounds().size.height).max(1.);
         self.visible = self.layout.visible(top, height);
@@ -385,8 +629,26 @@ impl PdfViewer {
             (self.zoom, self.backing_scale.unwrap_or(1.)),
             &mut self.desired,
         );
-        self.cache
-            .retain(|entry| self.desired.iter().any(|demand| demand.page == entry.page));
+        if self.visible != previous_visible {
+            self.demand_revision.fetch_add(1, Ordering::Release);
+            // Touch only when the viewport window changes, not on every paint.
+            for demand in self.desired.iter().rev() {
+                if let Some(index) = self
+                    .cache
+                    .iter()
+                    .position(|entry| entry.page == demand.page)
+                {
+                    if let Some(entry) = self.cache.remove(index) {
+                        self.cache.push_front(entry);
+                    }
+                }
+            }
+            while self.cache.len() > self.desired.len().max(RETAINED_PAGE_ENTRIES) {
+                if let Some(image) = self.cache.pop_back().and_then(|entry| entry.image) {
+                    cx.defer(move |cx| cx.drop_image(image, None));
+                }
+            }
+        }
     }
 
     fn request_render(&mut self, cx: &mut Context<Self>) {
@@ -396,25 +658,42 @@ impl PdfViewer {
         let Some(scale) = self.backing_scale else {
             return;
         };
-        let Some(demand) = self.desired.iter().copied().find(|demand| {
-            !self.cache.iter().any(|entry| {
-                entry.page == demand.page
-                    && entry.generation == self.generation
-                    && entry.pixel_budget == demand.pixel_budget
-            })
-        }) else {
+        let elapsed = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(self.last_motion);
+        let refine = elapsed >= REFINE_AFTER;
+        let demand = next_raster(
+            &self.desired,
+            &self.visible,
+            &self.cache,
+            self.generation,
+            refine,
+        );
+        let Some(RasterDemand { page, pixel_budget }) = demand else {
+            if !refine && !self.refinement_wake_pending {
+                self.refinement_wake_pending = true;
+                let delay = REFINE_AFTER.saturating_sub(elapsed);
+                cx.spawn(async move |viewer, cx| {
+                    cx.background_executor().timer(delay).await;
+                    let _ = viewer.update(cx, |viewer, cx| {
+                        viewer.refinement_wake_pending = false;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
             return;
         };
-        let RasterDemand { page, pixel_budget } = demand;
         let Ok(document) = &self.source.document else {
             return;
         };
         self.pending = true;
         let Some(permit) = RasterPermit::acquire() else {
-            // One coalesced retry per retained viewer, not one task per page.
+            // One coalesced retry, not a growing queue of departed page jobs.
             cx.spawn(async move |viewer, cx| {
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(16))
+                    .timer(Duration::from_millis(16))
                     .await;
                 let _ = viewer.update(cx, |viewer, cx| {
                     viewer.pending = false;
@@ -438,71 +717,83 @@ impl PdfViewer {
         };
         let document = document.clone();
         let zoom = self.zoom;
+        let revision = self.demand_revision.clone();
+        let expected_revision = revision.load(Ordering::Acquire);
         let task = cx.background_spawn(async move {
-            render_page_with_budget(document, page, zoom, scale, pixel_budget)
+            // A queued task may become obsolete before it receives CPU time.
+            render_if_current(&revision, expected_revision, || {
+                render_page_with_budget(document, page, zoom, scale, pixel_budget)
+            })
         });
         cx.spawn(async move |viewer, cx| {
             let result = task.await;
-            // Keep the global permit until publication, including when its
-            // viewer was dropped. Dropping a task never pretends CPU work stopped.
-            drop(permit);
+            // A synchronous Hayro call cannot be cancelled midway. Keep its
+            // permit until CPU work and publication finish, even after close.
             let _ = viewer.update(cx, |viewer, cx| {
                 viewer.pending = false;
-                if identity.matches(
-                    &viewer.source,
-                    viewer.generation,
-                    viewer.zoom,
-                    viewer.backing_scale,
-                    &viewer.desired,
-                ) {
-                    let mut entry = CachedPage {
-                        page,
-                        generation: identity.generation,
-                        pixel_budget,
-                        image: None,
-                        error: None,
-                        partial: false,
-                        bytes: 0,
-                    };
-                    match result {
-                        Ok((image, partial)) => {
-                            let size = image.size(0);
-                            entry.bytes = size.width.0 as usize * size.height.0 as usize * 4;
-                            if entry.bytes <= pixel_budget * 4 {
-                                entry.image = Some(image);
-                                entry.partial = partial;
-                            } else {
-                                entry.bytes = 0;
-                                entry.error = Some(PdfError::Dimensions);
-                            }
-                        }
-                        Err(error) => entry.error = Some(error),
-                    }
-                    viewer.cache.retain(|old| old.page != page);
-                    while viewer.cache.iter().map(|entry| entry.bytes).sum::<usize>() + entry.bytes
-                        > MAX_CACHED_BYTES
-                    {
-                        // Retire obsolete-resolution entries before any accepted
-                        // current demand. The complete current set fits by design.
-                        let obsolete = viewer.cache.iter().position(|old| {
-                            old.generation != viewer.generation
-                                || !viewer.desired.contains(&RasterDemand {
-                                    page: old.page,
-                                    pixel_budget: old.pixel_budget,
-                                })
-                        });
-                        if let Some(index) = obsolete {
-                            viewer.cache.remove(index);
-                        } else {
-                            viewer.cache.pop_back();
-                        }
-                    }
-                    viewer.cache.push_front(entry);
+                if let Some(result) = result {
+                    viewer.publish_raster(identity, result, cx);
                 }
                 cx.notify();
             });
+            drop(permit);
         })
         .detach();
+    }
+
+    fn publish_raster(
+        &mut self,
+        identity: RenderIdentity,
+        result: Result<(Arc<gpui::RenderImage>, bool), PdfError>,
+        cx: &mut Context<Self>,
+    ) {
+        if !identity.matches(
+            &self.source,
+            self.generation,
+            self.zoom,
+            self.backing_scale,
+            &self.desired,
+        ) || self.cache.iter().any(|entry| {
+            entry.satisfies(
+                RasterDemand {
+                    page: identity.page,
+                    pixel_budget: identity.pixel_budget,
+                },
+                self.generation,
+            )
+        }) {
+            return;
+        }
+        let mut entry = CachedPage {
+            page: identity.page,
+            generation: identity.generation,
+            pixel_budget: identity.pixel_budget,
+            image: None,
+            error: None,
+            partial: false,
+            bytes: 0,
+        };
+        match result {
+            Ok((image, partial)) => {
+                let size = image.size(0);
+                entry.bytes = size.width.0 as usize * size.height.0 as usize * 4;
+                if entry.bytes <= identity.pixel_budget * 4 {
+                    entry.image = Some(image);
+                    entry.partial = partial;
+                } else {
+                    entry.bytes = 0;
+                    entry.error = Some(PdfError::Dimensions);
+                }
+            }
+            Err(error) => entry.error = Some(error),
+        }
+        insert_cached_page(
+            &mut self.cache,
+            entry,
+            &self.desired,
+            self.generation,
+            |image| cx.defer(move |cx| cx.drop_image(image, None)),
+        );
     }
 
     fn toolbar(&self, fit_zoom: Option<f32>, cx: &mut Context<Self>) -> AnyElement {
@@ -663,11 +954,9 @@ impl PdfViewer {
             settled: self.source.document.is_err()
                 || (!self.pending
                     && self.desired.iter().all(|demand| {
-                        self.cache.iter().any(|entry| {
-                            entry.page == demand.page
-                                && entry.generation == self.generation
-                                && entry.pixel_budget == demand.pixel_budget
-                        })
+                        self.cache
+                            .iter()
+                            .any(|entry| entry.satisfies(*demand, self.generation))
                     })),
             in_flight: self.pending,
             request: self.generation,
@@ -675,7 +964,7 @@ impl PdfViewer {
             source_id: Arc::as_ptr(&self.source.bytes) as usize,
             cached_pages: self.cache.iter().map(|entry| entry.page).collect(),
             cached_bytes: self.cache.iter().map(|entry| entry.bytes).sum(),
-            cache_entry_limit: self.mounted.len(),
+            cache_entry_limit: self.desired.len().max(RETAINED_PAGE_ENTRIES),
             rendered_pages: self
                 .cache
                 .iter()
@@ -696,6 +985,7 @@ impl PdfViewer {
         }
     }
 }
+impl gpui::EventEmitter<PdfScrollChanged> for PdfViewer {}
 impl Focusable for PdfViewer {
     fn focus_handle(&self, _cx: &gpui::App) -> gpui::FocusHandle {
         self.focus.clone()
@@ -707,13 +997,16 @@ impl Render for PdfViewer {
         if self.backing_scale != Some(scale) {
             self.backing_scale = Some(scale);
             self.generation = self.generation.wrapping_add(1);
-            self.cache.clear();
+            self.demand_revision.fetch_add(1, Ordering::Release);
         }
         let gap = f32::from(theme::scaled_px(16.)).max(1.);
         if gap != self.layout.gap {
             self.layout = PdfLayout::new(&self.source, self.zoom, gap);
         }
-        self.sync_viewport();
+        self.sync_viewport(cx);
+        if self.synchronized_position.is_none() {
+            self.publish_scroll(cx);
+        }
         self.request_render(cx);
         let fit_zoom = self.fit_width_zoom();
         let toolbar = self.toolbar(fit_zoom, cx);
@@ -746,7 +1039,11 @@ impl Render for PdfViewer {
             move |_, _, cx| {
                 let _ = entity.update(cx, |viewer, cx| {
                     let before = (viewer.visible.clone(), viewer.page);
-                    viewer.sync_viewport();
+                    if let Some(position) = viewer.synchronized_position.take() {
+                        viewer.apply_synchronized_position(position);
+                    }
+                    viewer.sync_viewport(cx);
+                    viewer.publish_scroll(cx);
                     viewer.request_render(cx);
                     if before != (viewer.visible.clone(), viewer.page)
                         || fit_zoom != viewer.fit_width_zoom()
@@ -761,6 +1058,7 @@ impl Render for PdfViewer {
         .size_full();
         div()
             .id("ews-pdf")
+            .track_focus(&self.focus_scope)
             .key_context("EditorReadOnly")
             .flex_1()
             .size_full()

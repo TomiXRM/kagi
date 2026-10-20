@@ -61,8 +61,21 @@ impl DiffHeader {
         // show.
         let compact = fit.as_ref().is_some_and(HeaderFit::compact);
         let document = pdfs.is_some();
-        let modes = if document {
-            div().into_any_element()
+        let modes = if let Some(pdfs) = &pdfs {
+            match pdfs.control(compact, presentation_only, cx) {
+                Some(control) => {
+                    labels.push(SharedString::from(if pdfs.synchronized(cx) {
+                        super::i18n::Msg::DiffPdfScrollSynchronized.t()
+                    } else {
+                        super::i18n::Msg::DiffPdfScrollIndependent.t()
+                    }));
+                    match &fit {
+                        Some(fit) => fit.control("main-diff-pdf-sync", control),
+                        None => control,
+                    }
+                }
+                None => div().into_any_element(),
+            }
         } else {
             mode_segments(fit.as_ref(), compact, presentation_only, &mut labels, cx)
         };

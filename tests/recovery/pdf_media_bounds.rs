@@ -85,7 +85,7 @@ fn dimensions(
     paint(cx, window);
     let pane = pane(cx, app);
     let viewer = cx
-        .read(|cx| pane.read(cx).pdf_viewer_for_e2e(old))
+        .read(|cx| pane.read(cx).pdf_viewer_for_e2e(old, cx))
         .expect("present PDF side must own the shared viewer");
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -253,7 +253,7 @@ fn assert_failed_side(
     paint(cx, window);
     let pane = pane(cx, app);
     assert!(cx
-        .read(|cx| pane.read(cx).pdf_viewer_for_e2e(old))
+        .read(|cx| pane.read(cx).pdf_viewer_for_e2e(old, cx))
         .is_none());
     let id = if old {
         "main-diff-pdf-old"

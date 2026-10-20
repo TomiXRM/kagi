@@ -535,6 +535,10 @@ mod binary_diff_owner;
 mod commit_pdf;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pdf_sync.rs"]
+mod pdf_sync;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pdf_fit.rs"]
 mod pdf_fit;
 
@@ -3116,6 +3120,14 @@ mod macos {
             (
                 "commit_pdf_continuous_sides",
                 Box::new(crate::commit_pdf::scenario_commit_pdf_continuous_sides),
+            ),
+            (
+                "commit_pdf_sync_scrolling",
+                Box::new(crate::pdf_sync::scenario_commit_pdf_sync_scrolling),
+            ),
+            (
+                "commit_pdf_sync_lifecycle",
+                Box::new(crate::pdf_sync::scenario_commit_pdf_sync_lifecycle),
             ),
             (
                 "commit_pdf_fit_width",

@@ -1,6 +1,6 @@
 //! Real main-diff consumers of bounded PDF reads across immutable/mutable sources.
 use crate::diff_highlight::{commit_image_index, settle};
-use crate::macos::{build_fixture, git, mount, unmount};
+use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 use crate::native_ax;
 use crate::pr_viewed::{paint, rev};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
@@ -263,8 +263,33 @@ fn assert_failed_side(
     assert_eq!(
         native_ax::node(cx, window, id.into())["aria"]["description"],
         Msg::DiffPdfReadFailed.t(),
-        "oversized present side must be a read failure, not absence or a parser allocation"
+        "unreadable present side must be a read failure, not absence or another file's preview"
     );
+}
+
+pub fn scenario_pdf_media_symlink(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("outside.pdf");
+    std::fs::write(&target, document(500, None)).unwrap();
+    std::os::unix::fs::symlink(&target, repo.join("link.pdf")).unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, window) = mount(cx, &repo);
+    native_ax::activate(cx);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    wip_open(cx, &app, window, "link.pdf", false);
+    assert_failed_side(cx, &app, window, false);
+    assert_eq!(
+        native_ax::node(cx, window, "main-diff-pdf-old".into())["aria"]["description"],
+        Msg::DiffPdfNoPrevious.t()
+    );
+    assert_eq!(before, repo_fingerprint(&repo));
+    assert_eq!(std::fs::read(&target).unwrap(), document(500, None));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pdf_media_symlink");
 }
 
 pub fn scenario_pdf_media_bounds(cx: &mut VisualTestAppContext) {

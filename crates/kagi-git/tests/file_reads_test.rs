@@ -288,5 +288,141 @@ fn unborn_head_is_absent_but_invalid_history_is_an_error() {
         .is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn workdir_symlinks_are_not_previewed_as_their_targets() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let outside = tempfile::tempdir().unwrap();
+    fixture.write("regular.pdf", b"%PDF-inside");
+    std::fs::write(outside.path().join("outside.pdf"), b"%PDF-outside").unwrap();
+    let backend = fixture.backend();
+    for (name, target) in [
+        ("inside-link.pdf", fixture.temp.path().join("regular.pdf")),
+        ("outside-link.pdf", outside.path().join("outside.pdf")),
+        ("dangling-link.pdf", outside.path().join("missing.pdf")),
+    ] {
+        std::os::unix::fs::symlink(target, fixture.temp.path().join(name)).unwrap();
+        assert!(backend
+            .file_has_prefix(FileReadSource::Workdir, Path::new(name), b"%PDF-")
+            .is_err());
+        assert!(backend
+            .file_bytes(FileReadSource::Workdir, Path::new(name), LIMIT)
+            .is_err());
+    }
+    assert_eq!(
+        backend
+            .file_bytes(FileReadSource::Workdir, Path::new("regular.pdf"), LIMIT)
+            .unwrap(),
+        Some(b"%PDF-inside".to_vec())
+    );
+}
+
+#[test]
+fn conflicted_unstaged_sources_use_ours_then_ancestor_without_head_fallback() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for (head, ancestor, ours, expected) in [
+        (
+            None,
+            None,
+            Some(b"%PDF-ours".as_slice()),
+            Some(b"%PDF-ours".as_slice()),
+        ),
+        (
+            Some(b"%PDF-head".as_slice()),
+            Some(b"%PDF-base".as_slice()),
+            None,
+            Some(b"%PDF-base".as_slice()),
+        ),
+        (Some(b"%PDF-head".as_slice()), None, None, None),
+    ] {
+        let fixture = Fixture::new();
+        fixture.write("other.txt", b"base");
+        fixture.stage("other.txt");
+        if let Some(head) = head {
+            fixture.write("document.pdf", head);
+            fixture.stage("document.pdf");
+        }
+        fixture.commit();
+        fixture.write("document.pdf", b"%PDF-working-tree");
+        fixture.stage("document.pdf");
+        let path = Path::new("document.pdf");
+        let mut index = fixture.repo.index().unwrap();
+        let mut entry = index.get_path(path, 0).unwrap();
+        index.remove_path(path).unwrap();
+        for (stage, bytes) in [
+            (1u16, ancestor),
+            (2u16, ours),
+            (3u16, Some(b"%PDF-theirs".as_slice())),
+        ] {
+            if let Some(bytes) = bytes {
+                entry.id = fixture.repo.blob(bytes).unwrap();
+                entry.flags = (entry.flags & !0x3000) | (stage << 12);
+                index.add(&entry).unwrap();
+            }
+        }
+        index.write().unwrap();
+        assert!(index.has_conflicts());
+        let backend = fixture.backend();
+        assert_eq!(
+            backend
+                .file_bytes(FileReadSource::IndexOrHead, path, LIMIT)
+                .unwrap(),
+            expected.map(<[u8]>::to_vec)
+        );
+        assert_eq!(
+            backend
+                .file_has_prefix(FileReadSource::IndexOrHead, path, b"%PDF-")
+                .unwrap(),
+            expected.map(|_| true)
+        );
+        assert_eq!(
+            backend
+                .file_bytes(FileReadSource::Index, path, LIMIT)
+                .unwrap(),
+            None
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn conflicted_sources_match_exact_non_utf8_paths() {
+    use std::os::unix::ffi::OsStrExt;
+
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    fixture.write("other.txt", b"base");
+    fixture.stage("other.txt");
+    fixture.commit();
+    let mut index = fixture.repo.index().unwrap();
+    for (name, bytes) in [
+        (b"a-\xff.pdf", b"%PDF-first".as_slice()),
+        (b"b-\xff.pdf", b"%PDF-second".as_slice()),
+    ] {
+        // Index paths need not be representable by the host filesystem.
+        let mut entry = index.get_path(Path::new("other.txt"), 0).unwrap();
+        entry.path = name.to_vec();
+        entry.id = fixture.repo.blob(bytes).unwrap();
+        entry.flags = (2 << 12) | name.len() as u16;
+        index.add(&entry).unwrap();
+    }
+    index.write().unwrap();
+    let requested = Path::new(std::ffi::OsStr::from_bytes(b"b-\xff.pdf"));
+    assert_eq!(
+        fixture
+            .backend()
+            .file_bytes(FileReadSource::IndexOrHead, requested, LIMIT)
+            .unwrap(),
+        Some(b"%PDF-second".to_vec())
+    );
+}
+
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;

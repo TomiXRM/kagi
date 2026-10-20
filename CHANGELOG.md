@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Bound historical and working-tree PDF reads before allocating preview bytes, without copying complete ordinary text files merely to classify them. Keep oversized/read-failed sides distinct from absent versions.
+- Preserve PDF comparison sources for symlinks and unresolved index conflicts: do not preview a working-tree symlink's target, and use conflict ours/ancestor rather than substituting HEAD for the unstaged base.
 - Restore Graph keyboard navigation after a focused historical PDF is closed or replaced, without taking focus from another input or modal.
 - Keep Editor Save/Undo/Redo from reaching unrelated Git operations while file classification is pending or a size-limit placeholder is visible, including PDFs recognized by signature without a `.pdf` extension.
 - Preserve keyboard Save for active and cached unsaved text buffers renamed to `.pdf`; a filename change alone no longer reclassifies retained text as a read-only PDF. Keep keyboard navigation working when a later read replaces the focused text Input with a PDF surface.

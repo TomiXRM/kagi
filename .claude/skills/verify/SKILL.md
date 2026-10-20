@@ -480,7 +480,7 @@ with AXPress. The adjacent Blame control is a useful positive control.
 Record actual control bounds and screenshots; AX metadata is not VoiceOver speech.
 
 For ADR-0226 use
-`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,commit_pdf_,graph_copy'`
+`KAGI_GUI_E2E_ONLY='editor_markdown_default_view,editor_pdf,commit_pdf_,pdf_media_,pdf_focus_retirement,graph_copy'`
 with KEEP_GOING, plus the neighboring `editor_,settings_` scenarios.
 Markdown coverage must open a fresh buffer for each default preference and keep
 existing manual modes and dirty text intact. Writer scenarios that edit Markdown
@@ -558,6 +558,19 @@ source/session supersession and independent continuous scrolling. Final-page
 pixel markers must differ from first-page markers. Activate the native AX adapter
 before querying side labels. Keep neighboring `binary_diff_`, `diff_highlight`,
 `commit_diff_off_thread` and `editor_details` coverage.
+`pdf_media_sources` distinguishes commit, HEAD, index and worktree PDF bytes
+using real page geometry and blue raster pixels. `pdf_media_bounds` checks
+exactly 10 MiB versus one byte over on both historical sides, plus an oversized
+signature-only working-tree PDF. Read failures must not become absent sides.
+Pair with `cargo test -p kagi-git --test file_reads_test` and
+`cargo test -p kagi-git --lib backend::file_reads::tests` for bounded prefix
+reads, sparse files, growth during reading, and index-error fallback refusal.
+`pdf_focus_retirement` clicks both historical PDF bodies, then closes/replaces
+or hides their owners and navigates Graph without another click.
+`pdf_focus_retirement_preserves_input` keeps typing in a sidebar/modal Input
+when the old document disappears. Tier B repeats body click → Escape → Down
+in the ordinary app and compares the selected commit before/after the fix;
+also inspect an oversized side beside a valid PDF and a neighboring text diff.
 `hold_next_file_classification_for_e2e` holds the actual file-read result before
 publication. Open an extensionless PDF with root/tree focus and Git undo history,
 then send Cmd+Z / Cmd+Shift+Z / Cmd+S while the classification is pending:

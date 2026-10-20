@@ -535,6 +535,14 @@ mod binary_diff_owner;
 mod commit_pdf;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pdf_focus_retirement.rs"]
+mod pdf_focus_retirement;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pdf_media_bounds.rs"]
+mod pdf_media_bounds;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_viewports.rs"]
 mod modal_viewports;
 #[cfg(target_os = "macos")]
@@ -3100,6 +3108,22 @@ mod macos {
             (
                 "commit_pdf_continuous_sides",
                 Box::new(crate::commit_pdf::scenario_commit_pdf_continuous_sides),
+            ),
+            (
+                "pdf_focus_retirement",
+                Box::new(crate::pdf_focus_retirement::scenario_pdf_focus_retirement),
+            ),
+            (
+                "pdf_focus_retirement_preserves_input",
+                Box::new(crate::pdf_focus_retirement::scenario_pdf_focus_retirement_preserves_input),
+            ),
+            (
+                "pdf_media_sources",
+                Box::new(crate::pdf_media_bounds::scenario_pdf_media_sources),
+            ),
+            (
+                "pdf_media_bounds",
+                Box::new(crate::pdf_media_bounds::scenario_pdf_media_bounds),
             ),
             (
                 "conflict_save_boundary",

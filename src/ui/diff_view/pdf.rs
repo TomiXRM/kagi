@@ -1,5 +1,7 @@
 //! Historical document presentation. Parsing/rasterization belongs to kagi-ui-editor.
-use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString};
+use gpui::{
+    div, prelude::*, px, rgb, App, Context, Entity, FocusHandle, Focusable, SharedString, Window,
+};
 use kagi_ui_editor::{PdfSource, PdfViewer};
 
 use super::{theme, MainDiffSource};
@@ -72,6 +74,18 @@ impl DiffPdfViewers {
         // Read failures may recover after fetching missing objects. Rebuild
         // those states, and any changed side presence, on an accepted re-read.
         same_side(&self.old, &next.old) && same_side(&self.new, &next.new)
+    }
+
+    /// Keep the focused body alive for the host's post-paint membership check,
+    /// even when this pair is replaced or its retained owner stops being drawn.
+    pub(crate) fn focused_body(&self, window: &Window, cx: &App) -> Option<FocusHandle> {
+        [&self.old, &self.new].into_iter().find_map(|side| {
+            let PdfSide::Viewer(viewer) = side else {
+                return None;
+            };
+            let focus = viewer.read(cx).focus_handle(cx);
+            focus.is_focused(window).then_some(focus)
+        })
     }
 
     #[cfg(feature = "gui-e2e")]

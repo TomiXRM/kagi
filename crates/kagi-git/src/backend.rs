@@ -1814,7 +1814,8 @@ impl Backend {
                 "branch or HEAD changed during branch menu read".into(),
             ));
         }
-        let (merged, squash) = ops::branch_merge_status(&self.repo, tip, Some(head));
+        let (merged, squash) = ops::branch_merge_status(&self.repo, tip, Some(head))
+            .map_err(|error| GitError::Other(error.to_string()))?;
         Ok(merged || squash.is_some())
     }
 

@@ -774,13 +774,17 @@ pub(crate) fn branch_merge_status(
     repo: &Repository,
     tip: git2::Oid,
     head: Option<git2::Oid>,
-) -> (bool, Option<git2::Oid>) {
-    let merged = head
-        .is_some_and(|head| head == tip || repo.graph_descendant_of(head, tip).unwrap_or(false));
-    let squash = (!merged)
-        .then(|| head.and_then(|head| squash_merged_as(repo, tip, head)))
-        .flatten();
-    (merged, squash)
+) -> Result<(bool, Option<git2::Oid>), git2::Error> {
+    let Some(head) = head else {
+        return Ok((false, None));
+    };
+    let merged = head == tip || repo.graph_descendant_of(head, tip)?;
+    let squash = if merged {
+        None
+    } else {
+        squash_merged_as(repo, tip, head)?
+    };
+    Ok((merged, squash))
 }
 
 /// Analyse whether deleting local branch `name` is safe and return an
@@ -960,7 +964,8 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         Head::Unborn { .. } => None,
     };
 
-    let (is_merged, squash_merge) = branch_merge_status(repo, tip_oid, head_oid);
+    let (is_merged, squash_merge) = branch_merge_status(repo, tip_oid, head_oid)
+        .map_err(|error| GitError::Other(error.to_string()))?;
 
     if let Some(squash) = squash_merge {
         warnings.push(PlanNote::Branch(BranchNote::DeleteSquashMerged {

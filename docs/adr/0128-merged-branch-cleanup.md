@@ -179,6 +179,9 @@ Unknown, pending or unreadable classifications remain neutral; only a known
 unmerged tip receives the unmerged warning. Closing the menu or changing its
 owner discards the result. Classification is cached for that menu, never walked
 on each paint; execution still plans and preflights independently.
+The shared ancestry / squash proof propagates object, history and diff read
+errors. A missing commit or tree is unknown to the menu, never `unmerged`;
+delete planning also refuses unreadable evidence rather than classifying it.
 
 Cleanup's preview names branches to delete in EN/JA, rather than calling branch
 names commits to push. The visible heading and accessibility group share the

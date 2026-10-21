@@ -39,12 +39,23 @@ pub fn branch_menu_merge_labels(cx: &mut VisualTestAppContext) {
     git(repo, &["commit", "-q", "-m", "unmerged later"]);
     git(repo, &["checkout", "-q", "main"]);
     let before = output(repo, &["show-ref"]);
+    let tree = output(repo, &["rev-parse", "unmerged^{tree}"]);
+    let object = repo.join(".git/objects").join(&tree[..2]).join(&tree[2..]);
+    let held = object.with_extension("held");
     for locale in ["en", "ja"] {
         std::env::set_var("KAGI_LANG", locale);
         i18n::init_lang();
         let (app, window) = mount(cx, repo);
         native_ax::activate(cx);
-        for (branch, merged) in [("merged", true), ("squashed", true), ("unmerged", false)] {
+        for (branch, merged) in [
+            ("merged", Some(true)),
+            ("squashed", Some(true)),
+            ("unmerged", Some(false)),
+            ("unmerged", None),
+        ] {
+            if merged.is_none() {
+                std::fs::rename(&object, &held).unwrap();
+            }
             app.update(cx, |app, cx| {
                 app.open_local_branch_menu(branch.into(), point(px(400.), px(100.)));
                 assert_eq!(app.branch_menu.as_ref().unwrap().merged_into_current, None);
@@ -59,19 +70,22 @@ pub fn branch_menu_merge_labels(cx: &mut VisualTestAppContext) {
                     .as_ref()
                     .unwrap()
                     .merged_into_current),
-                Some(merged)
+                merged
             );
             let node = native_ax::node(cx, window, "branch-menu-item-2-2".into());
             assert_eq!(
                 node["aria"]["label"],
-                if merged {
-                    Msg::BcmDeleteBranch.t()
-                } else {
+                if merged == Some(false) {
                     Msg::BcmDeleteUnmerged.t()
+                } else {
+                    Msg::BcmDeleteBranch.t()
                 }
             );
             crate::keyboard_nav::keys(cx, window, "escape");
             assert!(app.read_with(cx, |app, _| app.branch_menu.is_none()));
+            if merged.is_none() {
+                std::fs::rename(&held, &object).unwrap();
+            }
         }
         unmount(cx, app, window);
     }

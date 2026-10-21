@@ -53,7 +53,7 @@ fn tree_diff<'r>(
     repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), None)
 }
 
-/// Patch-id of a diff, refusing an **empty** one.
+/// Patch-id of a nonempty diff; an empty change has no proof, not a read error.
 ///
 /// An empty diff hashes to a fixed value, so without this guard every net-zero
 /// branch (added a file then removed it; experimented then reverted) matches
@@ -61,13 +61,11 @@ fn tree_diff<'r>(
 /// branches were observed being declared squash-merged by the same unrelated
 /// commit. Nothing is lost by deleting such a branch, but the claim is false
 /// and the named squash commit is nonsense, so refuse to make it.
-fn patch_id_of(diff: &git2::Diff) -> Result<git2::Oid, git2::Error> {
+fn patch_id_of(diff: &git2::Diff) -> Result<Option<git2::Oid>, git2::Error> {
     if diff.deltas().len() == 0 {
-        return Err(git2::Error::from_str(
-            "empty diff has no meaningful patch-id",
-        ));
+        return Ok(None);
     }
-    diff.patchid(None)
+    diff.patchid(None).map(Some)
 }
 
 /// A byte-exact fingerprint of the change a diff makes.
@@ -113,22 +111,14 @@ fn exact_change_key(diff: &git2::Diff) -> Result<Vec<u8>, git2::Error> {
 /// identical patch-id, that change is already in `head` and deleting the
 /// branch loses nothing.
 ///
-/// Returns the squash commit's OID, or `None` — never an error — when anything
-/// cannot be resolved: this only ever *unblocks* a delete, so an inconclusive
-/// answer must stay "not merged".
+/// Returns the squash commit's OID, or `None` when no proof is found. Object,
+/// ancestry and diff read failures remain errors, not evidence of an unmerged
+/// branch.
 ///
 // ponytail: squash only. A "rebase and merge" replays each commit separately,
 // so the combined patch-id won't match; detecting that means matching every
 // commit of `base..tip` individually (N×M diffs). Add it if anyone asks.
 pub fn squash_merged_as(
-    repo: &Repository,
-    tip_oid: git2::Oid,
-    head_oid: git2::Oid,
-) -> Option<git2::Oid> {
-    squash_merged_as_inner(repo, tip_oid, head_oid).unwrap_or(None)
-}
-
-fn squash_merged_as_inner(
     repo: &Repository,
     tip_oid: git2::Oid,
     head_oid: git2::Oid,
@@ -139,7 +129,9 @@ fn squash_merged_as_inner(
         return Ok(None);
     }
     let branch_diff = tree_diff(repo, base, tip_oid)?;
-    let want = patch_id_of(&branch_diff)?;
+    let Some(want) = patch_id_of(&branch_diff)? else {
+        return Ok(None);
+    };
     let want_exact = exact_change_key(&branch_diff)?;
 
     // `hide(base)` already restricts the walk to commits the branch does not
@@ -171,7 +163,7 @@ fn squash_merged_as_inner(
         let candidate = tree_diff(repo, commit.parent(0)?.id(), oid)?;
         // patch-id first (cheap, whitespace-blind), then the byte-exact
         // confirmation that makes this safe to gate a delete on.
-        if patch_id_of(&candidate)? == want && exact_change_key(&candidate)? == want_exact {
+        if patch_id_of(&candidate)? == Some(want) && exact_change_key(&candidate)? == want_exact {
             return Ok(Some(oid));
         }
     }
@@ -233,7 +225,7 @@ pub fn collect_squash_links(repo: &Repository) -> Result<Vec<SquashLink>, git2::
     // patch-id → squash commit. Newest wins: the revwalk yields newest first,
     // and a change applied more than once should point at the latest copy.
     //
-    // No timestamp prune here either — see `squash_merged_as_inner`. This walk
+    // No timestamp prune here either — see `squash_merged_as`. This walk
     // cannot `hide(base)` (each candidate has its own base), so the ancestry
     // check at accept time below is what keeps a pre-fork commit from
     // matching.
@@ -260,7 +252,7 @@ pub fn collect_squash_links(repo: &Repository) -> Result<Vec<SquashLink>, git2::
         let Ok(diff) = tree_diff(repo, parent.id(), commit.id()) else {
             continue;
         };
-        if let Ok(pid) = patch_id_of(&diff) {
+        if let Ok(Some(pid)) = patch_id_of(&diff) {
             index.entry(pid).or_insert(commit.id());
         }
     }
@@ -273,7 +265,7 @@ pub fn collect_squash_links(repo: &Repository) -> Result<Vec<SquashLink>, git2::
         let Ok(branch_diff) = tree_diff(repo, base, tip) else {
             continue;
         };
-        let (Ok(want), Ok(want_exact)) =
+        let (Ok(Some(want)), Ok(want_exact)) =
             (patch_id_of(&branch_diff), exact_change_key(&branch_diff))
         else {
             continue;

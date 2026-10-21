@@ -69,8 +69,10 @@ Bounds, all in the direction of refusing to unblock:
   cannot hide a single base, uses `!graph_descendant_of(base, squash)` — the
   reachability fact the timestamp was only approximating.
 - Merge commits are skipped: they have no single "change they introduce".
-- Every error is swallowed into `None`. An inconclusive answer must read as
-  "not merged".
+- Object/history/diff read errors propagate rather than masquerading as a
+  negative proof (#1699). Delete planning refuses unreadable evidence; branch
+  menu labels remain neutral. A successful scan with no match still returns
+  `None` and never unblocks deletion.
 
 ## Consequences
 

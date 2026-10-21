@@ -146,8 +146,11 @@ Branch Delete stays in the top-level management group by ADR-0049 / #1253.
 
 For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure_visible,run_success_unrecorded_keeps_partial_footer,fetch_failure_reaches_the_oplog,pull_current_'`
 with KEEP_GOING. `branch_menu_merge_labels` compares real merged, squash-proven
-and unmerged tips in EN/JA after the owner-bound classification; pending/unknown
-labels stay neutral. `branch_cleanup_target_heading` checks the actual plan
+and unmerged tips in EN/JA after the owner-bound classification; it temporarily
+moves the unmerged tip's tree object aside to prove read failure keeps the final
+menu label neutral, then restores the object. Pending/unknown labels stay neutral.
+`branch_menu_classification_test` covers missing tip/ancestor commits and a missing
+squash-proof tree at the Backend boundary. `branch_cleanup_target_heading` checks the actual plan
 preview group and cancels without deleting. `conflict_merge_stopped_toast` and
 `conflict_rebase_stopped_toast` execute one/three-file conflicts and require a
 localized non-success stopped notice, real unresolved index entries and disabled

@@ -302,9 +302,35 @@ pub fn scenario_destructive_modal_return(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
         wait_idle(cx, &app);
         paint(cx, window);
-        focused_confirm(cx, &app, window, "discard-confirm");
-        assert!(cx.read(|cx| app.read(cx).discard_modal().unwrap().confirm_armed));
+        // Without the backup contract, both explicit stages remain mandatory.
+        app.update(cx, |app, cx| {
+            let mut modal = app.discard_modal().unwrap().clone();
+            std::sync::Arc::make_mut(&mut modal.plan).recovery = None;
+            app.set_discard_modal(modal);
+            cx.notify();
+        });
         paint(cx, window);
+        focused_confirm(cx, &app, window, "discard-confirm");
+        paint(cx, window);
+        assert!(cx.read(|cx| app.read(cx).discard_modal().unwrap().confirm_armed));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# changed\n");
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
+            before
+        );
+        let (_, notice) = kagi::ui::dialog_a11y::recorded_note("discard-armed-note").unwrap();
+        assert_eq!(notice, kagi_ui_core::i18n::Msg::DiscardArmedNotice.t());
+        if lang == kagi_ui_core::i18n::Lang::Ja {
+            assert!(notice.contains("バックアップがありません"));
+            assert!(!notice.contains("Working-tree changes"));
+        }
+        press_key(cx, &app, window, "enter");
+        assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# changed\n");
+        app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
+        wait_idle(cx, &app);
+        paint(cx, window);
+        assert!(!cx.read(|cx| app.read(cx).discard_modal().unwrap().requires_two_stage()));
         focused_activation(cx, &app, window, "discard-confirm", "space", "shift-tab");
         wait_idle(cx, &app);
         assert_ne!(std::fs::read_to_string(&path).unwrap(), "# changed\n");
@@ -312,11 +338,142 @@ pub fn scenario_destructive_modal_return(cx: &mut VisualTestAppContext) {
             kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
             before + 1
         );
+        assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
+        let receipts = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100);
+        let receipt = receipts
+            .iter()
+            .rev()
+            .find(|entry| entry.op == "discard")
+            .unwrap();
+        assert!(
+            !receipt.backup_refs.is_empty(),
+            "single confirm retains recovery"
+        );
+        assert_eq!(
+            kagi_git::Backend::open(repo)
+                .unwrap()
+                .read_backup(&receipt.backup_refs[0])
+                .unwrap(),
+            b"# changed\n",
+        );
         cancel_other_danger_modals(cx, &app, window, repo);
         create_branch_with_return(cx, &app, window, repo);
         unmount(cx, app, window);
+        amend_confirmation_policy(cx, lang);
     }
     eprintln!("[gui-e2e] PASS destructive_modal_return");
+}
+
+fn amend_confirmation_policy(cx: &mut VisualTestAppContext, lang: kagi_ui_core::i18n::Lang) {
+    use kagi_ui_core::i18n::Msg;
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git_fixture::git(repo, &["checkout", "-q", "-b", "amend-review"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        app.open_amend_modal_with_message(
+            kagi_git::AmendMode::MessageOnly,
+            "local replacement".into(),
+            cx,
+        );
+    });
+    wait_idle(cx, &app);
+    paint(cx, window);
+    let old = git_fixture::git_output(repo, &["rev-parse", "HEAD"]);
+    let records = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len();
+    assert!(!cx.read(|cx| app.read(cx).amend_modal().unwrap().requires_two_stage()));
+    focused_confirm(cx, &app, window, "amend-confirm");
+    wait_idle(cx, &app);
+    assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
+    assert_ne!(git_fixture::git_output(repo, &["rev-parse", "HEAD"]), old);
+    assert_eq!(
+        git_fixture::git_output(repo, &["rev-parse", "HEAD@{1}"]),
+        old
+    );
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
+        records + 1
+    );
+
+    // A real fetched upstream makes the existing plan warn about published history.
+    let origin = tempfile::tempdir().unwrap();
+    let bare = origin.path().join("origin.git");
+    git_fixture::git(
+        repo,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            repo.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    git_fixture::git(repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git_fixture::git(repo, &["fetch", "-q", "origin"]);
+    git_fixture::git(repo, &["branch", "--set-upstream-to=origin/amend-review"]);
+    let published = git_fixture::git_output(repo, &["rev-parse", "HEAD"]);
+    let records = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len();
+    for cancel in [true, false] {
+        app.update(cx, |app, cx| {
+            app.open_amend_modal_with_message(
+                kagi_git::AmendMode::MessageOnly,
+                "published replacement".into(),
+                cx,
+            );
+            cx.notify();
+        });
+        paint(cx, window);
+        assert!(cx.read(|cx| app.read(cx).amend_modal().unwrap().requires_two_stage()));
+        focused_confirm(cx, &app, window, "amend-confirm");
+        paint(cx, window);
+        assert!(cx.read(|cx| app.read(cx).amend_modal().unwrap().confirm_armed));
+        assert_eq!(
+            git_fixture::git_output(repo, &["rev-parse", "HEAD"]),
+            published
+        );
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
+            records
+        );
+        let (_, notice) = kagi::ui::dialog_a11y::recorded_note("amend-armed-note").unwrap();
+        assert_eq!(
+            notice,
+            format!(
+                "{}\n{}",
+                Msg::AmendArmedNotice.t(),
+                Msg::AmendArmedRecovery.t()
+            )
+        );
+        if lang == kagi_ui_core::i18n::Lang::Ja {
+            assert!(notice.contains("公開済み"));
+            assert!(!notice.contains("This rewrites"));
+        }
+        if cancel {
+            press_key(cx, &app, window, "enter");
+            assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
+            assert_eq!(
+                git_fixture::git_output(repo, &["rev-parse", "HEAD"]),
+                published
+            );
+        } else {
+            focused_activation(cx, &app, window, "amend-confirm", "space", "shift-tab");
+            wait_idle(cx, &app);
+            assert_ne!(
+                git_fixture::git_output(repo, &["rev-parse", "HEAD"]),
+                published
+            );
+            assert_eq!(
+                git_fixture::git_output(repo, &["rev-parse", "origin/amend-review"]),
+                published
+            );
+            assert_eq!(
+                kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
+                records + 1
+            );
+        }
+    }
+    unmount(cx, app, window);
 }
 
 fn cancel_other_danger_modals(

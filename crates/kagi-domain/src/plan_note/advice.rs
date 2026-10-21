@@ -664,7 +664,7 @@ macro_rules! advice_template_display_en {
         "Staged changes changed after you confirmed. Nothing was committed; review them and commit again."
     };
     (DiscardUntrackedWillBeDeleted) => {
-        "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any now-empty folders removed). A backup is saved first; find its blob SHA in the Operation Log details and recover with `git cat-file -p <blob-sha>`."
+        "⚠️ {} untracked file(s) will be removed from disk (and any now-empty folders removed). Each file is backed up first under a retained Git ref. Find the backup ref in the Operation Log receipt; export its saved content with `git cat-file blob <backup-ref>:file`."
     };
     (RulesetConstraintsUnknown) => {
         "Couldn't read this branch's GitHub rules. GitHub may still reject the push."

@@ -97,6 +97,9 @@ pub fn note_ja(note: &BranchNote) -> String {
             "HEAD がこの branch の先端を指しています(detached)。削除できません。\nbranch `{}`",
             name
         ),
+        BranchNote::DeleteUnmerged { name, tip, commits: 0 } => format!(
+            "local branch「{name}」（先端 {tip}）を削除します。すべての commit は他の ref から引き続き参照でき、復元用 ref にも先端を保持します。"
+        ),
         BranchNote::DeleteUnmerged { name, tip, commits } => {
             super::advice_text(Msg::AdviceDeleteUnmerged, &[commits, name, tip])
         }

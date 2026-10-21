@@ -1,9 +1,7 @@
 //! Force-with-lease push operation (branch-menu "Advanced / Dangerous" group).
 //!
-//! Two-stage confirm (mirrors `operations/reset.rs`'s
-//! reset-current-to-head `confirm_armed` pattern): the first click only arms
-//! the button; the second click runs the push on a background thread and
-//! reloads.
+//! The first explicit plan confirmation arms the remote rewrite; the second
+//! runs the push with the frozen lease on the background write path.
 
 use super::RunPresentation;
 use crate::ui::*;
@@ -47,9 +45,7 @@ impl KagiApp {
         self.clear_force_lease_push_modal();
     }
 
-    /// Two-stage confirm (mirrors `start_reset_current`): the first click
-    /// only arms the button; the second click runs the push on a background
-    /// thread (write latch) and reloads.
+    /// Arm, then explicitly confirm the remote rewrite with its frozen lease.
     pub fn start_force_lease_push(&mut self, cx: &mut Context<Self>) {
         let modal = match self.force_lease_push_modal().cloned() {
             Some(m) => m,

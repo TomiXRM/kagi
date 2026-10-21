@@ -796,9 +796,10 @@ mod tests {
             let mut entry = OpLogEntry::new("op", "repo", state.clone(), outcome);
             entry.recovery_plan = Some(recovery.clone());
             let section = recovery_lines(&entry).unwrap().join("\n");
+            let explanation = kagi_ui_core::i18n::plan_recovery_text(Some(&recovery));
             assert!(
-                section.contains("This discards your unstaged changes"),
-                "{section}"
+                section.contains(&explanation),
+                "changed outcomes retain the complete localized recovery explanation: {section}"
             );
             assert!(
                 section.contains(&format!(

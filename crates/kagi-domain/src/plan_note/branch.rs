@@ -73,7 +73,7 @@ pub enum BranchNote {
     DeleteDetachedAtTip {
         name: String,
     },
-    /// warning (`plan_delete_branch`) — unmerged deletion requires two confirmations.
+    /// warning — commits losing reachability determine whether deletion arms.
     DeleteUnmerged {
         name: String,
         tip: String,
@@ -168,6 +168,9 @@ impl BranchNote {
             BranchNote::RenameConfigChanged => {
                 crate::advice_template_display_en!(BranchRenameConfigChanged).into()
             }
+            BranchNote::DeleteUnmerged { name, tip, commits: 0 } => format!(
+                "Delete local branch '{name}' at {tip}. All commits remain reachable from other refs; a recovery ref also keeps this tip."
+            ),
             _ => self.message_en(),
         }
     }

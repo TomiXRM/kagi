@@ -9,6 +9,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, including Pull freshness/conflict scenarios, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
 
+### Fixed
+
+- Confirm recoverable ref-only Reset, unpublished Amend, backed-up Discard and local branch deletion losing no commits once. Keep two-stage approval for irreversible deletion and shared-history changes; show the force-with-lease remote target and exact lease instead of claiming it cannot be undone. Align English/Japanese consequences with recorded recovery. (#1695)
+
 ## [0.47.0] - 2026-10-21
 
 ### Added

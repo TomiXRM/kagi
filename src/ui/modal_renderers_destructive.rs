@@ -1,6 +1,6 @@
-//! History-rewriting / destructive modal renderers split out of
-//! `modal_renderers.rs` (T-SPLIT-MODALS-001 / ADR-0116 Wave 3): amend (two-stage
-//! rewrite-history confirm) and discard (two-stage permanent-discard confirm).
+//! Amend and discard modal renderers split out of `modal_renderers.rs`.
+//! Recovery-backed local plans confirm once; published history and plans
+//! without recovery retain the two-stage arm.
 //! These build bespoke cards rather than delegating to `render_plan_modal_card`.
 
 #![allow(clippy::too_many_arguments)]
@@ -47,10 +47,8 @@ const SECTION_DISCARD_RECOVERY: &str = "discard-recovery";
 
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
 ///
-/// History-rewriting → **two-stage confirm**.  The first Confirm click arms the
-/// action (`confirm_armed` flips to true); the button then turns into an
-/// explicit, red final-confirm that lists what is lost (the old SHA).  No typed
-/// confirmation is required (ADR-0023).
+/// Unpublished amendments confirm once; published history retains a separate
+/// arm before the explicit history-rewrite confirmation.
 pub(crate) fn render_amend_modal(
     modal: AmendPlanModal,
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
@@ -67,7 +65,8 @@ pub(crate) fn render_amend_modal(
     worktree: Option<SharedString>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let armed = modal.confirm_armed;
+    let two_stage = modal.requires_two_stage();
+    let armed = two_stage && modal.confirm_armed;
     let plan = modal.plan.clone();
     let disabled_reason: Option<SharedString> = plan
         .blockers
@@ -92,7 +91,7 @@ pub(crate) fn render_amend_modal(
         cx.notify();
     });
     let confirm_handler = cx.listener(|this, _: &(), window, cx| {
-        // First click arms; second click executes (handled in start_amend).
+        // The handler shares the renderer's plan-derived confirmation policy.
         this.start_amend(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
@@ -101,7 +100,7 @@ pub(crate) fn render_amend_modal(
     });
     let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
     let confirm: DialogHandler = Rc::new(move |w, a| confirm_handler(&(), w, a));
-    // Stage 1 label = "Amend…", stage 2 (armed) = red "Rewrite history".
+    // Published history has an explicit final rewrite label after arming.
     let confirm_label = if armed {
         Msg::PlanAmendConfirmArmed.t()
     } else {
@@ -112,8 +111,7 @@ pub(crate) fn render_amend_modal(
     // must never scroll out of view on a destructive confirm, and the only
     // scroll region is the file list itself.
     //
-    // The header carries the stakes as a chip (mock: `Cannot be undone` next to
-    // the title) — driven by `plan.destructive`, not by the renderer guessing.
+    // Rewriting a commit does not make its retained local history unrecoverable.
     // One string for the visible title and the dialog's AX name: a linked
     // worktree's suffix must be heard as well as seen (#354).
     let title =
@@ -138,12 +136,6 @@ pub(crate) fn render_amend_modal(
             .flex_1()
             .min_w(gpui::px(0.)),
         );
-    if plan.destructive {
-        title_row = title_row.child(modal_chip(
-            Msg::ModalCannotUndo.t(),
-            current_theme().color_blocker,
-        ));
-    }
     // The whole dialog as text — popup content was not copyable at all.
     title_row = title_row.child(modal_copy_button(
         "amend-card-copy",
@@ -163,7 +155,11 @@ pub(crate) fn render_amend_modal(
         &title,
         disabled_reason.is_none().then_some(confirm_label),
         plan.destructive,
-        ConfirmStage::two_stage(armed),
+        if two_stage {
+            ConfirmStage::two_stage(armed)
+        } else {
+            ConfirmStage::Single
+        },
     )
     .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let card = apply_dialog(
@@ -315,22 +311,35 @@ pub(crate) fn render_amend_modal(
         }
     }
 
-    // When armed: explicit "what is lost" second-stage notice (ADR-0023).
+    // Published-history second-stage notice, localized with its recovery scope.
     if armed && !has_blockers {
         let notice = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div().text_sm().text_color(rgb(current_theme().color_blocker))
-                        .child(SharedString::from("\u{26a0} This rewrites history. Click \u{201c}Rewrite history\u{201d} to confirm.")),
-                )
-                .child(
-                    div().text_xs().text_color(rgb(current_theme().text_sub)).overflow_hidden()
-                        .child(SharedString::from(
-                            "The current commit's SHA will be replaced. The old commit becomes unreachable from the branch (recoverable via git reflog / reset --soft <old>).",
-                        )),
-                );
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().color_blocker))
+                    .child(Msg::AmendArmedNotice.t()),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(current_theme().text_sub))
+                    .overflow_hidden()
+                    .child(Msg::AmendArmedRecovery.t()),
+            );
+        let notice = apply_note(
+            "amend-armed-note".into(),
+            notice.id("amend-armed-note"),
+            false,
+            &format!(
+                "{}\n{}",
+                Msg::AmendArmedNotice.t(),
+                Msg::AmendArmedRecovery.t()
+            ),
+        );
         #[cfg(feature = "gui-e2e")]
         let notice = notice
             .relative()
@@ -350,7 +359,7 @@ pub(crate) fn render_amend_modal(
         );
     }
 
-    // The first press arms history rewriting; only the second is destructive.
+    // Local amendments execute once; published-history amendments first arm.
     let button_row = super::button_style::modal_button_row()
         .child(super::e2e::measure_control(
             "amend-cancel",
@@ -426,8 +435,8 @@ pub(crate) fn render_discard_modal(
             })
         });
     let can_discard = disabled_reason.is_none();
-    // Two-stage confirm (T-REARCH-014): first click arms, second executes.
-    let armed = modal.confirm_armed;
+    let two_stage = modal.requires_two_stage();
+    let armed = two_stage && modal.confirm_armed;
 
     let cancel_handler = cx.listener(|this, _: &(), window, cx| {
         this.cancel_discard_modal();
@@ -445,9 +454,7 @@ pub(crate) fn render_discard_modal(
     });
     let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
     let confirm: DialogHandler = Rc::new(move |w, a| confirm_handler(&(), w, a));
-    // Two-stage confirm (T-REARCH-014): first click arms the red Discard
-    // button (label becomes the explicit "Permanently discard N files"); the
-    // second click executes. Both stages stay red — always destructive.
+    // Only missing backup recovery warrants a permanent-discard final label.
     let confirm_label = if armed {
         Msg::PlanDiscardConfirmArmed.t()
     } else {
@@ -473,7 +480,9 @@ pub(crate) fn render_discard_modal(
     };
     let title = worktree_wip::worktree_modal_title(
         &if modal.is_all {
-            format!("Discard all changes ({})", target_count)
+            Msg::DiscardAllTitle
+                .t()
+                .replace("{}", &target_count.to_string())
         } else {
             plan_title_text(&plan.title)
         },
@@ -549,7 +558,7 @@ pub(crate) fn render_discard_modal(
             .flex_1()
             .min_w(gpui::px(0.)),
         );
-    if plan.destructive {
+    if two_stage {
         title_row = title_row.child(modal_chip(
             Msg::ModalCannotUndo.t(),
             current_theme().color_blocker,
@@ -565,7 +574,11 @@ pub(crate) fn render_discard_modal(
         &title,
         can_discard.then_some(confirm_label.as_str()),
         true,
-        ConfirmStage::two_stage(armed),
+        if two_stage {
+            ConfirmStage::two_stage(armed)
+        } else {
+            ConfirmStage::Single
+        },
     )
     .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let card = apply_dialog(
@@ -602,6 +615,19 @@ pub(crate) fn render_discard_modal(
             ),
             file_list.into_any_element(),
             cx,
+        ));
+    }
+    if !two_stage && target_count > 0 {
+        let text = Msg::DiscardBackedOutcome.t();
+        let note = div()
+            .text_sm()
+            .text_color(rgb(current_theme().text_sub))
+            .child(text);
+        body = body.child(apply_note(
+            "discard-backed-outcome".into(),
+            note.id("discard-backed-outcome"),
+            false,
+            text,
         ));
     }
 
@@ -761,11 +787,15 @@ pub(crate) fn render_discard_modal(
     // click armed the action, so the user sees an explicit final warning.
     if armed && can_discard {
         let notice = div()
-                .text_sm()
-                .text_color(rgb(current_theme().color_blocker))
-                .child(SharedString::from(
-                    "\u{26a0} Working-tree changes will be lost. Click \u{201c}Permanently discard\u{201d} to confirm.",
-                ));
+            .text_sm()
+            .text_color(rgb(current_theme().color_blocker))
+            .child(Msg::DiscardArmedNotice.t());
+        let notice = apply_note(
+            "discard-armed-note".into(),
+            notice.id("discard-armed-note"),
+            false,
+            Msg::DiscardArmedNotice.t(),
+        );
         #[cfg(feature = "gui-e2e")]
         let notice = notice
             .relative()

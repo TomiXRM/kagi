@@ -12,9 +12,9 @@
 //! buttons, the target panel and the individual target rows, all measured
 //! through the zero-layout `e2e` canvas probes. Real `KagiApp`, real
 //! `kagi_git` plans against an isolated fixture (a bare local "remote", never
-//! the network), and nothing destructive is ever executed — the two-stage
-//! confirm is armed and then cancelled, and the fixture's fingerprint is
-//! re-checked at the end.
+//! the network), and nothing destructive is ever executed. Recovery-backed
+//! cards are inspected and cancelled; the fixture's fingerprint is re-checked
+//! at the end.
 //!
 //! One window per (viewport, locale): `MacWindow::resize` schedules work on the
 //! native main queue that `VisualTestAppContext` never drains, so a resize is
@@ -545,26 +545,17 @@ fn amend_case(
     theme::set_zoom(1.);
     assert_section(cx, case, "amend-recovery", true);
 
-    // Arming is the first of the two confirm clicks. The armed notice adds
-    // prose to an already-full card: the buttons and the targets must survive
-    // it, and nothing may be written.
-    app.update(cx, |app, cx| app.start_amend(cx));
-    cx.run_until_parked();
-    assert!(
-        cx.read(|cx| app
-            .read(cx)
-            .amend_modal()
-            .is_some_and(|modal| modal.confirm_armed)),
-        "{label}: the first confirm must arm the card, not execute"
-    );
-    let card = assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
-    assert_targets(cx, case, card, staged);
-    assert_body_content(cx, case, "modal-armed-notice");
-    assert_section(cx, case, "amend-warnings", true);
+    // Recovery-backed local history is single-stage, even with checklist warnings.
+    assert!(!cx.read(|cx| app.read(cx).amend_modal().unwrap().requires_two_stage()));
+    let dialog = kagi::ui::dialog_a11y::recorded_dialog("amend-card").unwrap();
+    let recovery = cx.read(|cx| {
+        i18n::plan_recovery_text(app.read(cx).amend_modal().unwrap().plan.recovery.as_ref())
+    });
+    assert_eq!(dialog.description.as_deref(), Some(recovery.as_str()));
     assert_eq!(
         repo_fingerprint(repo),
         *clean,
-        "{label}: arming a confirm must not touch the repository"
+        "{label}: preview cannot write"
     );
 
     // A blocked plan retains the confirm with its reason but cannot arm it.
@@ -655,23 +646,22 @@ fn discard_case(
     assert_eq!(text, warning);
     assert_section(cx, case, "discard-recovery", false);
 
-    app.update(cx, |app, cx| app.start_discard(cx));
-    cx.run_until_parked();
-    assert!(
-        cx.read(|cx| app
-            .read(cx)
-            .discard_modal()
-            .is_some_and(|modal| modal.confirm_armed)),
-        "{label}: the first Discard click must arm the card, not execute"
-    );
-    let card = assert_card_fits(cx, case, &["discard-cancel", "discard-confirm"]);
-    assert_targets(cx, case, card, targets);
-    assert_body_content(cx, case, "modal-armed-notice");
-    assert_section(cx, case, "discard-warnings", true);
+    assert!(!cx.read(|cx| app.read(cx).discard_modal().unwrap().requires_two_stage()));
+    let (role, outcome) = kagi::ui::dialog_a11y::recorded_note("discard-backed-outcome")
+        .expect("recovery-backed discard always explains its backup before confirmation");
+    assert_eq!(role, gpui::Role::Note);
+    assert_eq!(outcome, i18n::Msg::DiscardBackedOutcome.t());
+    let dialog = kagi::ui::dialog_a11y::recorded_dialog("discard-card").unwrap();
+    let recovery = cx.read(|cx| {
+        i18n::plan_recovery_text(app.read(cx).discard_modal().unwrap().plan.recovery.as_ref())
+    });
+    assert_eq!(dialog.description.as_deref(), Some(recovery.as_str()));
+    assert!(!warning.contains("PERMANENTLY DELETED"));
+    assert!(recovery.contains("<backup-ref>:file"));
     assert_eq!(
         repo_fingerprint(repo),
         *clean,
-        "{label}: arming discard must not touch the working tree"
+        "{label}: preview cannot write"
     );
     app.update(cx, |app, _| app.cancel_discard_modal());
     cx.run_until_parked();
@@ -767,7 +757,7 @@ fn push_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, case: &Case) 
 /// Call from the macOS main-thread runner after `e2e::init_app`.
 ///
 /// 4 viewports × 2 locales, each a fresh window: the amend, discard-all and
-/// push cards, at rest, with a flipped disclosure, and armed.
+/// push cards, at rest and with a flipped disclosure.
 pub fn scenario_modal_compact(cx: &mut VisualTestAppContext) {
     let restore = Restore::capture();
     theme::set_zoom(1.);

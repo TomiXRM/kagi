@@ -822,6 +822,10 @@ pub fn scenario_pull_quiet_late_dirty_refuses(cx: &mut VisualTestAppContext) {
     let origin = Origin::new(&repo);
     let incoming = origin.advance();
     let (app, window) = mount(cx, &repo);
+    let before_panel = cx.read(|cx| {
+        let state = app.read(cx);
+        (state.bottom_panel_open, state.bottom_tab)
+    });
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_run_for_e2e(hold);
     activate_toolbar(cx, window, "tb-pull");
@@ -860,7 +864,37 @@ pub fn scenario_pull_quiet_late_dirty_refuses(cx: &mut VisualTestAppContext) {
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(!app.app_sessions.has_leases());
-        assert!(matches!(app.status_footer, FooterStatus::Failed(_)));
+        assert_eq!((app.bottom_panel_open, app.bottom_tab), before_panel);
+        let mut errors = app
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .filter(|toast| toast.kind == ToastKind::Error);
+        let reason = errors.next().expect("the refusal has a visible reason");
+        assert!(!reason.message.is_empty());
+        assert!(reason.action.is_some());
+        assert!(errors.next().is_none(), "one refusal, one result");
+    });
+    draw(cx, window);
+    let details = e2e::control_bounds(window.window_id(), "operation-result-details").unwrap();
+    cx.simulate_click(window, details.center(), gpui::Modifiers::none());
+    draw(cx, window);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        let row = &panel.entries()[panel.expanded().unwrap()];
+        assert_eq!(
+            (row.id, row.timestamp, &row.op, &row.repo),
+            (
+                pulls[0].id,
+                pulls[0].timestamp,
+                &pulls[0].op,
+                &pulls[0].repo
+            )
+        );
     });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pull_quiet_late_dirty_refuses");
@@ -2182,6 +2216,10 @@ fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm
     std::fs::write(repo.join("untracked.txt"), "preserved untracked\n").unwrap();
     let before = Checkout::read(&repo);
     let (app, window) = mount(cx, &repo);
+    let before_panel = cx.read(|cx| {
+        let state = app.read(cx);
+        (state.bottom_panel_open, state.bottom_tab)
+    });
     click_branch_sync(cx, window, "main", true);
     assert_strict_ff_overlap_choice(cx, &app, window);
     let refs_before = output(&repo, &["show-ref"]);
@@ -2234,15 +2272,50 @@ fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm
     for op in ["stash-push", "stash-pop"] {
         assert!(oplog::records(&repo, op, 100, true).is_empty());
     }
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!((state.bottom_panel_open, state.bottom_tab), before_panel);
+    });
     if confirm {
+        let receipts = oplog::records(&repo, "branch-pull-ff", 100, true);
+        assert_eq!(receipts.len(), 1);
+        assert!(matches!(
+            receipts[0].outcome,
+            OpOutcome::Refused { .. } | OpOutcome::Failed { .. }
+        ));
         cx.read(|cx| {
             let state = app.read(cx);
-            assert!(
-                matches!(&state.status_footer, FooterStatus::Failed(_))
-                    || state
-                        .branch_plan_modal()
-                        .is_some_and(|modal| modal.error.is_some()),
-                "strict FF execution must report its dirty-path refusal"
+            let mut errors = state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .filter(|toast| toast.kind == ToastKind::Error);
+            let reason = errors
+                .next()
+                .expect("strict FF refusal has a visible reason");
+            assert!(!reason.message.is_empty());
+            assert!(reason.action.is_some());
+            assert!(errors.next().is_none(), "one refusal, one result");
+        });
+        draw(cx, window);
+        let details = e2e::control_bounds(window.window_id(), "operation-result-details").unwrap();
+        cx.simulate_click(window, details.center(), gpui::Modifiers::none());
+        draw(cx, window);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let panel = state.op_log.as_ref().unwrap().read(cx);
+            let row = &panel.entries()[panel.expanded().unwrap()];
+            assert_eq!(
+                (row.id, row.timestamp, &row.op, &row.repo),
+                (
+                    receipts[0].id,
+                    receipts[0].timestamp,
+                    &receipts[0].op,
+                    &receipts[0].repo
+                )
             );
         });
     } else {

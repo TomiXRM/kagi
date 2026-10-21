@@ -409,6 +409,9 @@ mod user_text;
 #[path = "recovery/busy_dismiss.rs"]
 mod busy_dismiss;
 #[cfg(target_os = "macos")]
+#[path = "recovery/busy_failure.rs"]
+mod busy_failure;
+#[cfg(target_os = "macos")]
 #[path = "recovery/op_queue.rs"]
 mod op_queue;
 #[cfg(target_os = "macos")]
@@ -2854,7 +2857,7 @@ mod macos {
             ),
             (
                 "busy_hidden_failure_reaches_details",
-                Box::new(crate::busy_dismiss::scenario_busy_hidden_failure_reaches_details),
+                Box::new(crate::busy_failure::scenario_busy_hidden_failure_reaches_details),
             ),
             (
                 "slow_write_cleared_after_panic",

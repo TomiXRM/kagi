@@ -4131,6 +4131,18 @@ execution lease handoff, same-live-waiter join, in-flight departure/revisit with
 new-visit waiter, and a same-clock next request. Hidden failure must still
 reach its exact durable receipt through the actual details Button. Existing Skip,
 writer/quit guards, clone completion and stale queued-plan disposal stay active.
+
+Initial requests use the actual enabled toolbar/branch-menu controls. Coalesced
+join legs use the existing `handle_menu_command("repo.pull", ...)` boundary for
+an already-enabled, delivered intent, while asserting the live toolbar remains
+disabled. They do not demonstrate a fresh native click/shortcut during Busy or
+a native input race; do not weaken admission to make these fixtures clickable.
+`busy_failure.rs` covers EN/JA with the panel open and closed using real Cmd-J.
+Record `(bottom_panel_open, bottom_tab)` before hiding, after hiding and after
+failure delivery: only the actual Details click may switch to the exact receipt.
+The historical `[kagi] bottom-panel: open (Failed auto-open)` line is preserved
+for compatibility and is not evidence of a panel transition.
+
 The revisit leg dismisses the new waiter again before departing; the flight must
 not switch back to an older undismissed key. A new read on the other repository
 must still appear. The conflict leg uses real competing commits, explicit Pull

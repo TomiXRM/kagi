@@ -127,6 +127,10 @@ Tier B compares release/fixed Reset, unpublished Amend, backed-up Discard,
 zero-loss local branch deletion and Force-with-lease in EN/JA on the same
 disposable fixtures. Cancel presentation plans; record both stages only where
 the fixed operation still arms. Never represent an arm-only check as execution.
+`modal_compact` and the `plan_recovery_` renderer cases explicitly install a
+real backend Push plan through the existing modal setter. A normal safe Push
+entry now runs directly (#1693); these fixtures must not perform that write
+just to obtain a confirmation card. They prove presentation, not Push routing.
 
 
 For #1646 use `KAGI_GUI_E2E_ONLY='sync_footer_cancel_visible,modal_compact,modal_scale_notes,modal_scale_targets,sync_to_remote_armed,modal_polish_editor_fs,modal_polish_remote,modal_polish_stash_after,primary_button_states,create_branch_warnings,branch_rename_neutral_state,stash_entry_identity,pull_fetch_preserves_conflict_blocker'`.

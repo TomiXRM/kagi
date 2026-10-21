@@ -671,7 +671,7 @@ fn discard_case(
 /// the one every non-destructive confirmation goes through.
 fn push_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, case: &Case) {
     let label = case.label.clone();
-    app.update(cx, |app, cx| app.open_push_modal(cx));
+    app.update(cx, crate::recovery_plan_card_994::show_push_preview);
     cx.run_until_parked();
     let final_preview = cx.read(|cx| {
         let modal = app.read(cx).push_modal().expect("the push card is open");

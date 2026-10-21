@@ -11,7 +11,7 @@ use kagi::ui::{
     theme, FooterStatus, KagiApp, ToastKind,
 };
 use kagi_domain::plan_note::{CommonNote, OpPhrase, PlanNote};
-use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
+use kagi_git::oplog::OpOutcome;
 
 use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, mount, unmount};
@@ -92,12 +92,8 @@ impl ConflictCheckout {
     }
 }
 
-fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
-    read_oplog_tail_for_repo(repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == op)
-        .collect()
-}
+#[path = "../support/oplog.rs"]
+mod oplog;
 
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
@@ -282,9 +278,9 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
     assert_eq!(dialog.actions.len(), 1, "blocked dialog offers only Cancel");
     assert_eq!(dialog.actions[0].1, Msg::PlanCancel.t());
     assert_eq!(ConflictCheckout::read(&repo), conflicted);
-    assert!(records(&repo, "pull").is_empty());
+    assert!(oplog::records(&repo, "pull", 100, true).is_empty());
     assert!(
-        records(&repo, "fetch").is_empty(),
+        oplog::records(&repo, "fetch", 100, true).is_empty(),
         "unchanged origin makes this a no-op fetch, not a write receipt"
     );
     let bounds =
@@ -292,7 +288,7 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     cx.read(|cx| assert!(app.read(cx).pull_modal().is_some()));
-    assert!(records(&repo, "pull").is_empty());
+    assert!(oplog::records(&repo, "pull", 100, true).is_empty());
     assert_eq!(ConflictCheckout::read(&repo), conflicted);
 
     // Root Enter retains the product's no-execute refusal receipt; Escape
@@ -308,7 +304,7 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
             assert_eq!(toast.kind, ToastKind::Error);
             assert!(toast.message.ends_with(&expected));
         });
-        let pulls = records(&repo, "pull");
+        let pulls = oplog::records(&repo, "pull", 100, true);
         assert_eq!(pulls.len(), 1);
         assert!(
             matches!(&pulls[0].outcome, OpOutcome::Refused { blockers } if *blockers == vec![blocker.message_en()])
@@ -337,7 +333,7 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
     } else {
         press_key(cx, &app, window, "escape");
         cx.run_until_parked();
-        assert!(records(&repo, "pull").is_empty());
+        assert!(oplog::records(&repo, "pull", 100, true).is_empty());
     }
     cx.run_until_parked();
     cx.read(|cx| {
@@ -354,7 +350,7 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
     );
     for op in ["stash-push", "stash-pop", "stash-apply"] {
         assert!(
-            records(&repo, op).is_empty(),
+            oplog::records(&repo, op, 100, true).is_empty(),
             "blocked Pull cannot start {op}"
         );
     }

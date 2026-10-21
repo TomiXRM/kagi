@@ -3459,6 +3459,27 @@ broken `-R` rectangle path is not a reliable substitute.
 
 ## Tier C — fixture states
 
+Automated integration setup is owned by `tests/support` (#1704): `git_fixture.rs`
+keeps hermetic commands, configurable remote seeds, explicit `clone_other` timing
+and raw working-tree collection; `app_fixture.rs` keeps the serialized environment/
+temporary-log/repository/request lifetime; `oplog.rs` filters records with caller-
+specified tail limit and ordering. Backend suites use
+`#[path = "../../../tests/support/…"]`. Keep snapshot types and receipt assertions
+local: raw index bytes are not staged-content identity, and traversal options
+retain each caller's nested `.git`/directory-symlink policy.
+
+After changing these helpers, run the fixture/application targets with a fresh
+`KAGI_LOG_DIR`:
+
+```sh
+KAGI_LOG_DIR="$(mktemp -d)" cargo test -p kagi --test git_fixture_isolation_test --test app_pull_test --test app_run_test
+KAGI_LOG_DIR="$(mktemp -d)" cargo test -p kagi-git --test branch_sync_test --test force_lease_push_test --test fetch_remote_branch_test --test delete_remote_branch_test --test commit_index_identity_test --test pull_identity_test --test sync_to_remote_test --test pull_configured_upstream_test
+```
+
+Pair with Tier A `KAGI_GUI_E2E_ONLY='pull_,cherry_pick_presents_backend_receipt'`
+and `KAGI_GUI_E2E_KEEP_GOING=1`, plus the workspace/invariant gates. Fixture-only
+refactoring does not change real-window presentation and does not require Tier B.
+
 Create the standard disposable repository only below `/tmp` (the script refuses
 to overwrite an existing fixture):
 

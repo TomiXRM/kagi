@@ -11,67 +11,18 @@ use kagi_git::backend::recording::{self, RunReport};
 use kagi_git::backend::stash::StashEvidence;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::{Backend, GitError, OperationOutcome, StateSummary, Termination};
-use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 #[path = "support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git_output as git, init_repo};
+use git_fixture::git_output as git;
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/app_fixture.rs"]
+mod app_fixture;
+use app_fixture::AppFixture as Fixture;
 
-struct Fixture {
-    _guard: MutexGuard<'static, ()>,
-    _dir: tempfile::TempDir,
-    repo: PathBuf,
-    old_log: Option<std::ffi::OsString>,
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        match &self.old_log {
-            Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
-            None => std::env::remove_var("KAGI_LOG_DIR"),
-        }
-    }
-}
 impl Fixture {
-    fn new() -> Self {
-        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        let repo = root.join("repo");
-        let bare = root.join("origin.git");
-        std::fs::create_dir(&repo).unwrap();
-        init_repo(&repo, "main");
-        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
-        commit_all(&repo, "initial");
-        git(&repo, &["init", "--bare", "-q", bare.to_str().unwrap()]);
-        git(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
-        git(&repo, &["push", "-q", "-u", "origin", "main"]);
-        let old_log = std::env::var_os("KAGI_LOG_DIR");
-        std::env::set_var("KAGI_LOG_DIR", root.join("log"));
-        Self {
-            _guard: guard,
-            _dir: dir,
-            repo,
-            old_log,
-        }
-    }
-    fn request(&self, s: &mut Sessions) -> PullRequest {
-        let session = s.attach(self.repo.clone());
-        let owner = s.attachment(session).expect("attached");
-        let backend = Backend::open(&self.repo).unwrap();
-        PullRequest {
-            owner,
-            name: "pull",
-            path: self.repo.clone(),
-            repo: backend.write_repo_id().unwrap(),
-            plan: Arc::new(backend.plan_pull().expect("plan pull")),
-            auto_stash: true,
-            promised_dirty: None,
-        }
-    }
     /// One durable receipt, exactly as a child of the workflow writes it.
     fn receipt(
         &self,
@@ -153,9 +104,9 @@ fn completed(deliveries: &[Delivery]) -> (OwnerStamp, PullReport, RunReport) {
 /// proven stopped (ADR-0175 / ADR-0196 決定 5).
 #[test]
 fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let second = request.clone();
     let stash_oid = "1".repeat(40);
     // A group that is still running, which is what makes the read mean
@@ -251,9 +202,9 @@ fn live_group() -> (std::process::Child, u32) {
 /// parked behind a guard nothing can ever satisfy (#702 review P1).
 #[test]
 fn a_reaped_child_is_the_stop_proof_that_reopens_the_scope() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let report = PullReport::settled(
         vec![f.receipt(
             "pull",
@@ -298,7 +249,7 @@ fn a_reaped_child_is_the_stop_proof_that_reopens_the_scope() {
 #[cfg(unix)]
 #[test]
 fn an_unaccounted_group_is_proven_stopped_by_going_away() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
     let alive = LiveGroup::spawn();
     let report = |pid: u32| {
@@ -324,7 +275,7 @@ fn an_unaccounted_group_is_proven_stopped_by_going_away() {
         )
     };
 
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let job = admit(&mut s, request, report(alive.id()));
     let id = job.id();
     apply(&mut s, job.run());
@@ -349,7 +300,7 @@ fn an_unaccounted_group_is_proven_stopped_by_going_away() {
     // A group nothing answers to: the writer is gone and the read says so.
     let gone = dead_group();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let job = admit(&mut s, request, report(gone));
     let id = job.id();
     apply(&mut s, job.run());
@@ -399,9 +350,9 @@ impl Drop for LiveGroup {
 /// needs no reconciliation.
 #[test]
 fn a_restored_failure_settles_on_the_pull_receipt() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let owner = request.owner.clone();
     let pull = f.receipt(
         "pull",
@@ -457,7 +408,7 @@ fn a_restored_failure_settles_on_the_pull_receipt() {
 /// not release the scope (#702 review P1).
 #[test]
 fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
     // The stash the workflow created — the one nothing could name at the time.
     std::fs::write(f.repo.join("a.txt"), "work in progress\n").unwrap();
@@ -467,7 +418,7 @@ fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
     std::fs::write(f.repo.join("a.txt"), "more work\n").unwrap();
     git(&f.repo, &["stash", "push", "-q", "-m", AUTO_STASH_MESSAGE]);
 
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let second = request.clone();
     let report = |f: &Fixture| {
         PullReport::settled(
@@ -551,9 +502,9 @@ fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
 /// operation that can never be settled (#289 / #702 review P1).
 #[test]
 fn an_abandoned_pull_task_settles_as_unknown_and_is_reconcilable() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let report = PullReport::settled(
         vec![f.success("pull")],
         PullPresentation::Success {
@@ -601,7 +552,7 @@ fn an_abandoned_pull_task_settles_as_unknown_and_is_reconcilable() {
 /// remote, and only a remote that already carries the local tip is confirmed.
 #[test]
 fn a_remote_push_is_resolved_only_by_the_remote() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
     let session = s.attach(f.repo.clone());
     let owner = s.attachment(session).expect("attached");
@@ -706,7 +657,7 @@ fn a_remote_push_is_resolved_only_by_the_remote() {
 /// ref it promised.
 #[test]
 fn a_branch_push_is_resolved_only_by_the_remote() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
     let session = s.attach(f.repo.clone());
     let owner = s.attachment(session).expect("attached");
@@ -802,7 +753,7 @@ fn a_branch_push_is_resolved_only_by_the_remote() {
 /// remote nobody asked.
 #[test]
 fn an_unclassified_operation_is_never_acknowledgeable_from_a_local_read() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
     let session = s.attach(f.repo.clone());
     let owner = s.attachment(session).expect("attached");
@@ -879,7 +830,7 @@ fn every_remote_expectation_is_confirmed_only_by_its_frozen_value() {
 fn a_remote_effect_is_named_from_the_plan_that_is_about_to_run() {
     use kagi_git::backend::remote_ref::{RemoteExpect, RemoteExpectation};
 
-    let f = Fixture::new();
+    let f = Fixture::pull();
     git(&f.repo, &["tag", "v1"]);
     let backend = Backend::open(&f.repo).unwrap();
     let head = git(&f.repo, &["rev-parse", "HEAD"]);
@@ -922,10 +873,10 @@ fn a_remote_effect_is_named_from_the_plan_that_is_about_to_run() {
 #[cfg(unix)]
 #[test]
 fn a_surviving_descendant_keeps_the_writer_unstopped() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
     let orphaned = OrphanedGroup::spawn();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let report = PullReport::settled(
         vec![f.receipt(
             "pull",
@@ -989,9 +940,9 @@ impl OrphanedGroup {
 /// dropped`) instead of showing it on whatever tab is now on screen.
 #[test]
 fn a_pull_completion_is_routed_by_the_stamp_frozen_at_admission() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let owner = request.owner.clone();
     let report = PullReport::settled(
         vec![f.success("pull")],
@@ -1023,9 +974,9 @@ fn a_pull_completion_is_routed_by_the_stamp_frozen_at_admission() {
 #[cfg(unix)]
 #[test]
 fn a_panicked_pull_is_acknowledgeable_once_the_supervisor_accounts_for_its_groups() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let approved = approve_pull(&mut s, request).expect("owner attached");
     let job = prepare_pull(
         &mut s,
@@ -1074,7 +1025,7 @@ fn a_panicked_pull_is_acknowledgeable_once_the_supervisor_accounts_for_its_group
 /// the live stash list instead.
 #[test]
 fn a_panicked_pull_that_auto_stashed_cannot_be_acknowledged_while_the_entry_is_there() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     // The auto-stash kagi itself would have taken, by the message the read
     // matches on: dirty work parked before the pull.
     std::fs::write(f.repo.join("a.txt"), "the user's unfinished work\n").unwrap();
@@ -1085,7 +1036,7 @@ fn a_panicked_pull_that_auto_stashed_cannot_be_acknowledged_while_the_entry_is_t
     );
 
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     assert!(request.auto_stash, "precondition: this pull auto-stashes");
     let approved = approve_pull(&mut s, request).expect("owner attached");
     let job = prepare_pull(
@@ -1132,9 +1083,9 @@ fn a_panicked_pull_that_auto_stashed_cannot_be_acknowledged_while_the_entry_is_t
 /// the ready plan on screen keeps its revision and its one-shot token.
 #[test]
 fn busy_pull_admission_preserves_another_ready_plan() {
-    let f = Fixture::new();
+    let f = Fixture::pull();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.pull_request(&mut s);
     let held = admit(
         &mut s,
         request.clone(),

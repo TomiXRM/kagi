@@ -60,3 +60,17 @@
 - 判定と GitHub API fixture は既存 `ci/` uv project に置く。オフライン回帰確認:
   `uv run --frozen --project ci python -m unittest kagi_checks.test_release_ci -v`。
   この fixture suite 自体も `gates-lint` で実行する。
+
+## 追補 (2026-10-21, #1704): fixture は既存 tests/support に集約
+
+- fixture 専用クレート新設の案は採らず、既存 `tests/support/` を共有 owner とする。
+  backend integration は #515 の `#[path = "../../../tests/support/…"]` で取り込む。
+- `git_fixture.rs` が hermetic Git、bare origin/local の seed と明示的な other clone、
+  低水準の working-tree 収集を持つ。clone 時点・scenario 固有の branch 設定は caller が決める。
+- `app_fixture.rs` が main repository、request と `KAGI_LOG_DIR` の復元を持つ。
+  従来どおり Drop 本体で環境を復元し、その後 mutex guard、TempDir の宣言順で解放する。
+- snapshot 型と期待値は caller に残す。raw index bytes と staged-content identity は
+  統合せず、nested `.git` / symlink の収集方針も caller が明示する。
+- `oplog.rs` は収集・operation filter のみ。tail limit と newest-first は caller が指定し、
+  outcome・receipt 件数・owner/lease の独立 assertion は共有しない。
+

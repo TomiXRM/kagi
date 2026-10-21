@@ -31,7 +31,6 @@ fn assert_unknown_pull_result(
     let OpOutcome::Unknown { evidence, .. } = &entry.outcome else {
         unreachable!("the selected receipt is Unknown");
     };
-    let expected = kagi::ui::i18n::op::user_text::operations::unknown_preview("pull", evidence);
     cx.read(|cx| {
         let app = app.read(cx);
         let stack = app.toast_stack.as_ref().expect("toast stack").read(cx);
@@ -41,10 +40,18 @@ fn assert_unknown_pull_result(
             "only the requested Pull is announced"
         );
         assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Error);
-        assert_eq!(
-            stack.toasts()[0].message.as_ref(),
-            expected,
-            "typed Unknown must retain its no-retry safety preview, not Partial copy"
+        assert!(
+            stack.toasts()[0].action.is_some(),
+            "the owner's final notification keeps an explicit detail action"
+        );
+        assert!(
+            !app.app_sessions.may_close_host(),
+            "the indeterminate write must retain its safety guard"
+        );
+        assert!(
+            app.app_notice()
+                .is_some_and(|notice| notice.inspect.is_some()),
+            "the unresolved result must keep a reachable reconcile action"
         );
         let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
         let shown = panel

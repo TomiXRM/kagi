@@ -245,9 +245,14 @@ impl KagiApp {
         }
     }
 
-    pub(crate) fn offer_fetched_branch_pull(&mut self, branch: String, remote: &str) {
-        self.open_branch_plan_modal(branch, BranchPlanKind::PullFfOnly);
-        let Some(modal) = self.branch_plan_modal() else {
+    pub(crate) fn offer_fetched_branch_pull(
+        &mut self,
+        branch: String,
+        remote: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut modal) = self.build_branch_plan_modal(branch, BranchPlanKind::PullFfOnly)
+        else {
             return;
         };
         // The title's upstream shorthand is display-only; admission uses the
@@ -262,42 +267,59 @@ impl KagiApp {
                 identity.branch == modal.branch_name && identity.remote == remote
             }));
         if !matches_remote {
-            self.clear_branch_plan_modal();
             self.report_plan_failure(i18n::Op::Pull, Msg::PullUpstreamChangedDuringFetch.t());
             return;
         }
         let Some(repo) = self.ui().repo_session.as_ref() else {
-            self.clear_branch_plan_modal();
             return;
         };
         let refs = match repo.backend().pull_branch_ref_state(&modal.branch_name) {
             Ok(refs) => refs,
             Err(error) => {
-                self.clear_branch_plan_modal();
                 self.report_plan_failure(i18n::Op::Pull, error);
                 return;
             }
         };
-        let fetch_owner = self.active_session().and_then(|session| {
+        modal.fetch_owner = self.active_session().and_then(|session| {
             self.app_sessions
                 .visit(session)
                 .map(|visit| (session, visit))
         });
-        if let Some(modal) = self.branch_plan_modal_mut() {
-            modal.fetch_owner = fetch_owner;
-            modal.fetched_refs = Some(refs);
+        modal.fetched_refs = Some(refs);
+        self.admit_branch_plan(modal, cx);
+    }
+
+    pub fn open_branch_plan_modal(
+        &mut self,
+        branch_name: String,
+        kind: BranchPlanKind,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(modal) = self.build_branch_plan_modal(branch_name, kind) {
+            self.admit_branch_plan(modal, cx);
         }
     }
 
-    pub fn open_branch_plan_modal(&mut self, branch_name: String, kind: BranchPlanKind) {
+    fn admit_branch_plan(&mut self, modal: BranchPlanModal, cx: &mut Context<Self>) {
+        let needs_choice = modal.plan.sync_needs_choice();
+        self.set_branch_plan_modal(modal);
+        if needs_choice {
+            self.focus_root_for_modal();
+        } else {
+            self.start_branch_plan(cx);
+        }
+    }
+
+    fn build_branch_plan_modal(
+        &mut self,
+        branch_name: String,
+        kind: BranchPlanKind,
+    ) -> Option<BranchPlanModal> {
         if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
-            return;
+            return None;
         }
-        let _repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
+        self.repo_path.as_ref()?;
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
@@ -305,7 +327,7 @@ impl KagiApp {
                 self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
                     SharedString::from("branch operation: repo session unavailable"),
                 ));
-                return;
+                return None;
             }
         };
         let mut dirty_digest = None;
@@ -333,7 +355,7 @@ impl KagiApp {
                         plan.warnings.len()
                     );
                 }
-                self.set_branch_plan_modal(BranchPlanModal {
+                Some(BranchPlanModal {
                     kind,
                     branch_name,
                     plan: std::sync::Arc::new(plan),
@@ -342,13 +364,13 @@ impl KagiApp {
                     fetch_owner: None,
                     dirty_digest,
                     fetched_refs: None,
-                });
-                self.focus_root_for_modal(); // #817: Enter / Escape via the root
+                })
             }
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
                     SharedString::from(format!("branch operation plan error: {}", e)),
                 ));
+                None
             }
         }
     }
@@ -400,8 +422,9 @@ impl KagiApp {
         }
 
         self.clear_branch_plan_modal();
-        self.status_footer =
-            FooterStatus::Busy(i18n::op::user_text::operations::progress(op_name).into());
+        self.status_footer = FooterStatus::Busy(
+            i18n::op::user_text::operations::branch_progress(op_name, &modal.branch_name).into(),
+        );
         if modal.kind == BranchPlanKind::SyncToRemote {
             klog!("async: sync-to-remote started");
         }
@@ -1173,13 +1196,13 @@ impl KagiApp {
                     if is_current {
                         self.open_push_modal(cx);
                     } else {
-                        self.open_branch_plan_modal(state.name, BranchPlanKind::Push);
+                        self.open_branch_plan_modal(state.name, BranchPlanKind::Push, cx);
                     }
                 }
             }
             BranchAction::PushAndCreateUpstream => {
                 if matches!(state.kind, BranchKind::Local) {
-                    self.open_branch_plan_modal(state.name, BranchPlanKind::PushSetUpstream);
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::PushSetUpstream, cx);
                 }
             }
             BranchAction::SetUpstream => {
@@ -1237,7 +1260,7 @@ impl KagiApp {
             }
             BranchAction::SyncToRemote => {
                 if matches!(state.kind, BranchKind::Local) {
-                    self.open_branch_plan_modal(state.name, BranchPlanKind::SyncToRemote);
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::SyncToRemote, cx);
                 }
             }
             BranchAction::DeleteRemoteBranch => {

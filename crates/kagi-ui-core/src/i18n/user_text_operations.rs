@@ -67,6 +67,14 @@ pub fn progress(op: &str) -> String {
     }
 }
 
+pub fn branch_progress(op: &str, branch: &str) -> String {
+    let label = operation_label(op);
+    match lang() {
+        Lang::En => format!("{label}: '{branch}': In progress…"),
+        Lang::Ja => format!("{label}: '{branch}' を実行中…"),
+    }
+}
+
 pub fn deleted_branch(branch: &str, remote: bool) -> String {
     match (lang(), remote) {
         (Lang::En, false) => {
@@ -287,10 +295,25 @@ mod tests {
 
     #[test]
     fn branch_display_preserves_user_names() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
         let branch = "feature/repo_session-unavailable-日本語";
-        let _guard = crate::i18n::tests::LOCK.lock();
-        let shown = branch_result(branch, &OperationOutcome::Pull(PullOutcome::UpToDate));
-        assert!(shown.contains(branch));
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            for shown in [
+                branch_progress("branch-pull-ff", branch),
+                branch_result(branch, &OperationOutcome::Pull(PullOutcome::UpToDate)),
+            ] {
+                assert!(shown.contains(branch), "{shown}");
+                assert_eq!(
+                    diagnostic(&shown),
+                    shown,
+                    "preserve the target in presentation"
+                );
+            }
+        }
+        set_lang_no_persist(previous);
     }
 
     #[test]

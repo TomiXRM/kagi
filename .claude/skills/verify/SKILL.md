@@ -2959,6 +2959,21 @@ The current suite covers:
   Pull is still running. Restore the fixture config afterward. In Japanese,
   inspect committed-conflict choice → Merge review → Cancel and verify unchanged
   HEAD, index and working files. Never use the user's checkout for these writes.
+- Consistent local sync entry admission (#1697): run
+  `KAGI_GUI_E2E_ONLY='entry_consistency_,pull_freshness_clean_updates,push_safe_intent,pull_safe_dirty_intent,pull_current_'`
+  with KEEP_GOING. Exercise actual toolbar, sidebar menu, command palette and
+  configured shortcut routes, not a direct call to the shared admission helper.
+  Safe Push/publish must admit exactly one recorded operation without another
+  card and without changing staged content or working files. For non-current
+  clean FF Pull, hold the admitted write after its owned fetch: progress names
+  the target branch, no card remains, and release advances only that branch.
+  Require the target in the result footer and a successful persisted receipt;
+  checked-out HEAD, staged content and working files remain unchanged.
+  Typed risk/blocker coverage retains explicit choices; warning-generation
+  cleanup is independent of this admission policy. Tier B compares released
+  versus fixed sidebar publish and non-current clean Pull in EN/JA, using
+  disposable local remotes, identical viewport/theme/zoom, isolated profiles
+  and only self-launched PID/window captures.
 - Pull freshness (`tests/recovery/pull_freshness.rs`):
   `KAGI_GUI_E2E_ONLY=pull_freshness_,pull_current_` exercises a real held fetch
   before execution or a necessary choice, an advanced upstream unknown to the

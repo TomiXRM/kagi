@@ -516,6 +516,36 @@ pub struct OperationPlan {
 }
 
 impl OperationPlan {
+    /// Whether a local Pull/Push intent needs an additional user choice.
+    ///
+    /// This is presentation admission, not execution authorization: quiet plans
+    /// still pass the same approval, preflight, identity and write lifecycle.
+    /// Unknown warnings/families stay explicit; informational notes are matched
+    /// by type, never by their localized text or their mere presence.
+    pub fn sync_needs_choice(&self) -> bool {
+        use crate::plan_note::{PullNote, PullTitle, PushNote, PushTitle};
+
+        if self.destructive || !self.blockers.is_empty() {
+            return true;
+        }
+        match &self.title {
+            PlanTitle::Push(PushTitle::Push { .. } | PushTitle::PushBranch { .. }) => self
+                .warnings
+                .iter()
+                .any(|note| !matches!(note, PlanNote::Push(PushNote::NoForceUsed { .. }))),
+            PlanTitle::Pull(PullTitle::Pull { .. }) => !self.warnings.is_empty(),
+            PlanTitle::Pull(PullTitle::PullBranchFf { .. }) => self.warnings.iter().any(|note| {
+                !matches!(
+                    note,
+                    PlanNote::Pull(PullNote::DirtyRefOnly | PullNote::ConflictedRefOnly { .. })
+                )
+            }),
+            // Remote Pull cannot predict fetched checkout safety. Other
+            // operations (notably destructive Sync-to-remote) keep their choice.
+            _ => true,
+        }
+    }
+
     /// Return the stash entry count captured at plan time.
     ///
     /// Pass this value to `preflight_check_stash` to verify that the stash
@@ -570,3 +600,6 @@ impl OperationPlan {
         format!("{:016x}", h.finish())
     }
 }
+
+#[cfg(test)]
+mod sync_admission_tests;

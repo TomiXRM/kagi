@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Use the same risk-based admission for Pull, Pull ff-only, Push and publish from the toolbar, sidebar menu, command palette and shortcuts. Run safe sidebar publish and clean non-current branch fast-forwards without a redundant confirmation, retaining the target branch in progress and result footers. Keep risk choices and execution-time safety checks. (#1697)
+  - Keep explicit destination review when publishing without an upstream to multiple configured remotes and no `origin`; show typed candidate names instead of silently publishing to the first remote.
 
 ## [0.47.0] - 2026-10-21
 

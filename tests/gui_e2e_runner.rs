@@ -2531,6 +2531,10 @@ mod macos {
                 Box::new(crate::entry_consistency::scenario_sidebar_publish_safe_intent),
             ),
             (
+                "entry_consistency_sidebar_publish_ambiguous_remote",
+                Box::new(crate::entry_consistency::scenario_sidebar_publish_ambiguous_remote),
+            ),
+            (
                 "entry_consistency_palette_pull_push_safe_intent",
                 Box::new(crate::entry_consistency::scenario_palette_pull_push_safe_intent),
             ),

@@ -91,7 +91,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     // reproduces the exact legacy strings for oplog/klog/EN (golden-tested
     // in kagi-domain's `plan_note::push`).
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
+    let mut warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
         punct: PushPunct::EmDash,
     })];
 
@@ -178,7 +178,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 .unwrap_or((0, 0));
             (true, remote, ahead)
         }
-        Err(_) => match choose_push_remote(repo)? {
+        Err(_) => match choose_push_remote(repo, Some(&mut warnings))? {
             Some(remote) => (false, remote, usize::MAX), // MAX sentinel: compute below
             None => {
                 blockers.push(PlanNote::Push(PushNote::NoUpstreamNoRemotes {
@@ -323,7 +323,10 @@ pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOu
     let upstream_result = push_upstream_info(repo, &branch_name);
     let (has_upstream, remote_name) = match upstream_result {
         Ok((_, remote, _)) => (true, remote),
-        Err(_) => (false, choose_push_remote(repo)?.ok_or_else(no_push_remote)?),
+        Err(_) => (
+            false,
+            choose_push_remote(repo, None)?.ok_or_else(no_push_remote)?,
+        ),
     };
 
     // ── 3. Compute ahead count for PushOutcome.pushed ────────
@@ -461,23 +464,39 @@ fn build_push_preview(
     Ok(result)
 }
 
-/// The remote a push targets when the caller has not named one: `origin` if it
-/// exists, otherwise the first configured remote. Absence is not a lookup error:
-/// planners translate it to their own typed blocker.
-pub(crate) fn choose_push_remote(repo: &Repository) -> Result<Option<String>, GitError> {
+/// Prefer `origin`, otherwise propose the first configured remote. Planners
+/// retain an explicit choice when that fallback is ambiguous; execution and
+/// tag callers pass no warning sink and keep their existing selection policy.
+pub(crate) fn choose_push_remote(
+    repo: &Repository,
+    publish_warnings: Option<&mut Vec<PlanNote>>,
+) -> Result<Option<String>, GitError> {
     let remotes = repo
         .remotes()
         .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
-    let remote_names: Vec<String> = remotes
+    if remotes
         .iter()
-        .filter_map(|s| s.ok().flatten())
-        .map(|s| s.to_owned())
-        .collect();
-    if remote_names.iter().any(|r| r == "origin") {
-        Ok(Some("origin".to_string()))
-    } else {
-        Ok(remote_names.into_iter().next())
+        .any(|remote| remote.ok().flatten() == Some("origin"))
+    {
+        return Ok(Some("origin".to_string()));
     }
+    let mut names = remotes
+        .iter()
+        .filter_map(|remote| remote.ok().flatten())
+        .peekable();
+    let first = names.next();
+    let selected = first.map(str::to_owned);
+    if let (Some(warnings), Some(first)) = (publish_warnings, first) {
+        if names.peek().is_some() {
+            warnings.push(PlanNote::Push(PushNote::PublishRemoteAmbiguous {
+                candidates: std::iter::once(first)
+                    .chain(names)
+                    .map(str::to_owned)
+                    .collect(),
+            }));
+        }
+    }
+    Ok(selected)
 }
 
 fn no_push_remote() -> GitError {
@@ -548,7 +567,7 @@ pub fn plan_push_branch(
     // site gets its own `PushNote` variant (this text is shared in English
     // with pull-ff's blocker, but that category is a separate fan-out PR).
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
+    let mut warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
         punct: PushPunct::Semicolon,
     })];
 
@@ -563,7 +582,9 @@ pub fn plan_push_branch(
     };
 
     let (remote_name, upstream_oid, has_upstream) = if set_upstream {
-        match choose_push_remote(repo).and_then(|remote| remote.ok_or_else(no_push_remote)) {
+        match choose_push_remote(repo, Some(&mut warnings))
+            .and_then(|remote| remote.ok_or_else(no_push_remote))
+        {
             Ok(remote) => (remote, None, false),
             Err(e) => {
                 blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
@@ -668,7 +689,10 @@ pub(crate) fn execute_push_branch(
     let local_oid = local_branch_oid(repo, branch_name)?;
 
     let (remote_name, upstream_oid) = if set_upstream {
-        (choose_push_remote(repo)?.ok_or_else(no_push_remote)?, None)
+        (
+            choose_push_remote(repo, None)?.ok_or_else(no_push_remote)?,
+            None,
+        )
     } else {
         let (_, remote, _) = resolve_upstream_info(repo, branch_name)?;
         let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote).ok();

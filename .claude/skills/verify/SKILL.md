@@ -2969,6 +2969,13 @@ The current suite covers:
   the target branch, no card remains, and release advances only that branch.
   Require the target in the result footer and a successful persisted receipt;
   checked-out HEAD, staged content and working files remain unchanged.
+  `entry_consistency_sidebar_publish_ambiguous_remote` checks EN/JA with
+  `company` and `personal` but no `origin`: the card names the proposed
+  destination and both typed candidates, takes no lease, and Escape preserves
+  both remote refs, checkout and the absent Push receipt. Pair it with
+  `publish_remote_ambiguity_requires_choice_for_both_plan_producers` in
+  `kagi-git`'s `push_test`: current/sidebar plans require a choice only for
+  ambiguous publication; `origin` or a sole remote remains quiet.
   Typed risk/blocker coverage retains explicit choices; warning-generation
   cleanup is independent of this admission policy. Tier B compares released
   versus fixed sidebar publish and non-current clean Pull in EN/JA, using

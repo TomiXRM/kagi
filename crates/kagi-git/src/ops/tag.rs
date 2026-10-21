@@ -6,7 +6,7 @@ use kagi_domain::remote::shell_quote;
 /// The remote a tag push targets. `origin` when it exists, else the first
 /// configured remote — the same rule `plan_push` uses, so the two agree.
 fn tag_push_remote(repo: &Repository) -> Option<String> {
-    super::push::choose_push_remote(repo).ok().flatten()
+    super::push::choose_push_remote(repo, None).ok().flatten()
 }
 
 // ────────────────────────────────────────────────────────────

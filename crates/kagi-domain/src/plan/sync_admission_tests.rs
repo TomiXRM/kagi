@@ -73,6 +73,15 @@ fn sync_admission_push_and_publish_ignore_only_no_force_information() {
                 assert!(!plan.sync_needs_choice());
             }
             plan.warnings
+                .push(PlanNote::Push(PushNote::PublishRemoteAmbiguous {
+                    candidates: vec!["company".into(), "personal".into()],
+                }));
+            assert!(
+                plan.sync_needs_choice(),
+                "publishing needs an unambiguous destination"
+            );
+            plan.warnings.pop();
+            plan.warnings
                 .push(PlanNote::Pull(PullNote::MergePrediction));
             assert!(
                 plan.sync_needs_choice(),

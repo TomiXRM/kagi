@@ -235,3 +235,79 @@ pub fn scenario_sidebar_noncurrent_pull_safe_intent(cx: &mut VisualTestAppContex
     }
     eprintln!("[gui-e2e] PASS entry_consistency_sidebar_noncurrent_pull_safe_intent");
 }
+
+pub fn scenario_sidebar_publish_ambiguous_remote(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for language in [i18n::Lang::En, i18n::Lang::Ja] {
+        i18n::set_lang(language);
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let _origin = Origin::new(&repo);
+        let personal = tempfile::tempdir().unwrap();
+        git(
+            &repo,
+            &["init", "--bare", "-q", personal.path().to_str().unwrap()],
+        );
+        git(&repo, &["remote", "rename", "origin", "company"]);
+        git(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "personal",
+                personal.path().to_str().unwrap(),
+            ],
+        );
+        git(&repo, &["branch", "feature"]);
+        let before = Checkout::read(&repo);
+        let company_refs = output(&repo, &["ls-remote", "company"]);
+        let before_config = std::fs::read(repo.join(".git/config")).unwrap();
+        let personal_refs = output(&repo, &["ls-remote", "personal"]);
+        let (app, window) = mount(cx, &repo);
+        branch_push(cx, window, true);
+        cx.run_until_parked();
+        draw(cx, window);
+        cx.read(|cx| {
+            use kagi_domain::plan_note::{PlanNote, PlanTitle, PushNote, PushTitle};
+            let app = app.read(cx);
+            let modal = app
+                .branch_plan_modal()
+                .expect("ambiguous publish keeps its choice");
+            assert!(
+                !app.app_sessions.has_leases(),
+                "no write before destination review"
+            );
+            assert!(modal.plan.sync_needs_choice());
+            assert!(matches!(&modal.plan.title,
+                PlanTitle::Push(PushTitle::PushBranch { remote, set_upstream: true, .. })
+                if remote == "company"));
+            let warning = modal
+                .plan
+                .warnings
+                .iter()
+                .find(|note| {
+                    matches!(
+                        note,
+                        PlanNote::Push(PushNote::PublishRemoteAmbiguous { .. })
+                    )
+                })
+                .expect("typed ambiguous destination warning");
+            let shown = i18n::plan_note_text(warning);
+            assert!(shown.contains("company") && shown.contains("personal"));
+        });
+        assert_eq!(Checkout::read(&repo), before);
+        assert_eq!(output(&repo, &["ls-remote", "company"]), company_refs);
+        assert_eq!(output(&repo, &["ls-remote", "personal"]), personal_refs);
+        assert_eq!(
+            std::fs::read(repo.join(".git/config")).unwrap(),
+            before_config
+        );
+        assert!(oplog::records(&repo, "push", 100, true).is_empty());
+        crate::recovery_operations::press_key(cx, &app, window, "escape");
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
+        assert_eq!(Checkout::read(&repo), before);
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS entry_consistency_sidebar_publish_ambiguous_remote");
+}

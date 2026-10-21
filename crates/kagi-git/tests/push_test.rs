@@ -637,3 +637,56 @@ fn no_remote_keeps_typed_push_blocker_and_branch_error() {
         ) if message.contains("No remote configured. Cannot push.")
     )));
 }
+
+#[test]
+fn publish_remote_ambiguity_requires_choice_for_both_plan_producers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use kagi_domain::plan_note::{PlanNote, PushNote};
+    for (origin, multiple) in [(true, true), (false, true), (false, false)] {
+        let r = setup();
+        git(&r.local, &["branch", "--unset-upstream", "main"]);
+        if !origin {
+            git(&r.local, &["remote", "rename", "origin", "company"]);
+        }
+        if multiple {
+            git(
+                &r.local,
+                &["remote", "add", "personal", r.remote.to_str().unwrap()],
+            );
+        }
+        let before_head = head_sha(&r.local);
+        let before_refs = git_output(&r.remote, &["show-ref"]);
+        let repo = Repository::open(&r.local).unwrap();
+        for plan in [
+            plan_push(&repo).unwrap(),
+            kagi_git::plan_push_branch(&repo, "main", true).unwrap(),
+        ] {
+            assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+            let ambiguous = plan.warnings.iter().find_map(|note| match note {
+                PlanNote::Push(PushNote::PublishRemoteAmbiguous { candidates }) => Some(candidates),
+                _ => None,
+            });
+            assert_eq!(plan.sync_needs_choice(), !origin && multiple);
+            if !origin && multiple {
+                let candidates = ambiguous.expect("multiple implicit destinations need review");
+                assert_eq!(candidates.len(), 2);
+                assert!(candidates.iter().any(|remote| remote == "company"));
+                assert!(candidates.iter().any(|remote| remote == "personal"));
+            } else {
+                assert!(
+                    ambiguous.is_none(),
+                    "origin or one remote resolves the destination"
+                );
+            }
+        }
+        assert_eq!(head_sha(&r.local), before_head);
+        assert_eq!(git_output(&r.remote, &["show-ref"]), before_refs);
+        assert!(repo
+            .find_branch("main", git2::BranchType::Local)
+            .unwrap()
+            .upstream()
+            .is_err());
+    }
+}

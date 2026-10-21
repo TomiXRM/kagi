@@ -375,6 +375,13 @@ Pull の `DirtyRefOnly` / `ConflictedRefOnly` は情報として扱う。空の 
 未知の warning、実際の overlap / restore / history conflict、blocker、
 destructive plan は確認を維持する。SSH Pull と Sync-to-remote の明示確認は変えない。
 
+未設定 upstream の publish は `origin` があればそれを、remote が 1 つならその
+remote を一意な送信先とする。`origin` がなく複数 remote がある場合は current /
+sidebar の両 plan に `PushNote::PublishRemoteAmbiguous { candidates }` を積み、
+候補名と提案された送信先を確認 card に示す。先頭 remote への推測を quiet な
+公開承認にしてはならない（#1712 独立レビュー P1）。既存の確認後の選択規則は
+変えず、曖昧な plan を `sync_needs_choice` の未知 warning 保守規則で明示確認に戻す。
+
 非 current branch の clean FF Pull は owned fetch 成功後に upstream identity、
 session / visit、fetched refs を凍結してから同じ admission を通し、card を描かず
 既存の `start_branch_plan` へ進む。対象 branch 名は進行 footer と完了 footer に残す。

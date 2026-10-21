@@ -24,6 +24,10 @@ pub(crate) const ADVICE_PUSH_UPSTREAM_NOT_PRESENT_LOCALLY: &str =
 pub fn note_ja(note: &PushNote) -> String {
     match note {
         PushNote::NoForceUsed { punct } => super::advice_text(Msg::AdviceNoForceUsed(*punct), &[]),
+        PushNote::PublishRemoteAmbiguous { candidates } => format!(
+            "origin がなく、公開先の remote が複数あります: {}。",
+            candidates.join(", ")
+        ),
         PushNote::NoUpstreamNoRemotes { branch } => {
             super::advice_text(Msg::AdvicePushNoUpstreamNoRemotes, &[branch])
         }

@@ -755,6 +755,24 @@ pub fn worktree_checkout_of(repo: &Repository, name: &str) -> Option<WorktreeChe
     None
 }
 
+/// The shared delete-plan/menu classification, including patch-proven squash merges.
+pub(crate) fn branch_merge_status(
+    repo: &Repository,
+    tip: git2::Oid,
+    head: Option<git2::Oid>,
+) -> Result<(bool, Option<git2::Oid>), git2::Error> {
+    let Some(head) = head else {
+        return Ok((false, None));
+    };
+    let merged = head == tip || repo.graph_descendant_of(head, tip)?;
+    let squash = if merged {
+        None
+    } else {
+        squash_merged_as(repo, tip, head)?
+    };
+    Ok((merged, squash))
+}
+
 /// Analyse whether deleting local branch `name` is safe and return an
 /// [`OperationPlan`].
 ///
@@ -913,19 +931,8 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         Head::Unborn { .. } => None,
     };
 
-    // Merged check: the branch tip must be reachable from HEAD.
-    // graph_descendant_of(a, b) is true when a descends from b, i.e. b is
-    // reachable FROM a — here: HEAD can reach tip.
-    let is_merged = head_oid
-        .is_some_and(|h| h == tip_oid || repo.graph_descendant_of(h, tip_oid).unwrap_or(false));
-
-    // A squash merge replays the branch as one new commit, so the tip is never
-    // an ancestor and the check above says "unmerged" forever — the branch sits
-    // in the graph as a dead-end leaf and could not be deleted at all (user
-    // report). Prove the change is already in HEAD by patch-id instead.
-    let squash_merge = (!is_merged)
-        .then(|| head_oid.and_then(|h| squash_merged_as(repo, tip_oid, h)))
-        .flatten();
+    let (is_merged, squash_merge) = branch_merge_status(repo, tip_oid, head_oid)
+        .map_err(|error| GitError::Other(error.to_string()))?;
 
     if let Some(squash) = squash_merge {
         warnings.push(PlanNote::Branch(BranchNote::DeleteSquashMerged {

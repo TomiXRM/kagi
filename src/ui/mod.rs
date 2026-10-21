@@ -1867,21 +1867,41 @@ impl KagiApp {
         persist: bool,
         display_override: Option<String>,
     ) {
+        self.record_op_with_notice(entry, cx, persist, display_override, None);
+    }
+
+    pub(in crate::ui) fn record_op_with_notice(
+        &mut self,
+        entry: OpLogEntry,
+        cx: &mut Context<Self>,
+        persist: bool,
+        display_override: Option<String>,
+        notice: Option<(ToastKind, SharedString)>,
+    ) {
         let op = entry.op.as_str();
         let before = &entry.before;
         let outcome = &entry.outcome;
         let (footer_msg, footer_ok) = Self::operation_footer_contract(op, before, outcome);
 
-        let display_footer_msg =
-            Self::display_footer_message(op, outcome, &footer_msg, display_override);
+        let display_footer_msg = notice
+            .as_ref()
+            .map(|(_, text)| text.clone())
+            .unwrap_or_else(|| {
+                Self::display_footer_message(op, outcome, &footer_msg, display_override)
+            });
 
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.
-        let toast_kind = if matches!(outcome, OpOutcome::Success { .. }) {
-            ToastKind::Success
-        } else {
-            ToastKind::Error
-        };
+        let toast_kind = notice.as_ref().map_or_else(
+            || {
+                if matches!(outcome, OpOutcome::Success { .. }) {
+                    ToastKind::Success
+                } else {
+                    ToastKind::Error
+                }
+            },
+            |(kind, _)| *kind,
+        );
         self.push_toast(toast_kind, display_footer_msg.clone(), cx);
 
         // T-BP-004: auto-open bottom panel on Failed.
@@ -1899,13 +1919,9 @@ impl KagiApp {
             let recording = kagi_git::backend::recording::finalize(entry.clone());
             if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
                 klog!("oplog: write failed (non-fatal): {}", error);
-                // "non-fatal" is true of the operation and false of the promise.
-                // The op already happened, but Kagi's reason to exist includes
-                // leaving a record to recover and audit from — and the in-memory
-                // panel below still shows the entry, so nothing looks wrong until
-                // the next launch, when it is simply gone. Say it out loud
-                // (#643 A1).
-                self.present_oplog_write_failure(error, cx);
+                // Recording failure does not change the operation's outcome.
+                // Keep failure, success and uncertainty distinct in the notice.
+                self.present_oplog_write_failure(&entry, error, cx);
             }
             shown = Some(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                 &recording,
@@ -1930,9 +1946,12 @@ impl KagiApp {
             klog!("bottom-panel: open (Failed auto-open)");
         }
 
-        if footer_ok {
+        if footer_ok && notice.is_none() {
             klog!("footer: {}", footer_msg);
             self.status_footer = FooterStatus::Success(display_footer_msg);
+        } else if notice.is_some() {
+            klog!("footer: {}", footer_msg);
+            self.status_footer = FooterStatus::Idle(display_footer_msg);
         } else {
             klog!("footer: {}", footer_msg);
             self.status_footer = FooterStatus::Failed(display_footer_msg);
@@ -2970,6 +2989,8 @@ impl KagiApp {
             target,
             kind: BranchKind::Local,
             position,
+            merged_into_current: None,
+            merge_check_started: false,
         });
         klog!("branch-menu: open local {}", branch_name);
     }
@@ -2986,6 +3007,8 @@ impl KagiApp {
             name: display_name.clone(),
             target,
             kind: BranchKind::Remote,
+            merged_into_current: None,
+            merge_check_started: false,
             position,
         });
         klog!("branch-menu: open remote {}", display_name);
@@ -3036,7 +3059,7 @@ impl KagiApp {
             checked_out_in_other_worktree: checked_out_worktree_path.is_some(),
             checked_out_worktree_path,
             worktree_path,
-            merged_into_current: false,
+            merged_into_current: state.merged_into_current,
             is_pushed: upstream.is_some(),
             detached_head: self.view().status_summary.is_detached,
             busy: self.op_latched(),

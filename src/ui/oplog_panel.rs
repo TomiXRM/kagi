@@ -150,11 +150,20 @@ impl OpLogPanel {
         let outcome = match recording {
             Recording::Appended { .. } => entry.outcome.clone(),
             Recording::Failed { error, .. } => match &entry.outcome {
-                OpOutcome::Success { after }
-                | OpOutcome::Partial { after, .. }
-                | OpOutcome::Unknown { after, .. } => OpOutcome::Partial {
+                OpOutcome::Success { after } => OpOutcome::Partial {
                     after: after.clone(),
                     error: format!("changed but not recorded: {error}"),
+                },
+                OpOutcome::Partial {
+                    after,
+                    error: operation_error,
+                } => OpOutcome::Partial {
+                    after: after.clone(),
+                    error: format!("{operation_error}\nrecording failed: {error}"),
+                },
+                OpOutcome::Unknown { after, evidence } => OpOutcome::Unknown {
+                    after: after.clone(),
+                    evidence: format!("{evidence}\nrecording failed: {error}"),
                 },
                 unchanged => unchanged.clone(),
             },
@@ -1040,5 +1049,44 @@ mod tests {
         );
         assert!(!restorable(&OpLogPanel::entry_for_recording(&failed)));
         assert!(!revertible(&OpLogPanel::entry_for_recording(&failed)));
+    }
+
+    #[test]
+    fn recording_failure_preserves_unknown_and_partial_operation_evidence() {
+        use kagi_git::backend::recording::Recording;
+        for unknown in [false, true] {
+            let mut entry = dummy_entry("fetch");
+            let after = entry.before.clone();
+            entry.outcome = if unknown {
+                OpOutcome::Unknown {
+                    after,
+                    evidence: "operation result unconfirmed".into(),
+                }
+            } else {
+                OpOutcome::Partial {
+                    after,
+                    error: "operation partly applied".into(),
+                }
+            };
+            entry.ref_moves = Some(Vec::new());
+            let failed = Recording::Failed {
+                attempted: entry,
+                error: "fixture recording error".into(),
+            };
+            let shown = OpLogPanel::entry_for_recording(&failed);
+            match (&shown.outcome, unknown) {
+                (OpOutcome::Unknown { evidence, .. }, true) => {
+                    assert!(evidence.contains("operation result unconfirmed"));
+                    assert!(evidence.contains("fixture recording error"));
+                }
+                (OpOutcome::Partial { error, .. }, false) => {
+                    assert!(error.contains("operation partly applied"));
+                    assert!(error.contains("fixture recording error"));
+                }
+                (outcome, _) => panic!("recording failure replaced operation result: {outcome:?}"),
+            }
+            assert!(!restorable(&shown));
+            assert!(!revertible(&shown));
+        }
     }
 }

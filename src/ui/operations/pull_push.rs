@@ -215,7 +215,7 @@ impl KagiApp {
                         self.plan_and_offer_pull_modal_from_async(fetched_remote, cx);
                     }
                     crate::ui::commands::PullTarget::BranchFfOnly(branch) => {
-                        self.offer_fetched_branch_pull(branch, fetched_remote);
+                        self.offer_fetched_branch_pull(branch, fetched_remote, cx);
                     }
                 }
             }
@@ -253,12 +253,7 @@ impl KagiApp {
                 offered
             }
             Ok(None) => {
-                self.push_toast(
-                    ToastKind::Sync,
-                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
-                    cx,
-                );
-                self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                self.present_pull_up_to_date(cx);
                 false
             }
             Err(error) => {
@@ -266,6 +261,15 @@ impl KagiApp {
                 false
             }
         }
+    }
+
+    pub(crate) fn present_pull_up_to_date(&mut self, cx: &mut Context<Self>) {
+        self.push_toast(
+            ToastKind::Sync,
+            SharedString::from(Msg::AlreadyUpToDatePull.t()),
+            cx,
+        );
+        self.status_footer = FooterStatus::Idle(SharedString::from(""));
     }
 
     /// Refresh a retained local Pull confirmation against reloaded repository

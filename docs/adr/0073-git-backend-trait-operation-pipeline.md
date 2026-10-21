@@ -40,3 +40,16 @@
 
 - oplog はパイプライン末尾で**必ず**1回書かれる(v0.2.0 は呼び出し側任意だった)。形式は ADR-0074。
 - UI は `OperationController::request(Operation)`(ADR-0075)しか触れない。
+
+## 2026-10-21 — W2 derived-data consolidation (#1705)
+
+- Operation-local `plan` / `preflight` / `execute` triples and lock/ref ordering
+  remain explicit. Only derived status text, conflict-path collection and remote
+  selection reuse the existing helpers; no plan builder or executor is added.
+- Status summaries keep each caller's HEAD display and ownership. Conflict
+  previews retain lossy UTF-8 conversion, while conflict resolution retains raw
+  path bytes through `conflict_path` / `bytes_to_pathbuf`.
+- `choose_push_remote` reports an absent remote as `None`, distinct from a lookup
+  error. The current-branch planner maps absence to `NoUpstreamNoRemotes`; branch
+  planning and execution retain their previous error text. Tag selection still
+  treats either absence or a lookup error as no target.

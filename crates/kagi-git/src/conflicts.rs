@@ -758,7 +758,7 @@ pub fn continue_blockers(
                 session.files.iter().map(|f| f.path.clone()).collect();
             let mut untracked_unmerged: Vec<String> = Vec::new();
             for entry in conflicts.flatten() {
-                if let Some(path) = conflict_path_local(&entry) {
+                if let Some(path) = conflict_path(&entry) {
                     if !session_paths.contains(&path) {
                         untracked_unmerged.push(path.to_string_lossy().into_owned());
                     }
@@ -779,18 +779,6 @@ pub fn continue_blockers(
     }
 
     out
-}
-
-/// Extract a conflict's path from whichever index stage entry is present
-/// (local copy; the detection path has its own private `conflict_path`).
-fn conflict_path_local(conflict: &git2::IndexConflict) -> Option<PathBuf> {
-    let bytes = conflict
-        .our
-        .as_ref()
-        .or(conflict.their.as_ref())
-        .or(conflict.ancestor.as_ref())
-        .map(|e| e.path.clone())?;
-    bytes_to_pathbuf(&bytes)
 }
 
 /// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.
@@ -1845,20 +1833,7 @@ fn head_display(head: &Head) -> String {
 pub(crate) fn current_state_summary(repo: &Repository) -> Result<StateSummary, GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let dirty = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
+    let dirty = crate::ops::status_summary_display(&status);
     Ok(StateSummary {
         head: head_display(&head),
         dirty,

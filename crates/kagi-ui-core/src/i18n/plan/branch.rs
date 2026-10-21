@@ -33,6 +33,8 @@ pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_HEADER: &str =
     "Git がこの branch 設定の header を安全にリネームできません。先に section／subsection の表記を揃えてください。\n設定ファイル: {}";
 pub(crate) const ADVICE_BRANCH_DELETE_CURRENT_BRANCH: &str =
     "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`";
+pub(crate) const ADVICE_BRANCH_DELETE_REACHABILITY_CHANGED: &str =
+    "確認後に branch の到達可能性が変わりました。他の通常の ref から到達不能になる commit は確認時 {}、現在 {} です。削除の計画を作り直して確認してください。\nbranch `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_CHECKED_OUT: &str =
     "branch '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別の branch へ切り替えてください。";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_LOCKED_WORKTREE: &str =
@@ -97,8 +99,17 @@ pub fn note_ja(note: &BranchNote) -> String {
             "HEAD がこの branch の先端を指しています(detached)。削除できません。\nbranch `{}`",
             name
         ),
+        BranchNote::DeleteUnmerged { name, tip, commits: 0 } => format!(
+            "local branch「{name}」（先端 {tip}）を削除します。すべての commit は他の ref から引き続き参照でき、復元用 ref にも先端を保持します。"
+        ),
         BranchNote::DeleteUnmerged { name, tip, commits } => {
             super::advice_text(Msg::AdviceDeleteUnmerged, &[commits, name, tip])
+        }
+        BranchNote::DeleteReachabilityChanged { name, approved, current } => {
+            super::advice_text(
+                Msg::AdviceBranchDeleteReachabilityChanged,
+                &[approved, current, name],
+            )
         }
         BranchNote::DeleteSquashMerged { name, squash } => {
             super::advice_text(Msg::AdviceBranchDeleteSquashMerged, &[name, squash])
@@ -127,6 +138,23 @@ mod contract_tests {
             note_ja_contract(&BranchNote::RenameConfigChanged),
             "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。"
         );
+    }
+
+    #[test]
+    fn review_1695_reachability_refusal_localizes_counts_and_literal_branch_name() {
+        let name = "feature/{}-レビュー";
+        let note = BranchNote::DeleteReachabilityChanged {
+            name: name.into(),
+            approved: 0,
+            current: 17,
+        };
+        let english = note.message_en();
+        assert!(english.contains(name));
+        assert!(english.contains("0 commits losing ordinary-ref reachability approved, 17 now"));
+        let japanese = note_ja(&note);
+        assert!(japanese.contains(&format!("branch `{name}`")));
+        assert!(japanese.contains("確認時 0、現在 17"));
+        assert!(japanese.contains("計画を作り直して"));
     }
 }
 

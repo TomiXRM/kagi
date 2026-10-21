@@ -154,13 +154,20 @@ fn notes_case(cx: &mut VisualTestAppContext, slug: &str, zoom: f32, blocked: boo
     let label = format!("{slug}/{}/{zoom}/blocked={blocked}", i18n::lang().slug());
     traverse_notes(cx, window, blocked, &label);
     let confirm = e2e::control_bounds(window.window_id(), "plan-confirm").unwrap();
-    cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
-    cx.run_until_parked();
-    assert_eq!(
-        cx.read(|cx| app.read(cx).reset_current_modal().unwrap().confirm_armed),
-        !blocked,
-        "{label}: blocked stays inert; ready only arms"
-    );
+    if blocked {
+        cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| app.read(cx).reset_current_modal().is_some()),
+            "{label}: blocked confirmation stays inert"
+        );
+    } else {
+        // A recoverable reset now executes on its first explicit confirmation.
+        // This is renderer stress data, so inspect the action but never run it.
+        let button = kagi::ui::button_style::recorded_modal_button("plan-confirm").unwrap();
+        assert!(!button.disabled, "{label}: ready reset remains confirmable");
+        assert_eq!(button.label, i18n::Msg::PlanResetCurrent.t());
+    }
     note_frame(
         cx,
         window,

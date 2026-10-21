@@ -1,10 +1,9 @@
 //! #1702: detected staged secrets are visible before a write and never quiet.
 use crate::macos::{build_fixture, git, unmount};
 use crate::recovery_layout::{contained, draw, GlobalSettings};
-use gpui::{px, size, VisualTestAppContext};
+use gpui::VisualTestAppContext;
 use kagi::ui::e2e;
 use kagi_ui_core::{i18n, theme};
-use std::{cell::RefCell, rc::Rc};
 
 pub fn scenario(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
@@ -28,15 +27,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 let index = std::fs::read(fixture.path().join(".git/index")).unwrap();
                 theme::set_zoom(zoom);
                 i18n::set_lang(lang);
-                let state = e2e::app_state(fixture.path()).unwrap();
-                let captured = Rc::new(RefCell::new(None));
-                let output = captured.clone();
-                let window = crate::macos::open_offscreen(
-                    cx,
-                    size(px(dimensions.0), px(dimensions.1)),
-                    move |window, cx| e2e::mount_root(state, window, cx, &output),
-                );
-                let app = captured.borrow().clone().unwrap();
+                let (app, window) =
+                    crate::presentation_support::mount(cx, fixture.path(), dimensions);
                 cx.update_window(window.into(), |_, window, cx| {
                     app.update(cx, |app, cx| app.open_commit_panel(window, cx));
                 })

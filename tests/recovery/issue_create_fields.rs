@@ -50,11 +50,7 @@ fn write_labels(dir: &Path, names: &[&str]) {
 
 fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .expect("draw Issues window");
+    crate::presentation_support::paint(cx, window);
 }
 
 fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> bool {

@@ -75,6 +75,9 @@ Approve is dispatched, then checks that the saved body is submitted only after
 restore. `pr_draft_post_after_graph` holds the admitted comment write, leaves
 PR mode through Graph, and requires reopening to retain an empty composer and
 one transport write. Both use fail-closed local gh fixtures.
+The consent, commit-warning and PR/Issue draft scenarios reuse W3's
+`presentation_support` paint/mount helpers; scenario-owned dispatcher drain
+ordering, viewport assertions and the existing idle-wait policy remain intact.
 
 Pair with `cargo test -p kagi-git --lib panel_secret_scan_bounds_work_for_thousand_staged_files`:
 1,000 staged 1 MiB text entries must reach only the secret predicate with

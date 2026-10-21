@@ -22,11 +22,7 @@ use crate::pr_fields_focus::OfflineGh;
 
 fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .expect("draw the PR window");
+    crate::presentation_support::paint(cx, window);
 }
 
 /// The parked draft of `base_repo`'s #7.

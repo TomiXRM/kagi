@@ -34,11 +34,7 @@ esac
 
 fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .unwrap();
+    crate::presentation_support::paint(cx, window);
 }
 
 fn composer(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> String {

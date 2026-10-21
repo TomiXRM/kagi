@@ -68,11 +68,7 @@ impl Drop for NoSendCli {
 }
 
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
-    cx.update_window(window, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .unwrap();
+    crate::presentation_support::paint(cx, window);
     cx.run_until_parked();
 }
 

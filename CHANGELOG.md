@@ -21,6 +21,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Reserve generic-operation cautions for actual fetched-path overlap or nonempty rebase replay. Show retained checkout changes, ref-only Pull, sidebar publish safety, tag publication and linked-worktree creation as neutral English/Japanese previews instead of amber warnings; preserve execution guards and approved identities. (#1696)
+  - Give strict ff-only overlap warnings their own commit/stash-and-retry guidance instead of advertising unavailable ordinary-Pull buttons. Keep untracked paths that conflict with the checkout target blocked before admission, while unrelated untracked files stay quiet.
 
 ## [0.47.0] - 2026-10-21
 

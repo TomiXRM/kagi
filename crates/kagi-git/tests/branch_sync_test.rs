@@ -307,15 +307,25 @@ fn current_pull_ff_keeps_dirty_paths_safe_and_accepts_newer_approved_upstream() 
         git(&r.local, &["add", dirty]);
         write_file(&r.local, dirty, "approved unstaged local content\n");
         write_file(&r.local, "untracked.txt", "preserve untracked content\n");
+        let before_plan = Checkout::read(&r.local);
+        let local_refs = git_output(&r.local, &["show-ref", "--heads"]);
         let repo = Repository::open(&r.local).unwrap();
         let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
         assert!(plan.blockers.is_empty());
+        assert_eq!(Checkout::read(&r.local), before_plan);
+        assert_eq!(git_output(&r.local, &["show-ref", "--heads"]), local_refs);
         if overlapping {
             assert!(plan.warnings.iter().any(|note| matches!(
                 note,
                 kagi_domain::plan_note::PlanNote::Pull(
-                    kagi_domain::plan_note::PullNote::LocalChangesOverlap { paths }
+                    kagi_domain::plan_note::PullNote::StrictFfLocalChangesOverlap { paths }
                 ) if paths == &[dirty.to_string()]
+            )));
+            assert!(!plan.warnings.iter().any(|note| matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Pull(
+                    kagi_domain::plan_note::PullNote::LocalChangesOverlap { .. }
+                )
             )));
         } else {
             assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
@@ -333,6 +343,7 @@ fn current_pull_ff_keeps_dirty_paths_safe_and_accepts_newer_approved_upstream() 
                 "strict FF must never overwrite dirty paths"
             );
             assert_eq!(Checkout::read(&r.local), before);
+            assert_eq!(git_output(&r.local, &["show-ref", "--heads"]), local_refs);
         } else {
             assert!(matches!(outcome.unwrap(), PullOutcome::FastForward { .. }));
             assert_eq!(rev_parse(&r.local, "HEAD"), rev_parse(&other, "HEAD"));

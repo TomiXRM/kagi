@@ -620,7 +620,7 @@ pub(crate) fn plan_pull_branch_ff_with_status(
     if is_current && blockers.is_empty() && !up_to_date {
         let prediction = plan_pull_restore_conflicts(repo, branch_name)?;
         if !prediction.overlapping.is_empty() {
-            warnings.push(PlanNote::Pull(PullNote::LocalChangesOverlap {
+            warnings.push(PlanNote::Pull(PullNote::StrictFfLocalChangesOverlap {
                 paths: prediction.overlapping,
             }));
         }

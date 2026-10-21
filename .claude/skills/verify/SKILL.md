@@ -4217,13 +4217,24 @@ and `queue_refuses_a_blocked_checkout` (a dirty-tree blocker no longer prevents
 busy enqueue; its fresh head plan refuses without writing), plus #1028's
 `queue_checkout_transient_blocker_clears` (a staged overlap initially blocks
 checkout, the held predecessor commits it, then the fresh clean checkout runs),
-`queue_busy_checkout_preserves_local_changes` (idle opens the modal normally;
-busy shows the strip at once, then safely carries unrelated staged and untracked
-work through checkout without a caution modal, preserving index content and files) and
+`queue_busy_checkout_preserves_local_changes` (idle checkout safely carries
+unrelated staged and untracked work without a caution modal; busy shows the
+strip at once and preserves those contents after replan. Untracked target-path
+collisions instead produce a concrete-path blocker before idle admission) and
 `queue_checkout_missing_ref_refuses` (a missing ref is statically rejected with
 the localized footer/toast and a durable refusal receipt), and
 `queue_checkout_linked_worktree_refuses` (a branch checked out in another
 worktree cannot enter the busy queue; its typed blocker reaches the oplog).
+
+For #1696 review regressions, scope
+`KAGI_GUI_E2E_ONLY='pull_ff_only_current_tree_consistency,queue_busy_checkout_preserves_local_changes'`.
+The strict ff-only card shows its own EN/JA commit/stash-and-retry overlap note,
+never buttons offered only by ordinary Pull. Cancel and execution refusal retain
+the dirty files, index and refs. Checkout distinguishes unrelated untracked files
+from target paths that safe checkout would overwrite; the latter refuse before
+execution. Backend checkout tests also cover file/directory collisions and target
+paths unchanged between HEAD and the destination.
+
 #1032 adds `queue_commit_checkout_busy_replans` (direct busy
 `open_checkout_commit_modal` freezes the target OID; the head plan reads the
 predecessor's new HEAD; an external HEAD change after confirm makes preflight

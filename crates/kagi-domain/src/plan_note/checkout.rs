@@ -28,8 +28,8 @@ pub enum CheckoutNote {
     /// (no-op family).
     CommitAlreadyHead,
     /// blocker (helper `predict_checkout_conflict`, shared by `plan_checkout`
-    /// and `plan_checkout_commit`) — locally modified tracked paths overlap
-    /// the target tree; a safe-mode checkout would be refused.
+    /// and `plan_checkout_commit`) — local edits or untracked obstructions
+    /// overlap target writes; a safe-mode checkout would be refused.
     ///
     /// `files` is the **list**, not a pre-joined string (#454): the UI renders
     /// it as a scrollable list instead of a comma wall inside the sentence —

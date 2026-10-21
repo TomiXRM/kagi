@@ -15,6 +15,9 @@ pub enum PullNote {
     /// Direct Pull would touch these locally changed paths. Explicitly save
     /// them (stash or commit) before executing; this is not a history conflict.
     LocalChangesOverlap { paths: Vec<String> },
+    /// Strict FF would overwrite these local paths. Its generic confirmation
+    /// has no stash/review choices: save the changes separately, then retry.
+    StrictFfLocalChangesOverlap { paths: Vec<String> },
     /// warning (`KagiApp` local pull orchestration): dirty work will be saved
     /// before pull and restored afterwards.
     AutoStash { parts: DirtyParts, untracked: usize },
@@ -117,6 +120,10 @@ impl PullNote {
         match self {
             PullNote::LocalChangesOverlap { paths } => format!(
                 "Incoming changes would overwrite local changes in:\n{}\nChoose Stash & Pull to save and restore your changes, or Review changes to inspect, edit, or commit them first.",
+                path_block_en(paths)
+            ),
+            PullNote::StrictFfLocalChangesOverlap { paths } => format!(
+                crate::advice_template_en!(PullStrictFfLocalChangesOverlap),
                 path_block_en(paths)
             ),
             PullNote::AutoStash { parts, untracked } => {
@@ -347,6 +354,24 @@ mod tests {
     use super::*;
 
     // ── PullNote golden tests ──────────────────────────────────────────
+
+    #[test]
+    fn strict_ff_overlap_names_paths_and_requires_separate_protection() {
+        let note = PullNote::StrictFfLocalChangesOverlap {
+            paths: vec!["shared.txt".into(), "日本語.rs".into()],
+        };
+        let expected = "Incoming changes would overwrite local changes in:\n  - shared.txt\n  - 日本語.rs\nCancel this pull, commit or stash the changes to these paths, then retry the fast-forward-only pull.";
+        assert_eq!(note.message_en(), expected);
+        assert_eq!(note.message_display_en(), expected);
+        assert!(!expected.contains("Stash & Pull"));
+        assert!(!expected.contains("Review changes"));
+        let ordinary = PullNote::LocalChangesOverlap {
+            paths: vec!["shared.txt".into()],
+        }
+        .message_display_en();
+        assert!(ordinary.contains("Stash & Pull"));
+        assert!(ordinary.contains("Review changes"));
+    }
 
     #[test]
     fn auto_stash_describes_the_complete_sequence() {

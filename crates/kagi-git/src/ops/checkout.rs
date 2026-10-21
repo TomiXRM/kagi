@@ -20,17 +20,13 @@ use kagi_domain::remote::shell_quote;
 /// - Target branch is already the current HEAD branch (no-op would be confusing).
 /// - Target branch is checked out in another registered worktree.
 /// - Repository is in a conflict state (`status.conflicted` is non-empty).
-/// - Staged / unstaged changes exist **and** overlap the files the checkout must
-///   rewrite (the HEAD-tree → target-tree diff). Only then would a safe-mode
-///   checkout actually be refused; the user is pointed at stash. Non-overlapping
-///   changes are carried over to the target branch and merely warned about.
+/// - Staged / unstaged changes overlap files the checkout must rewrite
+///   (the HEAD-tree → target-tree diff).
+/// - An untracked path obstructs a target file the checkout must write, including
+///   directory/file collisions. Safe checkout refuses a newly added target file
+///   even when the untracked file has identical contents.
 ///
-/// # Warning conditions
-///
-/// - Staged / unstaged changes that do **not** overlap the checkout — git carries
-///   them over to the target branch; the user is told so.
-/// - Untracked files exist.  The checkout itself will not touch them but users
-///   are reminded they remain after switching branches.
+/// Unrelated local changes and untracked files are carried over quietly.
 ///
 /// # Errors
 ///
@@ -84,14 +80,10 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         }));
     }
 
-    // Staged / unstaged changes — Guarded policy, but only a *real* collision
-    // blocks. A safe-mode `checkout_tree` carries local changes over to the
-    // target branch and refuses only when a locally-modified tracked path
-    // overlaps a path the checkout must rewrite (HEAD-tree → target-tree diff).
-    // So switch freely when nothing collides, and point at stash only when it
-    // does — mirroring `plan_checkout_commit` so the plan matches what execute
-    // actually does (no forced stash-before-every-switch).
-    if branch_exists && (!status.staged.is_empty() || !status.unstaged.is_empty()) {
+    // Both tracked edits and untracked obstructions can make safe checkout
+    // refuse. Analyse only the HEAD → target delta: merely existing in the
+    // target tree does not mean a path needs to be rewritten.
+    if branch_exists && status.is_dirty() {
         let target_oid = repo
             .find_branch(branch, BranchType::Local)
             .ok()
@@ -267,11 +259,11 @@ pub(crate) fn execute_checkout(repo: &Repository, branch: &str) -> Result<(), Gi
 /// Analyse whether checking out `id` as detached HEAD is safe and return an
 /// [`OperationPlan`].
 ///
-/// Dirty working-tree state is surfaced as a warning, not a blocker: execution
-/// still uses `checkout_tree(...safe())`, so libgit2 refuses rather than
-/// overwriting local changes. This keeps the normal plan → confirm → preflight
-/// → execute → verify pipeline intact while preserving the repository on safe
-/// checkout failure.
+/// Known tracked overlaps and untracked obstructions block just as they do for
+/// branch checkout. Other dirty state retains the detached checkout's warning;
+/// execution still uses `checkout_tree(...safe())` and never overwrites local
+/// changes to force a checkout. The normal plan → confirm → preflight → execute
+/// → verify pipeline remains intact.
 pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
@@ -310,11 +302,8 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     }
 
     if status.is_dirty() {
-        // BUG-2: in-memory dry-run. A safe-mode `checkout_tree` only fails when a
-        // locally-modified tracked path overlaps a path the checkout would
-        // rewrite (HEAD-tree → target-tree diff). If the dirty paths overlap that
-        // set, the green "proceed" plan would error in the footer — promote the
-        // warning to a blocker so the plan matches what execute actually does.
+        // Share branch checkout's tracked-overlap and untracked-obstruction
+        // prediction so a known safe-checkout refusal blocks before admission.
         match predict_checkout_conflict(repo, &head, target_oid, &status) {
             Some(blocker) => blockers.push(blocker),
             None => {
@@ -381,18 +370,14 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     })
 }
 
-/// BUG-2 dry-run: predict whether a safe-mode checkout of `target_oid` would be
-/// refused because a locally-modified tracked path overlaps a path the checkout
-/// must rewrite. Used for **both** branch and commit checkout — the target is
-/// just a commit oid in either case (a branch's tip).
+/// Predict path collisions for **both** branch and detached-commit checkout.
 ///
-/// Mirrors [`predict_stash_pop_conflict`] in spirit: pure in-memory analysis,
-/// **never** touches the working tree or HEAD. Returns `Some(blocker)` when the
-/// dirty (staged or unstaged) tracked paths intersect the HEAD-tree → target-tree
-/// diff. Untracked files cannot conflict with a safe checkout, so they are
-/// ignored here (libgit2 leaves them in place). On any analysis failure we return
-/// `None` (fall back to the existing warning) — never invent a blocker we cannot
-/// substantiate.
+/// Read-only analysis of the HEAD-tree → target-tree diff: tracked edits can
+/// collide with rewritten paths, and untracked paths can obstruct target writes.
+/// Component-wise matching also catches file/directory obstructions without
+/// confusing `dir` with `directory`. Unchanged target paths and deletions alone
+/// do not obstruct untracked files. On analysis failure return `None` rather
+/// than inventing an unsubstantiated blocker; execution remains safe-mode only.
 fn predict_checkout_conflict(
     repo: &Repository,
     head: &Head,
@@ -426,12 +411,27 @@ fn predict_checkout_conflict(
         return None;
     }
 
-    // Locally-modified tracked paths (staged + unstaged). Untracked excluded.
+    // Locally-modified tracked paths (staged + unstaged).
     let mut overlap: Vec<String> = Vec::new();
     for f in status.staged.iter().chain(status.unstaged.iter()) {
         let p = f.path.to_string_lossy().into_owned();
         if touched.contains(&p) && !overlap.contains(&p) {
             overlap.push(p);
+        }
+    }
+    for local in &status.untracked {
+        let obstructs_target = diff.deltas().any(|delta| {
+            let target = delta.new_file();
+            target.exists()
+                && target
+                    .path()
+                    .is_some_and(|path| local.starts_with(path) || path.starts_with(local))
+        });
+        if obstructs_target {
+            let path = local.to_string_lossy().into_owned();
+            if !overlap.contains(&path) {
+                overlap.push(path);
+            }
         }
     }
     if overlap.is_empty() {

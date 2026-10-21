@@ -13,6 +13,8 @@ pub(crate) const ADVICE_AUTO_STASH: &str =
 
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
+pub(crate) const ADVICE_PULL_STRICT_FF_LOCAL_CHANGES_OVERLAP: &str =
+    "incoming の変更が次のローカル変更を上書きします:{}\nこの Pull をキャンセルし、対象パスの変更を commit または stash してから、fast-forward のみの Pull を再試行してください。";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
     "commit 済みの履歴が conflict する見込みです。stash では解決できません。解決方法を確認してから、merge して Conflict Mode で解決するか、キャンセルできます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
@@ -82,6 +84,10 @@ pub fn note_ja(note: &PullNote) -> String {
         PullNote::LocalChangesOverlap { paths } => format!(
             "incoming の変更が次のローカル変更に触れます:{}\n「StashしてPull」で変更を保存・復元するか、「変更を確認」で先に確認・編集・commit できます。",
             path_block_ja(paths)
+        ),
+        PullNote::StrictFfLocalChangesOverlap { paths } => super::advice_text(
+            Msg::AdvicePullStrictFfLocalChangesOverlap,
+            &[&path_block_ja(paths)],
         ),
         PullNote::RestoreConflict { paths } => {
             super::advice_text(Msg::AdvicePullRestoreConflict, &[&path_block_ja(paths)])
@@ -199,6 +205,23 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_ff_overlap_ja_golden_and_ordinary_choices_stay_distinct() {
+        let paths = vec!["shared.txt".into(), "日本語.rs".into()];
+        let text = note_ja(&PullNote::StrictFfLocalChangesOverlap {
+            paths: paths.clone(),
+        });
+        assert_eq!(
+            text,
+            "incoming の変更が次のローカル変更を上書きします:\n  - shared.txt\n  - 日本語.rs\nこの Pull をキャンセルし、対象パスの変更を commit または stash してから、fast-forward のみの Pull を再試行してください。"
+        );
+        assert!(!text.contains("StashしてPull"));
+        assert!(!text.contains("変更を確認"));
+        let ordinary = note_ja(&PullNote::LocalChangesOverlap { paths });
+        assert!(ordinary.contains("StashしてPull"));
+        assert!(ordinary.contains("変更を確認"));
+    }
 
     #[test]
     fn contract_preserves_legacy_bytes_and_raw_paths() {

@@ -148,6 +148,7 @@ pub fn scenario_queue_checkout_transient_blocker_clears(cx: &mut VisualTestAppCo
 /// Busy checkout replans unrelated staged/untracked work without inventing a
 /// carry-over caution; the safe queued checkout runs and preserves local work.
 pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestAppContext) {
+    checkout_untracked_blockers(cx);
     let fixture = branches_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
@@ -195,6 +196,98 @@ pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestA
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_busy_checkout_preserves_local_changes");
+}
+
+/// Exercise the idle double-click admission that would otherwise execute a
+/// warning-free plan immediately, alongside the shared detached checkout plan.
+fn checkout_untracked_blockers(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for language in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        kagi_ui_core::i18n::set_lang(language);
+        for (path, content) in [
+            ("feat.txt", "untracked local bytes\n"),
+            ("feat.txt", "target bytes\n"),
+            ("feat.txt/local.txt", "untracked child\n"),
+            ("incoming", "untracked file\n"),
+        ] {
+            checkout_untracked_blocker_case(cx, path, content);
+        }
+    }
+}
+
+fn checkout_untracked_blocker_case(cx: &mut VisualTestAppContext, path: &str, content: &str) {
+    use kagi::ui::{button_style, dialog_a11y};
+    use kagi_domain::plan_note::{CheckoutNote, PlanNote};
+    use kagi_ui_core::i18n::Msg;
+
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["checkout", "-qb", "collision"]);
+    std::fs::write(repo.join("feat.txt"), "target bytes\n").unwrap();
+    std::fs::create_dir_all(repo.join("incoming")).unwrap();
+    std::fs::write(repo.join("incoming/child.txt"), "target child\n").unwrap();
+    git(&repo, &["add", "feat.txt", "incoming/child.txt"]);
+    git(&repo, &["commit", "-qm", "checkout targets"]);
+    let target = kagi_git::CommitId(rev_parse(&repo, &["HEAD"]));
+    git(&repo, &["checkout", "-q", "main"]);
+    std::fs::create_dir_all(repo.join(path).parent().unwrap()).unwrap();
+    std::fs::write(repo.join(path), content).unwrap();
+    let before = crate::macos::repo_fingerprint(&repo);
+    let index_before = git_output(&repo, &["ls-files", "--stage"]);
+    let (app, window) = mount(cx, &repo);
+
+    for (attempt, detached) in [false, true].into_iter().enumerate() {
+        app.update(cx, |app, cx| {
+            if detached {
+                app.open_checkout_commit_modal(target.clone(), cx);
+            } else {
+                app.dblclick_checkout_branch("collision", cx);
+            }
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let modal = state.plan_modal().expect("collision must stop admission");
+            assert_eq!(
+                modal.plan.blockers,
+                vec![PlanNote::Checkout(CheckoutNote::CheckoutOverlap {
+                    count: 1,
+                    files: vec![path.into()],
+                })]
+            );
+            assert!(!state.app_sessions.has_leases(), "no checkout admitted");
+        });
+        assert!(drawn(cx, window, &format!("plan-note-path-{path}")));
+        assert_eq!(
+            dialog_a11y::recorded_note("plan-blocker-0").unwrap().1,
+            Msg::PlanOverlapSummary.t().replace("{}", "1"),
+            "the actual blocker summary is localized"
+        );
+        assert!(
+            button_style::recorded_modal_button("plan-confirm")
+                .unwrap()
+                .disabled
+        );
+        assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), attempt);
+        click(cx, window, "plan-confirm");
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+        // Bypass the disabled button only to prove the existing execution
+        // safeguard records Refused rather than starting a failing checkout.
+        app.update(cx, |app, cx| app.start_checkout(cx));
+        cx.run_until_parked();
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.len(), attempt + 1);
+        assert!(entries.iter().all(|entry| matches!(
+            &entry.outcome,
+            OpOutcome::Refused { blockers } if blockers.iter().any(|note| note.contains(path))
+        )));
+        assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+        assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+        assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index_before);
+        assert_eq!(std::fs::read_to_string(repo.join(path)).unwrap(), content);
+    }
+    unmount(cx, app, window);
 }
 
 /// Missing refs are static and refused with a reason, without a queued plan.

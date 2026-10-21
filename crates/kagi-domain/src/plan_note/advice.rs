@@ -469,6 +469,9 @@ macro_rules! advice_template_en {
     (PullNoUpstreamWithHint) => {
         "No upstream configured for branch '{}': {}. Set one with `git branch --set-upstream-to=<remote>/<branch>`."
     };
+    (PullStrictFfLocalChangesOverlap) => {
+        "Incoming changes would overwrite local changes in:{}\nCancel this pull, commit or stash the changes to these paths, then retry the fast-forward-only pull."
+    };
     (PullMergePrediction) => {
         "Plan-time merge prediction: the current upstream tip would conflict with HEAD. Execute is NOT blocked (fetch may change things), but be aware that if the upstream has not changed, execute will fail safely leaving the repo untouched."
     };

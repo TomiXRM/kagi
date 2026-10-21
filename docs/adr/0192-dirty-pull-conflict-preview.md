@@ -80,6 +80,8 @@ remote と同一とは仮定しない。非 current branch は、どの worktree
 `Operation::PullBranchFf` の strict policy は維持し、通常の merge 可能な Pull には
 切り替えない。current branch の計画は backend でも working-tree digest を凍結し、
 conflict は blocker とし、取得済みの更新とローカルの変更が重なる path がある場合のみ warning を示す（#1696）。
+strict ff-only の warning は重なる path を commit / stash してから再実行するよう案内し、
+この汎用 card に存在しない通常 Pull の「StashしてPull」「変更を確認」は案内しない。
 実行時は取得した tree が dirty path に触れないことを既存の guard で検査し、
 HEAD が旧 tree を指す間に `checkout_tree(safe)` で index と tracked files を更新してから
 branch ref を進める。成功時は変更・追加・削除が新しい HEAD と一致し、ref だけが先に進んで

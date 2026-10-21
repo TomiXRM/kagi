@@ -136,6 +136,9 @@ Pull's fetched incoming-path overlap prediction; unrelated staged, unstaged and
 untracked paths create no warning. Non-current Pull remains ref-only, including
 with a dirty or conflicted active checkout. Its unchanged working tree/index is
 neutral AFTER context, not a caution.
+Strict ff-only Pull uses its own overlap note: commit or stash the listed paths,
+then retry. Only ordinary Pull's choice card may suggest its Stash & Pull or
+Review changes actions; the generic ff-only card must not advertise absent buttons.
 
 Sidebar Push's no-force guarantee, tag publication/refusal guarantees, linked
 worktree creation scope, and checkout's retained local changes are neutral EN/JA
@@ -145,7 +148,9 @@ start remain explicit without amber triangles. Rebase conflict caution requires
 at least one replay candidate in its typed scope; zero replay creates no caution.
 
 Checkout's existing warning/blocker-based direct execution now admits unrelated
-local changes. Pull/Push entrypoint policy remains owned by #1697. None of these
-presentation changes removes overlap checks, safe checkout, frozen identity/
+local changes. Untracked paths that safe checkout would overwrite remain concrete
+path blockers, including file/directory collisions; retained unrelated paths are
+still neutral context. Pull/Push entrypoint policy remains owned by #1697. None of
+these presentation changes removes overlap checks, safe checkout, frozen identity/
 digest preflight, worktree occupancy checks, lifecycle verification or receipts.
 

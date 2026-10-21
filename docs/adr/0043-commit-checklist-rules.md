@@ -64,3 +64,45 @@ Commit Checklist の各ルールの**判定方法**を確定する。ADR-0039 �
 - conflict marker / secret 走査は **テキスト BLOB の先頭一定量のみ**で性能を担保
 - 閾値・除外パターンは env / 定数で調整可。カスタムルール(ユーザー定義)は MVP 外
 - checklist を独立 module にすることで commit / amend の両 plan から再利用し、unit test を集中させられる
+
+## Amendment — 2026-10-21: pre-execution secret review (#1702)
+
+The Commit Panel's status refresh uses the same rule-5 filename/content
+predicates as `plan_commit`, without running the full checklist. Rule-5 paths
+stay unfolded and carry a localized warning in wide and compact file lists.
+The shared composer shows a short warning immediately above Commit, offering
+review or the existing Unstage action to exclude the affected files.
+
+Routine warning-free commits retain their quiet path. A fresh commit plan with
+a rule-5 filename/content finding instead retains the existing confirmation
+card, requiring a separate explicit confirmation before any write. Findings
+remain warnings, not blockers; approval is scoped to the plan's staged
+path/OID/mode/stage digest and is not retained for a later commit. The backend
+preflight still rejects a staging change after that approval. Other warning
+categories do not change quiet-commit policy in this issue.
+
+Panel rendering performs no Git reads and stores only the current read's
+detected path set. Unstaging refreshes that set; unstaged content is never
+mistaken for content being committed. The localized row warning is compact,
+and its tooltip/accessible description carries the review/exclusion advice.
+
+Rule-5 file identity is the original staged status `PathBuf`, retained when the
+shared filename/BLOB rules detect a finding. Checklist plan notes contain
+display-only text and must never be decoded or reverse-matched to identify a
+file: invalid UTF-8 bytes can be replaced in that text. The panel warning set
+uses the original paths for both row warnings and generated/artifact fold
+exclusion, including a valid secret basename beneath a non-UTF-8 directory.
+
+Panel refresh may also run synchronously after staging. Its secret-only scan
+therefore passes at most the first 8 KiB of each index BLOB to the shared
+content predicate and never runs conflict-marker or large-binary rules.
+A filename finding needs no BLOB lookup or content scan. The full checklist
+still runs at commit planning, with its unchanged 1 MiB marker bound.
+The 8 KiB limit bounds classification work, not Git object decoding: libgit2
+may still load a complete BLOB. No rendering or safety rule is weakened.
+
+`panel_secret_scan_bounds_work_for_thousand_staged_files` stages 1,000 index
+entries backed by a 1 MiB text BLOB. Test-only counters at the actual classifier
+dispatch boundaries require zero full-checklist calls and exactly 8,192,000
+prefix bytes, instead of 1,000 full marker scans.
+

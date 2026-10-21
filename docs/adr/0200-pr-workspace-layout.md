@@ -282,9 +282,16 @@ CDN, disk-cached, once per process per login: no API call and no token.
   `(SessionId, PrKey)`, not PR number or repository identity alone: two local
   sessions can show the same GitHub PR without sharing drafts. Rebinding parks
   through the recorded owner, then loads the destination owner's draft. A
-  posted comment clears only its owner's draft and re-reads the thread through
-  the existing owner-frozen conversation load; it resets the live input only
-  when that input is bound to the same owner and PR.
+  posted comment or review consumes only its captured storage version and
+  re-reads the thread through the existing owner-frozen conversation load.
+  Newer edits, other PRs, addressed repositories and clones remain untouched.
+  Persistence also carries that owner boundary: each session holds an exclusive
+  recovery-slot lease for queued edits and admitted posts. Restore reads observe
+  that scope weakly, so closing a loading tab does not reserve its saved slot
+  against an immediate reopen.
+  Two windows on the identical clone and addressed PR never share storage
+  versions. Stable recovery slots survive restart without using runtime
+  SessionIds as filenames; a posted owner clears only its captured slot/version.
 
 ### 10. The checks card and the review verdicts (mock 7a/7b)
 
@@ -442,12 +449,19 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   高さは固定せず、共有の 40px avatar + 上下 12px + 1px の hairline から 65px に
   決まる（固定 64px は avatar を 1px 切っていた）。header は avatar 列幅を
   確保して列を揃える。
-- **下書き表示**: PR の下書きは従来どおり `PrTab::comment_draft` のメモリ保持で、
-  永続化も新しい fetch も追加しない。composer の「下書き保存済み」はその保持を
-  指し、Issues 側だけが `drafts.rs` への保存中/保存済みを出し分ける。
-- **state**: 追加したのは `PrModeState::comment_preview`（`checks_open` と同じ
-  view flag）1 つだけ。書き込み経路 `start_pr_comment` / `start_pr_review`、
-  owner 固定、transport 記録は変更しない。
+- **下書き表示 (#1702)**: PR も ADR-0201 の既存 `drafts.rs` queue / atomic replace /
+  250ms background flush / quit flush を共有する。キーは clone path +
+  `:pr:<base_repo>:<number>`。同番号の Issue Reply とは衝突せず、タブや session を
+  閉じても再起動しても復元する。保存成功前は既存 EN/JA の保存中表示、失敗時には
+  保存済みを表示せず既存の notice にエラーを渡す。新しい保存先や設定は設けない。
+- **state**: `PrModeState::comment_preview` は view flag。#1702 で PrTab に
+  persistence version / loading / saving / error 状態を追加した。投稿時の version を
+  completion へ渡すが、owner 固定と transport 記録の境界は変更しない。
+  保存済み draft の復元中は Comment / Approve / Request Changes の dispatch を拒否する。
+  空本文で許可される Approve も、まだ表示していない保存版を消費してはいけない。
+  成功 completion の共有 input 失効は投稿時の session + PrKey と保存版で判定し、
+  PR mode / tab の存続には依存しない。Graph へ移動して mode が破棄された後も、
+  再表示が投稿済み本文を新規編集として queue し直してはいけない。
 - **i18n**: 両方が使う文言は `ComposerWrite` / `ComposerPreview` /
   `ComposerDraftSaved` / `ComposerDraftSaving` に改名した（EN/JA の文字列は不変）。
 

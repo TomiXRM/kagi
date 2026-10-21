@@ -1304,7 +1304,7 @@ pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
 /// result rather than delivering it to a same-path reopen.
 pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
     let _consent = crate::gui_isolation::SavedKeys::keep(&["smart_commit_consent_accepted"]);
-    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("codex"));
     let fixture_a = build_fixture();
     let fixture_b = build_fixture();
     let repo_a = fixture_a.path().canonicalize().expect("canonical A");
@@ -1317,6 +1317,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
         app.smart_commit.llm_enabled = true;
         app.smart_commit.provider =
             kagi::ui::smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex);
+        app.smart_commit.consent_provider = Some(app.smart_commit.provider);
     });
     kagi::ui::e2e::queue_smart_generation(
         cx.background_executor

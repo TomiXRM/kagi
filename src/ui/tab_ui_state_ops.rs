@@ -89,6 +89,7 @@ impl TabUiState {
             cleanup_selected,
             branch_cleanup_open,
             pr_mode,
+            pr_comment_drafts,
             pr_menu,
             // Focus/cache state follows pr_menu, like filter_controls.menu_keys.
             pr_menu_keys: _,
@@ -189,6 +190,7 @@ impl TabUiState {
             (!cleanup_selected.is_empty(), "cleanup_selected"),
             (*branch_cleanup_open, "branch_cleanup_open"),
             (pr_mode.is_some(), "pr_mode"),
+            (pr_comment_drafts.is_some(), "pr_comment_drafts"),
             (pr_menu.is_some(), "pr_menu"),
             (filter_controls.menu.is_some(), "filter_controls"),
             (*smart_commit_generating, "smart_commit_generating"),

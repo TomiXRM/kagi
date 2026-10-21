@@ -8,6 +8,8 @@
 //! recovery, so no `ChecklistTitle`/`ChecklistRecovery` exist.
 
 /// Findings from the staged-content checklist (ADR-0043 rules 4/5/6).
+/// Path strings are display-only; retain the original staged `PathBuf` outside
+/// these notes when associating findings with files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChecklistNote {
     /// warning (rule 5, file-name heuristic) — the staged file's name looks
@@ -24,6 +26,14 @@ pub enum ChecklistNote {
 }
 
 impl ChecklistNote {
+    /// Whether this finding requires an explicit secret review (rule 5).
+    pub fn is_secret(&self) -> bool {
+        matches!(
+            self,
+            Self::PossibleSecretFileStaged { .. } | Self::PossibleSecretContentStaged { .. }
+        )
+    }
+
     /// Byte-identical to the legacy `kagi_domain::checklist` strings
     /// (golden-tested).
     pub fn message_en(&self) -> String {

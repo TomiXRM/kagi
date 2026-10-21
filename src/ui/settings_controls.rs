@@ -23,6 +23,8 @@ pub(crate) struct SettingsControls {
 #[derive(Clone)]
 pub(super) struct SmartConsentAlert {
     pub window: gpui::WindowId,
+    pub provider: SmartProvider,
+    pub revision: u64,
     pub focus: gpui::FocusHandle,
     pub alert_return_focus: super::overlay_focus::AlertReturnFocus,
 }
@@ -81,10 +83,15 @@ pub(super) fn provider_chips(
         selected,
         keyboard_nav::Activation::Manual,
         pointer_focus,
-        move |slot, _, _, cx| {
+        move |slot, _, window, cx| {
             if let Some((_, provider, true)) = choices.get(slot) {
                 let _ = owner.update(cx, |app, cx| {
+                    let changed = app.smart_commit.provider != *provider;
+                    let enabled = app.smart_commit.llm_enabled;
                     app.smart_commit.set_provider(*provider);
+                    if changed && enabled {
+                        app.request_settings_smart_enabled(true, window, cx);
+                    }
                     cx.notify();
                 });
             }
@@ -250,7 +257,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !on || self.smart_commit.consent_accepted {
+        if !on || self.smart_commit.has_consent() {
             self.smart_commit.set_enabled(on);
             if on {
                 self.refresh_smart_commit_detection(cx);
@@ -262,6 +269,8 @@ impl KagiApp {
             let focus = cx.focus_handle();
             self.settings_controls.smart_consent = Some(SmartConsentAlert {
                 window: window.window_handle().window_id(),
+                provider: self.smart_commit.provider,
+                revision: self.smart_commit.provider_revision,
                 alert_return_focus: super::overlay_focus::AlertReturnFocus::for_settings(
                     window,
                     cx,
@@ -288,8 +297,11 @@ impl KagiApp {
             return;
         };
         alert.alert_return_focus.restore_settings(window, cx);
-        if confirm {
-            self.smart_commit.accept_consent();
+        if confirm
+            && self
+                .smart_commit
+                .accept_consent(alert.provider, alert.revision)
+        {
             kagi_ui_core::klog!("smart-commit: llm enabled (consent given)");
             self.refresh_smart_commit_detection(cx);
         }
@@ -359,9 +371,14 @@ pub(super) fn smart_consent_alert(
             app.finish_settings_smart_consent(false, window, cx)
         });
     });
-    let card = super::modal_renderers_misc::smart_consent_card(confirm.clone(), cancel.clone(), cx)
-        .w(gpui::relative(0.9))
-        .max_w(super::theme::scaled_px(super::modal_shell::MODAL_W_MD));
+    let card = super::modal_renderers_misc::smart_consent_card(
+        alert.provider,
+        confirm.clone(),
+        cancel.clone(),
+        cx,
+    )
+    .w(gpui::relative(0.9))
+    .max_w(super::theme::scaled_px(super::modal_shell::MODAL_W_MD));
     let key_cancel = cancel.clone();
     let card = apply_dialog(
         "settings-smart-consent-alert",

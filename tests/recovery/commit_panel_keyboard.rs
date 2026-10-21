@@ -739,10 +739,10 @@ fn footer_geometry(window: AnyWindowHandle) -> (Bounds<Pixels>, Bounds<Pixels>) 
 
 fn glyph_modals(cx: &mut VisualTestAppContext, window: AnyWindowHandle, app: &Entity<KagiApp>) {
     let _consent = crate::gui_isolation::SavedKeys::keep(&["smart_commit_consent_accepted"]);
-    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("ollama"));
     // Stop at model selection: no keyboard leg approves generation or a repository write.
     app.update(cx, |app, cx| {
-        app.smart_commit.consent_accepted = true;
+        app.smart_commit.consent_provider = Some(kagi::ui::smart_commit::SmartProvider::Ollama);
         app.smart_commit.llm_enabled = true;
         app.smart_commit.ollama_available = true;
         app.smart_commit.provider = kagi::ui::smart_commit::SmartProvider::Ollama;

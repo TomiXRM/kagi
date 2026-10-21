@@ -1,4 +1,4 @@
-//! Shared commit-message / Issue draft autosave — ADR-0042.
+//! Shared commit-message / Issue / PR comment draft autosave — ADR-0042 / ADR-0201.
 //!
 //! Persists a work-in-progress commit message **per repository + branch** so it
 //! survives an application restart, and clears it once the commit succeeds.
@@ -31,16 +31,16 @@
 //! - [`load_draft`] — read the draft for a branch (`None` when absent/corrupt)
 //! - [`clear_draft`] — delete the draft for a branch (e.g. after a commit)
 //! - [`queue_issue_draft`] / [`flush_issue_draft_if_version`] — keyed Issue autosave
-//! - [`flush_issue_drafts`] — best-effort flush of every pending Issue draft
+//! - [`flush_issue_drafts`] — best-effort flush of pending Issue and PR drafts
 //! - [`load_issue_draft`] — read the latest pending or saved Issue draft, an
 //!   [`IssueDraftRecord`] (text plus a New Issue's picked labels / assignees),
 //!   as an [`IssueDraftLoad`]
 //! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
+//! - [`PrCommentDraftSession`] — leased, independently recoverable PR comments
 //!
-//! An Issue draft is stored per clone, per repository it is written to (the
-//! `<host>/<owner>/<repo>` the Issues mode posts to) and per Issue: the clone
-//! can address another repository after `gh repo set-default`, where the same
-//! number is another Issue (#940 review).
+//! Issue and PR drafts are stored per clone, addressed base repository and
+//! number. PR comments additionally lease a recovery slot per live session;
+//! they share the Issue queue, version tokens, atomic writer and shutdown flush.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -50,6 +50,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use kagi_domain::github::IssueCreateFields;
 
 use super::GitError;
+
+mod pr_comment;
+
+pub use pr_comment::{PrCommentDraftReader, PrCommentDraftSession};
 
 /// One Issue draft: the composer's text, plus the labels and assignees picked
 /// for a New Issue (#903; always empty for a Reply).
@@ -267,6 +271,9 @@ impl IssueDraftKey {
 #[derive(Default)]
 struct IssueDraftQueue {
     pending: BTreeMap<IssueDraftKey, IssueDraftRecord>,
+    // PR orphan recovery queues a destination before clearing its source.
+    // Persist that destination first, even when a source timer/quit flush wins.
+    recovered_to: BTreeMap<IssueDraftKey, IssueDraftKey>,
     // Retain versions after flush and clear for process-lifetime completion
     // guards, including when the tab that dispatched a write has closed.
     versions: BTreeMap<IssueDraftKey, u64>,
@@ -281,6 +288,19 @@ impl IssueDraftQueue {
             .expect("Issue draft version exhausted");
         self.versions.insert(key.clone(), self.last_version);
         self.last_version
+    }
+
+    fn persist_pending(&mut self, key: &IssueDraftKey) -> Result<bool, GitError> {
+        if let Some(destination) = self.recovered_to.get(key).cloned() {
+            self.persist_pending(&destination)?;
+            self.recovered_to.remove(key);
+        }
+        let Some(record) = self.pending.get(key) else {
+            return Ok(false);
+        };
+        persist_issue_draft(key, record)?;
+        self.pending.remove(key);
+        Ok(true)
     }
 }
 
@@ -305,7 +325,20 @@ pub fn queue_issue_draft(
     body: &str,
     fields: &IssueCreateFields,
 ) -> u64 {
-    let key = IssueDraftKey::new(repo, base_repo, number);
+    queue_composer_draft(
+        IssueDraftKey::new(repo, base_repo, number),
+        title,
+        body,
+        fields,
+    )
+}
+
+fn queue_composer_draft(
+    key: IssueDraftKey,
+    title: &str,
+    body: &str,
+    fields: &IssueCreateFields,
+) -> u64 {
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -327,7 +360,10 @@ pub fn queue_issue_draft(
 /// Read (or allocate) the process-lifetime version of this storage key, without
 /// filesystem I/O. Capture before loading and check again before applying it.
 pub fn issue_draft_version(repo: &Path, base_repo: &str, number: Option<u64>) -> u64 {
-    let key = IssueDraftKey::new(repo, base_repo, number);
+    composer_draft_version(IssueDraftKey::new(repo, base_repo, number))
+}
+
+fn composer_draft_version(key: IssueDraftKey) -> u64 {
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -376,12 +412,7 @@ pub fn flush_issue_draft_if_version(
     let Some(key) = key else {
         return Ok(false);
     };
-    let Some(record) = queue.pending.get(&key) else {
-        return Ok(false);
-    };
-    persist_issue_draft(&key, record)?;
-    queue.pending.remove(&key);
-    Ok(true)
+    queue.persist_pending(&key)
 }
 
 fn persist_issue_draft(key: &IssueDraftKey, record: &IssueDraftRecord) -> Result<(), GitError> {
@@ -511,18 +542,14 @@ pub fn flush_issue_drafts() -> Result<(), GitError> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut first_error = None;
-    queue.pending.retain(|key, record| {
-        let result = persist_issue_draft(key, record);
-        match result {
-            Ok(()) => false,
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-                true
+    let keys: Vec<_> = queue.pending.keys().cloned().collect();
+    for key in keys {
+        if let Err(error) = queue.persist_pending(&key) {
+            if first_error.is_none() {
+                first_error = Some(error);
             }
         }
-    });
+    }
     first_error.map_or(Ok(()), Err)
 }
 

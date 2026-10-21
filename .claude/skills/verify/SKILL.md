@@ -57,6 +57,59 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1702 use `KAGI_GUI_E2E_ONLY='smart_commit_settings_consent,commit_panel_,pr_same_number,pr_draft_,issue_create_fields,workspace_mode_toolbar,smart_picker_keyboard,smart_picker_empty,smart_commit_generation_owner,smart_generation_close_drops_panel,smart_commit_footer_provider,smart_generation_commit_boundary,smart_generation_replaced_panel'`
+with KEEP_GOING. The consent scenario covers Ollama/Codex/Claude Code in
+EN/JA and both Settings hosts, reapproval and stale selections without sending
+diffs to an external service. CLI fixtures are fail-closed local executables;
+provider selection/consent must not invoke them. `commit_panel_secret_warnings`
+checks filename and staged-content findings before Commit in wide/compact,
+EN/JA, List/Tree and 100%/167%, unchanged HEAD/index on the first click,
+explicit confirmation and removal after Unstage. PR draft coverage restores
+through the same queued atomic store as Issue drafts and checks key/version
+isolation. Tier B compares EN/JA before/after consent and staged file/footer
+warnings with only provider selection and cancellation, never Generate or
+an external service send. Retain a production binary before building gui-e2e.
+
+`pr_draft_loading_blocks_review` holds the real asynchronous restore while
+Approve is dispatched, then checks that the saved body is submitted only after
+restore. `pr_draft_post_after_graph` holds the admitted comment write, leaves
+PR mode through Graph, and requires reopening to retain an empty composer and
+one transport write. Both use fail-closed local gh fixtures.
+`pr_draft_same_clone_sessions` mounts two independent SessionIds/windows on
+the exact same canonical clone and addressed PR. The second restore must be
+empty rather than inherit the first draft; after the second owner edits again,
+the first owner's recorded post must clear only its own composer/storage.
+Graph/reopen must preserve the sibling's queued body.
+`pr_draft_restore_close_reopen` keeps the old restore pending, closes its
+repository tab and immediately reopens the same clone/PR. The new owner must
+restore before the old read is released; its subsequent edit must survive that
+obsolete completion, with no transport write.
+`pr_draft_post_close_failure`, `pr_draft_post_close_success`, and
+`pr_draft_post_close_unknown` start actual comment/review processes, wait for
+their start marker, close/reopen the same clone/PR, then release the transport.
+The test-only real-thread seam keeps the deterministic GUI dispatcher available
+while the actual local process is blocked. Failure recovers the original body;
+success never resurrects posted text; both preserve a newer owner's edit.
+Unknown uses incomplete stdin delivery, retains the body and reconcile
+requirement, and remains an Unknown receipt rather than becoming a known failure.
+A proven local stop still releases the process lease under the existing policy. Every leg
+asserts exactly one transport write and Graph/reopen persistence (10 legs total).
+This raises the #1702 filtered lane to 32 scenarios. Backend draft tests cover
+read-retry version invalidation, intervening edits/erasure, confirmed clears and
+another close/reopen after recovery with successful or failed persistence,
+in addition to exclusive
+slot claims, wrong-scope clear/flush rejection and recovery after all leases
+are dropped, including when only a higher slot still has unsent text. The
+reader lifetime regression requires cloned readers not to reserve a closed
+scope's slot and rejects reads after the original owner expires.
+The consent, commit-warning and PR/Issue draft scenarios reuse W3's
+`presentation_support` paint/mount helpers; scenario-owned dispatcher drain
+ordering, viewport assertions and the existing idle-wait policy remain intact.
+
+Pair with `cargo test -p kagi-git --lib panel_secret_scan_bounds_work_for_thousand_staged_files`:
+1,000 staged 1 MiB text entries must reach only the secret predicate with
+8 KiB per file and never the full conflict-marker checklist. This is a
+classification-work bound, not a bound on libgit2 object decoding or I/O.
 For #1706 W3 use
 `KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Shared helpers own byte-exact repository

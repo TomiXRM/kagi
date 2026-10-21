@@ -7,6 +7,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Disclose Smart Commit's actual provider, external CLI account and possible charges, and request fresh consent after switching providers. Show staged `.env`/secret warnings on file rows and above Commit in wide and compact layouts, retaining explicit confirmation only for these safety findings. Persist PR comment/review drafts through the same isolated atomic draft store as Issue composers, preserving newer edits after posting. (#1702)
+- Keep secret-warning identities byte-exact for non-UTF-8 staged paths. Block PR submission until its saved draft is restored, and retire the posted composer input even when Graph replaced PR mode before completion. (#1702 review)
+- Limit Commit Panel secret classification to each staged blob's first 8 KiB, without running the full conflict-marker checklist during status refresh. (#1702 review)
+- Isolate PR comment/review draft persistence between independent sessions of the same clone and PR, while retaining restart recovery and consuming only the posted owner's version. (#1702 review)
+- Restore a saved PR draft after closing a loading repository tab and immediately reopening the same clone; obsolete background reads no longer reserve the closed session's draft slot or replace the new owner's edits. (#1702 review)
+- Recover an unsent PR comment/review when its repository tab closes and reopens before a delayed failure or unknown completion, without replacing the returning owner's edits, restoring successfully posted text, or retrying the transport. Preserve distinct Failed/Unknown receipts and Unknown's reconciliation hold. (#1702 review)
 - Keep branch deletion labels neutral until the existing merged/squash judgment is known, and identify branch-cleanup targets in English and Japanese. Report merge/rebase conflicts as stopped rather than completed, distinguish failed/successful/unknown operations when their log cannot be saved, and explain up-to-date current-branch fast-forward Pulls. (#1699)
   - Preserve the immediate Operation Log undo/restore warning for successful or partially applied operations whose recording failed, without showing it for unchanged failures or refusals.
   - Propagate unreadable ancestry and squash evidence, so missing Git objects leave deletion menus neutral instead of falsely warning that a branch is unmerged.
@@ -17,6 +23,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Reuse existing Git helpers for plan status summaries, cherry-pick/revert conflict paths, and push remote selection without changing displayed text or operation safety ordering. (#1705)
 - Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, including Pull freshness/conflict scenarios, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
 - Share native GUI test repository witnesses, presentation matrices, squash evidence projections, writer waits and Pull/checkout fixtures while retaining scenario-owned safety assertions and teardown. No product behavior changes. (#1706)
+- Reuse shared native presentation helpers in Smart Commit consent, staged-secret and PR/Issue draft regressions while retaining their scenario-owned timing and safety assertions. (#1702)
 
 ### Fixed
 

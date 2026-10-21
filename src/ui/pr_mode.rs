@@ -45,6 +45,13 @@ use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, Main
 mod detail_controls;
 pub mod threads;
 pub mod viewed;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static COMMENT_RESTORE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// One open PR tab.
 pub struct PrTab {
     pub pr: PullRequest,
@@ -89,6 +96,10 @@ pub struct PrTab {
     /// The composer's text for this PR, parked here while another PR holds the
     /// box (ADR-0200).
     pub comment_draft: String,
+    pub comment_storage_version: u64,
+    pub comment_loading: bool,
+    pub comment_saving: bool,
+    pub comment_save_error: bool,
     /// ADR-0145: conflicts a merge would produce, computed locally on first
     /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
     /// = computed and clean, which is a different thing to say than "unknown".
@@ -339,6 +350,10 @@ impl KagiApp {
             line_comments: Vec::new(),
             conversation_loaded: false,
             comment_draft: String::new(),
+            comment_storage_version: 0,
+            comment_loading: false,
+            comment_saving: false,
+            comment_save_error: false,
             feed_list: ListState::new(0, gpui::ListAlignment::Top, px(400.)),
             feed_entries: std::rc::Rc::new(Vec::new()),
             conflicts: None,
@@ -357,6 +372,7 @@ impl KagiApp {
         m.active = Some(m.tabs.len() - 1);
         reset_view_if_not_conflicting(m, pr);
         cx.notify();
+        self.restore_pr_comment_draft(pr.key(), cx);
         self.prioritize_pr_details(pr.key(), cx);
         self.pr_mode_load_conversation(pr, cx);
         self.fetch_pr_for_open(pr.clone(), cx);
@@ -914,11 +930,13 @@ impl KagiApp {
     pub(crate) fn settle_pr_write(
         &mut self,
         owner: Option<crate::app::SessionId>,
-        repo: std::path::PathBuf,
+        drafts: kagi_git::drafts::PrCommentDraftSession,
         pr: PrKey,
+        version: u64,
         cx: &mut Context<Self>,
     ) {
-        self.clear_pr_comment_draft_for(owner, &pr, cx);
+        let repo = drafts.repo().to_path_buf();
+        self.clear_pr_comment_draft_for(owner, &drafts, &pr, version, cx);
         // The thread is re-read from the repository the PR lives in; with no
         // tab for it there is nothing to land the read on.
         if !self
@@ -936,23 +954,40 @@ impl KagiApp {
     pub(crate) fn clear_pr_comment_draft_for(
         &mut self,
         owner: Option<crate::app::SessionId>,
+        drafts: &kagi_git::drafts::PrCommentDraftSession,
         pr: &PrKey,
+        version: u64,
         cx: &mut Context<Self>,
     ) {
-        if let Some(mode) = self.pr_mode_of(owner) {
-            mode.settle_composer_for(pr);
-        }
-        if self
+        let Some(next) = drafts.clear_if_version(&pr.base_repo, pr.number, version) else {
+            return;
+        };
+        // The input outlives PR mode when Graph takes over. A consumed storage
+        // version invalidates its original owner's box even without a tab.
+        let reset_input = self
             .pr_comment_for
             .as_ref()
-            .is_some_and(|(held_owner, held_pr)| Some(*held_owner) == owner && held_pr == pr)
-        {
-            // `InputState::set_value` needs a `&mut Window`, which a completion
-            // callback has none of. Dropping the entity is what the next
-            // window-bearing frame rebuilds from the (now empty) draft.
+            .is_some_and(|(held, key)| Some(*held) == owner && key == pr);
+        if let Some(ui) = owner.and_then(|owner| self.ui.get_mut(&owner)) {
+            if let Some(mode) = ui.pr_mode.as_mut() {
+                if mode
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.pr.is(pr) && tab.comment_storage_version == version)
+                {
+                    mode.settle_composer_for(pr);
+                    if let Some(tab) = mode.tabs.iter_mut().find(|tab| tab.pr.is(pr)) {
+                        tab.comment_storage_version = next;
+                        tab.comment_saving = true;
+                    }
+                }
+            }
+        }
+        if reset_input {
             self.pr_comment_input = None;
             self.pr_comment_for = None;
         }
+        self.flush_pr_comment_draft(owner, drafts.clone(), pr.clone(), next, cx);
         cx.notify();
     }
 
@@ -993,7 +1028,20 @@ impl KagiApp {
                     .auto_grow(2, 8)
                     .placeholder(Msg::PrCommentPlaceholder.t())
             });
-            self.pr_comment_input = Some(input);
+            self.pr_comment_input = Some(input.clone());
+            cx.subscribe(&input, |app, input, event, cx| {
+                if matches!(event, gpui_component::input::InputEvent::Change)
+                    && app
+                        .pr_comment_input
+                        .as_ref()
+                        .is_some_and(|held| held.entity_id() == input.entity_id())
+                {
+                    if let Some((owner, pr)) = app.pr_comment_for.clone() {
+                        app.save_pr_comment_text(owner, pr, input.read(cx).value().to_string(), cx);
+                    }
+                }
+            })
+            .detach();
         }
         let Some(input) = self.pr_comment_input.clone() else {
             return;
@@ -1001,13 +1049,17 @@ impl KagiApp {
         if same_pr {
             // Same PR: the box is the truth, the tab keeps the copy.
             let text = input.read(cx).value();
-            if let Some(tab) = self
-                .pr_mode_mut()
-                .and_then(|m| m.active.and_then(|ix| m.tabs.get_mut(ix)))
+            if self
+                .pr_mode()
+                .and_then(|mode| mode.active.and_then(|ix| mode.tabs.get(ix)))
+                .is_some_and(|tab| tab.comment_draft != text.as_str())
             {
-                if tab.comment_draft.as_str() != text.as_str() {
-                    tab.comment_draft = text.to_string();
-                }
+                self.save_pr_comment_text(
+                    owner,
+                    self.pr_comment_for.as_ref().unwrap().1.clone(),
+                    text.to_string(),
+                    cx,
+                );
             }
             return;
         }
@@ -1019,14 +1071,7 @@ impl KagiApp {
         }
         let parked = input.read(cx).value();
         if let Some((previous_owner, previous)) = self.pr_comment_for.take() {
-            if let Some(tab) = self
-                .pr_mode_of(Some(previous_owner))
-                .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&previous)))
-            {
-                if tab.comment_draft.as_str() != parked.as_str() {
-                    tab.comment_draft = parked.to_string();
-                }
-            }
+            self.save_pr_comment_text(previous_owner, previous, parked.to_string(), cx);
         }
         let Some((open, draft)) = self
             .pr_mode()
@@ -1037,6 +1082,221 @@ impl KagiApp {
         };
         input.update(cx, |state, cx| state.set_value(draft, window, cx));
         self.pr_comment_for = Some((owner, open));
+    }
+
+    pub(crate) fn recover_pr_comment_after_post(
+        &mut self,
+        owner: crate::app::SessionId,
+        drafts: kagi_git::drafts::PrCommentDraftSession,
+        pr: PrKey,
+        cx: &mut Context<Self>,
+    ) {
+        if self.ui.contains_key(&owner) {
+            return; // Its own still-open composer already retains the body.
+        }
+        let repo = drafts.repo().to_path_buf();
+        // No completion closure retains another clone: release the post's
+        // lease before any returning owner attempts orphan recovery.
+        drop(drafts);
+        let live_input = self
+            .pr_comment_input
+            .as_ref()
+            .is_some_and(|input| !input.read(cx).value().is_empty());
+        let protected = self
+            .pr_comment_for
+            .as_ref()
+            .filter(|(_, key)| live_input && key == &pr)
+            .map(|(held, _)| *held);
+        for (returning, ui) in &mut self.ui {
+            if returning.incarnation <= owner.incarnation || protected == Some(*returning) {
+                continue;
+            }
+            let Some(scope) = ui
+                .pr_comment_drafts
+                .as_ref()
+                .filter(|scope| scope.repo() == repo.as_path())
+            else {
+                continue;
+            };
+            let tab = ui
+                .pr_mode
+                .as_mut()
+                .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)));
+            if tab
+                .as_ref()
+                .is_some_and(|tab| !tab.comment_draft.is_empty())
+            {
+                continue;
+            }
+            let Some((version, reader)) = scope.retry_reader_if_untouched(&pr.base_repo, pr.number)
+            else {
+                continue;
+            };
+            // If Graph retired PR mode, the rearmed first load is enough.
+            if let Some(tab) = tab {
+                tab.comment_storage_version = version;
+                tab.comment_loading = true;
+                tab.comment_saving = false;
+                Self::restore_pr_comment_for(*returning, pr.clone(), version, reader, cx);
+            }
+        }
+    }
+
+    fn restore_pr_comment_draft(&mut self, pr: PrKey, cx: &mut Context<Self>) {
+        let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
+            return;
+        };
+        let Some(ui) = self.ui_mut() else {
+            return;
+        };
+        let drafts = ui
+            .pr_comment_drafts
+            .get_or_insert_with(|| kagi_git::drafts::PrCommentDraftSession::new(&repo));
+        let version = drafts.version(&pr.base_repo, pr.number);
+        let read_drafts = drafts.reader();
+        if let Some(tab) = self
+            .pr_mode_mut()
+            .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)))
+        {
+            tab.comment_storage_version = version;
+            tab.comment_loading = true;
+        }
+        Self::restore_pr_comment_for(owner, pr, version, read_drafts, cx);
+    }
+
+    fn restore_pr_comment_for(
+        owner: crate::app::SessionId,
+        pr: PrKey,
+        version: u64,
+        read_drafts: kagi_git::drafts::PrCommentDraftReader,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(feature = "gui-e2e")]
+        let hold = COMMENT_RESTORE_HOLD.with(|slot| slot.borrow_mut().take());
+        cx.spawn(async move |this, acx| {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            let read_pr = pr.clone();
+            let loaded = acx
+                .background_executor()
+                .spawn(async move { read_drafts.load(&read_pr.base_repo, read_pr.number) })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(drafts) = app
+                    .ui
+                    .get(&owner)
+                    .and_then(|ui| ui.pr_comment_drafts.clone())
+                else {
+                    return;
+                };
+                let Some(tab) = app
+                    .pr_mode_of(Some(owner))
+                    .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)))
+                else {
+                    return;
+                };
+                // Edits queued during the read win over the saved file.
+                if tab.comment_storage_version != version {
+                    return;
+                }
+                tab.comment_loading = false;
+                tab.comment_draft = loaded.unwrap_or_default();
+                tab.comment_saving = true;
+                if app
+                    .pr_comment_for
+                    .as_ref()
+                    .is_some_and(|(held, key)| *held == owner && key == &pr)
+                {
+                    app.pr_comment_input = None;
+                    app.pr_comment_for = None;
+                }
+                app.flush_pr_comment_draft(Some(owner), drafts, pr.clone(), version, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_pr_comment_text(
+        &mut self,
+        owner: crate::app::SessionId,
+        pr: PrKey,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drafts) = self
+            .ui
+            .get(&owner)
+            .and_then(|ui| ui.pr_comment_drafts.clone())
+        else {
+            return;
+        };
+        let Some(tab) = self
+            .pr_mode_of(Some(owner))
+            .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)))
+        else {
+            return;
+        };
+        if tab.comment_draft == text {
+            return;
+        }
+        tab.comment_draft = text;
+        tab.comment_loading = false;
+        let version = drafts.queue(&pr.base_repo, pr.number, &tab.comment_draft);
+        tab.comment_storage_version = version;
+        tab.comment_saving = true;
+        tab.comment_save_error = false;
+        self.flush_pr_comment_draft(Some(owner), drafts, pr, version, cx);
+        cx.notify();
+    }
+
+    fn flush_pr_comment_draft(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        drafts: kagi_git::drafts::PrCommentDraftSession,
+        pr: PrKey,
+        version: u64,
+        cx: &mut Context<Self>,
+    ) {
+        // A debounce is not an editor owner: closing/reopening must immediately
+        // reclaim its durable slot. The unique token still locates the exact key.
+        let repo = drafts.repo().to_path_buf();
+        drop(drafts);
+        cx.spawn(async move |this, acx| {
+            acx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
+            let flush_repo = repo.clone();
+            let number = pr.number;
+            let result = acx
+                .background_executor()
+                .spawn(async move {
+                    kagi_git::drafts::flush_issue_draft_if_version(
+                        &flush_repo,
+                        Some(number),
+                        version,
+                    )
+                })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                if let Some(tab) = app
+                    .pr_mode_of(owner)
+                    .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)))
+                {
+                    if tab.comment_storage_version == version {
+                        tab.comment_saving = false;
+                        tab.comment_save_error = result.is_err();
+                    }
+                }
+                if let Err(error) = result {
+                    app.report_unknown_notice(&repo, error.to_string());
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
@@ -2056,6 +2316,12 @@ mod pr_fixture_tests {
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn hold_next_pr_comment_restore_for_e2e(hold: gpui::Task<()>) {
+        COMMENT_RESTORE_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace(hold).is_none());
+        });
+    }
+
     pub fn pr_mode_reload_conversation_for_e2e(&mut self, cx: &mut Context<Self>) {
         let Some(pr) = self
             .pr_mode()

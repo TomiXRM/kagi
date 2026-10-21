@@ -90,12 +90,13 @@ stdin をブロック書き込みすると **パイプ・デッドロック**す
   kagi 経由でリポジトリを書き換えられない。ツール承認も print/exec モードでは発生
   しない。
 - **diff は外に出る**:Ollama と違い、staged diff は外部サービスに送られる。
-  よって **明示的オプトイン**(プロバイダを選ぶ操作そのもの)+ **Settings の
-  目立つ警告**で同意を取る。警告は警告色(`theme().color_warning`)の枠付き
-  ブロックで、(1) staged diff が外部 `claude`/`codex` CLI に送られ
-  ローカル Ollama サンドボックスを出ること、(2) ユーザーのアカウント/クォータを
-  使い課金され得ること、(3) kagi は CLI を非対話・read-only で動かしリポジトリを
-  変更しないこと、(4) CLI のインストールとログインが必要、の4点を全て明記する。
+  よって **プロバイダ別の明示的同意** + **Settings の目立つ警告**で同意を取る。
+  選択だけでは生成を許可しない。Claude Code は Anthropic、Codex は OpenAI の
+  外部サービスへ CLI 経由で staged diff を送ること、CLI の設定済みアカウントと
+  利用枠を使い課金され得ることを EN/JA の共通同意画面に明記する。
+  同意は選択先に結び付けて既存設定に保存し、変更時に取り直す
+  (ADR-0044 の #1702 amendment)。Settings の警告色付き枠には read-only 実行と
+  CLI のインストール・ログインが必要なことも引き続き示す。
 - `KAGI_OFFLINE=1` のときは Ollama 同様、生成は一切行わず `Err(Offline)`。
 
 ## Alternatives considered

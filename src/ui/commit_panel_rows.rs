@@ -233,6 +233,22 @@ fn render_cp_file_row(
                     },
                 ),
         )
+        .when(staged && state.secret_paths.contains(&file.path), |el| {
+            el.child(
+                div()
+                    .id(("cp-secret-warning", fi))
+                    .flex_shrink_0()
+                    .mx_1()
+                    .text_xs()
+                    .text_color(foreground(theme().color_warning))
+                    .aria_label(Msg::CommitSecretReview.t())
+                    .child(super::e2e::measure_control(
+                        format!("cp-secret-file-{fi}"),
+                        Msg::CommitSecretBadge.t(),
+                    ))
+                    .hover_tooltip(("cp-secret-help", fi), Msg::CommitSecretReview.t()),
+            )
+        })
         .when(convention, |el| {
             // issue #338: emphasis badge on a convention-body file — these steer
             // agent behaviour, so they are highlighted, never folded.

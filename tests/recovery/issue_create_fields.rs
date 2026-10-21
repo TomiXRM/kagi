@@ -50,11 +50,7 @@ fn write_labels(dir: &Path, names: &[&str]) {
 
 fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .expect("draw Issues window");
+    crate::presentation_support::paint(cx, window);
 }
 
 fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> bool {
@@ -355,6 +351,11 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         }),
         "Apply saves the picks with the draft"
     );
+    // PR comments use the same persistence owner without disturbing Issue
+    // text or the picked metadata restored below.
+    let pr_drafts = kagi_git::drafts::PrCommentDraftSession::new(&repo);
+    pr_drafts.queue("example/fixture", 7, "separate PR draft 日本語");
+    kagi_git::drafts::flush_issue_drafts().expect("flush both composer namespaces");
     // …and a composer that starts again loads them back with the text.
     app.update(cx, |app, cx| {
         app.forget_issue_composer_for_e2e(cx);
@@ -378,6 +379,10 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     assert_eq!(
         cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
         BODY
+    );
+    assert_eq!(
+        pr_drafts.load("example/fixture", 7).as_deref(),
+        Some("separate PR draft 日本語")
     );
     assert!(
         issue_creates(&repo).is_empty(),

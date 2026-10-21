@@ -3162,7 +3162,7 @@ impl KagiApp {
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
-            M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
+            M::SmartCommit(smart_commit::SmartCommitModal::Consent { .. }) => {
                 self.confirm_smart_consent(window, cx)
             }
             M::SmartCommit(smart_commit::SmartCommitModal::ModelPicker { .. }) => {

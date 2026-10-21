@@ -10,6 +10,7 @@ fn empty_state() -> CommitPanelState {
     CommitPanelState {
         unstaged: Vec::new(),
         staged: Vec::new(),
+        secret_paths: std::collections::HashSet::new(),
         unstaged_stats: Vec::new(),
         staged_stats: Vec::new(),
         conflicted_paths: std::collections::HashSet::new(),
@@ -150,4 +151,18 @@ fn conflicted_artifact_file_is_not_folded() {
         "conflicted file must not be folded as an agent artifact"
     );
     assert_eq!(s.unstaged_normal_files, vec![0, 1]);
+}
+
+#[test]
+fn staged_secret_is_never_folded_as_generated_or_artifact() {
+    let mut state = empty_state();
+    state.staged = vec![
+        modified(".claude/settings.json"),
+        modified("generated.lock"),
+    ];
+    state.secret_paths = state.staged.iter().map(|file| file.path.clone()).collect();
+    state.rebuild_derived(&[], &[true, true]);
+    assert!(state.staged_gen_files.is_empty());
+    assert!(state.staged_artifact_files.is_empty());
+    assert_eq!(state.staged_normal_files, [0, 1]);
 }

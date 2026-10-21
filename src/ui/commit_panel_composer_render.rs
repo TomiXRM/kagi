@@ -140,12 +140,14 @@ impl CommitPanelView {
                 .unwrap_or(!self.state.commit_msg.trim().is_empty());
         let commit_btn = controls::commit_button(self, can_commit, cx);
         let has_unstaged_warning = !self.state.unstaged.is_empty() && !self.state.staged.is_empty();
+        let has_secret_warning = !self.state.secret_paths.is_empty();
         // Padding, gaps, Commit and optional status lines retain dev's floor.
         let footer_min_height = message_min_height()
             + px(theme::rem_size_px() * 3.25 + 4.)
             + px(theme::rem_size_px() * 1.75)
-                * (usize::from(self.smart_status.is_some()) + usize::from(has_unstaged_warning))
-                    as f32;
+                * (usize::from(self.smart_status.is_some())
+                    + usize::from(has_unstaged_warning)
+                    + 3 * usize::from(has_secret_warning)) as f32;
         div()
             .when(compact, |el| el.w_full())
             .flex_shrink(1.)
@@ -178,6 +180,17 @@ impl CommitPanelView {
                         .child(SharedString::from(i18n::unstaged_not_included(
                             self.state.unstaged.len(),
                         ))),
+                )
+            })
+            .when(has_secret_warning, |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme().color_warning))
+                        .child(super::e2e::measure_control(
+                            "cp-secret-review",
+                            Msg::CommitSecretReview.t(),
+                        )),
                 )
             })
             .child(commit_btn)

@@ -41,6 +41,52 @@ flush と clear の順序を共通 mutex で直列化し、失敗は pending に
 消費できるが、再表示後の新しい編集は消さない。同じ保存版を復元していた input
 だけを同期する。失敗と Unknown では draft は残る。restore の遅い完了にも版を照合する。
 
+### PR comment drafts (#1702)
+
+PR comments and review bodies extend this same queue and atomic persistence
+owner, not settings or another store. Each `SessionId` owns one
+`PrCommentDraftSession` recovery-slot lease in `TabUiState` (ADR-0183 / 0197),
+outside PR mode so Graph does not release it. The slot scopes clone path,
+addressed repository and PR number; simultaneous sessions of the same clone
+claim different slots and never share pending text or version tokens.
+Slot zero retains `:pr:<lowercase base repository>:<PR number>`; additional
+slots use separate PR namespaces, disjoint from Issue replies. Runtime session
+identifiers are not filenames: released slots can be recovered after close or
+restart, including a remaining sibling draft after another slot was posted.
+The existing application-quit flush drains every slot through the same queue.
+Restoration uses a non-owning `PrCommentDraftReader`: its captured read state
+has only a weak reference to the exclusive slot lease, including during I/O.
+Closing the session immediately releases the slot for a returning owner; an
+expired reader does no recovery transfer and its UI completion must still match
+the creating `SessionId` and version. Reads prefer pending values before disk.
+Admitted posts retain their originating slot lease through
+settlement, even after the owner closes; only their captured scoped version
+can clear. Debounced flushes retain the globally unique version, not the lease,
+so an ordinary close/reopen can immediately recover the saved slot. Failed or
+unknown posts retain their draft. Their completion moves the post lease into
+presentation, then drops it before rearming recovery in a later session of the
+same clone and addressed PR if the posting owner has closed. Read-only activity
+is distinct from edits (including typing then erasing) and confirmed clears:
+only untouched reads may retry, using a fresh existing storage version to
+invalidate an earlier empty restore. A still-open older session and a newer
+owner's input remain private. Success only clears the captured original version;
+it never requests recovery. This is draft preservation, not a transport retry:
+Failed and Unknown receipts and Unknown's reconcile requirement remain unchanged.
+The existing proven-local-stop policy still releases the process lease.
+The PR saved indicator uses the same persistence completion semantics and
+existing EN/JA messages.
+If a returned editor closes again before its original source clear is drained,
+reclaiming that source may atomically reverse the pending transfer only from
+its exact, now-unclaimed destination. This avoids a dependency cycle or a hidden
+durable draft without requiring successful filesystem writes during restoration;
+failed persistence retains the pending body through another close/reopen.
+
+Issue composers retain their existing clone/addressed-Issue persistence keys;
+they did not already provide per-session storage isolation. This change scopes
+PR drafts explicitly rather than weakening the PR composer's existing
+`(SessionId, PrKey)` ownership contract or serializing ephemeral `SessionId`s.
+
+
 ## 書き込み
 
 github_comment.rs と同じ bounded runner と recording::finalize を使用する。

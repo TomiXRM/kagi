@@ -132,7 +132,7 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
         "smart_commit_consent_accepted",
         "lang",
     ]);
-    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("ollama"));
     let language = i18n::lang();
     for (count, lang, failure) in [
         (1, Lang::En, false),
@@ -160,6 +160,7 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
             );
             app.smart_commit.llm_enabled = true;
             app.smart_commit.provider = kagi::ui::smart_commit::SmartProvider::Ollama;
+            app.smart_commit.consent_provider = Some(app.smart_commit.provider);
             app.smart_commit.model = None;
             app.smart_commit.detected_models =
                 kagi_git::message_gen::ollama_list_models(&server.host);
@@ -422,7 +423,7 @@ pub fn empty(cx: &mut VisualTestAppContext) {
         kagi::ui::settings::write_setting("smart_commit_consent_accepted", None);
         app.update(cx, |app, _| {
             app.smart_commit.llm_enabled = false;
-            app.smart_commit.consent_accepted = false;
+            app.smart_commit.consent_provider = None;
         });
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {

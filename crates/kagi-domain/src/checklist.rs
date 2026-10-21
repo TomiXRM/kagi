@@ -17,7 +17,7 @@ const MARKER_SCAN_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// Maximum number of bytes scanned for secret content per staged BLOB.
 /// ADR-0043 §rule 5 ("先頭数 KiB").
-const SECRET_SCAN_BYTES: usize = 8 * 1024; // 8 KiB
+pub const SECRET_SCAN_BYTES: usize = 8 * 1024; // 8 KiB
 
 /// Default large-binary threshold (5 MiB).
 pub const DEFAULT_LARGE_BLOB_BYTES: u64 = 5 * 1024 * 1024;
@@ -184,7 +184,7 @@ fn is_equals_marker(line: &[u8]) -> bool {
 
 /// Return `true` if the staged path's **file name** looks like a secret
 /// (ADR-0043 §rule 5 file-name heuristics).
-fn path_is_secret_name(path: &Path) -> bool {
+pub fn path_is_secret_name(path: &Path) -> bool {
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(n) => n,
         None => return false,
@@ -225,7 +225,9 @@ fn path_is_secret_name(path: &Path) -> bool {
 /// key id (`AKIA…`), or a known token prefix (`ghp_` / `xoxb-`).
 ///
 /// Conservative by design to avoid warning spam on ordinary code.
-fn content_has_secret(bytes: &[u8]) -> bool {
+/// Callers pass at most [`SECRET_SCAN_BYTES`] from text BLOBs; the full
+/// checklist and the panel's secret-only read share this exact classifier.
+pub fn content_has_secret(bytes: &[u8]) -> bool {
     // Work on a lossy string view; secret patterns are ASCII so this is safe.
     let text = String::from_utf8_lossy(bytes);
 

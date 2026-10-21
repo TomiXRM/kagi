@@ -960,6 +960,16 @@ impl Backend {
         self.run_recorded(op, plan).result
     }
 
+    /// Rule-5 findings using the commit plan's filename/content predicates.
+    /// Classifies only the 8 KiB content prefix; never scans conflict markers.
+    /// The caller supplies its status read so panel loading needs no second walk.
+    pub fn staged_secret_paths(
+        &self,
+        status: &WorkingTreeStatus,
+    ) -> Result<std::collections::HashSet<std::path::PathBuf>, GitError> {
+        crate::checklist::staged_secret_paths(&self.repo, status)
+    }
+
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
         ops::plan_commit(&self.repo, message)
     }

@@ -11,12 +11,64 @@ const CONSENT: &str = "smart_commit_consent_accepted";
 const MODEL: &str = "smart_commit_model";
 const MODEL_NAME: &str = "consent-fixture-model";
 
+const PROVIDERS: [smart_commit::SmartProvider; 3] = [
+    smart_commit::SmartProvider::Ollama,
+    smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode),
+    smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex),
+];
+
+/// Fail closed before reading stdin: no test can reach a real external CLI.
+struct NoSendCli {
+    directory: tempfile::TempDir,
+    previous_path: Option<std::ffi::OsString>,
+}
+
+impl NoSendCli {
+    fn install() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        for binary in ["claude", "codex"] {
+            let path = directory.path().join(binary);
+            std::fs::write(&path, "#!/bin/sh\n: > \"$0.invoked\"\nexit 97\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let previous_path = std::env::var_os("PATH");
+        let mut paths = vec![directory.path().to_path_buf()];
+        paths.extend(std::env::split_paths(
+            &previous_path.clone().unwrap_or_default(),
+        ));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        Self {
+            directory,
+            previous_path,
+        }
+    }
+
+    fn assert_unused(&self) {
+        for binary in ["claude", "codex"] {
+            assert!(
+                !self
+                    .directory
+                    .path()
+                    .join(format!("{binary}.invoked"))
+                    .exists(),
+                "consent must not invoke {binary} or transmit staged code"
+            );
+        }
+    }
+}
+
+impl Drop for NoSendCli {
+    fn drop(&mut self) {
+        match self.previous_path.take() {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
-    cx.update_window(window, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .unwrap();
+    crate::presentation_support::paint(cx, window);
     cx.run_until_parked();
 }
 
@@ -45,7 +97,7 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
         .unwrap();
     // Settings is a scrolling form. Reveal pointer targets with real wheel
     // input instead of relying on a fixture-written offset surviving Tab.
-    if id == "smart-commit-enabled-key" || id.starts_with("sc-model-") {
+    if id == "smart-commit-enabled-key" || id.starts_with("sc-") {
         let body = settings_body(window);
         for _ in 0..20 {
             if bounds.top() >= body.top() && bounds.bottom() <= body.bottom() {
@@ -173,14 +225,50 @@ fn assert_no_post(server: &Ollama) {
     );
 }
 
-fn assert_lines(cx: &mut VisualTestAppContext, host: AnyWindowHandle) {
+fn assert_provider_lines(
+    cx: &mut VisualTestAppContext,
+    host: AnyWindowHandle,
+    provider: smart_commit::SmartProvider,
+) {
     draw(cx, host);
     let viewport = cx
         .update_window(host, |_, window, _| window.viewport_size())
         .unwrap();
     // IDs are formed from the same localized text passed to each rendered child.
     // A translation-only assertion cannot satisfy this laid-out renderer oracle.
-    for (index, line) in smart_commit::CONSENT_LINES.into_iter().enumerate() {
+    use i18n::Msg;
+    let (intro, destination) = match provider {
+        smart_commit::SmartProvider::Ollama => (Msg::SmartConsentIntro, Msg::SmartConsentLocalhost),
+        smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode) => {
+            (Msg::SmartConsentClaudeIntro, Msg::SmartConsentCliAccount)
+        }
+        smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex) => {
+            (Msg::SmartConsentCodexIntro, Msg::SmartConsentCliAccount)
+        }
+    };
+    let intro = intro.t();
+    let service = match provider {
+        smart_commit::SmartProvider::Ollama => "localhost Ollama",
+        smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode) => {
+            "Anthropic"
+        }
+        smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex) => "OpenAI",
+    };
+    assert!(
+        intro.contains(service),
+        "disclosure names the actual destination"
+    );
+    assert!(
+        e2e::control_bounds(host.window_id(), &format!("smart-consent-intro-{intro}")).is_some(),
+        "the actual provider-specific destination is rendered: {intro}"
+    );
+    let lines = [
+        Msg::SmartConsentStagedOnly,
+        Msg::SmartConsentUnstagedExcluded,
+        destination,
+        Msg::SmartConsentSecretsWarning,
+    ];
+    for (index, line) in lines.into_iter().enumerate() {
         let id = format!("smart-consent-line-{index}-{}", line.t());
         let bounds = e2e::control_bounds(host.window_id(), &id)
             .unwrap_or_else(|| panic!("localized consent line {index} is rendered: {}", line.t()));
@@ -199,6 +287,10 @@ fn assert_lines(cx: &mut VisualTestAppContext, host: AnyWindowHandle) {
             "{id} rendered"
         );
     }
+}
+
+fn assert_lines(cx: &mut VisualTestAppContext, host: AnyWindowHandle) {
+    assert_provider_lines(cx, host, smart_commit::SmartProvider::Ollama);
 }
 
 fn assert_pending(
@@ -345,7 +437,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     assert_pending(cx, &app, host, &server);
     click(cx, host, "smart-consent-confirm");
     assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("1"));
-    assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("1"));
+    assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("ollama"));
     assert_eq!(
         settings::read_setting(MODEL),
         None,
@@ -396,7 +488,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("0"));
     assert_eq!(
         settings::read_setting(CONSENT).as_deref(),
-        Some("1"),
+        Some("ollama"),
         "OFF does not revoke completed consent"
     );
     switch_on(cx, &app, host, space);
@@ -472,7 +564,7 @@ fn generate_leg(cx: &mut VisualTestAppContext, legacy_enabled: bool) {
         request(cx);
         assert!(cx.read(|cx| matches!(
             app.read(cx).smart_commit_modal(),
-            Some(smart_commit::SmartCommitModal::Consent)
+            Some(smart_commit::SmartCommitModal::Consent { .. })
         )));
         assert_lines(cx, root);
         assert_no_post(&server);
@@ -492,7 +584,7 @@ fn generate_leg(cx: &mut VisualTestAppContext, legacy_enabled: bool) {
     }
     request(cx);
     click(cx, root, "smart-consent-confirm");
-    assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("1"));
+    assert_eq!(settings::read_setting(CONSENT).as_deref(), Some("ollama"));
     assert_eq!(settings::read_setting(ENABLED).as_deref(), Some("1"));
     assert_no_post(&server);
     if !legacy_enabled {
@@ -552,6 +644,150 @@ fn native_preserves_plan(cx: &mut VisualTestAppContext) {
     unmount(cx, app, root);
 }
 
+fn provider_switch_leg(cx: &mut VisualTestAppContext, native: bool) {
+    fresh_settings();
+    let cli = NoSendCli::install();
+    let server = Ollama::new(&[MODEL_NAME.to_string()]);
+    let fixture = build_fixture();
+    let (mut app, mut root) = mount(cx, fixture.path());
+    for provider in PROVIDERS.into_iter().chain([PROVIDERS[0]]) {
+        let mut host = open_settings(cx, root, native);
+        if cx.read(|cx| app.read(cx).smart_commit.provider) != provider {
+            click(cx, host, &format!("sc-provider-{}", provider.slug()));
+        } else {
+            switch_on(cx, &app, host, false);
+        }
+        assert_switch(cx, host, false);
+        assert_provider_lines(cx, host, provider);
+        assert_eq!(
+            settings::read_setting(CONSENT),
+            None,
+            "switch revokes approval"
+        );
+        assert!(!cx.read(|cx| app.read(cx).smart_commit.has_consent()));
+        assert_no_post(&server);
+        cli.assert_unused();
+        // Closing/reopening the actual Settings host cannot retain approval.
+        close_settings(cx, &app, root, host, native);
+        host = open_settings(cx, root, native);
+        switch_on(cx, &app, host, false);
+        assert_provider_lines(cx, host, provider);
+        click(cx, host, "smart-consent-confirm");
+        assert_eq!(
+            settings::read_setting(CONSENT).as_deref(),
+            Some(provider.slug())
+        );
+        assert!(cx.read(|cx| app.read(cx).smart_commit.has_consent()));
+        assert_switch(cx, host, true);
+        assert_no_post(&server);
+        cli.assert_unused();
+        close_settings(cx, &app, root, host, native);
+        unmount(cx, app, root);
+        (app, root) = mount(cx, fixture.path());
+        assert!(
+            cx.read(|cx| app.read(cx).smart_commit.has_consent()),
+            "restart accepts only the persisted selected provider"
+        );
+    }
+    // A Settings alert cannot approve a different provider, or an away/back revision.
+    let host = open_settings(cx, root, native);
+    click(cx, host, &format!("sc-provider-{}", PROVIDERS[1].slug()));
+    assert_provider_lines(cx, host, PROVIDERS[1]);
+    app.update(cx, |app, _| {
+        app.smart_commit.set_provider(PROVIDERS[2]);
+        app.smart_commit.set_provider(PROVIDERS[1]);
+    });
+    click(cx, host, "smart-consent-confirm");
+    assert!(!cx.read(|cx| app.read(cx).smart_commit.has_consent()));
+    assert_switch(cx, host, false);
+    assert_eq!(settings::read_setting(CONSENT), None);
+    assert_no_post(&server);
+    cli.assert_unused();
+    close_settings(cx, &app, root, host, native);
+    unmount(cx, app, root);
+}
+
+fn provider_generate_leg(cx: &mut VisualTestAppContext) {
+    fresh_settings();
+    let cli = NoSendCli::install();
+    let server = Ollama::new(&[MODEL_NAME.to_string()]);
+    let fixture = build_fixture();
+    std::fs::write(
+        fixture.path().join("consent.txt"),
+        "staged consent fixture\n",
+    )
+    .unwrap();
+    git(fixture.path(), &["add", "consent.txt"]);
+    settings::write_setting(MODEL, Some(MODEL_NAME));
+    for (index, provider) in PROVIDERS.into_iter().enumerate() {
+        settings::write_setting("smart_commit_provider", Some(provider.slug()));
+        settings::write_setting(CONSENT, Some("1"));
+        let (app, root) = mount(cx, fixture.path());
+        assert!(
+            !cx.read(|cx| app.read(cx).smart_commit.has_consent()),
+            "legacy unbound approval must be reacquired for every provider"
+        );
+        open_panel(cx, &app, root);
+        let request = |cx: &mut VisualTestAppContext| {
+            cx.update_window(root, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.smart_generate(app.active_session().unwrap(), window, cx);
+                });
+            })
+            .unwrap();
+            settle(cx, root);
+        };
+        request(cx);
+        assert_provider_lines(cx, root, provider);
+        let next = PROVIDERS[(index + 1) % PROVIDERS.len()];
+        app.update(cx, |app, _| app.smart_commit.set_provider(next));
+        click(cx, root, "smart-consent-confirm");
+        assert_eq!(
+            settings::read_setting(CONSENT),
+            None,
+            "stale Generate approval rejected"
+        );
+        assert!(!cx.read(|cx| app.read(cx).smart_commit.has_consent()));
+        request(cx);
+        assert_provider_lines(cx, root, next);
+        click(cx, root, "smart-consent-cancel");
+        app.update(cx, |app, _| app.smart_commit.set_provider(provider));
+        request(cx);
+        click(cx, root, "smart-consent-confirm");
+        assert_eq!(
+            settings::read_setting(CONSENT).as_deref(),
+            Some(provider.slug())
+        );
+        assert!(
+            cx.read(|cx| app.read(cx).smart_commit_modal().is_none()),
+            "CLI consent must not open Ollama's model picker"
+        );
+        assert_no_post(&server);
+        cli.assert_unused();
+        unmount(cx, app, root);
+        // Simulate a persisted provider change outside the live Settings view.
+        settings::write_setting("smart_commit_provider", Some(next.slug()));
+        let (app, root) = mount(cx, fixture.path());
+        assert!(
+            !cx.read(|cx| app.read(cx).smart_commit.has_consent()),
+            "persisted approval for another provider cannot authorize generation"
+        );
+        open_panel(cx, &app, root);
+        cx.update_window(root, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.smart_generate(app.active_session().unwrap(), window, cx);
+            });
+        })
+        .unwrap();
+        settle(cx, root);
+        assert_provider_lines(cx, root, next);
+        click(cx, root, "smart-consent-cancel");
+        assert_no_post(&server);
+        cli.assert_unused();
+        unmount(cx, app, root);
+    }
+}
+
 pub fn scenario_smart_commit_settings_consent(cx: &mut VisualTestAppContext) {
     let _presentation = crate::recovery_layout::GlobalSettings::capture();
     let _saved = crate::gui_isolation::SavedKeys::keep(&[
@@ -585,10 +821,12 @@ pub fn scenario_smart_commit_settings_consent(cx: &mut VisualTestAppContext) {
                 }
                 owner_close_leg(cx, native, home);
             }
+            provider_switch_leg(cx, native);
         }
         generate_leg(cx, false);
         generate_leg(cx, true);
         native_preserves_plan(cx);
+        provider_generate_leg(cx);
     }
     eprintln!("[gui-e2e] PASS smart_commit_settings_consent");
 }

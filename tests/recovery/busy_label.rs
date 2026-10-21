@@ -459,14 +459,13 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     pr_merge_local::settle_plan(cx, &app);
     app.update(cx, |app, cx| {
         app.start_pr_merge(cx);
-        let refusal = match &app.status_footer {
-            kagi::ui::FooterStatus::Failed(text) => text.to_string(),
-            other => panic!("a refused admission must reach the footer: {other:?}"),
-        };
         assert!(
-            refusal.contains("NeedsReconcile"),
-            "the parked entry is what refuses the next write on this scope: {refusal}"
+            matches!(app.status_footer, kagi::ui::FooterStatus::Failed(_)),
+            "a refused admission must reach the footer"
         );
+        let notice = app.app_notice().expect("the refusal must remain actionable");
+        assert_eq!(notice.inspect, Some(parked[0]));
+        assert!(notice.acknowledge.is_none(), "inspection precedes release");
         assert_eq!(
             app.app_sessions.reconcile_ids(),
             parked,

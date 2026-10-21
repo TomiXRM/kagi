@@ -27,6 +27,7 @@ fn branch_plan() -> OperationPlan {
         stash_identity: None,
         pull_identity: None,
         tag_push_identity: None,
+        push_identity: None,
         rebase_scope: None,
         approved_index_digest: None,
         worktree_digest: None,

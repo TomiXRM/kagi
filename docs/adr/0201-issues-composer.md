@@ -44,13 +44,28 @@ flush と clear の順序を共通 mutex で直列化し、失敗は pending に
 ### PR comment drafts (#1702)
 
 PR comments and review bodies extend this same queue and atomic persistence
-owner, not settings or another store. Their key is clone path plus
-`:pr:<lowercase base repository>:<PR number>`, disjoint from Issue replies.
-The existing application-quit flush drains both namespaces. Restoration uses
-the pending value before disk and a version guard before touching an input;
-successful posts consume only the captured version, including after close and
-reopen. Failed or unknown posts retain their draft. The PR saved indicator now
+owner, not settings or another store. Each `SessionId` owns one
+`PrCommentDraftSession` recovery-slot lease in `TabUiState` (ADR-0183 / 0197),
+outside PR mode so Graph does not release it. The slot scopes clone path,
+addressed repository and PR number; simultaneous sessions of the same clone
+claim different slots and never share pending text or version tokens.
+Slot zero retains `:pr:<lowercase base repository>:<PR number>`; additional
+slots use separate PR namespaces, disjoint from Issue replies. Runtime session
+identifiers are not filenames: released slots can be recovered after close or
+restart, including a remaining sibling draft after another slot was posted.
+The existing application-quit flush drains every slot through the same queue.
+Restoration uses the pending value before disk and a version guard before
+touching an input. Admitted posts retain their originating slot lease through
+settlement, even after the owner closes; only their captured scoped version
+can clear. Debounced flushes retain the globally unique version, not the lease,
+so an ordinary close/reopen can immediately recover the saved slot. Failed or
+unknown posts retain their draft. The PR saved indicator
 uses the same persistence completion semantics and existing EN/JA messages.
+
+Issue composers retain their existing clone/addressed-Issue persistence keys;
+they did not already provide per-session storage isolation. This change scopes
+PR drafts explicitly rather than weakening the PR composer's existing
+`(SessionId, PrKey)` ownership contract or serializing ephemeral `SessionId`s.
 
 
 ## 書き込み

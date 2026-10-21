@@ -486,7 +486,15 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     assert_eq!(draft(cx, &app, B), "other session B");
     kagi_git::drafts::flush_issue_drafts().expect("shared Issue/PR quit flush");
     assert_eq!(
-        kagi_git::drafts::load_pr_comment_draft(&other_repo, B, 7).as_deref(),
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.ui[&app.active_session().unwrap()]
+                .pr_comment_drafts
+                .as_ref()
+                .unwrap()
+                .load(B, 7)
+        })
+        .as_deref(),
         Some("other session B")
     );
 

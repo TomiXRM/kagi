@@ -13,6 +13,7 @@ use kagi_git::drafts::{
     clear_draft, clear_issue_draft_if_version, flush_issue_draft_if_version, flush_issue_drafts,
     issue_draft_version as addressed_version, load_draft, load_issue_draft as load_addressed,
     queue_issue_draft as queue_addressed, save_draft, IssueDraftLoad, IssueDraftRecord,
+    PrCommentDraftSession,
 };
 
 /// The repository the drafts below are written to, and where a New Issue
@@ -73,55 +74,440 @@ fn pr_comment_drafts_share_atomic_queue_with_isolated_keys_and_version_guards() 
         return;
     }
     with_log_dir(|_| {
-        use kagi_git::drafts::{load_pr_comment_draft, queue_pr_comment_draft};
         let repo = Path::new("/tmp/kagi-it/pr-comments");
         let clone = Path::new("/tmp/kagi-it/pr-comments-other-clone");
+        let scope = PrCommentDraftSession::new(repo);
+        let other_clone = PrCommentDraftSession::new(clone);
         let other = "github.com/other/widgets";
         queue_issue_draft(repo, Some(7), "", "Issue reply", &no_picks());
-        let old = queue_pr_comment_draft(repo, BASE, 7, "old PR comment 日本語");
+        let old = scope.queue(BASE, 7, "old PR comment 日本語");
         assert_eq!(
-            load_pr_comment_draft(repo, BASE, 7).as_deref(),
+            scope.load(BASE, 7).as_deref(),
             Some("old PR comment 日本語")
         );
-        let current = queue_pr_comment_draft(repo, BASE, 7, "newer PR comment");
-        let sibling = queue_pr_comment_draft(repo, BASE, 8, "PR 8");
-        queue_pr_comment_draft(repo, other, 7, "other base repository");
-        queue_pr_comment_draft(clone, BASE, 7, "other clone");
-        assert_eq!(clear_issue_draft_if_version(repo, Some(7), old), None);
-        assert_eq!(clear_issue_draft_if_version(clone, Some(7), current), None);
-        assert_eq!(clear_issue_draft_if_version(repo, Some(8), current), None);
+        let current = scope.queue(BASE, 7, "newer PR comment");
+        let sibling = scope.queue(BASE, 8, "PR 8");
+        scope.queue(other, 7, "other base repository");
+        other_clone.queue(BASE, 7, "other clone");
+        assert_eq!(scope.clear_if_version(BASE, 7, old), None);
+        assert_eq!(other_clone.clear_if_version(BASE, 7, current), None);
+        assert_eq!(scope.clear_if_version(BASE, 8, current), None);
+        assert_eq!(scope.clear_if_version(other, 7, current), None);
+        assert!(!other_clone.flush_if_version(BASE, 7, current).unwrap());
+        assert!(!scope.flush_if_version(BASE, 8, current).unwrap());
+        assert!(!scope.flush_if_version(other, 7, current).unwrap());
+        assert!(!scope.flush_if_version(BASE, 7, old).unwrap());
         flush_issue_drafts().expect("shared shutdown flush");
         let stored = load_draft(repo, ":pr:github.com/acme/widgets:7").unwrap();
         assert_eq!(
             serde_json::from_str::<Vec<String>>(&stored.message).unwrap(),
             ["", "newer PR comment"]
         );
-        assert_eq!(
-            load_pr_comment_draft(repo, BASE, 7).as_deref(),
-            Some("newer PR comment")
-        );
-        let cleared = clear_issue_draft_if_version(repo, Some(7), current).unwrap();
+        assert_eq!(scope.load(BASE, 7).as_deref(), Some("newer PR comment"));
+        let cleared = scope.clear_if_version(BASE, 7, current).unwrap();
         assert!(
-            load_pr_comment_draft(repo, BASE, 7).is_none(),
+            scope.load(BASE, 7).is_none(),
             "pending clear wins over disk"
         );
-        assert_eq!(clear_issue_draft_if_version(repo, Some(7), current), None);
-        assert!(flush_issue_draft_if_version(repo, Some(7), cleared).unwrap());
+        assert_eq!(scope.clear_if_version(BASE, 7, current), None);
+        assert!(scope.flush_if_version(BASE, 7, cleared).unwrap());
         assert!(load_draft(repo, ":pr:github.com/acme/widgets:7").is_none());
         assert_eq!(load_issue_draft(repo, Some(7)).unwrap().1, "Issue reply");
+        assert_eq!(scope.load(BASE, 8).as_deref(), Some("PR 8"));
         assert_eq!(
-            load_pr_comment_draft(repo, BASE, 8).as_deref(),
-            Some("PR 8")
-        );
-        assert_eq!(
-            load_pr_comment_draft(repo, other, 7).as_deref(),
+            scope.load(other, 7).as_deref(),
             Some("other base repository")
         );
+        assert_eq!(other_clone.load(BASE, 7).as_deref(), Some("other clone"));
+        assert!(!scope.flush_if_version(BASE, 8, sibling).unwrap());
+    });
+}
+
+#[test]
+fn pr_comment_live_scopes_restore_independently_and_clear_only_the_posted_slot() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-live-scopes");
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        let first_version = first.queue(BASE, 7, "first owner's draft 日本語");
+        let second_version = second.queue(BASE, 7, "second owner's draft");
+        assert_ne!(first_version, second_version);
+        assert_eq!(first.version(BASE, 7), first_version);
+        assert_eq!(second.version(BASE, 7), second_version);
+        assert_eq!(second.clear_if_version(BASE, 7, first_version), None);
+        assert_eq!(first.clear_if_version(BASE, 7, second_version), None);
+        assert!(!second.flush_if_version(BASE, 7, first_version).unwrap());
+        assert!(!first.flush_if_version(BASE, 7, second_version).unwrap());
+        flush_issue_drafts().expect("persist both slots");
+        drop((first, second));
+
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
         assert_eq!(
-            load_pr_comment_draft(clone, BASE, 7).as_deref(),
-            Some("other clone")
+            first.load(BASE, 7).as_deref(),
+            Some("first owner's draft 日本語")
         );
-        assert!(!flush_issue_draft_if_version(repo, Some(8), sibling).unwrap());
+        assert_eq!(
+            second.load(BASE, 7).as_deref(),
+            Some("second owner's draft")
+        );
+        let posted = first.version(BASE, 7);
+        let edited = second.queue(BASE, 7, "second owner's newer draft");
+        assert_eq!(first.version(BASE, 7), posted, "other input is independent");
+        assert_eq!(second.version(BASE, 7), edited);
+        let clear = first.clear_if_version(BASE, 7, posted).expect("first post");
+        assert!(first.load(BASE, 7).is_none());
+        assert_eq!(
+            second.load(BASE, 7).as_deref(),
+            Some("second owner's newer draft")
+        );
+        assert_eq!(second.clear_if_version(BASE, 7, clear), None);
+        assert!(!second.flush_if_version(BASE, 7, clear).unwrap());
+        assert!(first.flush_if_version(BASE, 7, clear).unwrap());
+        assert!(second.flush_if_version(BASE, 7, edited).unwrap());
+        drop((first, second));
+
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        assert!(first.load(BASE, 7).is_none(), "cleared slot stays cleared");
+        assert_eq!(
+            second.load(BASE, 7).as_deref(),
+            Some("second owner's newer draft")
+        );
+    });
+}
+
+#[test]
+fn pr_comment_cloned_scope_keeps_its_slot_until_last_drop() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-leases");
+        let first = PrCommentDraftSession::new(repo);
+        let version = first.queue(BASE, 7, "admitted post");
+        let admitted = first.clone();
+        drop(first);
+        let second = PrCommentDraftSession::new(repo);
+        assert!(second.load(BASE, 7).is_none());
+        second.queue(BASE, 7, "new session");
+        assert_eq!(admitted.repo(), repo);
+        assert_eq!(admitted.version(BASE, 7), version);
+        assert_eq!(admitted.load(BASE, 7).as_deref(), Some("admitted post"));
+        drop(admitted);
+
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(reopened.load(BASE, 7).as_deref(), Some("admitted post"));
+        assert_eq!(second.load(BASE, 7).as_deref(), Some("new session"));
+        drop(second);
+        let reopened_second = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened_second.load(BASE, 7).as_deref(),
+            Some("new session")
+        );
+        assert_ne!(reopened.version(BASE, 7), reopened_second.version(BASE, 7));
+        flush_issue_drafts().expect("persist reclaimed slots");
+    });
+}
+
+#[test]
+fn pr_comment_scopes_recover_failed_pending_writes_after_lease_reclamation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/pr-pending-recovery");
+        let blocked = log_dir.join("drafts");
+        std::fs::write(&blocked, "not a directory").expect("block persistence");
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        let first_version = first.queue(BASE, 7, "first retained failure");
+        let second_version = second.queue(BASE, 7, "second retained failure");
+        assert!(first.flush_if_version(BASE, 7, first_version).is_err());
+        assert!(second.flush_if_version(BASE, 7, second_version).is_err());
+        drop((first, second));
+
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            first.load(BASE, 7).as_deref(),
+            Some("first retained failure")
+        );
+        assert_eq!(
+            second.load(BASE, 7).as_deref(),
+            Some("second retained failure")
+        );
+        std::fs::remove_file(blocked).expect("unblock persistence");
+        assert!(first.flush_if_version(BASE, 7, first_version).unwrap());
+        assert!(second.flush_if_version(BASE, 7, second_version).unwrap());
+        drop((first, second));
+
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            first.load(BASE, 7).as_deref(),
+            Some("first retained failure")
+        );
+        assert_eq!(
+            second.load(BASE, 7).as_deref(),
+            Some("second retained failure")
+        );
+    });
+}
+
+#[test]
+fn pr_comment_scopes_capture_root_and_reject_foreign_root_tokens() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|original| {
+        let repo = Path::new("/tmp/kagi-it/pr-root");
+        let first = PrCommentDraftSession::new(repo);
+        let posted = first.queue(BASE, 7, "original storage");
+        let other_root = tempfile::tempdir().expect("other root");
+        std::env::set_var("KAGI_LOG_DIR", other_root.path());
+        let second = PrCommentDraftSession::new(repo);
+        assert!(second.load(BASE, 7).is_none());
+        let other = second.queue(BASE, 7, "other storage");
+        assert_eq!(second.clear_if_version(BASE, 7, posted), None);
+        assert_eq!(first.clear_if_version(BASE, 7, other), None);
+        assert!(!second.flush_if_version(BASE, 7, posted).unwrap());
+        assert!(!first.flush_if_version(BASE, 7, other).unwrap());
+        assert!(first.flush_if_version(BASE, 7, posted).unwrap());
+        assert!(second.flush_if_version(BASE, 7, other).unwrap());
+        assert_eq!(first.load(BASE, 7).as_deref(), Some("original storage"));
+        assert_eq!(second.load(BASE, 7).as_deref(), Some("other storage"));
+        let clear = first.clear_if_version(BASE, 7, posted).unwrap();
+        assert!(first.flush_if_version(BASE, 7, clear).unwrap());
+        assert_eq!(second.load(BASE, 7).as_deref(), Some("other storage"));
+        drop((first, second));
+        let second = PrCommentDraftSession::new(repo);
+        assert_eq!(second.load(BASE, 7).as_deref(), Some("other storage"));
+        std::env::set_var("KAGI_LOG_DIR", original);
+        let first = PrCommentDraftSession::new(repo);
+        assert!(first.load(BASE, 7).is_none());
+    });
+}
+
+#[test]
+fn pr_comment_concurrent_claims_keep_the_same_clone_independent() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-concurrent");
+        let barrier = std::sync::Barrier::new(2);
+        let (first, second) = std::thread::scope(|threads| {
+            let first = threads.spawn(|| {
+                let scope = PrCommentDraftSession::new(repo);
+                barrier.wait();
+                scope.queue(BASE, 7, "first thread");
+                scope
+            });
+            let second = threads.spawn(|| {
+                let scope = PrCommentDraftSession::new(repo);
+                barrier.wait();
+                scope.queue(BASE, 7, "second thread");
+                scope
+            });
+            (
+                first.join().expect("first claim"),
+                second.join().expect("second claim"),
+            )
+        });
+        assert_ne!(first.version(BASE, 7), second.version(BASE, 7));
+        assert_eq!(first.load(BASE, 7).as_deref(), Some("first thread"));
+        assert_eq!(second.load(BASE, 7).as_deref(), Some("second thread"));
+        flush_issue_drafts().expect("persist both concurrent claims");
+    });
+}
+
+#[test]
+fn pr_comment_slot_zero_restores_legacy_files_but_rejects_foreign_record_identity() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/pr-legacy");
+        let branch = ":pr:github.com/acme/widgets:7";
+        let message = serde_json::json!(["", "legacy PR draft"]).to_string();
+        save_draft(repo, branch, &message, "issue-composer").expect("pre-scope draft");
+        let scope = PrCommentDraftSession::new(repo);
+        assert_eq!(scope.load(BASE, 7).as_deref(), Some("legacy PR draft"));
+        let file = std::fs::read_dir(log_dir.join("drafts"))
+            .expect("draft directory")
+            .next()
+            .expect("draft entry")
+            .expect("read draft entry")
+            .path();
+        let original = std::fs::read(&file).expect("draft bytes");
+        let mut record: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        record["repo"] = serde_json::json!("/another/clone");
+        std::fs::write(&file, record.to_string()).expect("wrong clone metadata");
+        assert!(scope.load(BASE, 7).is_none());
+        record = serde_json::from_slice(&original).unwrap();
+        record["branch"] = serde_json::json!(":pr-slot:1:github.com/acme/widgets:7");
+        std::fs::write(&file, record.to_string()).expect("wrong scoped metadata");
+        assert!(scope.load(BASE, 7).is_none());
+        std::fs::write(file, original).expect("restore original record");
+        assert_eq!(scope.load(BASE, 7).as_deref(), Some("legacy PR draft"));
+    });
+}
+
+#[test]
+fn pr_comment_single_reopen_recovers_orphan_without_reverse_migration_cycles() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-single-recovery");
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        let posted = first.queue(BASE, 7, "posted slot zero");
+        second.queue(BASE, 7, "remaining slot one");
+        flush_issue_drafts().expect("persist both scopes");
+        first
+            .clear_if_version(BASE, 7, posted)
+            .expect("post completed");
+        drop((first, second));
+
+        let reopened = PrCommentDraftSession::new(repo);
+        let before_load = reopened.version(BASE, 7);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("remaining slot one")
+        );
+        assert_eq!(reopened.version(BASE, 7), before_load);
+        // Claim the old source, then close the recovery destination before its
+        // queued write. The source must not import back and form a cycle.
+        let reverse = PrCommentDraftSession::new(repo);
+        drop(reopened);
+        assert!(reverse.load(BASE, 7).is_none());
+        flush_issue_drafts().expect("destination precedes source without recursion cycle");
+        assert!(
+            reverse.load(BASE, 7).is_none(),
+            "later load must not import"
+        );
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("remaining slot one")
+        );
+        drop((reopened, reverse));
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("remaining slot one")
+        );
+        let sibling = PrCommentDraftSession::new(repo);
+        assert!(
+            sibling.load(BASE, 7).is_none(),
+            "source is not offered twice"
+        );
+    });
+}
+
+#[test]
+fn pr_comment_existing_scope_never_imports_a_later_closed_sibling() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-no-late-import");
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        second.queue(BASE, 7, "sibling draft");
+        assert!(first.load(BASE, 7).is_none(), "live sibling is private");
+        drop(second);
+        assert!(first.load(BASE, 7).is_none(), "Graph reload cannot import");
+        drop(first);
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(reopened.load(BASE, 7).as_deref(), Some("sibling draft"));
+        flush_issue_drafts().expect("persist newly recovered draft");
+    });
+}
+
+#[test]
+fn pr_comment_orphan_source_survives_destination_failure_and_flushes_in_order() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/pr-recovery-write-failure");
+        let first = PrCommentDraftSession::new(repo);
+        let second = PrCommentDraftSession::new(repo);
+        let posted = first.queue(BASE, 7, "posted");
+        second.queue(BASE, 7, "durable orphan");
+        flush_issue_drafts().expect("persist both scopes");
+        let branch = ":pr:github.com/acme/widgets:7";
+        let destination = drafts_dir_files(log_dir)
+            .into_iter()
+            .find(|(_, bytes)| {
+                serde_json::from_slice::<serde_json::Value>(bytes).unwrap()["branch"] == branch
+            })
+            .map(|(name, _)| log_dir.join("drafts").join(name))
+            .expect("slot zero file");
+        let clear = first.clear_if_version(BASE, 7, posted).unwrap();
+        first
+            .flush_if_version(BASE, 7, clear)
+            .expect("persist posted clear");
+        drop((first, second));
+        std::fs::create_dir(&destination).expect("block destination replacement");
+
+        let recovered = PrCommentDraftSession::new(repo);
+        assert_eq!(recovered.load(BASE, 7).as_deref(), Some("durable orphan"));
+        let source = PrCommentDraftSession::new(repo);
+        let source_version = source.version(BASE, 7);
+        assert!(source.flush_if_version(BASE, 7, source_version).is_err());
+        let source_branch = ":pr-slot:1:github.com/acme/widgets:7";
+        assert!(
+            load_draft(repo, source_branch).is_some(),
+            "failed move keeps source"
+        );
+        assert!(flush_issue_drafts().is_err());
+        assert!(
+            load_draft(repo, source_branch).is_some(),
+            "quit flush also keeps source"
+        );
+        std::fs::remove_dir(destination).expect("unblock destination");
+        assert!(source.flush_if_version(BASE, 7, source_version).unwrap());
+        assert!(load_draft(repo, source_branch).is_none());
+        assert!(
+            load_draft(repo, branch).is_some(),
+            "destination persisted first"
+        );
+        drop((recovered, source));
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(reopened.load(BASE, 7).as_deref(), Some("durable orphan"));
+    });
+}
+
+#[test]
+fn pr_comment_first_load_discovers_orphan_disk_slots_without_prior_claims() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-restarted-disk-recovery");
+        let orphan = ":pr-slot:4:github.com/acme/widgets:7";
+        let message = serde_json::json!(["", "restarted orphan"]).to_string();
+        save_draft(repo, orphan, &message, "issue-composer").expect("prior process draft");
+        let scope = PrCommentDraftSession::new(repo);
+        let before_load = scope.version(BASE, 7);
+        assert_eq!(scope.load(BASE, 7).as_deref(), Some("restarted orphan"));
+        assert_eq!(scope.version(BASE, 7), before_load);
+        assert!(
+            load_draft(repo, orphan).is_some(),
+            "source preserved before flush"
+        );
+        flush_issue_drafts().expect("persist recovery before removing orphan");
+        assert!(load_draft(repo, orphan).is_none());
+        drop(scope);
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(reopened.load(BASE, 7).as_deref(), Some("restarted orphan"));
     });
 }
 

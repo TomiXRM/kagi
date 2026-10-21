@@ -36,10 +36,11 @@
 //!   [`IssueDraftRecord`] (text plus a New Issue's picked labels / assignees),
 //!   as an [`IssueDraftLoad`]
 //! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
+//! - [`PrCommentDraftSession`] — leased, independently recoverable PR comments
 //!
 //! Issue and PR drafts are stored per clone, addressed base repository and
-//! number. PR comments use `:pr:` keys, disjoint from the `:issue:` namespace,
-//! but share the queue, version tokens, atomic writer and shutdown flush.
+//! number. PR comments additionally lease a recovery slot per live session;
+//! they share the Issue queue, version tokens, atomic writer and shutdown flush.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use kagi_domain::github::IssueCreateFields;
 
 use super::GitError;
+
+mod pr_comment;
+
+pub use pr_comment::PrCommentDraftSession;
 
 /// One Issue draft: the composer's text, plus the labels and assignees picked
 /// for a New Issue (#903; always empty for a Reply).
@@ -240,14 +245,6 @@ impl IssueDraftKey {
         )
     }
 
-    fn pr(repo: &Path, base_repo: &str, number: u64) -> Self {
-        Self::at(
-            repo,
-            Some(number),
-            format!(":pr:{}:{number}", base_repo.to_ascii_lowercase()),
-        )
-    }
-
     /// Where builds before #940 kept the draft: per clone only, without the
     /// repository it was written to.
     fn unaddressed(repo: &Path, number: Option<u64>) -> Self {
@@ -274,6 +271,9 @@ impl IssueDraftKey {
 #[derive(Default)]
 struct IssueDraftQueue {
     pending: BTreeMap<IssueDraftKey, IssueDraftRecord>,
+    // PR orphan recovery queues a destination before clearing its source.
+    // Persist that destination first, even when a source timer/quit flush wins.
+    recovered_to: BTreeMap<IssueDraftKey, IssueDraftKey>,
     // Retain versions after flush and clear for process-lifetime completion
     // guards, including when the tab that dispatched a write has closed.
     versions: BTreeMap<IssueDraftKey, u64>,
@@ -288,6 +288,19 @@ impl IssueDraftQueue {
             .expect("Issue draft version exhausted");
         self.versions.insert(key.clone(), self.last_version);
         self.last_version
+    }
+
+    fn persist_pending(&mut self, key: &IssueDraftKey) -> Result<bool, GitError> {
+        if let Some(destination) = self.recovered_to.get(key).cloned() {
+            self.persist_pending(&destination)?;
+            self.recovered_to.remove(key);
+        }
+        let Some(record) = self.pending.get(key) else {
+            return Ok(false);
+        };
+        persist_issue_draft(key, record)?;
+        self.pending.remove(key);
+        Ok(true)
     }
 }
 
@@ -360,38 +373,6 @@ fn composer_draft_version(key: IssueDraftKey) -> u64 {
     }
 }
 
-/// PR comments share the Issue queue, atomic writes and shutdown flush, but
-/// use a separate namespace even when an Issue has the same number.
-pub fn queue_pr_comment_draft(repo: &Path, base_repo: &str, number: u64, body: &str) -> u64 {
-    queue_composer_draft(
-        IssueDraftKey::pr(repo, base_repo, number),
-        "",
-        body,
-        &IssueCreateFields::default(),
-    )
-}
-
-pub fn pr_comment_draft_version(repo: &Path, base_repo: &str, number: u64) -> u64 {
-    composer_draft_version(IssueDraftKey::pr(repo, base_repo, number))
-}
-
-/// Read the latest pending value before disk, including a pending clear.
-pub fn load_pr_comment_draft(repo: &Path, base_repo: &str, number: u64) -> Option<String> {
-    let key = IssueDraftKey::pr(repo, base_repo, number);
-    let queue = issue_drafts()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(record) = queue.pending.get(&key) {
-        return (!record.is_empty()).then(|| record.body.clone());
-    }
-    let draft = key.path.as_deref().and_then(load_draft_at)?;
-    (draft.mode == "issue-composer")
-        .then(|| parse_issue_message(&draft.message))
-        .flatten()
-        .filter(|record| !record.is_empty())
-        .map(|record| record.body)
-}
-
 /// Consume the posted version only if it is still current, queuing a clear,
 /// and return the key's next version. No tab needs to remain alive and no
 /// disk I/O occurs here. Globally unique tokens locate their original storage
@@ -431,12 +412,7 @@ pub fn flush_issue_draft_if_version(
     let Some(key) = key else {
         return Ok(false);
     };
-    let Some(record) = queue.pending.get(&key) else {
-        return Ok(false);
-    };
-    persist_issue_draft(&key, record)?;
-    queue.pending.remove(&key);
-    Ok(true)
+    queue.persist_pending(&key)
 }
 
 fn persist_issue_draft(key: &IssueDraftKey, record: &IssueDraftRecord) -> Result<(), GitError> {
@@ -566,18 +542,14 @@ pub fn flush_issue_drafts() -> Result<(), GitError> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut first_error = None;
-    queue.pending.retain(|key, record| {
-        let result = persist_issue_draft(key, record);
-        match result {
-            Ok(()) => false,
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-                true
+    let keys: Vec<_> = queue.pending.keys().cloned().collect();
+    for key in keys {
+        if let Err(error) = queue.persist_pending(&key) {
+            if first_error.is_none() {
+                first_error = Some(error);
             }
         }
-    });
+    }
     first_error.map_or(Ok(()), Err)
 }
 

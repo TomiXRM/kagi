@@ -353,12 +353,8 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     );
     // PR comments use the same persistence owner without disturbing Issue
     // text or the picked metadata restored below.
-    kagi_git::drafts::queue_pr_comment_draft(
-        &repo,
-        "example/fixture",
-        7,
-        "separate PR draft 日本語",
-    );
+    let pr_drafts = kagi_git::drafts::PrCommentDraftSession::new(&repo);
+    pr_drafts.queue("example/fixture", 7, "separate PR draft 日本語");
     kagi_git::drafts::flush_issue_drafts().expect("flush both composer namespaces");
     // …and a composer that starts again loads them back with the text.
     app.update(cx, |app, cx| {
@@ -385,7 +381,7 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         BODY
     );
     assert_eq!(
-        kagi_git::drafts::load_pr_comment_draft(&repo, "example/fixture", 7).as_deref(),
+        pr_drafts.load("example/fixture", 7).as_deref(),
         Some("separate PR draft 日本語")
     );
     assert!(

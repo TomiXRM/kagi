@@ -379,6 +379,8 @@ pub struct TabUiState {
     /// tab's workspace mode; the PR tabs they hold name this repository's PRs.
     pub branch_cleanup_open: bool,
     pub pr_mode: Option<super::pr_mode::PrModeState>,
+    /// The session's exclusive durable PR draft slot, retained outside PR mode.
+    pub pr_comment_drafts: Option<kagi_git::drafts::PrCommentDraftSession>,
     /// Right-click menu on one of this tab's PR rows: `Some((pr, cursor))`.
     pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
     pub(super) pr_menu_keys: super::menu_keys::MenuKeys,
@@ -553,6 +555,7 @@ impl Default for TabUiState {
             cleanup_selected: HashSet::new(),
             branch_cleanup_open: false,
             pr_mode: None,
+            pr_comment_drafts: None,
             pr_menu: None,
             pr_menu_keys: Default::default(),
             filter_controls: Default::default(),

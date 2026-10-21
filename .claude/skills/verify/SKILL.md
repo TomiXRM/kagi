@@ -75,6 +75,14 @@ Approve is dispatched, then checks that the saved body is submitted only after
 restore. `pr_draft_post_after_graph` holds the admitted comment write, leaves
 PR mode through Graph, and requires reopening to retain an empty composer and
 one transport write. Both use fail-closed local gh fixtures.
+`pr_draft_same_clone_sessions` mounts two independent SessionIds/windows on
+the exact same canonical clone and addressed PR. The second restore must be
+empty rather than inherit the first draft; after the second owner edits again,
+the first owner's recorded post must clear only its own composer/storage.
+Graph/reopen must preserve the sibling's queued body. This raises the #1702
+filtered lane to 28 scenarios. Backend draft tests additionally cover exclusive
+slot claims, wrong-scope clear/flush rejection and recovery after all leases
+are dropped, including when only a higher slot still has unsent text.
 The consent, commit-warning and PR/Issue draft scenarios reuse W3's
 `presentation_support` paint/mount helpers; scenario-owned dispatcher drain
 ordering, viewport assertions and the existing idle-wait policy remain intact.

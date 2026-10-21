@@ -293,6 +293,7 @@ mod tests {
         let mut plan = OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             title: PlanTitle::Discard {
                 single: None,
@@ -456,6 +457,7 @@ mod tests {
         let mut plan = OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             title: PlanTitle::Push(PushTitle::Push {
                 branch: "main".into(),

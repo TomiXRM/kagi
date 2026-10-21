@@ -157,6 +157,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         return Ok(OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
@@ -219,6 +220,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         return Ok(OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
@@ -323,6 +325,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         return Ok(OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
@@ -380,6 +383,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
@@ -668,6 +672,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: title.clone(),
@@ -787,6 +792,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,

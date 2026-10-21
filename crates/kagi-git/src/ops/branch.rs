@@ -158,6 +158,7 @@ pub fn plan_create_branch(
     let mut plan = OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::CreateBranch {
@@ -571,6 +572,7 @@ pub fn plan_rename_branch(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::RenameBranch {
@@ -834,6 +836,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
             return Ok(OperationPlan {
                 rebase_scope: None,
                 tag_push_identity: None,
+                push_identity: None,
                 approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
                 title: PlanTitle::Branch(BranchTitle::DeleteBranch {
@@ -981,6 +984,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::DeleteBranch {

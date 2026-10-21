@@ -85,6 +85,7 @@ pub fn plan_checkout_tracking_branch(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Switch(SwitchTitle::CheckoutTracking {
@@ -301,6 +302,7 @@ pub fn plan_switch_to_latest(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Switch(SwitchTitle::SwitchToLatest {

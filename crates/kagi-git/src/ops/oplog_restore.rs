@@ -337,6 +337,7 @@ fn plan_oplog_restore(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::OplogRestore(title),

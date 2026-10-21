@@ -179,8 +179,9 @@ modal!(push, push_modal, |f, app, window, cx| {
     app.update(cx, |app, cx| app.open_push_modal(cx));
 });
 modal!(branch_plan, branch_plan_modal, |f, app, window, cx| {
-    app.update(cx, |app, _| {
-        app.open_branch_plan_modal("main".into(), BranchPlanKind::PushSetUpstream)
+    // A missing target is genuinely blocked; safe Publish now runs without a card.
+    app.update(cx, |app, cx| {
+        app.open_branch_plan_modal("missing-branch".into(), BranchPlanKind::PushSetUpstream, cx)
     });
 });
 modal!(set_upstream, set_upstream_modal, |f, app, window, cx| {

@@ -104,26 +104,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     // ── 3. Build current StateSummary ────────────────────────
     let head_display = head.display();
 
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
-
-    let current = StateSummary {
-        head: head_display.clone(),
-        dirty: dirty_display.clone(),
-    };
+    let current = state_summary(head_display.clone(), &status);
 
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();
@@ -313,26 +294,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     // ── 3. Build current StateSummary ────────────────────────
     let head_display = head.display();
 
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
-
-    let current = StateSummary {
-        head: head_display.clone(),
-        dirty: dirty_display.clone(),
-    };
+    let current = state_summary(head_display.clone(), &status);
 
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();

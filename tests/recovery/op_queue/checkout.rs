@@ -145,28 +145,32 @@ pub fn scenario_queue_checkout_transient_blocker_clears(cx: &mut VisualTestAppCo
     eprintln!("[gui-e2e] PASS queue_checkout_transient_blocker_clears");
 }
 
-/// Busy checkout replans unrelated staged/untracked work without inventing a
-/// carry-over caution; the safe queued checkout runs and preserves local work.
+/// Both idle double-click and queued checkout quietly preserve unrelated staged,
+/// unstaged and untracked work; concrete blockers and unknown cautions stop them.
 pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestAppContext) {
     checkout_untracked_blockers(cx);
+    checkout_unknown_cautions(cx);
     let fixture = branches_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
     git(&repo, &["add", "README.md"]);
+    std::fs::write(
+        repo.join("README.md"),
+        "# fixture\nlocal edit\nunstaged edit\n",
+    )
+    .unwrap();
     std::fs::write(repo.join("queue-untracked.txt"), "keep untracked\n").unwrap();
     let index_before = git_output(&repo, &["ls-files", "--stage"]);
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.open_plan_modal("a", cx));
-    assert!(cx.read(
-        |cx| app.read(cx).plan_modal().is_some_and(|m| m.queued.is_none()
-            && m.plan.warnings.is_empty()
-            && m.plan.blockers.is_empty())
-    ));
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_run_for_e2e(hold);
-    app.update(cx, |app, cx| app.start_checkout(cx));
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_none()),
+        "idle double-click quietly admits unrelated local work"
+    );
 
     app.update(cx, |app, cx| app.open_plan_modal("b", cx));
     assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
@@ -184,7 +188,7 @@ pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestA
     assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index_before);
     assert_eq!(
         std::fs::read_to_string(repo.join("README.md")).unwrap(),
-        "# fixture\nlocal edit\n"
+        "# fixture\nlocal edit\nunstaged edit\n"
     );
     assert_eq!(
         std::fs::read_to_string(repo.join("queue-untracked.txt")).unwrap(),
@@ -196,6 +200,59 @@ pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestA
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_busy_checkout_preserves_local_changes");
+}
+
+fn checkout_unknown_cautions(cx: &mut VisualTestAppContext) {
+    use kagi_domain::plan_note::{CommonNote, PlanNote};
+
+    for queued in [false, true] {
+        let fixture = branches_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let (app, window) = mount(cx, &repo);
+        let release = queued.then(|| hold_checkout(cx, &app, "a"));
+        let caution = PlanNote::Common(CommonNote::GitIdentityUnavailable);
+        KagiApp::caution_next_checkout_for_e2e(caution.clone());
+        app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+        if let Some(release) = release {
+            release.send(());
+        }
+        tick_until(cx, &app, "the unrecognized checkout caution", |app| {
+            app.plan_modal().is_some()
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let modal = state.plan_modal().unwrap();
+            assert_eq!(modal.queued.is_some(), queued);
+            assert_eq!(modal.plan.warnings, vec![caution]);
+            assert!(modal.plan.blockers.is_empty());
+            assert!(
+                !state.app_sessions.has_leases(),
+                "confirmation owns no writer"
+            );
+        });
+        assert!(drawn(cx, window, "plan-confirm"));
+        let before = crate::macos::repo_fingerprint(&repo);
+        let receipts = read_oplog_tail_for_repo(&repo, 100).len();
+        assert_eq!(receipts, usize::from(queued), "only the predecessor ran");
+        assert_eq!(head(&repo), if queued { "a" } else { "main" });
+        advance(cx, 4);
+        assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+        assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), receipts);
+        assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+        click(cx, window, "plan-confirm");
+        tick_until(cx, &app, "the explicitly confirmed checkout", |app| {
+            app.plan_modal().is_none()
+                && !app.app_sessions.has_leases()
+                && app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+        });
+        assert_eq!(head(&repo), "b");
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.len(), receipts + 1);
+        assert!(entries
+            .iter()
+            .all(|entry| matches!(&entry.outcome, OpOutcome::Success { .. })));
+        unmount(cx, app, window);
+    }
 }
 
 /// Exercise the idle double-click admission that would otherwise execute a

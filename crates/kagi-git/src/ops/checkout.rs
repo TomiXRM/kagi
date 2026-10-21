@@ -384,20 +384,21 @@ fn predict_checkout_conflict(
     target_oid: git2::Oid,
     status: &crate::status::WorkingTreeStatus,
 ) -> Option<PlanNote> {
-    // Resolve the current HEAD tree (the baseline the checkout diffs against).
-    let head_oid = match head {
+    // None is libgit2's empty baseline for unborn HEAD; do not materialize an
+    // empty tree object during read-only planning.
+    let head_tree = match head {
         Head::Attached { target, .. } | Head::Detached { target } => {
-            git2::Oid::from_str(target).ok()?
+            let oid = git2::Oid::from_str(target).ok()?;
+            Some(repo.find_commit(oid).ok()?.tree().ok()?)
         }
-        Head::Unborn { .. } => return None,
+        Head::Unborn { .. } => None,
     };
-    let head_tree = repo.find_commit(head_oid).ok()?.tree().ok()?;
     let target_tree = repo.find_commit(target_oid).ok()?.tree().ok()?;
 
     // Paths the checkout would write (anything that differs between the two trees).
     let mut touched: std::collections::HashSet<String> = std::collections::HashSet::new();
     let diff = repo
-        .diff_tree_to_tree(Some(&head_tree), Some(&target_tree), None)
+        .diff_tree_to_tree(head_tree.as_ref(), Some(&target_tree), None)
         .ok()?;
     for delta in diff.deltas() {
         if let Some(p) = delta.old_file().path() {

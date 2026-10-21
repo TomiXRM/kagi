@@ -147,10 +147,15 @@ one approved-plan presenter. Tag identity/destination and worktree branch/path/
 start remain explicit without amber triangles. Rebase conflict caution requires
 at least one replay candidate in its typed scope; zero replay creates no caution.
 
-Checkout's existing warning/blocker-based direct execution now admits unrelated
-local changes. Untracked paths that safe checkout would overwrite remain concrete
-path blockers, including file/directory collisions; retained unrelated paths are
-still neutral context. Pull/Push entrypoint policy remains owned by #1697. None of
-these presentation changes removes overlap checks, safe checkout, frozen identity/
-digest preflight, worktree occupancy checks, lifecycle verification or receipts.
+Checkout's typed `OperationPlan::checkout_needs_choice` policy admits unrelated
+local changes without confirmation; warning-vector emptiness is not an approval
+token. Both idle double-click and queued checkout use that policy. Blockers,
+destructive/non-checkout plans and unknown caution variants stay fail-closed;
+only explicitly recognized informational notes may bypass a choice.
+Untracked paths that safe checkout would overwrite remain concrete path blockers,
+including file/directory collisions. Unborn HEAD uses an empty tree baseline, not
+an exemption from overlap prediction. Retained unrelated paths are neutral context.
+Pull/Push entrypoint policy remains owned by #1697. None of these presentation
+changes removes overlap checks, safe checkout, frozen identity/digest preflight,
+worktree occupancy checks, lifecycle verification or receipts.
 

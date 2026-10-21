@@ -374,9 +374,7 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     // its HUP trap before closing the tab, rather than racing shell readiness.
     let shell_pid = shell_dir.path().join("shell.pid");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    while !std::fs::read_to_string(&shell_pid)
-        .is_ok_and(|pid| pid.trim().parse::<u32>().is_ok())
-    {
+    while !std::fs::read_to_string(&shell_pid).is_ok_and(|pid| pid.trim().parse::<u32>().is_ok()) {
         assert!(
             std::time::Instant::now() < deadline,
             "the hangup-proof shell never became ready"

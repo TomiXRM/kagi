@@ -529,6 +529,36 @@ impl OperationPlan {
         self.worktree_digest
     }
 
+    /// Whether a checkout must retain its confirmation/refusal surface.
+    ///
+    /// Only a ready, non-destructive branch checkout may run quietly. Dirty
+    /// summaries are not cautions: the backend's collision analysis and
+    /// preflight remain authoritative. Detached checkout and unrecognized
+    /// notes always retain the choice. `true` never authorizes a blocked plan.
+    pub fn checkout_needs_choice(&self) -> bool {
+        use crate::plan_note::{CheckoutTitle, CommonNote, UntrackedCtx};
+
+        if !matches!(
+            self.title,
+            PlanTitle::Checkout(CheckoutTitle::Checkout { .. })
+        ) || self.disposition != PlanDisposition::Ready
+            || self.destructive
+            || !self.blockers.is_empty()
+        {
+            return true;
+        }
+        self.warnings.iter().any(|note| match note {
+            // This describes preserved files, not an operation risk.
+            PlanNote::Common(CommonNote::UntrackedRemain {
+                ctx: UntrackedCtx::AfterCheckout,
+                ..
+            }) => false,
+            // No checkout caution (including future variants) is informational
+            // unless explicitly admitted above.
+            _ => true,
+        })
+    }
+
     /// A content-derived id for this plan (#330). Deterministic across process
     /// runs: it hashes exactly the inputs whose change would invalidate the
     /// plan — the operation identity (title, which encodes op kind + targets),
@@ -570,3 +600,6 @@ impl OperationPlan {
         format!("{:016x}", h.finish())
     }
 }
+
+#[cfg(test)]
+mod checkout_admission_tests;

@@ -4265,8 +4265,10 @@ The strict ff-only card shows its own EN/JA commit/stash-and-retry overlap note,
 never buttons offered only by ordinary Pull. Cancel and execution refusal retain
 the dirty files, index and refs. Checkout distinguishes unrelated untracked files
 from target paths that safe checkout would overwrite; the latter refuse before
-execution. Backend checkout tests also cover file/directory collisions and target
-paths unchanged between HEAD and the destination.
+execution. Both idle double-click and queue use typed checkout admission: unrelated
+dirty work stays quiet, while unknown cautions require confirmation and blockers
+refuse. Backend checkout tests also cover file/directory collisions, an empty-tree
+baseline for unborn HEAD, and paths unchanged between HEAD and the destination.
 
 #1032 adds `queue_commit_checkout_busy_replans` (direct busy
 `open_checkout_commit_modal` freezes the target OID; the head plan reads the

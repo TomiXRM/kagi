@@ -541,6 +541,11 @@ cannot be undone or restored from its Operation Log record immediately, not only
 that the history will be absent after restart. The in-memory entry has no trusted
 ref-move evidence for those recovery actions. Failure/refusal notices do not claim
 that an unchanged operation needs undo.
+When conflict-stopped execution and recording failure coincide, keep the stopped
+Info notice and neutral footer, and independently emit the recording Error toast
+and immediate AppNotice. Use the unrecorded Partial entry for that notice so it
+does not claim the whole merge/rebase completed. The in-memory row remains
+non-durable; presentation never retries append or manufactures a persisted receipt.
 
 Current strict-FF Pull uses the existing typed `NoOp(PullUpToDate)` presentation
 after its successful freshness fetch. Equal or locally ahead tips show the same

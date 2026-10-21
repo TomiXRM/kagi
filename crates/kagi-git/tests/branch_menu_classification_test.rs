@@ -76,3 +76,49 @@ fn branch_menu_merge_classification_preserves_squash_tree_read_failures() {
     }
     missing_object_stays_an_error("feature^{tree}", true);
 }
+
+#[test]
+fn branch_menu_orphan_is_unmerged_and_delete_plan_keeps_unmerged_warning() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use kagi_domain::plan_note::{BranchNote, PlanNote};
+
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    git_fixture::init_repo(dir, "main");
+    write_file(dir, "base.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+    git(dir, &["checkout", "-q", "--orphan", "orphan"]);
+    write_file(dir, "orphan.txt", "independent history\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "independent root"]);
+    git(dir, &["checkout", "-q", "main"]);
+    let tip = CommitId(git_output(dir, &["rev-parse", "orphan"]));
+    let head = git_output(dir, &["rev-parse", "HEAD"]);
+    let refs = git_output(dir, &["show-ref"]);
+    let repo = Repository::open(dir).unwrap();
+    let tip_oid = git2::Oid::from_str(&tip.0).unwrap();
+    let head_oid = git2::Oid::from_str(&head).unwrap();
+    let no_base = repo.merge_base(head_oid, tip_oid).unwrap_err();
+    assert_eq!(no_base.code(), git2::ErrorCode::NotFound);
+    assert_eq!(no_base.class(), git2::ErrorClass::Merge);
+    assert_eq!(
+        kagi_git::ops::squash_merged_as(&repo, tip_oid, head_oid).unwrap(),
+        None
+    );
+    let backend = Backend::open(dir).unwrap();
+    assert!(!backend
+        .branch_is_merged_into_head("orphan", &tip, &head)
+        .unwrap());
+    let plan = backend.plan_delete_branch("orphan").unwrap();
+    assert!(plan.blockers.is_empty());
+    assert!(plan.destructive);
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|warning| matches!(warning, PlanNote::Branch(BranchNote::DeleteUnmerged { .. }))));
+    assert_eq!(git_output(dir, &["show-ref"]), refs);
+    assert!(git_output(dir, &["status", "--porcelain"]).is_empty());
+}

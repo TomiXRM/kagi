@@ -123,7 +123,19 @@ pub fn squash_merged_as(
     tip_oid: git2::Oid,
     head_oid: git2::Oid,
 ) -> Result<Option<git2::Oid>, git2::Error> {
-    let base = repo.merge_base(head_oid, tip_oid)?;
+    let base = match repo.merge_base(head_oid, tip_oid) {
+        Ok(base) => base,
+        // Unrelated roots have no squash evidence. Missing objects can also
+        // return NotFound, but belong to a different error class and must stay
+        // errors rather than become a known-unmerged classification.
+        Err(error)
+            if error.code() == git2::ErrorCode::NotFound
+                && error.class() == git2::ErrorClass::Merge =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
     if base == tip_oid {
         // Already an ancestor — the plain reachability check covers this.
         return Ok(None);

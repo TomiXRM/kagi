@@ -620,6 +620,12 @@ impl KagiApp {
                             let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                                 &report.recording,
                             );
+                            if let Recording::Failed { error, .. } = &report.recording {
+                                // The stopped notice describes Git's state; it
+                                // must not hide the independent loss of its
+                                // durable recovery record.
+                                app.present_oplog_write_failure(&entry, error, cx);
+                            }
                             app.record_op_with_notice(
                                 entry,
                                 cx,

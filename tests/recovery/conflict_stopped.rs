@@ -5,6 +5,9 @@ use kagi::ui::{FooterStatus, KagiApp, ToastKind};
 use kagi_ui_core::i18n::{self, Lang, Msg};
 use std::time::{Duration, Instant};
 
+#[path = "../support/oplog.rs"]
+mod oplog;
+
 fn fixture(count: usize) -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
@@ -57,7 +60,95 @@ fn wait_for(
     }
 }
 
-fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool) {
+fn start_conflict(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, rebase: bool) {
+    app.update(cx, |app, cx| {
+        if rebase {
+            app.open_rebase_modal("feature".into(), cx);
+        } else {
+            app.open_merge_modal("feature".into(), None, cx);
+        }
+    });
+    wait_for(cx, app, |app| app.planning.is_none());
+    app.update(cx, |app, cx| {
+        if rebase {
+            assert!(app
+                .rebase_current_onto_modal()
+                .unwrap()
+                .plan
+                .blockers
+                .is_empty());
+            app.start_rebase(cx);
+            if app.rebase_current_onto_modal().is_some() {
+                assert!(app.rebase_current_onto_modal().unwrap().confirm_armed);
+                app.start_rebase(cx);
+            }
+        } else {
+            assert!(app.merge_modal().unwrap().plan.blockers.is_empty());
+            app.start_merge(cx);
+        }
+    });
+}
+
+fn assert_stopped(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, observed: usize) {
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let conflict = app.ui().conflict.as_ref().unwrap().read(cx);
+        let mode = conflict.mode.as_ref().unwrap();
+        assert_eq!(mode.conflicted_count(), observed);
+        assert!(!mode.can_continue(), "unresolved files disable Continue");
+        let expected = Msg::conflict_stopped(Some(observed));
+        assert!(matches!(&app.status_footer,
+            FooterStatus::Idle(text) if text.as_ref() == expected.as_str()),
+            "a conflict stop must not leave a successful footer");
+        let stack = app.toast_stack.as_ref().unwrap().read(cx);
+        assert!(stack.toasts().iter().any(|toast| {
+            toast.kind == ToastKind::Info && toast.message.as_ref() == expected.as_str()
+        }), "localized stopped notice must report the actual conflict count");
+        assert!(stack.toasts().iter().all(|toast| toast.kind != ToastKind::Success),
+            "unresolved conflicts and disabled Continue cannot coexist with a green completion toast");
+    });
+}
+
+fn assert_recording_failure(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    repo: &std::path::Path,
+    operation: &str,
+) {
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let notice = app
+            .app_notice()
+            .expect("failed append must be immediately visible");
+        assert!(notice.message.contains(&repo.display().to_string()));
+        let (record_label, undo, restore) = match i18n::lang() {
+            Lang::En => ("Operation Log", "cannot undo", "restore from"),
+            Lang::Ja => ("操作ログ", "取り消せません", "復元もできません"),
+        };
+        assert!(notice.message.contains(record_label));
+        assert!(notice.message.contains(undo));
+        assert!(notice.message.contains(restore));
+        let stack = app.toast_stack.as_ref().unwrap().read(cx);
+        assert!(
+            stack
+                .toasts()
+                .iter()
+                .any(|toast| toast.kind == ToastKind::Error),
+            "recording failure needs a separate error notice alongside the stopped notice"
+        );
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let entries: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|entry| entry.op == operation)
+            .collect();
+        assert_eq!(entries.len(), 1, "no duplicate in-memory receipts");
+        assert!(matches!(&entries[0].outcome,
+            kagi_git::oplog::OpOutcome::Partial { error, .. } if error.contains("not recorded")));
+    });
+}
+
+fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool, recording_failure: bool) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let language = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
@@ -66,32 +157,19 @@ fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool) {
             let repo = fixture.path().canonicalize().unwrap();
             i18n::set_lang(lang);
             let (app, window) = mount(cx, &repo);
-            app.update(cx, |app, cx| {
-                if rebase {
-                    app.open_rebase_modal("feature".into(), cx);
-                } else {
-                    app.open_merge_modal("feature".into(), None, cx);
-                }
+            let recording_lock = recording_failure.then(|| {
+                let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                    .join("operations.jsonl.lock");
+                let lock = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(path)
+                    .unwrap();
+                lock.lock().unwrap();
+                lock
             });
-            wait_for(cx, &app, |app| app.planning.is_none());
-            app.update(cx, |app, cx| {
-                if rebase {
-                    assert!(app
-                        .rebase_current_onto_modal()
-                        .unwrap()
-                        .plan
-                        .blockers
-                        .is_empty());
-                    app.start_rebase(cx);
-                    if app.rebase_current_onto_modal().is_some() {
-                        assert!(app.rebase_current_onto_modal().unwrap().confirm_armed);
-                        app.start_rebase(cx);
-                    }
-                } else {
-                    assert!(app.merge_modal().unwrap().plan.blockers.is_empty());
-                    app.start_merge(cx);
-                }
-            });
+            start_conflict(cx, &app, rebase);
             wait_for(cx, &app, |app| {
                 app.write_busy_op.is_none() && app.ui().conflict.is_some()
             });
@@ -107,36 +185,26 @@ fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool) {
                 observed, count,
                 "fixture leaves real unmerged index entries"
             );
-            cx.read(|cx| {
-                let app = app.read(cx);
-                let conflict = app.ui().conflict.as_ref().unwrap().read(cx);
-                let mode = conflict.mode.as_ref().unwrap();
-                assert_eq!(mode.conflicted_count(), observed);
-                assert!(!mode.can_continue(), "unresolved files disable Continue");
-                let expected = Msg::conflict_stopped(Some(observed));
-                assert!(matches!(&app.status_footer,
-                    FooterStatus::Idle(text) if text.as_ref() == expected.as_str()),
-                    "a conflict stop must not leave a successful footer");
-                let stack = app.toast_stack.as_ref().unwrap().read(cx);
-                assert!(stack.toasts().iter().any(|toast| {
-                    toast.kind == ToastKind::Info && toast.message.as_ref() == expected.as_str()
-                }), "localized stopped notice must report the actual conflict count");
-                assert!(stack.toasts().iter().all(|toast| toast.kind != ToastKind::Success),
-                    "unresolved conflicts and disabled Continue cannot coexist with a green completion toast");
-            });
+            assert_stopped(cx, &app, observed);
             let operation = if rebase { "rebase" } else { "merge" };
-            let receipts: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
-                .into_iter()
-                .filter(|entry| entry.op == operation)
-                .collect();
+            if recording_failure {
+                assert_recording_failure(cx, &app, &repo, operation);
+            }
             assert_eq!(
-                receipts.len(),
-                1,
-                "presentation must not duplicate receipts"
+                oplog::records(&repo, operation, 100, true).len(),
+                usize::from(!recording_failure),
+                "presentation must neither duplicate nor fabricate durable receipts"
             );
             assert!(
                 !cx.read(|cx| app.read(cx).app_sessions.has_leases()),
                 "the existing known-outcome settlement still releases its lease"
+            );
+            drop(recording_lock);
+            cx.run_until_parked();
+            assert_eq!(
+                oplog::records(&repo, operation, 100, true).len(),
+                usize::from(!recording_failure),
+                "presentation must not retry persistence"
             );
             unmount(cx, app, window);
         }
@@ -145,9 +213,14 @@ fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool) {
 }
 
 pub fn scenario_conflict_merge_stopped_toast(cx: &mut VisualTestAppContext) {
-    stopped_matrix(cx, false);
+    stopped_matrix(cx, false, false);
 }
 
 pub fn scenario_conflict_rebase_stopped_toast(cx: &mut VisualTestAppContext) {
-    stopped_matrix(cx, true);
+    stopped_matrix(cx, true, false);
+}
+
+pub fn scenario_oplog_append_failure_conflict_stopped(cx: &mut VisualTestAppContext) {
+    stopped_matrix(cx, false, true);
+    stopped_matrix(cx, true, true);
 }

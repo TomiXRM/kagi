@@ -8,6 +8,9 @@ use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_ui_core::i18n::{self, Msg};
 use std::path::Path;
 
+#[path = "../support/oplog.rs"]
+mod oplog;
+
 fn output(repo: &Path, args: &[&str]) -> String {
     let result = std::process::Command::new("git")
         .args(args)
@@ -133,4 +136,70 @@ pub fn branch_cleanup_target_heading(cx: &mut VisualTestAppContext) {
     }
     assert_eq!(output(repo, &["show-ref"]), before);
     assert!(output(repo, &["status", "--porcelain"]).is_empty());
+}
+
+pub fn branch_menu_orphan_delete(cx: &mut VisualTestAppContext) {
+    let _settings = GlobalSettings::capture();
+    for locale in ["en", "ja"] {
+        std::env::set_var("KAGI_LANG", locale);
+        i18n::init_lang();
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        git(repo, &["checkout", "-q", "--orphan", "orphan"]);
+        std::fs::write(repo.join("orphan.txt"), "independent root\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", "independent root"]);
+        let tip = output(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["checkout", "-q", "main"]);
+        let head = output(repo, &["rev-parse", "HEAD"]);
+        let (app, window) = mount(cx, repo);
+        native_ax::activate(cx);
+        app.update(cx, |app, cx| {
+            app.open_local_branch_menu("orphan".into(), point(px(400.), px(100.)));
+            cx.notify();
+        });
+        draw(cx, window, (1440., 900.));
+        cx.run_until_parked();
+        draw(cx, window, (1440., 900.));
+        assert_eq!(
+            app.read_with(cx, |app, _| app
+                .branch_menu
+                .as_ref()
+                .unwrap()
+                .merged_into_current),
+            Some(false)
+        );
+        let node = native_ax::node(cx, window, "branch-menu-item-2-2".into());
+        assert_eq!(node["aria"]["label"], Msg::BcmDeleteUnmerged.t());
+        crate::keyboard_nav::keys(cx, window, "escape");
+        app.update(cx, |app, cx| app.open_delete_branch_modal("orphan", cx));
+        crate::recovery_operations::wait_idle(cx, &app);
+        app.read_with(cx, |app, _| {
+            let modal = app.delete_branch_modal().unwrap();
+            assert!(modal.plan.blockers.is_empty());
+            assert!(!modal.confirm_armed);
+        });
+        app.update(cx, |app, cx| app.start_delete_branch(cx));
+        cx.run_until_parked();
+        assert!(app.read_with(cx, |app, _| app
+            .delete_branch_modal()
+            .unwrap()
+            .confirm_armed));
+        assert_eq!(output(repo, &["rev-parse", "orphan"]), tip);
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        assert!(oplog::records(repo, "delete-branch", 100, true).is_empty());
+        app.update(cx, |app, cx| app.start_delete_branch(cx));
+        crate::recovery_operations::wait_idle(cx, &app);
+        assert!(app.read_with(cx, |app, _| app.delete_branch_modal().is_none()));
+        assert!(output(repo, &["branch", "--list", "orphan"]).is_empty());
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        let receipts = oplog::records(repo, "delete-branch", 100, true);
+        assert_eq!(receipts.len(), 1);
+        assert!(matches!(
+            receipts[0].outcome,
+            kagi_git::oplog::OpOutcome::Success { .. }
+        ));
+        assert!(!app.read_with(cx, |app, _| app.app_sessions.has_leases()));
+        unmount(cx, app, window);
+    }
 }

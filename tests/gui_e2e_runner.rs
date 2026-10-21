@@ -3000,6 +3000,10 @@ mod macos {
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
             ),
             (
+                "oplog_append_failure_conflict_stopped",
+                Box::new(crate::conflict_stopped::scenario_oplog_append_failure_conflict_stopped),
+            ),
+            (
                 "pr_merge_delete_branch_return_cancel",
                 Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
             ),
@@ -3038,6 +3042,10 @@ mod macos {
             (
                 "conflict_rebase_stopped_toast",
                 Box::new(crate::conflict_stopped::scenario_conflict_rebase_stopped_toast),
+            ),
+            (
+                "branch_menu_orphan_delete",
+                Box::new(crate::state_labels::branch_menu_orphan_delete),
             ),
             (
                 "editor_external_change_banner",

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp, ToastKind};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
-use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, FailureCode, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{append_oplog, FailureCode, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind, StateSummary};
 use kagi_ui_core::theme;
 
@@ -71,12 +71,9 @@ pub(super) fn dispatch_checkout_selected(
     cx.dispatch_action(window, CheckoutSelected);
 }
 
-fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
-    read_oplog_tail_for_repo(repo, 100)
-        .into_iter()
-        .filter(|e| e.op == op)
-        .collect()
-}
+#[path = "../support/oplog.rs"]
+mod oplog;
+use oplog::records;
 
 fn recovery_oid(entry: &OpLogEntry, expected: &str) -> String {
     let OpOutcome::Success { after } = &entry.outcome else {
@@ -130,7 +127,7 @@ pub fn scenario_stash_drop_persists(cx: &mut VisualTestAppContext) {
         assert!(output(repo, &["stash", "list"]).is_empty());
         assert_eq!(fingerprint, repo_fingerprint(repo));
         assert_eq!(other_before, repo_fingerprint(other.path()));
-        let entries = records(repo, "stash-drop");
+        let entries = records(repo, "stash-drop", 100, true);
         assert_eq!(
             entries.len(),
             1,
@@ -171,7 +168,7 @@ pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
     });
     assert_eq!(output(repo, &["rev-parse", "HEAD"]), before);
     assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), text);
-    let undo = records(repo, "undo-commit");
+    let undo = records(repo, "undo-commit", 100, true);
     assert_eq!(undo.len(), 1, "UI undo must persist exactly once");
     recovery_oid(&undo[0], &before);
     recovery_oid(&undo[0], &after);
@@ -182,7 +179,7 @@ pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
     });
     assert_eq!(output(repo, &["rev-parse", "HEAD"]), after);
     assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), text);
-    let redo = records(repo, "redo-commit");
+    let redo = records(repo, "redo-commit", 100, true);
     assert_eq!(redo.len(), 1);
     recovery_oid(&redo[0], &before);
     recovery_oid(&redo[0], &after);
@@ -230,7 +227,7 @@ pub fn scenario_cleanup_stale_tab(cx: &mut VisualTestAppContext) {
         assert!(!matches!(&app.status_footer, FooterStatus::Success(s) if s.starts_with("branch-cleanup:")),
             "cleanup completion overwrote another tab's footer");
     });
-    let entries = records(repo, "branch-cleanup");
+    let entries = records(repo, "branch-cleanup", 100, true);
     assert_eq!(
         entries.len(),
         1,
@@ -282,7 +279,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
         // Local stash now shares the root Enter/button approval boundary.
         app.update(cx, |app, cx| app.start_stash_drop(cx));
         wait_idle(cx, &app);
-        let entries = records(repo, "stash-drop");
+        let entries = records(repo, "stash-drop", 100, true);
         assert_eq!(entries.len(), 1);
         let OpOutcome::Refused { blockers } = &entries[0].outcome else {
             panic!("expected a durable refusal, got {:?}", entries[0].outcome);
@@ -366,7 +363,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             );
         });
         assert_eq!(repo_fingerprint(repo), before);
-        let entries = records(repo, "undo-commit");
+        let entries = records(repo, "undo-commit", 100, true);
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Failed { .. }));
         unmount(cx, app, window);
@@ -411,7 +408,7 @@ pub fn scenario_cleanup_presents_backend_receipt(cx: &mut VisualTestAppContext) 
     });
     wait_idle(cx, &app);
     assert!(output(repo, &["for-each-ref", "refs/heads/merged"]).is_empty());
-    let durable = records(repo, "branch-cleanup");
+    let durable = records(repo, "branch-cleanup", 100, true);
     assert_eq!(durable.len(), 1, "one attempt, one durable entry");
     cx.read(|cx| {
         let app = app.read(cx);
@@ -504,7 +501,7 @@ pub fn scenario_cleanup_open_failure(cx: &mut VisualTestAppContext) {
         // open failure after admission is `RunJob::run`'s own recording, which
         // lands before the ownership guard the way this used to.)
         assert!(
-            records(repo, "branch-cleanup").is_empty(),
+            records(repo, "branch-cleanup", 100, true).is_empty(),
             "a refused admission executed nothing, so it records nothing"
         );
         cx.read(|cx| {
@@ -590,7 +587,7 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
     assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
     assert_eq!(repo_fingerprint(repo), before);
 
-    let entries = records(repo, "branch-cleanup");
+    let entries = records(repo, "branch-cleanup", 100, true);
     assert_eq!(entries.len(), 1);
     let recovered = match &entries[0].outcome {
         OpOutcome::Partial { after, .. } => after
@@ -1711,7 +1708,7 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).app_notice().is_none()),
         "push-failure-no-notice-after-close: closing the foreground must not reveal a dismiss-only modal"
     );
-    let durable = records(repo, "push");
+    let durable = records(repo, "push", 100, true);
     assert_eq!(
         durable.len(),
         1,
@@ -1794,7 +1791,7 @@ pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext)
         head,
         "preflight must refuse the stale plan"
     );
-    let durable = records(repo, "checkout");
+    let durable = records(repo, "checkout", 100, true);
     assert_eq!(durable.len(), 1, "one attempt, one durable entry");
     assert!(matches!(durable[0].outcome, OpOutcome::Failed { .. }));
     assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
@@ -1877,7 +1874,7 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
         head,
         "preflight must refuse the stale plan"
     );
-    let durable = records(repo, "cherry-pick");
+    let durable = records(repo, "cherry-pick", 100, true);
     assert_eq!(durable.len(), 1, "one attempt, one durable entry");
     assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
     cx.read(|cx| {
@@ -1933,12 +1930,12 @@ fn assert_created_branch_dismissed(
         .unwrap(),
         "verified creation must return focus from the removed input to the root"
     );
-    let receipt = records(repo, "create-branch");
+    let receipt = records(repo, "create-branch", 100, true);
     assert_eq!(receipt.len(), 1);
     cx.simulate_keystrokes(window, "enter");
     cx.run_until_parked();
     paint(cx, window);
-    let after_enter = records(repo, "create-branch");
+    let after_enter = records(repo, "create-branch", 100, true);
     assert_eq!(
         after_enter.len(),
         1,
@@ -2028,7 +2025,7 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
         assert!(modal.error.is_none());
     });
     assert!(
-        records(&repo, "create-branch").is_empty(),
+        records(&repo, "create-branch", 100, true).is_empty(),
         "reload never submits unsent input"
     );
 
@@ -2044,7 +2041,7 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
         "unchecked checkout leaves HEAD on the original branch"
     );
     assert_created_branch_dismissed(cx, &app, window, &repo);
-    let durable = records(&repo, "create-branch");
+    let durable = records(&repo, "create-branch", 100, true);
     assert_eq!(durable.len(), 1, "one attempt, one durable entry");
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     assert!(
@@ -2105,7 +2102,7 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
     cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     paint(cx, window);
-    let durable = records(&repo, "create-branch");
+    let durable = records(&repo, "create-branch", 100, true);
     assert_eq!(
         durable.len(),
         1,
@@ -2163,7 +2160,7 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
         assert_eq!(input.read(cx).value().as_str(), "collision/child");
     });
     assert_eq!(
-        records(&repo, "create-branch").len(),
+        records(&repo, "create-branch", 100, true).len(),
         1,
         "reload never retries"
     );
@@ -2459,7 +2456,7 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         "composition Enter must not create a Git ref"
     );
     assert!(
-        records(&repo, "create-branch").is_empty(),
+        records(&repo, "create-branch", 100, true).is_empty(),
         "composition Enter must not record any create attempt"
     );
     cx.read(|cx| {
@@ -2485,7 +2482,7 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         "ordinary Enter after composition still creates the branch"
     );
     assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "feat");
-    let durable = records(&repo, "create-branch");
+    let durable = records(&repo, "create-branch", 100, true);
     assert_eq!(durable.len(), 1);
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     assert_created_branch_dismissed(cx, &app, window, &repo);
@@ -3000,7 +2997,7 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
         assert!(
-            records(repo, "delete-branch").is_empty(),
+            records(repo, "delete-branch", 100, true).is_empty(),
             "arming must not record or execute"
         );
         confirm_branch_delete(cx, &app, window, input);
@@ -3008,7 +3005,7 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
         assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
         assert_eq!(output(repo, &["branch", "--list", "unmerged-delete"]), "");
         assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
-        let entries = records(repo, "delete-branch");
+        let entries = records(repo, "delete-branch", 100, true);
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
         assert_eq!(entries[0].backup_refs.len(), 1);
@@ -3145,7 +3142,7 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
         wait_idle(cx, &app);
         assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
         assert_eq!(output(repo, &["branch", "--list", "merged-delete"]), "");
-        assert_eq!(records(repo, "delete-branch").len(), 2);
+        assert_eq!(records(repo, "delete-branch", 100, true).len(), 2);
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS unmerged_branch_delete_armed: Enter/button arm then execute; merged stays one-stage");
@@ -3204,8 +3201,8 @@ fn delayed_delete_plan_stays_with_its_owner(cx: &mut VisualTestAppContext) {
         press_enter(cx, &app, window);
         cx.run_until_parked();
         assert_eq!(repo_fingerprint(other.path()), before);
-        assert!(records(other.path(), "delete-branch").is_empty());
-        assert!(records(fixture.path(), "delete-branch").is_empty());
+        assert!(records(other.path(), "delete-branch", 100, true).is_empty());
+        assert!(records(fixture.path(), "delete-branch", 100, true).is_empty());
         app.update(cx, |app, cx| {
             app.switch_repo(0, cx);
             assert!(app.delete_branch_modal().is_none());
@@ -3361,7 +3358,7 @@ pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
                 && note.message_en().contains("last fetch")));
     });
     assert_eq!(repo_fingerprint(dir), before);
-    assert!(records(dir, "merge-into").is_empty());
+    assert!(records(dir, "merge-into", 100, true).is_empty());
     assert_ne!(output(dir, &["rev-parse", "target"]), source);
     press_enter(cx, &app, window);
     wait_idle(cx, &app);
@@ -3376,7 +3373,7 @@ pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
         output(dir, &["for-each-ref", "--format=%(refname)", "refs/heads"]),
         "refs/heads/main\nrefs/heads/target"
     );
-    let entries = records(dir, "merge-into");
+    let entries = records(dir, "merge-into", 100, true);
     assert_eq!(entries.len(), 1);
     assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
     unmount(cx, app, window);
@@ -3435,7 +3432,7 @@ pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
         });
         assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
         assert_eq!(repo_fingerprint(repo), fingerprint);
-        let entries = records(repo, "stage");
+        let entries = records(repo, "stage", 100, true);
         assert_eq!(entries.len(), 1);
         assert!(
             matches!(&entries[0].outcome, OpOutcome::Refused { blockers } if blockers[0].contains("external filter (lfs)"))
@@ -3508,7 +3505,7 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 (true, _) => "stage",
                 (false, _) => "unstage",
             };
-            let count = records(repo, op).len();
+            let count = records(repo, op, 100, true).len();
             app.update(cx, |app, cx| match (stage, entry) {
                 (true, "editor") => {
                     app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
@@ -3566,7 +3563,7 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                     std::fs::canonicalize(repo).unwrap()
                 );
             });
-            assert_eq!(records(repo, op).len(), count + 1);
+            assert_eq!(records(repo, op, 100, true).len(), count + 1);
             assert_eq!(std::fs::read(git_dir.join("index")).unwrap(), index);
             std::fs::remove_file(lock).unwrap();
             assert_eq!((repo_fingerprint(&main), repo_fingerprint(&linked)), before);
@@ -3574,13 +3571,13 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     }
     // Admission denial never reaches a mutation or opens a modal.
     let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&main).unwrap());
-    let count = records(&main, "stage").len();
+    let count = records(&main, "stage", 100, true).len();
     app.update(cx, |app, cx| {
         app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
     });
     cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
-    assert_eq!(records(&main, "stage").len(), count + 1);
-    assert!(records(&main, "stage")
+    assert_eq!(records(&main, "stage", 100, true).len(), count + 1);
+    assert!(records(&main, "stage", 100, true)
         .iter()
         .any(|e| matches!(e.outcome, OpOutcome::Refused { .. })));
     guard.complete();
@@ -3651,7 +3648,7 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(output(repo, &["rev-parse", "refs/heads/feat"]), feat_before);
         assert!(
-            records(repo, "replay-onto").is_empty(),
+            records(repo, "replay-onto", 100, true).is_empty(),
             "arming must not record or execute"
         );
 
@@ -3682,7 +3679,7 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
             feat_after,
             "its HEAD follows the ref"
         );
-        let entries = records(repo, "replay-onto");
+        let entries = records(repo, "replay-onto", 100, true);
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
         assert_eq!(entries[0].backup_refs.len(), 1);
@@ -4261,7 +4258,7 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(output(repo, &["rev-parse", "HEAD"]), before_tip);
         assert!(
-            records(repo, "sync-to-remote").is_empty(),
+            records(repo, "sync-to-remote", 100, true).is_empty(),
             "arming must not record or execute"
         );
 
@@ -4285,7 +4282,7 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
             !repo.join("untracked.txt").exists(),
             "retained untracked removed"
         );
-        let entries = records(repo, "sync-to-remote");
+        let entries = records(repo, "sync-to-remote", 100, true);
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
         assert_eq!(

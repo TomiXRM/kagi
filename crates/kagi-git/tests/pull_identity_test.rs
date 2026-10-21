@@ -10,7 +10,8 @@ use kagi_git::{Backend, OpOutcome, Operation, OperationOutcome, OperationPlan, P
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
 use git_fixture::{
-    commit_all, git, git_output, init_repo, repo_with_bare_origin, write_file, RemoteFixture,
+    commit_all, git, git_output, init_repo, repo_with_bare_origin, worktree_files, write_file,
+    RemoteFixture, WorktreeFilesOptions,
 };
 
 #[path = "../../../tests/support/isolated.rs"]
@@ -146,33 +147,20 @@ struct CheckoutState {
     worktree: BTreeMap<PathBuf, Vec<u8>>,
 }
 
-fn worktree_files(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path == root.join(".git") {
-            continue;
-        }
-        if path.is_dir() {
-            worktree_files(root, &path, files);
-        } else {
-            files.insert(
-                path.strip_prefix(root).unwrap().to_path_buf(),
-                std::fs::read(path).unwrap(),
-            );
-        }
-    }
-}
-
 fn checkout_state(local: &Path) -> CheckoutState {
-    let mut worktree = BTreeMap::new();
-    worktree_files(local, local, &mut worktree);
     CheckoutState {
         head: git_output(local, &["rev-parse", "HEAD"]),
         symbolic_head: git_output(local, &["symbolic-ref", "HEAD"]),
         index_bytes: std::fs::read(local.join(".git/index")).unwrap(),
         index_entries: git_output(local, &["ls-files", "--stage"]),
         index_blob: git_output(local, &["show", ":a.txt"]),
-        worktree,
+        worktree: worktree_files(
+            local,
+            WorktreeFilesOptions {
+                skip_nested_git: false,
+                follow_directory_symlinks: true,
+            },
+        ),
     }
 }
 

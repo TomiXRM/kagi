@@ -35,10 +35,14 @@ fn build_and_describe() -> String {
     commit_all(&f.local, "topic work");
     git(&f.local, &["push", "-q", "origin", "topic"]);
     git(&f.local, &["tag", "v1"]);
+    let other = f.clone_other();
+    write_file(&other, "clone.txt", "other clone\n");
+    commit_all(&other, "other work");
     let description = format!(
-        "== local\n{}== remote\n{}",
+        "== local\n{}== remote\n{}== other\n{}",
         describe(&f.local, &f.local.join(".git")),
-        describe(&f.remote, &f.remote)
+        describe(&f.remote, &f.remote),
+        describe(&other, &other.join(".git"))
     );
     // The remote URL names the per-run temp directory.
     description.replace(f.local.parent().unwrap().to_str().unwrap(), "<fixture>")
@@ -564,4 +568,110 @@ fn fixture_commands_spawn_no_detached_maintenance() {
         !tmp.path().join(".git/objects/maintenance.lock").exists(),
         "a maintenance lock was left in the fixture"
     );
+}
+
+#[test]
+fn selected_worktree_files_preserve_bytes_absence_and_order() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("binary"), b" \0\xff\r\n ").unwrap();
+    std::fs::write(tmp.path().join("empty"), b"").unwrap();
+    assert_eq!(
+        git_fixture::selected_worktree_files(
+            tmp.path(),
+            ["missing/child", "binary", "empty", "absent"],
+        ),
+        vec![
+            ("missing/child", None),
+            ("binary", Some(b" \0\xff\r\n ".to_vec())),
+            ("empty", Some(Vec::new())),
+            ("absent", None),
+        ]
+    );
+}
+
+#[test]
+#[should_panic(expected = "read directory")]
+fn selected_worktree_files_do_not_hide_non_missing_read_errors() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("directory")).unwrap();
+    git_fixture::selected_worktree_files(tmp.path(), ["directory"]);
+}
+
+#[test]
+fn worktree_files_preserve_collection_scope_and_exact_bytes() {
+    for git_is_dir in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        if git_is_dir {
+            std::fs::create_dir(root.join(".git")).unwrap();
+            write_file(root, ".git/metadata", "excluded\n");
+        } else {
+            write_file(root, ".git", "gitdir: elsewhere\n");
+        }
+        std::fs::create_dir_all(root.join("nested/.git")).unwrap();
+        write_file(root, "nested/.git/metadata", "nested metadata\n");
+        write_file(root, "nested/untracked", " untracked\r\n");
+        write_file(root, ".gitignore", "*.log\n");
+        std::fs::write(root.join("ignored.log"), b"\0\xff\r\n").unwrap();
+        let mut expected = BTreeMap::from([
+            (PathBuf::from(".gitignore"), b"*.log\n".to_vec()),
+            (PathBuf::from("ignored.log"), b"\0\xff\r\n".to_vec()),
+            (
+                PathBuf::from("nested/untracked"),
+                b" untracked\r\n".to_vec(),
+            ),
+        ]);
+        assert_eq!(
+            git_fixture::worktree_files(
+                root,
+                git_fixture::WorktreeFilesOptions {
+                    skip_nested_git: true,
+                    follow_directory_symlinks: false,
+                },
+            ),
+            expected,
+        );
+        expected.insert(
+            PathBuf::from("nested/.git/metadata"),
+            b"nested metadata\n".to_vec(),
+        );
+        assert_eq!(
+            git_fixture::worktree_files(
+                root,
+                git_fixture::WorktreeFilesOptions {
+                    skip_nested_git: false,
+                    follow_directory_symlinks: true,
+                },
+            ),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn worktree_files_preserve_directory_symlink_traversal_choice() {
+    let tmp = TempDir::new().unwrap();
+    let target = TempDir::new().unwrap();
+    write_file(target.path(), "bytes", "linked\r\n");
+    std::os::unix::fs::symlink(target.path(), tmp.path().join("linked")).unwrap();
+    assert_eq!(
+        git_fixture::worktree_files(
+            tmp.path(),
+            git_fixture::WorktreeFilesOptions {
+                skip_nested_git: false,
+                follow_directory_symlinks: true,
+            },
+        ),
+        BTreeMap::from([(PathBuf::from("linked/bytes"), b"linked\r\n".to_vec())]),
+    );
+    assert!(std::panic::catch_unwind(|| {
+        git_fixture::worktree_files(
+            tmp.path(),
+            git_fixture::WorktreeFilesOptions {
+                skip_nested_git: true,
+                follow_directory_symlinks: false,
+            },
+        )
+    })
+    .is_err());
 }

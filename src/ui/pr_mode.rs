@@ -1093,9 +1093,9 @@ impl KagiApp {
         };
         let drafts = ui
             .pr_comment_drafts
-            .get_or_insert_with(|| kagi_git::drafts::PrCommentDraftSession::new(&repo))
-            .clone();
+            .get_or_insert_with(|| kagi_git::drafts::PrCommentDraftSession::new(&repo));
         let version = drafts.version(&pr.base_repo, pr.number);
+        let read_drafts = drafts.reader();
         if let Some(tab) = self
             .pr_mode_mut()
             .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)))
@@ -1110,13 +1110,19 @@ impl KagiApp {
             if let Some(hold) = hold {
                 hold.await;
             }
-            let read_drafts = drafts.clone();
             let read_pr = pr.clone();
             let loaded = acx
                 .background_executor()
                 .spawn(async move { read_drafts.load(&read_pr.base_repo, read_pr.number) })
                 .await;
             let _ = this.update(acx, |app, cx| {
+                let Some(drafts) = app
+                    .ui
+                    .get(&owner)
+                    .and_then(|ui| ui.pr_comment_drafts.clone())
+                else {
+                    return;
+                };
                 let Some(tab) = app
                     .pr_mode_of(Some(owner))
                     .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)))

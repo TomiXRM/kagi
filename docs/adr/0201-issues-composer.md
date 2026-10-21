@@ -54,8 +54,12 @@ slots use separate PR namespaces, disjoint from Issue replies. Runtime session
 identifiers are not filenames: released slots can be recovered after close or
 restart, including a remaining sibling draft after another slot was posted.
 The existing application-quit flush drains every slot through the same queue.
-Restoration uses the pending value before disk and a version guard before
-touching an input. Admitted posts retain their originating slot lease through
+Restoration uses a non-owning `PrCommentDraftReader`: its captured read state
+has only a weak reference to the exclusive slot lease, including during I/O.
+Closing the session immediately releases the slot for a returning owner; an
+expired reader does no recovery transfer and its UI completion must still match
+the creating `SessionId` and version. Reads prefer pending values before disk.
+Admitted posts retain their originating slot lease through
 settlement, even after the owner closes; only their captured scoped version
 can clear. Debounced flushes retain the globally unique version, not the lease,
 so an ordinary close/reopen can immediately recover the saved slot. Failed or

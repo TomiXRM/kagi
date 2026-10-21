@@ -286,7 +286,9 @@ CDN, disk-cached, once per process per login: no API call and no token.
   re-reads the thread through the existing owner-frozen conversation load.
   Newer edits, other PRs, addressed repositories and clones remain untouched.
   Persistence also carries that owner boundary: each session holds an exclusive
-  recovery-slot lease, shared by its restore, queued edits and admitted post.
+  recovery-slot lease for queued edits and admitted posts. Restore reads observe
+  that scope weakly, so closing a loading tab does not reserve its saved slot
+  against an immediate reopen.
   Two windows on the identical clone and addressed PR never share storage
   versions. Stable recovery slots survive restart without using runtime
   SessionIds as filenames; a posted owner clears only its captured slot/version.

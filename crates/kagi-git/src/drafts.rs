@@ -53,7 +53,7 @@ use super::GitError;
 
 mod pr_comment;
 
-pub use pr_comment::PrCommentDraftSession;
+pub use pr_comment::{PrCommentDraftReader, PrCommentDraftSession};
 
 /// One Issue draft: the composer's text, plus the labels and assignees picked
 /// for a New Issue (#903; always empty for a Reply).

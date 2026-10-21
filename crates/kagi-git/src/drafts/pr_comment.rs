@@ -22,9 +22,10 @@ struct DraftScope {
     location: DraftLocation,
     slot: usize,
     loaded: Mutex<BTreeSet<String>>,
+    lease: Weak<()>,
 }
 
-type Claims = BTreeMap<DraftLocation, Vec<Weak<DraftScope>>>;
+type Claims = BTreeMap<DraftLocation, Vec<Weak<()>>>;
 
 fn claims() -> &'static Mutex<Claims> {
     static CLAIMS: LazyLock<Mutex<Claims>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
@@ -40,14 +41,28 @@ fn mark_loaded(loaded: &mut BTreeSet<String>, branch: &str) -> bool {
 
 /// A session's exclusive recovery slot for PR comments from one clone.
 ///
-/// Construct once when the session opens, then clone for background loads and
-/// admitted posts. Clones retain the same slot until the last one drops. A
+/// Construct once when the session opens, then clone for admitted posts.
+/// Restoration uses a non-owning reader. Clones retain the slot until last drop. A
 /// later session claims the lowest free slot, restoring its durable drafts
 /// (or pending failed writes) without persisting a SessionId. Its first load
 /// may recover an unclaimed sibling's draft if its own slot is empty.
 /// Slot zero retains the pre-session `:pr:<base>:<number>` disk namespace.
 #[derive(Clone, Debug)]
-pub struct PrCommentDraftSession(Arc<DraftScope>);
+pub struct PrCommentDraftSession {
+    scope: Arc<DraftScope>,
+    _lease: Arc<()>,
+}
+
+/// A read may retain its captured location, but never a closed editor's slot.
+#[derive(Clone, Debug)]
+pub struct PrCommentDraftReader(Arc<DraftScope>);
+
+impl PrCommentDraftReader {
+    /// Return no draft after the originating session/post lease expires.
+    pub fn load(&self, base_repo: &str, number: u64) -> Option<String> {
+        self.0.load(base_repo, number)
+    }
+}
 
 impl PrCommentDraftSession {
     /// Capture the exact drafts root and clone path, without filesystem I/O.
@@ -66,51 +81,42 @@ impl PrCommentDraftSession {
             .iter()
             .position(|lease| lease.strong_count() == 0)
             .unwrap_or(slots.len());
+        let lease = Arc::new(());
         let scope = Arc::new(DraftScope {
             location,
             slot,
             loaded: Mutex::new(BTreeSet::new()),
+            lease: Arc::downgrade(&lease),
         });
-        let lease = Arc::downgrade(&scope);
+        let weak_lease = Arc::downgrade(&lease);
         if slot == slots.len() {
-            slots.push(lease);
+            slots.push(weak_lease);
         } else {
-            slots[slot] = lease;
+            slots[slot] = weak_lease;
         }
-        Self(scope)
+        Self {
+            scope,
+            _lease: lease,
+        }
     }
 
     /// The captured clone locator, including after its UI session closes.
     pub fn repo(&self) -> &Path {
-        &self.0.location.repo
+        self.scope.repo()
+    }
+
+    /// Capture a background reader without extending this session's slot lease.
+    pub fn reader(&self) -> PrCommentDraftReader {
+        PrCommentDraftReader(self.scope.clone())
     }
 
     fn key(&self, base_repo: &str, number: u64) -> IssueDraftKey {
-        self.key_at_slot(&base_repo.to_ascii_lowercase(), number, self.0.slot)
-    }
-
-    fn key_at_slot(&self, base_repo: &str, number: u64, slot: usize) -> IssueDraftKey {
-        let branch = if slot == 0 {
-            format!(":pr:{base_repo}:{number}")
-        } else {
-            format!(":pr-slot:{slot}:{base_repo}:{number}")
-        };
-        IssueDraftKey {
-            path: self
-                .0
-                .location
-                .root
-                .as_deref()
-                .map(|root| draft_file_path_in_dir(self.repo(), &branch, root)),
-            repo: self.repo().to_path_buf(),
-            branch,
-            number: Some(number),
-        }
+        self.scope.key(base_repo, number)
     }
 
     fn touch(&self, key: &IssueDraftKey) -> bool {
         let mut loaded = self
-            .0
+            .scope
             .loaded
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -132,16 +138,7 @@ impl PrCommentDraftSession {
     /// Prefer pending content over disk, recovering an unclaimed orphan only
     /// on this scope's first load of an untouched addressed PR.
     pub fn load(&self, base_repo: &str, number: u64) -> Option<String> {
-        let key = self.key(base_repo, number);
-        // Serialize first recovery with later reads from cloned handles, so
-        // none can return a stale empty result while recovery is in progress.
-        let mut loaded = self
-            .0
-            .loaded
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let first = mark_loaded(&mut loaded, &key.branch);
-        recovery::load(self, key, base_repo, number, first)
+        self.scope.load(base_repo, number)
     }
 
     /// Consume only this exact scoped key's current token, queuing a clear.
@@ -150,7 +147,7 @@ impl PrCommentDraftSession {
         let key = self.key(base_repo, number);
         // Activity -> claims (load only) -> queue is the global lock order.
         let mut loaded = self
-            .0
+            .scope
             .loaded
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -184,5 +181,47 @@ impl PrCommentDraftSession {
         // Keep the shared lock through writes and recovery dependencies, so
         // an old flush cannot resurrect a cleared draft or lose an orphan.
         queue.persist_pending(&key)
+    }
+}
+
+impl DraftScope {
+    fn repo(&self) -> &Path {
+        &self.location.repo
+    }
+
+    fn key(&self, base_repo: &str, number: u64) -> IssueDraftKey {
+        self.key_at_slot(&base_repo.to_ascii_lowercase(), number, self.slot)
+    }
+
+    fn key_at_slot(&self, base_repo: &str, number: u64, slot: usize) -> IssueDraftKey {
+        let branch = if slot == 0 {
+            format!(":pr:{base_repo}:{number}")
+        } else {
+            format!(":pr-slot:{slot}:{base_repo}:{number}")
+        };
+        IssueDraftKey {
+            path: self
+                .location
+                .root
+                .as_deref()
+                .map(|root| draft_file_path_in_dir(self.repo(), &branch, root)),
+            repo: self.repo().to_path_buf(),
+            branch,
+            number: Some(number),
+        }
+    }
+
+    fn load(&self, base_repo: &str, number: u64) -> Option<String> {
+        if self.lease.strong_count() == 0 {
+            return None;
+        }
+        let key = self.key(base_repo, number);
+        // Keep concurrent readers serialized, without retaining the editor lease.
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let first = mark_loaded(&mut loaded, &key.branch);
+        recovery::load(self, key, base_repo, number, first)
     }
 }

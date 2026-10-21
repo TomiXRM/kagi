@@ -256,3 +256,52 @@ pub fn scenario_same_clone_sessions(cx: &mut VisualTestAppContext) {
     unmount(cx, first, first_window);
     unmount(cx, second, second_window);
 }
+
+pub fn scenario_restore_close_reopen(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let _gh = offline_gh(state.path());
+    {
+        let saved = kagi_git::drafts::PrCommentDraftSession::new(&repo);
+        saved.queue(BASE, 7, TEXT);
+        kagi_git::drafts::flush_issue_drafts().unwrap();
+    }
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred(cx);
+    KagiApp::hold_next_pr_comment_restore_for_e2e(hold);
+    open(cx, &app, window, &pr());
+    let old_owner = cx.read(|cx| {
+        let app = app.read(cx);
+        let mode = app.pr_mode().unwrap();
+        assert!(mode.tabs[mode.active.unwrap()].comment_loading);
+        app.active_session().unwrap()
+    });
+    app.update(cx, |app, cx| {
+        app.close_tab(0, cx);
+        assert!(app.active_session().is_none());
+        assert!(app.open_repository(repo.clone(), cx));
+        assert_ne!(app.active_session(), Some(old_owner));
+    });
+    open(cx, &app, window, &pr());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while composer(cx, &app) != TEXT {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "reopened owner must restore before the closed owner's read finishes"
+        );
+        paint(cx, window);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    type_comment(cx, &app, window, "new owner edit after immediate reopen");
+    release.send(());
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "new owner edit after immediate reopen");
+    assert_eq!(
+        drafts(cx, &app).load(BASE, 7).as_deref(),
+        Some("new owner edit after immediate reopen"),
+        "the obsolete read cannot replace the returning owner's saved edit"
+    );
+    assert!(!state.path().join("writes").exists());
+    unmount(cx, app, window);
+}

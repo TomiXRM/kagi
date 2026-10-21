@@ -3558,6 +3558,10 @@ mod macos {
                 "pr_draft_same_clone_sessions",
                 Box::new(crate::pr_draft_races::scenario_same_clone_sessions),
             ),
+            (
+                "pr_draft_restore_close_reopen",
+                Box::new(crate::pr_draft_races::scenario_restore_close_reopen),
+            ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             ("pr_lane_keyboard", Box::new(crate::pr_lane_keys::scenario_pr_lane_keyboard)),
             ("pr_lane_selected", Box::new(crate::pr_lane_keys::scenario_pr_lane_selected)),

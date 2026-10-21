@@ -79,10 +79,16 @@ one transport write. Both use fail-closed local gh fixtures.
 the exact same canonical clone and addressed PR. The second restore must be
 empty rather than inherit the first draft; after the second owner edits again,
 the first owner's recorded post must clear only its own composer/storage.
-Graph/reopen must preserve the sibling's queued body. This raises the #1702
-filtered lane to 28 scenarios. Backend draft tests additionally cover exclusive
+Graph/reopen must preserve the sibling's queued body.
+`pr_draft_restore_close_reopen` keeps the old restore pending, closes its
+repository tab and immediately reopens the same clone/PR. The new owner must
+restore before the old read is released; its subsequent edit must survive that
+obsolete completion, with no transport write. This raises the #1702 filtered
+lane to 29 scenarios. Backend draft tests additionally cover exclusive
 slot claims, wrong-scope clear/flush rejection and recovery after all leases
-are dropped, including when only a higher slot still has unsent text.
+are dropped, including when only a higher slot still has unsent text. The
+reader lifetime regression requires cloned readers not to reserve a closed
+scope's slot and rejects reads after the original owner expires.
 The consent, commit-warning and PR/Issue draft scenarios reuse W3's
 `presentation_support` paint/mount helpers; scenario-owned dispatcher drain
 ordering, viewport assertions and the existing idle-wait policy remain intact.

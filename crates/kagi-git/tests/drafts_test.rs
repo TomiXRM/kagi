@@ -181,6 +181,36 @@ fn pr_comment_live_scopes_restore_independently_and_clear_only_the_posted_slot()
 }
 
 #[test]
+fn pr_comment_restore_reader_does_not_lease_a_closed_sessions_slot() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-restore-reader");
+        let session = PrCommentDraftSession::new(repo);
+        let saved = session.queue(BASE, 7, "saved before close 日本語");
+        assert!(session.flush_if_version(BASE, 7, saved).unwrap());
+        let reader = session.reader();
+        let other_reader = reader.clone();
+        drop(session);
+
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("saved before close 日本語"),
+            "a pending read must not reserve the closed owner's saved slot"
+        );
+        reopened.queue(BASE, 7, "new owner's edit");
+        assert!(
+            reader.load(BASE, 7).is_none(),
+            "the old reader has no owner"
+        );
+        assert!(other_reader.load(BASE, 7).is_none());
+        assert_eq!(reopened.load(BASE, 7).as_deref(), Some("new owner's edit"));
+    });
+}
+
+#[test]
 fn pr_comment_cloned_scope_keeps_its_slot_until_last_drop() {
     if !crate::test_support::run_isolated() {
         return;

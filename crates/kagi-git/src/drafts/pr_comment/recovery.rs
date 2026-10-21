@@ -1,10 +1,10 @@
 //! First-load recovery of closed sessions through the existing pending queue.
 
 use super::super::{load_draft_at, parse_issue_message, Draft, IssueDraftQueue};
-use super::{claims, issue_drafts, IssueDraftKey, IssueDraftRecord, PrCommentDraftSession};
+use super::{claims, issue_drafts, DraftScope, IssueDraftKey, IssueDraftRecord};
 
 pub(super) fn load(
-    scope: &PrCommentDraftSession,
+    scope: &DraftScope,
     key: IssueDraftKey,
     base_repo: &str,
     number: u64,
@@ -23,6 +23,9 @@ pub(super) fn load(
     let claims = claims()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if scope.lease.strong_count() == 0 {
+        return None;
+    }
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -34,15 +37,18 @@ pub(super) fn load(
     if queue.recovered_to.contains_key(&key) {
         return None;
     }
-    let slots = claims.get(&scope.0.location)?;
+    let slots = claims.get(&scope.location)?;
     let available = |slot: usize| {
-        slot != scope.0.slot
+        slot != scope.slot
             && slots
                 .get(slot)
                 .is_none_or(|lease| lease.strong_count() == 0)
     };
     let base_repo = base_repo.to_ascii_lowercase();
     let (source, record) = candidate(scope, &queue, &base_repo, number, available)?;
+    if scope.lease.strong_count() == 0 {
+        return None;
+    }
     let body = record.body.clone();
     // Preserve the destination's pre-load version, just as Issue migration
     // does. The restore caller captured it before dispatching this read.
@@ -83,7 +89,7 @@ fn slot_for_branch(branch: &str, suffix: &str) -> Option<usize> {
 }
 
 fn candidate(
-    scope: &PrCommentDraftSession,
+    scope: &DraftScope,
     queue: &IssueDraftQueue,
     base_repo: &str,
     number: u64,
@@ -107,7 +113,6 @@ fn candidate(
         best = Some((slot, key.clone(), record.clone()));
     }
     if let Some(entries) = scope
-        .0
         .location
         .root
         .as_deref()

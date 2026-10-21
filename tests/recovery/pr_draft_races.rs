@@ -305,3 +305,190 @@ pub fn scenario_restore_close_reopen(cx: &mut VisualTestAppContext) {
     assert!(!state.path().join("writes").exists());
     unmount(cx, app, window);
 }
+
+#[derive(Clone, Copy, Debug)]
+enum LatePost {
+    Success,
+    Failed,
+    Unknown,
+}
+
+fn delayed_gh(dir: &Path, outcome: LatePost) -> OfflineGh {
+    let receive = if matches!(outcome, LatePost::Unknown) {
+        ":".to_owned()
+    } else {
+        format!("cat > '{}'", dir.join("body").display())
+    };
+    let finish = if matches!(outcome, LatePost::Success) {
+        "echo https://example.invalid/acme/widgets/pull/7#comment"
+    } else {
+        "echo 'deliberate late fixture refusal' >&2; exit 1"
+    };
+    OfflineGh::with_script(&format!(
+        r#"#!/bin/sh
+case "$1 $2" in
+  'pr review'|'pr comment')
+    echo "$2" >> '{calls}'
+    {receive}
+    touch '{started}'
+    while [ ! -f '{release}' ]; do /bin/sleep 0.02; done
+    {finish} ;;
+  'pr view') echo '{{"reviews":[],"comments":[]}}' ;;
+  'pr list') echo '[]' ;;
+  *) exit 1 ;;
+esac
+"#,
+        calls = dir.join("writes").display(),
+        started = dir.join("started").display(),
+        release = dir.join("release").display(),
+    ))
+}
+
+fn reopen_while_posting(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+) {
+    let old_owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+    app.update(cx, |app, cx| {
+        app.close_tab(0, cx);
+        assert!(app.open_repository(repo.to_path_buf(), cx));
+        assert_ne!(app.active_session(), Some(old_owner));
+        app.pr_mode_open(&pr(), cx);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().unwrap();
+        mode.tabs[mode.active.unwrap()].comment_loading
+    }) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "new owner restore stalled"
+        );
+        paint(cx, window);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, app),
+        "",
+        "the in-flight post still owns its slot"
+    );
+}
+
+fn late_post_leg(cx: &mut VisualTestAppContext, review: bool, outcome: LatePost, edit: bool) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let _gh = delayed_gh(state.path(), outcome);
+    let (app, window) = mount(cx, &repo);
+    open(cx, &app, window, &pr());
+    let text = if matches!(outcome, LatePost::Unknown) {
+        "unconfirmed body ".repeat(8192)
+    } else {
+        TEXT.to_owned()
+    };
+    type_comment(cx, &app, window, &text);
+    KagiApp::run_next_write_on_thread_for_e2e();
+    app.update(cx, |app, cx| {
+        if review {
+            app.start_pr_review(ReviewVerdict::Approve, cx);
+        } else {
+            app.start_pr_comment(cx);
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !state.path().join("started").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "actual gh post never started"
+        );
+        paint(cx, window);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    reopen_while_posting(cx, &app, window, &repo);
+    if edit {
+        type_comment(cx, &app, window, "new owner's independent edit");
+    }
+    std::fs::write(state.path().join("release"), "").unwrap();
+    wait_idle(cx, &app);
+    let expected = if edit {
+        "new owner's independent edit"
+    } else if matches!(outcome, LatePost::Success) {
+        ""
+    } else {
+        &text
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while composer(cx, &app) != expected {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{outcome:?} must recover unsent text without replacing a new edit"
+        );
+        paint(cx, window);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_late_post_receipt(&repo, review, outcome);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).app_sessions.blocking_reconcile().is_some()),
+        matches!(outcome, LatePost::Unknown),
+        "Unknown must keep its reconcile requirement, not become a known failure"
+    );
+    assert!(
+        !cx.read(|cx| kagi::ui::e2e::op_latched(app.read(cx))),
+        "every fixture proves its local process stopped, even with incomplete input"
+    );
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    app.update(cx, |app, cx| app.pr_mode_open(&pr(), cx));
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), expected);
+    assert_eq!(drafts(cx, &app).load(BASE, 7).unwrap_or_default(), expected);
+    assert_eq!(
+        std::fs::read_to_string(state.path().join("writes")).unwrap(),
+        if review { "review\n" } else { "comment\n" }
+    );
+    unmount(cx, app, window);
+}
+
+fn assert_late_post_receipt(repo: &Path, review: bool, expected: LatePost) {
+    use kagi_git::oplog::OpOutcome;
+    let op = if review { "pr-review" } else { "pr-comment" };
+    let entries: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == op)
+        .collect();
+    assert_eq!(entries.len(), 1, "one actual attempt, no implicit repost");
+    assert!(
+        matches!(
+            (&entries[0].outcome, expected),
+            (OpOutcome::Success { .. }, LatePost::Success)
+                | (OpOutcome::Failed { .. }, LatePost::Failed)
+                | (OpOutcome::Unknown { .. }, LatePost::Unknown)
+        ),
+        "the recorded transport outcome must remain distinct: {:?}",
+        entries[0].outcome
+    );
+}
+
+pub fn scenario_post_close_failure(cx: &mut VisualTestAppContext) {
+    for review in [false, true] {
+        for edit in [false, true] {
+            late_post_leg(cx, review, LatePost::Failed, edit);
+        }
+    }
+}
+
+pub fn scenario_post_close_success(cx: &mut VisualTestAppContext) {
+    for review in [false, true] {
+        for edit in [false, true] {
+            late_post_leg(cx, review, LatePost::Success, edit);
+        }
+    }
+}
+
+pub fn scenario_post_close_unknown(cx: &mut VisualTestAppContext) {
+    for review in [false, true] {
+        late_post_leg(cx, review, LatePost::Unknown, false);
+    }
+}

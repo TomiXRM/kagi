@@ -63,8 +63,23 @@ Admitted posts retain their originating slot lease through
 settlement, even after the owner closes; only their captured scoped version
 can clear. Debounced flushes retain the globally unique version, not the lease,
 so an ordinary close/reopen can immediately recover the saved slot. Failed or
-unknown posts retain their draft. The PR saved indicator
-uses the same persistence completion semantics and existing EN/JA messages.
+unknown posts retain their draft. Their completion moves the post lease into
+presentation, then drops it before rearming recovery in a later session of the
+same clone and addressed PR if the posting owner has closed. Read-only activity
+is distinct from edits (including typing then erasing) and confirmed clears:
+only untouched reads may retry, using a fresh existing storage version to
+invalidate an earlier empty restore. A still-open older session and a newer
+owner's input remain private. Success only clears the captured original version;
+it never requests recovery. This is draft preservation, not a transport retry:
+Failed and Unknown receipts and Unknown's reconcile requirement remain unchanged.
+The existing proven-local-stop policy still releases the process lease.
+The PR saved indicator uses the same persistence completion semantics and
+existing EN/JA messages.
+If a returned editor closes again before its original source clear is drained,
+reclaiming that source may atomically reverse the pending transfer only from
+its exact, now-unclaimed destination. This avoids a dependency cycle or a hidden
+durable draft without requiring successful filesystem writes during restoration;
+failed persistence retains the pending body through another close/reopen.
 
 Issue composers retain their existing clone/addressed-Issue persistence keys;
 they did not already provide per-session storage isolation. This change scopes

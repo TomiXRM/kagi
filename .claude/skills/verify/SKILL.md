@@ -83,8 +83,21 @@ Graph/reopen must preserve the sibling's queued body.
 `pr_draft_restore_close_reopen` keeps the old restore pending, closes its
 repository tab and immediately reopens the same clone/PR. The new owner must
 restore before the old read is released; its subsequent edit must survive that
-obsolete completion, with no transport write. This raises the #1702 filtered
-lane to 29 scenarios. Backend draft tests additionally cover exclusive
+obsolete completion, with no transport write.
+`pr_draft_post_close_failure`, `pr_draft_post_close_success`, and
+`pr_draft_post_close_unknown` start actual comment/review processes, wait for
+their start marker, close/reopen the same clone/PR, then release the transport.
+The test-only real-thread seam keeps the deterministic GUI dispatcher available
+while the actual local process is blocked. Failure recovers the original body;
+success never resurrects posted text; both preserve a newer owner's edit.
+Unknown uses incomplete stdin delivery, retains the body and reconcile
+requirement, and remains an Unknown receipt rather than becoming a known failure.
+A proven local stop still releases the process lease under the existing policy. Every leg
+asserts exactly one transport write and Graph/reopen persistence (10 legs total).
+This raises the #1702 filtered lane to 32 scenarios. Backend draft tests cover
+read-retry version invalidation, intervening edits/erasure, confirmed clears and
+another close/reopen after recovery with successful or failed persistence,
+in addition to exclusive
 slot claims, wrong-scope clear/flush rejection and recovery after all leases
 are dropped, including when only a higher slot still has unsent text. The
 reader lifetime regression requires cloned readers not to reserve a closed

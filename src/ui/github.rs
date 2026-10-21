@@ -754,16 +754,12 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::PrComment { .. }) => {
                     klog!("executed: pr-comment #{}", number);
-                    RunPresentation::none().pr_comment(
-                        posted.clone(),
-                        storage_version,
-                        drafts.clone(),
-                    )
+                    RunPresentation::none().pr_comment(posted, storage_version, drafts)
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {
                     klog!("pr-comment failed: {}", failure.message);
-                    RunPresentation::none()
+                    RunPresentation::none().pr_comment_retained(posted, drafts)
                 }
             },
         );
@@ -851,16 +847,12 @@ impl KagiApp {
                     klog!("executed: pr-review #{}", number);
                     // A review carries the same text the composer held, so it
                     // clears and the thread re-reads exactly like a comment.
-                    RunPresentation::none().pr_comment(
-                        posted.clone(),
-                        storage_version,
-                        drafts.clone(),
-                    )
+                    RunPresentation::none().pr_comment(posted, storage_version, drafts)
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {
                     klog!("pr-review failed: {}", failure.message);
-                    RunPresentation::none()
+                    RunPresentation::none().pr_comment_retained(posted, drafts)
                 }
             },
         );

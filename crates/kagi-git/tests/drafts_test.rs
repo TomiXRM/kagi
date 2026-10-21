@@ -211,6 +211,107 @@ fn pr_comment_restore_reader_does_not_lease_a_closed_sessions_slot() {
 }
 
 #[test]
+fn pr_comment_post_release_retries_untouched_read_with_fresh_version() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/pr-post-release");
+        let posting = PrCommentDraftSession::new(repo);
+        posting.queue(BASE, 7, "retained after transport failure 日本語");
+        flush_issue_drafts().unwrap();
+        let returning = PrCommentDraftSession::new(repo);
+        let stale = returning.version(BASE, 7);
+        assert!(
+            returning.load(BASE, 7).is_none(),
+            "post still owns its slot"
+        );
+        drop(posting);
+        assert!(
+            returning.load(BASE, 7).is_none(),
+            "ordinary reads do not import late"
+        );
+        let (fresh, read) = returning.retry_reader_if_untouched(BASE, 7).unwrap();
+        assert!(fresh > stale, "the original empty restore is now obsolete");
+        assert_eq!(
+            read.load(BASE, 7).as_deref(),
+            Some("retained after transport failure 日本語")
+        );
+        assert!(returning.clear_if_version(BASE, 7, stale).is_none());
+        assert!(returning.flush_if_version(BASE, 7, fresh).unwrap());
+        drop(returning);
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("retained after transport failure 日本語")
+        );
+    });
+}
+
+#[test]
+fn pr_comment_post_recovery_preserves_edits_erasure_and_confirmed_clears() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        for body in ["new owner text", ""] {
+            let repo = Path::new("/tmp/kagi-it/pr-post-recovery-edits").join(body);
+            let posting = PrCommentDraftSession::new(&repo);
+            posting.queue(BASE, 7, "old post body");
+            let returning = PrCommentDraftSession::new(&repo);
+            assert!(returning.load(BASE, 7).is_none());
+            drop(posting);
+            let (retry, read) = returning.retry_reader_if_untouched(BASE, 7).unwrap();
+            returning.queue(BASE, 7, "typed text");
+            let edited = returning.queue(BASE, 7, body);
+            assert!(edited > retry);
+            assert_eq!(read.load(BASE, 7).unwrap_or_default(), body);
+            assert!(returning.retry_reader_if_untouched(BASE, 7).is_none());
+            assert!(returning.clear_if_version(BASE, 7, retry).is_none());
+            assert!(returning.clear_if_version(BASE, 7, edited).is_some());
+            assert!(returning.retry_reader_if_untouched(BASE, 7).is_none());
+        }
+    });
+}
+
+#[test]
+fn pr_comment_post_recovery_can_return_to_source_after_failed_persistence() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/pr-post-return-to-source");
+        let blocked = log_dir.join("drafts");
+        std::fs::write(&blocked, "not a directory").unwrap();
+        let posting = PrCommentDraftSession::new(repo);
+        posting.queue(BASE, 7, "retained while draft storage is unavailable");
+        let returning = PrCommentDraftSession::new(repo);
+        assert!(returning.load(BASE, 7).is_none());
+        drop(posting);
+        let (retry, read) = returning.retry_reader_if_untouched(BASE, 7).unwrap();
+        assert_eq!(
+            read.load(BASE, 7).as_deref(),
+            Some("retained while draft storage is unavailable")
+        );
+        assert!(returning.flush_if_version(BASE, 7, retry).is_err());
+        drop(returning);
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("retained while draft storage is unavailable")
+        );
+        std::fs::remove_file(blocked).unwrap();
+        flush_issue_drafts().expect("reversed dependencies remain acyclic");
+        drop(reopened);
+        let reopened = PrCommentDraftSession::new(repo);
+        assert_eq!(
+            reopened.load(BASE, 7).as_deref(),
+            Some("retained while draft storage is unavailable")
+        );
+    });
+}
+
+#[test]
 fn pr_comment_cloned_scope_keeps_its_slot_until_last_drop() {
     if !crate::test_support::run_isolated() {
         return;
@@ -388,7 +489,7 @@ fn pr_comment_slot_zero_restores_legacy_files_but_rejects_foreign_record_identit
 }
 
 #[test]
-fn pr_comment_single_reopen_recovers_orphan_without_reverse_migration_cycles() {
+fn pr_comment_single_reopen_reverses_orphan_transfer_without_migration_cycles() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -412,19 +513,16 @@ fn pr_comment_single_reopen_recovers_orphan_without_reverse_migration_cycles() {
         );
         assert_eq!(reopened.version(BASE, 7), before_load);
         // Claim the old source, then close the recovery destination before its
-        // queued write. The source must not import back and form a cycle.
+        // queued write. Returning the body reverses the edge without a cycle.
         let reverse = PrCommentDraftSession::new(repo);
         drop(reopened);
-        assert!(reverse.load(BASE, 7).is_none());
+        assert_eq!(reverse.load(BASE, 7).as_deref(), Some("remaining slot one"));
         flush_issue_drafts().expect("destination precedes source without recursion cycle");
-        assert!(
-            reverse.load(BASE, 7).is_none(),
-            "later load must not import"
-        );
+        assert_eq!(reverse.load(BASE, 7).as_deref(), Some("remaining slot one"));
         let reopened = PrCommentDraftSession::new(repo);
-        assert_eq!(
-            reopened.load(BASE, 7).as_deref(),
-            Some("remaining slot one")
+        assert!(
+            reopened.load(BASE, 7).is_none(),
+            "the live returned owner keeps its body private"
         );
         drop((reopened, reverse));
         let reopened = PrCommentDraftSession::new(repo);

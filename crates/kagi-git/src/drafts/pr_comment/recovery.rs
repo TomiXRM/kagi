@@ -32,11 +32,6 @@ pub(super) fn load(
     if let Some(record) = read_record(&queue, &key).filter(|record| !record.is_empty()) {
         return Some(record.body);
     }
-    // An outstanding source clear must not import its own destination back.
-    // Keeping it authoritative until persistence prevents dependency cycles.
-    if queue.recovered_to.contains_key(&key) {
-        return None;
-    }
     let slots = claims.get(&scope.location)?;
     let available = |slot: usize| {
         slot != scope.slot
@@ -48,6 +43,15 @@ pub(super) fn load(
     let (source, record) = candidate(scope, &queue, &base_repo, number, available)?;
     if scope.lease.strong_count() == 0 {
         return None;
+    }
+    // A closed destination may return to its original source. Reverse that
+    // pending transfer atomically, rather than hiding its body or forming a
+    // dependency cycle. An unrelated outstanding clear remains authoritative.
+    if let Some(destination) = queue.recovered_to.get(&key) {
+        if destination != &source {
+            return None;
+        }
+        queue.recovered_to.remove(&key);
     }
     let body = record.body.clone();
     // Preserve the destination's pre-load version, just as Issue migration

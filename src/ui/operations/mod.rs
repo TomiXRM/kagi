@@ -34,6 +34,8 @@ pub(in crate::ui) mod record;
 pub mod remote_branch;
 pub(crate) mod repo_health;
 pub mod reset;
+#[cfg(feature = "gui-e2e")]
+mod run_e2e;
 mod smart_generate;
 mod staging_failure;
 pub mod stash;
@@ -170,6 +172,11 @@ pub(crate) struct RunPresentation {
         u64,
         kagi_git::drafts::PrCommentDraftSession,
     )>,
+    /// Non-success preserves the body, without retrying or reclassifying transport.
+    pr_comment_retained: Option<(
+        kagi_domain::github::PrKey,
+        kagi_git::drafts::PrCommentDraftSession,
+    )>,
     /// A posted Issue write: `(number, storage version, fields sent)`.
     issue_write: Option<(Option<u64>, u64, kagi_domain::github::IssueCreateFields)>,
     /// A confirmed field edit: the tab's own copy of the PR carries these
@@ -249,6 +256,15 @@ impl RunPresentation {
         drafts: kagi_git::drafts::PrCommentDraftSession,
     ) -> Self {
         self.pr_comment = Some((pr, version, drafts));
+        self
+    }
+
+    pub(crate) fn pr_comment_retained(
+        mut self,
+        pr: kagi_domain::github::PrKey,
+        drafts: kagi_git::drafts::PrCommentDraftSession,
+    ) -> Self {
+        self.pr_comment_retained = Some((pr, drafts));
         self
     }
 
@@ -481,6 +497,8 @@ impl KagiApp {
             crate::ui::op_queue::take_run_hold(),
             crate::ui::op_queue::take_run_panic(),
         );
+        #[cfg(feature = "gui-e2e")]
+        let run_on_thread = run_e2e::take_run_on_thread();
         let task = cx.background_spawn(async move {
             #[cfg(feature = "gui-e2e")]
             if let Some(hold) = hold {
@@ -493,7 +511,14 @@ impl KagiApp {
                 drop(job);
                 return None;
             }
+            #[cfg(not(feature = "gui-e2e"))]
             let completion = job.run();
+            #[cfg(feature = "gui-e2e")]
+            let completion = if run_on_thread {
+                run_e2e::run(move || job.run()).await?
+            } else {
+                job.run()
+            };
             // Observe while the operation still owns its lease, off the UI
             // thread. Presentation never changes the completion or receipt.
             let stopped = completion.report.result.as_ref().ok().and_then(|outcome| {
@@ -600,6 +625,9 @@ impl KagiApp {
                         // even after close; never clear whichever input is
                         // currently on screen.
                         app.settle_pr_write(Some(stamp.session), drafts, pr, version, cx);
+                    }
+                    if let Some((pr, drafts)) = presentation.pr_comment_retained.take() {
+                        app.recover_pr_comment_after_post(stamp.session, drafts, pr, cx);
                     }
                     if let Some((number, revision, sent)) = presentation.issue_write.take() {
                         app.settle_issue_write(

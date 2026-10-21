@@ -1,6 +1,6 @@
 //! Session leases over the shared composer queue, not a separate persistence layer.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
@@ -17,11 +17,17 @@ struct DraftLocation {
     repo: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DraftActivity {
+    Read,
+    Edited,
+}
+
 #[derive(Debug)]
 struct DraftScope {
     location: DraftLocation,
     slot: usize,
-    loaded: Mutex<BTreeSet<String>>,
+    activity: Mutex<BTreeMap<String, DraftActivity>>,
     lease: Weak<()>,
 }
 
@@ -32,11 +38,20 @@ fn claims() -> &'static Mutex<Claims> {
     &CLAIMS
 }
 
-fn mark_loaded(loaded: &mut BTreeSet<String>, branch: &str) -> bool {
-    if loaded.contains(branch) {
+fn mark_loaded(activity: &mut BTreeMap<String, DraftActivity>, branch: &str) -> bool {
+    if activity.contains_key(branch) {
         return false;
     }
-    loaded.insert(branch.to_owned())
+    activity.insert(branch.to_owned(), DraftActivity::Read);
+    true
+}
+
+fn mark_edited(activity: &mut BTreeMap<String, DraftActivity>, branch: &str) {
+    if let Some(state) = activity.get_mut(branch) {
+        *state = DraftActivity::Edited;
+    } else {
+        activity.insert(branch.to_owned(), DraftActivity::Edited);
+    }
 }
 
 /// A session's exclusive recovery slot for PR comments from one clone.
@@ -85,7 +100,7 @@ impl PrCommentDraftSession {
         let scope = Arc::new(DraftScope {
             location,
             slot,
-            loaded: Mutex::new(BTreeSet::new()),
+            activity: Mutex::new(BTreeMap::new()),
             lease: Arc::downgrade(&lease),
         });
         let weak_lease = Arc::downgrade(&lease);
@@ -114,13 +129,13 @@ impl PrCommentDraftSession {
         self.scope.key(base_repo, number)
     }
 
-    fn touch(&self, key: &IssueDraftKey) -> bool {
-        let mut loaded = self
+    fn touch(&self, key: &IssueDraftKey) {
+        let mut activity = self
             .scope
-            .loaded
+            .activity
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        mark_loaded(&mut loaded, &key.branch)
+        mark_edited(&mut activity, &key.branch);
     }
 
     /// Replace this slot's pending body without filesystem I/O; empty clears.
@@ -141,14 +156,39 @@ impl PrCommentDraftSession {
         self.scope.load(base_repo, number)
     }
 
+    /// Retry an empty read after an older post releases its recovery slot.
+    /// Edits (including deleting typed text) and confirmed clears never retry.
+    /// Advance the existing token so an earlier read cannot overwrite recovery.
+    pub fn retry_reader_if_untouched(
+        &self,
+        base_repo: &str,
+        number: u64,
+    ) -> Option<(u64, PrCommentDraftReader)> {
+        let key = self.key(base_repo, number);
+        let mut activity = self
+            .scope
+            .activity
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if activity.get(&key.branch) != Some(&DraftActivity::Read) {
+            return None;
+        }
+        activity.remove(&key.branch);
+        let version = issue_drafts()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .advance(&key);
+        Some((version, self.reader()))
+    }
+
     /// Consume only this exact scoped key's current token, queuing a clear.
     /// No filesystem I/O occurs; repeated or foreign completions return None.
     pub fn clear_if_version(&self, base_repo: &str, number: u64, version: u64) -> Option<u64> {
         let key = self.key(base_repo, number);
         // Activity -> claims (load only) -> queue is the global lock order.
-        let mut loaded = self
+        let mut activity = self
             .scope
-            .loaded
+            .activity
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut queue = issue_drafts()
@@ -157,7 +197,7 @@ impl PrCommentDraftSession {
         if queue.versions.get(&key) != Some(&version) {
             return None;
         }
-        mark_loaded(&mut loaded, &key.branch);
+        mark_edited(&mut activity, &key.branch);
         let next = queue.advance(&key);
         queue.pending.insert(key, IssueDraftRecord::default());
         Some(next)
@@ -217,11 +257,11 @@ impl DraftScope {
         }
         let key = self.key(base_repo, number);
         // Keep concurrent readers serialized, without retaining the editor lease.
-        let mut loaded = self
-            .loaded
+        let mut activity = self
+            .activity
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let first = mark_loaded(&mut loaded, &key.branch);
+        let first = mark_loaded(&mut activity, &key.branch);
         recovery::load(self, key, base_repo, number, first)
     }
 }

@@ -3590,6 +3590,18 @@ mod macos {
                 "pr_draft_restore_close_reopen",
                 Box::new(crate::pr_draft_races::scenario_restore_close_reopen),
             ),
+            (
+                "pr_draft_post_close_failure",
+                Box::new(crate::pr_draft_races::scenario_post_close_failure),
+            ),
+            (
+                "pr_draft_post_close_success",
+                Box::new(crate::pr_draft_races::scenario_post_close_success),
+            ),
+            (
+                "pr_draft_post_close_unknown",
+                Box::new(crate::pr_draft_races::scenario_post_close_unknown),
+            ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             ("pr_lane_keyboard", Box::new(crate::pr_lane_keys::scenario_pr_lane_keyboard)),
             ("pr_lane_selected", Box::new(crate::pr_lane_keys::scenario_pr_lane_selected)),

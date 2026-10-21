@@ -1084,6 +1084,64 @@ impl KagiApp {
         self.pr_comment_for = Some((owner, open));
     }
 
+    pub(crate) fn recover_pr_comment_after_post(
+        &mut self,
+        owner: crate::app::SessionId,
+        drafts: kagi_git::drafts::PrCommentDraftSession,
+        pr: PrKey,
+        cx: &mut Context<Self>,
+    ) {
+        if self.ui.contains_key(&owner) {
+            return; // Its own still-open composer already retains the body.
+        }
+        let repo = drafts.repo().to_path_buf();
+        // No completion closure retains another clone: release the post's
+        // lease before any returning owner attempts orphan recovery.
+        drop(drafts);
+        let live_input = self
+            .pr_comment_input
+            .as_ref()
+            .is_some_and(|input| !input.read(cx).value().is_empty());
+        let protected = self
+            .pr_comment_for
+            .as_ref()
+            .filter(|(_, key)| live_input && key == &pr)
+            .map(|(held, _)| *held);
+        for (returning, ui) in &mut self.ui {
+            if returning.incarnation <= owner.incarnation || protected == Some(*returning) {
+                continue;
+            }
+            let Some(scope) = ui
+                .pr_comment_drafts
+                .as_ref()
+                .filter(|scope| scope.repo() == repo.as_path())
+            else {
+                continue;
+            };
+            let tab = ui
+                .pr_mode
+                .as_mut()
+                .and_then(|mode| mode.tabs.iter_mut().find(|tab| tab.pr.is(&pr)));
+            if tab
+                .as_ref()
+                .is_some_and(|tab| !tab.comment_draft.is_empty())
+            {
+                continue;
+            }
+            let Some((version, reader)) = scope.retry_reader_if_untouched(&pr.base_repo, pr.number)
+            else {
+                continue;
+            };
+            // If Graph retired PR mode, the rearmed first load is enough.
+            if let Some(tab) = tab {
+                tab.comment_storage_version = version;
+                tab.comment_loading = true;
+                tab.comment_saving = false;
+                Self::restore_pr_comment_for(*returning, pr.clone(), version, reader, cx);
+            }
+        }
+    }
+
     fn restore_pr_comment_draft(&mut self, pr: PrKey, cx: &mut Context<Self>) {
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
@@ -1103,6 +1161,16 @@ impl KagiApp {
             tab.comment_storage_version = version;
             tab.comment_loading = true;
         }
+        Self::restore_pr_comment_for(owner, pr, version, read_drafts, cx);
+    }
+
+    fn restore_pr_comment_for(
+        owner: crate::app::SessionId,
+        pr: PrKey,
+        version: u64,
+        read_drafts: kagi_git::drafts::PrCommentDraftReader,
+        cx: &mut Context<Self>,
+    ) {
         #[cfg(feature = "gui-e2e")]
         let hold = COMMENT_RESTORE_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |this, acx| {

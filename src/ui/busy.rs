@@ -123,7 +123,6 @@ impl KagiApp {
         }
     }
 
-
     pub(super) fn continue_busy_request(&mut self, identity: Option<BusyIdentity>, hidden: bool) {
         let running = self.app_sessions.running_lease().map(|(id, _)| id);
         if let (Some((id, origin)), Some(identity)) = (&mut self.busy_write_origin, identity) {
@@ -138,7 +137,12 @@ impl KagiApp {
     }
 
     fn busy_identity(&self) -> Option<BusyIdentity> {
-        if let Some(started) = self.home_github.cloning.as_ref().and_then(|card| card.started) {
+        if let Some(started) = self
+            .home_github
+            .cloning
+            .as_ref()
+            .and_then(|card| card.started)
+        {
             return Some(BusyIdentity::Clone(started));
         }
         if self.write_busy_op.is_some() {
@@ -175,9 +179,10 @@ impl KagiApp {
         };
         let live = self.busy_identity() == Some(hidden)
             || self.fetch_in_flight.as_ref().is_some_and(|flight| {
-                flight.waiters.iter().any(|(owner, visit, _, started)| {
-                    owns_pull(Some((*owner, *visit, *started)))
-                })
+                flight
+                    .waiters
+                    .iter()
+                    .any(|(owner, visit, _, started)| owns_pull(Some((*owner, *visit, *started))))
             })
             || self.pull_modal().is_some_and(|modal| {
                 owns_pull(modal.fetch_owner)

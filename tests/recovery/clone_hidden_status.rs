@@ -141,7 +141,11 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
         assert!(app.read(cx).home_github.cloning.is_some());
         assert!(e2e::op_latched(app.read(cx)));
     });
-    assert_eq!(e2e::take_clone_dispatches(), 0, "hiding never dispatches again");
+    assert_eq!(
+        e2e::take_clone_dispatches(),
+        0,
+        "hiding never dispatches again"
+    );
     cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
     for _ in 0..3 {
         crate::keyboard_nav::keys(cx, window, "cmd-q");

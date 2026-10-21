@@ -406,14 +406,14 @@ mod busy_label;
 mod user_text;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/busy_dismiss.rs"]
+mod busy_dismiss;
+#[cfg(target_os = "macos")]
 #[path = "recovery/op_queue.rs"]
 mod op_queue;
 #[cfg(target_os = "macos")]
 #[path = "recovery/slow_read.rs"]
 mod slow_read;
-#[cfg(target_os = "macos")]
-#[path = "recovery/busy_dismiss.rs"]
-mod busy_dismiss;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]

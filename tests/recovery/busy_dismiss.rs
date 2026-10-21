@@ -79,7 +79,11 @@ fn paint(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindow
 
 fn assert_hidden(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     paint(cx, app, window);
-    for id in ["busy-snackbar", "busy-snackbar-dismiss", "busy-snackbar-skip"] {
+    for id in [
+        "busy-snackbar",
+        "busy-snackbar-dismiss",
+        "busy-snackbar-skip",
+    ] {
         assert!(
             e2e::control_bounds(window.window_id(), id).is_none(),
             "hidden progress must not retain {id}'s painted/hit bounds"
@@ -126,7 +130,10 @@ fn close_by_keyboard(
     cx.run_until_parked();
     assert_hidden(cx, app, window);
     cx.update_window(window, |_, window, _| {
-        assert!(!focus.is_focused(window), "removed close releases its focus");
+        assert!(
+            !focus.is_focused(window),
+            "removed close releases its focus"
+        );
     })
     .unwrap();
 }
@@ -191,14 +198,12 @@ pub fn scenario_busy_read_dismiss(cx: &mut VisualTestAppContext) {
             assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some());
             app.update(cx, |app, cx| app.switch_repo(0, cx));
             wait(cx, &app, "A's new revalidation completes", |state| {
-                !state.reads.is_loading(owner_a)
-                    && state.slow_reads_inflight_for_e2e(owner_a) == 2
+                !state.reads.is_loading(owner_a) && state.slow_reads_inflight_for_e2e(owner_a) == 2
             });
             assert_hidden(cx, &app, window);
             app.update(cx, |app, cx| app.switch_repo(1, cx));
             wait(cx, &app, "B's new revalidation completes", |state| {
-                !state.reads.is_loading(owner_b)
-                    && state.slow_reads_inflight_for_e2e(owner_b) == 1
+                !state.reads.is_loading(owner_b) && state.slow_reads_inflight_for_e2e(owner_b) == 1
             });
             paint(cx, &app, window);
             assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some());
@@ -216,7 +221,13 @@ pub fn scenario_busy_read_dismiss(cx: &mut VisualTestAppContext) {
             ready(cx, &app);
             cx.read(|cx| {
                 let counts = app.read(cx).view().branch_upstream_info["main"].counts;
-                assert_eq!(counts, Some(kagi_git::AheadBehind { ahead: 1, behind: 0 }));
+                assert_eq!(
+                    counts,
+                    Some(kagi_git::AheadBehind {
+                        ahead: 1,
+                        behind: 0
+                    })
+                );
             });
             let (next, release_next) = deferred::<()>(cx);
             KagiApp::hold_next_snapshot_for_e2e(next);
@@ -276,15 +287,24 @@ pub fn scenario_busy_pull_progress_dismiss(cx: &mut VisualTestAppContext) {
             });
             close_by_pointer(cx, &app, window);
             fetch_release.send(());
-            wait(cx, &app, "freshness Fetch hands off to the admitted Pull", |state| {
-                state.fetch_in_flight.is_none()
-                    && state.app_sessions.running_lease().is_some_and(|(id, _)| id != fetch_id)
-            });
+            wait(
+                cx,
+                &app,
+                "freshness Fetch hands off to the admitted Pull",
+                |state| {
+                    state.fetch_in_flight.is_none()
+                        && state
+                            .app_sessions
+                            .running_lease()
+                            .is_some_and(|(id, _)| id != fetch_id)
+                },
+            );
             assert_hidden(cx, &app, window);
             cx.read(|cx| assert!(e2e::op_latched(app.read(cx))));
             run_release.send(());
             wait(cx, &app, "hidden Pull completes and retires", |state| {
-                !state.app_sessions.has_leases() && state.write_busy_op.is_none()
+                !state.app_sessions.has_leases()
+                    && state.write_busy_op.is_none()
                     && !matches!(state.status_footer, FooterStatus::Busy(_))
             });
             assert_eq!(git_output(&repo, &["rev-parse", branch]), expected);
@@ -302,7 +322,13 @@ pub fn scenario_busy_pull_progress_dismiss(cx: &mut VisualTestAppContext) {
             cx.read(|cx| {
                 let state = app.read(cx);
                 assert!(matches!(state.status_footer, FooterStatus::Success(_)));
-                assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty());
+                assert!(state
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .toasts()
+                    .is_empty());
             });
 
             // No advance_clock between the two requests: a reused request time
@@ -312,7 +338,10 @@ pub fn scenario_busy_pull_progress_dismiss(cx: &mut VisualTestAppContext) {
             click(cx);
             cx.run_until_parked();
             cx.read(|cx| {
-                assert_eq!(app.read(cx).fetch_in_flight.as_ref().unwrap().waiters[0].3, requested_at);
+                assert_eq!(
+                    app.read(cx).fetch_in_flight.as_ref().unwrap().waiters[0].3,
+                    requested_at
+                );
             });
             paint(cx, &app, window);
             assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some());
@@ -339,7 +368,10 @@ pub fn scenario_busy_hidden_failure_reaches_details(cx: &mut VisualTestAppContex
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         let missing = repo.join("missing.git");
-        git(&repo, &["remote", "add", "origin", missing.to_str().unwrap()]);
+        git(
+            &repo,
+            &["remote", "add", "origin", missing.to_str().unwrap()],
+        );
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
             app.set_lang(language, cx);
@@ -372,7 +404,9 @@ pub fn scenario_busy_hidden_failure_reaches_details(cx: &mut VisualTestAppContex
         });
         let entries = oplog::read_oplog_tail_for_repo(&repo, 100);
         let receipt = entries.iter().find(|entry| entry.op == "fetch").unwrap();
-        assert!(matches!(&receipt.outcome, OpOutcome::Failed { error } if error.contains(missing.to_str().unwrap())));
+        assert!(
+            matches!(&receipt.outcome, OpOutcome::Failed { error } if error.contains(missing.to_str().unwrap()))
+        );
         cx.read(|cx| {
             let state = app.read(cx);
             assert!(!state.bottom_panel_open);
@@ -390,8 +424,17 @@ pub fn scenario_busy_hidden_failure_reaches_details(cx: &mut VisualTestAppContex
             let state = app.read(cx);
             let panel = state.op_log.as_ref().unwrap().read(cx);
             let row = &panel.entries()[panel.expanded().unwrap()];
-            assert_eq!((row.id, row.timestamp, &row.op, &row.repo), (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo));
-            assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty());
+            assert_eq!(
+                (row.id, row.timestamp, &row.op, &row.repo),
+                (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+            );
+            assert!(state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .is_empty());
         });
         read_release.send(());
         ready(cx, &app);

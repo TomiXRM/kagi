@@ -44,10 +44,15 @@ fn assert_refusal(
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none());
         assert!(!app.app_sessions.has_leases());
-        let modal = app.branch_plan_modal().expect("non-FF reason stays readable");
+        let modal = app
+            .branch_plan_modal()
+            .expect("non-FF reason stays readable");
         assert!(modal.error.is_none());
         assert!(!modal.confirm_armed);
-        assert!(modal.plan.pull_identity.is_none(), "refusal is not approval");
+        assert!(
+            modal.plan.pull_identity.is_none(),
+            "refusal is not approval"
+        );
         assert!(modal.plan.blockers.iter().any(|note| matches!(
             note,
             PlanNote::Pull(PullNote::CannotFastForward { branch }) if branch == "main"
@@ -59,15 +64,18 @@ fn assert_refusal(
     });
     button_style::clear_recorded_modal_buttons();
     draw(cx, window);
-    let (_, explanation) = dialog_a11y::recorded_note("plan-blocker-0")
-        .expect("the actual refusal reason is drawn");
+    let (_, explanation) =
+        dialog_a11y::recorded_note("plan-blocker-0").expect("the actual refusal reason is drawn");
     assert!(
         explanation.contains("main"),
         "the rendered refusal identifies the selected branch"
     );
     assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_some());
     if let Some(confirm) = button_style::recorded_modal_button("plan-confirm") {
-        assert!(confirm.disabled, "a blocked explanation cannot authorize Pull");
+        assert!(
+            confirm.disabled,
+            "a blocked explanation cannot authorize Pull"
+        );
     }
 }
 
@@ -75,7 +83,11 @@ fn protected_refs(repo: &Path, upstream_ref: &str) -> (String, String) {
     (
         output(
             repo,
-            &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"],
+            &[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                "refs/heads/",
+            ],
         ),
         output(repo, &["rev-parse", "--verify", upstream_ref]),
     )
@@ -87,12 +99,18 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
     let fetch_remote = if remote == "." { "origin" } else { remote };
     let origin = Origin::new_named(&repo, fetch_remote);
     git(&repo, &["config", "pull.ff", "only"]);
-    git(&repo, &["commit", "-q", "--allow-empty", "-m", "local divergence"]);
+    git(
+        &repo,
+        &["commit", "-q", "--allow-empty", "-m", "local divergence"],
+    );
     let incoming = origin.advance();
     git(&repo, &["fetch", "-q", fetch_remote]);
     let upstream_ref = if remote == "." {
         git(&repo, &["branch", "local-upstream", &incoming]);
-        git(&repo, &["branch", "--set-upstream-to=local-upstream", "main"]);
+        git(
+            &repo,
+            &["branch", "--set-upstream-to=local-upstream", "main"],
+        );
         "refs/heads/local-upstream".to_string()
     } else {
         format!("refs/remotes/{remote}/main")
@@ -146,12 +164,21 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
             "captured snapshot has not been published"
         );
         assert_eq!(app.reads.revision(owner), revision);
-        assert!(app.branch_plan_modal().is_some(), "original refusal is still shown");
+        assert!(
+            app.branch_plan_modal().is_some(),
+            "original refusal is still shown"
+        );
     });
     match drift {
         Drift::Head => git(
             &repo,
-            &["commit", "-q", "--allow-empty", "-m", "external HEAD change"],
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "external HEAD change",
+            ],
         ),
         Drift::Worktree => {
             std::fs::write(repo.join("README.md"), "external checkout edit\n").unwrap();
@@ -206,7 +233,10 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
     cx.run_until_parked();
     cx.read(|cx| {
         let app = app.read(cx);
-        assert!(app.branch_plan_modal().is_none(), "stale explanation expired");
+        assert!(
+            app.branch_plan_modal().is_none(),
+            "stale explanation expired"
+        );
         assert!(!app.app_sessions.has_leases());
     });
     press_enter(cx, &app, window);

@@ -338,7 +338,9 @@ impl KagiApp {
                     modal.plan.warnings.len()
                 );
                 modal.fetch_owner = self.pull_modal().and_then(|current| current.fetch_owner);
-                modal.progress_request = self.pull_modal().and_then(|current| current.progress_request);
+                modal.progress_request = self
+                    .pull_modal()
+                    .and_then(|current| current.progress_request);
                 self.update_pull_plan_from_async(modal);
             }
             Ok(None) => {

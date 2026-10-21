@@ -53,3 +53,27 @@ pub fn recovery_ja(recovery: &ForceLeaseRecovery) -> String {
         ),
     }
 }
+
+/// Final approval names the frozen remote target and its exact lease. Recovery
+/// remains conditional on that remote not moving again; never promise undo.
+pub fn armed_confirmation(plan: &kagi_domain::plan::OperationPlan) -> String {
+    use crate::i18n::{lang, Lang};
+    use kagi_domain::plan_note::RecoveryKind;
+    let Some(RecoveryKind::ForceLease(ForceLeaseRecovery::ForceLeasePush {
+        branch,
+        remote,
+        previous_remote_sha,
+        ..
+    })) = plan.recovery.as_ref().map(|recovery| &recovery.kind)
+    else {
+        return Msg::PlanForcePush.t().to_string();
+    };
+    match lang() {
+        Lang::En => {
+            format!("Rewrite {remote}/{branch} only if its tip is still {previous_remote_sha}")
+        }
+        Lang::Ja => {
+            format!("{remote}/{branch} の先端が {previous_remote_sha} の場合だけ履歴を書き換える")
+        }
+    }
+}

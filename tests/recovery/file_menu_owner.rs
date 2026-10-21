@@ -178,11 +178,7 @@ pub fn scenario_discard_literal_backslash(cx: &mut VisualTestAppContext) {
                 );
             }
         });
-        app.update(cx, |app, cx| app.start_discard(cx));
-        assert_eq!(
-            std::fs::read(repo.join(r"a\b.txt")).unwrap(),
-            b"selected dirty\n"
-        );
+        assert!(!cx.read(|cx| app.read(cx).discard_modal().unwrap().requires_two_stage()));
         app.update(cx, |app, cx| app.start_discard(cx));
         cx.run_until_parked();
         assert_eq!(
@@ -369,7 +365,6 @@ pub fn scenario_file_menu_freezes_path(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).discard_modal().is_some()),
         "the real menu item did not dispatch Discard"
     );
-    app.update(cx, |app, cx| app.start_discard(cx));
     app.update(cx, |app, cx| app.start_discard(cx));
     cx.run_until_parked();
 

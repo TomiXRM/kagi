@@ -509,9 +509,9 @@ pub struct OperationPlan {
     /// Push is newest first; ordinary Rebase is oldest first, with its true
     /// candidate count and frozen operands in `rebase_scope`.
     pub preview_commits: Vec<String>,
-    /// History-rewriting flag (ADR-0023).  `true` for plans that rewrite
-    /// history (e.g. amend), which the UI must gate behind a **two-stage
-    /// confirmation**.  Defaults to `false` for every other plan.
+    /// History-rewriting flag (ADR-0023), separate from confirmation stages.
+    /// `true` for plans that rewrite history (e.g. amend). Recovery and impact
+    /// determine whether approval needs one stage or two.
     pub destructive: bool,
     /// The faithful equivalent `git` CLI command for this operation, shown in
     /// the plan modal as "this is *equivalent to* `<cmd>`" — never "runs"

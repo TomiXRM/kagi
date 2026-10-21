@@ -19,9 +19,8 @@ use kagi_domain::remote::shell_quote;
 // ────────────────────────────────────────────────────────────
 
 /// Analyse whether a force-with-lease push of the current branch is safe and
-/// return an [`OperationPlan`]. `destructive: true` — the UI must require an
-/// armed two-stage confirm (mirrors `discard` / `delete-remote-branch` /
-/// `reset-current-to-head`), not a single click.
+/// return an [`OperationPlan`]. The UI requires two explicit confirmations:
+/// even with conditional recovery, rewriting a remote can affect other people.
 ///
 /// # Blocker conditions
 ///

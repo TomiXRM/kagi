@@ -23,6 +23,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Use the same risk-based admission for Pull, Pull ff-only, Push and publish from the toolbar, sidebar menu, command palette and shortcuts. Run safe sidebar publish and clean non-current branch fast-forwards without a redundant confirmation, retaining the target branch in progress and result footers. Keep risk choices and execution-time safety checks. (#1697)
   - Keep explicit destination review when publishing without an upstream to multiple configured remotes and no `origin`; show typed candidate names instead of silently publishing to the first remote.
   - Freeze the approved Push branch, upstream, remote name and effective push URLs; refuse destination/config drift before any write instead of publishing to a newly added `origin` or changed URL.
+- Confirm recoverable ref-only Reset, unpublished Amend, backed-up Discard and local branch deletion losing no commits once. Keep two-stage approval for irreversible deletion and shared-history changes; show the force-with-lease remote target and exact lease instead of claiming it cannot be undone. Align English/Japanese consequences with recorded recovery. (#1695)
+- Keep recovery-only refs out of zero-loss local branch deletion, recheck approved commit reachability before execution, and recognize published Amend history through remote-tracking refs even without a configured upstream. (#1695)
+- Keep ordinary branch-retention refs locked through deletion, freeze existing Amend publication refs through Git's real commit boundary, and give CLI/MCP zero-loss deletion plans the same one-confirmation explanation as the GUI. Document that new remote-ref namespaces cannot be locked globally. (#1695)
 
 ## [0.47.0] - 2026-10-21
 

@@ -263,6 +263,13 @@ impl Backend {
             // A display plan is not authority to omit required safety fields. Derive
             // the family requirements again before any snapshot or mutation (#502).
             let fresh = self.plan(op)?;
+            if let Operation::DeleteBranch { name } = op {
+                ops::preflight_delete_reachability(
+                    plan,
+                    name,
+                    ops::delete_branch_loss_count(&fresh),
+                )?;
+            }
             if !fresh.blockers.is_empty() {
                 if matches!(op, Operation::SyncToRemote { .. }) {
                     // Keep the fresh plan's typed reason before any savepoint,

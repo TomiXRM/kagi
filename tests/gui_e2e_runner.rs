@@ -7012,10 +7012,9 @@ mod macos {
     /// Issue #476 slice 3: **amend** and **discard** dispatched from a LINKED
     /// WORKTREE's panel act on that worktree.
     ///
-    /// Both are the destructive pair the earlier slices kept refused, and both
-    /// run their real two-stage confirm here: `commit_panel_amend` →
-    /// `start_amend` (arm) → `start_amend` (fire), and `open_discard_all_modal`
-    /// → `start_discard` (arm) → `start_discard` (fire).
+    /// Both use one explicit confirmation for their recovery-backed local plans:
+    /// `commit_panel_amend` → `start_amend`, and `open_discard_all_modal`
+    /// → `start_discard`.
     ///
     /// Asserts, in order: the amend rewrote worktree A's HEAD **in place** (new
     /// SHA, same parent, same commit count, clean tree) while the open
@@ -7085,13 +7084,7 @@ mod macos {
             repo_fingerprint(&wt_a).0,
             "planning the amend must not have rewritten anything yet"
         );
-        // Two-stage confirm: the first click only arms.
-        kagi.update(cx, |app, cx| app.start_amend(cx));
-        assert_eq!(
-            head_before,
-            repo_fingerprint(&wt_a).0,
-            "the FIRST amend confirm must only arm — a history rewrite needs two"
-        );
+        assert!(!cx.read(|cx| kagi.read(cx).amend_modal().unwrap().requires_two_stage()));
         kagi.update(cx, |app, cx| app.start_amend(cx));
         cx.run_until_parked();
 
@@ -7163,12 +7156,7 @@ mod macos {
             app.open_discard_all_modal(app.active_session().unwrap(), cx)
         });
         cx.run_until_parked();
-        kagi.update(cx, |app, cx| app.start_discard(cx));
-        assert_eq!(
-            repo_fingerprint(&wt_a).1,
-            " M f.txt\n",
-            "the FIRST discard confirm must only arm — the destructive op needs two"
-        );
+        assert!(!cx.read(|cx| kagi.read(cx).discard_modal().unwrap().requires_two_stage()));
         kagi.update(cx, |app, cx| app.start_discard(cx));
         cx.run_until_parked();
 
@@ -7345,8 +7333,7 @@ mod macos {
         })
         .expect("dispatch editor-tree discard");
         cx.run_until_parked();
-        kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
-        kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
+        kagi.update(cx, |app, cx| app.start_discard(cx));
         cx.run_until_parked();
 
         assert_eq!(
@@ -7371,8 +7358,7 @@ mod macos {
             app.open_discard_all_modal(app.active_session().unwrap(), cx)
         });
         cx.run_until_parked();
-        kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
-        kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
+        kagi.update(cx, |app, cx| app.start_discard(cx));
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_a),
@@ -7428,7 +7414,6 @@ mod macos {
                 .open(log_dir.join("operations.jsonl.lock"))
                 .unwrap();
             lock.lock().unwrap();
-            kagi.update(cx, |app, cx| app.start_discard(cx));
             kagi.update(cx, |app, cx| {
                 app.start_discard(cx);
                 if stale {

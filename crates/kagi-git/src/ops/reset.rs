@@ -15,9 +15,9 @@ use kagi_domain::remote::shell_quote;
 // ────────────────────────────────────────────────────────────
 
 /// Analyse whether moving the current branch's ref to `target` is safe and
-/// return an [`OperationPlan`]. `destructive: true` — the UI must require an
-/// armed two-stage confirm (mirrors `discard` / `delete-remote-branch`), not
-/// a single click.
+/// return an [`OperationPlan`]. `destructive: true` records the history change;
+/// the UI uses one explicit confirmation because the old tip is recoverable
+/// and this operation changes no remote, index or working-tree state.
 ///
 /// # Blocker conditions
 ///

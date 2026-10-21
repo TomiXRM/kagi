@@ -73,11 +73,17 @@ pub enum BranchNote {
     DeleteDetachedAtTip {
         name: String,
     },
-    /// warning (`plan_delete_branch`) — unmerged deletion requires two confirmations.
+    /// warning — commits losing reachability determine whether deletion arms.
     DeleteUnmerged {
         name: String,
         tip: String,
         commits: usize,
+    },
+    /// Refuse before writes when ordinary-ref reachability changed since approval.
+    DeleteReachabilityChanged {
+        name: String,
+        approved: usize,
+        current: usize,
     },
     /// warning (`plan_delete_branch`) — the branch has an upstream that is not
     /// deleted by this operation.
@@ -95,7 +101,7 @@ pub enum BranchNote {
 }
 
 impl BranchNote {
-    /// Sole English renderer (byte-identical to the legacy producer strings).
+    /// English contract copy, including the approved loss-count confirmation policy.
     pub fn message_en(&self) -> String {
         match self {
             BranchNote::CommitMissing { sha } => {
@@ -147,9 +153,16 @@ impl BranchNote {
                 "HEAD is detached and points to the same commit as '{}'. This branch cannot be deleted while HEAD is at its tip.",
                 name
             ),
+            BranchNote::DeleteUnmerged { name, tip, commits: 0 } => format!(
+                "Delete local branch '{name}' at {tip}. All commits remain reachable from other refs; a recovery ref also keeps this tip."
+            ),
             BranchNote::DeleteUnmerged { name, tip, commits } => format!(
                 crate::advice_template_en!(DeleteUnmerged),
                 name, tip, commits
+            ),
+            BranchNote::DeleteReachabilityChanged { name, approved, current } => format!(
+                crate::advice_template_en!(BranchDeleteReachabilityChanged),
+                name, approved, current
             ),
             BranchNote::DeleteSquashMerged { name, squash } => format!(
                 crate::advice_template_en!(BranchDeleteSquashMerged),

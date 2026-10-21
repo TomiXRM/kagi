@@ -219,6 +219,21 @@ impl KagiApp {
             .child(self.render_home_main(sidebar, compact, window, cx));
         // Home is a document even when it is the window's only tab.
         let body = super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t());
+        // Receipts outlive their repository tab. A detail action can reveal
+        // the existing shared log even when its worktree no longer exists.
+        let operation_log =
+            if self.bottom_panel_open && self.bottom_tab == super::BottomTab::OperationLog {
+                self.render_bottom_panel_slot(
+                    1.,
+                    self.bottom_panel_body_height(window, false),
+                    super::BottomTab::OperationLog,
+                    window,
+                    cx,
+                )
+                .map(IntoElement::into_any_element)
+            } else {
+                None
+            };
         let home = div()
             .id("home")
             .flex()
@@ -253,7 +268,8 @@ impl KagiApp {
                     )
                     .child(self.render_chrome_spacer("home-drag-region", cx)),
             )
-            .child(body);
+            .child(body)
+            .children(operation_log);
         // A flex box, as the Welcome screen's root was: the window-global
         // modals attached below are absolute overlays, and in a plain block
         // box they landed after Home's content instead of covering it.

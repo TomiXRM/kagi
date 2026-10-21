@@ -6,6 +6,7 @@ use super::workspace::WorkspaceItem as _;
 use super::*;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::IconName;
+use gpui_component::Sizable as _;
 
 /// The same presented body limit governs fitting and pointer resizing.
 pub(super) fn max_body_height(window: &Window, editor: bool) -> f32 {
@@ -85,6 +86,7 @@ impl KagiApp {
             return None;
         }
         let compact = self.compact.enabled;
+        let home = self.home_in_front();
 
         // ── Horizontal resize divider at top of panel ──
         let h_divider = div()
@@ -156,8 +158,16 @@ impl KagiApp {
         let entity = cx.weak_entity();
         let tabs = keyboard_nav::TabList::new(
             &self.bottom_tab_focus,
-            keyboard_nav::slot_keys(if compact { 4 } else { 3 }),
-            if compact {
+            keyboard_nav::slot_keys(if home {
+                1
+            } else if compact {
+                4
+            } else {
+                3
+            }),
+            if home {
+                vec![0]
+            } else if compact {
                 vec![3, 0, 1, 2]
             } else {
                 vec![0, 1, 2]
@@ -255,11 +265,30 @@ impl KagiApp {
                     .mx_2()
                     .gap_1()
                     .rounded(theme::scaled_px(4.))
-                    .when(compact, |el| el.child(cell(3, "compact-tab-changes")))
+                    .when(compact && !home, |el| {
+                        el.child(cell(3, "compact-tab-changes"))
+                    })
                     .child(cell(0, "tab-oplog"))
-                    .child(cell(1, "tab-terminal"))
-                    .child(cell(2, "tab-activity")),
+                    .when(!home, |el| {
+                        el.child(cell(1, "tab-terminal"))
+                            .child(cell(2, "tab-activity"))
+                    }),
             );
+        let tab_bar = tab_bar.when(home, |bar| {
+            bar.child(div().flex_1()).child(
+                Button::new("home-operation-log-close")
+                    .ghost()
+                    .small()
+                    .label(i18n::tab_close_name(Msg::BottomTabOperationLog.t()))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.bottom_panel_open = false;
+                        if let Some(root) = &this.root_focus {
+                            root.focus(window, cx);
+                        }
+                        cx.notify();
+                    })),
+            )
+        });
 
         // ── Body: Operation Log or Terminal ──
         let body = match active_tab {

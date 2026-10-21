@@ -562,6 +562,8 @@ refusal or fabricates a write receipt.
 - Pull の fetch と一時 stash push / pop は内部手順であり、独立の成功 toast を出さない。
   backend が記録した全 child receipt と順序 / id はそのまま既存 Operation Log に挿入し、
   workflow の要求名 **Pull** と最終結果だけを一度提示する。記録失敗した child を成功で隠さない。
+  freshness fetch を共有した場合も各要求の開始時刻を引き継ぎ、最終 no-op / write の提示で
+  経過時間を判断する。decisive receipt が Unknown なら workflow の Partial より優先する。
   hunk Stage / Unstage 成功も file staging と同じく静かにし、失敗時だけ原因を提示する。
 - 同じ repository + 要求操作 + outcome の toast は既存 card を置換する。
   件数、close focus、詳細 action を増やさず、repository は操作名の後に短い名前だけを示す。
@@ -570,6 +572,10 @@ refusal or fabricates a write receipt.
   Unknown は再試行禁止を明示する。raw stderr / exit code / 絶対 path は durable receipt の
   詳細に保持し、未知の診断は安全な翻訳済み要約にする。toast の操作ログ button と常設
   footer の操作ログ button から詳細へ進める。失敗だけでは panel を自動展開しない。
+  詳細 action は receipt の確定 id に紐づき、Home / 別 tab から操作 owner を表示して展開する。
+  owner tab が閉じられた場合も worktree の再 open / remote 再接続を要求せず、同じ既存 log panel を
+  Home で表示できる。到達できると確認する前に toast / action を消さない。
+  `index.lock` という path だけを lock 競合の証拠にせず、既存 lock の診断が無ければ安全な要約を使う。
   既存 `[kagi] bottom-panel: open (Failed auto-open)` は harness 互換の契約行として残るが、
   表示状態を変更する指示ではない。
 - 通常の Busy admission 拒否は既存 snackbar と近傍の Idle 理由だけとし、Error toast /

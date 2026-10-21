@@ -1781,7 +1781,10 @@ impl KagiApp {
             stack.update(cx, |stack, cx| {
                 stack.push_keyed_notify(kind, message, Some(key), cx);
                 if kind == ToastKind::Error {
-                    stack.set_latest_action(types::ToastAction::OpenOperationLog, cx);
+                    stack.set_latest_action(
+                        types::ToastAction::OpenOperationLog(oplog_panel::EntryKey::of(entry)),
+                        cx,
+                    );
                 }
             });
         }
@@ -1963,15 +1966,6 @@ impl KagiApp {
             },
             |(kind, _)| *kind,
         );
-        if announce {
-            self.push_operation_result(
-                &entry,
-                requested_op.unwrap_or(op),
-                toast_kind,
-                display_footer_msg.clone(),
-                cx,
-            );
-        }
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
 
         // Callers choose persistence. Already-recorded/attempted receipts are
@@ -1993,6 +1987,16 @@ impl KagiApp {
             shown = Some(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                 &recording,
             ));
+        }
+        if announce {
+            let receipt = shown.as_ref().unwrap_or(&entry);
+            self.push_operation_result(
+                receipt,
+                requested_op.unwrap_or(&receipt.op),
+                toast_kind,
+                display_footer_msg.clone(),
+                cx,
+            );
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front) and collapse

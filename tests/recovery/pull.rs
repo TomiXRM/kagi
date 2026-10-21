@@ -18,6 +18,47 @@ use git_fixture::git_output as output;
 mod oplog;
 use oplog::records;
 
+fn assert_unknown_pull_result(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    repo: &Path,
+) {
+    let durable = records(repo, "pull", 100, true);
+    let entry = durable
+        .iter()
+        .find(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. }))
+        .expect("the real indeterminate Pull has a typed durable receipt");
+    let OpOutcome::Unknown { evidence, .. } = &entry.outcome else {
+        unreachable!("the selected receipt is Unknown");
+    };
+    let expected = kagi::ui::i18n::op::user_text::operations::unknown_preview("pull", evidence);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let stack = app.toast_stack.as_ref().expect("toast stack").read(cx);
+        assert_eq!(
+            stack.toasts().len(),
+            1,
+            "only the requested Pull is announced"
+        );
+        assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Error);
+        assert_eq!(
+            stack.toasts()[0].message.as_ref(),
+            expected,
+            "typed Unknown must retain its no-retry safety preview, not Partial copy"
+        );
+        let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
+        let shown = panel
+            .entries()
+            .iter()
+            .find(|shown| shown.id == entry.id)
+            .expect("the same decisive receipt is presented");
+        assert!(
+            matches!(&shown.outcome, OpOutcome::Unknown { evidence: shown, .. }
+            if shown == evidence)
+        );
+    });
+}
+
 struct DirtyPullFixture<'a> {
     repo: &'a Path,
     remote_root: tempfile::TempDir,
@@ -848,6 +889,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     protection_collision(repo, dirty.remote_root.path());
 
     let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     app.update(cx, |app, cx| app.open_pull_modal(cx));
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
@@ -891,6 +933,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
             .any(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. })),
         "the indeterminate Pull outcome must be durable"
     );
+    assert_unknown_pull_result(cx, &app, repo);
     // The descendant of the fetch is still holding the pipes, so nothing about
     // this write is proven stopped: the scope stays reserved (ADR-0175).
     cx.read(|cx| {
@@ -1138,6 +1181,7 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
             notice.message
         );
     });
+    assert_unknown_pull_result(cx, &app, repo);
 
     // The helper's `sleep 4 &` outlives the fetch; let it exit before the
     // next scenario runs, as the sibling scenarios do (#516).

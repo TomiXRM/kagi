@@ -177,6 +177,9 @@ impl KagiApp {
                 cx,
             );
         }
+        if current && announce {
+            self.status_footer = FooterStatus::Idle("".into());
+        }
         if current && !announce {
             self.status_footer = if success && !recording_failed {
                 FooterStatus::Success(crate::ui::operations::display_text(footer.clone().into()))
@@ -604,7 +607,9 @@ impl KagiApp {
             );
         }
         if active {
-            if !announce {
+            if announce {
+                self.status_footer = FooterStatus::Idle("".into());
+            } else {
                 self.status_footer = if success {
                     FooterStatus::Success(shown.into())
                 } else {

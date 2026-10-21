@@ -909,6 +909,10 @@ fn click_branch_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     click_branch_sync(cx, window, "main", false);
 }
 
+fn click_current_ff(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    click_branch_sync(cx, window, "main", true);
+}
+
 fn click_branch_sync(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
@@ -1077,6 +1081,11 @@ pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
     clean_updates_from(cx, click_pull);
     clean_updates_from(cx, click_branch_pull);
+    for click in [click_pull, click_current_ff] {
+        for join_existing in [false, true] {
+            clean_updates_from_timed(cx, click, true, join_existing);
+        }
+    }
     eprintln!("[gui-e2e] PASS pull_freshness_clean_updates");
 }
 
@@ -1084,17 +1093,37 @@ pub(super) fn clean_updates_from(
     cx: &mut VisualTestAppContext,
     click: fn(&mut VisualTestAppContext, AnyWindowHandle),
 ) {
+    clean_updates_from_timed(cx, click, false, false);
+}
+
+fn clean_updates_from_timed(
+    cx: &mut VisualTestAppContext,
+    click: fn(&mut VisualTestAppContext, AnyWindowHandle),
+    long_running: bool,
+    join_existing: bool,
+) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let origin = Origin::new(&repo);
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.show_graph_mode(cx);
+        app.set_window_active_for_e2e(true, cx);
+    });
     let expected = origin.advance();
     assert_cached_zero(cx, &app, &repo);
     let before = Checkout::read(&repo);
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
+    if join_existing {
+        app.update(cx, |app, cx| app.fetch_async(true, cx));
+        cx.run_until_parked();
+    }
     click(cx, window);
     assert_waiting(cx, &app, &repo, &before);
+    if long_running {
+        cx.advance_clock(Duration::from_secs(2));
+    }
     release.send(());
     wait_idle(cx, &app);
     cx.run_until_parked();
@@ -1130,6 +1159,23 @@ pub(super) fn clean_updates_from(
         let app = app.read(cx);
         assert!(!e2e::active_modal_present(app));
         assert!(!app.app_sessions.has_leases());
+        let stack = app.toast_stack.as_ref().expect("toast stack").read(cx);
+        assert_eq!(
+            stack.toasts().len(),
+            usize::from(long_running),
+            "only the final long-running Pull may toast, never its freshness fetch"
+        );
+        if long_running {
+            let toast = &stack.toasts()[0];
+            assert_eq!(toast.kind, ToastKind::Success);
+            assert_eq!(
+                toast.result_key.as_ref(),
+                Some(&format!("{}\0pull\0success", repo.display())),
+                "the notification belongs to the requested Pull, not a child"
+            );
+        } else {
+            assert!(matches!(&app.status_footer, FooterStatus::Success(_)));
+        }
         let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
         let shown: Vec<_> = panel
             .entries()
@@ -1312,14 +1358,26 @@ pub fn scenario_pull_current_up_to_date(cx: &mut VisualTestAppContext) {
         i18n::set_lang(language);
         for ff_only in [false, true] {
             for ahead in [false, true] {
-                current_up_to_date(cx, ff_only, ahead);
+                current_up_to_date(cx, ff_only, ahead, false, false);
             }
+        }
+    }
+    i18n::set_lang(Lang::En);
+    for ff_only in [false, true] {
+        for (long_running, join_existing) in [(true, false), (true, true), (false, true)] {
+            current_up_to_date(cx, ff_only, false, long_running, join_existing);
         }
     }
     eprintln!("[gui-e2e] PASS pull_current_up_to_date");
 }
 
-fn current_up_to_date(cx: &mut VisualTestAppContext, ff_only: bool, ahead: bool) {
+fn current_up_to_date(
+    cx: &mut VisualTestAppContext,
+    ff_only: bool,
+    ahead: bool,
+    long_running: bool,
+    join_existing: bool,
+) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let _origin = Origin::new(&repo);
@@ -1334,41 +1392,66 @@ fn current_up_to_date(cx: &mut VisualTestAppContext, ff_only: bool, ahead: bool)
     let before = Checkout::read(&repo);
     let refs_before = output(&repo, &["show-ref"]);
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    app.update(cx, |app, cx| {
+        app.show_graph_mode(cx);
+        app.set_window_active_for_e2e(true, cx);
+    });
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
+    if join_existing {
+        app.update(cx, |app, cx| app.fetch_async(true, cx));
+        cx.run_until_parked();
+        // Time before this Pull request must not make a short joined request long.
+        cx.advance_clock(Duration::from_secs(3));
+    }
     if ff_only {
         click_branch_sync(cx, window, "main", true);
     } else {
         click_pull(cx, window);
     }
     assert_waiting(cx, &app, &repo, &before);
+    if long_running {
+        cx.advance_clock(Duration::from_secs(2));
+    }
     release.send(());
     cx.run_until_parked();
-    assert_eq!(latest_count(cx, &app), 1, "fresh Pull explains its no-op");
+    assert_eq!(
+        latest_count(cx, &app),
+        usize::from(!long_running),
+        "only a short attended Pull explains its no-op in the footer"
+    );
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none());
         assert!(!app.app_sessions.has_leases());
         assert!(app.pull_modal().is_none());
         assert!(app.branch_plan_modal().is_none());
-        assert!(
-            app.toast_stack
-                .as_ref()
-                .unwrap()
-                .read(cx)
-                .toasts()
-                .is_empty(),
-            "an attended no-op Pull uses the footer, not a toast"
+        let stack = app.toast_stack.as_ref().unwrap().read(cx);
+        assert_eq!(
+            stack.toasts().len(),
+            usize::from(long_running),
+            "one final long-running Pull toast, with no child Fetch toast"
         );
-        assert!(matches!(&app.status_footer,
-            FooterStatus::Idle(text) | FooterStatus::Success(text)
-                if text.as_ref() == Msg::AlreadyUpToDatePull.t()));
+        if long_running {
+            assert_eq!(stack.toasts()[0].kind, ToastKind::Sync);
+            assert_eq!(
+                stack.toasts()[0].message.as_ref(),
+                Msg::AlreadyUpToDatePull.t()
+            );
+            assert_eq!(
+                stack.toasts()[0].result_key.as_ref(),
+                Some(&format!("{}\0pull\0success", repo.display())),
+            );
+        } else {
+            assert!(matches!(&app.status_footer,
+                FooterStatus::Idle(text) | FooterStatus::Success(text)
+                    if text.as_ref() == Msg::AlreadyUpToDatePull.t()));
+        }
     });
     // The fetch's watcher must neither lose the explanation nor open a card.
     app.update(cx, |app, cx| app.reload_external(cx));
     cx.run_until_parked();
-    assert_eq!(latest_count(cx, &app), 1);
+    assert_eq!(latest_count(cx, &app), usize::from(!long_running));
     assert_eq!(Checkout::read(&repo), before);
     assert_eq!(output(&repo, &["show-ref"]), refs_before);
     for op in ["pull", "branch-pull-ff", "stash-push", "stash-pop"] {

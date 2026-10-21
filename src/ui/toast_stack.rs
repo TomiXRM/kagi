@@ -37,7 +37,11 @@ impl ToastRemoved {
     }
 }
 impl gpui::EventEmitter<ToastRemoved> for ToastStack {}
-impl gpui::EventEmitter<super::types::ToastAction> for ToastStack {}
+pub(super) struct ToastActionRequested {
+    pub id: u64,
+    pub action: super::types::ToastAction,
+}
+impl gpui::EventEmitter<ToastActionRequested> for ToastStack {}
 
 fn error_preview(message: &str) -> String {
     let mut preview = String::new();
@@ -425,12 +429,12 @@ impl ToastStack {
     pub(super) fn activate_action(&mut self, id: u64, cx: &mut Context<Self>) {
         let action = self
             .toasts
-            .iter_mut()
+            .iter()
             .find(|toast| toast.id == id && toast.dismissing.is_none())
-            .and_then(|toast| toast.action.take());
+            .and_then(|toast| toast.action.clone());
         if let Some(action) = action {
-            cx.emit(action);
-            self.begin_exit(id, cx);
+            // The app acknowledges only after the destination is reachable.
+            cx.emit(ToastActionRequested { id, action });
         }
     }
 

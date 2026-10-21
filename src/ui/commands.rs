@@ -1938,7 +1938,8 @@ pub struct FetchFlight {
     /// Frozen before dispatch: an earlier visit's failure is recorded even
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
-    pub waiters: Vec<(crate::app::SessionId, u64, PullTarget)>,
+    /// Each waiter keeps its own request time, including when joining an older fetch.
+    pub waiters: Vec<(crate::app::SessionId, u64, PullTarget, Instant)>,
     /// Live branch captured before dispatch; same-scope requests may join.
     /// `None` retains the detached/no-upstream ordinary fetch fallback.
     pub upstream_branch: Option<String>,
@@ -2538,6 +2539,7 @@ impl KagiApp {
         pull_confirm: Option<PullTarget>,
         cx: &mut Context<Self>,
     ) -> bool {
+        let request_started = cx.background_executor().now();
         self.refresh_write_busy();
         let requested_session = self.active_session();
         let live_current_branch = || {
@@ -2564,13 +2566,18 @@ impl KagiApp {
                     if session == flight.owner {
                         if let Some(visit) = self.app_sessions.visit(session) {
                             if let Some(waiter) =
-                                flight.waiters.iter_mut().find(|(owner, incarnation, _)| {
-                                    *owner == session && *incarnation == visit
-                                })
+                                flight
+                                    .waiters
+                                    .iter_mut()
+                                    .find(|(owner, incarnation, _, _)| {
+                                        *owner == session && *incarnation == visit
+                                    })
                             {
                                 waiter.2 = target;
                             } else {
-                                flight.waiters.push((session, visit, target));
+                                flight
+                                    .waiters
+                                    .push((session, visit, target, request_started));
                             }
                             flight.pull_confirm_displaced = false;
                             klog!("pull-confirm: waiting on the fetch already in flight");
@@ -2621,7 +2628,7 @@ impl KagiApp {
             before,
             upstream_branch,
             waiters: pull_confirm
-                .map(|target| (owner, visit, target))
+                .map(|target| (owner, visit, target, request_started))
                 .into_iter()
                 .collect(),
             pull_confirm_displaced: false,
@@ -2721,7 +2728,6 @@ impl KagiApp {
                     .now()
                     .saturating_duration_since(result_started)
                     >= std::time::Duration::from_secs(2);
-                let announce = app.operation_result_toast_needed(long_running);
                 let requested_op = if flight.waiters.is_empty() {
                     "fetch"
                 } else {
@@ -2750,10 +2756,25 @@ impl KagiApp {
                 // A visit is a stay in the same tab, not merely its session.
                 // The flight owns one receipt; only waiters on the current
                 // visit may receive a result from an earlier visit's flight.
-                let current_waiter = flight.waiters.iter().any(|(session, visit, _)| {
-                    app.active_session() == Some(*session)
-                        && app.app_sessions.visit(*session) == Some(*visit)
-                });
+                let current_request_started =
+                    flight
+                        .waiters
+                        .iter()
+                        .find_map(|(session, visit, _, started)| {
+                            (app.active_session() == Some(*session)
+                                && app.app_sessions.visit(*session) == Some(*visit))
+                            .then_some(*started)
+                        });
+                let current_waiter = current_request_started.is_some();
+                let announce = app.operation_result_toast_needed(current_request_started.map_or(
+                    long_running,
+                    |started| {
+                        cx.background_executor()
+                            .now()
+                            .saturating_duration_since(started)
+                            >= std::time::Duration::from_secs(2)
+                    },
+                ));
                 if app.active_session() != Some(flight.owner)
                     || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
                         != Some(flight.visit)
@@ -2795,7 +2816,7 @@ impl KagiApp {
                             }
                         }
                         Ok((outcome, _)) if current_waiter => {
-                            for (session, visit, target) in flight.waiters {
+                            for (session, visit, target, request_started) in flight.waiters {
                                 if app.active_session() == Some(session)
                                     && app.app_sessions.visit(session) == Some(visit)
                                 {
@@ -2804,6 +2825,7 @@ impl KagiApp {
                                         flight.pull_confirm_displaced,
                                         target,
                                         &outcome.remote,
+                                        request_started,
                                         cx,
                                     );
                                 }
@@ -2897,7 +2919,7 @@ impl KagiApp {
                 // Failed fetches already own one durable receipt. A waiter
                 // only offers a confirmation after a successful fetch.
                 if let Some(fetched_remote) = fetched_remote {
-                    for (session, visit, target) in flight.waiters {
+                    for (session, visit, target, request_started) in flight.waiters {
                         if app.active_session() == Some(session)
                             && app.app_sessions.visit(session) == Some(visit)
                         {
@@ -2906,6 +2928,7 @@ impl KagiApp {
                                 flight.pull_confirm_displaced,
                                 target,
                                 &fetched_remote,
+                                request_started,
                                 cx,
                             );
                         }

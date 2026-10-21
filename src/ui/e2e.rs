@@ -762,14 +762,17 @@ pub fn build_kagi_entity(
         if let Some(stack) = app_state.toast_stack.as_ref() {
             cx.subscribe(
                 stack,
-                |app, _, action: &super::types::ToastAction, cx| match action {
-                    super::types::ToastAction::OpenRepository(path) => {
-                        app.open_repository(path.clone(), cx);
-                    }
-                    super::types::ToastAction::OpenOperationLog => {
-                        app.bottom_panel_open = true;
-                        app.bottom_tab = super::BottomTab::OperationLog;
-                        cx.notify();
+                |app, stack, request: &toast_stack::ToastActionRequested, cx| {
+                    let opened = match &request.action {
+                        super::types::ToastAction::OpenRepository(path) => {
+                            app.open_repository(path.clone(), cx)
+                        }
+                        super::types::ToastAction::OpenOperationLog(entry) => {
+                            app.open_operation_result(entry, cx)
+                        }
+                    };
+                    if opened {
+                        stack.update(cx, |stack, cx| stack.begin_exit(request.id, cx));
                     }
                 },
             )

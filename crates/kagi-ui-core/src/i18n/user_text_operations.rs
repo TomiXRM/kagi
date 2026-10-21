@@ -130,7 +130,11 @@ impl FailureCause {
         ]) {
             Self::Authentication
         } else if any(&[
-            "index.lock",
+            // A lock pathname alone can also occur in permission or remote errors.
+            // Require an existing-file diagnostic or an explicit locked-area message.
+            "index.lock: file exists",
+            "index.lock': file exists",
+            "index.lock\": file exists",
             "staging area is locked",
             "ステージ領域がロック",
             "index がロック",
@@ -461,6 +465,72 @@ mod tests {
                 FailureCause::Authentication,
             );
             assert!(!failure_preview("fetch", &authentication).contains("/private/secret"));
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn index_lock_previews_require_competition_not_just_a_lock_path() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        let fixtures = [
+            (
+                "fatal: Unable to create '/private/repository/.git/index.lock': File exists.",
+                FailureCause::IndexLocked,
+            ),
+            (
+                "Unable to create \"/private/repository/.git/index.lock\": File exists",
+                FailureCause::IndexLocked,
+            ),
+            ("index.lock: File exists", FailureCause::IndexLocked),
+            ("The staging area is locked.", FailureCause::IndexLocked),
+            (
+                "ステージ領域がロックされています。",
+                FailureCause::IndexLocked,
+            ),
+            ("index がロックされています。", FailureCause::IndexLocked),
+            (
+                "fatal: Unable to create '/private/repository/.git/index.lock': Permission denied",
+                FailureCause::Other,
+            ),
+            (
+                "/private/repository/.git/index.lock: 許可がありません",
+                FailureCause::Other,
+            ),
+            ("/private/repository/.git/index.lock", FailureCause::Other),
+            (
+                "File exists: /private/repository/unrelated; /private/repository/.git/index.lock",
+                FailureCause::Other,
+            ),
+            (
+                "fatal: unable to access 'https://example.test/index.lock/': Failed to connect",
+                FailureCause::Network,
+            ),
+            (
+                "https://example.test/index.lock/ に接続できません",
+                FailureCause::Network,
+            ),
+        ];
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            for (reason, expected) in fixtures {
+                let raw = reason.to_owned();
+                assert_eq!(FailureCause::classify(&raw), expected, "{reason}");
+                for shown in [
+                    failure_preview("stage-hunk", &raw),
+                    partial_preview("stage-hunk", &raw),
+                    unknown_preview("stage-hunk", &raw),
+                ] {
+                    assert!(shown.contains(expected.text()), "{shown}");
+                    assert!(!shown.contains("/private/"), "{shown}");
+                    assert!(!shown.contains("example.test"), "{shown}");
+                    if expected != FailureCause::IndexLocked {
+                        assert!(!shown.contains(FailureCause::IndexLocked.text()), "{shown}");
+                    }
+                }
+                assert_eq!(raw, reason, "preview must not alter durable details");
+            }
         }
         set_lang_no_persist(previous);
     }

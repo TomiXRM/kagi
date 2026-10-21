@@ -261,13 +261,20 @@ fn toast_card(
             use gpui_component::Sizable as _;
             let owner = cx.entity().downgrade();
             card.child(e2e::measure_control(
-                "clone-completion-open",
+                if matches!(
+                    &toast.action,
+                    Some(super::types::ToastAction::OpenOperationLog(_))
+                ) {
+                    "operation-result-details"
+                } else {
+                    "clone-completion-open"
+                },
                 toast_stack::ToastButton(
                     Button::new(("toast-open-repository", id))
                         .ghost()
                         .small()
-                        .label(match toast.action {
-                            Some(super::types::ToastAction::OpenOperationLog) => {
+                        .label(match &toast.action {
+                            Some(super::types::ToastAction::OpenOperationLog(_)) => {
                                 Msg::BottomTabOperationLog.t()
                             }
                             _ => Msg::ToastOpenRepository.t(),

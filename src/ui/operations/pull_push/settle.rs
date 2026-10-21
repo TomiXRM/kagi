@@ -31,6 +31,10 @@ impl KagiApp {
         let latched = self.op_latched();
         let plan = modal.plan.clone();
         let (auto_stash, promised_dirty) = (modal.auto_stash, modal.dirty_digest);
+        let result_started = modal
+            .fetch_owner
+            .map(|(_, _, started)| started)
+            .unwrap_or_else(|| cx.background_executor().now());
         let (bg_path, bg_plan) = (repo_path.clone(), plan.clone());
         let admitted = self
             .active_session()
@@ -80,7 +84,6 @@ impl KagiApp {
         klog!("async: pull started");
         cx.notify();
         let stamp = job.stamp();
-        let result_started = cx.background_executor().now();
         // Pull has a remote effect and no verify path: untracked (ADR-0204 決定 4).
         self.queue_untracked_write(Some(stamp.session), cx);
         // #289: gpui does not propagate a background panic, so the task can end
@@ -241,17 +244,22 @@ impl KagiApp {
     ) {
         let recording = &report.steps[report.announce()].recording;
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        let text = match &report.terminal.presentation {
-            crate::app::PullPresentation::Success { summary } if !report.recording_failed() => {
-                i18n::op::user_text::operations::pull_summary(summary)
+        let text = match &report.decisive().recording.entry().outcome {
+            kagi_git::oplog::OpOutcome::Unknown { evidence, .. } => {
+                i18n::op::user_text::operations::unknown_preview("pull", evidence)
             }
-            crate::app::PullPresentation::Failed { error } => {
-                i18n::op::user_text::operations::failure_preview("pull", error)
-            }
-            crate::app::PullPresentation::Partial { error } => {
-                i18n::op::user_text::operations::partial_preview("pull", error)
-            }
-            _ => crate::ui::operations::outcome_text("pull", &entry.outcome),
+            _ => match &report.terminal.presentation {
+                crate::app::PullPresentation::Success { summary } if !report.recording_failed() => {
+                    i18n::op::user_text::operations::pull_summary(summary)
+                }
+                crate::app::PullPresentation::Failed { error } => {
+                    i18n::op::user_text::operations::failure_preview("pull", error)
+                }
+                crate::app::PullPresentation::Partial { error } => {
+                    i18n::op::user_text::operations::partial_preview("pull", error)
+                }
+                _ => crate::ui::operations::outcome_text("pull", &entry.outcome),
+            },
         };
         let kind = if matches!(
             report.terminal.presentation,

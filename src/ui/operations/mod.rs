@@ -157,6 +157,8 @@ pub(crate) struct GithubMergePresentation {
 #[derive(Default)]
 pub(crate) struct RunPresentation {
     status: Option<FooterStatus>,
+    /// Pull's freshness fetch belongs to the same user request as its write.
+    request_started: Option<std::time::Instant>,
     history: Option<RunHistory>,
     consume_commit_message: Option<(PathBuf, Option<(String, String)>)>,
     refresh_worktree_wip: Option<PathBuf>,
@@ -613,10 +615,9 @@ impl KagiApp {
                     }
                     failed = report.result.is_err();
                     let announce = app.operation_result_toast_needed(
-                        cx.background_executor()
-                            .now()
-                            .saturating_duration_since(result_started)
-                            >= std::time::Duration::from_secs(2),
+                        cx.background_executor().now().saturating_duration_since(
+                            presentation.request_started.unwrap_or(result_started),
+                        ) >= std::time::Duration::from_secs(2),
                     );
                     if announce {
                         presentation.status = None;

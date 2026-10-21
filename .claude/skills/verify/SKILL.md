@@ -4068,7 +4068,7 @@ attempted failure stays visible with the recording error; it is not a success.
 
 ### One requested operation, one result (#1698)
 
-Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_completion_drops,pull_freshness_,pull_current_,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,slow_write_explained'`
+Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Real repeated no-op Push is footer-only when
 attended; the existing `set_window_active_for_e2e` input selects inactive
 presentation without activating an OS window, where the same result replaces one
@@ -4079,6 +4079,16 @@ localized causes and a log action without raw stderr/exit/absolute paths; comple
 details remain durable. Hunk success has no toast. Quit/native-close repeats
 coalesce in active/queued notices and disappear after real writer/clone settlement
 without automatically quitting. Recording-failure acknowledge notices remain.
+The toast budget scenario also starts real Fetch failures before entering Home or
+another tab, then invokes the actual detail Button to reveal the same recorded ID.
+Closed-owner and removed-worktree legs must paint the shared log, not only mutate
+hidden panel state. The action is dismissed only after navigation succeeds.
+Long freshness-fetch no-op/write legs retain each request's own elapsed time,
+including shared fetches; Unknown receipts override a Partial workflow preview.
+Run the EN/JA lock-classification boundary unit regression: an `index.lock` path
+alone, a permission denial or a remote URL is not evidence of an existing lock.
+Stash local/remote success coverage checks attended footer versus inactive toast,
+with no stale Busy footer and no unrelated-session footer changes.
 Tier B uses the same isolated EN/JA fixture and owned PID/window for before/after
 no-op repetition, failure details, Pull and Quit; keep non-key/no-activate and
 report occluded byte-identical frames as stale, not evidence of the new screen.

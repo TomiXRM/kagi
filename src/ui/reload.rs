@@ -207,7 +207,7 @@ impl KagiApp {
             && self.remote_view.is_none()
             && self.pull_modal().is_some_and(|modal| {
                 modal.error.is_none()
-                    && modal.fetch_owner
+                    && modal.fetch_owner.map(|(owner, visit, _)| (owner, visit))
                         == self
                             .app_sessions
                             .visit(session)
@@ -221,7 +221,7 @@ impl KagiApp {
                 modal.kind == crate::ui::BranchPlanKind::PullFfOnly
                     && modal.error.is_none()
                     && modal.fetch_owner.is_some()
-                    && modal.fetch_owner
+                    && modal.fetch_owner.map(|(owner, visit, _)| (owner, visit))
                         == self
                             .app_sessions
                             .visit(session)

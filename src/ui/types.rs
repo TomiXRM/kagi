@@ -144,7 +144,7 @@ pub type ToastCloseFocus =
 #[derive(Clone, Debug)]
 pub enum ToastAction {
     OpenRepository(std::path::PathBuf),
-    OpenOperationLog,
+    OpenOperationLog(super::oplog_panel::EntryKey),
 }
 
 /// One snackbar entry, stacked bottom-right above the status bar.

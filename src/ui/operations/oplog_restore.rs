@@ -40,6 +40,33 @@ pub(crate) fn op_log_panel(
 }
 
 impl KagiApp {
+    /// A result's detail action follows its owner, never the currently visible
+    /// repository. The shared log can still show a receipt after its tab closes.
+    pub(crate) fn open_operation_result(
+        &mut self,
+        entry: &crate::ui::oplog_panel::EntryKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self.op_log.clone() else {
+            return false;
+        };
+        if !panel.update(cx, |panel, cx| panel.reveal_entry(entry, cx)) {
+            return false;
+        }
+        let path = entry.owner_path();
+        if let Some(index) = self.tabs.iter().position(|tab| tab.path == path) {
+            let left = self.home_yields_to_repository();
+            self.return_to_tab(index, left, cx);
+        }
+        // A removed repository (or a closed remote tab) does not make its
+        // durable receipt depend on reopening Git or reconnecting over SSH.
+        // Home renders the same existing log panel when no owner is available.
+        self.bottom_panel_open = true;
+        self.bottom_tab = BottomTab::OperationLog;
+        cx.notify();
+        true
+    }
+
     /// Plan `op` (`OpRevert` / `RestoreToPoint`) for the active repository and
     /// show the card. Nothing is written here.
     pub fn open_oplog_restore_modal(&mut self, op: Operation, cx: &mut Context<Self>) {

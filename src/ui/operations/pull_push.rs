@@ -204,6 +204,7 @@ impl KagiApp {
         displaced: bool,
         target: crate::ui::commands::PullTarget,
         fetched_remote: &str,
+        request_started: std::time::Instant,
         cx: &mut Context<Self>,
     ) {
         if self.active_session() == Some(session) {
@@ -212,10 +213,14 @@ impl KagiApp {
             } else {
                 match target {
                     crate::ui::commands::PullTarget::Current => {
-                        self.plan_and_offer_pull_modal_from_async(fetched_remote, cx);
+                        self.plan_and_offer_pull_modal_from_async(
+                            fetched_remote,
+                            request_started,
+                            cx,
+                        );
                     }
                     crate::ui::commands::PullTarget::BranchFfOnly(branch) => {
-                        self.offer_fetched_branch_pull(branch, fetched_remote, cx);
+                        self.offer_fetched_branch_pull(branch, fetched_remote, request_started, cx);
                     }
                 }
             }
@@ -225,6 +230,7 @@ impl KagiApp {
     fn plan_and_offer_pull_modal_from_async(
         &mut self,
         fetched_remote: &str,
+        request_started: std::time::Instant,
         cx: &mut Context<Self>,
     ) -> bool {
         match self.build_pull_modal(Some(fetched_remote)) {
@@ -237,7 +243,7 @@ impl KagiApp {
                 modal.fetch_owner = self.active_session().and_then(|session| {
                     self.app_sessions
                         .visit(session)
-                        .map(|visit| (session, visit))
+                        .map(|visit| (session, visit, request_started))
                 });
                 let needs_choice = modal.plan.sync_needs_choice();
                 let offered = self.offer_plan_from_async(AsyncPlanOffer::new(
@@ -252,7 +258,7 @@ impl KagiApp {
                 offered
             }
             Ok(None) => {
-                self.present_pull_up_to_date(cx);
+                self.present_pull_up_to_date(request_started, cx);
                 false
             }
             Err(error) => {
@@ -262,13 +268,28 @@ impl KagiApp {
         }
     }
 
-    pub(crate) fn present_pull_up_to_date(&mut self, cx: &mut Context<Self>) {
-        self.present_sync_noop("pull", Msg::AlreadyUpToDatePull, cx);
+    pub(crate) fn present_pull_up_to_date(
+        &mut self,
+        request_started: std::time::Instant,
+        cx: &mut Context<Self>,
+    ) {
+        let long_running = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(request_started)
+            >= std::time::Duration::from_secs(2);
+        self.present_sync_noop("pull", Msg::AlreadyUpToDatePull, long_running, cx);
     }
 
-    fn present_sync_noop(&mut self, op: &str, message: Msg, cx: &mut Context<Self>) {
+    fn present_sync_noop(
+        &mut self,
+        op: &str,
+        message: Msg,
+        long_running: bool,
+        cx: &mut Context<Self>,
+    ) {
         let text = SharedString::from(message.t());
-        if self.operation_result_toast_needed(false) {
+        if self.operation_result_toast_needed(long_running) {
             if let Some(stack) = self.toast_stack.clone() {
                 let key = format!(
                     "{}\0{op}\0success",
@@ -562,7 +583,7 @@ impl KagiApp {
                     plan.disposition,
                     kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PushUpToDate)
                 ) {
-                    self.present_sync_noop("push", Msg::AlreadyUpToDatePush, cx);
+                    self.present_sync_noop("push", Msg::AlreadyUpToDatePush, false, cx);
                     return;
                 }
                 let needs_choice = plan.sync_needs_choice();

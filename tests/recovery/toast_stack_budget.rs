@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 pub fn scenario_toast_stack_budget(cx: &mut VisualTestAppContext) {
     repeated_noop_push(cx);
+    operation_result_details(cx);
     run_budget_matrix(cx, 1.);
 }
 
@@ -485,45 +486,223 @@ fn repeated_noop_push(cx: &mut VisualTestAppContext) {
         &["remote", "add", "origin", remote.path().to_str().unwrap()],
     );
     git(repo, &["push", "-qu", "origin", "HEAD"]);
-    let (app, window) = mount(cx, repo);
-    for active in [true, false] {
-        app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
-        for _ in 0..3 {
-            let before = kagi_git::read_oplog_tail_for_repo(repo, 100).len();
-            app.update(cx, |app, cx| app.start_push(cx));
-            crate::recovery_operations::wait_idle(cx, &app);
-            let entries = kagi_git::read_oplog_tail_for_repo(repo, 100);
-            assert_eq!(
-                entries.len(),
-                before + 1,
-                "each real no-op Push retains its receipt"
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let old_lang = i18n::lang();
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        for active in [true, false] {
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+            let mut result_key = None;
+            for _ in 0..3 {
+                let before = kagi_git::read_oplog_tail_for_repo(repo, 100).len();
+                let requested_at = Instant::now();
+                app.update(cx, |app, cx| {
+                    app.status_footer = kagi::ui::FooterStatus::Idle("".into());
+                    app.open_push_modal(cx);
+                });
+                let deadline = Instant::now() + Duration::from_secs(30);
+                loop {
+                    cx.run_until_parked();
+                    let presented = cx.read(|cx| {
+                        let state = app.read(cx);
+                        let expected = i18n::Msg::AlreadyUpToDatePush.t();
+                        if active {
+                            matches!(&state.status_footer,
+                                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == expected)
+                        } else {
+                            state
+                                .toast_stack
+                                .as_ref()
+                                .unwrap()
+                                .read(cx)
+                                .toasts()
+                                .iter()
+                                .any(|toast| {
+                                    toast.message.as_ref() == expected && toast.born >= requested_at
+                                })
+                        }
+                    });
+                    if presented {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "no-op Push result settles");
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                assert_eq!(
+                    kagi_git::read_oplog_tail_for_repo(repo, 100).len(),
+                    before,
+                    "a no-op Push request creates no write receipt"
+                );
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(
+                        state.push_modal().is_none(),
+                        "no-op Push needs no confirmation"
+                    );
+                    assert!(e2e::app_notice_message(state).is_none());
+                    assert!(
+                        !state.bottom_panel_open,
+                        "Push must not auto-open Operation Log"
+                    );
+                    let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                    assert_eq!(
+                        stack.toasts().len(),
+                        usize::from(!active),
+                        "current quick Push is footer-only; inactive repeats replace"
+                    );
+                    if !active {
+                        let toast = &stack.toasts()[0];
+                        assert_eq!(toast.kind, kagi::ui::ToastKind::Sync);
+                        let key = toast.result_key.as_ref().expect("no-op Push result key");
+                        if let Some(previous) = &result_key {
+                            assert_eq!(key, previous, "repeated Push retains the same result key");
+                        }
+                        result_key = Some(key.clone());
+                    }
+                });
+            }
+        }
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(old_lang);
+}
+
+fn operation_result_details(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let old_lang = i18n::lang();
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        for destination in ["home", "other-tab", "closed-owner", "removed-owner"] {
+            let fixture = build_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            git(
+                &repo,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    repo.join("missing-remote").to_str().unwrap(),
+                ],
             );
+            let other = (destination == "other-tab").then(build_fixture);
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                app.set_lang(lang, cx);
+                app.set_window_active_for_e2e(true, cx);
+                app.bottom_panel_open = false;
+                app.bottom_tab = kagi::ui::BottomTab::Terminal;
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.fetch_async(false, cx);
+                    if let Some(other) = &other {
+                        assert!(app.open_repository(other.path().to_path_buf(), cx));
+                    } else {
+                        app.open_home_tab(window, cx);
+                    }
+                });
+            })
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                cx.run_until_parked();
+                let settled = cx.read(|cx| {
+                    let state = app.read(cx);
+                    state.fetch_in_flight.is_none()
+                        && state
+                            .toast_stack
+                            .as_ref()
+                            .unwrap()
+                            .read(cx)
+                            .toasts()
+                            .iter()
+                            .any(|toast| {
+                                toast.kind == kagi::ui::ToastKind::Error && toast.action.is_some()
+                            })
+                });
+                if settled {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "background failure presents its detail action"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let recorded = kagi_git::read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .find(|entry| entry.op == "fetch")
+                .expect("real failed Fetch is durable");
+            assert!(recorded.id > 0);
             assert!(matches!(
-                entries[0].outcome,
-                kagi_git::OpOutcome::Success { .. }
+                recorded.outcome,
+                kagi_git::oplog::OpOutcome::Failed { .. }
             ));
+            if matches!(destination, "closed-owner" | "removed-owner") {
+                app.update(cx, |app, cx| app.close_tab(0, cx));
+                if destination == "removed-owner" {
+                    std::fs::remove_dir_all(&repo).unwrap();
+                }
+            }
+            cx.read(|cx| {
+                assert!(
+                    !app.read(cx).bottom_panel_open,
+                    "failure never auto-opens details"
+                )
+            });
+            draw(cx, window);
+            let action = e2e::control_bounds(window.window_id(), "operation-result-details")
+                .expect("failure detail action is actually drawn on this screen");
+            if lang == i18n::Lang::Ja {
+                assert!(crate::native_ax::press(
+                    cx,
+                    window,
+                    i18n::Msg::BottomTabOperationLog.t()
+                ));
+            } else {
+                cx.simulate_click(window, action.center(), gpui::Modifiers::none());
+            }
+            cx.run_until_parked();
+            draw(cx, window);
             cx.read(|cx| {
                 let state = app.read(cx);
-                assert!(e2e::app_notice_message(state).is_none());
-                assert!(
-                    !state.bottom_panel_open,
-                    "Push must not auto-open Operation Log"
-                );
-                assert_eq!(
-                    state.toast_stack.as_ref().unwrap().read(cx).toasts().len(),
-                    usize::from(!active),
-                    "current quick Push is footer-only; inactive repeats replace"
-                );
-                if active {
-                    assert!(matches!(
-                        state.status_footer,
-                        kagi::ui::FooterStatus::Success(_)
-                    ));
+                assert!(state.bottom_panel_open);
+                assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                if matches!(destination, "home" | "other-tab") {
+                    assert!(
+                        !state.home_in_front(),
+                        "detail action enters the operation owner"
+                    );
+                    assert_eq!(state.repo_path.as_deref(), Some(repo.as_path()));
+                } else {
+                    assert!(
+                        state.home_in_front(),
+                        "closed owner still has a visible host log"
+                    );
                 }
+                let panel = state.op_log.as_ref().unwrap().read(cx);
+                let expanded = panel
+                    .expanded()
+                    .expect("detail action expands its own receipt");
+                assert_eq!(panel.entries()[expanded].id, recorded.id);
+                assert!(
+                    panel.scroll_handle().bounds_for_item(expanded).is_some(),
+                    "the selected receipt is painted, not hidden behind Home"
+                );
+                let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                assert!(
+                    stack
+                        .toasts()
+                        .iter()
+                        .all(|toast| toast.dismissing.is_some()),
+                    "only successful navigation dismisses the result"
+                );
             });
+            unmount(cx, app, window);
         }
     }
-    unmount(cx, app, window);
+    i18n::set_lang(old_lang);
+    eprintln!("[gui-e2e] PASS operation result details from Home/other/closed/removed owner EN/JA");
 }
 
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {

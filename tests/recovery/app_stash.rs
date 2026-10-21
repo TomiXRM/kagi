@@ -210,6 +210,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
                 std::fs::write(repo.join("new"), "four\n").unwrap();
             }
             let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(!button, cx));
             app.update(cx, |app, cx| match action {
                 StashAction::Push { .. } => app.open_stash_push_modal(cx),
                 StashAction::Apply { index } => app.open_stash_apply_modal(index, cx),
@@ -227,6 +228,20 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
                 .collect();
             assert_eq!(entries.len(), 1, "one actual receipt for {action:?}");
             assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                if button {
+                    assert!(
+                        matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+                        "an inactive owner's completed Stash must not retain Busy"
+                    );
+                    assert_eq!(stack.toasts().len(), 1);
+                } else {
+                    assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                    assert!(stack.toasts().is_empty(), "attended Stash stays in context");
+                }
+            });
             match action {
                 StashAction::Push { .. } => {
                     assert_eq!(ids(&repo).len(), 4);
@@ -280,6 +295,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         let before = read_oplog_tail(usize::MAX).len();
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
+            app.set_window_active_for_e2e(!button, cx);
             app.enter_remote_view(host.clone(), "/srv/repo".into(), snap, cx);
             // #733: this tab's worktree is fabricated with the *remote host's*
             // path while every worktree-menu action runs locally, so the menu
@@ -306,13 +322,27 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         });
         confirm(cx, &app, window, button);
         wait(cx, &app, |app| {
-            !app.app_sessions.has_leases() && matches!(&app.status_footer, FooterStatus::Success(_))
+            !app.app_sessions.has_leases() && remote_stash_e2e_refreshes() == 1
         });
         let entries = read_oplog_tail(usize::MAX);
         assert_eq!(entries.len(), before + 1);
         assert_eq!(entries[0].op, "stash-drop");
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
         assert_eq!(remote_stash_e2e_refreshes(), 1);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let stack = state.toast_stack.as_ref().unwrap().read(cx);
+            if button {
+                assert!(
+                    matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+                    "an inactive remote owner must settle its Busy footer"
+                );
+                assert_eq!(stack.toasts().len(), 1);
+            } else {
+                assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                assert!(stack.toasts().is_empty());
+            }
+        });
         unmount(cx, app, window);
         set_remote_stash_e2e_mode(None);
         eprintln!(

@@ -291,12 +291,10 @@ impl KagiApp {
         let text = SharedString::from(message.t());
         if self.operation_result_toast_needed(long_running) {
             if let Some(stack) = self.toast_stack.clone() {
-                let key = format!(
-                    "{}\0{op}\0success",
-                    self.repo_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_default()
+                let key = Self::operation_result_key(
+                    self.repo_path.as_deref().unwrap_or_else(|| Path::new("")),
+                    op,
+                    "success",
                 );
                 stack.update(cx, |stack, cx| {
                     stack.push_keyed_notify(ToastKind::Sync, text, Some(key), cx);

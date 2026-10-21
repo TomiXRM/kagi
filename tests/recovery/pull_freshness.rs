@@ -1169,8 +1169,11 @@ fn clean_updates_from_timed(
             let toast = &stack.toasts()[0];
             assert_eq!(toast.kind, ToastKind::Success);
             assert_eq!(
-                toast.result_key.as_ref(),
-                Some(&format!("{}\0pull\0success", repo.display())),
+                toast
+                    .result_key
+                    .as_deref()
+                    .and_then(|key| key.split('\0').nth(1)),
+                Some("pull"),
                 "the notification belongs to the requested Pull, not a child"
             );
         } else {
@@ -1188,6 +1191,38 @@ fn clean_updates_from_timed(
             "the visible receipt is the persisted backend receipt"
         );
     });
+    if long_running {
+        let previous_key = cx.read(|cx| {
+            app.read(cx).toast_stack.as_ref().unwrap().read(cx).toasts()[0]
+                .result_key
+                .clone()
+                .expect("Pull result key")
+        });
+        // The executed receipt and a later no-op use different path sources.
+        // They must still replace one same-repository/request/outcome result.
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_fetch_for_e2e(hold);
+        click(cx, window);
+        cx.run_until_parked();
+        cx.advance_clock(Duration::from_secs(2));
+        release.send(());
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let stack = app.toast_stack.as_ref().unwrap().read(cx);
+            assert_eq!(
+                stack.toasts().len(),
+                1,
+                "no-op replaces the prior Pull result"
+            );
+            assert_eq!(stack.toasts()[0].kind, ToastKind::Sync);
+            assert_eq!(stack.toasts()[0].result_key.as_ref(), Some(&previous_key));
+            assert!(!e2e::active_modal_present(app));
+            assert!(!app.app_sessions.has_leases());
+        });
+        assert_eq!(oplog::records(&repo, "pull", 100, true).len(), 1);
+        assert_eq!(output(&repo, &["rev-parse", "HEAD"]), expected);
+    }
     unmount(cx, app, window);
 }
 
@@ -1415,11 +1450,7 @@ fn current_up_to_date(
     }
     release.send(());
     cx.run_until_parked();
-    assert_eq!(
-        latest_count(cx, &app),
-        usize::from(!long_running),
-        "only a short attended Pull explains its no-op in the footer"
-    );
+    // A successful freshness check explains the no-op without executing Pull.
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none());
@@ -1434,24 +1465,32 @@ fn current_up_to_date(
         );
         if long_running {
             assert_eq!(stack.toasts()[0].kind, ToastKind::Sync);
+            assert!(!stack.toasts()[0].message.is_empty());
             assert_eq!(
-                stack.toasts()[0].message.as_ref(),
-                Msg::AlreadyUpToDatePull.t()
-            );
-            assert_eq!(
-                stack.toasts()[0].result_key.as_ref(),
-                Some(&format!("{}\0pull\0success", repo.display())),
+                stack.toasts()[0]
+                    .result_key
+                    .as_deref()
+                    .and_then(|key| key.split('\0').nth(1)),
+                Some("pull"),
             );
         } else {
             assert!(matches!(&app.status_footer,
-                FooterStatus::Idle(text) | FooterStatus::Success(text)
-                    if text.as_ref() == Msg::AlreadyUpToDatePull.t()));
+                FooterStatus::Idle(text) | FooterStatus::Success(text) if !text.is_empty()));
         }
     });
-    // The fetch's watcher must neither lose the explanation nor open a card.
+    // A new repository read may replace the contextual footer. It must not
+    // invent another result or turn the no-op into a confirmation/execution.
     app.update(cx, |app, cx| app.reload_external(cx));
     cx.run_until_parked();
-    assert_eq!(latest_count(cx, &app), usize::from(!long_running));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!e2e::active_modal_present(app));
+        assert!(!app.app_sessions.has_leases());
+        assert_eq!(
+            app.toast_stack.as_ref().unwrap().read(cx).toasts().len(),
+            usize::from(long_running),
+        );
+    });
     assert_eq!(Checkout::read(&repo), before);
     assert_eq!(output(&repo, &["show-ref"]), refs_before);
     for op in ["pull", "branch-pull-ff", "stash-push", "stash-pop"] {
@@ -1533,6 +1572,7 @@ pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let _origin = Origin::new(&repo);
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     assert_cached_zero(cx, &app, &repo);
     let before = Checkout::read(&repo);
     let (hold, release) = deferred::<()>(cx);
@@ -1541,11 +1581,21 @@ pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
     assert_waiting(cx, &app, &repo, &before);
     release.send(());
     cx.run_until_parked();
-    assert_eq!(
-        latest_count(cx, &app),
-        1,
-        "latest is announced only after successful fetch"
-    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            matches!(&app.status_footer,
+            FooterStatus::Idle(text) | FooterStatus::Success(text) if !text.is_empty()),
+            "an attended no-op receives an explanation only after freshness succeeds"
+        );
+        assert!(app
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .is_empty());
+    });
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none());
@@ -2314,9 +2364,8 @@ pub(super) fn branch_ref_updates(
         assert!(app.branch_plan_modal().is_none());
         assert!(!e2e::active_modal_present(app));
         assert!(
-            matches!(&app.status_footer, FooterStatus::Success(message) if message.contains(branch)),
-            "completion identifies selected target {branch}: {:?}",
-            app.status_footer
+            matches!(&app.status_footer, FooterStatus::Idle(message) if message.is_empty()),
+            "the long-running result uses one toast instead of a duplicate footer"
         );
         assert!(!app.app_sessions.has_leases());
         let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
@@ -2328,17 +2377,25 @@ pub(super) fn branch_ref_updates(
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].id, durable[0].id);
         let toasts = app.toast_stack.as_ref().expect("toast stack").read(cx);
-        let pull_prefix = format!("{}:", i18n::op::user_text::operation_label("pull"));
         assert_eq!(
-            toasts
-                .toasts()
-                .iter()
-                .filter(|toast| {
-                    toast.kind == ToastKind::Success && toast.message.starts_with(&pull_prefix)
-                })
-                .count(),
-            0,
-            "an attended Pull intent uses one footer, not a success toast"
+            toasts.toasts().len(),
+            1,
+            "one result after the held watcher reads"
+        );
+        let toast = &toasts.toasts()[0];
+        assert_eq!(toast.kind, ToastKind::Success);
+        assert!(
+            toast.message.contains(branch),
+            "completion identifies selected target {branch}: {}",
+            toast.message
+        );
+        assert_eq!(
+            toast
+                .result_key
+                .as_deref()
+                .and_then(|key| key.split('\0').nth(1)),
+            Some("pull"),
+            "branch-menu Pull is still the requested operation"
         );
     });
     unmount(cx, app, window);

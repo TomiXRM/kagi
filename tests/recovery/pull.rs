@@ -1571,11 +1571,13 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
         1,
         "the one pull entry is the backend's; the UI must not synthesize a copy"
     );
+    let pulled_head = output(repo, &["rev-parse", "HEAD"]);
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(
             matches!(&app.status_footer, kagi::ui::FooterStatus::Success(text)
                 if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
+                    && text.contains(&pulled_head[..8])
                     && !text.contains("stash-push") && !text.contains("stash-pop")),
             "one workflow footer names Pull, never its children: {:?}",
             app.status_footer

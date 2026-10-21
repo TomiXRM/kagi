@@ -1751,6 +1751,12 @@ impl KagiApp {
             || self.workspace_mode() != workspace_mode::WorkspaceMode::Graph
     }
 
+    fn operation_result_key(repo: &Path, op: &str, result: &str) -> String {
+        // Receipt locators may retain a trailing separator while the active
+        // repository path does not. Both must replace the same transient result.
+        format!("{}\0{op}\0{result}", repo.components().as_path().display())
+    }
+
     /// One transient result per repository / requested operation / outcome.
     pub(crate) fn push_operation_result(
         &mut self,
@@ -1777,7 +1783,7 @@ impl KagiApp {
             SharedString::from(format!("{message} — {repository}"))
         };
         if let Some(stack) = self.toast_stack.clone() {
-            let key = format!("{}\0{op}\0{result}", entry.repo);
+            let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
             stack.update(cx, |stack, cx| {
                 stack.push_keyed_notify(kind, message, Some(key), cx);
                 if kind == ToastKind::Error {

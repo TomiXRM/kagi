@@ -191,24 +191,11 @@ impl KagiApp {
                             app.insert_recorded_row(&step.recording, cx);
                         }
                     }
-                    let recording_failed = report.recording_failed();
-                    match &report.terminal.presentation {
-                        PullPresentation::Success { summary } => {
-                            // A mutation that happened but was not recorded is
-                            // presented as "changed but not recorded" (#501),
-                            // and that holds for a *child*'s receipt too: the
-                            // success footer must not paper over any of them.
-                            if !recording_failed && !announce {
-                                app.status_footer = FooterStatus::Success(
-                                    i18n::op::user_text::operations::pull_summary(summary).into(),
-                                );
-                            }
-                        }
-                        PullPresentation::Failed { error }
-                        | PullPresentation::Partial { error } => {
-                            let decisive = &report.steps[announce_at].recording;
-                            app.enqueue_run_outcome_notice(id, decisive, Some(error), None);
-                        }
+                    if let PullPresentation::Failed { error }
+                    | PullPresentation::Partial { error } = &report.terminal.presentation
+                    {
+                        let decisive = &report.steps[announce_at].recording;
+                        app.enqueue_run_outcome_notice(id, decisive, Some(error), None);
                     }
                     // One completion per admitted write.
                     break;
@@ -250,7 +237,11 @@ impl KagiApp {
             }
             _ => match &report.terminal.presentation {
                 crate::app::PullPresentation::Success { summary } if !report.recording_failed() => {
-                    i18n::op::user_text::operations::pull_summary(summary)
+                    format!(
+                        "{}: {}",
+                        i18n::op::user_text::operation_label("pull"),
+                        i18n::op::user_text::operations::pull_summary(summary)
+                    )
                 }
                 crate::app::PullPresentation::Failed { error } => {
                     i18n::op::user_text::operations::failure_preview("pull", error)
@@ -288,11 +279,10 @@ impl KagiApp {
 
     /// Put a receipt in the operation-log panel and nowhere else.
     ///
-    /// [`KagiApp::present_recorded`] is *presentation*: it also toasts, moves
-    /// the status footer, emits the `footer:` contract line and auto-opens the
-    /// panel on a failure. A workflow with several children must do that once,
-    /// from the receipt that decided it — the siblings are still durable
-    /// receipts the panel should hold, but they are not the answer to what the
+    /// [`KagiApp::present_recorded`] presents the result in a footer or toast
+    /// and emits the `footer:` contract line. A workflow with several children
+    /// must do that once, from the receipt that decided it. The siblings are
+    /// durable receipts the panel should hold, but they are not the answer to what the
     /// user asked for (#702 review P1).
     pub(in crate::ui::operations) fn insert_recorded_row(
         &mut self,

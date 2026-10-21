@@ -364,6 +364,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         let snap = snapshot(&repo);
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
+            app.set_window_active_for_e2e(true, cx);
             app.enter_remote_view(host.clone(), "/srv/repo".into(), snap, cx);
             app.open_stash_drop_modal(1, cx);
         });

@@ -7396,6 +7396,7 @@ mod macos {
                     .unwrap()
             });
             kagi.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(true, cx);
                 e2e::open_worktree_panel_no_inputs(app, wt_a.clone(), "wt-a", index, cx)
             });
             cx.run_until_parked();

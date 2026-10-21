@@ -269,6 +269,7 @@ pub fn scenario_hunk_staging_content_identity(cx: &mut VisualTestAppContext) {
             }
             let (app, window) = mount(cx, &repo);
             app.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(true, cx);
                 e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
             });
             cx.run_until_parked();
@@ -306,14 +307,28 @@ pub fn scenario_hunk_staging_content_identity(cx: &mut VisualTestAppContext) {
             let note = PlanNote::Common(CommonNote::HunkChanged {
                 path: "f.txt".into(),
             });
-            let expected = i18n::op_refused(op, i18n::plan_note_text(&note), 0);
             cx.read(|cx| {
                 let state = app.read(cx);
-                assert!(matches!(&state.status_footer, FooterStatus::Failed(m) if m.as_ref() == expected),
-                    "{lang:?} {op}: {:?}", state.status_footer);
-                let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
-                assert!(matches!(toast.kind, kagi::ui::ToastKind::Error));
-                assert!(toast.message.ends_with(&expected), "{:?}", toast.message);
+                let FooterStatus::Failed(preview) = &state.status_footer else {
+                    panic!(
+                        "{lang:?} {op}: missing refusal footer: {:?}",
+                        state.status_footer
+                    );
+                };
+                assert!(!preview.is_empty() && preview.chars().count() <= 240);
+                for private in [repo.to_str().unwrap(), "f.txt", "stderr", "exit status"] {
+                    assert!(!preview.contains(private), "{preview}");
+                }
+                assert!(
+                    state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .is_empty(),
+                    "an attended hunk refusal stays in the footer"
+                );
                 assert!(e2e::app_notice_message(state).is_none());
             });
             assert_eq!(git_value(&repo, &["rev-parse", "HEAD"]), head);

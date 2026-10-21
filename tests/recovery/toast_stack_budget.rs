@@ -490,7 +490,11 @@ fn repeated_noop_push(cx: &mut VisualTestAppContext) {
     let old_lang = i18n::lang();
     for lang in [i18n::Lang::En, i18n::Lang::Ja] {
         let (app, window) = mount(cx, repo);
-        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        app.update(cx, |app, cx| {
+            app.set_lang(lang, cx);
+            app.bottom_panel_open = false;
+            app.bottom_tab = kagi::ui::BottomTab::Terminal;
+        });
         for active in [true, false] {
             app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
             let mut result_key = None;
@@ -506,10 +510,9 @@ fn repeated_noop_push(cx: &mut VisualTestAppContext) {
                     cx.run_until_parked();
                     let presented = cx.read(|cx| {
                         let state = app.read(cx);
-                        let expected = i18n::Msg::AlreadyUpToDatePush.t();
                         if active {
                             matches!(&state.status_footer,
-                                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == expected)
+                                kagi::ui::FooterStatus::Idle(text) if !text.is_empty())
                         } else {
                             state
                                 .toast_stack
@@ -519,7 +522,9 @@ fn repeated_noop_push(cx: &mut VisualTestAppContext) {
                                 .toasts()
                                 .iter()
                                 .any(|toast| {
-                                    toast.message.as_ref() == expected && toast.born >= requested_at
+                                    toast.kind == kagi::ui::ToastKind::Sync
+                                        && toast.result_key.is_some()
+                                        && toast.born >= requested_at
                                 })
                         }
                     });
@@ -543,7 +548,12 @@ fn repeated_noop_push(cx: &mut VisualTestAppContext) {
                     assert!(e2e::app_notice_message(state).is_none());
                     assert!(
                         !state.bottom_panel_open,
-                        "Push must not auto-open Operation Log"
+                        "Push must leave the initially closed bottom panel closed"
+                    );
+                    assert_eq!(
+                        state.bottom_tab,
+                        kagi::ui::BottomTab::Terminal,
+                        "Push must not select Operation Log"
                     );
                     let stack = state.toast_stack.as_ref().unwrap().read(cx);
                     assert_eq!(

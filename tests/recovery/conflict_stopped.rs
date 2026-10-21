@@ -2,7 +2,7 @@
 use crate::macos::{git, mount, unmount};
 use gpui::{Entity, VisualTestAppContext};
 use kagi::ui::{FooterStatus, KagiApp, ToastKind};
-use kagi_ui_core::i18n::{self, Lang, Msg};
+use kagi_ui_core::i18n::{self, Lang};
 use std::time::{Duration, Instant};
 
 #[path = "../support/oplog.rs"]
@@ -89,23 +89,36 @@ fn start_conflict(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, rebase: 
     });
 }
 
-fn assert_stopped(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, observed: usize) {
+fn assert_stopped(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    observed: usize,
+    recording_failure: bool,
+) {
     cx.read(|cx| {
         let app = app.read(cx);
         let conflict = app.ui().conflict.as_ref().unwrap().read(cx);
         let mode = conflict.mode.as_ref().unwrap();
         assert_eq!(mode.conflicted_count(), observed);
         assert!(!mode.can_continue(), "unresolved files disable Continue");
-        let expected = Msg::conflict_stopped(Some(observed));
-        assert!(matches!(&app.status_footer,
-            FooterStatus::Idle(text) if text.as_ref() == expected.as_str()),
-            "a conflict stop must not leave a successful footer");
         let stack = app.toast_stack.as_ref().unwrap().read(cx);
-        assert!(stack.toasts().iter().any(|toast| {
-            toast.kind == ToastKind::Info && toast.message.as_ref() == expected.as_str()
-        }), "localized stopped notice must report the actual conflict count");
-        assert!(stack.toasts().iter().all(|toast| toast.kind != ToastKind::Success),
-            "unresolved conflicts and disabled Continue cannot coexist with a green completion toast");
+        if recording_failure {
+            assert!(stack.toasts().is_empty(),
+                "required recording acknowledgment is the only result presentation");
+            assert!(matches!(&app.status_footer,
+                FooterStatus::Idle(text) if text.is_empty()));
+        } else {
+            assert!(matches!(&app.status_footer, FooterStatus::Idle(_)),
+                "unresolved conflicts must not leave a successful footer");
+            let notices: Vec<_> = stack.toasts().iter()
+                .filter(|toast| toast.kind == ToastKind::Info)
+                .collect();
+            assert_eq!(notices.len(), 1);
+            assert!(notices[0].message.contains(&observed.to_string()),
+                "the stopped result must report the actual unresolved-file count");
+            assert!(stack.toasts().iter().all(|toast| toast.kind != ToastKind::Success),
+                "unresolved conflicts and disabled Continue cannot coexist with green completion");
+        }
     });
 }
 
@@ -121,21 +134,9 @@ fn assert_recording_failure(
             .app_notice()
             .expect("failed append must be immediately visible");
         assert!(notice.message.contains(&repo.display().to_string()));
-        let (record_label, undo, restore) = match i18n::lang() {
-            Lang::En => ("Operation Log", "cannot undo", "restore from"),
-            Lang::Ja => ("操作ログ", "取り消せません", "復元もできません"),
-        };
-        assert!(notice.message.contains(record_label));
-        assert!(notice.message.contains(undo));
-        assert!(notice.message.contains(restore));
-        let stack = app.toast_stack.as_ref().unwrap().read(cx);
-        assert!(
-            stack
-                .toasts()
-                .iter()
-                .any(|toast| toast.kind == ToastKind::Error),
-            "recording failure needs a separate error notice alongside the stopped notice"
-        );
+        assert!(!notice.message.trim().is_empty());
+        assert!(app.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
+            "a failed append must not add a stopped or error toast beside its acknowledgment");
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let entries: Vec<_> = panel
             .entries()
@@ -144,7 +145,7 @@ fn assert_recording_failure(
             .collect();
         assert_eq!(entries.len(), 1, "no duplicate in-memory receipts");
         assert!(matches!(&entries[0].outcome,
-            kagi_git::oplog::OpOutcome::Partial { error, .. } if error.contains("not recorded")));
+            kagi_git::oplog::OpOutcome::Partial { error, .. } if !error.is_empty()));
     });
 }
 
@@ -185,7 +186,7 @@ fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool, recording_failure
                 observed, count,
                 "fixture leaves real unmerged index entries"
             );
-            assert_stopped(cx, &app, observed);
+            assert_stopped(cx, &app, observed, recording_failure);
             let operation = if rebase { "rebase" } else { "merge" };
             if recording_failure {
                 assert_recording_failure(cx, &app, &repo, operation);

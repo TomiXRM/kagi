@@ -121,7 +121,7 @@ impl KagiApp {
         report: kagi_git::backend::stash::StashReport,
         cx: &mut Context<Self>,
     ) {
-        let entry = report.recording.entry().clone();
+        let entry = report.recording.entry();
         let name = report.action.name();
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
         let partial = matches!(entry.outcome, OpOutcome::Partial { .. });
@@ -144,11 +144,10 @@ impl KagiApp {
         }
         if let Some(panel) = &self.op_log {
             panel.update(cx, |panel, cx| {
-                panel.push(entry.clone());
+                panel.push(oplog_panel::OpLogPanel::entry_for_recording(&report.recording));
                 cx.notify();
             });
         }
-        let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
         let footer = if !report.evidence.conflicts.is_empty() {
             format!(
                 "{}: {}",
@@ -156,7 +155,7 @@ impl KagiApp {
                 Msg::StashPopConflictedKept.t()
             )
         } else {
-            super::outcome_text(name, &shown.outcome)
+            super::outcome_text(name, &entry.outcome)
         };
         let recording_failed = matches!(
             report.recording,
@@ -164,11 +163,11 @@ impl KagiApp {
         );
         let current = self.active_session() == Some(owner.session);
         let announce = !current || self.operation_result_toast_needed(false);
-        if announce {
+        if announce && !recording_failed {
             self.push_operation_result(
-                &entry,
+                entry,
                 name,
-                if success && !recording_failed {
+                if success {
                     ToastKind::Success
                 } else {
                     ToastKind::Error
@@ -177,11 +176,11 @@ impl KagiApp {
                 cx,
             );
         }
-        if current && announce {
+        if current && (announce || recording_failed) {
             self.status_footer = FooterStatus::Idle("".into());
         }
-        if current && !announce {
-            self.status_footer = if success && !recording_failed {
+        if current && !announce && !recording_failed {
+            self.status_footer = if success {
                 FooterStatus::Success(crate::ui::operations::display_text(footer.clone().into()))
             } else if partial {
                 FooterStatus::Idle(footer.clone().into())
@@ -196,10 +195,10 @@ impl KagiApp {
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &report.recording {
             self.app_notices.push_back(
-                i18n::op::user_text::operations::recording_failed(
+                super::record::recording_failure_notice(
                     &entry.repo,
                     &entry.op,
-                    super::record::recording_outcome(&report.recording.entry().outcome),
+                    &report.recording.entry().outcome,
                     &error.to_string(),
                 )
                 .into(),
@@ -437,7 +436,7 @@ impl KagiApp {
                         return;
                     }
                 };
-                let entry = report.recording.entry().clone();
+                let entry = report.recording.entry();
                 let summary = oplog_panel::outcome_summary_contract(&entry.outcome);
                 let success = matches!(entry.outcome, OpOutcome::Success { .. });
                 let footer = match &entry.outcome {
@@ -478,6 +477,10 @@ impl KagiApp {
                         super::outcome_text("remove-worktree", &entry.outcome)
                     )
                 };
+                let recording_failed = matches!(
+                    report.recording,
+                    kagi_git::backend::remove::Recording::Failed { .. }
+                );
                 match &entry.outcome {
                     OpOutcome::Success { .. } => klog!(
                         "executed: remove-worktree {} (backups={})",
@@ -494,33 +497,42 @@ impl KagiApp {
                 }
                 if let Some(panel) = self.op_log.clone() {
                     panel.update(cx, |panel, cx| {
-                        panel.push(entry);
+                        panel.push(oplog_panel::OpLogPanel::entry_for_recording(&report.recording));
                         cx.notify();
                     });
                 }
-                if concise_note.is_none()
+                if !recording_failed
+                    && concise_note.is_none()
                     && report.blocker.is_some()
                     && matches!(report.recording.entry().outcome, OpOutcome::Refused { .. })
                 {
                     self.app_notices.push_back(text.clone().into());
                 }
-                self.push_toast(
-                    if success {
-                        ToastKind::Success
-                    } else {
-                        ToastKind::Error
-                    },
-                    text.clone(),
-                    cx,
-                );
+                if !recording_failed {
+                    self.push_toast(
+                        if success {
+                            ToastKind::Success
+                        } else {
+                            ToastKind::Error
+                        },
+                        text.clone(),
+                        cx,
+                    );
+                }
                 if self.active_session() == Some(attachment.session) {
                     klog!("footer: {}", footer);
-                    let display =
-                        super::outcome_text("remove-worktree", &report.recording.entry().outcome);
-                    self.status_footer = if success {
-                        FooterStatus::Success(display.into())
+                    self.status_footer = if recording_failed {
+                        FooterStatus::Idle("".into())
                     } else {
-                        FooterStatus::Failed(display.into())
+                        let display = super::outcome_text(
+                            "remove-worktree",
+                            &report.recording.entry().outcome,
+                        );
+                        if success {
+                            FooterStatus::Success(display.into())
+                        } else {
+                            FooterStatus::Failed(display.into())
+                        }
                     };
                 }
                 if !success
@@ -535,10 +547,10 @@ impl KagiApp {
                     &report.recording
                 {
                     self.app_notices.push_back(
-                        i18n::op::user_text::operations::recording_failed(
+                        super::record::recording_failure_notice(
                             attachment.path.display(),
                             "remove-worktree",
-                            super::record::recording_outcome(&report.recording.entry().outcome),
+                            &report.recording.entry().outcome,
                             &error.to_string(),
                         )
                         .into(),
@@ -568,7 +580,7 @@ impl KagiApp {
         report: crate::remote::stash::RemoteStashReport,
         cx: &mut Context<Self>,
     ) {
-        let entry = report.recording.entry().clone();
+        let entry = report.recording.entry();
         let summary = if matches!(entry.outcome, OpOutcome::Unknown { .. }) {
             i18n::op::remote_completion_pending_contract(i18n::lang()).to_string()
         } else {
@@ -582,7 +594,7 @@ impl KagiApp {
         }
         if let Some(panel) = &self.op_log {
             panel.update(cx, |panel, cx| {
-                panel.push(entry.clone());
+                panel.push(oplog_panel::OpLogPanel::entry_for_recording(&report.recording));
                 cx.notify();
             });
         }
@@ -593,10 +605,14 @@ impl KagiApp {
                 && view.root == owner.root
                 && self.active_session() == Some(owner.session)
         });
+        let recording_failed = matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        );
         let announce = !active || self.operation_result_toast_needed(false);
-        if announce {
+        if announce && !recording_failed {
             self.push_operation_result(
-                &entry,
+                entry,
                 "stash-drop",
                 if success {
                     ToastKind::Success
@@ -608,7 +624,7 @@ impl KagiApp {
             );
         }
         if active {
-            if announce {
+            if announce || recording_failed {
                 self.status_footer = FooterStatus::Idle("".into());
             } else {
                 self.status_footer = if success {
@@ -638,10 +654,10 @@ impl KagiApp {
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &report.recording {
             self.app_notices.push_back(
-                i18n::op::user_text::operations::recording_failed(
+                super::record::recording_failure_notice(
                     &entry.repo,
                     &entry.op,
-                    super::record::recording_outcome(&report.recording.entry().outcome),
+                    &report.recording.entry().outcome,
                     &error.to_string(),
                 )
                 .into(),
@@ -757,15 +773,15 @@ impl KagiApp {
         error: impl std::fmt::Display,
         cx: &mut Context<Self>,
     ) {
-        let message = i18n::op::user_text::operations::recording_failed(
+        let message = super::record::recording_failure_notice(
             &entry.repo,
             &entry.op,
-            super::record::recording_outcome(&entry.outcome),
+            &entry.outcome,
             &error.to_string(),
         );
-        self.push_toast(ToastKind::Error, message.clone(), cx);
         self.app_notices.push_back(message.into());
         self.present_app_notice();
+        cx.notify();
     }
     pub(crate) fn present_app_notice(&mut self) {
         // Only this transient refusal expires. Receipts and reconcile notices

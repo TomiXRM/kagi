@@ -11,7 +11,7 @@ fn dirty(repo: &Path) {
     std::fs::write(repo.join("dirty.txt"), "dirty\n").unwrap();
 }
 
-fn local_remote_with_change(repo: &Path, root: &Path) {
+pub(super) fn local_remote_with_change(repo: &Path, root: &Path) {
     let bare = root.join("origin.git");
     let other = root.join("other");
     git(repo, &["init", "--bare", "-q", bare.to_str().unwrap()]);

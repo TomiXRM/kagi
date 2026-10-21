@@ -118,7 +118,11 @@ impl KagiApp {
         // The synchronous lease has ended and the receipt has settled before
         // presentation. Never append a second time or turn this into success.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
-        self.record_op_impl(entry, cx, false, Some(failure.footer.clone()));
+        let announce = self.operation_result_toast_needed(false);
+        self.record_op_result(
+            entry, cx, false, Some(failure.footer.clone()), None, announce, None,
+            matches!(failure.recording, kagi_git::backend::recording::Recording::Failed { .. }),
+        );
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());
             self.present_app_notice();

@@ -518,26 +518,18 @@ impl KagiApp {
                             }
                             Err(e) => {
                                 let err_msg = format!("{}", e);
-                                let is_unknown = unknown.is_some();
                                 klog!("{} failed: {}", op_name, err_msg);
                                 app.record_operation_completion(
                                     &op_name,
                                     before,
                                     unknown.unwrap_or_else(|| OpOutcome::Failed {
-                                        error: err_msg.clone(),
+                                        error: err_msg,
                                     }),
                                     ref_moves,
                                     &repo_path,
                                     current,
                                     cx,
                                 );
-                                if current && !is_unknown {
-                                    app.push_toast(
-                                        ToastKind::Error,
-                                        SharedString::from(err_msg),
-                                        cx,
-                                    );
-                                }
                             }
                         }
                         for (id, op, path) in app.app_sessions.drain_unaccounted() {

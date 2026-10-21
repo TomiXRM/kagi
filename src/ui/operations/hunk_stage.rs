@@ -84,16 +84,15 @@ impl KagiApp {
                 };
                 let entry =
                     crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
-                if report.result.is_ok()
-                    && !matches!(
-                        report.recording,
-                        kagi_git::backend::recording::Recording::Failed { .. }
-                    )
-                {
-                    self.record_op_result(entry, cx, false, display, None, false, None);
-                } else {
-                    self.record_op_impl(entry, cx, false, display);
-                }
+                let recording_failed = matches!(
+                    report.recording,
+                    kagi_git::backend::recording::Recording::Failed { .. }
+                );
+                let announce =
+                    report.result.is_err() && self.operation_result_toast_needed(false);
+                self.record_op_result(
+                    entry, cx, false, display, None, announce, None, recording_failed,
+                );
             }
             Err(e) => {
                 klog!("hunk staging error: {}", e);

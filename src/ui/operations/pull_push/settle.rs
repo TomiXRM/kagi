@@ -237,12 +237,22 @@ impl KagiApp {
     ) {
         let recording = &report.steps[report.announce()].recording;
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        if report.recording_failed() {
+            if background {
+                self.insert_recorded_row(recording, cx);
+            } else {
+                self.record_op_result(
+                    entry, cx, false, None, None, announce, Some("pull"), true,
+                );
+            }
+            return;
+        }
         let text = match &report.decisive().recording.entry().outcome {
             kagi_git::oplog::OpOutcome::Unknown { evidence, .. } => {
                 i18n::op::user_text::operations::unknown_preview("pull", evidence)
             }
             _ => match &report.terminal.presentation {
-                crate::app::PullPresentation::Success { summary } if !report.recording_failed() => {
+                crate::app::PullPresentation::Success { summary } => {
                     format!(
                         "{}: {}",
                         i18n::op::user_text::operation_label("pull"),
@@ -261,7 +271,7 @@ impl KagiApp {
         let kind = if matches!(
             report.terminal.presentation,
             crate::app::PullPresentation::Success { .. }
-        ) && !report.recording_failed()
+        )
         {
             ToastKind::Success
         } else {
@@ -279,6 +289,7 @@ impl KagiApp {
                 Some((kind, text.into())),
                 announce,
                 Some("pull"),
+                false,
             );
         }
     }
@@ -313,6 +324,10 @@ impl KagiApp {
         success_text: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
+        if matches!(recording, kagi_git::backend::recording::Recording::Failed { .. }) {
+            self.insert_recorded_row(recording, cx);
+            return;
+        }
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
         let success = matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. });
         let shown = success_text.filter(|_| success).unwrap_or_else(|| {

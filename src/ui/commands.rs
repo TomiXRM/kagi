@@ -2000,6 +2000,7 @@ impl FetchFailure {
             Some((ToastKind::Error, preview.into())),
             announce,
             Some(requested_op),
+            false,
         );
     }
 
@@ -2749,12 +2750,13 @@ impl KagiApp {
                 };
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
+                let mut recording_failed = false;
                 if let Ok((outcome, ref_moves)) = &mut result {
                     if outcome.changed {
                         // Fetch changes tracking refs even when its owner departs.
                         // Persist once, without adding a second success toast or
                         // presenting a quiet auto-fetch on the active tab.
-                        app.record_operation_completion(
+                        recording_failed = app.record_operation_completion(
                             "fetch",
                             flight.before.clone(),
                             kagi_git::oplog::OpOutcome::Success {
@@ -2831,7 +2833,12 @@ impl KagiApp {
                                 // footer/panes alone and offer its durable result.
                                 // A Pull waiter owns the requested name; a quiet
                                 // auto-fetch with no waiter has no notification.
-                                if !silent || !flight.waiters.is_empty() {
+                                if (!silent || !flight.waiters.is_empty())
+                                    && !matches!(
+                                        recording,
+                                        kagi_git::backend::recording::Recording::Failed { .. }
+                                    )
+                                {
                                     let entry = recording.entry();
                                     app.push_operation_result(
                                         entry,
@@ -2879,6 +2886,9 @@ impl KagiApp {
                 if flight.superseded_read && !result.as_ref().is_ok_and(|(o, _)| o.changed) {
                     app.reload(cx);
                 }
+                if recording_failed && !silent {
+                    app.status_footer = FooterStatus::Idle("".into());
+                }
                 match result {
                     Ok((outcome, _)) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the
@@ -2895,7 +2905,7 @@ impl KagiApp {
                         }
                         if silent {
                             klog!("auto-fetch: ok remote={}", outcome.remote);
-                        } else if flight.waiters.is_empty() {
+                        } else if flight.waiters.is_empty() && !recording_failed {
                             let text = SharedString::from(
                                 i18n::op::user_text::operations::completed("fetch"),
                             );

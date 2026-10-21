@@ -1923,14 +1923,16 @@ impl KagiApp {
     /// Present (and, when `persist`, append) one outcome: footer, toast and
     /// panel. A caller with typed refusal text or a bounded failed-plan reason
     /// may override only the human-facing preview; the receipt keeps detail.
+    /// Returns true when appending failed. Callers adding no result of their
+    /// own may ignore it; an extra announcement must respect that failure.
     pub(in crate::ui) fn record_op_impl(
         &mut self,
         entry: OpLogEntry,
         cx: &mut Context<Self>,
         persist: bool,
         display_override: Option<String>,
-    ) {
-        self.record_op_with_notice(entry, cx, persist, display_override, None);
+    ) -> bool {
+        self.record_op_with_notice(entry, cx, persist, display_override, None, false)
     }
 
     pub(in crate::ui) fn record_op_with_notice(
@@ -1940,11 +1942,17 @@ impl KagiApp {
         persist: bool,
         display_override: Option<String>,
         notice: Option<(ToastKind, SharedString)>,
-    ) {
+        recording_failed: bool,
+    ) -> bool {
         let announce = self.operation_result_toast_needed(false);
-        self.record_op_result(entry, cx, persist, display_override, notice, announce, None);
+        self.record_op_result(
+            entry, cx, persist, display_override, notice, announce, None, recording_failed,
+        )
     }
 
+    /// Returns whether this call's receipt could not be appended. An already
+    /// attempted receipt supplies that fact explicitly; its required notice,
+    /// not an ordinary result toast/footer, owns presentation of every outcome.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_op_result(
         &mut self,
@@ -1955,18 +1963,12 @@ impl KagiApp {
         notice: Option<(ToastKind, SharedString)>,
         announce: bool,
         requested_op: Option<&str>,
-    ) {
+        mut recording_failed: bool,
+    ) -> bool {
         let op = entry.op.as_str();
         let before = &entry.before;
         let outcome = &entry.outcome;
         let (footer_msg, footer_ok) = Self::operation_footer_contract(op, before, outcome);
-
-        let display_footer_msg = notice
-            .as_ref()
-            .map(|(_, text)| text.clone())
-            .unwrap_or_else(|| {
-                Self::display_footer_message(op, outcome, &footer_msg, display_override)
-            });
 
         // Ordinary results stay in context; only unattended / long operations
         // use the existing toast owner.
@@ -1993,6 +1995,7 @@ impl KagiApp {
         if persist {
             let recording = kagi_git::backend::recording::finalize(entry.clone());
             if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
+                recording_failed = true;
                 klog!("oplog: write failed (non-fatal): {}", error);
                 // Recording failure does not change the operation's outcome.
                 // Keep failure, success and uncertainty distinct in the notice.
@@ -2002,7 +2005,17 @@ impl KagiApp {
                 &recording,
             ));
         }
-        if announce {
+        let display_footer_msg = if recording_failed {
+            SharedString::default()
+        } else {
+            notice
+                .as_ref()
+                .map(|(_, text)| text.clone())
+                .unwrap_or_else(|| {
+                    Self::display_footer_message(op, outcome, &footer_msg, display_override)
+                })
+        };
+        if announce && !recording_failed {
             let receipt = shown.as_ref().unwrap_or(&entry);
             self.push_operation_result(
                 receipt,
@@ -2028,7 +2041,7 @@ impl KagiApp {
         if is_failed {
             klog!("bottom-panel: open (Failed auto-open)");
         }
-        if announce {
+        if announce || recording_failed {
             self.status_footer = FooterStatus::Idle("".into());
         }
 
@@ -2038,8 +2051,8 @@ impl KagiApp {
                 .is_none_or(|(kind, _)| *kind == ToastKind::Success)
         {
             klog!("footer: {}", footer_msg);
-            if announce {
-                return;
+            if announce || recording_failed {
+                return recording_failed;
             }
             self.status_footer = FooterStatus::Success(display_footer_msg);
         } else if notice
@@ -2047,17 +2060,18 @@ impl KagiApp {
             .is_some_and(|(kind, _)| matches!(kind, ToastKind::Info | ToastKind::Sync))
         {
             klog!("footer: {}", footer_msg);
-            if announce {
-                return;
+            if announce || recording_failed {
+                return recording_failed;
             }
             self.status_footer = FooterStatus::Idle(display_footer_msg);
         } else {
             klog!("footer: {}", footer_msg);
-            if announce {
-                return;
+            if announce || recording_failed {
+                return recording_failed;
             }
             self.status_footer = FooterStatus::Failed(display_footer_msg);
         }
+        recording_failed
     }
 
     // ── T-BP-007: Terminal session ────────────────────────────

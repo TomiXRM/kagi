@@ -15,7 +15,7 @@ use kagi_domain::plan_note::PlanNote;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::ops::StateSummary;
 
-pub(crate) fn recording_outcome(outcome: &OpOutcome) -> i18n::op::RecordingOutcome {
+fn recording_outcome(outcome: &OpOutcome) -> i18n::op::RecordingOutcome {
     use i18n::op::RecordingOutcome;
     match outcome {
         OpOutcome::Success { .. } => RecordingOutcome::Succeeded,
@@ -24,6 +24,40 @@ pub(crate) fn recording_outcome(outcome: &OpOutcome) -> i18n::op::RecordingOutco
         OpOutcome::Partial { .. } => RecordingOutcome::Partial,
         OpOutcome::Unknown { .. } => RecordingOutcome::Unknown,
     }
+}
+
+/// The mandatory acknowledgement is the sole result when its receipt was
+/// not saved. Keep the original diagnostic here too: there is no durable
+/// receipt to fall back to, and a successful append must never be implied.
+pub(crate) fn recording_failure_notice(
+    repo: impl std::fmt::Display,
+    op: &str,
+    outcome: &OpOutcome,
+    error: &str,
+) -> String {
+    let mut notice = i18n::op::user_text::operations::recording_failed(
+        repo,
+        op,
+        recording_outcome(outcome),
+        error,
+    );
+    let details: &[String] = match outcome {
+        OpOutcome::Failed { error } | OpOutcome::Partial { error, .. } => {
+            std::slice::from_ref(error)
+        }
+        OpOutcome::Unknown { evidence, .. } => std::slice::from_ref(evidence),
+        OpOutcome::Refused { blockers } => blockers,
+        OpOutcome::Success { .. } => &[],
+    };
+    for detail in details
+        .iter()
+        .map(String::as_str)
+        .filter(|detail| !detail.trim().is_empty() && *detail != error)
+    {
+        notice.push_str("\n\n");
+        notice.push_str(detail);
+    }
+    notice
 }
 
 impl KagiApp {
@@ -78,13 +112,15 @@ impl KagiApp {
         ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
             .with_ref_moves(ref_moves);
-        self.record_op_impl(entry, cx, true, None);
+        self.record_op_impl(entry, cx, true, None)
     }
     /// Persist an async operation for its frozen owner. Quiet completions keep
     /// the live footer/toast and bottom panel with their current presentation owner.
+    /// Returns true only when appending this completion failed, so a caller
+    /// adding its own result cannot overwrite the required acknowledgement.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_operation_completion(
         &mut self,
@@ -95,10 +131,9 @@ impl KagiApp {
         repo_path: &std::path::Path,
         current: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if current {
-            self.record_op_persist_moves(op, before, outcome, ref_moves, repo_path, cx);
-            return;
+            return self.record_op_persist_moves(op, before, outcome, ref_moves, repo_path, cx);
         }
         let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
             .with_ref_moves(ref_moves);
@@ -109,13 +144,15 @@ impl KagiApp {
             OpOutcome::Success { .. } | OpOutcome::Unknown { .. }
         );
         let recording = kagi_git::backend::recording::finalize(entry);
+        let recording_failed =
+            matches!(recording, kagi_git::backend::recording::Recording::Failed { .. });
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
             self.app_notices.push_back(
-                i18n::op::user_text::operations::recording_failed(
+                recording_failure_notice(
                     repo_path.display(),
                     op,
-                    recording_outcome(&recording.entry().outcome),
+                    &recording.entry().outcome,
                     &error.to_string(),
                 )
                 .into(),
@@ -132,7 +169,7 @@ impl KagiApp {
         // The footer contract is logged for the frozen owner, but the live
         // footer, toast and bottom panel belong to the tab currently on screen.
         klog!("footer: {}", footer_msg);
-        if failed {
+        if failed && !recording_failed {
             let entry = recording.entry();
             self.push_operation_result(
                 entry,
@@ -142,6 +179,7 @@ impl KagiApp {
                 cx,
             );
         }
+        recording_failed
     }
 
     /// [`Self::record_op_persist`] for a write that by construction moves no
@@ -213,7 +251,11 @@ impl KagiApp {
     ) {
         self.notice_recording_failure(op, &report.recording, repo_path);
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
-        self.record_op_impl(entry, cx, false, typed_refusal(op, blockers));
+        let announce = self.operation_result_toast_needed(false);
+        self.record_op_result(
+            entry, cx, false, typed_refusal(op, blockers), None, announce, None,
+            matches!(report.recording, kagi_git::backend::recording::Recording::Failed { .. }),
+        );
     }
 }
 

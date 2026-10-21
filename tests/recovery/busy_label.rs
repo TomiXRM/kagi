@@ -171,7 +171,7 @@ pub fn scenario_fetch_failure_reaches_the_oplog(cx: &mut VisualTestAppContext) {
 /// Exercise the real failed-fetch path and persisted success/unknown receipts
 /// in both languages while the oplog writer is unable to take its lock.
 pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
-    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi::ui::FooterStatus;
     use kagi_git::oplog::OpOutcome;
 
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
@@ -231,48 +231,11 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 let notice = state.app_notice().expect("recording failure notice");
                 let message = notice.message.as_str();
                 assert!(message.contains(&repo.display().to_string()), "{message}");
-                let (record_label, failed, completed, unconfirmed) = match language {
-                    Lang::En => (
-                        "Operation Log",
-                        "operation failed",
-                        "operation completed",
-                        "could not be confirmed",
-                    ),
-                    Lang::Ja => (
-                        "操作ログ",
-                        "操作は失敗",
-                        "操作は完了",
-                        "結果を確認できません",
-                    ),
-                };
-                assert!(message.contains(record_label), "{message}");
-                match result {
-                    "failed" => {
-                        assert!(message.contains(failed), "{message}");
-                        assert!(!message.contains(completed), "{message}");
-                    }
-                    "success" => assert!(message.contains(completed), "{message}"),
-                    _ => {
-                        assert!(message.contains(unconfirmed), "{message}");
-                        assert!(!message.contains(completed), "{message}");
-                    }
-                }
-                let (undo, restore) = match language {
-                    Lang::En => ("cannot undo", "restore from"),
-                    Lang::Ja => ("取り消せません", "復元もできません"),
-                };
-                assert_eq!(message.contains(undo), result == "success", "{message}");
-                assert_eq!(message.contains(restore), result == "success", "{message}");
-                assert!(state
-                    .toast_stack
-                    .as_ref()
-                    .unwrap()
-                    .read(cx)
-                    .toasts()
-                    .iter()
-                    .any(
-                        |toast| toast.kind == ToastKind::Error && !toast.message.trim().is_empty()
-                    ));
+                assert!(!message.trim().is_empty());
+                assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
+                    "the mandatory acknowledgment, not another result toast, owns this failure");
+                assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+                    "a result footer must not override required acknowledgment");
                 let panel = state.op_log.as_ref().unwrap().read(cx);
                 let op = if result == "failed" {
                     "fetch"
@@ -282,17 +245,19 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 let entry = panel.entries().iter().find(|entry| entry.op == op).unwrap();
                 match (&entry.outcome, result) {
                     (OpOutcome::Failed { error }, "failed") => {
-                        assert!(!error.is_empty());
-                        assert!(matches!(&state.status_footer, FooterStatus::Failed(text)
-                            if !text.is_empty() && !text.contains(record_label)));
+                        assert!(error.contains("no-such-remote"));
+                        assert!(message.contains(error.as_str()),
+                            "the missing durable receipt cannot discard the backend diagnostic");
                     }
-                    (OpOutcome::Partial { error, .. }, "success") => {
-                        assert!(error.contains("not recorded"));
-                        assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                    (OpOutcome::Partial { after, error }, "success") => {
+                        assert!(!error.is_empty());
+                        assert_eq!(after.head, "branch: main");
+                        assert_eq!(after.dirty, "clean");
                     }
                     (OpOutcome::Unknown { evidence, .. }, "unknown") => {
                         assert!(evidence.contains("fixture result unconfirmed"));
-                        assert!(!matches!(state.status_footer, FooterStatus::Success(_)));
+                        assert!(message.contains("fixture result unconfirmed"),
+                            "uncertainty evidence must remain inspectable without a saved receipt");
                     }
                     (outcome, _) => panic!("recording failure changed {result}: {outcome:?}"),
                 }

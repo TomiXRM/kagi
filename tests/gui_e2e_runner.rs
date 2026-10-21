@@ -402,6 +402,10 @@ mod stash_apply_manifest;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/fetch_recording_failure.rs"]
+mod fetch_recording_failure;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/user_text.rs"]
 mod user_text;
 
@@ -3062,6 +3066,12 @@ mod macos {
             (
                 "oplog_append_failure_visible",
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
+            ),
+            (
+                "fetch_changed_ref_recording_failure",
+                Box::new(
+                    crate::fetch_recording_failure::scenario_fetch_changed_ref_recording_failure,
+                ),
             ),
             (
                 "oplog_append_failure_conflict_stopped",

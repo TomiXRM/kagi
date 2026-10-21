@@ -640,7 +640,7 @@ impl KagiApp {
                         continue;
                     }
                     failed = report.result.is_err();
-                    if announce {
+                    if announce || matches!(report.recording, Recording::Failed { .. }) {
                         presentation.status = None;
                     }
                     let stopped_notice =
@@ -652,18 +652,13 @@ impl KagiApp {
                             let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                                 &report.recording,
                             );
-                            if let Recording::Failed { error, .. } = &report.recording {
-                                // The stopped notice describes Git's state; it
-                                // must not hide the independent loss of its
-                                // durable recovery record.
-                                app.present_oplog_write_failure(&entry, error, cx);
-                            }
                             app.record_op_with_notice(
                                 entry,
                                 cx,
                                 false,
                                 None,
                                 Some((ToastKind::Info, notice.into())),
+                                matches!(report.recording, Recording::Failed { .. }),
                             );
                         } else {
                             let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
@@ -677,6 +672,7 @@ impl KagiApp {
                                 success_text.map(|text| (ToastKind::Success, text)),
                                 announce,
                                 None,
+                                matches!(report.recording, Recording::Failed { .. }),
                             );
                         }
                         Some(app.status_footer.clone())
@@ -692,11 +688,18 @@ impl KagiApp {
                         // Logs and receipts keep the original reason; the typed
                         // preview remains localized independently.
                         let preview = failure_display.clone();
-                        app.record_op_result(entry, cx, false, preview, None, announce, None);
+                        app.record_op_result(
+                            entry, cx, false, preview, None, announce, None,
+                            matches!(report.recording, Recording::Failed { .. }),
+                        );
                         None
                     };
                     let notice_override = presentation.outcome_notice.clone();
-                    app.apply_run_presentation(presentation, cx);
+                    app.apply_run_presentation(
+                        presentation,
+                        matches!(report.recording, Recording::Failed { .. }),
+                        cx,
+                    );
                     app.enqueue_run_outcome_notice(
                         id,
                         &report.recording,
@@ -781,7 +784,12 @@ impl KagiApp {
         }
     }
 
-    fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
+    fn apply_run_presentation(
+        &mut self,
+        presentation: RunPresentation,
+        recording_failed: bool,
+        cx: &mut Context<Self>,
+    ) {
         if let Some((repo, message)) = presentation.consume_commit_message {
             match message {
                 Some((branch, frozen)) => {
@@ -877,15 +885,17 @@ impl KagiApp {
             }
         }
         if let Some(merged) = presentation.github_merge {
-            self.push_toast(
-                ToastKind::Info,
-                SharedString::from(if merged.detail.is_empty() {
-                    format!("{} #{}", Msg::PrModeMergeDone.t(), merged.pr.number)
-                } else {
-                    merged.detail
-                }),
-                cx,
-            );
+            if !recording_failed {
+                self.push_toast(
+                    ToastKind::Info,
+                    SharedString::from(if merged.detail.is_empty() {
+                        format!("{} #{}", Msg::PrModeMergeDone.t(), merged.pr.number)
+                    } else {
+                        merged.detail
+                    }),
+                    cx,
+                );
+            }
             self.pr_mode_close_tab_for(&merged.pr, cx);
             self.refresh_github_prs(cx);
             self.fetch_async(true, cx);
@@ -949,10 +959,10 @@ impl KagiApp {
     ) {
         if let Recording::Failed { error, .. } = recording {
             self.app_notices.push_back(
-                crate::ui::i18n::op::user_text::operations::recording_failed(
+                record::recording_failure_notice(
                     repo.display(),
                     op,
-                    record::recording_outcome(&recording.entry().outcome),
+                    &recording.entry().outcome,
                     &error.to_string(),
                 )
                 .into(),
@@ -968,7 +978,11 @@ impl KagiApp {
         // Presentation consumes the attempted receipt, never reconstructs its
         // structured recovery/owner metadata and never retries persistence.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        self.record_op_impl(entry, cx, false, None);
+        let announce = self.operation_result_toast_needed(false);
+        self.record_op_result(
+            entry, cx, false, None, None, announce, None,
+            matches!(recording, Recording::Failed { .. }),
+        );
     }
 }
 

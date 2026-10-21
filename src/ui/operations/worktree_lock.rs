@@ -25,19 +25,17 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let error = i18n::op::terminal_lock_changed_contract(i18n::lang());
-        self.record_op_persist(
+        let entry = kagi_git::oplog::OpLogEntry::new(
             op,
+            offer.path.display().to_string(),
             plan.current.clone(),
             OpOutcome::Failed {
                 error: error.into(),
             },
-            &offer.path,
-            cx,
         );
-        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
-            SharedString::from(error),
-        ));
-        self.push_toast(ToastKind::Error, error, cx);
+        // The recorder owns the result, including required acknowledgement
+        // when append fails; do not overwrite it with a second announcement.
+        self.record_op_impl(entry, cx, true, Some(error.into()));
     }
 
     pub fn open_lock_worktree_modal(&mut self, name: String) {

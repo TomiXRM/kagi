@@ -414,6 +414,17 @@ pub struct PullIdentity {
     pub upstream_ref: String,
 }
 
+/// Frozen branch, upstream mapping and transports approved for ordinary Push.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushIdentity {
+    pub branch: String,
+    pub local_oid: CommitId,
+    pub remote: String,
+    pub push_urls: Vec<String>,
+    pub set_upstream: bool,
+    pub upstream_ref: Option<String>,
+}
+
 /// Whether the published ref points at a tag object or directly at its target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagKind {
@@ -478,6 +489,7 @@ pub struct OperationPlan {
     /// Frozen local Pull operand, checked before and after execution's fetch.
     /// `None` for non-Pull and remote-snapshot plans.
     pub pull_identity: Option<PullIdentity>,
+    pub push_identity: Option<PushIdentity>,
     pub tag_push_identity: Option<TagPushIdentity>,
     pub rebase_scope: Option<RebaseScope>,
     /// Read-only digest of approved index paths, OIDs, modes and conflict stages.

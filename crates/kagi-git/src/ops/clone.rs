@@ -77,6 +77,7 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
     OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Clone(CloneTitle::Clone {

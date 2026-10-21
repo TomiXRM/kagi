@@ -131,6 +131,21 @@ impl Backend {
         };
         let outcome = if action.is_some() {
             stash::stash_outcome(&result, plan, &evidence)
+        } else if let Some(blocker) =
+            result
+                .as_ref()
+                .err()
+                .and_then(GitError::blocker)
+                .filter(|_| {
+                    partial_after.is_none()
+                        && matches!(op, Operation::Push | Operation::PushBranch { .. })
+                })
+        {
+            // Ordinary Push's typed guards run before sending or setting an
+            // upstream. Preserve that refusal, not a failed remote write.
+            crate::oplog::OpOutcome::Refused {
+                blockers: vec![blocker.message_en()],
+            }
         } else {
             oplog_outcome_from(&result, &plan.predicted, partial_after)
         };
@@ -223,6 +238,7 @@ impl Backend {
             _ => self.preflight_check(plan),
         }
         .and_then(|()| match op {
+            Operation::Push | Operation::PushBranch { .. } => ops::preflight_push(&self.repo, plan),
             Operation::PushTag { name, remote } => {
                 ops::preflight_push_tag(&self.repo, plan, remote, name)
             }
@@ -464,7 +480,7 @@ impl Backend {
             Operation::Pull => self
                 .execute_pull(plan, partial_after)
                 .map(OperationOutcome::Pull),
-            Operation::Push => self.execute_push().map(OperationOutcome::Push),
+            Operation::Push => self.execute_push(plan).map(OperationOutcome::Push),
             Operation::PullBranchFf { branch_name } => self
                 .execute_pull_branch_ff(plan, branch_name, partial_after)
                 .map(OperationOutcome::Pull),

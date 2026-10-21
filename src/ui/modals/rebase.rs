@@ -71,6 +71,7 @@ impl RebaseCurrentOntoModal {
             std::sync::Arc::new(OperationPlan {
                 rebase_scope: None,
                 tag_push_identity: None,
+                push_identity: None,
                 approved_index_digest: None,
                 preview_commits: Vec::new(),
                 ..(*self.plan).clone()

@@ -159,6 +159,7 @@ pub fn plan_pr_review(pr: &PullRequest, verdict: ReviewVerdict, body: &str) -> O
     OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready

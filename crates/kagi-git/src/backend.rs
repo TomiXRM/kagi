@@ -1481,8 +1481,8 @@ impl Backend {
         ops::plan_push(&self.repo)
     }
 
-    pub(crate) fn execute_push(&self) -> Result<PushOutcome, GitError> {
-        ops::execute_push(&self.repo, &self.path)
+    pub(crate) fn execute_push(&self, plan: &OperationPlan) -> Result<PushOutcome, GitError> {
+        ops::execute_push(&self.repo, &self.path, plan)
     }
 
     pub fn plan_pull_branch_ff(&self, branch_name: &str) -> Result<OperationPlan, GitError> {

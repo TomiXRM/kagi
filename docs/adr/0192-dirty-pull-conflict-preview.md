@@ -379,8 +379,14 @@ destructive plan は確認を維持する。SSH Pull と Sync-to-remote の明�
 remote を一意な送信先とする。`origin` がなく複数 remote がある場合は current /
 sidebar の両 plan に `PushNote::PublishRemoteAmbiguous { candidates }` を積み、
 候補名と提案された送信先を確認 card に示す。先頭 remote への推測を quiet な
-公開承認にしてはならない（#1712 独立レビュー P1）。既存の確認後の選択規則は
-変えず、曖昧な plan を `sync_needs_choice` の未知 warning 保守規則で明示確認に戻す。
+公開承認にしてはならない（#1712 独立レビュー P1）。曖昧な plan を
+`sync_needs_choice` の未知 warning 保守規則で明示確認に戻す。
+current / sidebar 両 plan に `PushIdentity`（branch tip、upstream mapping、
+remote 名、`git remote get-url --push --all` で解決した全送信先）を凍結する。
+preflight と write 直前に選択規則・送信先・branch identity を再照合し、`origin`
+追加、remote rename / URL / pushurl 変更などの drift は typed
+`PushNote::PushIdentityChanged` と Refused receipt で拒否する。execute は
+承認済みの remote と branch を使い、live config から送信先を再選択しない。
 
 非 current branch の clean FF Pull は owned fetch 成功後に upstream identity、
 session / visit、fetched refs を凍結してから同じ admission を通し、card を描かず

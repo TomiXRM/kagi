@@ -2987,6 +2987,13 @@ The current suite covers:
   `publish_remote_ambiguity_requires_choice_for_both_plan_producers` in
   `kagi-git`'s `push_test`: current/sidebar plans require a choice only for
   ambiguous publication; `origin` or a sole remote remains quiet.
+  Also run `cargo test -p kagi-git --test push_identity_test`: execute the
+  **original approved plan**, without replanning, after adding `origin`,
+  changing the selected URL/pushurl, or renaming/replacing its remote. Both
+  current and non-current sidebar publish must produce typed identity refusal,
+  one durable Refused receipt, no upstream and unchanged refs/index/worktree
+  on every remote. An unchanged approved ambiguity plan publishes once only
+  to its named destination. Retain execution-time destination identity checks.
   Typed risk/blocker coverage retains explicit choices; warning-generation
   cleanup is independent of this admission policy. Tier B compares released
   versus fixed sidebar publish and non-current clean Pull in EN/JA, using

@@ -497,6 +497,7 @@ pub(crate) fn plan_pr_merge(
     OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready

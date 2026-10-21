@@ -436,7 +436,7 @@ fn checkout_overlap_state(repo_dir: &Path) -> (String, String, Vec<u8>, String, 
 }
 
 fn assert_checkout_obstruction_read_only(repo_dir: &Path, target: CommitId, path: &str) {
-    let mut backend = kagi_git::Backend::open_with_policy(
+    let backend = kagi_git::Backend::open_with_policy(
         repo_dir,
         kagi_git::backend::ExecutionPolicy::human(false),
     )

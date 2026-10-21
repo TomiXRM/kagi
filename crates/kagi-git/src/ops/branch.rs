@@ -943,7 +943,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         warnings.push(PlanNote::Branch(BranchNote::DeleteUnmerged {
             name: name.to_string(),
             tip: tip_short.clone(),
-            commits: delete_unreachable_commits(repo, name, tip_oid)?,
+            commits: delete_unreachable_commits(repo, name, tip_oid, None)?,
         }));
     }
 
@@ -1014,6 +1014,7 @@ fn delete_unreachable_commits(
     repo: &Repository,
     name: &str,
     tip: git2::Oid,
+    locked: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<usize, GitError> {
     let mut walk = repo.revwalk().map_err(|e| GitError::Other(e.to_string()))?;
     walk.push(tip).map_err(|e| GitError::Other(e.to_string()))?;
@@ -1027,11 +1028,22 @@ fn delete_unreachable_commits(
             continue;
         }
         if let Ok(commit) = reference.peel_to_commit() {
+            if let Some(locked) = locked {
+                super::branch_delete_safety::require_retention_locked(repo, reference, locked)?;
+            }
             walk.hide(commit.id())
                 .map_err(|e| GitError::Other(e.to_string()))?;
         }
     }
     if let Ok(head) = repo.head().and_then(|r| r.peel_to_commit()) {
+        if let Some(locked) = locked {
+            super::branch_delete_safety::require_retention_locked(
+                repo,
+                repo.find_reference("HEAD")
+                    .map_err(|e| GitError::Other(e.to_string()))?,
+                locked,
+            )?;
+        }
         walk.hide(head.id())
             .map_err(|e| GitError::Other(e.to_string()))?;
     }
@@ -1078,13 +1090,14 @@ pub(crate) fn preflight_delete_reachability(
 ///
 /// # Design (ADR-0014)
 ///
-/// Locks and removes only the approved local ref after retaining its commit.
+/// Remove only the approved local ref after retaining its commit. Keep HEADs
+/// and any ordinary reachability witnesses locked through the removal.
 /// HEAD/index/remotes and every worktree remain unchanged.
 ///
 /// Steps:
 /// 1. [`preflight_check`] — verify HEAD has not moved since planning.
-/// 2. Lock the branch, compare its full tip, and create the recovery ref.
-/// 3. Refuse checked-out branches, clean the reflog, and commit ref deletion.
+/// 2. Lock the branch, compare its full tip, and refuse checked-out branches.
+/// 3. Lock reachability witnesses, retain recovery, clean the reflog, and delete.
 /// 4. Verify the branch is gone (`find_branch` now returns `Err`).
 ///
 /// # Errors
@@ -1158,15 +1171,35 @@ pub(crate) fn execute_delete_branch(
             "worktree registrations changed; please re-plan".into(),
         ));
     }
-    // Recheck the unmerged route under the existing locks before retention or
-    // reflog/config writes. Merged/squash-proven routes keep their own proof.
+    // Recheck the unmerged route with its ordinary reachability witnesses
+    // locked before recovery or reflog/config writes. Other proofs stay as-is.
+    let mut retention_locks = None;
     if plan
         .warnings
         .iter()
         .any(|note| matches!(note, PlanNote::Branch(BranchNote::DeleteUnmerged { .. })))
     {
-        preflight_delete_reachability(plan, name, delete_unreachable_commits(repo, name, tip)?)
-            .map_err(|error| GitError::Preflight(Box::new(error)))?;
+        let protected = super::branch_delete_safety::retention_refs(repo, &branch_ref)?;
+        // libgit2 commit releases unchanged locks while iterating its ref map,
+        // potentially before victim removal. Keep these in an uncommitted guard.
+        let mut guard = repo
+            .transaction()
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        for reference in &protected {
+            // Every worktree's HEAD already has its own existing guard.
+            if reference != "HEAD" {
+                guard
+                    .lock_ref(reference)
+                    .map_err(|e| GitError::Other(e.to_string()))?;
+            }
+        }
+        preflight_delete_reachability(
+            plan,
+            name,
+            delete_unreachable_commits(repo, name, tip, Some(&protected))?,
+        )
+        .map_err(|error| GitError::Preflight(Box::new(error)))?;
+        retention_locks = Some(guard);
     }
     let reference = super::backup::retain_object(repo, &super::backup::operation_id(), 0, tip)?;
     backup_refs.push(reference.clone());
@@ -1195,6 +1228,7 @@ pub(crate) fn execute_delete_branch(
         .remove(&branch_ref)
         .map_err(|e| GitError::Other(e.to_string()))?;
     super::branch_delete_safety::commit(transaction)?;
+    drop(retention_locks);
 
     // ── 4. Verify the branch is gone ─────────────────────────
     if repo.find_branch(name, BranchType::Local).is_ok() {

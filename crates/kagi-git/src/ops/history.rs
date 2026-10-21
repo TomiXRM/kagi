@@ -664,7 +664,15 @@ pub fn preflight_amend(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
     } else {
         super::commit::check_commit_identity(repo)?;
     }
-    if let Some(note) = amend_publication_note(repo, &resolve_head(repo)?)? {
+    check_amend_publication(repo, plan, &resolve_head(repo)?)
+}
+
+fn check_amend_publication(
+    repo: &Repository,
+    plan: &OperationPlan,
+    head: &Head,
+) -> Result<(), GitError> {
+    if let Some(note) = amend_publication_note(repo, head)? {
         let blocked = matches!(
             note,
             PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
@@ -674,6 +682,83 @@ pub fn preflight_amend(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
         }
     }
     Ok(())
+}
+
+/// Freeze the existing publication evidence through Git's own HEAD CAS,
+/// including hooks and signing. A transaction is only a lock owner here:
+/// dropping it releases the refs without writing them.
+///
+/// This does not lock the remote namespace: another process can still create
+/// an unrelated, previously absent remote-tracking ref.
+fn lock_amend_publication<'repo>(
+    repo: &'repo Repository,
+    plan: &OperationPlan,
+) -> Result<Option<git2::Transaction<'repo>>, GitError> {
+    let head = &plan.head_at_plan;
+    let Head::Attached { target, branch } = head else {
+        return Ok(None);
+    };
+    let sha = target.get(..8).unwrap_or(target);
+    // Publication cannot escalate an already approved divergence warning.
+    // In particular, a local upstream may resolve to the very branch Git
+    // needs to lock; do not introduce a competing lock in that allowed case.
+    if !kagi_domain::refs::is_protected_branch(branch)
+        && plan.warnings.iter().any(|note| {
+            matches!(
+                note,
+                PlanNote::History(HistoryNote::AmendDivergesFromRemote {
+                    sha: approved_sha,
+                    branch: approved_branch,
+                }) if approved_sha == sha && approved_branch == branch
+            )
+        })
+    {
+        return Ok(None);
+    }
+
+    let error = |error: git2::Error| {
+        GitError::Other(format!(
+            "cannot lock amend publication refs: {}",
+            error.message()
+        ))
+    };
+    let mut pending = std::collections::BTreeSet::new();
+    for reference in repo.references_glob("refs/remotes/*").map_err(error)? {
+        let reference = reference.map_err(error)?;
+        pending.insert(reference.name().map_err(error)?.to_owned());
+    }
+    match repo.branch_upstream_name(&format!("refs/heads/{branch}")) {
+        Ok(upstream) => {
+            pending.insert(upstream.as_str().map_err(error)?.to_owned());
+        }
+        Err(cause) if cause.code() == git2::ErrorCode::NotFound => {}
+        Err(cause) => return Err(error(cause)),
+    }
+    let mut transaction = repo.transaction().map_err(error)?;
+    let mut locked = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop_first() {
+        if locked.contains(&name) {
+            continue;
+        }
+        transaction.lock_ref(&name).map_err(error)?;
+        // Read symbolic targets only after locking their referring name, so
+        // neither the alias nor any transitive dependency can be retargeted.
+        match repo.find_reference(&name) {
+            Ok(reference) => {
+                if let Some(target) = reference.symbolic_target().map_err(error)? {
+                    if !locked.contains(target) {
+                        pending.insert(target.to_owned());
+                    }
+                }
+            }
+            Err(cause) if cause.code() == git2::ErrorCode::NotFound => {}
+            Err(cause) => return Err(error(cause)),
+        }
+        locked.insert(name);
+    }
+    check_amend_publication(repo, plan, head)
+        .map_err(|error| GitError::Preflight(Box::new(error)))?;
+    Ok(Some(transaction))
 }
 
 /// Execute an amend through Git with hooks/signing (ADR-0039 amendment).
@@ -691,6 +776,8 @@ pub(crate) fn execute_amend(
     mode: AmendMode,
     message: Option<&str>,
 ) -> Result<AmendOutcome, GitError> {
+    preflight_check(repo, plan).map_err(|error| GitError::Preflight(Box::new(error)))?;
+    let _publication_lock = lock_amend_publication(repo, plan)?;
     // ── 1. Resolve HEAD branch ref + commit ──────────────────
     let head_ref = repo
         .head()
@@ -1268,4 +1355,107 @@ pub fn history_from_reflog(
     // `seeded` wants oldest → newest (cursor = len).
     newest_first.reverse();
     Ok(newest_first)
+}
+
+#[cfg(test)]
+mod amend_boundary_tests {
+    use super::*;
+
+    fn refuse_publication_after_preflight(branch: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        repo.set_head(&format!("refs/heads/{branch}")).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Committer").unwrap();
+        config
+            .set_str("user.email", "committer@example.com")
+            .unwrap();
+        config.set_bool("commit.gpgsign", false).unwrap();
+        config.set_str("core.hooksPath", "/dev/null").unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "committed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let author = git2::Signature::now("Author", "author@example.com").unwrap();
+        let base = repo
+            .commit(Some("HEAD"), &author, &author, "base", &tree, &[])
+            .unwrap();
+        let base = repo.find_commit(base).unwrap();
+        let target = repo
+            .commit(
+                Some("HEAD"),
+                &author,
+                &author,
+                "amend target",
+                &tree,
+                &[&base],
+            )
+            .unwrap();
+        repo.reference(
+            "refs/remotes/late/published",
+            base.id(),
+            false,
+            "before fetch",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "staged\n").unwrap();
+        index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "unstaged\n").unwrap();
+        let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("replacement")).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        preflight_amend(&repo, &plan).unwrap();
+        let before_head = resolve_head(&repo).unwrap();
+        let before_index = std::fs::read(repo.path().join("index")).unwrap();
+        let before_worktree = std::fs::read(dir.path().join("tracked.txt")).unwrap();
+
+        // The Backend's initial preflight already passed. A concurrent fetch
+        // publishes HEAD before the private executor reaches its write boundary.
+        repo.reference("refs/remotes/late/published", target, true, "late fetch")
+            .unwrap();
+        let result = execute_amend(&repo, &plan, AmendMode::MessageOnly, Some("replacement"));
+        let error = result.expect_err("execution must recheck publication after initial preflight");
+        assert!(error.is_preflight(), "{error:?}");
+        let note = error
+            .blocker()
+            .expect("publication refusal must stay typed");
+        if branch == "main" {
+            assert!(matches!(
+                note,
+                PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
+            ));
+        } else {
+            assert!(matches!(
+                note,
+                PlanNote::History(HistoryNote::AmendDivergesFromRemote { .. })
+            ));
+        }
+        assert_eq!(resolve_head(&repo).unwrap(), before_head);
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            before_index
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("tracked.txt")).unwrap(),
+            before_worktree
+        );
+    }
+
+    #[test]
+    fn inline_1695_amend_execute_rechecks_late_protected_publication() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
+        refuse_publication_after_preflight("main");
+    }
+
+    #[test]
+    fn inline_1695_amend_execute_rechecks_late_unapproved_publication() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
+        refuse_publication_after_preflight("feat/x");
+    }
 }

@@ -101,7 +101,7 @@ pub enum BranchNote {
 }
 
 impl BranchNote {
-    /// Sole English renderer (byte-identical to the legacy producer strings).
+    /// English contract copy, including the approved loss-count confirmation policy.
     pub fn message_en(&self) -> String {
         match self {
             BranchNote::CommitMissing { sha } => {
@@ -153,6 +153,9 @@ impl BranchNote {
                 "HEAD is detached and points to the same commit as '{}'. This branch cannot be deleted while HEAD is at its tip.",
                 name
             ),
+            BranchNote::DeleteUnmerged { name, tip, commits: 0 } => format!(
+                "Delete local branch '{name}' at {tip}. All commits remain reachable from other refs; a recovery ref also keeps this tip."
+            ),
             BranchNote::DeleteUnmerged { name, tip, commits } => format!(
                 crate::advice_template_en!(DeleteUnmerged),
                 name, tip, commits
@@ -178,9 +181,6 @@ impl BranchNote {
             BranchNote::RenameConfigChanged => {
                 crate::advice_template_display_en!(BranchRenameConfigChanged).into()
             }
-            BranchNote::DeleteUnmerged { name, tip, commits: 0 } => format!(
-                "Delete local branch '{name}' at {tip}. All commits remain reachable from other refs; a recovery ref also keeps this tip."
-            ),
             _ => self.message_en(),
         }
     }

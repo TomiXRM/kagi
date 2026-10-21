@@ -56,6 +56,11 @@ Discard は backup から内容を完全復元できる一方、branch 削除は
 知らないと履歴を見失うため、この到達可能性も確認基準とする。実行前にも承認した
 到達不能 commit 数を再検査し、通常 ref の削除・移動で変化したら typed refusal と
 して新しい plan の確認を要求する。
+到達性を支える通常 ref と symbolic chain は最終検査から削除完了まで lock する。
+libgit2 の transaction commit は変更しない ref の lock を削除対象より先に解放し得るため、
+保持先の lock は別の未 commit guard transaction に置き、削除 transaction の完了後に
+解放する。最終計算へ未 lock の新しい保持先を紛れ込ませず、必要な lock を取得できなければ
+副作用前に拒否する。
 文言は条件に一致させ、回復可能な plan に「取り消せません」
 「Permanently」を併記しない。force-with-lease の復元も remote が再び動いていない
 場合の条件付き操作であり、他者の取得済み履歴までは元に戻せないため二段のままとする。
@@ -65,4 +70,11 @@ EN/JA の同一条件で同じ確認段数を使い、JA に英語の追確認�
 すべての remote-tracking ref の履歴に HEAD が含まれていないことを検査する。
 upstream が未設定・解除済みでも remote-tracking ref が HEAD またはその子孫を
 指していれば公開済みとして二段確認を維持し、protected branch の blocker も維持する。
+未公開の承認では実行入口で既存の remote-tracking / upstream ref と symbolic chain を
+transaction lock し、lock 内で公開判定を再検査する。typed refusal は Git の実行前に返し、
+lock は既存の Git CLI による hooks / signing / HEAD 更新が終わるまで保持する。
+
+ただし Git / libgit2 に ref namespace 全体の lock API はない。列挙時に存在しなかった
+remote ref の新規作成（hook 内で新規 ref を作る拡張ケースを含む）はこの排他の対象外とする。
+既存 ref の更新・削除に対する guard を、新規 namespace 追加も防ぐ大域的な保証と表示しない。
 

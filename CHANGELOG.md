@@ -22,6 +22,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Confirm recoverable ref-only Reset, unpublished Amend, backed-up Discard and local branch deletion losing no commits once. Keep two-stage approval for irreversible deletion and shared-history changes; show the force-with-lease remote target and exact lease instead of claiming it cannot be undone. Align English/Japanese consequences with recorded recovery. (#1695)
 - Keep recovery-only refs out of zero-loss local branch deletion, recheck approved commit reachability before execution, and recognize published Amend history through remote-tracking refs even without a configured upstream. (#1695)
+- Keep ordinary branch-retention refs locked through deletion, freeze existing Amend publication refs through Git's real commit boundary, and give CLI/MCP zero-loss deletion plans the same one-confirmation explanation as the GUI. Document that new remote-ref namespaces cannot be locked globally. (#1695)
 
 ## [0.47.0] - 2026-10-21
 

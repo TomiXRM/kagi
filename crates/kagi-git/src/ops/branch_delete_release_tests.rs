@@ -460,3 +460,321 @@ fn review_1695_changed_nonzero_loss_count_also_requires_reapproval() {
     assert!(report.recording.entry().backup_refs.is_empty());
     assert_eq!(refs(&repo), before_refs);
 }
+
+struct RetentionProbe {
+    dir: PathBuf,
+    commands: Vec<Vec<String>>,
+    attempts: Vec<std::process::Output>,
+}
+
+thread_local! {
+    static RETENTION_PROBE: std::cell::RefCell<Option<RetentionProbe>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+fn observe_retention_before_commit() {
+    RETENTION_PROBE.with(|probe| {
+        let mut probe = probe.borrow_mut();
+        let probe = probe.as_mut().expect("retention probe must be installed");
+        for args in &probe.commands {
+            probe.attempts.push(
+                std::process::Command::new("git")
+                    .current_dir(&probe.dir)
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("HOME", &probe.dir)
+                    .args(args)
+                    .output()
+                    .unwrap(),
+            );
+        }
+    });
+}
+
+fn assert_retention_locked_until_commit(
+    repo: &Repository,
+    plan: &OperationPlan,
+    commands: Vec<Vec<String>>,
+) {
+    RETENTION_PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(RetentionProbe {
+            dir: repo.workdir().unwrap().to_path_buf(),
+            commands,
+            attempts: Vec::new(),
+        });
+    });
+    FAULT.with(|fault| {
+        fault.set(Some(DeleteFault::BeforeCommit(
+            observe_retention_before_commit,
+        )))
+    });
+    let mut backups = Vec::new();
+    let mut partial = None;
+    let result = super::super::branch::execute_delete_branch(
+        repo,
+        plan,
+        "victim",
+        &mut backups,
+        &mut partial,
+    );
+    let probe = RETENTION_PROBE.with(|probe| probe.borrow_mut().take().unwrap());
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(probe.attempts.len(), probe.commands.len());
+    for (args, attempt) in probe.commands.iter().zip(&probe.attempts) {
+        assert!(
+            !attempt.status.success(),
+            "external git {args:?} invalidated retention before victim commit"
+        );
+        assert!(
+            String::from_utf8_lossy(&attempt.stderr).contains(".lock"),
+            "external git {args:?}: {}",
+            String::from_utf8_lossy(&attempt.stderr)
+        );
+    }
+    assert!(repo.find_reference("refs/heads/victim").is_err());
+    assert_eq!(backups.len(), 1);
+    for args in &probe.commands {
+        let after = std::process::Command::new("git")
+            .current_dir(&probe.dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &probe.dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            after.status.success(),
+            "external git {args:?} stayed blocked after victim commit: {}",
+            String::from_utf8_lossy(&after.stderr)
+        );
+    }
+}
+
+#[test]
+fn inline_1695_retention_roots_lock_external_delete_until_victim_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for retained in [
+        "refs/heads/retained",
+        "refs/tags/retained",
+        "refs/remotes/origin/retained",
+        "refs/kagi/pr/123",
+    ] {
+        let (_dir, repo, tip) = unmerged_fixture();
+        repo.reference(retained, tip, false, "ordinary retention")
+            .unwrap();
+        let plan = super::super::branch::plan_delete_branch(&repo, "victim").unwrap();
+        assert_eq!(loss_count(&plan), 0);
+        assert_retention_locked_until_commit(
+            &repo,
+            &plan,
+            vec![vec!["update-ref".into(), "-d".into(), retained.into()]],
+        );
+    }
+}
+
+#[test]
+fn inline_1695_annotated_retention_tag_cannot_move_before_victim_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (_dir, repo, tip) = unmerged_fixture();
+    let tag = repo
+        .tag(
+            "retained",
+            &repo.find_object(tip, None).unwrap(),
+            &git2::Signature::now("Test", "test@example.com").unwrap(),
+            "ordinary annotated retention",
+            false,
+        )
+        .unwrap();
+    let plan = super::super::branch::plan_delete_branch(&repo, "victim").unwrap();
+    assert_eq!(loss_count(&plan), 0);
+    assert_retention_locked_until_commit(
+        &repo,
+        &plan,
+        vec![vec![
+            "update-ref".into(),
+            "refs/tags/retained".into(),
+            repo.head().unwrap().target().unwrap().to_string(),
+            tag.to_string(),
+        ]],
+    );
+}
+
+#[test]
+fn inline_1695_symbolic_retention_chain_locks_alias_hop_and_terminal() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (_dir, repo, tip) = unmerged_fixture();
+    repo.reference("refs/retention/terminal", tip, false, "retained terminal")
+        .unwrap();
+    repo.reference_symbolic(
+        "refs/retention/hop",
+        "refs/retention/terminal",
+        false,
+        "retention hop",
+    )
+    .unwrap();
+    repo.reference_symbolic(
+        "refs/heads/retained",
+        "refs/retention/hop",
+        false,
+        "retention alias",
+    )
+    .unwrap();
+    let plan = super::super::branch::plan_delete_branch(&repo, "victim").unwrap();
+    assert_eq!(loss_count(&plan), 0);
+    assert_retention_locked_until_commit(
+        &repo,
+        &plan,
+        vec![
+            vec![
+                "update-ref".into(),
+                "--no-deref".into(),
+                "-d".into(),
+                "refs/heads/retained".into(),
+            ],
+            vec![
+                "symbolic-ref".into(),
+                "refs/retention/hop".into(),
+                "refs/heads/main".into(),
+            ],
+            vec![
+                "update-ref".into(),
+                "-d".into(),
+                "refs/retention/terminal".into(),
+            ],
+        ],
+    );
+}
+
+#[test]
+fn inline_1695_retention_lock_conflict_refuses_zero_loss_before_writes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for locked in ["refs/heads/retained", "refs/retention/terminal"] {
+        let (_dir, repo, tip) = unmerged_fixture();
+        repo.reference("refs/retention/terminal", tip, false, "retained terminal")
+            .unwrap();
+        repo.reference_symbolic(
+            "refs/heads/retained",
+            "refs/retention/terminal",
+            false,
+            "retention alias",
+        )
+        .unwrap();
+        let plan = super::super::branch::plan_delete_branch(&repo, "victim").unwrap();
+        assert_eq!(loss_count(&plan), 0);
+        let before_refs = refs(&repo);
+        let files = [
+            repo.path().join("HEAD"),
+            repo.path().join("config"),
+            repo.path().join("logs/refs/heads/victim"),
+        ];
+        let before_files: Vec<_> = files
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        let mut held = repo.transaction().unwrap();
+        held.lock_ref(locked).unwrap();
+        let mut backups = Vec::new();
+        let mut partial = None;
+        let result = super::super::branch::execute_delete_branch(
+            &repo,
+            &plan,
+            "victim",
+            &mut backups,
+            &mut partial,
+        );
+        assert!(
+            result.is_err(),
+            "deletion ignored held retention lock {locked}"
+        );
+        assert!(result.unwrap_err().to_string().contains("lock"));
+        assert!(backups.is_empty());
+        assert!(partial.is_none());
+        assert_eq!(refs(&repo), before_refs);
+        for (path, before) in files.iter().zip(before_files) {
+            assert_eq!(std::fs::read(path).unwrap(), before, "{}", path.display());
+        }
+        drop(held);
+    }
+}
+
+#[test]
+fn inline_1695_nonzero_loss_ignores_locked_recovery_and_noncommit_refs() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (_dir, repo, tip) = unmerged_fixture();
+    let recovery = "refs/kagi/backups/retained/0";
+    repo.reference(recovery, tip, false, "excluded recovery")
+        .unwrap();
+    repo.reference_symbolic(
+        "refs/heads/recovery-alias",
+        recovery,
+        false,
+        "excluded alias",
+    )
+    .unwrap();
+    repo.reference(
+        "refs/tags/blob",
+        repo.blob(b"not a commit").unwrap(),
+        false,
+        "noncommit root",
+    )
+    .unwrap();
+    let plan = super::super::branch::plan_delete_branch(&repo, "victim").unwrap();
+    assert_eq!(loss_count(&plan), 1);
+    let mut held = repo.transaction().unwrap();
+    for excluded in [recovery, "refs/heads/recovery-alias", "refs/tags/blob"] {
+        held.lock_ref(excluded).unwrap();
+    }
+    let mut backups = Vec::new();
+    let mut partial = None;
+    let result = super::super::branch::execute_delete_branch(
+        &repo,
+        &plan,
+        "victim",
+        &mut backups,
+        &mut partial,
+    );
+    assert!(result.is_ok(), "{result:?}");
+    assert!(repo.find_reference("refs/heads/victim").is_err());
+    assert_eq!(backups.len(), 1);
+}
+
+#[test]
+fn inline_1695_partial_retention_stays_locked_for_nonzero_loss() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (_dir, repo, retained) = unmerged_fixture();
+    let parent = repo.find_commit(retained).unwrap();
+    let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+    repo.commit(
+        Some("refs/heads/victim"),
+        &sig,
+        &sig,
+        "additional branch-only commit",
+        &parent.tree().unwrap(),
+        &[&parent],
+    )
+    .unwrap();
+    repo.reference("refs/tags/retained", retained, false, "partial retention")
+        .unwrap();
+    let plan = super::super::branch::plan_delete_branch(&repo, "victim").unwrap();
+    assert_eq!(loss_count(&plan), 1);
+    assert_retention_locked_until_commit(
+        &repo,
+        &plan,
+        vec![vec![
+            "update-ref".into(),
+            "-d".into(),
+            "refs/tags/retained".into(),
+        ]],
+    );
+}

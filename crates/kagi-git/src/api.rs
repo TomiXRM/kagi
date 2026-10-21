@@ -203,3 +203,61 @@ pub fn confirm_response(op: &Operation, plan_id: &str, report: &RunReport) -> Va
 fn entry_value(entry: &crate::oplog::OpLogEntry) -> Value {
     serde_json::from_str(&crate::oplog::entry_to_json(entry)).unwrap_or(Value::Null)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kagi_domain::plan::StateSummary;
+    use kagi_domain::plan_note::{BranchNote, BranchTitle, PlanDisposition, PlanNote, PlanTitle};
+
+    #[test]
+    fn inline_1695_api_zero_loss_delete_matches_confirmation_policy() {
+        let current = StateSummary {
+            head: "branch: main".into(),
+            dirty: "clean".into(),
+        };
+        let mut plan = OperationPlan {
+            title: PlanTitle::Branch(BranchTitle::DeleteBranch {
+                name: "topic".into(),
+                tip: Some("a1b2c3d4".into()),
+            }),
+            current: current.clone(),
+            predicted: current,
+            warnings: Vec::new(),
+            blockers: Vec::new(),
+            recovery: None,
+            disposition: PlanDisposition::Ready,
+            head_at_plan: Head::Attached {
+                branch: "main".into(),
+                target: "a".repeat(40),
+            },
+            stash_count_at_plan: 0,
+            stash_identity: None,
+            pull_identity: None,
+            tag_push_identity: None,
+            rebase_scope: None,
+            approved_index_digest: None,
+            worktree_digest: None,
+            preview_files: Vec::new(),
+            preview_commits: Vec::new(),
+            destructive: false,
+            equivalent_command: None,
+        };
+        for commits in [0, 1] {
+            let note = PlanNote::Branch(BranchNote::DeleteUnmerged {
+                name: "topic".into(),
+                tip: "a1b2c3d4".into(),
+                commits,
+            });
+            plan.warnings = vec![note.clone()];
+            let body = plan_body(&plan);
+            let warning = body["warnings"][0].as_str().unwrap();
+            assert_eq!(warning, note.message_display_en());
+            assert_eq!(warning.contains("Confirm twice"), commits > 0);
+            assert!(warning.contains("topic") && warning.contains("a1b2c3d4"));
+            if commits == 0 {
+                assert!(warning.contains("All commits remain reachable"));
+            }
+        }
+    }
+}

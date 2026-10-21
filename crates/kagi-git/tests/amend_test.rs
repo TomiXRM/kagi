@@ -865,3 +865,213 @@ fn review_1695_amend_preflight_rechecks_publication() {
         }
     }
 }
+
+#[cfg(unix)]
+fn inline_1695_amend_hook_publication(branch: &str, hook_name: &str, advance: bool) {
+    use kagi_domain::plan_note::{HistoryNote, PlanNote};
+    use kagi_git::{backend::ExecutionPolicy, Backend, Operation, OperationOutcome};
+    use std::os::unix::fs::PermissionsExt;
+
+    let r = setup_local();
+    git(&r.path, &["branch", "-m", branch]);
+    let head = head_sha(&r.path);
+    let ancestor = rev_parse(&r.path, "HEAD^");
+    let publication_ref = if hook_name == "reference-transaction" {
+        git(
+            &r.path,
+            &["update-ref", "refs/fixture/publication", &ancestor],
+        );
+        git(
+            &r.path,
+            &[
+                "symbolic-ref",
+                "refs/remotes/late/alias",
+                "refs/fixture/publication",
+            ],
+        );
+        "refs/fixture/publication"
+    } else if hook_name == "commit-msg" {
+        git(
+            &r.path,
+            &["update-ref", "refs/upstream/late/published", &ancestor],
+        );
+        git(&r.path, &["config", "remote.origin.url", "."]);
+        git(
+            &r.path,
+            &[
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/upstream/late/*",
+            ],
+        );
+        git(
+            &r.path,
+            &["config", &format!("branch.{branch}.remote"), "origin"],
+        );
+        git(
+            &r.path,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                "refs/heads/published",
+            ],
+        );
+        "refs/upstream/late/published"
+    } else {
+        git(
+            &r.path,
+            &["update-ref", "refs/remotes/late/published", &ancestor],
+        );
+        "refs/remotes/late/published"
+    };
+    write_file(&r.path, "feature.txt", "approved staged content\n");
+    git(&r.path, &["add", "feature.txt"]);
+    write_file(&r.path, "feature.txt", "unstaged worktree content\n");
+    write_file(&r.path, "untracked.txt", "keep this untracked content\n");
+    let mut backend = Backend::open_with_policy(&r.path, ExecutionPolicy::human(false)).unwrap();
+    let op = Operation::Amend {
+        mode: AmendMode::Both,
+        message: Some("late-publication amend".into()),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan.warnings.iter().all(|note| !matches!(
+        note,
+        PlanNote::History(HistoryNote::AmendDivergesFromRemote { .. })
+    )));
+    let repo = Repository::open(&r.path).unwrap();
+    kagi_git::ops::preflight_amend(&repo, &plan).unwrap();
+
+    let hook = repo.path().join("hooks").join(hook_name);
+    let marker = repo.path().join("inline-1695-hook-ran");
+    let prepared_only = if hook_name == "reference-transaction" {
+        "[ \"$1\" = prepared ] || exit 0\n"
+    } else {
+        ""
+    };
+    let publication = if advance {
+        format!(
+            "if git -c core.hooksPath=/dev/null update-ref {publication_ref} {head}; then\nprintf advanced > '{}'\nelse\nprintf locked > '{}'\nfi\n",
+            marker.display(),
+            marker.display(),
+        )
+    } else {
+        format!("printf ran > '{}'\n", marker.display())
+    };
+    std::fs::write(&hook, format!("#!/bin/sh\n{prepared_only}{publication}")).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let index = std::fs::read(repo.path().join("index")).unwrap();
+    let worktree = ["base.txt", "feature.txt", "untracked.txt"]
+        .map(|path| std::fs::read(r.path.join(path)).unwrap());
+
+    let result = backend.run_recorded(&op, &plan).result;
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("the real Git hook must run after preflight"),
+        if advance { "locked" } else { "ran" },
+        "existing publication refs must stay locked through the real Git ref update"
+    );
+    assert_eq!(
+        rev_parse(&r.path, publication_ref),
+        ancestor,
+        "the hook must not advance the publication dependency"
+    );
+    let OperationOutcome::Amend(outcome) = result.expect("unpublished amend must execute") else {
+        panic!("expected amend outcome");
+    };
+    assert_eq!(outcome.old.0, head);
+    assert_eq!(head_sha(&r.path), outcome.new.0);
+    assert_ne!(outcome.old, outcome.new);
+    assert_eq!(head_author(&r.path), "Alice <alice@example.com>");
+    assert_eq!(
+        git_output(&r.path, &["show", "HEAD:feature.txt"]),
+        "approved staged content"
+    );
+    assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
+    assert_eq!(
+        ["base.txt", "feature.txt", "untracked.txt"]
+            .map(|path| std::fs::read(r.path.join(path)).unwrap()),
+        worktree,
+        "amend must preserve worktree bytes"
+    );
+    git(
+        &r.path,
+        &[
+            "-c",
+            "core.hooksPath=/dev/null",
+            "update-ref",
+            publication_ref,
+            &head,
+        ],
+    );
+    assert_eq!(
+        rev_parse(&r.path, publication_ref),
+        head,
+        "external updates must resume after the recorded amend releases its locks"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn inline_1695_amend_freezes_publication_during_pre_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    inline_1695_amend_hook_publication("main", "pre-commit", true);
+}
+
+#[cfg(unix)]
+#[test]
+fn inline_1695_amend_freezes_symbolic_publication_at_ref_boundary() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    inline_1695_amend_hook_publication("feat/x", "reference-transaction", true);
+}
+
+#[cfg(unix)]
+#[test]
+fn inline_1695_amend_unpublished_ref_boundary_control_executes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    inline_1695_amend_hook_publication("feat/x", "reference-transaction", false);
+}
+
+#[cfg(unix)]
+#[test]
+fn inline_1695_amend_freezes_configured_upstream_during_commit_msg() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    inline_1695_amend_hook_publication("feat/x", "commit-msg", true);
+}
+
+#[test]
+fn inline_1695_amend_approved_local_upstream_does_not_self_lock() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup_local();
+    git(&r.path, &["branch", "-m", "feat/x"]);
+    git(&r.path, &["config", "branch.feat/x.remote", "."]);
+    git(
+        &r.path,
+        &["config", "branch.feat/x.merge", "refs/heads/feat/x"],
+    );
+    let repo = Repository::open(&r.path).unwrap();
+    let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("approved rewrite")).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan.warnings.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::History(
+            kagi_domain::plan_note::HistoryNote::AmendDivergesFromRemote { .. }
+        )
+    )));
+    let old = head_sha(&r.path);
+    let index = std::fs::read(repo.path().join("index")).unwrap();
+    let outcome = execute_amend(&repo, AmendMode::MessageOnly, Some("approved rewrite")).unwrap();
+    assert_eq!(outcome.old.0, old);
+    assert_ne!(outcome.new.0, old);
+    assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
+    assert_eq!(head_author(&r.path), "Alice <alice@example.com>");
+}

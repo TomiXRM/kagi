@@ -3,6 +3,7 @@ use crate::macos::{build_fixture, git, repo_fingerprint};
 use crate::presentation_support::{each_presentation, paint, Presentation};
 use gpui::{AnyWindowHandle, Entity, Role, VisualTestAppContext};
 use kagi::ui::{button_style, e2e, KagiApp};
+use kagi_ui_core::i18n;
 
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;

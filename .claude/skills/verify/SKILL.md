@@ -4115,7 +4115,7 @@ report occluded byte-identical frames as stale, not evidence of the new screen.
 
 ### Presentation-only Busy progress close (#1719)
 
-Select `busy_read_dismiss,busy_pull_progress_dismiss,busy_pull_revisit_request,busy_hidden_failure_reaches_details,slow_read_explained,clone_hidden_status,queue_merge_plan_after_departure`
+Select `busy_read_dismiss,busy_pull_progress_dismiss,busy_pull_revisit_request,busy_pull_merge_progress_dismiss,busy_hidden_failure_reaches_details,slow_read_explained,clone_hidden_status,queue_merge_plan_after_departure`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. These consumers use actual repository reads,
 Fetch admission, queued planning and clone dispatch held by existing deferred
 backend seams. The readonly `slow_reads_inflight_for_e2e` observer reports real
@@ -4131,6 +4131,13 @@ execution lease handoff, same-live-waiter join, in-flight departure/revisit with
 new-visit waiter, and a same-clock next request. Hidden failure must still
 reach its exact durable receipt through the actual details Button. Existing Skip,
 writer/quit guards, clone completion and stale queued-plan disposal stay active.
+The revisit leg dismisses the new waiter again before departing; the flight must
+not switch back to an older undismissed key. A new read on the other repository
+must still appear. The conflict leg uses real competing commits, explicit Pull
+Review and Merge approval, and verifies real unmerged index/Conflict Mode without
+premature writes. `hold_next_merge_plan_for_e2e` reuses the former queued merge
+hold slot for direct/queued planning; no production plan or request is fabricated.
+It also cancels a separate normal Merge and checks a new normal request is visible.
 
 Tier B uses an ordinary isolated binary, actual linked-worktree status work and
 Terminal, EN/JA × Apple Light/Dark, desktop width ≥1000 plus the 940 compact leg.

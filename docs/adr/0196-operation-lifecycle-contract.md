@@ -639,13 +639,19 @@ policies; this change does not rewrite Git configuration or their admission.
 - Global work uses its existing admitted operation identity. A local Pull's
   `(session, visit, request_started)` follows the freshness waiter and confirmation
   into its distinct execution lease, including non-current branch fast-forward.
+  Explicit conflict Review retains that same origin through the existing merge
+  planner, merge confirmation and admitted merge execution. A new independent
+  Merge still starts with its own planning request; cancellation retires it.
   Remote planning retains its admitted request identity into approved execution;
   clone retains its current card's start identity. No operation-name matching,
   notification controller or parallel delivery store is introduced.
 - Retire suppression with the actual owner. A new admission cannot inherit a
   completed same-clock request's hidden state; joining the same live waiter does
   not resurrect it. An unrelated Fetch must not erase a still-owned Pull's
-  dismissal. The existing independent toast entity stays mounted for later
+  dismissal. With no current-visit waiter, global progress keeps a dismissed
+  identity from that same flight rather than reverting to an older undismissed
+  waiter. A new current-visit request takes precedence; another owner's new read
+  stays visible. The existing independent toast entity stays mounted for later
   results, without retaining the closed Busy card's paint or pointer target.
 - Closing progress never dismisses terminal feedback. Failed/Unknown/Partial
   and oplog append failure keep the one-request/result and inspect/ack contracts

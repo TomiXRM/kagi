@@ -110,8 +110,25 @@ impl KagiApp {
     pub(crate) fn mark_planning_busy(&mut self, name: &'static str) -> crate::app::RequestId {
         let request = crate::app::RequestId(crate::app::next_id());
         self.planning = Some(name);
-        self.busy_plan_request = Some(request);
+        self.busy_plan_origin = Some(BusyIdentity::Planning(request));
         request
+    }
+
+    pub(super) fn continue_busy_planning(
+        &mut self,
+        request: crate::app::RequestId,
+        progress: Option<(BusyIdentity, bool)>,
+    ) {
+        if self.planning.is_none() || self.busy_plan_origin != Some(BusyIdentity::Planning(request))
+        {
+            return;
+        }
+        if let Some((identity, hidden)) = progress {
+            self.busy_plan_origin = Some(identity);
+            if hidden {
+                self.hidden_busy_job = Some(identity);
+            }
+        }
     }
 
     pub(super) fn busy_request_hidden(&self, identity: Option<BusyIdentity>) -> bool {
@@ -155,8 +172,15 @@ impl KagiApp {
                             self.active_session() == Some(*owner)
                                 && self.app_sessions.visit(*owner) == Some(*visit)
                         })
-                        // The global card still represents its original work
-                        // while another tab has no request attached to it.
+                        // Switching tabs is not a new request. Keep this
+                        // flight's dismissed owner rather than falling back
+                        // to an older, undismissed waiter from another visit.
+                        .or_else(|| {
+                            flight.waiters.iter().find(|(owner, visit, _, started)| {
+                                self.hidden_busy_job
+                                    == Some(BusyIdentity::Pull(*owner, *visit, *started))
+                            })
+                        })
                         .or_else(|| flight.waiters.first())
                 })
             {
@@ -164,9 +188,7 @@ impl KagiApp {
             }
             return self.busy_write_origin.map(|(_, identity)| identity);
         }
-        self.planning
-            .and(self.busy_plan_request)
-            .map(BusyIdentity::Planning)
+        self.planning.and(self.busy_plan_origin)
     }
 
     fn busy_progress_hidden(&self) -> bool {
@@ -179,6 +201,9 @@ impl KagiApp {
     pub(super) fn retire_hidden_busy_progress(&mut self) {
         if self.write_busy_op.is_none() {
             self.busy_write_origin = None;
+        }
+        if self.planning.is_none() {
+            self.busy_plan_origin = None;
         }
         let Some(hidden) = self.hidden_busy_job else {
             return;
@@ -199,7 +224,10 @@ impl KagiApp {
             })
             || self
                 .branch_plan_modal()
-                .is_some_and(|modal| owns_pull(modal.fetch_owner));
+                .is_some_and(|modal| owns_pull(modal.fetch_owner))
+            || self
+                .merge_modal()
+                .is_some_and(|modal| modal.progress_identity == Some(hidden));
         if !live {
             self.hidden_busy_job = None;
         }

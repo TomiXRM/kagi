@@ -568,6 +568,43 @@ pub fn scenario_busy_pull_revisit_request(cx: &mut VisualTestAppContext) {
             "the new visit never inherits the departed request's dismissal"
         );
         close_by_pointer(cx, &app, window);
+        app.update(cx, |app, cx| app.switch_repo(1, cx));
+        cx.run_until_parked();
+        assert_hidden(cx, &app, window);
+        let other_owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+        let (other_read, release_other) = deferred::<()>(cx);
+        KagiApp::hold_next_snapshot_for_e2e(other_read);
+        app.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        advance(cx, 10);
+        paint(cx, &app, window);
+        assert!(
+            e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some(),
+            "another owner's new read is not hidden with the dismissed Fetch"
+        );
+        close_by_pointer(cx, &app, window);
+        cx.read(|cx| {
+            assert_eq!(app.read(cx).slow_reads_inflight_for_e2e(other_owner), 1);
+            assert_eq!(app.read(cx).app_sessions.running_lease().unwrap().0, lease);
+        });
+        release_other.send(());
+        ready(cx, &app);
+        app.update(cx, |app, cx| app.switch_repo(0, cx));
+        wait(cx, &app, "the next visit revalidates", |state| {
+            state.active_session() == Some(owner) && !state.reads.is_loading(owner)
+        });
+        assert_hidden(cx, &app, window);
+        crate::pull_freshness::click_pull(cx, window);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert_eq!(
+                app.read(cx).fetch_in_flight.as_ref().unwrap().waiters.len(),
+                3
+            );
+        });
+        paint(cx, &app, window);
+        assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some());
+        close_by_pointer(cx, &app, window);
         release_fetch.send(());
         wait(
             cx,
@@ -595,5 +632,164 @@ pub fn scenario_busy_pull_revisit_request(cx: &mut VisualTestAppContext) {
         assert_eq!(pulls.len(), 1);
         assert!(matches!(pulls[0].outcome, OpOutcome::Success { .. }));
         unmount(cx, app, window);
+    }
+}
+
+pub fn scenario_busy_pull_merge_progress_dismiss(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for language in [Lang::En, Lang::Ja] {
+        for from_pull in [true, false] {
+            let fixture = build_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let origin = Origin::new(&repo);
+            std::fs::write(repo.join("upstream.txt"), "committed local side\n").unwrap();
+            git(&repo, &["add", "upstream.txt"]);
+            git(&repo, &["commit", "-qm", "competing local history"]);
+            let before_head = git_output(&repo, &["rev-parse", "HEAD"]);
+            let incoming = origin.advance();
+            if !from_pull {
+                git(&repo, &["fetch", "-q", "origin"]);
+            }
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                app.set_lang(language, cx);
+                app.set_window_active_for_e2e(true, cx);
+            });
+            ready(cx, &app);
+            if from_pull {
+                let (fetch, release_fetch) = deferred::<()>(cx);
+                KagiApp::hold_next_fetch_for_e2e(fetch);
+                crate::pull_freshness::click_pull(cx, window);
+                cx.run_until_parked();
+                close_by_pointer(cx, &app, window);
+                release_fetch.send(());
+                wait(
+                    cx,
+                    &app,
+                    "the real history-conflict Pull review appears",
+                    |state| state.pull_modal().is_some() && !state.app_sessions.has_leases(),
+                );
+            }
+            let (plan, release_plan) = deferred::<()>(cx);
+            KagiApp::hold_next_merge_plan_for_e2e(plan);
+            if from_pull {
+                crate::recovery_operations::press_enter(cx, &app, window);
+            } else {
+                app.update(cx, |app, cx| {
+                    app.open_merge_modal(
+                        "refs/remotes/origin/main".into(),
+                        Some("main".into()),
+                        cx,
+                    );
+                });
+            }
+            cx.run_until_parked();
+            advance(cx, 10);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(state.planning.is_some());
+                assert!(state.pull_modal().is_none());
+                assert!(state.merge_modal().is_none());
+                assert!(!state.app_sessions.has_leases(), "Review is not execution");
+            });
+            if from_pull {
+                assert_hidden(cx, &app, window);
+            } else {
+                paint(cx, &app, window);
+                assert!(
+                    e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some(),
+                    "an independent Merge never inherits Pull's dismissal"
+                );
+                close_by_pointer(cx, &app, window);
+            }
+            assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), before_head);
+            assert!(git_output(&repo, &["status", "--porcelain"]).is_empty());
+            release_plan.send(());
+            wait(cx, &app, "the real merge confirmation arrives", |state| {
+                state.planning.is_none() && state.merge_modal().is_some()
+            });
+            cx.read(|cx| {
+                assert!(matches!(
+                    app.read(cx).merge_modal().unwrap().kind,
+                    kagi_git::MergeKind::Conflicts(_)
+                ));
+            });
+            paint(cx, &app, window);
+            if !from_pull {
+                let cancel = e2e::control_bounds(window.window_id(), "plan-cancel").unwrap();
+                cx.simulate_click(window, cancel.center(), Modifiers::none());
+                cx.run_until_parked();
+                cx.read(|cx| assert!(app.read(cx).merge_modal().is_none()));
+                assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), before_head);
+                assert!(git_output(&repo, &["status", "--porcelain"]).is_empty());
+                assert!(oplog::read_oplog_tail_for_repo(&repo, 100)
+                    .iter()
+                    .all(|entry| entry.op != "merge"));
+                let (next, release_next) = deferred::<()>(cx);
+                KagiApp::hold_next_merge_plan_for_e2e(next);
+                app.update(cx, |app, cx| {
+                    app.open_merge_modal(
+                        "refs/remotes/origin/main".into(),
+                        Some("main".into()),
+                        cx,
+                    );
+                });
+                cx.run_until_parked();
+                paint(cx, &app, window);
+                assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some());
+                release_next.send(());
+                wait(
+                    cx,
+                    &app,
+                    "a new normal Merge still owns its confirmation",
+                    |state| state.merge_modal().is_some() && state.planning.is_none(),
+                );
+                paint(cx, &app, window);
+                let cancel = e2e::control_bounds(window.window_id(), "plan-cancel").unwrap();
+                cx.simulate_click(window, cancel.center(), Modifiers::none());
+            } else {
+                let (run, release_run) = deferred::<()>(cx);
+                KagiApp::hold_next_run_for_e2e(run);
+                let confirm = e2e::control_bounds(window.window_id(), "plan-confirm").unwrap();
+                cx.simulate_click(window, confirm.center(), Modifiers::none());
+                cx.run_until_parked();
+                advance(cx, 10);
+                cx.read(|cx| {
+                    assert!(app.read(cx).app_sessions.running_lease().is_some());
+                    assert!(app.read(cx).merge_modal().is_none());
+                });
+                assert_hidden(cx, &app, window);
+                assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), before_head);
+                assert!(git_output(&repo, &["status", "--porcelain"]).is_empty());
+                release_run.send(());
+                wait(
+                    cx,
+                    &app,
+                    "the hidden merge really enters Conflict Mode",
+                    |state| {
+                        !state.app_sessions.has_leases()
+                            && state.write_busy_op.is_none()
+                            && state.ui().conflict.is_some()
+                    },
+                );
+                assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), before_head);
+                assert_eq!(git_output(&repo, &["rev-parse", "MERGE_HEAD"]), incoming);
+                assert!(git_output(&repo, &["ls-files", "--unmerged"]).contains("upstream.txt"));
+                let entries = oplog::read_oplog_tail_for_repo(&repo, 100);
+                assert_eq!(
+                    entries.iter().filter(|entry| entry.op == "merge").count(),
+                    1
+                );
+                assert!(entries
+                    .iter()
+                    .all(|entry| !matches!(entry.op.as_str(), "stash-push" | "stash-pop")));
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(!matches!(state.status_footer, FooterStatus::Busy(_)));
+                    assert!(state.merge_modal().is_none());
+                });
+            }
+            unmount(cx, app, window);
+        }
     }
 }

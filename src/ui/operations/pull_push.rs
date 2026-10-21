@@ -538,7 +538,12 @@ impl KagiApp {
                 let target = identity.upstream_ref.clone();
                 let branch = identity.branch.clone();
                 self.clear_pull_modal();
-                self.open_merge_modal(target, Some(branch), cx);
+                self.open_merge_modal_with_progress(
+                    target,
+                    Some(branch),
+                    progress_identity.map(|identity| (identity, progress_hidden)),
+                    cx,
+                );
                 cx.notify();
             }
             return;

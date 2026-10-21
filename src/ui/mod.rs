@@ -1309,7 +1309,7 @@ pub struct KagiApp {
     /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
     pub write_busy_op: Option<&'static str>,
     busy_write_origin: Option<(crate::app::OperationId, busy::BusyIdentity)>,
-    busy_plan_request: Option<crate::app::RequestId>,
+    busy_plan_origin: Option<busy::BusyIdentity>,
     hidden_busy_job: Option<busy::BusyIdentity>,
     busy_close_focus: types::ToastCloseFocus,
     /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
@@ -1597,7 +1597,7 @@ impl KagiApp {
             github_host_login_requests: Default::default(),
             write_busy_op: None,
             busy_write_origin: None,
-            busy_plan_request: None,
+            busy_plan_origin: None,
             hidden_busy_job: None,
             busy_close_focus: Default::default(),
             planning: None,

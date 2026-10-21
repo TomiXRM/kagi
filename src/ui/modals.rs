@@ -301,6 +301,8 @@ pub struct MergePlanModal {
     pub error: Option<SharedString>,
     /// Queue-owned confirmation; absent for a direct merge.
     pub queued: Option<crate::app::IntentId>,
+    /// Presentation owner only; Pull's existing request can span merge planning.
+    pub(super) progress_identity: Option<super::busy::BusyIdentity>,
 }
 
 /// State for creating a local tracking branch from a remote branch and checking

@@ -14,7 +14,7 @@ pub(crate) const ADVICE_DISCARD_TARGET_SUBMODULE: &str =
 
 /// JA template for `Msg::AdviceDiscardUntrackedWillBeDeleted`.
 pub(crate) const ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED: &str =
-    "⚠️ untracked ファイル {} 件をディスクから削除します(空フォルダも削除)。削除前にバックアップを保存します。操作ログの詳細で blob SHA を確認し、`git cat-file -p <blob-sha>` で内容を取り出せます。";
+    "⚠️ 未追跡ファイル {} 件をディスクから削除します（空フォルダも削除）。各ファイルを削除前に Git 参照で保持するバックアップに保存します。操作ログの記録にある参照を使い、`git cat-file blob <backup-ref>:file` で内容を取り出せます。";
 
 /// Japanese rendering of one discard note.
 pub fn note_ja(note: &DiscardNote) -> String {
@@ -58,6 +58,18 @@ mod contract_tests {
             "⚠️ 未追跡ファイル 2 件をディスクから削除します(空フォルダも削除)。削除前に blob を oplog に保存します:\n  git cat-file -p <blob-sha>"
         );
     }
+
+    #[test]
+    fn display_explains_manual_retained_backup_recovery() {
+        assert!(ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains("バックアップ"));
+        assert!(ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains("<backup-ref>:file"));
+        assert!(!ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains("PERMANENTLY"));
+        let recovery = recovery_ja();
+        assert!(recovery.contains("Git の種類・モード"));
+        assert!(recovery.contains("git ls-tree <backup-ref>"));
+        assert!(recovery.contains("復旧は手動"));
+        assert!(recovery.contains("自動復元するわけではありません"));
+    }
 }
 
 /// Japanese rendering of the discard title.
@@ -80,7 +92,9 @@ pub fn title_ja(title: &PlanTitle) -> String {
 
 /// Japanese rendering of the discard recovery block.
 pub fn recovery_ja() -> String {
-    "未 stage の変更を破棄します。追跡ファイルは index から復元、未追跡ファイルはディスクから削除。\
-     実行前に各ファイルのバックアップを保存します。操作ログの詳細で blob SHA を確認し、内容を取り出してください:\n  git cat-file -p <blob-sha>"
+    "未 stage の変更を破棄します。追跡ファイルは index から復元し、未追跡ファイルはディスクから削除します。\
+     各ファイルの内容と Git の種類・モードを、実行前にバックアップ参照で保持します。操作ログの記録にある正確な参照を使い、\
+     `git cat-file blob <backup-ref>:file` で内容を、`git ls-tree <backup-ref>` で種類・モードを確認できます。\
+     復旧は手動です。Kagi がファイルを自動復元するわけではありません。"
         .to_string()
 }

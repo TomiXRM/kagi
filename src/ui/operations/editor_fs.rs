@@ -218,10 +218,8 @@ impl KagiApp {
 
     /// Move the target to `~/.Trash` (see `editor_fs_ops::trash_path` — same-
     /// volume only, never falls back to a permanent delete) and close any
-    /// open tab(s) under it. Single explicit confirm click — a Trash move is
-    /// recoverable, unlike Discard's `git checkout --`, so this doesn't need
-    /// `DiscardModal`'s two-stage arm (ponytail: match the safety mechanism to
-    /// the actual risk instead of copying the heaviest gate everywhere).
+    /// open tab(s) under it. A single explicit confirmation is sufficient for
+    /// this recoverable move.
     pub fn confirm_editor_delete(&mut self, cx: &mut Context<Self>) {
         let Some(modal) = self.editor_delete_confirm_modal().cloned() else {
             return;

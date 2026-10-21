@@ -36,6 +36,25 @@ fn bounds(
     e2e::control_bounds(window.window_id(), id)
 }
 
+/// These cases inspect the renderer, not the quiet-Push product entry (which
+/// now executes a safe Push directly). Freeze a real backend plan without a
+/// write so recovery/heading assertions remain about the card itself.
+pub(crate) fn show_push_preview(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    let plan = app
+        .ui()
+        .repo_session
+        .as_ref()
+        .expect("fixture repository session")
+        .backend()
+        .plan_push()
+        .expect("real Push preview plan");
+    app.set_push_modal(kagi::ui::PushPlanModal {
+        plan: std::sync::Arc::new(plan),
+        error: None,
+    });
+    cx.notify();
+}
+
 fn ready_push(
     cx: &mut VisualTestAppContext,
 ) -> (
@@ -58,7 +77,7 @@ fn ready_push(
     git(repo, &["push", "-q", "-u", "origin", "main"]);
     git(repo, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
     let (app, window) = mount(cx, repo);
-    app.update(cx, |app, cx| app.open_push_modal(cx));
+    app.update(cx, show_push_preview);
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).push_modal().unwrap().plan.blockers.is_empty()));
     (fixture, remote, app, window)
@@ -560,7 +579,7 @@ pub fn scenario_plan_card_heading(cx: &mut VisualTestAppContext) {
             cx.read(|cx| i18n::plan_title_text(&app.read(cx).plan_modal().unwrap().plan.title));
         assert_heading(cx, window, &checkout_title);
         app.update(cx, |app, _| app.clear_plan_modal());
-        app.update(cx, |app, cx| app.open_push_modal(cx));
+        app.update(cx, show_push_preview);
         cx.run_until_parked();
     }
     assert_eq!(repo_fingerprint(repo), before);

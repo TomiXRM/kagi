@@ -685,6 +685,7 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
 /// together. Asserting the slot therefore also asserts the absent klog line —
 /// without teaching the runner to capture its own stderr.
 pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
+    recoverable_reset_and_leased_remote_confirmation(cx);
     let fixture = build_fixture();
     let repo = fixture.path();
     let head = output(repo, &["rev-parse", "HEAD"]);
@@ -2966,6 +2967,72 @@ pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
     );
 }
 
+/// #1695: ref-only reset executes once; remote rewrites retain an arm-only
+/// first approval with the exact frozen target and lease in both languages.
+fn recoverable_reset_and_leased_remote_confirmation(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-q"]);
+        git(
+            repo,
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(repo, &["push", "-qu", "origin", "main"]);
+        let previous = output(repo, &["rev-parse", "HEAD"]);
+        let target = output(repo, &["rev-parse", "HEAD~1"]);
+        std::fs::write(repo.join("README.md"), "retained working edit\n").unwrap();
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, cx| {
+            app.set_lang(language, cx);
+            app.open_reset_current_modal(CommitId(target.clone()), cx);
+        });
+        paint(cx, window);
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).reset_current_modal().is_none()));
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), target);
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "retained working edit\n"
+        );
+        let entries = records(repo, "reset", 100, true);
+        assert_eq!(
+            entries.len(),
+            1,
+            "one explicit confirmation records one reset"
+        );
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        app.update(cx, |app, cx| app.open_force_lease_push_modal(cx));
+        paint(cx, window);
+        crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
+        paint(cx, window);
+        assert!(cx.read(|cx| app.read(cx).force_lease_push_modal().unwrap().confirm_armed));
+        let label = kagi::ui::button_style::recorded_modal_button("plan-confirm")
+            .unwrap()
+            .label;
+        assert!(
+            label.contains("origin/main") && label.contains(&previous),
+            "{language:?}: {label}"
+        );
+        assert!(!label.contains("cannot be undone") && !label.contains("取り消せません"));
+        if language == Lang::Ja {
+            assert!(label.contains("場合だけ履歴を書き換える"));
+        }
+        assert_eq!(output(remote.path(), &["rev-parse", "main"]), previous);
+        assert!(records(repo, "force-with-lease-push", 100, true).is_empty());
+        app.update(cx, |app, _| app.cancel_force_lease_push_modal());
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(original_language);
+}
+
 /// #584: both real confirm inputs share the unmerged arm transition.
 pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
     use kagi::ui::i18n::{self, Lang};
@@ -3031,6 +3098,44 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
             assert_eq!(displayed.id, entries[0].id);
             assert_eq!(displayed.backup_refs, entries[0].backup_refs);
         });
+        // The tip is not merged into main, but a remote ref already retains
+        // every commit. One explicit confirmation deletes only the local ref.
+        git(repo, &["branch", "shared-delete", &tip]);
+        git(
+            repo,
+            &["update-ref", "refs/remotes/origin/shared-delete", &tip],
+        );
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("shared-delete", cx)
+        });
+        wait_idle(cx, &app);
+        cx.read(|cx| {
+            let modal = app.read(cx).delete_branch_modal().unwrap();
+            assert!(!modal.requires_arm());
+            assert!(modal.plan.warnings.iter().any(|note| matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Branch(
+                    kagi_domain::plan_note::BranchNote::DeleteUnmerged { commits: 0, .. }
+                )
+            )));
+        });
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
+        assert_eq!(output(repo, &["branch", "--list", "shared-delete"]), "");
+        assert_eq!(
+            output(repo, &["rev-parse", "refs/remotes/origin/shared-delete"]),
+            tip
+        );
+        let retained = records(repo, "delete-branch", 100, true);
+        assert_eq!(retained.len(), 2);
+        assert_eq!(
+            retained
+                .iter()
+                .map(|entry| entry.backup_refs.len())
+                .sum::<usize>(),
+            2
+        );
 
         // Merged branches still execute on the first Enter/click.
         app.update(cx, |app, cx| {
@@ -3154,7 +3259,7 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
         wait_idle(cx, &app);
         assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
         assert_eq!(output(repo, &["branch", "--list", "merged-delete"]), "");
-        assert_eq!(records(repo, "delete-branch", 100, true).len(), 2);
+        assert_eq!(records(repo, "delete-branch", 100, true).len(), 3);
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS unmerged_branch_delete_armed: Enter/button arm then execute; merged stays one-stage");
@@ -4163,6 +4268,22 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
             .t()
             .replace("{}", "1")
     );
+    let recovery = cx.read(|cx| {
+        kagi_ui_core::i18n::plan_recovery_text(
+            app.read(cx).discard_modal().unwrap().plan.recovery.as_ref(),
+        )
+    });
+    assert_eq!(d.description.as_deref(), Some(recovery.as_str()));
+    assert!(!cx.read(|cx| app.read(cx).discard_modal().unwrap().requires_two_stage()));
+
+    // A plan without the backup guarantee still requires two explicit presses.
+    app.update(cx, |app, cx| {
+        let mut modal = app.discard_modal().unwrap().clone();
+        std::sync::Arc::make_mut(&mut modal.plan).recovery = None;
+        app.set_discard_modal(modal);
+        cx.notify();
+    });
+    redraw(cx, &app, window);
     crate::destructive_modal_return::focused_confirm(cx, &app, window, "discard-confirm");
     cx.run_until_parked();
     redraw(cx, &app, window);

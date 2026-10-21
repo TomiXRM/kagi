@@ -254,11 +254,8 @@ impl KagiApp {
     /// Confirm the discard: run `discard_blocking` on a background thread
     /// (write latch "discard"), then reload. Mirrors `start_pop`.
     ///
-    /// Two-stage confirm (T-REARCH-014, mirrors `start_amend`): the first click
-    /// only *arms* the red Discard button; the second click executes. Discard is
-    /// the most destructive working-tree op (checkout -- + untracked deletion),
-    /// and the single-click execute was the biggest safety gap vs the product
-    /// thesis.
+    /// Mandatory backup-backed plans need one explicit confirmation. A plan
+    /// without that recovery contract retains the two-stage arm.
     pub fn start_discard(&mut self, cx: &mut Context<Self>) {
         let modal = match self.discard_modal().cloned() {
             Some(m) => m,
@@ -269,8 +266,8 @@ impl KagiApp {
             return;
         }
 
-        // ── Two-stage confirm: first click only arms ──────────────────
-        if !modal.confirm_armed {
+        // Only a plan without mandatory discard recovery needs an arm.
+        if modal.requires_two_stage() && !modal.confirm_armed {
             let kinds = self.discard_kinds(cx);
             self.set_discard_modal(DiscardModal {
                 kinds: kinds.clone(),
@@ -308,14 +305,9 @@ impl KagiApp {
             return;
         }
 
-        // ADR-0104 / T-REARCH-014 cross-review fix (B3): the two-stage gate
-        // opens an unbounded window between arming (first click) and firing
-        // (second click). The repo may have changed under the user in that
-        // window (terminal checkout, sibling worktree, etc.). Re-run preflight
-        // here on the ARMED path; if HEAD moved since the plan was built,
-        // refuse and re-show the modal (disarmed) with the preflight error,
-        // rather than executing a stale plan that may discard the wrong
-        // content or back up the wrong blobs.
+        // Repository state may change at any time after planning. Re-run
+        // preflight on every execution path, including single confirmation.
+        // A stale plan is refused and re-shown disarmed with its error.
         match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(repo) => {
                 if let Err(e) = repo.preflight_check(&modal.plan) {

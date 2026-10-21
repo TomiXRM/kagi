@@ -1,9 +1,7 @@
 //! Reset-current-to-HEAD operation (branch-menu "Advanced / Dangerous" group).
 //!
-//! Two-stage confirm (mirrors `operations/remote_branch.rs`'s
-//! delete-remote-branch `confirm_armed` pattern): the first click only arms
-//! the button; the second click runs the reset on a background thread and
-//! reloads.
+//! A single explicit plan confirmation runs the ref-only reset. The index and
+//! working tree remain unchanged, and the recorded previous tip is recoverable.
 
 use super::RunPresentation;
 use crate::ui::*;
@@ -34,7 +32,6 @@ impl KagiApp {
                     target,
                     plan: std::sync::Arc::new(plan),
                     error: None,
-                    confirm_armed: false,
                 });
             }
             Err(e) => {
@@ -49,24 +46,13 @@ impl KagiApp {
         self.clear_reset_current_modal();
     }
 
-    /// Two-stage confirm (mirrors `start_delete_remote_branch`): the first
-    /// click only arms the button; the second click runs the reset on a
-    /// background thread (write latch) and reloads.
+    /// Confirm the recoverable ref-only move, then run it on the background
+    /// write path with the existing admission and backend preflight checks.
     pub fn start_reset_current(&mut self, cx: &mut Context<Self>) {
         let modal = match self.reset_current_modal().cloned() {
             Some(m) => m,
             None => return,
         };
-
-        if !modal.confirm_armed {
-            self.set_reset_current_modal(ResetCurrentModal {
-                confirm_armed: true,
-                ..modal
-            });
-            klog!("reset-current: armed (second confirm required — destructive)");
-            cx.notify();
-            return;
-        }
 
         if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));

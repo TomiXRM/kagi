@@ -452,6 +452,33 @@ fn advice_keeps_identifiers_literal_and_their_roles_distinct() {
 }
 
 #[test]
+fn zero_loss_branch_deletion_describes_retention_without_second_confirmation() {
+    use kagi_domain::plan_note::{BranchNote, PlanNote};
+    let _guard = LOCK.lock();
+    let note = PlanNote::Branch(BranchNote::DeleteUnmerged {
+        name: "feature/{}-レビュー".into(),
+        tip: "abc123456789".into(),
+        commits: 0,
+    });
+    for language in [Lang::En, Lang::Ja] {
+        set_lang_no_persist(language);
+        let text = plan_note_text(&note);
+        assert!(text.contains("feature/{}-レビュー") && text.contains("abc123456789"));
+        assert!(!text.contains("Confirm twice") && !text.contains("2 回確認"));
+        assert!(
+            !text.contains("0 commits unreachable")
+                && !text.contains("0 commit が他の ref から到達不能")
+        );
+        assert!(text.contains(if language == Lang::En {
+            "recovery ref"
+        } else {
+            "復元用 ref"
+        }));
+    }
+    set_lang_no_persist(Lang::En);
+}
+
+#[test]
 fn explicit_japanese_advice_preserves_stash_syntax_under_english_locale() {
     use kagi_domain::plan_note::CommonNote;
 

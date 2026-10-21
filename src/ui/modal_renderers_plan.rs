@@ -725,19 +725,13 @@ pub(crate) fn render_delete_remote_branch_modal(
     )
 }
 
-/// Reset-current-to-HEAD confirmation overlay (branch-menu "Advanced /
-/// Dangerous" group). Two-stage confirm, same shape as
-/// `render_delete_remote_branch_modal`.
+/// Recoverable ref-only reset: one explicit plan confirmation.
 pub(crate) fn render_reset_current_modal(
     modal: ResetCurrentModal,
     overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let confirm_label: SharedString = if modal.confirm_armed {
-        SharedString::from(Msg::PlanResetCurrentArmed.t())
-    } else {
-        SharedString::from(Msg::PlanResetCurrent.t())
-    };
+    let confirm_label = SharedString::from(Msg::PlanResetCurrent.t());
     render_plan_modal_wrapper_staged(
         modal.plan,
         modal.error,
@@ -747,7 +741,7 @@ pub(crate) fn render_reset_current_modal(
             ModalIcon::Path("icons/refresh-cw.svg"),
             theme().color_blocker,
         )),
-        super::dialog_a11y::ConfirmStage::two_stage(modal.confirm_armed),
+        super::dialog_a11y::ConfirmStage::Single,
         |this, _cx| this.cancel_reset_current_modal(),
         |this, cx| this.start_reset_current(cx),
         overrides,
@@ -755,16 +749,16 @@ pub(crate) fn render_reset_current_modal(
     )
 }
 
-/// Force-with-lease push confirmation overlay (branch-menu "Advanced /
-/// Dangerous" group). Two-stage confirm, same shape as
-/// `render_reset_current_modal`.
+/// Remote history rewrite: retain both confirmations and show the frozen lease.
 pub(crate) fn render_force_lease_push_modal(
     modal: ForceLeasePushModal,
     overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
-        SharedString::from(Msg::PlanForcePushArmed.t())
+        SharedString::from(kagi_ui_core::i18n::plan::force_lease::armed_confirmation(
+            &modal.plan,
+        ))
     } else {
         SharedString::from(Msg::PlanForcePush.t())
     };

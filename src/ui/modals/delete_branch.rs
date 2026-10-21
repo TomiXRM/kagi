@@ -1,5 +1,5 @@
-//! Delete-branch confirmation state (W2-DELETE; unmerged branches arm a
-//! second confirm, #584).
+//! Delete-branch confirmation state: only deletion losing commit reachability
+//! requires a second confirmation (#584 / #1695).
 
 use gpui::SharedString;
 use kagi_git::ops::OperationPlan;
@@ -7,13 +7,13 @@ use kagi_ui_core::i18n::Msg;
 
 /// State for an in-progress delete-branch confirmation (W2-DELETE).
 ///
-/// Unmerged deletion requires two confirmations; blockers still refuse.
-/// Recovery retains the tip under a mandatory backup ref.
+/// Losing commit reachability requires two confirmations; blockers still refuse.
+/// Zero lost commits needs one confirmation. Recovery always retains the tip.
 #[derive(Clone)]
 pub struct DeleteBranchModal {
     /// Frozen plan owner, including its departure revision.
     pub owner: crate::app::Attachment,
-    /// First confirmation arms only unmerged deletion; errors/reopening reset it.
+    /// First confirmation arms only deletion losing commits; reopening resets it.
     pub confirm_armed: bool,
     /// The local branch name to delete.
     pub branch_name: String,
@@ -42,13 +42,13 @@ impl DeleteBranchModal {
 
     /// Returns true when this confirmation only arms; false permits the caller
     /// to continue through its existing blockers/busy/preflight checks.
-    /// An unmerged branch needs the second confirm (#584).
+    /// An unmerged branch with no commits losing reachability needs only one.
     pub fn requires_arm(&self) -> bool {
         self.plan.warnings.iter().any(|note| {
             matches!(
                 note,
                 kagi_domain::plan_note::PlanNote::Branch(
-                    kagi_domain::plan_note::BranchNote::DeleteUnmerged { .. }
+                    kagi_domain::plan_note::BranchNote::DeleteUnmerged { commits: 1.., .. }
                 )
             )
         })

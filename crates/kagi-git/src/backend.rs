@@ -240,21 +240,7 @@ impl Backend {
     pub fn current_state(&self) -> Result<ops::StateSummary, GitError> {
         let head_display = resolve_head(&self.repo)?.display();
         let status = crate::status::working_tree_status(&self.repo)?;
-        let dirty_parts: Vec<String> = [
-            (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-            (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-            (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-            (!status.conflicted.is_empty())
-                .then(|| format!("{} conflicted", status.conflicted.len())),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        let dirty = if dirty_parts.is_empty() {
-            "clean".to_string()
-        } else {
-            dirty_parts.join(", ")
-        };
+        let dirty = ops::status_summary_display(&status);
         Ok(ops::StateSummary {
             head: head_display,
             dirty,

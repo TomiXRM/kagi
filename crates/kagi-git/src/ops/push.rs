@@ -84,26 +84,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     // ── 2. Build current StateSummary ────────────────────────
     let head_display = head.display();
 
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
-
-    let current = StateSummary {
-        head: head_display.clone(),
-        dirty: dirty_display,
-    };
+    let current = state_summary(head_display.clone(), &status);
 
     // ── 3. Early blockers (before touching git objects) ──────
     // ADR-0129 appendix §B-5: typed notes, not English prose. `message_en()`
@@ -197,32 +178,15 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 .unwrap_or((0, 0));
             (true, remote, ahead)
         }
-        Err(_) => {
-            // No upstream configured — find a remote to use (set-upstream flow).
-            let remotes = repo
-                .remotes()
-                .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
-            let remote_names: Vec<String> = remotes
-                .iter()
-                .filter_map(|s| s.ok().flatten())
-                .map(|s| s.to_owned())
-                .collect();
-
-            if remote_names.is_empty() {
+        Err(_) => match choose_push_remote(repo)? {
+            Some(remote) => (false, remote, usize::MAX), // MAX sentinel: compute below
+            None => {
                 blockers.push(PlanNote::Push(PushNote::NoUpstreamNoRemotes {
                     branch: branch_name.clone(),
                 }));
                 (false, String::new(), 0usize)
-            } else {
-                // Prefer "origin"; fall back to the only remote.
-                let chosen = if remote_names.iter().any(|r| r == "origin") {
-                    "origin".to_string()
-                } else {
-                    remote_names[0].clone()
-                };
-                (false, chosen, usize::MAX) // MAX sentinel: compute below
             }
-        }
+        },
     };
 
     // ── 6. Upstream-configured but nothing to push ───────────
@@ -359,28 +323,7 @@ pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOu
     let upstream_result = push_upstream_info(repo, &branch_name);
     let (has_upstream, remote_name) = match upstream_result {
         Ok((_, remote, _)) => (true, remote),
-        Err(_) => {
-            // No upstream — pick a remote (prefer origin).
-            let remotes = repo
-                .remotes()
-                .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
-            let remote_names: Vec<String> = remotes
-                .iter()
-                .filter_map(|s| s.ok().flatten())
-                .map(|s| s.to_owned())
-                .collect();
-            if remote_names.is_empty() {
-                return Err(GitError::Other(
-                    "No remote configured. Cannot push.".to_string(),
-                ));
-            }
-            let chosen = if remote_names.iter().any(|r| r == "origin") {
-                "origin".to_string()
-            } else {
-                remote_names[0].clone()
-            };
-            (false, chosen)
-        }
+        Err(_) => (false, choose_push_remote(repo)?.ok_or_else(no_push_remote)?),
     };
 
     // ── 3. Compute ahead count for PushOutcome.pushed ────────
@@ -519,8 +462,9 @@ fn build_push_preview(
 }
 
 /// The remote a push targets when the caller has not named one: `origin` if it
-/// exists, otherwise the first configured remote.
-pub(crate) fn choose_push_remote(repo: &Repository) -> Result<String, GitError> {
+/// exists, otherwise the first configured remote. Absence is not a lookup error:
+/// planners translate it to their own typed blocker.
+pub(crate) fn choose_push_remote(repo: &Repository) -> Result<Option<String>, GitError> {
     let remotes = repo
         .remotes()
         .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
@@ -529,16 +473,15 @@ pub(crate) fn choose_push_remote(repo: &Repository) -> Result<String, GitError> 
         .filter_map(|s| s.ok().flatten())
         .map(|s| s.to_owned())
         .collect();
-    if remote_names.is_empty() {
-        return Err(GitError::Other(
-            "No remote configured. Cannot push.".to_string(),
-        ));
-    }
     if remote_names.iter().any(|r| r == "origin") {
-        Ok("origin".to_string())
+        Ok(Some("origin".to_string()))
     } else {
-        Ok(remote_names[0].clone())
+        Ok(remote_names.into_iter().next())
     }
+}
+
+fn no_push_remote() -> GitError {
+    GitError::Other("No remote configured. Cannot push.".to_string())
 }
 
 fn build_push_preview_for_oid(
@@ -620,7 +563,7 @@ pub fn plan_push_branch(
     };
 
     let (remote_name, upstream_oid, has_upstream) = if set_upstream {
-        match choose_push_remote(repo) {
+        match choose_push_remote(repo).and_then(|remote| remote.ok_or_else(no_push_remote)) {
             Ok(remote) => (remote, None, false),
             Err(e) => {
                 blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
@@ -725,7 +668,7 @@ pub(crate) fn execute_push_branch(
     let local_oid = local_branch_oid(repo, branch_name)?;
 
     let (remote_name, upstream_oid) = if set_upstream {
-        (choose_push_remote(repo)?, None)
+        (choose_push_remote(repo)?.ok_or_else(no_push_remote)?, None)
     } else {
         let (_, remote, _) = resolve_upstream_info(repo, branch_name)?;
         let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote).ok();

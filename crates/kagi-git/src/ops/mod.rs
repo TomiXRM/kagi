@@ -246,6 +246,13 @@ pub(crate) fn status_summary_display(status: &super::status::WorkingTreeStatus) 
     }
 }
 
+fn state_summary(head: String, status: &super::status::WorkingTreeStatus) -> StateSummary {
+    StateSummary {
+        head,
+        dirty: status_summary_display(status),
+    }
+}
+
 /// Build the effective Git committer signature without inventing an identity.
 /// Libgit2 commit writers share Git's config/env semantics with CLI commits.
 pub(crate) fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
@@ -491,4 +498,63 @@ pub(crate) fn merge_dirty_warnings_notes(
         }));
     }
     warnings
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use crate::status::WorkingTreeStatus;
+
+    #[test]
+    fn state_summary_preserves_head_and_dirty_category_order() {
+        let file = FileStatus {
+            path: "tracked".into(),
+            change: ChangeKind::Modified,
+        };
+        let expected = [
+            "clean",
+            "1 staged",
+            "2 modified",
+            "1 staged, 2 modified",
+            "3 untracked",
+            "1 staged, 3 untracked",
+            "2 modified, 3 untracked",
+            "1 staged, 2 modified, 3 untracked",
+            "4 conflicted",
+            "1 staged, 4 conflicted",
+            "2 modified, 4 conflicted",
+            "1 staged, 2 modified, 4 conflicted",
+            "3 untracked, 4 conflicted",
+            "1 staged, 3 untracked, 4 conflicted",
+            "2 modified, 3 untracked, 4 conflicted",
+            "1 staged, 2 modified, 3 untracked, 4 conflicted",
+        ];
+        for (mask, expected) in expected.into_iter().enumerate() {
+            let status = WorkingTreeStatus {
+                staged: if mask & 1 != 0 {
+                    vec![file.clone()]
+                } else {
+                    vec![]
+                },
+                unstaged: if mask & 2 != 0 {
+                    vec![file.clone(); 2]
+                } else {
+                    vec![]
+                },
+                untracked: if mask & 4 != 0 {
+                    vec!["new".into(); 3]
+                } else {
+                    vec![]
+                },
+                conflicted: if mask & 8 != 0 {
+                    vec!["conflict".into(); 4]
+                } else {
+                    vec![]
+                },
+            };
+            let summary = state_summary("unchanged HEAD display".into(), &status);
+            assert_eq!(summary.head, "unchanged HEAD display");
+            assert_eq!(summary.dirty, expected, "category mask {mask}");
+        }
+    }
 }

@@ -50,26 +50,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     // ── 2. Build current StateSummary ────────────────────────
     let head_display = head.display();
 
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
-
-    let current = StateSummary {
-        head: head_display.clone(),
-        dirty: dirty_display,
-    };
+    let current = state_summary(head_display.clone(), &status);
 
     // ── 3. Early blockers (before touching git objects) ──────
     let mut blockers: Vec<PlanNote> = Vec::new();
@@ -220,28 +201,8 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         .map_err(|e| GitError::Other(format!("cherry-pick in-memory failed: {}", e.message())))?;
 
     // ── 8. Conflict detection ─────────────────────────────────
-    let mut conflict_files: Vec<String> = Vec::new();
     if index.has_conflicts() {
-        // Collect conflicting paths.
-        let conflicts = index
-            .conflicts()
-            .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
-        for conflict_result in conflicts {
-            let conflict = conflict_result
-                .map_err(|e| GitError::Other(format!("conflict entry error: {}", e.message())))?;
-            // Each of ours/theirs/ancestor may be Some; grab whichever has a path.
-            // In git2, IndexEntry.path is a Vec<u8>.
-            let path_bytes: Option<Vec<u8>> = conflict
-                .our
-                .as_ref()
-                .map(|e| e.path.clone())
-                .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
-                .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
-            if let Some(p) = path_bytes {
-                let path_str = String::from_utf8_lossy(&p).into_owned();
-                conflict_files.push(path_str);
-            }
-        }
+        let conflict_files = conflict_paths_from_index(&mut index)?;
         blockers.push(PlanNote::CherryRevert(CherryRevertNote::WouldConflict {
             count: conflict_files.len(),
             files: conflict_files.clone(),
@@ -596,25 +557,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     let status = working_tree_status(repo)?;
     let head_display = head.display();
 
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
-
-    let current = StateSummary {
-        head: head_display.clone(),
-        dirty: dirty_display,
-    };
+    let current = state_summary(head_display.clone(), &status);
 
     let mut blockers: Vec<PlanNote> = Vec::new();
     super::add_git_identity_blocker(repo, &mut blockers)?;
@@ -762,23 +705,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         .map_err(|e| GitError::Other(format!("revert in-memory failed: {}", e.message())))?;
 
     if index.has_conflicts() {
-        let mut conflict_files = Vec::new();
-        let conflicts = index
-            .conflicts()
-            .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
-        for conflict_result in conflicts {
-            let conflict = conflict_result
-                .map_err(|e| GitError::Other(format!("conflict entry error: {}", e.message())))?;
-            let path_bytes: Option<Vec<u8>> = conflict
-                .our
-                .as_ref()
-                .map(|e| e.path.clone())
-                .or_else(|| conflict.their.as_ref().map(|e| e.path.clone()))
-                .or_else(|| conflict.ancestor.as_ref().map(|e| e.path.clone()));
-            if let Some(p) = path_bytes {
-                conflict_files.push(String::from_utf8_lossy(&p).into_owned());
-            }
-        }
+        let conflict_files = conflict_paths_from_index(&mut index)?;
         blockers.push(PlanNote::CherryRevert(CherryRevertNote::WouldConflict {
             count: conflict_files.len(),
             files: conflict_files.clone(),

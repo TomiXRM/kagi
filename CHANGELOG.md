@@ -12,6 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   - Propagate unreadable ancestry and squash evidence, so missing Git objects leave deletion menus neutral instead of falsely warning that a branch is unmerged.
 ### Changed
 
+- Reuse existing Git helpers for plan status summaries, cherry-pick/revert conflict paths, and push remote selection without changing displayed text or operation safety ordering. (#1705)
 - Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, including Pull freshness/conflict scenarios, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
 
 ## [0.47.0] - 2026-10-21

@@ -20,6 +20,21 @@ The measured app-layer slices below now live in `src/app` and existing `Sessions
 they do not establish the original `kagi-app` crate, universal worker dispatch, or
 zero-copy tab ownership target.
 
+### Structure W1 (2026-10-21, #1704)
+
+Git remote setup, application fixtures and low-level snapshot/oplog collection now
+live in `tests/support/`; all T02/T05/T06/T10 callers use those owners. Backend
+integrations retain #515's relative `#[path]` inclusion. Snapshot types and safety
+oracles remain scenario-owned, including the distinction between raw index bytes
+and staged-content identity. No production owner or migration-stage status changes.
+
+Measured Rust physical LOC (including blank/comment lines): production is unchanged
+at 306,273 LOC / 771 files; tests/support moves from 208,198 LOC / 476 files to
+208,254 LOC / 478 files (+56 LOC, including new collection regressions). This is
+not the planning estimate of a 200-line net reduction. Files over 800 remain 115;
+AST functions over 80 remain 875, with 19 parser-error files under pinned
+tree-sitter 0.25.2 / tree-sitter-rust 0.24.0. No physical move is counted as a saving.
+
 ## Invariants held at every step
 - `cargo test --workspace` green.
 - Every v0.2.0 feature (`inventory.md` §2) and safety guarantee (`§3`) preserved.

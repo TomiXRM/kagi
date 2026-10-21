@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
+
 ## [0.47.0] - 2026-10-21
 
 ### Added

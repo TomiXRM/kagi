@@ -5,7 +5,10 @@
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git, git_command, git_output, git_succeeds, init_repo, write_file};
+use git_fixture::{
+    commit_all, git, git_command, git_output, git_succeeds, init_repo, selected_worktree_files,
+    write_file,
+};
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 
@@ -135,25 +138,18 @@ fn checkout_state(local: &Path) -> CheckoutState {
         index_entries: git_output(local, &["ls-files", "-s"]),
         staged_a: staged_a.stdout,
         status: status(local),
-        files: [
-            ".gitignore",
-            "a.txt",
-            "b.txt",
-            "c.txt",
-            "new.txt",
-            "sub/untracked.txt",
-            "ignored.log",
-        ]
-        .into_iter()
-        .map(|path| {
-            let bytes = match std::fs::read(local.join(path)) {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => panic!("read {path}: {error}"),
-            };
-            (path, bytes)
-        })
-        .collect(),
+        files: selected_worktree_files(
+            local,
+            [
+                ".gitignore",
+                "a.txt",
+                "b.txt",
+                "c.txt",
+                "new.txt",
+                "sub/untracked.txt",
+                "ignored.log",
+            ],
+        ),
     }
 }
 

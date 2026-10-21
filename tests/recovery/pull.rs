@@ -14,15 +14,12 @@ use crate::recovery_operations::{press_enter, wait_idle};
 mod git_fixture;
 use git_fixture::git_output as output;
 
-fn records(repo: &Path, op: &str) -> Vec<kagi_git::oplog::OpLogEntry> {
-    read_oplog_tail_for_repo(repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == op)
-        .collect()
-}
+#[path = "../support/oplog.rs"]
+mod oplog;
+use oplog::records;
 
 fn assert_stash_push_recovery(repo: &Path) {
-    let pushes = records(repo, "stash-push");
+    let pushes = records(repo, "stash-push", 100, true);
     assert_eq!(pushes.len(), 1, "auto-stash must be recorded exactly once");
     assert!(
         pushes[0]
@@ -139,7 +136,7 @@ pub fn scenario_pull_auto_stash_success(cx: &mut VisualTestAppContext) {
     assert!(output(repo, &["stash", "list"]).is_empty());
     assert_stash_push_recovery(repo);
     assert!(
-        records(repo, "pull")
+        records(repo, "pull", 100, true)
             .iter()
             .any(|entry| matches!(entry.outcome, OpOutcome::Success { .. })),
         "Pull success must be durable"
@@ -870,7 +867,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     });
 
     assert_eq!(
-        records(repo, "stash-pop").len(),
+        records(repo, "stash-pop", 100, true).len(),
         0,
         "a fetch that is not proven stopped must not be followed by a pop"
     );
@@ -879,7 +876,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         "the user's work stays in the stash"
     );
     assert!(
-        records(repo, "pull")
+        records(repo, "pull", 100, true)
             .iter()
             .any(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. })),
         "the indeterminate Pull outcome must be durable"
@@ -999,7 +996,7 @@ pub fn scenario_run_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) 
                 .is_some_and(|notice| notice.inspect.is_some())
         })
     });
-    let durable = records(repo, "push");
+    let durable = records(repo, "push", 100, true);
     assert_eq!(durable.len(), 1, "one attempt, one durable Push entry");
     assert!(matches!(durable[0].outcome, OpOutcome::Unknown { .. }));
 
@@ -1185,15 +1182,22 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
     cx.run_until_parked();
 
     for op in ["stash-push", "pull", "stash-pop"] {
-        assert_eq!(records(repo, op).len(), 1, "{op} is recorded once");
+        assert_eq!(
+            records(repo, op, 100, true).len(),
+            1,
+            "{op} is recorded once"
+        );
     }
     assert!(
-        matches!(records(repo, "pull")[0].outcome, OpOutcome::Failed { .. }),
+        matches!(
+            records(repo, "pull", 100, true)[0].outcome,
+            OpOutcome::Failed { .. }
+        ),
         "the pull is the failure the workflow settles on"
     );
     assert!(
         matches!(
-            records(repo, "stash-pop")[0].outcome,
+            records(repo, "stash-pop", 100, true)[0].outcome,
             OpOutcome::Success { .. }
         ),
         "and the restore after it succeeded — the case that used to win the footer"
@@ -1231,7 +1235,7 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         for op in ["stash-push", "pull", "stash-pop"] {
-            let durable = records(repo, op);
+            let durable = records(repo, op, 100, true);
             assert!(
                 panel
                     .entries()
@@ -1310,7 +1314,7 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
 
-    let durable = records(repo, "pull");
+    let durable = records(repo, "pull", 100, true);
     assert_eq!(
         durable.len(),
         1,
@@ -1393,7 +1397,7 @@ pub fn scenario_pull_blocked_plan_presents_a_core_receipt(cx: &mut VisualTestApp
     wait_idle(cx, &app);
     cx.run_until_parked();
 
-    let durable = records(repo, "pull");
+    let durable = records(repo, "pull", 100, true);
     assert_eq!(
         durable.len(),
         1,
@@ -1490,7 +1494,7 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
         vec!["stash-push", "pull", "stash-pop"],
         "a dirty pull records its three children, in execution order"
     );
-    let pulls = records(repo, "pull");
+    let pulls = records(repo, "pull", 100, true);
     assert_eq!(
         pulls.len(),
         1,
@@ -1520,7 +1524,7 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
             "the presented entry keeps the backend's failure code"
         );
         for op in ["stash-push", "pull", "stash-pop"] {
-            let durable = records(repo, op);
+            let durable = records(repo, op, 100, true);
             assert_eq!(durable.len(), 1, "{op} is recorded once");
             assert!(
                 mine.iter().any(|entry| entry.id == durable[0].id),
@@ -1586,7 +1590,7 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
     assert!(output(repo, &["stash", "list"]).is_empty());
     assert_stash_push_recovery(repo);
     assert!(
-        records(repo, "pull")
+        records(repo, "pull", 100, true)
             .iter()
             .any(|entry| matches!(entry.outcome, OpOutcome::Failed { .. })),
         "Pull failure must be durable"
@@ -1769,8 +1773,8 @@ fn pull_overlap_preview(cx: &mut VisualTestAppContext) {
         before,
         "cancel leaves local changes intact"
     );
-    assert!(records(repo, "stash-push").is_empty());
-    assert!(records(repo, "pull").is_empty());
+    assert!(records(repo, "stash-push", 100, true).is_empty());
+    assert!(records(repo, "pull", 100, true).is_empty());
     crate::pull_freshness::click_pull(cx, window);
     cx.run_until_parked();
     cx.read(|cx| assert!(app.read(cx).pull_modal().is_some_and(|m| m.auto_stash)));
@@ -1814,16 +1818,16 @@ fn pull_overlap_preview(cx: &mut VisualTestAppContext) {
         "held job has not written"
     );
     assert!(
-        records(repo, "stash-push").is_empty(),
+        records(repo, "stash-push", 100, true).is_empty(),
         "repeated Enter cannot dispatch another job"
     );
     cx.read(|cx| assert!(app.read(cx).fetch_in_flight.is_none()));
     release.send(());
     wait_idle(cx, &app);
     cx.run_until_parked();
-    assert_eq!(records(repo, "stash-push").len(), 1);
-    assert_eq!(records(repo, "pull").len(), 1);
-    assert_eq!(records(repo, "stash-pop").len(), 1);
+    assert_eq!(records(repo, "stash-push", 100, true).len(), 1);
+    assert_eq!(records(repo, "pull", 100, true).len(), 1);
+    assert_eq!(records(repo, "stash-pop", 100, true).len(), 1);
     assert!(
         !output(repo, &["stash", "list"]).is_empty(),
         "conflicting restore keeps recovery stash"
@@ -1997,7 +2001,7 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
         "the recorded fetch failure must not add a dismiss-only notice"
     );
     assert!(
-        records(repo, "fetch")
+        records(repo, "fetch", 100, true)
             .iter()
             .any(|entry| matches!(entry.outcome, OpOutcome::Failed { .. })),
         "the fetch failure must remain durable in Operation Log"
@@ -2111,7 +2115,7 @@ pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTes
         "closing another modal must not materialize a recorded failure notice"
     );
     assert!(
-        records(repo, "fetch")
+        records(repo, "fetch", 100, true)
             .iter()
             .any(|entry| matches!(entry.outcome, OpOutcome::Failed { .. })),
         "the complete fetch error remains available in Operation Log"
@@ -2178,7 +2182,7 @@ pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppCont
         "local second\n",
         "the work the user did after confirming is untouched"
     );
-    let refusals = records(repo, "pull");
+    let refusals = records(repo, "pull", 100, true);
     assert_eq!(refusals.len(), 1, "one receipt for the refused run");
     assert!(
         matches!(&refusals[0].outcome, OpOutcome::Refused { blockers }

@@ -10,8 +10,8 @@ use kagi_git::{Backend, OpOutcome, Operation, OperationOutcome, PullOutcome};
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
 use git_fixture::{
-    commit_all, git, git_output, git_succeeds, init_repo, repo_with_bare_origin, write_file,
-    RemoteFixture,
+    commit_all, git, git_output, git_succeeds, init_repo, repo_with_bare_origin, worktree_files,
+    write_file, RemoteFixture, WorktreeFilesOptions,
 };
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
@@ -84,33 +84,19 @@ struct CheckoutState {
     worktree: BTreeMap<PathBuf, Vec<u8>>,
 }
 
-fn collect_files(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let entry = entry.unwrap();
-        if entry.file_name() == ".git" {
-            continue;
-        }
-        let path = entry.path();
-        if entry.file_type().unwrap().is_dir() {
-            collect_files(root, &path, files);
-        } else {
-            files.insert(
-                path.strip_prefix(root).unwrap().to_path_buf(),
-                std::fs::read(path).unwrap(),
-            );
-        }
-    }
-}
-
 fn checkout_state(local: &Path) -> CheckoutState {
-    let mut worktree = BTreeMap::new();
-    collect_files(local, local, &mut worktree);
     CheckoutState {
         head: git_output(local, &["rev-parse", "HEAD"]),
         symbolic_head: git_output(local, &["symbolic-ref", "HEAD"]),
         index: std::fs::read(local.join(".git/index")).unwrap(),
         entries: git_output(local, &["ls-files", "--stage"]),
-        worktree,
+        worktree: worktree_files(
+            local,
+            WorktreeFilesOptions {
+                skip_nested_git: true,
+                follow_directory_symlinks: false,
+            },
+        ),
     }
 }
 

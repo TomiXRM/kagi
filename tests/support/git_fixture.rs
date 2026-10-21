@@ -138,9 +138,41 @@ pub struct RemoteFixture {
     pub remote: PathBuf,
 }
 
+impl RemoteFixture {
+    /// Clone `origin` into `other` now, after any caller-specific branch setup.
+    /// The clone shares this fixture's temporary-directory lifetime.
+    pub fn clone_other(&self) -> PathBuf {
+        let other = self._tmp.path().join("other");
+        git(
+            self._tmp.path(),
+            &[
+                "clone",
+                "-q",
+                self.remote.to_str().expect("utf-8 temp path"),
+                other.to_str().expect("utf-8 temp path"),
+            ],
+        );
+        git(&other, &["config", "user.name", "Other"]);
+        git(&other, &["config", "user.email", "other@example.com"]);
+        git(&other, &["config", "commit.gpgsign", "false"]);
+        other
+    }
+}
+
 /// A work tree on `branch` with one commit (`a.txt`) pushed to a bare `origin`,
 /// upstream set.
 pub fn repo_with_bare_origin(branch: &str) -> RemoteFixture {
+    repo_with_bare_origin_seed(branch, "a.txt", "a\n", "base")
+}
+
+/// A work tree on `branch` with the caller's seed file committed and pushed to
+/// a bare `origin`, upstream set. Additional branches remain caller-owned.
+pub fn repo_with_bare_origin_seed(
+    branch: &str,
+    file: &str,
+    content: &str,
+    message: &str,
+) -> RemoteFixture {
     let tmp = TempDir::new().expect("tempdir");
     let remote = tmp.path().join("remote.git");
     let local = tmp.path().join("local");
@@ -152,12 +184,83 @@ pub fn repo_with_bare_origin(branch: &str) -> RemoteFixture {
     std::fs::create_dir(&local).expect("create local");
     init_repo(&local, branch);
     git(&local, &["remote", "add", "origin", remote_arg]);
-    write_file(&local, "a.txt", "a\n");
-    commit_all(&local, "base");
+    write_file(&local, file, content);
+    commit_all(&local, message);
     git(&local, &["push", "-q", "-u", "origin", branch]);
     RemoteFixture {
         _tmp: tmp,
         local,
         remote,
     }
+}
+
+/// Read one selected worktree file as bytes; preserve absence instead of
+/// treating a missing path as an empty file. Other I/O errors remain failures.
+pub fn worktree_file(root: &Path, path: &str) -> Option<Vec<u8>> {
+    match std::fs::read(root.join(path)) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("read {path}: {error}"),
+    }
+}
+
+/// Snapshot exactly the caller-selected paths, including absent files, in the
+/// caller's order. No text decoding or Git ignore filtering is applied.
+pub fn selected_worktree_files<'a>(
+    root: &Path,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> Vec<(&'a str, Option<Vec<u8>>)> {
+    paths
+        .into_iter()
+        .map(|path| (path, worktree_file(root, path)))
+        .collect()
+}
+
+/// Traversal choices remain explicit because checkout witnesses differ in
+/// their treatment of nested repositories and directory symlinks.
+pub struct WorktreeFilesOptions {
+    /// Always exclude the root `.git`; also exclude nested `.git` entries.
+    pub skip_nested_git: bool,
+    /// Follow directory symlinks with `Path::is_dir`, rather than descending
+    /// only into directories reported by `DirEntry::file_type`.
+    pub follow_directory_symlinks: bool,
+}
+
+/// Collect relative paths and exact bytes, including ignored and untracked
+/// files. This is only a file collector: callers own checkout/index witnesses.
+pub fn worktree_files(
+    root: &Path,
+    options: WorktreeFilesOptions,
+) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fn collect(
+        root: &Path,
+        dir: &Path,
+        options: &WorktreeFilesOptions,
+        files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    ) {
+        for entry in std::fs::read_dir(dir).expect("read worktree directory") {
+            let entry = entry.expect("read worktree entry");
+            if entry.file_name() == ".git" && (options.skip_nested_git || dir == root) {
+                continue;
+            }
+            let path = entry.path();
+            let is_dir = if options.follow_directory_symlinks {
+                path.is_dir()
+            } else {
+                entry.file_type().expect("worktree entry type").is_dir()
+            };
+            if is_dir {
+                collect(root, &path, options, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    std::fs::read(path).expect("read worktree file"),
+                );
+            }
+        }
+    }
+
+    let mut files = std::collections::BTreeMap::new();
+    collect(root, root, &options, &mut files);
+    files
 }

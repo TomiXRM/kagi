@@ -382,9 +382,10 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
     wait(cx, &app, |app| {
         matches!(
             &app.status_footer,
-            FooterStatus::Failed(message) if message.as_ref() == i18n::Msg::OpInProgress.t()
+            FooterStatus::Idle(message) if message.as_ref() == i18n::Msg::OpInProgress.t()
         )
     });
+    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
     assert_eq!(read_oplog_tail(usize::MAX).len(), before);
     guard.complete();
     unmount(cx, app, window);

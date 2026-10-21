@@ -1986,9 +1986,20 @@ impl FetchFailure {
         before: kagi_git::StateSummary,
         repo_path: &std::path::Path,
         cx: &mut Context<KagiApp>,
+        announce: bool,
+        requested_op: &str,
     ) {
         let entry = self.entry(before, repo_path);
-        app.record_op_impl(entry, cx, true, self.auth_summary());
+        let preview = crate::ui::operations::outcome_text(requested_op, &entry.outcome);
+        app.record_op_result(
+            entry,
+            cx,
+            true,
+            None,
+            Some((ToastKind::Error, preview.into())),
+            announce,
+            Some(requested_op),
+        );
     }
 
     fn entry(
@@ -2629,6 +2640,7 @@ impl KagiApp {
             .fetch_in_flight
             .as_ref()
             .and_then(|flight| flight.upstream_branch.clone());
+        let result_started = cx.background_executor().now();
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
             #[cfg(feature = "gui-e2e")]
@@ -2704,6 +2716,17 @@ impl KagiApp {
                 let Some(flight) = app.fetch_in_flight.take() else {
                     return;
                 };
+                let long_running = cx
+                    .background_executor()
+                    .now()
+                    .saturating_duration_since(result_started)
+                    >= std::time::Duration::from_secs(2);
+                let announce = app.operation_result_toast_needed(long_running);
+                let requested_op = if flight.waiters.is_empty() {
+                    "fetch"
+                } else {
+                    "pull"
+                };
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
                 if let Ok((outcome, ref_moves)) = &mut result {
@@ -2746,7 +2769,14 @@ impl KagiApp {
                     match &mut result {
                         Err(failure) => {
                             if current_waiter {
-                                failure.record(app, flight.before, &repo_path_guard, cx);
+                                failure.record(
+                                    app,
+                                    flight.before,
+                                    &repo_path_guard,
+                                    cx,
+                                    announce,
+                                    requested_op,
+                                );
                             } else {
                                 app.record_ref_fetch_failure(
                                     "fetch",
@@ -2806,16 +2836,27 @@ impl KagiApp {
                         }
                         if silent {
                             klog!("auto-fetch: ok remote={}", outcome.remote);
-                        } else {
-                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                                "Fetched {}",
-                                outcome.remote
-                            )));
-                            app.push_toast(
-                                ToastKind::Success,
-                                format!("Fetched {}", outcome.remote),
-                                cx,
+                        } else if flight.waiters.is_empty() {
+                            let text = SharedString::from(
+                                i18n::op::user_text::operations::completed("fetch"),
                             );
+                            if app.operation_result_toast_needed(long_running) {
+                                if let Some(stack) = app.toast_stack.clone() {
+                                    let key =
+                                        format!("{}\0fetch\0success", repo_path_guard.display());
+                                    stack.update(cx, |stack, cx| {
+                                        stack.push_keyed_notify(
+                                            ToastKind::Success,
+                                            text,
+                                            Some(key),
+                                            cx,
+                                        );
+                                    });
+                                }
+                                app.status_footer = FooterStatus::Idle("".into());
+                            } else {
+                                app.status_footer = FooterStatus::Success(text);
+                            }
                         }
                         fetched_remote = Some(outcome.remote);
                     }
@@ -2825,7 +2866,14 @@ impl KagiApp {
                         if !silent || current_waiter {
                             // The receipt presenter owns the single failure
                             // toast and footer, including joined Pull waiters.
-                            e.record(app, flight.before, &repo_path_guard, cx);
+                            e.record(
+                                app,
+                                flight.before,
+                                &repo_path_guard,
+                                cx,
+                                announce,
+                                requested_op,
+                            );
                         } else {
                             // No presentation owner: preserve the receipt and
                             // recording-failure notice without changing the UI.

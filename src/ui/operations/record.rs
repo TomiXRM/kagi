@@ -133,13 +133,13 @@ impl KagiApp {
         // footer, toast and bottom panel belong to the tab currently on screen.
         klog!("footer: {}", footer_msg);
         if failed {
-            self.app_notices.push_back(
-                format!(
-                    "{}: {}",
-                    repo_path.display(),
-                    super::outcome_text(op, &recording.entry().outcome)
-                )
-                .into(),
+            let entry = recording.entry();
+            self.push_operation_result(
+                entry,
+                op,
+                crate::ui::ToastKind::Error,
+                super::outcome_text(op, &entry.outcome).into(),
+                cx,
             );
         }
     }

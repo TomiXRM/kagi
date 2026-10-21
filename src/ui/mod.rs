@@ -1741,6 +1741,52 @@ impl KagiApp {
         }
     }
 
+    pub(crate) fn operation_result_toast_needed(&self, long_running: bool) -> bool {
+        let active = self.window_active;
+        #[cfg(feature = "gui-e2e")]
+        let active = self.window_active_override.unwrap_or(active);
+        long_running
+            || !active
+            || self.home_in_front()
+            || self.workspace_mode() != workspace_mode::WorkspaceMode::Graph
+    }
+
+    /// One transient result per repository / requested operation / outcome.
+    pub(crate) fn push_operation_result(
+        &mut self,
+        entry: &OpLogEntry,
+        op: &str,
+        kind: ToastKind,
+        message: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let result = match entry.outcome {
+            OpOutcome::Success { .. } => "success",
+            OpOutcome::Failed { .. } => "failed",
+            OpOutcome::Refused { .. } => "refused",
+            OpOutcome::Partial { .. } => "partial",
+            OpOutcome::Unknown { .. } => "unknown",
+        };
+        let repository = std::path::Path::new(&entry.repo)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let message = if repository.is_empty() {
+            message
+        } else {
+            SharedString::from(format!("{message} — {repository}"))
+        };
+        if let Some(stack) = self.toast_stack.clone() {
+            let key = format!("{}\0{op}\0{result}", entry.repo);
+            stack.update(cx, |stack, cx| {
+                stack.push_keyed_notify(kind, message, Some(key), cx);
+                if kind == ToastKind::Error {
+                    stack.set_latest_action(types::ToastAction::OpenOperationLog, cx);
+                }
+            });
+        }
+    }
+
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
     /// silence before doing git work, so typing stays fluid.
     fn schedule_modal_replan(&mut self, cx: &mut Context<Self>) {
@@ -1878,6 +1924,21 @@ impl KagiApp {
         display_override: Option<String>,
         notice: Option<(ToastKind, SharedString)>,
     ) {
+        let announce = self.operation_result_toast_needed(false);
+        self.record_op_result(entry, cx, persist, display_override, notice, announce, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::ui) fn record_op_result(
+        &mut self,
+        entry: OpLogEntry,
+        cx: &mut Context<Self>,
+        persist: bool,
+        display_override: Option<String>,
+        notice: Option<(ToastKind, SharedString)>,
+        announce: bool,
+        requested_op: Option<&str>,
+    ) {
         let op = entry.op.as_str();
         let before = &entry.before;
         let outcome = &entry.outcome;
@@ -1890,8 +1951,8 @@ impl KagiApp {
                 Self::display_footer_message(op, outcome, &footer_msg, display_override)
             });
 
-        // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
-        // outcome (Success / Failed / Refused) becomes a toast.
+        // Ordinary results stay in context; only unattended / long operations
+        // use the existing toast owner.
         let toast_kind = notice.as_ref().map_or_else(
             || {
                 if matches!(outcome, OpOutcome::Success { .. }) {
@@ -1902,9 +1963,15 @@ impl KagiApp {
             },
             |(kind, _)| *kind,
         );
-        self.push_toast(toast_kind, display_footer_msg.clone(), cx);
-
-        // T-BP-004: auto-open bottom panel on Failed.
+        if announce {
+            self.push_operation_result(
+                &entry,
+                requested_op.unwrap_or(op),
+                toast_kind,
+                display_footer_msg.clone(),
+                cx,
+            );
+        }
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
 
         // Callers choose persistence. Already-recorded/attempted receipts are
@@ -1939,21 +2006,38 @@ impl KagiApp {
             });
         }
 
-        // T-BP-004: auto-open panel on failure.
+        // Preserve the historical contract line, not the disruptive auto-open.
         if is_failed {
-            self.bottom_panel_open = true;
-            self.bottom_tab = BottomTab::OperationLog;
             klog!("bottom-panel: open (Failed auto-open)");
         }
+        if announce {
+            self.status_footer = FooterStatus::Idle("".into());
+        }
 
-        if footer_ok && notice.is_none() {
+        if footer_ok
+            && notice
+                .as_ref()
+                .is_none_or(|(kind, _)| *kind == ToastKind::Success)
+        {
             klog!("footer: {}", footer_msg);
+            if announce {
+                return;
+            }
             self.status_footer = FooterStatus::Success(display_footer_msg);
-        } else if notice.is_some() {
+        } else if notice
+            .as_ref()
+            .is_some_and(|(kind, _)| matches!(kind, ToastKind::Info | ToastKind::Sync))
+        {
             klog!("footer: {}", footer_msg);
+            if announce {
+                return;
+            }
             self.status_footer = FooterStatus::Idle(display_footer_msg);
         } else {
             klog!("footer: {}", footer_msg);
+            if announce {
+                return;
+            }
             self.status_footer = FooterStatus::Failed(display_footer_msg);
         }
     }

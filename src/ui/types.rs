@@ -144,6 +144,7 @@ pub type ToastCloseFocus =
 #[derive(Clone, Debug)]
 pub enum ToastAction {
     OpenRepository(std::path::PathBuf),
+    OpenOperationLog,
 }
 
 /// One snackbar entry, stacked bottom-right above the status bar.
@@ -159,6 +160,8 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub message: SharedString,
+    /// Stable repository / requested operation / outcome identity.
+    pub result_key: Option<String>,
     pub action: Option<ToastAction>,
     /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,

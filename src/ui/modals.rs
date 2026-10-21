@@ -711,6 +711,8 @@ pub struct AppNotice {
     pub acknowledge: Option<crate::app::ReconcileRead>,
     /// Only the explicit unobservable-release action uses two-step approval.
     pub release_armed: bool,
+    /// A transient host-close refusal, retired when the writer/clone finishes.
+    pub host_close_guard: bool,
 }
 impl From<String> for AppNotice {
     fn from(message: String) -> Self {
@@ -719,6 +721,7 @@ impl From<String> for AppNotice {
             inspect: None,
             acknowledge: None,
             release_armed: false,
+            host_close_guard: false,
         }
     }
 }

@@ -136,6 +136,20 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
     settings_busy_feedback(cx, &app, window);
     reopen_same(cx, &app, window, &owner);
     home_hidden(cx, &app, window);
+    cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
+    for _ in 0..3 {
+        crate::keyboard_nav::keys(cx, window, "cmd-q");
+    }
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.app_notice().unwrap().host_close_guard);
+        assert_eq!(e2e::host_close_guard_count(app), 1);
+        assert!(!e2e::queued_notice_contains(
+            app,
+            kagi::ui::i18n::Msg::OpInProgress.t()
+        ));
+        assert!(!cx.global::<e2e::QuitForE2e>().requested);
+    });
     release.send(());
     crate::home_github::wait_for(cx, &app, "clone terminal report", |app| {
         app.home_github.cloning.is_none()
@@ -151,6 +165,30 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
         "only terminal report releases latch"
     );
     assert_eq!(e2e::take_clone_dispatches(), 0);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.may_close_host());
+        assert_eq!(e2e::host_close_guard_count(app), 0);
+        assert!(
+            app.app_notice().is_none(),
+            "the clone terminal report retires its close guard"
+        );
+        assert!(!e2e::queued_notice_contains(
+            app,
+            kagi::ui::i18n::Msg::OpInProgress.t()
+        ));
+        assert!(
+            !cx.global::<e2e::QuitForE2e>().requested,
+            "completion is not approval to quit"
+        );
+        assert!(cx
+            .windows()
+            .iter()
+            .any(|handle| handle.window_id() == window.window_id()));
+    });
+    cx.update(|cx| {
+        cx.remove_global::<e2e::QuitForE2e>();
+    });
     unmount(cx, app, window);
 }
 
@@ -251,13 +289,12 @@ fn reopen_same(
             "reopen never spawns a second clone"
         );
         cx.read(|cx| {
-            assert_eq!(
-                app.read(cx).app_notice().unwrap().message,
-                kagi::ui::i18n::Msg::OpInProgress.t(),
-                "repository B explains its blocked write"
-            );
+            assert!(app.read(cx).app_notice().is_none());
+            assert!(matches!(&app.read(cx).status_footer,
+                kagi::ui::FooterStatus::Idle(reason)
+                    if reason.as_ref() == kagi::ui::i18n::Msg::OpInProgress.t()));
         });
-        // The refusal owns the single modal slot until its normal dismissal.
+        // The ongoing clone snackbar remains; refusal adds no blocking notice.
         draw(cx, app, window);
         crate::keyboard_nav::keys(cx, window, "escape");
         draw(cx, app, window);

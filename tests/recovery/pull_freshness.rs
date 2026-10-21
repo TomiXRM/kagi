@@ -216,6 +216,7 @@ fn auto_stash_guard_drift(
     .unwrap();
 
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     app.update(cx, |app, cx| app.open_pull_modal(cx));
     cx.run_until_parked();
     let approved_identity = cx.read(|cx| {
@@ -387,7 +388,7 @@ fn auto_stash_guard_drift(
                 .iter()
                 .filter(|toast| toast.kind == ToastKind::Error)
                 .count(),
-            1
+            0
         );
         let visible = state
             .op_log
@@ -969,21 +970,9 @@ fn assert_cached_zero(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo
 
 fn latest_count(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> usize {
     cx.read(|cx| {
-        app.read(cx)
-            .toast_stack
-            .as_ref()
-            .map(|stack| {
-                stack
-                    .read(cx)
-                    .toasts()
-                    .iter()
-                    .filter(|toast| {
-                        toast.kind == ToastKind::Sync
-                            && toast.message.as_ref() == Msg::AlreadyUpToDatePull.t()
-                    })
-                    .count()
-            })
-            .unwrap_or(0)
+        usize::from(matches!(&app.read(cx).status_footer,
+            FooterStatus::Idle(message) | FooterStatus::Success(message)
+                if message.as_ref() == Msg::AlreadyUpToDatePull.t()))
     })
 }
 
@@ -1345,6 +1334,7 @@ fn current_up_to_date(cx: &mut VisualTestAppContext, ff_only: bool, ahead: bool)
     let before = Checkout::read(&repo);
     let refs_before = output(&repo, &["show-ref"]);
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
     if ff_only {
@@ -1362,15 +1352,18 @@ fn current_up_to_date(cx: &mut VisualTestAppContext, ff_only: bool, ahead: bool)
         assert!(!app.app_sessions.has_leases());
         assert!(app.pull_modal().is_none());
         assert!(app.branch_plan_modal().is_none());
-        let toasts = app
-            .toast_stack
-            .as_ref()
-            .expect("Pull outcome toast")
-            .read(cx);
-        let latest = toasts.toasts().last().expect("explanatory Pull toast");
-        assert_eq!(latest.kind, ToastKind::Sync);
-        assert_eq!(latest.message.as_ref(), Msg::AlreadyUpToDatePull.t());
-        assert!(matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()));
+        assert!(
+            app.toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .is_empty(),
+            "an attended no-op Pull uses the footer, not a toast"
+        );
+        assert!(matches!(&app.status_footer,
+            FooterStatus::Idle(text) | FooterStatus::Success(text)
+                if text.as_ref() == Msg::AlreadyUpToDatePull.t()));
     });
     // The fetch's watcher must neither lose the explanation nor open a card.
     app.update(cx, |app, cx| app.reload_external(cx));
@@ -1497,6 +1490,7 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
         let repo = fixture.path().canonicalize().unwrap();
         let origin = Origin::new(&repo);
         let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
         let presentation = |app: &KagiApp| {
             let message = match &app.status_footer {
                 FooterStatus::Success(message)
@@ -1560,8 +1554,11 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
                     "Pull must see its fetch failure (joined silent={join_silent})"
                 );
             } else {
-                assert_eq!(presentation(app), presentation_before,
-                    "a silent fetch without Pull must not replace the footer or open a panel");
+                assert_eq!(
+                    presentation(app),
+                    presentation_before,
+                    "a silent fetch without Pull must not replace the footer or open a panel"
+                );
             }
             let stack = app.toast_stack.as_ref().unwrap().read(cx);
             let errors = stack
@@ -1570,8 +1567,8 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
                 .filter(|toast| toast.kind == ToastKind::Error)
                 .count();
             assert_eq!(
-                errors, usize::from(pull_requested),
-                "one failed Pull-owned fetch must emit one notification; background failure stays quiet"
+                errors, 0,
+                "an attended failed Pull uses its footer; internal fetch stays quiet"
             );
             let panel = app.op_log.as_ref().unwrap().read(cx);
             assert!(panel
@@ -2014,6 +2011,7 @@ pub(super) fn branch_ref_updates(
     );
     let target_ref = format!("refs/heads/{branch}");
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     let upstream = alternate.as_ref().unwrap_or(&origin);
     let expected = if current {
         upstream.advance_tree()
@@ -2256,8 +2254,8 @@ pub(super) fn branch_ref_updates(
                     toast.kind == ToastKind::Success && toast.message.starts_with(&pull_prefix)
                 })
                 .count(),
-            1,
-            "one Pull intent delivers one success toast"
+            0,
+            "an attended Pull intent uses one footer, not a success toast"
         );
     });
     unmount(cx, app, window);

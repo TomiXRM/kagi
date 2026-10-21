@@ -80,6 +80,7 @@ impl KagiApp {
         klog!("async: pull started");
         cx.notify();
         let stamp = job.stamp();
+        let result_started = cx.background_executor().now();
         // Pull has a remote effect and no verify path: untracked (ADR-0204 決定 4).
         self.queue_untracked_write(Some(stamp.session), cx);
         // #289: gpui does not propagate a background panic, so the task can end
@@ -129,13 +130,19 @@ impl KagiApp {
                         app.notice_recording_failure("pull", &step.recording, &repo_path);
                     }
                     app.notice_reconcile_required(id, "pull", &repo_path);
+                    let announce = app.operation_result_toast_needed(
+                        cx.background_executor()
+                            .now()
+                            .saturating_duration_since(result_started)
+                            >= std::time::Duration::from_secs(2),
+                    );
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {
                         let announce_at = report.announce();
                         for (at, step) in report.steps.iter().enumerate() {
                             if at == announce_at {
-                                app.present_recorded_background(&step.recording, cx);
+                                app.present_pull_recorded(&report, true, true, cx);
                             } else {
                                 app.insert_recorded_row(&step.recording, cx);
                             }
@@ -176,7 +183,7 @@ impl KagiApp {
                     let announce_at = report.announce();
                     for (at, step) in report.steps.iter().enumerate() {
                         if at == announce_at {
-                            app.present_recorded(&step.recording, cx);
+                            app.present_pull_recorded(&report, announce, false, cx);
                         } else {
                             app.insert_recorded_row(&step.recording, cx);
                         }
@@ -188,7 +195,7 @@ impl KagiApp {
                             // presented as "changed but not recorded" (#501),
                             // and that holds for a *child*'s receipt too: the
                             // success footer must not paper over any of them.
-                            if !recording_failed {
+                            if !recording_failed && !announce {
                                 app.status_footer = FooterStatus::Success(
                                     i18n::op::user_text::operations::pull_summary(summary).into(),
                                 );
@@ -224,6 +231,53 @@ impl KagiApp {
         true
     }
 
+    /// Pull remains the requested operation even when stash pop settles last.
+    fn present_pull_recorded(
+        &mut self,
+        report: &crate::app::PullReport,
+        announce: bool,
+        background: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let recording = &report.steps[report.announce()].recording;
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        let text = match &report.terminal.presentation {
+            crate::app::PullPresentation::Success { summary } if !report.recording_failed() => {
+                i18n::op::user_text::operations::pull_summary(summary)
+            }
+            crate::app::PullPresentation::Failed { error } => {
+                i18n::op::user_text::operations::failure_preview("pull", error)
+            }
+            crate::app::PullPresentation::Partial { error } => {
+                i18n::op::user_text::operations::partial_preview("pull", error)
+            }
+            _ => crate::ui::operations::outcome_text("pull", &entry.outcome),
+        };
+        let kind = if matches!(
+            report.terminal.presentation,
+            crate::app::PullPresentation::Success { .. }
+        ) && !report.recording_failed()
+        {
+            ToastKind::Success
+        } else {
+            ToastKind::Error
+        };
+        if background {
+            self.push_operation_result(&entry, "pull", kind, text.into(), cx);
+            self.insert_recorded_row(recording, cx);
+        } else {
+            self.record_op_result(
+                entry,
+                cx,
+                false,
+                None,
+                Some((kind, text.into())),
+                announce,
+                Some("pull"),
+            );
+        }
+    }
+
     /// Put a receipt in the operation-log panel and nowhere else.
     ///
     /// [`KagiApp::present_recorded`] is *presentation*: it also toasts, moves
@@ -255,12 +309,19 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) {
-            // #353: a refusal names its first blocker, not a count.
-            let shown = crate::ui::operations::record::refused_display(&entry.op, &entry.outcome)
-                .unwrap_or_else(|| crate::ui::operations::outcome_text(&entry.op, &entry.outcome));
-            self.push_toast(ToastKind::Error, format!("{} — {}", entry.repo, shown), cx);
-        }
+        let success = matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. });
+        let shown = crate::ui::operations::outcome_text(&entry.op, &entry.outcome);
+        self.push_operation_result(
+            &entry,
+            &entry.op,
+            if success {
+                ToastKind::Success
+            } else {
+                ToastKind::Error
+            },
+            shown.into(),
+            cx,
+        );
         self.insert_recorded_row(recording, cx);
     }
 }

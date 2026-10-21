@@ -119,9 +119,6 @@ impl KagiApp {
         // presentation. Never append a second time or turn this into success.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
         self.record_op_impl(entry, cx, false, Some(failure.footer.clone()));
-        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
-            failure.footer.clone().into(),
-        ));
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());
             self.present_app_notice();
@@ -147,6 +144,24 @@ impl KagiApp {
                 let owner = self.active_session();
                 self.queue_untracked_write(owner, cx);
                 Some(guard)
+            }
+            Err(app::AdmissionError::Busy) => {
+                let failure = StageFailure::record(
+                    action,
+                    repo,
+                    paths,
+                    &GitError::Other(app::AdmissionError::Busy.to_string()),
+                    true,
+                );
+                let entry =
+                    crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
+                let (contract, _) =
+                    Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
+                klog!("footer: {}", contract);
+                self.notice_recording_failure(action.name(), &failure.recording, repo);
+                self.insert_recorded_row(&failure.recording, cx);
+                self.report_admission_refusal(app::AdmissionError::Busy, cx);
+                None
             }
             Err(error) => {
                 self.deliver_stage_failure(

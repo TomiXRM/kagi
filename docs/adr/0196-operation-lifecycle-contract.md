@@ -402,8 +402,8 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 2. async plan は `offer_plan_from_async` で空 slot にだけ confirmation を出す。
    競合時は生 plan を queue せず、`PlanToken` / one-shot approval を失効し、
    planning latch を解放して fresh plan の再実行案内を queue する。
-3. 実行済み write の terminal outcome は oplog receipt を真実とし、短い toast で
-   到着を知らせる。記録済み結果を閉じるだけの `AppNotice` は作らない。
+3. 実行済み write の terminal outcome は oplog receipt を真実とし、現在の文脈内
+   footer を基本に一か所で提示する（#1698、下記）。記録済み結果を閉じるだけの `AppNotice` は作らない。
    `Unknown` / `Partial` の acknowledge / inspect capability がある場合だけ、その操作を
    `AppNotice` queue 末尾へ送り、foreground modal は置換しない。
 4. async in-place update は expected variant と modal generation / request identity が
@@ -552,4 +552,33 @@ after its successful freshness fetch. Equal or locally ahead tips show the same
 up-to-date notice as ordinary Pull. Exact upstream identity is retained and
 structural blockers take precedence, so a no-op never masks conflict/worktree
 refusal or fabricates a write receipt.
+
+## Amendment — 2026-10-21: one request, one result (#1698)
+
+- 既存の receipt presenter / session owner / `ToastStack` が表示を所有する。
+  通常の現在の Graph 操作は footer のみ。window が非 active、別画面、別 tab、
+  または開始から 2 秒以上の run / Pull / Fetch は toast のみで通知し、完了後に Busy footer を残さない。
+  background owner の結果は現在の tab の footer / panes を変更しない。
+- Pull の fetch と一時 stash push / pop は内部手順であり、独立の成功 toast を出さない。
+  backend が記録した全 child receipt と順序 / id はそのまま既存 Operation Log に挿入し、
+  workflow の要求名 **Pull** と最終結果だけを一度提示する。記録失敗した child を成功で隠さない。
+  hunk Stage / Unstage 成功も file staging と同じく静かにし、失敗時だけ原因を提示する。
+- 同じ repository + 要求操作 + outcome の toast は既存 card を置換する。
+  件数、close focus、詳細 action を増やさず、repository は操作名の後に短い名前だけを示す。
+  no-op Pull / Push は write receipt を捏造しない。
+- Failed / Refused は EN/JA の短い原因と次の行動を表示する。Partial / Unknown は意味を保ち、
+  Unknown は再試行禁止を明示する。raw stderr / exit code / 絶対 path は durable receipt の
+  詳細に保持し、未知の診断は安全な翻訳済み要約にする。toast の操作ログ button と常設
+  footer の操作ログ button から詳細へ進める。失敗だけでは panel を自動展開しない。
+  既存 `[kagi] bottom-panel: open (Failed auto-open)` は harness 互換の契約行として残るが、
+  表示状態を変更する指示ではない。
+- 通常の Busy admission 拒否は既存 snackbar と近傍の Idle 理由だけとし、Error toast /
+  Failed footer / dismiss-only AppNotice は作らない。reconcile が実際に必要なら Inspect を保つ。
+  Quit / host-close guard は同一理由を active / queued 合わせて一枚に集約し、write / clone 完了後
+  `may_close_host` が true になれば自然に取り除く。Quit / close 自体を自動再開しない。
+- oplog append failure は別の「記録を保存できなかった」事実であり、既存の明示 acknowledge /
+  inspect notice を保持する。無言化、再 append、成功への置き換えはしない。
+- Tier A の所有: `toast_stack_budget`（実 no-op Push 連打 / keyed 置換）、`stage_failure_notice` /
+  `hunk_staging`、`pull_presents_backend_receipts` / departed-owner Pull、host dirty guard / clone close。
+  Busy のこの実装は #1700 の統合依存であり、同 issue で第二の通知 owner は追加しない。
 

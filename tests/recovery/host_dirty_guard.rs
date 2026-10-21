@@ -522,10 +522,76 @@ pub fn scenario_host_dirty_guard_close_then_quit(cx: &mut VisualTestAppContext) 
         cleanup(cx, app, window);
         cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
     }
+    check_transient_writer_close_guard(cx);
     cx.update(|cx| {
         cx.remove_global::<e2e::QuitForE2e>();
     });
     eprintln!("[gui-e2e] PASS host_dirty_guard_close_then_quit");
+}
+
+fn check_transient_writer_close_guard(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        for queued in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let repo = fixture(dir.path(), "writer-close");
+            let (app, window) = mount(cx, &repo, 1000.);
+            let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
+            if queued {
+                app.update(cx, |app, _| {
+                    e2e::deliver_app_notice(app, "retained receipt")
+                });
+            }
+            for _ in 0..3 {
+                draw(cx, window);
+                cx.simulate_keystrokes(window, "cmd-q");
+                cx.run_until_parked();
+                request(cx, &app, window, Entry::Native);
+            }
+            cx.read(|cx| {
+                let app = app.read(cx);
+                assert!(!app.may_close_host());
+                assert!(!cx.global::<e2e::QuitForE2e>().requested);
+                assert_eq!(e2e::host_close_guard_count(app), 1);
+                assert_eq!(app.app_notice().unwrap().host_close_guard, !queued);
+                assert_eq!(
+                    e2e::queued_notice_contains(app, Msg::OpInProgress.t()),
+                    queued
+                );
+            });
+            if !queued {
+                app.update(cx, |app, _| {
+                    e2e::deliver_app_notice(app, "retained receipt")
+                });
+            }
+            guard.complete();
+            draw(cx, window);
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let app = app.read(cx);
+                assert!(app.may_close_host());
+                assert_eq!(e2e::host_close_guard_count(app), 0);
+                assert_eq!(e2e::app_notice_message(app), Some("retained receipt"));
+                assert!(!app.app_notice().unwrap().host_close_guard);
+                assert!(!e2e::queued_notice_contains(app, Msg::OpInProgress.t()));
+                assert!(!cx.global::<e2e::QuitForE2e>().requested);
+            });
+            assert!(
+                alive(cx, window),
+                "settlement must not automatically close the host"
+            );
+            app.update(cx, |app, cx| {
+                app.confirm_app_notice(cx);
+                e2e::present_app_notice(app);
+                assert!(
+                    app.app_notice().is_none(),
+                    "repeated close requests must not queue guards"
+                );
+            });
+            cleanup(cx, app, window);
+        }
+    }
 }
 
 pub fn scenario_host_dirty_guard_relaunch(cx: &mut VisualTestAppContext) {

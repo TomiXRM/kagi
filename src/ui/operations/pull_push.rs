@@ -263,12 +263,28 @@ impl KagiApp {
     }
 
     pub(crate) fn present_pull_up_to_date(&mut self, cx: &mut Context<Self>) {
-        self.push_toast(
-            ToastKind::Sync,
-            SharedString::from(Msg::AlreadyUpToDatePull.t()),
-            cx,
-        );
-        self.status_footer = FooterStatus::Idle(SharedString::from(""));
+        self.present_sync_noop("pull", Msg::AlreadyUpToDatePull, cx);
+    }
+
+    fn present_sync_noop(&mut self, op: &str, message: Msg, cx: &mut Context<Self>) {
+        let text = SharedString::from(message.t());
+        if self.operation_result_toast_needed(false) {
+            if let Some(stack) = self.toast_stack.clone() {
+                let key = format!(
+                    "{}\0{op}\0success",
+                    self.repo_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default()
+                );
+                stack.update(cx, |stack, cx| {
+                    stack.push_keyed_notify(ToastKind::Sync, text, Some(key), cx);
+                });
+            }
+            self.status_footer = FooterStatus::Idle("".into());
+        } else {
+            self.status_footer = FooterStatus::Idle(text);
+        }
     }
 
     /// Refresh a retained local Pull confirmation against reloaded repository
@@ -546,12 +562,7 @@ impl KagiApp {
                     plan.disposition,
                     kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PushUpToDate)
                 ) {
-                    self.push_toast(
-                        ToastKind::Sync,
-                        SharedString::from(Msg::AlreadyUpToDatePush.t()),
-                        cx,
-                    );
-                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                    self.present_sync_noop("push", Msg::AlreadyUpToDatePush, cx);
                     return;
                 }
                 let needs_choice = plan.sync_needs_choice();

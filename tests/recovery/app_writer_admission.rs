@@ -59,12 +59,11 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     assert!(
         cx.read(|cx| matches!(&app.read(cx).status_footer,
-            FooterStatus::Failed(message) if message.as_ref() == Msg::OpInProgress.t())),
-        "busy Cmd-S must visibly refuse with OpInProgress"
+            FooterStatus::Idle(message) if message.as_ref() == Msg::OpInProgress.t())),
+        "busy Cmd-S must give a contextual reason, not report a failed operation"
     );
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases() && editor.read(cx).dirty));
     assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
-    app.update(cx, |app, cx| app.confirm_app_notice(cx));
 
     // Exercise save_editor_file → SaveRequested → reserve_write, not a direct
     // invocation of the pane executor or a manually raised Busy notification.
@@ -77,7 +76,8 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
         "Busy must retain the buffer"
     );
     assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
-        FooterStatus::Failed(message) if message.as_ref() == Msg::OpInProgress.t())));
+        FooterStatus::Idle(message) if message.as_ref() == Msg::OpInProgress.t())));
+    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
     assert!(cx.read(|cx| app
         .read(cx)
         .toast_stack
@@ -86,7 +86,7 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
         .read(cx)
         .toasts()
         .iter()
-        .any(|toast| toast.message.as_ref() == Msg::OpInProgress.t())));
+        .all(|toast| toast.message.as_ref() != Msg::OpInProgress.t())));
     assert_eq!(
         cx.read(|cx| editor
             .read(cx)
@@ -101,13 +101,8 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
 
     guard.complete();
     assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
-    // The visible Busy refusal remains a modal until the user dismisses it.
-    // Releasing the lease alone must not make Save operate behind that modal.
-    app.update(cx, |app, cx| app.save_editor_file(cx));
-    cx.run_until_parked();
-    assert!(cx.read(|cx| editor.read(cx).dirty));
-    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
-    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    // A live-writer refusal never owns the modal slot. The next explicit Save
+    // is admitted as soon as the lease is released, without dismissing anything.
     app.update(cx, |app, cx| app.save_editor_file(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

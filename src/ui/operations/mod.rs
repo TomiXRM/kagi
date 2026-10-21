@@ -60,15 +60,15 @@ pub(crate) fn outcome_text(op: &str, outcome: &kagi_git::oplog::OpOutcome) -> St
     use kagi_ui_core::i18n::op::user_text::{diagnostic, operations};
     match outcome {
         OpOutcome::Success { .. } => operations::completed(op),
-        OpOutcome::Partial { error, .. } => operations::partial(op, error),
-        OpOutcome::Unknown { evidence, .. } => operations::unknown(op, evidence),
-        OpOutcome::Failed { error } => operations::failed(op, error),
+        OpOutcome::Partial { error, .. } => operations::partial_preview(op, error),
+        OpOutcome::Unknown { evidence, .. } => operations::unknown_preview(op, evidence),
+        OpOutcome::Failed { error } => operations::failure_preview(op, error),
         OpOutcome::Refused { blockers } => {
             let reason = blockers
                 .first()
                 .map(|reason| diagnostic(reason))
                 .unwrap_or_else(|| diagnostic("plan has blockers"));
-            kagi_ui_core::i18n::op_refused(op, reason, blockers.len().saturating_sub(1))
+            operations::failure_preview(op, &reason)
         }
     }
 }
@@ -459,6 +459,7 @@ impl KagiApp {
         };
         self.mark_write_busy(op_name, cx);
         let stamp = job.stamp();
+        let result_started = cx.background_executor().now();
         self.queue_write_admitted(stamp, cx);
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write
@@ -611,6 +612,15 @@ impl KagiApp {
                         continue;
                     }
                     failed = report.result.is_err();
+                    let announce = app.operation_result_toast_needed(
+                        cx.background_executor()
+                            .now()
+                            .saturating_duration_since(result_started)
+                            >= std::time::Duration::from_secs(2),
+                    );
+                    if announce {
+                        presentation.status = None;
+                    }
                     let stopped_notice =
                         stopped.map(|stopped| Msg::conflict_stopped(stopped.count));
                     let stopped_for_conflicts = stopped_notice.is_some();
@@ -634,7 +644,10 @@ impl KagiApp {
                                 Some((ToastKind::Info, notice.into())),
                             );
                         } else {
-                            app.present_recorded(&report.recording, cx);
+                            let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                                &report.recording,
+                            );
+                            app.record_op_result(entry, cx, false, None, None, announce, None);
                         }
                         Some(app.status_footer.clone())
                     } else {
@@ -649,7 +662,7 @@ impl KagiApp {
                         // Logs and receipts keep the original reason; the typed
                         // preview remains localized independently.
                         let preview = failure_display.clone();
-                        app.record_op_impl(entry, cx, false, preview);
+                        app.record_op_result(entry, cx, false, preview, None, announce, None);
                         None
                     };
                     let notice_override = presentation.outcome_notice.clone();

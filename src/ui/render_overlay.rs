@@ -266,7 +266,12 @@ fn toast_card(
                     Button::new(("toast-open-repository", id))
                         .ghost()
                         .small()
-                        .label(Msg::ToastOpenRepository.t())
+                        .label(match toast.action {
+                            Some(super::types::ToastAction::OpenOperationLog) => {
+                                Msg::BottomTabOperationLog.t()
+                            }
+                            _ => Msg::ToastOpenRepository.t(),
+                        })
                         .on_click(cx.listener(move |stack, _, _, cx| {
                             stack.activate_action(id, cx);
                         })),

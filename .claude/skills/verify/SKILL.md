@@ -4057,15 +4057,32 @@ Use a fresh KAGI_LOG_DIR as with all cargo tests.
 Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
 paths, panel file indices and batch buttons under index.lock, including a linked
 worktree panel while the main tab remains active. Per attempt it asserts the
-Failed footer (cause, path and the actual owning repo), the newest toast is an
-Error `<op>: failed …`, **no** `AppNotice` (ADR-0196 §3 as amended by #747 — a
-recorded failure is never a dismiss-only modal), one more Failed oplog receipt
-for the owning repo, and byte-identical indexes. An admission denial records a
-Refused receipt, again without a notice. Until #846 the scenario still asserted
-the pre-#747 notice and panicked on it. Compile only when PM owns E execution.
+Failed footer with a short translated cause and Operation Log direction, **no**
+toast / automatic panel opening / `AppNotice` for an attended attempt, one more
+Failed oplog receipt for the owning repo with complete path/cause detail, and
+byte-identical indexes. An admission denial records a Refused receipt without a
+notice. The #1698 policy replaces the earlier duplicated footer/toast expectation.
 M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
 attempted failure stays visible with the recording error; it is not a success.
+
+### One requested operation, one result (#1698)
+
+Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_completion_drops,pull_freshness_,pull_current_,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,slow_write_explained'`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. Real repeated no-op Push is footer-only when
+attended; the existing `set_window_active_for_e2e` input selects inactive
+presentation without activating an OS window, where the same result replaces one
+keyed toast. Different result/repository keys retain separate cards. All Pull
+child receipts keep their backend IDs, while fetch/stash steps produce no
+independent completion and the workflow is named Pull. Failure previews have
+localized causes and a log action without raw stderr/exit/absolute paths; complete
+details remain durable. Hunk success has no toast. Quit/native-close repeats
+coalesce in active/queued notices and disappear after real writer/clone settlement
+without automatically quitting. Recording-failure acknowledge notices remain.
+Tier B uses the same isolated EN/JA fixture and owned PID/window for before/after
+no-op repetition, failure details, Pull and Quit; keep non-key/no-activate and
+report occluded byte-identical frames as stale, not evidence of the new screen.
+
 
 ### Hunk staging (#842, Refs #357)
 

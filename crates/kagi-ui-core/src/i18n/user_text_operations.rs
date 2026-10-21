@@ -26,6 +26,195 @@ pub fn failed(op: &str, reason: &str) -> String {
     }
 }
 
+/// Short, display-only failure preview. The unchanged receipt owns the details.
+/// Never interpolate diagnostic text here: it may contain credentials or paths.
+pub fn failure_preview(op: &str, reason: &str) -> String {
+    outcome_preview(op, reason, PreviewOutcome::Failed)
+}
+
+/// Partial writes must remain distinguishable from failures with no known effect.
+pub fn partial_preview(op: &str, reason: &str) -> String {
+    outcome_preview(op, reason, PreviewOutcome::Partial)
+}
+
+/// Unconfirmed writes must never invite a retry, even for a known network cause.
+pub fn unknown_preview(op: &str, reason: &str) -> String {
+    outcome_preview(op, reason, PreviewOutcome::Unknown)
+}
+
+#[derive(Clone, Copy)]
+enum PreviewOutcome {
+    Failed,
+    Partial,
+    Unknown,
+}
+
+fn outcome_preview(op: &str, reason: &str, outcome: PreviewOutcome) -> String {
+    use super::text;
+    let label = if op.len() <= 80 && super::known_operation(op) {
+        operation_label(op)
+    } else {
+        std::borrow::Cow::Borrowed(text("Operation", "操作"))
+    };
+    let status = match outcome {
+        PreviewOutcome::Failed => "",
+        PreviewOutcome::Partial => text(
+            "Only partly completed. Check the repository before continuing. ",
+            "一部のみ完了しました。続行する前にリポジトリを確認してください。",
+        ),
+        PreviewOutcome::Unknown => text(
+            "The result could not be confirmed. Do not retry yet. ",
+            "結果を確認できませんでした。まだ再試行しないでください。",
+        ),
+    };
+    let cause = FailureCause::classify(reason).text();
+    let details = text(
+        "See the Operation Log for details.",
+        "詳しくは操作ログを確認してください。",
+    );
+    format!("{label}: {status}{cause} {details}")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureCause {
+    UpstreamChanged,
+    Network,
+    Authentication,
+    IndexLocked,
+    Untrusted,
+    Refused,
+    Other,
+}
+
+impl FailureCause {
+    // This only selects preview wording, never the semantic outcome or retry
+    // policy. Unknown diagnostics intentionally receive the safe generic text.
+    fn classify(reason: &str) -> Self {
+        let contains = |needle: &str| {
+            reason
+                .as_bytes()
+                .windows(needle.len())
+                .any(|part| part.eq_ignore_ascii_case(needle.as_bytes()))
+        };
+        let any = |needles: &[&str]| needles.iter().any(|needle| contains(needle));
+        if any(&[
+            "non-fast-forward",
+            "non fast forward",
+            "fetch first",
+            "remote contains work",
+            "tip of your current branch is behind",
+            "new upstream commits",
+            "remote has newer commits",
+            "リモートに新しいコミット",
+            "upstream に新しい commit",
+        ]) {
+            Self::UpstreamChanged
+        } else if any(&[
+            "authentication failed",
+            "authentication required",
+            "requires authentication",
+            "authentication was denied",
+            "認証が必要",
+            "認証に失敗",
+            "認証が拒否",
+            "could not read username",
+            "terminal prompts disabled",
+            "permission denied (publickey",
+            "permission denied, please try again",
+            "invalid username or password",
+            "invalid credentials",
+            "http 401",
+            "error: 401",
+            "error: 403",
+            "access denied",
+        ]) {
+            Self::Authentication
+        } else if any(&[
+            "index.lock",
+            "staging area is locked",
+            "ステージ領域がロック",
+            "index がロック",
+        ]) {
+            Self::IndexLocked
+        } else if any(&[
+            "not trusted",
+            "untrusted repository",
+            "dubious ownership",
+            "safe.directory",
+            "approve this repository before changing",
+            "信頼を確認",
+            "変更が許可されていないリポジトリ",
+        ]) {
+            Self::Untrusted
+        } else if any(&[
+            "could not resolve host",
+            "could not resolve hostname",
+            "failed to connect",
+            "connection refused",
+            "connection timed out",
+            "connection reset",
+            "network is unreachable",
+            "no route to host",
+            "remote end hung up",
+            "unable to access",
+            "does not appear to be a git repository",
+            "could not read from remote repository",
+            "unreachable",
+            "could not be reached",
+            "couldn't reach",
+            "接続できません",
+            "到達できません",
+        ]) {
+            Self::Network
+        } else if any(&[
+            "refused",
+            "blocked",
+            "blocker",
+            "rejected",
+            "拒否され",
+            "ブロックされ",
+        ]) {
+            Self::Refused
+        } else {
+            Self::Other
+        }
+    }
+
+    fn text(self) -> &'static str {
+        use super::text;
+        match self {
+            Self::UpstreamChanged => text(
+                "The remote has newer commits. Fetch and review the differences.",
+                "リモートに新しいコミットがあります。fetch して差分を確認してください。",
+            ),
+            Self::Network => text(
+                "The remote could not be reached. Check your connection and remote settings.",
+                "リモートに接続できませんでした。通信環境とリモート設定を確認してください。",
+            ),
+            Self::Authentication => text(
+                "Authentication was denied. Check your sign-in and repository access.",
+                "認証が拒否されました。ログイン情報とリポジトリへのアクセス権を確認してください。",
+            ),
+            Self::IndexLocked => text(
+                "The staging area is locked. Check for another Git operation before continuing.",
+                "ステージ領域がロックされています。続行する前に別の Git 操作が実行中でないか確認してください。",
+            ),
+            Self::Untrusted => text(
+                "The repository is not trusted for changes. Review its trust settings.",
+                "変更が許可されていないリポジトリです。信頼設定を確認してください。",
+            ),
+            Self::Refused => text(
+                "The operation was blocked. Review the repository and operation warnings.",
+                "操作が拒否されました。リポジトリの状態と操作の注意事項を確認してください。",
+            ),
+            Self::Other => text(
+                "The operation could not be completed. Review its details before continuing.",
+                "操作を完了できませんでした。続行する前に詳細を確認してください。",
+            ),
+        }
+    }
+}
+
 pub fn partial(op: &str, reason: &str) -> String {
     let label = operation_label(op);
     let reason = diagnostic(reason);
@@ -242,6 +431,179 @@ pub fn discarded(count: usize, only_path: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn translated_overrides_keep_their_cause_without_preserving_private_values() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            for cause in [
+                FailureCause::UpstreamChanged,
+                FailureCause::Network,
+                FailureCause::Authentication,
+                FailureCause::IndexLocked,
+                FailureCause::Untrusted,
+                FailureCause::Refused,
+            ] {
+                let translated = format!("/private/secret: {}", cause.text());
+                assert_eq!(FailureCause::classify(&translated), cause);
+                let shown = failure_preview("push", &translated);
+                assert!(shown.contains(cause.text()), "{shown}");
+                assert!(!shown.contains("/private/secret"), "{shown}");
+            }
+            let authentication = crate::i18n::Msg::FetchAuthenticationRequired
+                .t()
+                .replace("{}", "/private/secret");
+            assert_eq!(
+                FailureCause::classify(&authentication),
+                FailureCause::Authentication,
+            );
+            assert!(!failure_preview("fetch", &authentication).contains("/private/secret"));
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn failure_previews_classify_causes_without_exposing_diagnostics() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        let fixtures = [
+            ("push", "non-fast-forward", FailureCause::UpstreamChanged),
+            ("push", "fetch first", FailureCause::UpstreamChanged),
+            (
+                "push",
+                "new upstream commits",
+                FailureCause::UpstreamChanged,
+            ),
+            ("fetch", "Could not resolve host", FailureCause::Network),
+            ("push", "Connection refused", FailureCause::Network),
+            (
+                "fetch",
+                "does not appear to be a git repository",
+                FailureCause::Network,
+            ),
+            (
+                "fetch",
+                "Authentication failed",
+                FailureCause::Authentication,
+            ),
+            (
+                "push",
+                "Permission denied (publickey)",
+                FailureCause::Authentication,
+            ),
+            (
+                "push",
+                "unable to access: error: 403",
+                FailureCause::Authentication,
+            ),
+            (
+                "stage-hunk",
+                "index.lock: File exists",
+                FailureCause::IndexLocked,
+            ),
+            (
+                "stash-push",
+                "repository is not trusted for writes",
+                FailureCause::Untrusted,
+            ),
+            (
+                "commit",
+                "detected dubious ownership",
+                FailureCause::Untrusted,
+            ),
+            (
+                "push",
+                "remote rejected: protected branch",
+                FailureCause::Refused,
+            ),
+            ("stash-pop", "plan has blockers", FailureCause::Refused),
+            ("fetch", "unrecognized_hook_failure", FailureCause::Other),
+        ];
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            for (op, cause, expected) in fixtures {
+                let raw = format!(
+                    "Git: {op} failed (exit 128): {cause}\n\
+                     To /private/tmp/private_repository\n\
+                     https://private_user:private_token@example.test/repo\n\
+                     C:\\private\\repository"
+                );
+                let unchanged = raw.clone();
+                assert_eq!(FailureCause::classify(&raw), expected);
+                for shown in [
+                    failure_preview(op, &raw),
+                    partial_preview(op, &raw),
+                    unknown_preview(op, &raw),
+                ] {
+                    assert!(shown.starts_with(operation_label(op).as_ref()), "{shown}");
+                    assert!(shown.contains(expected.text()), "{shown}");
+                    assert!(shown.chars().count() <= 400, "{shown}");
+                    assert_eq!(shown.lines().count(), 1, "{shown}");
+                    for private in [
+                        "exit 128",
+                        "/private/",
+                        "C:\\",
+                        "private_user",
+                        "private_token",
+                        "example.test",
+                        "unrecognized_hook_failure",
+                        "Git:",
+                    ] {
+                        assert!(!shown.contains(private), "{shown}");
+                    }
+                    match language {
+                        Lang::En => {
+                            assert!(shown.contains("Operation Log"), "{shown}");
+                            assert!(!shown
+                                .chars()
+                                .any(|ch| ('\u{3040}'..='\u{30ff}').contains(&ch)));
+                        }
+                        Lang::Ja => {
+                            assert!(shown.contains("操作ログ"), "{shown}");
+                            assert!(shown.contains("確認"), "{shown}");
+                            assert!(!shown.contains("Failed"), "{shown}");
+                            assert!(!shown.contains("Authentication failed"), "{shown}");
+                        }
+                    }
+                }
+                assert_eq!(raw, unchanged, "preview must not alter durable details");
+            }
+            let raw_operation = "/private/tmp/unknown_operation";
+            assert!(!failure_preview(raw_operation, "unknown").contains(raw_operation));
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn uncertain_previews_keep_their_safety_meaning_for_known_causes() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            let reason = "Connection refused: /private/tmp/remote";
+            let failed = failure_preview("push", reason);
+            let partial = partial_preview("push", reason);
+            let unknown = unknown_preview("push", reason);
+            assert_ne!(failed, partial);
+            assert_ne!(partial, unknown);
+            assert_ne!(failed, unknown);
+            let (partial_meaning, uncertain_meaning, no_retry) = match language {
+                Lang::En => ("partly", "could not be confirmed", "Do not retry"),
+                Lang::Ja => ("一部のみ", "確認できません", "再試行しない"),
+            };
+            assert!(partial.contains(partial_meaning), "{partial}");
+            assert!(unknown.contains(uncertain_meaning), "{unknown}");
+            assert!(unknown.contains(no_retry), "{unknown}");
+            assert!(!failed.contains(partial_meaning), "{failed}");
+            assert!(!failed.contains(uncertain_meaning), "{failed}");
+        }
+        set_lang_no_persist(previous);
+    }
 
     #[test]
     fn action_labels_remain_separate_from_status_and_recording_reason() {

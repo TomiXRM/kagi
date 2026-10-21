@@ -504,6 +504,18 @@ pub fn queued_notice_contains(app: &KagiApp, needle: &str) -> bool {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn host_close_guard_count(app: &KagiApp) -> usize {
+    usize::from(
+        app.app_notice()
+            .is_some_and(|notice| notice.host_close_guard),
+    ) + app
+        .app_notices
+        .iter()
+        .filter(|notice| notice.host_close_guard)
+        .count()
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn set_remote_browse_host_input(
     app: &mut KagiApp,
     value: &str,
@@ -548,6 +560,7 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
         inspect: None,
         acknowledge: Some(read),
         release_armed: false,
+        host_close_guard: false,
     });
     app.present_app_notice();
     true
@@ -752,6 +765,11 @@ pub fn build_kagi_entity(
                 |app, _, action: &super::types::ToastAction, cx| match action {
                     super::types::ToastAction::OpenRepository(path) => {
                         app.open_repository(path.clone(), cx);
+                    }
+                    super::types::ToastAction::OpenOperationLog => {
+                        app.bottom_panel_open = true;
+                        app.bottom_tab = super::BottomTab::OperationLog;
+                        cx.notify();
                     }
                 },
             )

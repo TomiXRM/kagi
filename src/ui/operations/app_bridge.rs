@@ -108,7 +108,7 @@ impl KagiApp {
             if let Some(display) =
                 display_override.or_else(|| super::record::refused_display(op, outcome))
             {
-                return super::display_text(display.into());
+                return i18n::op::user_text::operations::failure_preview(op, &display).into();
             }
         }
         super::outcome_text(op, outcome).into()
@@ -148,45 +148,36 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        let footer = if let Some(note) = &report.evidence.preflight_note {
-            i18n::op_failed(
-                i18n::Op::Preflight,
-                kagi_ui_core::i18n::plan_note_text(note),
-            )
-        } else if let Some(error) = &report.evidence.preflight_error {
-            i18n::op_failed(i18n::Op::Preflight, error)
-        } else if !report.evidence.conflicts.is_empty() {
+        let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
+        let footer = if !report.evidence.conflicts.is_empty() {
             format!(
                 "{}: {}",
                 i18n::op::user_text::operation_label(name),
                 Msg::StashPopConflictedKept.t()
             )
-        } else if let Some(refused) = report
-            .evidence
-            .plan_blocked
-            .then(|| super::record::typed_refusal(name, &report.blockers))
-            .flatten()
-            .or_else(|| super::record::refused_display(name, &entry.outcome))
-        {
-            // #353: a plan-blocked stash names its first typed blocker.
-            refused
         } else {
-            super::outcome_text(name, &entry.outcome)
+            super::outcome_text(name, &shown.outcome)
         };
         let recording_failed = matches!(
             report.recording,
             kagi_git::backend::recording::Recording::Failed { .. }
         );
-        self.push_toast(
-            if success && !recording_failed {
-                ToastKind::Success
-            } else {
-                ToastKind::Error
-            },
-            format!("{}: {}", entry.repo, footer),
-            cx,
-        );
-        if self.active_session() == Some(owner.session) {
+        let current = self.active_session() == Some(owner.session);
+        let announce = !current || self.operation_result_toast_needed(false);
+        if announce {
+            self.push_operation_result(
+                &entry,
+                name,
+                if success && !recording_failed {
+                    ToastKind::Success
+                } else {
+                    ToastKind::Error
+                },
+                footer.clone().into(),
+                cx,
+            );
+        }
+        if current && !announce {
             self.status_footer = if success && !recording_failed {
                 FooterStatus::Success(crate::ui::operations::display_text(footer.clone().into()))
             } else if partial {
@@ -592,28 +583,34 @@ impl KagiApp {
             });
         }
         // #353: a refused remote drop names its diagnostic, not a count.
-        let shown = super::record::refused_display("stash-drop", &entry.outcome)
-            .unwrap_or_else(|| super::outcome_text("stash-drop", &entry.outcome));
-        self.push_toast(
-            if success {
-                ToastKind::Success
-            } else {
-                ToastKind::Error
-            },
-            format!("{}: {}", entry.repo, shown),
-            cx,
-        );
+        let shown = super::outcome_text("stash-drop", &entry.outcome);
         let active = self.remote_view.as_ref().is_some_and(|view| {
             view.host == owner.host
                 && view.root == owner.root
                 && self.active_session() == Some(owner.session)
         });
+        let announce = !active || self.operation_result_toast_needed(false);
+        if announce {
+            self.push_operation_result(
+                &entry,
+                "stash-drop",
+                if success {
+                    ToastKind::Success
+                } else {
+                    ToastKind::Error
+                },
+                shown.clone().into(),
+                cx,
+            );
+        }
         if active {
-            self.status_footer = if success {
-                FooterStatus::Success(crate::ui::operations::display_text(shown.into()))
-            } else {
-                FooterStatus::Failed(crate::ui::operations::display_text(shown.into()))
-            };
+            if !announce {
+                self.status_footer = if success {
+                    FooterStatus::Success(shown.into())
+                } else {
+                    FooterStatus::Failed(shown.into())
+                };
+            }
             if success {
                 #[cfg(feature = "gui-e2e")]
                 let intercepted = crate::remote::stash::note_remote_stash_e2e_refresh();
@@ -712,8 +709,18 @@ impl KagiApp {
         if self.may_close_host() {
             return false;
         }
-        self.app_notices
-            .push_back(Msg::OpInProgress.t().to_string().into());
+        let already_presented = self
+            .app_notice()
+            .is_some_and(|notice| notice.host_close_guard)
+            || self
+                .app_notices
+                .iter()
+                .any(|notice| notice.host_close_guard);
+        if !already_presented {
+            let mut notice = modals::AppNotice::from(Msg::OpInProgress.t().to_string());
+            notice.host_close_guard = true;
+            self.app_notices.push_back(notice);
+        }
         self.present_app_notice();
         cx.notify();
         true
@@ -755,6 +762,17 @@ impl KagiApp {
         self.present_app_notice();
     }
     pub(crate) fn present_app_notice(&mut self) {
+        // Only this transient refusal expires. Receipts and reconcile notices
+        // retain their normal owner/action, even when the final writer exits.
+        if self.may_close_host() {
+            if self
+                .app_notice()
+                .is_some_and(|notice| notice.host_close_guard)
+            {
+                self.clear_app_notice();
+            }
+            self.app_notices.retain(|notice| !notice.host_close_guard);
+        }
         if self.has_active_modal() {
             return;
         }
@@ -806,7 +824,11 @@ mod tests {
         let OpOutcome::Unknown { evidence, .. } = &outcome else {
             unreachable!()
         };
-        assert!(display.contains(evidence));
+        assert!(
+            !display.contains(evidence),
+            "raw evidence remains in the receipt"
+        );
+        assert!(display.contains("retry") || display.contains("再試行"));
         assert_ne!(display, contract);
         assert!(!display.contains("rebase-skip"));
     }

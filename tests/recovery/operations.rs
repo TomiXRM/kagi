@@ -3561,11 +3561,8 @@ pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
 /// #490: same real index.lock failure from panel indices, batch buttons and
 /// editor paths, including a linked panel while the main tab stays active.
 ///
-/// ADR-0196 §3 (as amended by #747): a recorded staging failure reaches the
-/// user as the Operation Log receipt plus the Failed footer and an Error toast
-/// — never as a dismiss-only `AppNotice`, which is reserved for a receipt that
-/// could not be persisted. (The scenario used to assert that notice and has
-/// failed since #747 removed it; #846, the same decay as #824.)
+/// #1698: current Graph failures use a safe footer only. Full backend detail
+/// remains in the durable receipt; neither a toast nor the Operation Log opens.
 pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     use kagi::ui::e2e;
     let temp = tempfile::tempdir().unwrap();
@@ -3606,6 +3603,8 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
             }
             cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
             app.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(true, cx);
+                app.bottom_panel_open = false;
                 e2e::open_worktree_panel_no_inputs(app, repo.clone(), "fixture", 0, cx);
             });
             cx.run_until_parked();
@@ -3640,8 +3639,12 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 let FooterStatus::Failed(footer) = &state.status_footer else {
                     panic!("missing staging failure footer")
                 };
-                assert!(footer.contains("lock"), "{footer}");
-                assert!(footer.contains("f.txt"));
+                assert!(footer.chars().count() <= 240, "{footer}");
+                assert!(footer.contains("lock") || footer.contains("ロック"), "{footer}");
+                assert!(footer.contains("Operation Log"), "{footer}");
+                for private in [repo.to_str().unwrap(), "f.txt", "index.write", "stderr", "exit status"] {
+                    assert!(!footer.contains(private), "{footer}");
+                }
                 let owner = if entry == "editor" {
                     state.repo_path.as_ref().expect("editor owner").clone()
                 } else {
@@ -3658,14 +3661,9 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                     std::fs::canonicalize(&owner).unwrap(),
                     std::fs::canonicalize(repo).unwrap()
                 );
-                assert!(footer.contains(owner.to_str().unwrap()), "{footer}");
-                let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last();
-                assert!(
-                    toast.is_some_and(|t| t.kind == ToastKind::Error
-                        && t.message.contains("f.txt")
-                        && !t.message.contains("index.write")),
-                    "stage-failure-toasts: {op} via {entry} must toast its failure, got {toast:?}"
-                );
+                assert!(!state.bottom_panel_open, "failure must not reveal Operation Log");
+                assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
+                    "current quick staging failure is footer-only");
                 assert!(
                     e2e::app_notice_message(state).is_none(),
                     "stage-failure-no-notice: a recorded failure must not open a dismiss-only notice, got {:?}",
@@ -3674,6 +3672,11 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 let panel = state.op_log.as_ref().unwrap().read(cx);
                 let attempted = panel.entries().front().unwrap();
                 assert!(matches!(attempted.outcome, OpOutcome::Failed { .. }));
+                let OpOutcome::Failed { error } = &attempted.outcome else {
+                    unreachable!()
+                };
+                assert!(error.contains("lock"), "full failure cause remains durable: {error}");
+                assert!(error.contains("f.txt"), "attempted path remains durable: {error}");
                 assert_eq!(
                     std::fs::canonicalize(&attempted.repo).unwrap(),
                     std::fs::canonicalize(repo).unwrap()
@@ -3691,7 +3694,12 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
     });
-    cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(e2e::app_notice_message(state).is_none());
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == kagi_ui_core::i18n::Msg::OpInProgress.t()));
+        assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty());
+    });
     assert_eq!(records(&main, "stage", 100, true).len(), count + 1);
     assert!(records(&main, "stage", 100, true)
         .iter()

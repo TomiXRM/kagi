@@ -123,9 +123,14 @@ fn check_busy_home(cx: &mut VisualTestAppContext) {
     );
     app.update(cx, |a, cx| {
         a.home_github.cloning = None;
-        a.clear_app_notice();
         cx.notify();
     });
+    draw(cx, window);
+    assert!(app.read_with(cx, |a, _| a.app_notice().is_none()));
+    assert!(
+        open(cx, window),
+        "finishing the clone must not resume a refused close"
+    );
     crate::macos::unmount(cx, app, window);
 }
 

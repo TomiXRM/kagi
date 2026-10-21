@@ -5,6 +5,7 @@ use kagi::ui::{e2e, i18n, theme, KagiApp};
 use std::time::{Duration, Instant};
 
 pub fn scenario_toast_stack_budget(cx: &mut VisualTestAppContext) {
+    repeated_noop_push(cx);
     run_budget_matrix(cx, 1.);
 }
 
@@ -36,6 +37,7 @@ pub fn scenario_toast_stack_budget_compact_editor(cx: &mut VisualTestAppContext)
                 ],
             );
             let (app, window) = mount(cx, repo);
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
             crate::pr_detail_adaptive::resize(cx, window, dimensions);
             theme::set_active(preset);
             theme::set_zoom(1.67);
@@ -62,6 +64,23 @@ pub fn scenario_toast_stack_budget_compact_editor(cx: &mut VisualTestAppContext)
                     std::thread::sleep(Duration::from_millis(2));
                 }
             }
+            // Repeated workflow results replace one key. Fill the remaining
+            // slots with independent layout fixtures to exercise the cap.
+            app.update(cx, |app, cx| {
+                let stack = app.toast_stack.clone().unwrap();
+                stack.update(cx, |stack, cx| {
+                    assert_eq!(stack.toasts().len(), 1);
+                    for n in 0..3 {
+                        stack.push_notify(
+                            kagi::ui::ToastKind::Error,
+                            format!("Layout fixture {n}"),
+                            cx,
+                        );
+                    }
+                });
+                app.bottom_panel_open = true;
+                cx.notify();
+            });
             crate::native_ax::activate(cx);
             draw(cx, window);
             assert!(cx.read(|cx| app.read(cx).bottom_panel_open));
@@ -157,6 +176,7 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                     theme::set_active(preset);
                     theme::set_zoom(zoom);
                     app.update(cx, |app, cx| app.set_lang(lang, cx));
+                    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
                     let before = cx.read(|cx| {
                         app.read(cx)
                             .op_log
@@ -186,6 +206,25 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                             std::thread::sleep(Duration::from_millis(2));
                         }
                     }
+                    app.update(cx, |app, cx| {
+                        let stack = app.toast_stack.clone().unwrap();
+                        stack.update(cx, |stack, cx| {
+                            assert_eq!(
+                                stack.toasts().len(),
+                                1,
+                                "same repo/request/outcome replaces even when raw errors differ"
+                            );
+                            for n in 0..3 {
+                                stack.push_notify(
+                                    kagi::ui::ToastKind::Error,
+                                    format!("Layout fixture {n}"),
+                                    cx,
+                                );
+                            }
+                        });
+                        app.bottom_panel_open = true;
+                        cx.notify();
+                    });
                     crate::native_ax::activate(cx);
                     cx.update_window(window, |_, window, cx| {
                         window.refresh();
@@ -434,6 +473,57 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
     theme::set_active(&old_theme);
     i18n::set_lang(old_lang);
     eprintln!("[gui-e2e] PASS toast_stack_budget");
+}
+
+fn repeated_noop_push(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--bare", "-q"]);
+    let repo = fixture.path();
+    git(
+        repo,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(repo, &["push", "-qu", "origin", "HEAD"]);
+    let (app, window) = mount(cx, repo);
+    for active in [true, false] {
+        app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+        for _ in 0..3 {
+            let before = kagi_git::read_oplog_tail_for_repo(repo, 100).len();
+            app.update(cx, |app, cx| app.start_push(cx));
+            crate::recovery_operations::wait_idle(cx, &app);
+            let entries = kagi_git::read_oplog_tail_for_repo(repo, 100);
+            assert_eq!(
+                entries.len(),
+                before + 1,
+                "each real no-op Push retains its receipt"
+            );
+            assert!(matches!(
+                entries[0].outcome,
+                kagi_git::OpOutcome::Success { .. }
+            ));
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(e2e::app_notice_message(state).is_none());
+                assert!(
+                    !state.bottom_panel_open,
+                    "Push must not auto-open Operation Log"
+                );
+                assert_eq!(
+                    state.toast_stack.as_ref().unwrap().read(cx).toasts().len(),
+                    usize::from(!active),
+                    "current quick Push is footer-only; inactive repeats replace"
+                );
+                if active {
+                    assert!(matches!(
+                        state.status_footer,
+                        kagi::ui::FooterStatus::Success(_)
+                    ));
+                }
+            });
+        }
+    }
+    unmount(cx, app, window);
 }
 
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {

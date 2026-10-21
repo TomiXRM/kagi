@@ -535,7 +535,7 @@ fn test_unborn_checkout_obstructions_block_branch_and_commit_read_only() {
             std::fs::read(repo.path().join("HEAD")).unwrap(),
             head_before
         );
-        assert!(repo.head().unwrap_err().code() == git2::ErrorCode::UnbornBranch);
+        assert!(matches!(repo.head(), Err(error) if error.code() == git2::ErrorCode::UnbornBranch));
         assert_eq!(git_output(&repo_dir, &["show-ref"]), refs_before);
         assert_eq!(
             std::fs::read(repo.path().join("index")).unwrap(),

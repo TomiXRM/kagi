@@ -21,7 +21,7 @@ fn branch_plan() -> OperationPlan {
         disposition: PlanDisposition::Ready,
         head_at_plan: Head::Attached {
             branch: "main".into(),
-            target: CommitId("a".repeat(40)),
+            target: "a".repeat(40),
         },
         stash_count_at_plan: 0,
         stash_identity: None,

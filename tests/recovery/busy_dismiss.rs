@@ -553,7 +553,7 @@ pub fn scenario_busy_pull_revisit_request(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         cx.read(|cx| {
             let state = app.read(cx);
-            let current_visit = state.app_sessions.visit(owner).unwrap();
+            let current_visit = state.app_sessions.attachment(owner).unwrap().visit;
             assert_ne!(current_visit, old_visit);
             assert_eq!(state.app_sessions.running_lease().unwrap().0, lease);
             let waiters = &state.fetch_in_flight.as_ref().unwrap().waiters;

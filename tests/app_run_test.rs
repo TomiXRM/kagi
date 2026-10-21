@@ -5,68 +5,17 @@ use kagi_git::oplog::{read_oplog_tail, OpOutcome};
 use kagi_git::{Backend, GitError, Operation, StateSummary, Termination};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Mutex;
 
 #[path = "support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git_output as git, init_repo};
+use git_fixture::git_output as git;
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct Fixture {
-    _guard: MutexGuard<'static, ()>,
-    _dir: tempfile::TempDir,
-    repo: PathBuf,
-    old_log: Option<std::ffi::OsString>,
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        match &self.old_log {
-            Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
-            None => std::env::remove_var("KAGI_LOG_DIR"),
-        }
-    }
-}
-impl Fixture {
-    fn new() -> Self {
-        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        let repo = root.join("repo");
-        std::fs::create_dir(&repo).unwrap();
-        init_repo(&repo, "main");
-        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
-        commit_all(&repo, "initial");
-        git(&repo, &["branch", "side"]);
-        let old_log = std::env::var_os("KAGI_LOG_DIR");
-        std::env::set_var("KAGI_LOG_DIR", root.join("log"));
-        Self {
-            _guard: guard,
-            _dir: dir,
-            repo,
-            old_log,
-        }
-    }
-    /// A checkout-to-`side` request owned by the one attached session.
-    fn request(&self, s: &mut Sessions) -> RunRequest {
-        let session = s.attach(self.repo.clone());
-        let owner = s.attachment(session).expect("attached");
-        let backend = Backend::open(&self.repo).unwrap();
-        let plan = backend
-            .plan(&Operation::Checkout {
-                branch: "side".into(),
-            })
-            .expect("plan checkout");
-        RunRequest {
-            owner,
-            name: "checkout",
-            path: self.repo.clone(),
-            repo: backend.write_repo_id().unwrap(),
-            plan: Arc::new(plan),
-            remote: Vec::new(),
-        }
-    }
-}
+#[path = "support/app_fixture.rs"]
+mod app_fixture;
+use app_fixture::AppFixture as Fixture;
 
 fn checkout_side(repo: PathBuf, plan: Arc<kagi_git::OperationPlan>) -> RunExecute {
     Box::new(move || {
@@ -98,9 +47,9 @@ fn completed(deliveries: &[Delivery]) -> (OwnerStamp, kagi_git::backend::recordi
 /// the owner's worktree.
 #[test]
 fn run_write_is_admitted_settled_and_delivered_to_its_owner() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     let owner = request.owner.clone();
     let plan = request.plan.clone();
     let approved = approve_run(&mut s, request).expect("owner attached and identical");
@@ -136,9 +85,9 @@ fn run_write_is_admitted_settled_and_delivered_to_its_owner() {
 /// failure itself so the lease is released and the owner sees a receipt.
 #[test]
 fn open_failure_still_yields_a_receipt_and_releases_the_lease() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     let approved = approve_run(&mut s, request).unwrap();
     let job = prepare_run(
         &mut s,
@@ -159,9 +108,9 @@ fn open_failure_still_yields_a_receipt_and_releases_the_lease() {
 
 #[test]
 fn approve_run_refuses_a_detached_owner() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     s.detach(request.owner.session);
     assert_eq!(
         approve_run(&mut s, request).err(),
@@ -171,9 +120,9 @@ fn approve_run_refuses_a_detached_owner() {
 
 #[test]
 fn a_second_run_is_refused_while_the_first_holds_the_lease() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let first = f.request(&mut s);
+    let first = f.checkout_request(&mut s);
     let second = first.clone();
     let approved = approve_run(&mut s, first).unwrap();
     let job = prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string()))).unwrap();
@@ -194,9 +143,9 @@ fn a_second_run_is_refused_while_the_first_holds_the_lease() {
 /// the original token is still approvable and is consumed only by begin_write.
 #[test]
 fn busy_run_admission_preserves_another_ready_plan_and_its_one_shot_token() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     let first = approve_run(&mut s, request.clone()).unwrap();
     let job = prepare_run(
         &mut s,
@@ -256,9 +205,9 @@ fn busy_run_admission_preserves_another_ready_plan_and_its_one_shot_token() {
 #[cfg(unix)]
 #[test]
 fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     let plan = request.plan.clone();
     let repo = f.repo.clone();
     // A group the kill could not account for: only probing it proves it later.
@@ -340,9 +289,9 @@ fn dead_group() -> u32 {
 #[cfg(unix)]
 #[test]
 fn a_panicked_run_is_reconciled_through_the_supervisor_once_its_group_is_gone() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     let approved = approve_run(&mut s, request).unwrap();
     // What the job spawned, read back after the unwind so the test can watch it.
     let spawned: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
@@ -439,9 +388,9 @@ fn a_panicked_run_is_reconciled_through_the_supervisor_once_its_group_is_gone() 
 /// instead of holding the scope for the life of the process (#703).
 #[test]
 fn a_panicked_run_that_spawned_nothing_is_acknowledgeable() {
-    let f = Fixture::new();
+    let f = Fixture::checkout();
     let mut s = Sessions::new();
-    let request = f.request(&mut s);
+    let request = f.checkout_request(&mut s);
     let approved = approve_run(&mut s, request).unwrap();
     let job = prepare_run(
         &mut s,
@@ -463,4 +412,45 @@ fn a_panicked_run_that_spawned_nothing_is_acknowledgeable() {
     assert!(read.stop_proven(), "nothing of that job is running");
     acknowledge(&mut s, read).expect("so the scope can be let go");
     assert!(!s.has_leases());
+}
+
+#[path = "support/oplog.rs"]
+mod oplog;
+
+#[test]
+fn receipt_filter_keeps_caller_limit_order_and_repository_scope() {
+    use kagi_git::oplog::{append_oplog, OpLogEntry};
+
+    let fixture = Fixture::checkout();
+    for (repo, op) in [
+        (&fixture.repo, "wanted"),
+        (&fixture.repo, "unrelated"),
+        (&fixture.repo.join("other"), "wanted"),
+        (&fixture.repo, "wanted"),
+    ] {
+        append_oplog(&OpLogEntry::new(
+            op,
+            repo.display().to_string(),
+            StateSummary {
+                head: "main".into(),
+                dirty: "clean".into(),
+            },
+            OpOutcome::Refused {
+                blockers: vec!["fixture receipt".into()],
+            },
+        ))
+        .unwrap();
+    }
+
+    let newest = oplog::records(&fixture.repo, "wanted", 100, true);
+    assert_eq!(newest.len(), 2);
+    let oldest = oplog::records(&fixture.repo, "wanted", 100, false);
+    assert_eq!(oldest[0].id, newest[1].id);
+    assert_eq!(oldest[1].id, newest[0].id);
+    assert_eq!(
+        oplog::records(&fixture.repo, "wanted", 1, true)[0].id,
+        newest[0].id
+    );
+    assert_eq!(oplog::records(&fixture.repo, "wanted", 2, true).len(), 1);
+    assert!(oplog::records(&fixture.repo, "wanted", 0, true).is_empty());
 }

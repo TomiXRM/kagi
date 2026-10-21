@@ -9,7 +9,9 @@ use tempfile::TempDir;
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git, git_output, git_succeeds, init_repo, write_file};
+use git_fixture::{
+    commit_all, git, git_output, git_succeeds, init_repo, worktree_file, write_file,
+};
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 
@@ -395,7 +397,7 @@ fn checkout_state(path: &Path) -> (String, String, String, String, Vec<u8>) {
         git_output(path, &["show-ref"]),
         git_output(path, &["ls-files", "--stage"]),
         git_output(path, &["status", "--porcelain", "--untracked-files=all"]),
-        std::fs::read(path.join("a")).unwrap(),
+        worktree_file(path, "a").expect("checkout file a"),
     )
 }
 

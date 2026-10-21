@@ -617,6 +617,7 @@ pub(crate) fn plan_pull_branch_ff_with_status(
             }
         };
 
+    let mut up_to_date = false;
     if blockers.is_empty() {
         if let Some(upstream_oid) = upstream_oid {
             if local_oid == upstream_oid
@@ -624,9 +625,7 @@ pub(crate) fn plan_pull_branch_ff_with_status(
                     .graph_descendant_of(local_oid, upstream_oid)
                     .unwrap_or(false)
             {
-                blockers.push(PlanNote::Pull(PullNote::AlreadyUpToDate {
-                    branch: branch_name.to_string(),
-                }));
+                up_to_date = true;
             } else if !repo
                 .graph_descendant_of(upstream_oid, local_oid)
                 .unwrap_or(false)
@@ -638,7 +637,7 @@ pub(crate) fn plan_pull_branch_ff_with_status(
         }
     }
 
-    let predicted_head = if blockers.is_empty() {
+    let predicted_head = if blockers.is_empty() && !up_to_date {
         format!(
             "branch: {} -> {}",
             branch_name,
@@ -686,7 +685,13 @@ pub(crate) fn plan_pull_branch_ff_with_status(
             rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
-            disposition: PlanDisposition::for_blockers(&blockers),
+            disposition: if !blockers.is_empty() {
+                PlanDisposition::Blocked
+            } else if up_to_date {
+                PlanDisposition::NoOp(NoOpKind::PullUpToDate)
+            } else {
+                PlanDisposition::Ready
+            },
             title: PlanTitle::Pull(PullTitle::PullBranchFf {
                 branch: branch_name.to_string(),
                 remote: remote_name,

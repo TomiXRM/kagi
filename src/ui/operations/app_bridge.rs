@@ -200,11 +200,12 @@ impl KagiApp {
             notice.inspect = Some(id);
             self.app_notices.push_back(notice);
         }
-        if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &report.recording {
             self.app_notices.push_back(
                 i18n::op::user_text::operations::recording_failed(
                     &entry.repo,
                     &entry.op,
+                    super::record::recording_outcome(&report.recording.entry().outcome),
                     &error.to_string(),
                 )
                 .into(),
@@ -535,12 +536,14 @@ impl KagiApp {
                     notice.inspect = Some(id);
                     self.app_notices.push_back(notice);
                 }
-                if let kagi_git::backend::remove::Recording::Failed { error, .. } = report.recording
+                if let kagi_git::backend::remove::Recording::Failed { error, .. } =
+                    &report.recording
                 {
                     self.app_notices.push_back(
                         i18n::op::user_text::operations::recording_failed(
                             attachment.path.display(),
                             "remove-worktree",
+                            super::record::recording_outcome(&report.recording.entry().outcome),
                             &error.to_string(),
                         )
                         .into(),
@@ -630,11 +633,12 @@ impl KagiApp {
             notice.inspect = Some(id);
             self.app_notices.push_back(notice);
         }
-        if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &report.recording {
             self.app_notices.push_back(
                 i18n::op::user_text::operations::recording_failed(
                     &entry.repo,
                     &entry.op,
+                    super::record::recording_outcome(&report.recording.entry().outcome),
                     &error.to_string(),
                 )
                 .into(),
@@ -736,10 +740,16 @@ impl KagiApp {
     }
     pub(crate) fn present_oplog_write_failure(
         &mut self,
+        entry: &OpLogEntry,
         error: impl std::fmt::Display,
         cx: &mut Context<Self>,
     ) {
-        let message = i18n::oplog_write_failed(error);
+        let message = i18n::op::user_text::operations::recording_failed(
+            &entry.repo,
+            &entry.op,
+            super::record::recording_outcome(&entry.outcome),
+            &error.to_string(),
+        );
         self.push_toast(ToastKind::Error, message.clone(), cx);
         self.app_notices.push_back(message.into());
         self.present_app_notice();

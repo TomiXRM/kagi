@@ -73,6 +73,8 @@ pub struct CommitPanelState {
     pub unstaged: Vec<FileStatus>,
     /// Files in the staged section.
     pub staged: Vec<FileStatus>,
+    /// Rule-5 findings from staged index BLOBs, refreshed with this status read.
+    pub secret_paths: std::collections::HashSet<PathBuf>,
     /// W16-DIFFSTAT: per-file additions/deletions for unstaged files (index→WT).
     pub unstaged_stats: Vec<FileDiffStat>,
     /// W16-DIFFSTAT: per-file additions/deletions for staged files (HEAD→index).
@@ -158,6 +160,7 @@ impl CommitPanelState {
         Self {
             unstaged: Vec::new(),
             staged: Vec::new(),
+            secret_paths: std::collections::HashSet::new(),
             unstaged_stats: Vec::new(),
             staged_stats: Vec::new(),
             conflicted_paths: std::collections::HashSet::new(),
@@ -212,6 +215,13 @@ impl CommitPanelState {
 
     /// Apply a read already owned by the caller, without another status walk.
     pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+        self.secret_paths = match backend.staged_secret_paths(&status) {
+            Ok(paths) => paths,
+            Err(error) => {
+                klog!("commit-panel: secret checklist read failed: {}", error);
+                std::collections::HashSet::new()
+            }
+        };
         // Track conflicted paths for UI (these cannot be staged).
         self.conflicted_paths = status.conflicted.iter().cloned().collect();
 
@@ -277,15 +287,13 @@ impl CommitPanelState {
                 })
                 .collect::<Vec<_>>()
         };
-        // issue #411: a conflicted file must NEVER be folded away — an unresolved
-        // conflict (e.g. Cargo.lock after a merge) has to stay a visible row in
-        // the Commit Panel. Mask conflicted paths out of BOTH the artifact and
-        // generated axes below, mirroring the "convention bodies are never
-        // folded" carve-out (#378).
+        // Conflicts and detected staged secrets must never be folded away.
         let conf_flags = |files: &[FileStatus]| -> Vec<bool> {
             files
                 .iter()
-                .map(|f| self.conflicted_paths.contains(&f.path))
+                .map(|f| {
+                    self.conflicted_paths.contains(&f.path) || self.secret_paths.contains(&f.path)
+                })
                 .collect::<Vec<_>>()
         };
         let us_conf = conf_flags(&self.unstaged);

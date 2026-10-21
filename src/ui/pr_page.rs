@@ -530,10 +530,11 @@ pub(super) fn render_composer(
 ) -> Option<gpui::AnyElement> {
     use gpui_component::{Disableable as _, Sizable as _};
     let input = app.pr_comment_input.clone()?;
-    let (number, base_repo) = app
-        .pr_mode()
-        .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-        .map(|t| (t.pr.number, t.pr.base_repo.as_str()))?;
+    let tab = app
+        .pr_mode()?
+        .active
+        .and_then(|ix| app.pr_mode()?.tabs.get(ix))?;
+    let (number, base_repo) = (tab.pr.number, tab.pr.base_repo.as_str());
     // The box is the truth, not the tab's parked copy: a preview of what was
     // parked would show yesterday's text while you type today's. The value is
     // already a `SharedString`; keep it, don't rebuild it every frame.
@@ -659,13 +660,13 @@ pub(super) fn render_composer(
                         )),
                 ),
         );
-    // What the box holds lives on the PR's tab for as long as the app runs
-    // (`PrTab::comment_draft`) - it is kept, not filed away on disk like an
-    // Issue draft. Say so only when there is something to keep.
-    if !empty {
-        content = content.child(super::timeline_row::draft_status(
-            Msg::ComposerDraftSaved.t(),
-        ));
+    // Only the atomic persistence completion earns the saved label.
+    if !empty && !tab.comment_loading && !tab.comment_save_error {
+        content = content.child(super::timeline_row::draft_status(if tab.comment_saving {
+            Msg::ComposerDraftSaving.t()
+        } else {
+            Msg::ComposerDraftSaved.t()
+        }));
     }
     Some(
         super::timeline_row::composer_frame(

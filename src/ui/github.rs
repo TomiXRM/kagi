@@ -731,6 +731,10 @@ impl KagiApp {
         // "not a GitHub repo" whenever GitHub was unreachable (user report).
         let base_repo = pr.base_repo.clone();
         let posted = pr.key();
+        let storage_version = self
+            .pr_mode()
+            .and_then(|mode| mode.active.and_then(|ix| mode.tabs.get(ix)))
+            .map_or(0, |tab| tab.comment_storage_version);
         let dispatched = self.finish_run(
             cx,
             "pr-comment",
@@ -746,7 +750,7 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::PrComment { .. }) => {
                     klog!("executed: pr-comment #{}", number);
-                    RunPresentation::none().pr_comment(posted.clone())
+                    RunPresentation::none().pr_comment(posted.clone(), storage_version)
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {
@@ -814,6 +818,10 @@ impl KagiApp {
         let bg_body = body.clone();
         let base_repo = pr.base_repo.clone();
         let posted = pr.key();
+        let storage_version = self
+            .pr_mode()
+            .and_then(|mode| mode.active.and_then(|ix| mode.tabs.get(ix)))
+            .map_or(0, |tab| tab.comment_storage_version);
         let dispatched = self.finish_run(
             cx,
             "pr-review",
@@ -831,7 +839,7 @@ impl KagiApp {
                     klog!("executed: pr-review #{}", number);
                     // A review carries the same text the composer held, so it
                     // clears and the thread re-reads exactly like a comment.
-                    RunPresentation::none().pr_comment(posted.clone())
+                    RunPresentation::none().pr_comment(posted.clone(), storage_version)
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {

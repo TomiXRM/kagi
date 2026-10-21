@@ -468,8 +468,8 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     paint(cx, window);
     assert_eq!(composer(cx, &app), "other session B");
 
-    // A closed-and-reopened repository is a new session, not permission to
-    // carry the old session's identical PR-key draft into a new tab.
+    // The durable key survives a closed session and restores to its clone,
+    // without taking the other clone's identical PR key.
     app.update(cx, |app, cx| app.close_tab(1, cx));
     paint(cx, window);
     app.update(cx, |app, cx| {
@@ -478,8 +478,21 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         app.pr_mode_open(&b7, cx);
     });
     paint(cx, window);
-    assert_eq!(composer(cx, &app), "");
-    assert_eq!(draft(cx, &app, B), "");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while composer(cx, &app) != "other session B" {
+        assert!(
+            Instant::now() < deadline,
+            "the durable PR draft never restored"
+        );
+        paint(cx, window);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(draft(cx, &app, B), "other session B");
+    kagi_git::drafts::flush_issue_drafts().expect("shared Issue/PR quit flush");
+    assert_eq!(
+        kagi_git::drafts::load_pr_comment_draft(&other_repo, B, 7).as_deref(),
+        Some("other session B")
+    );
 
     unmount(cx, app, window);
 }

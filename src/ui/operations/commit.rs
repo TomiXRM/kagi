@@ -477,13 +477,8 @@ impl KagiApp {
         true
     }
 
-    /// "Generate with Local LLM" button.
-    ///
-    /// Enforces the opt-in gates: if the user has not confirmed privacy consent
-    /// (or never confirmed a model) the consent / model-picker modal is shown
-    /// first.  Only when all gates are cleared is the staged diff collected and
-    /// sent to loopback Ollama (in the background, with a timeout).  Any failure
-    /// falls back **quietly** to the rule-based draft.
+    /// Explicit Generate: obtain provider-bound consent before collecting or
+    /// sending staged content to localhost Ollama or the selected CLI service.
     pub fn smart_generate(
         &mut self,
         owner: crate::app::SessionId,
@@ -503,8 +498,11 @@ impl KagiApp {
         // when an earlier tab's presentation is still awaiting dismissal.
         self.smart_model_focus.owner = Some(owner);
         // Gate 1: first-time consent.
-        if !self.smart_commit.consent_accepted {
-            self.set_smart_commit_modal(smart_commit::SmartCommitModal::Consent);
+        if !self.smart_commit.has_consent() {
+            self.set_smart_commit_modal(smart_commit::SmartCommitModal::Consent {
+                provider: self.smart_commit.provider,
+                revision: self.smart_commit.provider_revision,
+            });
             cx.notify();
             return;
         }
@@ -550,20 +548,23 @@ impl KagiApp {
             self.cancel_smart_modal(cx);
             return;
         };
+        let Some(&smart_commit::SmartCommitModal::Consent { provider, revision }) =
+            self.smart_commit_modal()
+        else {
+            self.cancel_smart_modal(cx);
+            return;
+        };
         if Some(owner) != self.active_session()
-            || !matches!(
-                self.smart_commit_modal(),
-                Some(smart_commit::SmartCommitModal::Consent)
-            )
+            || !self.smart_commit.accept_consent(provider, revision)
         {
             self.cancel_smart_modal(cx);
             return;
         }
         self.clear_smart_commit_modal();
-        self.smart_commit.accept_consent();
+        // Approval only enables the disclosed provider; it never submits a diff.
         klog!("smart-commit: llm enabled (consent given)");
         // Move on to picking a model (always confirm at least once per ADR).
-        if self.smart_commit.model.is_none() {
+        if provider == smart_commit::SmartProvider::Ollama && self.smart_commit.model.is_none() {
             self.open_smart_model_picker(owner, window, cx);
         } else {
             cx.notify();
@@ -959,6 +960,10 @@ impl KagiApp {
         match planned {
             Ok(plan) => {
                 let has_blockers = !plan.blockers.is_empty();
+                let has_secret_warning = plan.warnings.iter().any(|note| {
+                    matches!(note, kagi_domain::plan_note::PlanNote::Checklist(note)
+                        if note.secret_path().is_some())
+                });
                 eprintln!(
                     "[kagi] plan: commit blockers={} warnings={}",
                     plan.blockers.len(),
@@ -973,13 +978,10 @@ impl KagiApp {
                         });
                     });
                 }
-                // Smooth commit (user request): with no blockers, commit immediately
-                // instead of showing a "commit?" confirmation popup. The pre-commit
-                // checklist blockers (conflict markers / secrets / large binaries)
-                // still surface the modal as a safety net. `start_commit` captures the
-                // plan synchronously, so we can drop the modal right after to suppress
-                // the popup; success/failure shows in the status footer.
-                if !has_blockers {
+                // Quiet commits still skip routine confirmations. A detected
+                // secret must retain its fresh, staged-digest-bound plan for
+                // explicit review; it is a warning, not a blocker.
+                if !has_blockers && !has_secret_warning {
                     self.start_commit(cx);
                     if let Some(entity) = self.ui().commit_panel.clone() {
                         entity.update(cx, |v, _| v.state.plan_modal = None);

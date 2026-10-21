@@ -68,6 +68,64 @@ fn with_log_dir<T>(f: impl FnOnce(&Path) -> T) -> T {
 }
 
 #[test]
+fn pr_comment_drafts_share_atomic_queue_with_isolated_keys_and_version_guards() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        use kagi_git::drafts::{load_pr_comment_draft, queue_pr_comment_draft};
+        let repo = Path::new("/tmp/kagi-it/pr-comments");
+        let clone = Path::new("/tmp/kagi-it/pr-comments-other-clone");
+        let other = "github.com/other/widgets";
+        queue_issue_draft(repo, Some(7), "", "Issue reply", &no_picks());
+        let old = queue_pr_comment_draft(repo, BASE, 7, "old PR comment 日本語");
+        assert_eq!(
+            load_pr_comment_draft(repo, BASE, 7).as_deref(),
+            Some("old PR comment 日本語")
+        );
+        let current = queue_pr_comment_draft(repo, BASE, 7, "newer PR comment");
+        let sibling = queue_pr_comment_draft(repo, BASE, 8, "PR 8");
+        queue_pr_comment_draft(repo, other, 7, "other base repository");
+        queue_pr_comment_draft(clone, BASE, 7, "other clone");
+        assert_eq!(clear_issue_draft_if_version(repo, Some(7), old), None);
+        assert_eq!(clear_issue_draft_if_version(clone, Some(7), current), None);
+        assert_eq!(clear_issue_draft_if_version(repo, Some(8), current), None);
+        flush_issue_drafts().expect("shared shutdown flush");
+        let stored = load_draft(repo, ":pr:github.com/acme/widgets:7").unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(&stored.message).unwrap(),
+            ["", "newer PR comment"]
+        );
+        assert_eq!(
+            load_pr_comment_draft(repo, BASE, 7).as_deref(),
+            Some("newer PR comment")
+        );
+        let cleared = clear_issue_draft_if_version(repo, Some(7), current).unwrap();
+        assert!(
+            load_pr_comment_draft(repo, BASE, 7).is_none(),
+            "pending clear wins over disk"
+        );
+        assert_eq!(clear_issue_draft_if_version(repo, Some(7), current), None);
+        assert!(flush_issue_draft_if_version(repo, Some(7), cleared).unwrap());
+        assert!(load_draft(repo, ":pr:github.com/acme/widgets:7").is_none());
+        assert_eq!(load_issue_draft(repo, Some(7)).unwrap().1, "Issue reply");
+        assert_eq!(
+            load_pr_comment_draft(repo, BASE, 8).as_deref(),
+            Some("PR 8")
+        );
+        assert_eq!(
+            load_pr_comment_draft(repo, other, 7).as_deref(),
+            Some("other base repository")
+        );
+        assert_eq!(
+            load_pr_comment_draft(clone, BASE, 7).as_deref(),
+            Some("other clone")
+        );
+        assert!(!flush_issue_draft_if_version(repo, Some(8), sibling).unwrap());
+    });
+}
+
+#[test]
 fn round_trip_preserves_message_mode_and_branch() {
     if !crate::test_support::run_isolated() {
         return;

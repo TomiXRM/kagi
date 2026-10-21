@@ -21,12 +21,16 @@ use gpui_component::IconName;
 
 /// One privacy disclosure for Generate and both Settings hosts.
 pub(super) fn smart_consent_card(
+    provider: smart_commit::SmartProvider,
     confirm: super::dialog_a11y::DialogHandler,
     cancel: super::dialog_a11y::DialogHandler,
     cx: &gpui::App,
 ) -> gpui::Div {
     let mut lines = div().flex().flex_col().gap_1();
-    for (index, line) in smart_commit::CONSENT_LINES.into_iter().enumerate() {
+    for (index, line) in smart_commit::consent_lines(provider)
+        .into_iter()
+        .enumerate()
+    {
         let text = line.t();
         let row = div()
             .flex()
@@ -50,6 +54,18 @@ pub(super) fn smart_consent_card(
         let _ = index;
         lines = lines.child(row);
     }
+    let intro = div()
+        .text_sm()
+        .text_color(rgb(current_theme().text_sub))
+        .child(smart_commit::consent_intro(provider).t());
+    #[cfg(feature = "gui-e2e")]
+    let intro = super::e2e::measure_control(
+        format!(
+            "smart-consent-intro-{}",
+            smart_commit::consent_intro(provider).t()
+        ),
+        intro,
+    );
     modal_card(MODAL_W_MD)
         .child(div().flex_shrink_0().child(render_modal_title_row(
             Msg::SmartConsentTitle.t().into(),
@@ -58,12 +74,7 @@ pub(super) fn smart_consent_card(
                 current_theme().color_success,
             )),
         )))
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(current_theme().text_sub))
-                .child(Msg::SmartConsentIntro.t()),
-        )
+        .child(intro)
         .child(lines)
         .child(
             div().flex_shrink_0().child(
@@ -96,9 +107,7 @@ pub(super) fn smart_consent_card(
 
 /// Render the Smart Commit consent / model-picker overlay.
 ///
-/// * `Consent` — the first-time opt-in dialog carrying the four mandated
-///   statements ([`smart_commit::CONSENT_LINES`]).  Confirm enables LLM
-///   generation and proceeds to model selection.
+/// * `Consent` — provider-specific opt-in; confirmation only enables generation.
 /// * `ModelPicker` — choose one installed model; the choice is persisted.
 pub(crate) fn render_smart_commit_modal(
     modal: smart_commit::SmartCommitModal,
@@ -107,7 +116,7 @@ pub(crate) fn render_smart_commit_modal(
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let card = match modal {
-        smart_commit::SmartCommitModal::Consent => {
+        smart_commit::SmartCommitModal::Consent { provider, .. } => {
             let owner = cx.entity().downgrade();
             let cancel: super::dialog_a11y::DialogHandler = std::rc::Rc::new(move |_, cx| {
                 let _ = owner.update(cx, |app, cx| app.cancel_smart_modal(cx));
@@ -116,7 +125,7 @@ pub(crate) fn render_smart_commit_modal(
             let confirm: super::dialog_a11y::DialogHandler = std::rc::Rc::new(move |window, cx| {
                 let _ = owner.update(cx, |app, cx| app.confirm_smart_consent(window, cx));
             });
-            smart_consent_card(confirm, cancel, cx)
+            smart_consent_card(provider, confirm, cancel, cx)
         }
         smart_commit::SmartCommitModal::ModelPicker { models } => {
             let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {

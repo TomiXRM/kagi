@@ -9,12 +9,10 @@
 //! ## Policy (ADR-0044, user-decided)
 //!
 //!   * **Rule-based suggestion is always available** (the "Suggest" button).
-//!   * **Local-LLM generation is opt-in**: it is usable only when an Ollama
-//!     server is detected *and* the user has explicitly enabled it.
-//!   * Pressing **"Generate with Local LLM"** is the *only* moment the staged
-//!     diff is sent, and only to loopback Ollama.
-//!   * On **first** enable a consent dialog is shown carrying the four mandated
-//!     statements (see [`CONSENT_LINES`]).
+//!   * **LLM generation is opt-in** for the selected provider.
+//!   * Only explicit Generate sends staged diff: to localhost Ollama or the
+//!     selected external service through its configured CLI account.
+//!   * Consent is provider-bound and must be reacquired after provider changes.
 //!   * Model selection: one model still needs first-time confirmation; multiple
 //!     models force a choice.  The chosen model is persisted to `settings.json`.
 //!   * `KAGI_OFFLINE=1` disables detection and generation entirely.
@@ -89,16 +87,27 @@ pub struct SmartGeneration {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Consent dialog text (ADR-0044 — these four English statements MUST be present)
-// ──────────────────────────────────────────────────────────────────────────
+// Provider-specific consent shared by Generate and both Settings hosts.
 
-/// The four mandated statements; the translated lines retain the same policy.
-pub const CONSENT_LINES: [Msg; 4] = [
-    Msg::SmartConsentStagedOnly,
-    Msg::SmartConsentUnstagedExcluded,
-    Msg::SmartConsentLocalhost,
-    Msg::SmartConsentSecretsWarning,
-];
+pub fn consent_intro(provider: SmartProvider) -> Msg {
+    match provider {
+        SmartProvider::Ollama => Msg::SmartConsentIntro,
+        SmartProvider::Cli(CliProvider::ClaudeCode) => Msg::SmartConsentClaudeIntro,
+        SmartProvider::Cli(CliProvider::Codex) => Msg::SmartConsentCodexIntro,
+    }
+}
+
+pub fn consent_lines(provider: SmartProvider) -> [Msg; 4] {
+    [
+        Msg::SmartConsentStagedOnly,
+        Msg::SmartConsentUnstagedExcluded,
+        match provider {
+            SmartProvider::Ollama => Msg::SmartConsentLocalhost,
+            SmartProvider::Cli(_) => Msg::SmartConsentCliAccount,
+        },
+        Msg::SmartConsentSecretsWarning,
+    ]
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // State
@@ -107,9 +116,11 @@ pub const CONSENT_LINES: [Msg; 4] = [
 /// Which modal (if any) the Smart Commit flow is currently showing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SmartCommitModal {
-    /// First-time consent (carries [`CONSENT_LINES`]).  On confirm, enables LLM
-    /// generation and proceeds to model selection (or generation).
-    Consent,
+    /// Approval is valid only for the provider disclosed when this modal opened.
+    Consent {
+        provider: SmartProvider,
+        revision: u64,
+    },
     /// Model picker: the user must choose one of `models`.
     ModelPicker {
         /// Installed model names from `/api/tags`.
@@ -167,10 +178,12 @@ pub struct SmartCommitState {
     pub codex_available: bool,
     /// Selected generation backend (persisted; ADR-0099). Default `Ollama`.
     pub provider: SmartProvider,
+    /// Invalidates pending approval even after switching away and back.
+    pub provider_revision: u64,
     /// Whether LLM generation is enabled (persisted independently of consent).
     pub llm_enabled: bool,
-    /// The user explicitly confirmed the four first-use privacy statements.
-    pub consent_accepted: bool,
+    /// The provider whose privacy disclosure was explicitly approved.
+    pub consent_provider: Option<SmartProvider>,
     /// Selected model name (persisted); `None` until chosen.
     pub model: Option<String>,
     /// Output language (persisted; remembered like the draft per ADR-0042).
@@ -186,8 +199,9 @@ impl Default for SmartCommitState {
             claude_available: false,
             codex_available: false,
             provider: SmartProvider::Ollama,
+            provider_revision: 0,
             llm_enabled: false,
-            consent_accepted: false,
+            consent_provider: None,
             model: None,
             lang: Lang::En,
         }
@@ -199,9 +213,16 @@ impl SmartCommitState {
     /// the running Ollama server is done separately in the background so the UI
     /// thread never blocks on a probe.
     pub fn load() -> Self {
+        let provider = settings::read_setting(KEY_PROVIDER)
+            .map(|p| SmartProvider::from_slug(&p))
+            .unwrap_or(SmartProvider::Ollama);
+        // Legacy "1" was not provider-bound and cannot authorize any backend.
+        let consent_provider = settings::read_setting(KEY_CONSENT)
+            .filter(|slug| slug == provider.slug())
+            .map(|_| provider);
         SmartCommitState {
             llm_enabled: settings::read_setting(KEY_ENABLED).as_deref() == Some("1"),
-            consent_accepted: settings::read_setting(KEY_CONSENT).as_deref() == Some("1"),
+            consent_provider,
             model: settings::read_setting(KEY_MODEL).filter(|m| !m.is_empty()),
             // ADR-0134: the Lang pill in the commit footer is gone, so an
             // unset `smart_commit_lang` follows the UI language rather than
@@ -213,9 +234,7 @@ impl SmartCommitState {
                     kagi_ui_core::i18n::Lang::Ja => Lang::Ja,
                     kagi_ui_core::i18n::Lang::En => Lang::En,
                 }),
-            provider: settings::read_setting(KEY_PROVIDER)
-                .map(|p| SmartProvider::from_slug(&p))
-                .unwrap_or(SmartProvider::Ollama),
+            provider,
             ..Default::default()
         }
     }
@@ -226,11 +245,19 @@ impl SmartCommitState {
         settings::write_setting(KEY_ENABLED, Some(if on { "1" } else { "0" }));
     }
 
-    /// Record explicit privacy consent before enabling generation.
-    pub fn accept_consent(&mut self) {
-        settings::write_setting(KEY_CONSENT, Some("1"));
-        self.consent_accepted = true;
+    pub fn has_consent(&self) -> bool {
+        self.consent_provider == Some(self.provider)
+    }
+
+    /// Record only the provider actually disclosed by the pending approval.
+    pub fn accept_consent(&mut self, provider: SmartProvider, revision: u64) -> bool {
+        if provider != self.provider || revision != self.provider_revision {
+            return false;
+        }
+        settings::write_setting(KEY_CONSENT, Some(provider.slug()));
+        self.consent_provider = Some(provider);
         self.set_enabled(true);
+        true
     }
 
     /// Persist the selected model.
@@ -242,8 +269,15 @@ impl SmartCommitState {
 
     /// Persist the selected generation provider (ADR-0099).
     pub fn set_provider(&mut self, provider: SmartProvider) {
-        self.provider = provider;
-        settings::write_setting(KEY_PROVIDER, Some(provider.slug()));
+        if self.provider != provider {
+            // Revoke before publishing the new selection, including on disk.
+            self.provider_revision = self.provider_revision.wrapping_add(1);
+            settings::write_setting(KEY_CONSENT, None);
+            self.consent_provider = None;
+            self.set_enabled(false);
+            self.provider = provider;
+            settings::write_setting(KEY_PROVIDER, Some(provider.slug()));
+        }
     }
 
     /// Whether `provider`'s CLI was detected on `$PATH` (from the last probe).

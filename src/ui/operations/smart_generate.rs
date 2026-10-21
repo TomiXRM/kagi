@@ -14,12 +14,11 @@ use crate::ui::*;
 impl KagiApp {
     /// Collect the staged diff and dispatch generation on a background thread.
     ///
-    /// Sends only the staged diff to loopback Ollama (ureq + global timeout in
-    /// the backend).  On any `Err` the result falls back to the rule-based draft
-    /// so the UI never blocks or shows a blocking error.
+    /// Sends staged diff only to the approved provider. On any backend error,
+    /// quietly falls back to the rule-based draft without a blocking error.
     pub(super) fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.smart_commit.llm_enabled
-            || !self.smart_commit.consent_accepted
+            || !self.smart_commit.has_consent()
             || message_gen::offline()
         {
             return;

@@ -974,6 +974,24 @@ impl Backend {
         self.run_recorded(op, plan).result
     }
 
+    /// Secret findings from the same index-BLOB checklist used by commit plans.
+    /// The caller supplies its status read so panel loading needs no second walk.
+    pub fn staged_secret_paths(
+        &self,
+        status: &WorkingTreeStatus,
+    ) -> Result<std::collections::HashSet<std::path::PathBuf>, GitError> {
+        let (_, warnings) = crate::checklist::checklist(&self.repo, status)?;
+        Ok(warnings
+            .into_iter()
+            .filter_map(|note| match note {
+                kagi_domain::plan_note::PlanNote::Checklist(note) => {
+                    note.secret_path().map(std::path::PathBuf::from)
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
         ops::plan_commit(&self.repo, message)
     }

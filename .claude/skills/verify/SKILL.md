@@ -57,6 +57,19 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1702 use `KAGI_GUI_E2E_ONLY='smart_commit_settings_consent,commit_panel_,pr_same_number,issue_create_fields,workspace_mode_toolbar,smart_picker_keyboard,smart_picker_empty,smart_commit_generation_owner,smart_generation_close_drops_panel,smart_commit_footer_provider,smart_generation_commit_boundary,smart_generation_replaced_panel'`
+with KEEP_GOING. The consent scenario covers Ollama/Codex/Claude Code in
+EN/JA and both Settings hosts, reapproval and stale selections without sending
+diffs to an external service. CLI fixtures are fail-closed local executables;
+provider selection/consent must not invoke them. `commit_panel_secret_warnings`
+checks filename and staged-content findings before Commit in wide/compact,
+EN/JA, List/Tree and 100%/167%, unchanged HEAD/index on the first click,
+explicit confirmation and removal after Unstage. PR draft coverage restores
+through the same queued atomic store as Issue drafts and checks key/version
+isolation. Tier B compares EN/JA before/after consent and staged file/footer
+warnings with only provider selection and cancellation, never Generate or
+an external service send. Retain a production binary before building gui-e2e.
+
 For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_detail_select_copy'`
 with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
 selecting both Nagi presets, checks native focus-ring and graph-selection

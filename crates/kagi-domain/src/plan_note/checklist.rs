@@ -24,6 +24,15 @@ pub enum ChecklistNote {
 }
 
 impl ChecklistNote {
+    /// The staged path requiring an explicit secret review, if this is rule 5.
+    pub fn secret_path(&self) -> Option<&str> {
+        match self {
+            Self::PossibleSecretFileStaged { path }
+            | Self::PossibleSecretContentStaged { path } => Some(path),
+            _ => None,
+        }
+    }
+
     /// Byte-identical to the legacy `kagi_domain::checklist` strings
     /// (golden-tested).
     pub fn message_en(&self) -> String {

@@ -1,4 +1,4 @@
-//! Shared commit-message / Issue draft autosave — ADR-0042.
+//! Shared commit-message / Issue / PR comment draft autosave — ADR-0042 / ADR-0201.
 //!
 //! Persists a work-in-progress commit message **per repository + branch** so it
 //! survives an application restart, and clears it once the commit succeeds.
@@ -31,16 +31,15 @@
 //! - [`load_draft`] — read the draft for a branch (`None` when absent/corrupt)
 //! - [`clear_draft`] — delete the draft for a branch (e.g. after a commit)
 //! - [`queue_issue_draft`] / [`flush_issue_draft_if_version`] — keyed Issue autosave
-//! - [`flush_issue_drafts`] — best-effort flush of every pending Issue draft
+//! - [`flush_issue_drafts`] — best-effort flush of pending Issue and PR drafts
 //! - [`load_issue_draft`] — read the latest pending or saved Issue draft, an
 //!   [`IssueDraftRecord`] (text plus a New Issue's picked labels / assignees),
 //!   as an [`IssueDraftLoad`]
 //! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
 //!
-//! An Issue draft is stored per clone, per repository it is written to (the
-//! `<host>/<owner>/<repo>` the Issues mode posts to) and per Issue: the clone
-//! can address another repository after `gh repo set-default`, where the same
-//! number is another Issue (#940 review).
+//! Issue and PR drafts are stored per clone, addressed base repository and
+//! number. PR comments use `:pr:` keys, disjoint from the `:issue:` namespace,
+//! but share the queue, version tokens, atomic writer and shutdown flush.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -241,6 +240,14 @@ impl IssueDraftKey {
         )
     }
 
+    fn pr(repo: &Path, base_repo: &str, number: u64) -> Self {
+        Self::at(
+            repo,
+            Some(number),
+            format!(":pr:{}:{number}", base_repo.to_ascii_lowercase()),
+        )
+    }
+
     /// Where builds before #940 kept the draft: per clone only, without the
     /// repository it was written to.
     fn unaddressed(repo: &Path, number: Option<u64>) -> Self {
@@ -305,7 +312,20 @@ pub fn queue_issue_draft(
     body: &str,
     fields: &IssueCreateFields,
 ) -> u64 {
-    let key = IssueDraftKey::new(repo, base_repo, number);
+    queue_composer_draft(
+        IssueDraftKey::new(repo, base_repo, number),
+        title,
+        body,
+        fields,
+    )
+}
+
+fn queue_composer_draft(
+    key: IssueDraftKey,
+    title: &str,
+    body: &str,
+    fields: &IssueCreateFields,
+) -> u64 {
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -327,7 +347,10 @@ pub fn queue_issue_draft(
 /// Read (or allocate) the process-lifetime version of this storage key, without
 /// filesystem I/O. Capture before loading and check again before applying it.
 pub fn issue_draft_version(repo: &Path, base_repo: &str, number: Option<u64>) -> u64 {
-    let key = IssueDraftKey::new(repo, base_repo, number);
+    composer_draft_version(IssueDraftKey::new(repo, base_repo, number))
+}
+
+fn composer_draft_version(key: IssueDraftKey) -> u64 {
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -335,6 +358,38 @@ pub fn issue_draft_version(repo: &Path, base_repo: &str, number: Option<u64>) ->
         Some(version) => *version,
         None => queue.advance(&key),
     }
+}
+
+/// PR comments share the Issue queue, atomic writes and shutdown flush, but
+/// use a separate namespace even when an Issue has the same number.
+pub fn queue_pr_comment_draft(repo: &Path, base_repo: &str, number: u64, body: &str) -> u64 {
+    queue_composer_draft(
+        IssueDraftKey::pr(repo, base_repo, number),
+        "",
+        body,
+        &IssueCreateFields::default(),
+    )
+}
+
+pub fn pr_comment_draft_version(repo: &Path, base_repo: &str, number: u64) -> u64 {
+    composer_draft_version(IssueDraftKey::pr(repo, base_repo, number))
+}
+
+/// Read the latest pending value before disk, including a pending clear.
+pub fn load_pr_comment_draft(repo: &Path, base_repo: &str, number: u64) -> Option<String> {
+    let key = IssueDraftKey::pr(repo, base_repo, number);
+    let queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(record) = queue.pending.get(&key) {
+        return (!record.is_empty()).then(|| record.body.clone());
+    }
+    let draft = key.path.as_deref().and_then(load_draft_at)?;
+    (draft.mode == "issue-composer")
+        .then(|| parse_issue_message(&draft.message))
+        .flatten()
+        .filter(|record| !record.is_empty())
+        .map(|record| record.body)
 }
 
 /// Consume the posted version only if it is still current, queuing a clear,

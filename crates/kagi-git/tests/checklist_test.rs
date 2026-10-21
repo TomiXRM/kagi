@@ -82,6 +82,50 @@ fn run_checklist(
     checklist(repo, &status).expect("checklist")
 }
 
+#[test]
+fn panel_secret_paths_match_plan_and_scan_index_not_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (dir, _repo) = init_repo(&tmp);
+    write(&dir, ".env", b"EXAMPLE=not-a-real-secret\n");
+    write(&dir, "key.txt", b"-----BEGIN PRIVATE KEY-----\nfixture\n");
+    write(&dir, ".env.example", b"EXAMPLE=placeholder\n");
+    write(&dir, "ordinary.txt", b"ordinary\n");
+    git(&dir, &["add", "."]);
+    // Remove a staged secret from WT and add an unstaged secret elsewhere.
+    write(
+        &dir,
+        "key.txt",
+        b"ordinary now, but index still has the key\n",
+    );
+    write(&dir, "ordinary.txt", b"-----BEGIN PRIVATE KEY-----\n");
+    let backend = kagi_git::Backend::open(&dir).unwrap();
+    let status = backend.working_tree_status().unwrap();
+    let found = backend.staged_secret_paths(&status).unwrap();
+    let expected = [".env", "key.txt"]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+    assert_eq!(found, expected);
+    let plan = backend.plan_commit("review").unwrap();
+    let plan_paths = plan
+        .warnings
+        .iter()
+        .filter_map(|note| match note {
+            kagi_git::ops::PlanNote::Checklist(note) => {
+                note.secret_path().map(std::path::PathBuf::from)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(found, plan_paths);
+    git(&dir, &["restore", "--staged", ".env", "key.txt"]);
+    let status = backend.working_tree_status().unwrap();
+    assert!(backend.staged_secret_paths(&status).unwrap().is_empty());
+}
+
 fn any_contains(v: &[kagi_git::ops::PlanNote], needle: &str) -> bool {
     v.iter().any(|s| s.message_en().contains(needle))
 }

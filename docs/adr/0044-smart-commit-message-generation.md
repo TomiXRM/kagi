@@ -161,12 +161,12 @@ the existing session-owned completion and quiet fallback policy are unchanged.
 
 ## Amendment — 2026-10-14: Settings first-time consent (#1509)
 
-- First-time enable from Settings and Generate must show the same four localized
-  `CONSENT_LINES`, including unstaged exclusion and the staged-secret warning.
-- Consent is a persisted fact separate from `smart_commit_llm_enabled`. Disabling
-  preserves consent; re-enabling after approval does not ask again. A legacy
-  enabled value without recorded consent is not evidence of approval and must
-  pass the consent gate before generation.
+- First-time enable from Settings and Generate shares the localized provider
+  disclosure, unstaged exclusion and staged-secret warning.
+- Consent is separate from `smart_commit_llm_enabled` and bound to the selected
+  provider. Disabling preserves consent only for that provider; switching
+  providers revokes approval before persisting the new selection. Legacy enabled
+  values and unbound consent values are not evidence of approval.
 - Settings approval belongs to its actual native-window or portable-overlay
   focus owner, without requiring a repository session. It enables only: no
   automatic model choice and no generation. Cancel, Escape and host closure
@@ -175,3 +175,26 @@ the existing session-owned completion and quiet fallback policy are unchanged.
 - Generate's existing repository-session ownership, explicit model selection,
   provider warnings and offline policy remain intact. Detection may read model
   availability, but only an explicit Generate submits staged content.
+
+## Amendment — 2026-10-21: provider-correct consent (#1702)
+
+The existing `smart_commit_consent_accepted` string now stores the approved
+provider's exact slug (`ollama`, `claude-code`, `codex`), not a generic `"1"`.
+Load accepts it only when it matches `smart_commit_provider`; legacy `"1"`
+requires fresh consent. The existing Settings store remains the only writer.
+Changing provider clears approval and disables generation; an enabled Settings
+selection immediately offers the new disclosure, without sending content.
+
+Both Generate's modal and the native/portable Settings alert freeze the provider
+and its selection revision. Confirmation must match both before enabling, so a
+switch (including away and back) retires stale approval. Generate rechecks the
+provider-bound consent at dispatch. Approval itself never sends a diff; CLI
+approval skips Ollama model selection and waits for a separate Generate.
+
+EN/JA disclosures name localhost Ollama, Anthropic's external Claude service via
+Claude Code CLI, or OpenAI's external Codex service via Codex CLI. CLI disclosures
+state configured CLI account/quota use and possible charges, never localhost-only
+processing. The existing `smart_commit_settings_consent` Tier A covers all three
+providers, Settings switching, stale approval, persisted reopen and no-send using
+local transport fixtures only.
+

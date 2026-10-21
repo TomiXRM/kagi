@@ -145,7 +145,7 @@ pub(crate) struct RunPresentation {
     github_merge: Option<GithubMergePresentation>,
     /// A posted PR comment: clear the composer and re-read the thread of this
     /// PR (repository and number, #940 review).
-    pr_comment: Option<kagi_domain::github::PrKey>,
+    pr_comment: Option<(kagi_domain::github::PrKey, u64)>,
     /// A posted Issue write: `(number, storage version, fields sent)`.
     issue_write: Option<(Option<u64>, u64, kagi_domain::github::IssueCreateFields)>,
     /// A confirmed field edit: the tab's own copy of the PR carries these
@@ -218,8 +218,8 @@ impl RunPresentation {
         self
     }
 
-    pub(crate) fn pr_comment(mut self, pr: kagi_domain::github::PrKey) -> Self {
-        self.pr_comment = Some(pr);
+    pub(crate) fn pr_comment(mut self, pr: kagi_domain::github::PrKey, version: u64) -> Self {
+        self.pr_comment = Some((pr, version));
         self
     }
 
@@ -557,11 +557,17 @@ impl KagiApp {
                             cx,
                         );
                     }
-                    if let Some(pr) = presentation.pr_comment.take() {
+                    if let Some((pr, version)) = presentation.pr_comment.take() {
                         // `repo_path` is the one the write was planned against,
                         // frozen at dispatch - not `app.repo_path`, which is
                         // whatever is on screen now (review finding).
-                        app.settle_pr_write(Some(stamp.session), repo_path.clone(), pr, cx);
+                        app.settle_pr_write(
+                            Some(stamp.session),
+                            repo_path.clone(),
+                            pr,
+                            version,
+                            cx,
+                        );
                     }
                     if let Some((number, revision, sent)) = presentation.issue_write.take() {
                         app.settle_issue_write(

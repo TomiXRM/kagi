@@ -64,3 +64,25 @@ Commit Checklist の各ルールの**判定方法**を確定する。ADR-0039 �
 - conflict marker / secret 走査は **テキスト BLOB の先頭一定量のみ**で性能を担保
 - 閾値・除外パターンは env / 定数で調整可。カスタムルール(ユーザー定義)は MVP 外
 - checklist を独立 module にすることで commit / amend の両 plan から再利用し、unit test を集中させられる
+
+## Amendment — 2026-10-21: pre-execution secret review (#1702)
+
+The Commit Panel's existing background status read also runs the same staged
+index-BLOB checklist as `plan_commit`. Rule-5 paths stay unfolded and carry a
+localized inline warning in both wide file lists and compact Changes. The
+shared composer shows a short warning immediately above Commit, offering
+review or the existing Unstage action to exclude the affected files.
+
+Routine warning-free commits retain their quiet path. A fresh commit plan with
+a rule-5 filename/content finding instead retains the existing confirmation
+card, requiring a separate explicit confirmation before any write. Findings
+remain warnings, not blockers; approval is scoped to the plan's staged
+path/OID/mode/stage digest and is not retained for a later commit. The backend
+preflight still rejects a staging change after that approval. Other warning
+categories do not change quiet-commit policy in this issue.
+
+Panel rendering performs no Git reads and stores only the current read's
+detected path set. Unstaging refreshes that set; unstaged content is never
+mistaken for content being committed. The localized row warning is compact,
+and its tooltip/accessible description carries the review/exclusion advice.
+

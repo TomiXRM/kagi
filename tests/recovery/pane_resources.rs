@@ -743,7 +743,7 @@ fn pending_generation(
 /// only after the owner entry proves the tab is still open.
 pub fn scenario_smart_generation_close_drops_panel(cx: &mut VisualTestAppContext) {
     let _consent = crate::gui_isolation::SavedKeys::keep(&["smart_commit_consent_accepted"]);
-    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("codex"));
     let root_dir = tempfile::tempdir().expect("tempdir");
     let root = root_dir.path().canonicalize().unwrap();
     let repo_a = build_fixture(&root, "smart-a");
@@ -762,6 +762,7 @@ pub fn scenario_smart_generation_close_drops_panel(cx: &mut VisualTestAppContext
         state.smart_commit.llm_enabled = true;
         state.smart_commit.provider =
             kagi::ui::smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex);
+        state.smart_commit.consent_provider = Some(state.smart_commit.provider);
     });
     let (task, finish) = pending_generation(cx);
     kagi::ui::e2e::queue_smart_generation(task);

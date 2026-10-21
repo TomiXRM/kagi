@@ -41,6 +41,18 @@ flush と clear の順序を共通 mutex で直列化し、失敗は pending に
 消費できるが、再表示後の新しい編集は消さない。同じ保存版を復元していた input
 だけを同期する。失敗と Unknown では draft は残る。restore の遅い完了にも版を照合する。
 
+### PR comment drafts (#1702)
+
+PR comments and review bodies extend this same queue and atomic persistence
+owner, not settings or another store. Their key is clone path plus
+`:pr:<lowercase base repository>:<PR number>`, disjoint from Issue replies.
+The existing application-quit flush drains both namespaces. Restoration uses
+the pending value before disk and a version guard before touching an input;
+successful posts consume only the captured version, including after close and
+reopen. Failed or unknown posts retain their draft. The PR saved indicator now
+uses the same persistence completion semantics and existing EN/JA messages.
+
+
 ## 書き込み
 
 github_comment.rs と同じ bounded runner と recording::finalize を使用する。

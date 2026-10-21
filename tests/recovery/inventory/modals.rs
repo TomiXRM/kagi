@@ -103,7 +103,10 @@ modal!(update, update_modal, |f, app, window, cx| {
 });
 modal!(smart_commit, smart_commit_modal, |f, app, window, cx| {
     app.update(cx, |app, _| {
-        app.set_smart_commit_modal(kagi::ui::smart_commit::SmartCommitModal::Consent)
+        app.set_smart_commit_modal(kagi::ui::smart_commit::SmartCommitModal::Consent {
+            provider: app.smart_commit.provider,
+            revision: app.smart_commit.provider_revision,
+        })
     });
 });
 // AppNotice's presentation helper is also used by the real operation error path.

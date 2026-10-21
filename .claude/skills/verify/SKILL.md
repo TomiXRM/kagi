@@ -4298,6 +4298,16 @@ execution. Both idle double-click and queue use typed checkout admission: unrela
 dirty work stays quiet, while unknown cautions require confirmation and blockers
 refuse. Backend checkout tests also cover file/directory collisions, an empty-tree
 baseline for unborn HEAD, and paths unchanged between HEAD and the destination.
+Also exercise staged child-vs-target-file and staged file-vs-target-directory
+obstructions, plus a staged rename whose source is rewritten by the target.
+Idle double-click and queued admission must show the concrete-path blocker before
+starting a target writer; a disabled confirm must leave refs, index, bytes and
+receipt count unchanged (only an existing queued predecessor may have run).
+The same entrypoints must execute a nonoverlapping staged rename quietly and
+preserve its index entry and split unstaged bytes. Backend `ops_test` counterparts
+use the public `Backend::plan` for branch and detached checkout and assert read-only
+planning, including component-prefix neighbours that must not be mistaken for
+file/directory collisions.
 After #1697 integration, also include `entry_consistency_` in the scoped run.
 Current ff-only and non-current Pull must execute without a card for clean and
 unrelated dirty fixtures, while unknown typed cautions retain their choice. In

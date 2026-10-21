@@ -20,8 +20,8 @@ use kagi_domain::remote::shell_quote;
 /// - Target branch is already the current HEAD branch (no-op would be confusing).
 /// - Target branch is checked out in another registered worktree.
 /// - Repository is in a conflict state (`status.conflicted` is non-empty).
-/// - Staged / unstaged changes overlap files the checkout must rewrite
-///   (the HEAD-tree → target-tree diff).
+/// - Staged / unstaged changes, including rename sources, overlap paths the
+///   checkout must rewrite or obstruct target writes through file/directory shape.
 /// - An untracked path obstructs a target file the checkout must write, including
 ///   directory/file collisions. Safe checkout refuses a newly added target file
 ///   even when the untracked file has identical contents.
@@ -398,43 +398,52 @@ fn predict_checkout_conflict(
     let target_tree = repo.find_commit(target_oid).ok()?.tree().ok()?;
 
     // Paths the checkout would write (anything that differs between the two trees).
-    let mut touched: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut touched: std::collections::HashSet<&std::path::Path> = std::collections::HashSet::new();
     let diff = repo
         .diff_tree_to_tree(head_tree.as_ref(), Some(&target_tree), None)
         .ok()?;
     for delta in diff.deltas() {
         if let Some(p) = delta.old_file().path() {
-            touched.insert(p.to_string_lossy().into_owned());
+            touched.insert(p);
         }
         if let Some(p) = delta.new_file().path() {
-            touched.insert(p.to_string_lossy().into_owned());
+            touched.insert(p);
         }
     }
     if touched.is_empty() {
         return None;
     }
 
-    // Locally-modified tracked paths (staged + unstaged).
-    let mut overlap: Vec<String> = Vec::new();
-    for f in status.staged.iter().chain(status.unstaged.iter()) {
-        let p = f.path.to_string_lossy().into_owned();
-        if touched.contains(&p) && !overlap.contains(&p) {
-            overlap.push(p);
-        }
-    }
-    for local in &status.untracked {
-        let obstructs_target = diff.deltas().any(|delta| {
+    let obstructs_target = |local: &std::path::Path| {
+        diff.deltas().any(|delta| {
             let target = delta.new_file();
             target.exists()
                 && target
                     .path()
                     .is_some_and(|path| local.starts_with(path) || path.starts_with(local))
-        });
-        if obstructs_target {
-            let path = local.to_string_lossy().into_owned();
-            if !overlap.contains(&path) {
-                overlap.push(path);
+        })
+    };
+    let mut overlap: Vec<String> = Vec::new();
+    let mut record_overlap = |local: &std::path::Path| {
+        let path = local.to_string_lossy();
+        if !overlap.iter().any(|known| known == path.as_ref()) {
+            overlap.push(path.into_owned());
+        }
+    };
+    for file in status.staged.iter().chain(status.unstaged.iter()) {
+        let from = match &file.change {
+            crate::status::ChangeKind::Renamed { from } => Some(from.as_path()),
+            _ => None,
+        };
+        for local in std::iter::once(file.path.as_path()).chain(from) {
+            if touched.contains(local) || obstructs_target(local) {
+                record_overlap(local);
             }
+        }
+    }
+    for local in &status.untracked {
+        if obstructs_target(local) {
+            record_overlap(local);
         }
     }
     if overlap.is_empty() {

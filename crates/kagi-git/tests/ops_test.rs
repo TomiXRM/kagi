@@ -424,6 +424,167 @@ fn test_untracked_checkout_obstructions_block_branch_and_commit_with_paths() {
     }
 }
 
+fn checkout_overlap_state(repo_dir: &Path) -> (String, String, Vec<u8>, String, usize) {
+    let repo = Repository::open(repo_dir).unwrap();
+    (
+        git_output(repo_dir, &["symbolic-ref", "HEAD"]),
+        git_output(repo_dir, &["show-ref"]),
+        std::fs::read(repo.path().join("index")).unwrap(),
+        git_output(repo_dir, &["diff", "--binary", "HEAD"]),
+        kagi_git::oplog::read_oplog_tail_for_repo(repo_dir, 100).len(),
+    )
+}
+
+fn assert_checkout_obstruction_read_only(repo_dir: &Path, target: CommitId, path: &str) {
+    let mut backend = kagi_git::Backend::open_with_policy(
+        repo_dir,
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let before = checkout_overlap_state(repo_dir);
+    for operation in [
+        kagi_git::Operation::Checkout {
+            branch: "feature/one".into(),
+        },
+        kagi_git::Operation::CheckoutCommit { id: target },
+    ] {
+        let plan = backend.plan(&operation).unwrap();
+        assert_eq!(
+            plan.blockers,
+            vec![kagi_domain::plan_note::PlanNote::Checkout(
+                kagi_domain::plan_note::CheckoutNote::CheckoutOverlap {
+                    count: 1,
+                    files: vec![path.into()],
+                }
+            )]
+        );
+        assert!(
+            plan.checkout_needs_choice(),
+            "a blocker cannot quietly admit"
+        );
+        assert_eq!(checkout_overlap_state(repo_dir), before);
+    }
+}
+
+#[test]
+fn test_staged_checkout_directory_file_obstructions_block_read_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for local_path in ["feat.txt/local.txt", "incoming"] {
+        for unstaged_edit in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let (repo_dir, _) = build_two_branch_repo(&tmp);
+            git(&repo_dir, &["checkout", "-q", "feature/one"]);
+            std::fs::create_dir_all(repo_dir.join("incoming")).unwrap();
+            write_file(&repo_dir, "incoming/child.txt", "target child\n");
+            git(&repo_dir, &["add", "incoming/child.txt"]);
+            git(&repo_dir, &["commit", "-qm", "target directory"]);
+            let target = CommitId(git_output(&repo_dir, &["rev-parse", "HEAD"]));
+            git(&repo_dir, &["checkout", "-q", "main"]);
+            std::fs::create_dir_all(repo_dir.join(local_path).parent().unwrap()).unwrap();
+            write_file(&repo_dir, local_path, "staged local bytes\n");
+            git(&repo_dir, &["add", local_path]);
+            if unstaged_edit {
+                write_file(&repo_dir, local_path, "unstaged local bytes\n");
+            }
+            assert_checkout_obstruction_read_only(&repo_dir, target, local_path);
+        }
+    }
+}
+
+fn build_staged_checkout_rename(
+    tmp: &TempDir,
+    overlap: bool,
+    unstaged_edit: bool,
+) -> (std::path::PathBuf, CommitId) {
+    let repo_dir = tmp.path();
+    init_repo(repo_dir, "main");
+    write_file(repo_dir, "old.txt", "rename base\n");
+    git(repo_dir, &["add", "old.txt"]);
+    git(repo_dir, &["commit", "-qm", "rename base"]);
+    git(repo_dir, &["checkout", "-qb", "feature/one"]);
+    let target_path = if overlap {
+        "old.txt"
+    } else {
+        "old.txt-neighbour/child.txt"
+    };
+    std::fs::create_dir_all(repo_dir.join(target_path).parent().unwrap()).unwrap();
+    write_file(repo_dir, target_path, "target bytes\n");
+    git(repo_dir, &["add", target_path]);
+    git(repo_dir, &["commit", "-qm", "checkout target"]);
+    let target = CommitId(git_output(repo_dir, &["rev-parse", "HEAD"]));
+    git(repo_dir, &["checkout", "-q", "main"]);
+    git(repo_dir, &["mv", "old.txt", "new.txt"]);
+    if unstaged_edit {
+        write_file(repo_dir, "new.txt", "unstaged rename bytes\n");
+    }
+    (repo_dir.to_path_buf(), target)
+}
+
+#[test]
+fn test_staged_checkout_rename_sources_block_read_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for unstaged_edit in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, target) = build_staged_checkout_rename(&tmp, true, unstaged_edit);
+        assert_checkout_obstruction_read_only(&repo_dir, target, "old.txt");
+    }
+}
+
+#[test]
+fn test_nonoverlapping_staged_checkout_rename_remains_quiet() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for detached in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, target) = build_staged_checkout_rename(&tmp, false, true);
+        let renamed_index = git_output(
+            &repo_dir,
+            &["ls-files", "--stage", "--", "old.txt", "new.txt"],
+        );
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &repo_dir,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        let operation = if detached {
+            kagi_git::Operation::CheckoutCommit { id: target.clone() }
+        } else {
+            kagi_git::Operation::Checkout {
+                branch: "feature/one".into(),
+            }
+        };
+        let plan = backend.plan(&operation).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        if !detached {
+            assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+            assert!(!plan.checkout_needs_choice());
+        }
+        backend.run(&operation, &plan).unwrap();
+        assert_eq!(git_output(&repo_dir, &["rev-parse", "HEAD"]), target.0);
+        assert_eq!(
+            git_output(
+                &repo_dir,
+                &["ls-files", "--stage", "--", "old.txt", "new.txt"]
+            ),
+            renamed_index
+        );
+        assert!(!repo_dir.join("old.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("new.txt")).unwrap(),
+            "unstaged rename bytes\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("old.txt-neighbour/child.txt")).unwrap(),
+            "target bytes\n"
+        );
+    }
+}
+
 /// Retain existing branch/commit targets while giving checkout an unborn HEAD
 /// and an empty index, rather than creating an empty baseline commit/tree.
 fn build_unborn_checkout_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, CommitId) {

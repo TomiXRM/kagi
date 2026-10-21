@@ -155,6 +155,12 @@ only explicitly recognized informational notes may bypass a choice.
 Untracked paths that safe checkout would overwrite remain concrete path blockers,
 including file/directory collisions. Unborn HEAD uses an empty tree baseline, not
 an exemption from overlap prediction. Retained unrelated paths are neutral context.
+Tracked staged/unstaged entries use the same component-wise target-write
+obstruction check as untracked paths. A rename contributes both its destination
+and source; a rewritten source is a concrete blocker even when status exposes
+the destination as its primary path. Component neighbours and nonoverlapping
+renames remain quiet. Planning and a disabled confirmation do not start a writer
+or create an execution receipt; an already-running queued predecessor is separate.
 After integrating #1697, Pull/Push's adjacent typed `sync_needs_choice` policy
 admits quiet current/ref-only fast-forwards without retired informational warning
 variants. Unknown warnings remain choices; remote publication ambiguity remains

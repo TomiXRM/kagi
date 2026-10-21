@@ -2730,6 +2730,10 @@ impl KagiApp {
                 })
             });
             let _ = this.update(acx, |app, cx| {
+                // Retirement may run after taking the flight but before a
+                // confirmation exists. Carry this waiter's presentation only
+                // across that synchronous ownership gap.
+                let hidden_progress = app.hidden_busy_job;
                 let Some(flight) = app.fetch_in_flight.take() else {
                     return;
                 };
@@ -2849,11 +2853,16 @@ impl KagiApp {
                                     && app.app_sessions.visit(session) == Some(visit)
                                 {
                                     app.deliver_pull_confirm(
-                                        session,
+                                        (session, visit, request_started),
                                         flight.pull_confirm_displaced,
                                         target,
                                         &outcome.remote,
-                                        request_started,
+                                        hidden_progress
+                                            == Some(super::busy::BusyIdentity::pull((
+                                                session,
+                                                visit,
+                                                request_started,
+                                            ))),
                                         cx,
                                     );
                                 }
@@ -2952,11 +2961,16 @@ impl KagiApp {
                             && app.app_sessions.visit(session) == Some(visit)
                         {
                             app.deliver_pull_confirm(
-                                session,
+                                (session, visit, request_started),
                                 flight.pull_confirm_displaced,
                                 target,
                                 &fetched_remote,
-                                request_started,
+                                hidden_progress
+                                    == Some(super::busy::BusyIdentity::pull((
+                                        session,
+                                        visit,
+                                        request_started,
+                                    ))),
                                 cx,
                             );
                         }

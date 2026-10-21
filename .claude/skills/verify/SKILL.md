@@ -4115,17 +4115,20 @@ report occluded byte-identical frames as stale, not evidence of the new screen.
 
 ### Presentation-only Busy progress close (#1719)
 
-Select `busy_read_dismiss,busy_pull_progress_dismiss,busy_hidden_failure_reaches_details,slow_read_explained,clone_hidden_status,queue_merge_plan_after_departure`
+Select `busy_read_dismiss,busy_pull_progress_dismiss,busy_pull_revisit_request,busy_hidden_failure_reaches_details,slow_read_explained,clone_hidden_status,queue_merge_plan_after_departure`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. These consumers use actual repository reads,
 Fetch admission, queued planning and clone dispatch held by existing deferred
 backend seams. The readonly `slow_reads_inflight_for_e2e` observer reports real
 unfinished handle lifetimes, including superseded reads; it never creates work.
 `busy_dismiss_focus` observes the rendered control's handle; keyboard coverage
 must reach it through real Tab navigation rather than assigning test focus.
+Exercise Enter/Space and actual AX Press. Natural read completion while close is
+focused must remove the control and return focus through the existing root event.
 
 Cover all reads already in flight, a newly admitted read, another owner and tab
 round trips, read-phase retention, read/write overlap, the freshness Fetch → Pull
-execution lease handoff and a same-clock next request. Hidden failure must still
+execution lease handoff, same-live-waiter join, in-flight departure/revisit with a
+new-visit waiter, and a same-clock next request. Hidden failure must still
 reach its exact durable receipt through the actual details Button. Existing Skip,
 writer/quit guards, clone completion and stale queued-plan disposal stay active.
 

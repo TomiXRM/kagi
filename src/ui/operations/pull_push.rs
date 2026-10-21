@@ -201,17 +201,22 @@ impl KagiApp {
     /// a waiter must neither create a second receipt nor revive an old visit.
     pub(crate) fn deliver_pull_confirm(
         &mut self,
-        session: crate::app::SessionId,
+        request: (crate::app::SessionId, u64, std::time::Instant),
         displaced: bool,
         target: crate::ui::commands::PullTarget,
         fetched_remote: &str,
-        request_started: std::time::Instant,
+        progress_hidden: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() == Some(session) {
+        let (session, visit, request_started) = request;
+        if self.active_session() == Some(session) && self.app_sessions.visit(session) == Some(visit)
+        {
             if displaced || self.has_active_modal() || self.op_latched() {
                 self.discard_contended_plan_from_async(i18n::Op::Pull, AsyncPlanToken::None);
             } else {
+                if progress_hidden {
+                    self.hidden_busy_job = Some(super::super::busy::BusyIdentity::pull(request));
+                }
                 match target {
                     crate::ui::commands::PullTarget::Current => {
                         self.plan_and_offer_pull_modal_from_async(

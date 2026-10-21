@@ -104,11 +104,11 @@ pub(super) fn close_by_pointer(
     assert_hidden(cx, app, window);
 }
 
-fn close_by_keyboard(
+fn focus_by_keyboard(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
-) {
+) -> gpui::FocusHandle {
     paint(cx, app, window);
     let focus = cx
         .read(|cx| e2e::busy_dismiss_focus(app.read(cx), window.window_id()))
@@ -126,13 +126,34 @@ fn close_by_keyboard(
         }
     }
     assert!(reached, "production Tab navigation reaches progress close");
-    cx.simulate_keystrokes(window, "enter");
+    focus
+}
+
+fn close_by_keyboard(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    activation: &str,
+) {
+    let focus = focus_by_keyboard(cx, app, window);
+    cx.simulate_keystrokes(window, activation);
+    cx.simulate_event(
+        window,
+        gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(activation).unwrap(),
+        },
+    );
     cx.run_until_parked();
     assert_hidden(cx, app, window);
+    let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
     cx.update_window(window, |_, window, _| {
         assert!(
             !focus.is_focused(window),
             "removed close releases its focus"
+        );
+        assert!(
+            root.is_focused(window),
+            "the existing removal event repairs focus"
         );
     })
     .unwrap();
@@ -175,7 +196,16 @@ pub fn scenario_busy_read_dismiss(cx: &mut VisualTestAppContext) {
             cx.read(|cx| {
                 assert_eq!(app.read(cx).slow_reads_inflight_for_e2e(owner_a), 2);
             });
-            close_by_keyboard(cx, &app, window);
+            close_by_keyboard(
+                cx,
+                &app,
+                window,
+                if language == Lang::En {
+                    "enter"
+                } else {
+                    "space"
+                },
+            );
             advance(cx, 20);
             assert_hidden(cx, &app, window);
             cx.read(|cx| {
@@ -236,9 +266,33 @@ pub fn scenario_busy_read_dismiss(cx: &mut VisualTestAppContext) {
             advance(cx, 10);
             paint(cx, &app, window);
             assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some());
-            close_by_pointer(cx, &app, window);
+            crate::native_ax::activate(cx);
+            paint(cx, &app, window);
+            assert!(crate::native_ax::press(
+                cx,
+                window,
+                kagi::ui::i18n::Msg::BusyHideProgress.t()
+            ));
+            cx.run_until_parked();
+            assert_hidden(cx, &app, window);
             release_next.send(());
             ready(cx, &app);
+            let (finishing, release_finishing) = deferred::<()>(cx);
+            KagiApp::hold_next_snapshot_for_e2e(finishing);
+            app.update(cx, |app, cx| app.reload_external(cx));
+            cx.run_until_parked();
+            advance(cx, 10);
+            let focus = focus_by_keyboard(cx, &app, window);
+            release_finishing.send(());
+            ready(cx, &app);
+            advance(cx, 1);
+            assert_hidden(cx, &app, window);
+            let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
+            cx.update_window(window, |_, window, _| {
+                assert!(!focus.is_focused(window));
+                assert!(root.is_focused(window), "natural completion repairs focus");
+            })
+            .unwrap();
             assert_eq!(oplog::read_oplog_tail_for_repo(&repo, 100).len(), receipts);
             unmount(cx, app, window);
         }
@@ -286,6 +340,16 @@ pub fn scenario_busy_pull_progress_dismiss(cx: &mut VisualTestAppContext) {
                 )
             });
             close_by_pointer(cx, &app, window);
+            if !branch_ff {
+                click(cx);
+                cx.run_until_parked();
+                assert_hidden(cx, &app, window);
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert_eq!(state.fetch_in_flight.as_ref().unwrap().waiters.len(), 1);
+                    assert_eq!(state.app_sessions.running_lease().unwrap().0, fetch_id);
+                });
+            }
             fetch_release.send(());
             wait(
                 cx,
@@ -438,6 +502,98 @@ pub fn scenario_busy_hidden_failure_reaches_details(cx: &mut VisualTestAppContex
         });
         read_release.send(());
         ready(cx, &app);
+        unmount(cx, app, window);
+    }
+}
+
+pub fn scenario_busy_pull_revisit_request(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for language in [Lang::En, Lang::Ja] {
+        let fixture = build_fixture();
+        let other = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let origin = Origin::new(&repo);
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            app.set_lang(language, cx);
+            app.set_window_active_for_e2e(true, cx);
+        });
+        ready(cx, &app);
+        let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+        app.update(cx, |app, cx| {
+            assert!(app.open_repository(other.path().to_path_buf(), cx));
+        });
+        ready(cx, &app);
+        app.update(cx, |app, cx| app.switch_repo(0, cx));
+        ready(cx, &app);
+        let expected = origin.advance();
+        let (fetch, release_fetch) = deferred::<()>(cx);
+        let (run, release_run) = deferred::<()>(cx);
+        KagiApp::hold_next_fetch_for_e2e(fetch);
+        KagiApp::hold_next_run_for_e2e(run);
+        crate::pull_freshness::click_pull(cx, window);
+        cx.run_until_parked();
+        let (lease, old_visit) = cx.read(|cx| {
+            let state = app.read(cx);
+            (
+                state.app_sessions.running_lease().unwrap().0,
+                state.fetch_in_flight.as_ref().unwrap().waiters[0].1,
+            )
+        });
+        close_by_pointer(cx, &app, window);
+        app.update(cx, |app, cx| app.switch_repo(1, cx));
+        cx.run_until_parked();
+        assert_hidden(cx, &app, window);
+        app.update(cx, |app, cx| app.switch_repo(0, cx));
+        wait(cx, &app, "the revisited repository revalidates", |state| {
+            state.active_session() == Some(owner) && !state.reads.is_loading(owner)
+        });
+        assert_hidden(cx, &app, window);
+        crate::pull_freshness::click_pull(cx, window);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let current_visit = state.app_sessions.visit(owner).unwrap();
+            assert_ne!(current_visit, old_visit);
+            assert_eq!(state.app_sessions.running_lease().unwrap().0, lease);
+            let waiters = &state.fetch_in_flight.as_ref().unwrap().waiters;
+            assert_eq!(waiters.len(), 2, "a new visit joins, not a new Fetch");
+            assert!(waiters
+                .iter()
+                .any(|(session, visit, _, _)| { *session == owner && *visit == current_visit }));
+        });
+        paint(cx, &app, window);
+        assert!(
+            e2e::control_bounds(window.window_id(), "busy-snackbar-dismiss").is_some(),
+            "the new visit never inherits the departed request's dismissal"
+        );
+        close_by_pointer(cx, &app, window);
+        release_fetch.send(());
+        wait(
+            cx,
+            &app,
+            "the current waiter owns the Pull execution",
+            |state| {
+                state.fetch_in_flight.is_none()
+                    && state
+                        .app_sessions
+                        .running_lease()
+                        .is_some_and(|(id, _)| id != lease)
+            },
+        );
+        assert_hidden(cx, &app, window);
+        release_run.send(());
+        wait(cx, &app, "the revisited Pull really completes", |state| {
+            !state.app_sessions.has_leases()
+                && state.write_busy_op.is_none()
+                && !matches!(state.status_footer, FooterStatus::Busy(_))
+        });
+        assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), expected);
+        assert!(git_output(&repo, &["status", "--porcelain"]).is_empty());
+        let entries = oplog::read_oplog_tail_for_repo(&repo, 100);
+        let pulls: Vec<_> = entries.iter().filter(|entry| entry.op == "pull").collect();
+        assert_eq!(pulls.len(), 1);
+        assert!(matches!(pulls[0].outcome, OpOutcome::Success { .. }));
         unmount(cx, app, window);
     }
 }

@@ -2845,6 +2845,10 @@ mod macos {
                 Box::new(crate::busy_dismiss::scenario_busy_pull_progress_dismiss),
             ),
             (
+                "busy_pull_revisit_request",
+                Box::new(crate::busy_dismiss::scenario_busy_pull_revisit_request),
+            ),
+            (
                 "busy_hidden_failure_reaches_details",
                 Box::new(crate::busy_dismiss::scenario_busy_hidden_failure_reaches_details),
             ),

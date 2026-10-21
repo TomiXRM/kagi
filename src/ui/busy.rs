@@ -146,10 +146,19 @@ impl KagiApp {
             return Some(BusyIdentity::Clone(started));
         }
         if self.write_busy_op.is_some() {
-            if let Some((owner, visit, _, started)) = self
-                .fetch_in_flight
-                .as_ref()
-                .and_then(|flight| flight.waiters.first())
+            if let Some((owner, visit, _, started)) =
+                self.fetch_in_flight.as_ref().and_then(|flight| {
+                    flight
+                        .waiters
+                        .iter()
+                        .find(|(owner, visit, _, _)| {
+                            self.active_session() == Some(*owner)
+                                && self.app_sessions.visit(*owner) == Some(*visit)
+                        })
+                        // The global card still represents its original work
+                        // while another tab has no request attached to it.
+                        .or_else(|| flight.waiters.first())
+                })
             {
                 return Some(BusyIdentity::Pull(*owner, *visit, *started));
             }
@@ -420,7 +429,7 @@ impl KagiApp {
         let identity = self.busy_identity();
         let app = cx.entity().downgrade();
         let control = super::toast_stack::ToastButton(
-            Button::new("busy-snackbar-dismiss")
+            Button::new(("busy-snackbar-dismiss", 0_u64))
                 .ghost()
                 .small()
                 .flex_shrink_0()

@@ -144,6 +144,22 @@ Changes/Inspector file cards are not the shared MenuGroup renderer: Changes
 places its red Discard last without a separator; Inspector has no danger action.
 Branch Delete stays in the top-level management group by ADR-0049 / #1253.
 
+For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure_visible,run_success_unrecorded_keeps_partial_footer,fetch_failure_reaches_the_oplog,pull_current_'`
+with KEEP_GOING. `branch_menu_merge_labels` compares real merged, squash-proven
+and unmerged tips in EN/JA after the owner-bound classification; pending/unknown
+labels stay neutral. `branch_cleanup_target_heading` checks the actual plan
+preview group and cancels without deleting. `conflict_merge_stopped_toast` and
+`conflict_rebase_stopped_toast` execute one/three-file conflicts and require a
+localized non-success stopped notice, real unresolved index entries and disabled
+Continue. The existing oplog failure scenario covers failed Fetch plus success
+and Unknown attempts under a real sidecar lock. `pull_current_up_to_date` covers
+equal/ahead strict/ordinary Pull without changing local edits; its blocker
+neighbor rejects a conflict arriving during the freshness fetch. Tier B compares
+the released and fixed real-window menu, cleanup confirmation and conflict
+settlement on the same EN/JA fixtures, preserving viewport/theme/zoom. Menu and
+cleanup captures cancel; conflict operations run only in disposable repositories.
+
+
 For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
 This includes wide, compact and frozen-clock directory motion scenarios.
 Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,

@@ -16,7 +16,7 @@ fn ctx() -> BranchMenuContext {
         checked_out_in_other_worktree: false,
         checked_out_worktree_path: None,
         worktree_path: None,
-        merged_into_current: true,
+        merged_into_current: Some(true),
         is_pushed: true,
         detached_head: false,
         busy: false,
@@ -461,4 +461,24 @@ fn reset_retains_protected_branch_warning() {
             .as_ref(),
         "Reset current to this HEAD…"
     );
+}
+
+#[test]
+fn delete_warning_requires_a_known_unmerged_tip() {
+    for merged in [None, Some(true), Some(false)] {
+        let mut context = ctx();
+        context.merged_into_current = merged;
+        let groups = branch_context_menu_items(&context);
+        let delete = item_for(&groups, BranchAction::DeleteBranch);
+        assert_eq!(delete.dangerous, merged == Some(false));
+        assert_eq!(
+            delete.label.as_ref(),
+            if merged == Some(false) {
+                Msg::BcmDeleteUnmerged.t()
+            } else {
+                Msg::BcmDeleteBranch.t()
+            },
+        );
+        assert_eq!(delete.state, ItemState::Enabled);
+    }
 }

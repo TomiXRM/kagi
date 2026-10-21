@@ -109,9 +109,6 @@ pub fn note_ja(note: &PullNote) -> String {
                 branch, err
             )
         }
-        PullNote::AlreadyUpToDate { branch } => {
-            format!("branch `{}` は upstream と同期済みです。", branch)
-        }
         PullNote::CannotFastForward { branch } => {
             super::advice_text(Msg::AdvicePullCannotFastForward, &[branch])
         }

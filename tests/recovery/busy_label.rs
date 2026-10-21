@@ -9,6 +9,10 @@ use kagi::ui::{
 #[path = "pr_merge_local.rs"]
 mod pr_merge_local;
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output;
+
 pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
@@ -120,59 +124,145 @@ pub fn scenario_fetch_failure_reaches_the_oplog(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
-/// #643 A1: when the oplog append fails, the user is told.
-///
-/// The operation itself already happened, so the append failure was logged as
-/// "non-fatal" and nothing reached the screen. But Kagi's promise includes
-/// leaving a record to recover and audit from, and the in-memory panel still
-/// shows the entry — so nothing looks wrong until the next launch, when it is
-/// simply gone.
+/// #1699: recording failure must not change the operation's actual result.
+/// Exercise the real failed-fetch path and persisted success/unknown receipts
+/// in both languages while the oplog writer is unable to take its lock.
 pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
-    let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
-    let (app, window) = mount(cx, &repo);
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_git::oplog::OpOutcome;
 
-    // Hold the oplog's lock so the append cannot take it, the same way the
-    // staging-failure test induces this.
-    let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
-        .join("operations.jsonl.lock");
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .unwrap();
-    lock.lock().unwrap();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        for result in ["failed", "success", "unknown"] {
+            let fixture = build_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let missing = repo.join("no-such-remote");
+            git(
+                &repo,
+                &["remote", "add", "origin", missing.to_str().unwrap()],
+            );
+            let refs_before = git_output(&repo, &["show-ref"]);
+            let status_before = git_output(&repo, &["status", "--porcelain"]);
+            let entries_before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len();
+            let (app, window) = mount(cx, &repo);
+            let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                .join("operations.jsonl.lock");
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&lock_path)
+                .unwrap();
+            lock.lock().unwrap();
 
-    app.update(cx, |app, cx| {
-        e2e::record_persisted_op(app, &repo, cx);
-    });
+            if result == "failed" {
+                app.update(cx, |app, cx| app.fetch_async(false, cx));
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
+                    cx.run_until_parked();
+                    assert!(std::time::Instant::now() < deadline, "fetch did not settle");
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            } else {
+                let state = kagi_git::StateSummary {
+                    head: "branch: main".into(),
+                    dirty: "clean".into(),
+                };
+                let outcome = if result == "success" {
+                    OpOutcome::Success { after: state }
+                } else {
+                    OpOutcome::Unknown {
+                        after: state,
+                        evidence: "fixture result unconfirmed".into(),
+                    }
+                };
+                app.update(cx, |app, cx| {
+                    e2e::record_persisted_op(app, &repo, outcome, cx);
+                });
+            }
 
-    cx.read(|cx| {
-        let stack = app
-            .read(cx)
-            .toast_stack
-            .clone()
-            .expect("the mounted app has a toast stack");
-        let said_so = stack.read(cx).toasts().iter().any(|toast| {
-            toast.kind == kagi::ui::ToastKind::Error && !toast.message.trim().is_empty()
-        });
-        assert!(
-            said_so,
-            "a failed oplog append must reach the user: they are about to trust \
-             a log that is missing this entry (#643 A1)"
-        );
-        assert!(
-            app.read(cx)
-                .app_notice()
-                .is_some_and(|notice| !notice.message.trim().is_empty()),
-            "a failed oplog append has no durable row, so its full error must remain in AppNotice"
-        );
-    });
-
-    drop(lock);
-    let _ = std::fs::remove_file(&lock_path);
-    unmount(cx, app, window);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let notice = state.app_notice().expect("recording failure notice");
+                let message = notice.message.as_str();
+                assert!(message.contains(&repo.display().to_string()), "{message}");
+                let (record_label, failed, completed, unconfirmed) = match language {
+                    Lang::En => (
+                        "Operation Log",
+                        "operation failed",
+                        "operation completed",
+                        "could not be confirmed",
+                    ),
+                    Lang::Ja => (
+                        "操作ログ",
+                        "操作は失敗",
+                        "操作は完了",
+                        "結果を確認できません",
+                    ),
+                };
+                assert!(message.contains(record_label), "{message}");
+                match result {
+                    "failed" => {
+                        assert!(message.contains(failed), "{message}");
+                        assert!(!message.contains(completed), "{message}");
+                    }
+                    "success" => assert!(message.contains(completed), "{message}"),
+                    _ => {
+                        assert!(message.contains(unconfirmed), "{message}");
+                        assert!(!message.contains(completed), "{message}");
+                    }
+                }
+                assert!(!message.contains("cannot undo"), "{message}");
+                assert!(!message.contains("取り消せません"), "{message}");
+                assert!(state
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .toasts()
+                    .iter()
+                    .any(
+                        |toast| toast.kind == ToastKind::Error && !toast.message.trim().is_empty()
+                    ));
+                let panel = state.op_log.as_ref().unwrap().read(cx);
+                let op = if result == "failed" {
+                    "fetch"
+                } else {
+                    "e2e-record"
+                };
+                let entry = panel.entries().iter().find(|entry| entry.op == op).unwrap();
+                match (&entry.outcome, result) {
+                    (OpOutcome::Failed { error }, "failed") => {
+                        assert!(!error.is_empty());
+                        assert!(matches!(&state.status_footer, FooterStatus::Failed(text)
+                            if !text.is_empty() && !text.contains(record_label)));
+                    }
+                    (OpOutcome::Partial { error, .. }, "success") => {
+                        assert!(error.contains("not recorded"));
+                        assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                    }
+                    (OpOutcome::Unknown { evidence, .. }, "unknown") => {
+                        assert!(evidence.contains("fixture result unconfirmed"));
+                        assert!(!matches!(state.status_footer, FooterStatus::Success(_)));
+                    }
+                    (outcome, _) => panic!("recording failure changed {result}: {outcome:?}"),
+                }
+            });
+            assert_eq!(git_output(&repo, &["show-ref"]), refs_before);
+            assert_eq!(git_output(&repo, &["status", "--porcelain"]), status_before);
+            assert_eq!(
+                kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+                entries_before,
+                "the attempted row must not masquerade as a durable entry",
+            );
+            drop(lock);
+            let _ = std::fs::remove_file(&lock_path);
+            unmount(cx, app, window);
+        }
+    }
+    i18n::set_lang(original_language);
 }
 
 /// A PR the fixture repo can plan a clean merge for. No GitHub remote exists,

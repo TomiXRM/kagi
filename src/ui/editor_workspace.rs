@@ -282,8 +282,13 @@ impl KagiApp {
                                     ..
                                 } = &recording
                                 {
-                                    app.app_notices
-                                        .push_back(i18n::oplog_write_failed(error).into());
+                                    app.app_notices.push_back(
+                                        i18n::oplog_write_failed(
+                                            i18n::op::RecordingOutcome::Unknown,
+                                            error,
+                                        )
+                                        .into(),
+                                    );
                                 }
                                 app.present_app_notice();
                                 let msg = Msg::EditorWorkspaceSaveInterrupted.t().to_string();

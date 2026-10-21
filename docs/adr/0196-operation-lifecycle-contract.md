@@ -519,3 +519,27 @@ helper. Global credential helpers remain available; this does not add credential
 storage, automatic authentication retry or a success fallback. A loopback HTTP
 Basic 401 fixture covers the backend and real native Fetch presentation in both
 languages and Apple themes, with unchanged refs and full diagnostic Copy.
+
+## Amendment — 2026-10-21: truthful stopped / unrecorded outcomes (#1699)
+
+Entering Conflict Mode is not completion of merge or rebase. Typed conflict
+outcomes produce an informational stopped notice and neutral footer, with the
+observed unresolved-file count. Merge supplies its conflict paths; rebase reads
+the actual index conflicts inside its existing background completion, before
+the write lease settles. If that observation fails, the notice explicitly leaves
+the count unknown rather than inventing zero. Existing receipts and klog lines
+continue to describe the unchanged execution contract.
+
+Recording failure is independent of operation outcome: notices distinguish
+success, failure, refusal, partial application and uncertainty in EN/JA. An
+unchanged failed operation is never called completed or impossible to undo.
+Attempted Unknown/Partial evidence is retained in the in-memory log even when
+the durable append fails; the recording diagnostic is supplementary, not a
+replacement operation result.
+
+Current strict-FF Pull uses the existing typed `NoOp(PullUpToDate)` presentation
+after its successful freshness fetch. Equal or locally ahead tips show the same
+up-to-date notice as ordinary Pull. Exact upstream identity is retained and
+structural blockers take precedence, so a no-op never masks conflict/worktree
+refusal or fabricates a write receipt.
+

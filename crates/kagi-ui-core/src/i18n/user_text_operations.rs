@@ -48,15 +48,17 @@ pub fn unknown(op: &str, reason: &str) -> String {
     }
 }
 
-pub fn recording_failed(repo: impl std::fmt::Display, op: &str, reason: &str) -> String {
+pub fn recording_failed(
+    repo: impl std::fmt::Display,
+    op: &str,
+    outcome: crate::i18n::op::RecordingOutcome,
+    reason: &str,
+) -> String {
     let label = operation_label(op);
-    let reason = diagnostic(reason);
-    match lang() {
-        Lang::En => {
-            format!("{repo}: {label}: Could not save this operation to the Operation Log: {reason}")
-        }
-        Lang::Ja => format!("{repo}: {label}: この操作を操作ログに保存できませんでした: {reason}"),
-    }
+    format!(
+        "{repo}: {label}: {}",
+        crate::i18n::op::oplog_write_failed(outcome, reason)
+    )
 }
 
 pub fn progress(op: &str) -> String {
@@ -252,11 +254,66 @@ mod tests {
                     assert!(shown.starts_with(&prefix), "{shown}");
                     assert_eq!(diagnostic(&shown), shown, "toast must preserve footer text");
                 }
-                let notice = recording_failed("/repos/project", op, reason);
+                let notice = recording_failed(
+                    "/repos/project",
+                    op,
+                    crate::i18n::op::RecordingOutcome::Failed,
+                    reason,
+                );
                 assert!(notice.contains(&prefix));
                 assert!(notice.contains("/repos/project"));
-                assert!(notice.ends_with(reason));
+                assert!(notice.contains(reason));
                 assert!(!notice.contains(op), "internal operation name: {notice}");
+            }
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn recording_failure_preserves_each_operation_result_in_both_languages() {
+        use crate::i18n::op::RecordingOutcome;
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            for (outcome, en, ja) in [
+                (
+                    RecordingOutcome::Succeeded,
+                    "operation completed",
+                    "操作は完了",
+                ),
+                (RecordingOutcome::Failed, "operation failed", "操作は失敗"),
+                (RecordingOutcome::Refused, "not started", "開始されません"),
+                (
+                    RecordingOutcome::Partial,
+                    "partly completed",
+                    "一部のみ完了",
+                ),
+                (
+                    RecordingOutcome::Unknown,
+                    "could not be confirmed",
+                    "結果を確認できません",
+                ),
+            ] {
+                let shown = recording_failed("/repo", "fetch", outcome, "fixture record error");
+                let expected = if language == Lang::En { en } else { ja };
+                assert!(shown.contains(expected), "{shown}");
+                assert!(shown.contains("fixture record error"), "{shown}");
+                assert!(shown.contains("/repo"), "{shown}");
+                assert!(!shown.contains("cannot undo"), "{shown}");
+                assert!(!shown.contains("取り消せません"), "{shown}");
+                assert!(
+                    shown.lines().count() >= 3,
+                    "separate result and recording error"
+                );
+                if matches!(
+                    outcome,
+                    RecordingOutcome::Failed | RecordingOutcome::Unknown
+                ) {
+                    assert!(!shown.contains("operation completed"), "{shown}");
+                    assert!(!shown.contains("操作は完了"), "{shown}");
+                }
             }
         }
         set_lang_no_persist(previous);

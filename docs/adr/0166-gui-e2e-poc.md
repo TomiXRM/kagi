@@ -107,6 +107,21 @@ test dispatcher alone does not service that platform queue. PNG creation
 and successful teardown remain separate acceptance conditions. The canonical
 verification skill scopes the RemoteBrowse and neighboring Input matrix.
 
+## Update 2026-10-21 — scenario support ownership (#1706)
+
+Native GUI tests share only setup, observations and bounded waits. Conversation
+no-write witnesses preserve raw Git stdout, working-file bytes and the distinction
+between absent and empty oplog; only `NotFound` means absent. Presentation matrices
+retain viewport → language → palette → zoom ordering and per-leg unmount. Their
+guard restores language → zoom → palette, then drops the saved settings keys.
+Squash queue/link/graph/ghost-row collection shares no expected signatures.
+Writer waits preserve each caller's deadline and failure diagnostic.
+
+Scenario names, injection points, independent expectations and runner isolation/
+window-budget checks are not consolidated or weakened. The canonical verification
+skill lists the complete bounded KEEP_GOING selection for this cutover. This
+test-only refactor changes no visible application surface and needs no Tier B.
+
 ## 何を実証したか
 
 `gpui` の `test-support` feature が解禁する **`VisualTestAppContext`**（macOS 専用、

@@ -79,3 +79,64 @@ pub fn pr_page(
         next_cursor: next_cursor.map(str::to_owned),
     }
 }
+
+pub type ScanResult = Result<Vec<kagi_git::ops::SquashLink>, kagi_git::GitError>;
+pub type GraphSignature = Vec<(String, usize, usize, Vec<(usize, usize, String, usize)>)>;
+
+pub fn queue_scan(cx: &mut VisualTestAppContext) -> Reply<ScanResult> {
+    let (task, reply) = deferred(cx);
+    kagi::ui::e2e::queue_squash_scan(task);
+    reply
+}
+
+pub fn link(
+    tip: &kagi_git::CommitId,
+    squash: &kagi_git::CommitId,
+    branch: &str,
+) -> kagi_git::ops::SquashLink {
+    kagi_git::ops::SquashLink {
+        branch: branch.into(),
+        tip: tip.0.clone(),
+        squash: squash.0.clone(),
+    }
+}
+
+pub fn graph_signature(app: &kagi::ui::KagiApp, owner: kagi::app::SessionId) -> GraphSignature {
+    app.reads
+        .get(Some(owner))
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row.id.0.clone(),
+                row.lane,
+                row.lane_count,
+                row.edges
+                    .iter()
+                    .map(|edge| {
+                        (
+                            edge.from_lane,
+                            edge.to_lane,
+                            format!("{:?}", edge.kind),
+                            edge.color,
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+pub fn ghost_rows(app: &kagi::ui::KagiApp, owner: kagi::app::SessionId) -> Vec<String> {
+    app.reads
+        .get(Some(owner))
+        .rows
+        .iter()
+        .filter(|row| {
+            row.edges
+                .iter()
+                .any(|edge| edge.color == kagi::ui::graph_squash::GHOST_COLOR)
+        })
+        .map(|row| row.id.0.clone())
+        .collect()
+}

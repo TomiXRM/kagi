@@ -69,16 +69,23 @@ Bounds, all in the direction of refusing to unblock:
   cannot hide a single base, uses `!graph_descendant_of(base, squash)` — the
   reachability fact the timestamp was only approximating.
 - Merge commits are skipped: they have no single "change they introduce".
-- Every error is swallowed into `None`. An inconclusive answer must read as
-  "not merged".
+- Object/history/diff read errors propagate rather than masquerading as a
+  negative proof (#1699). Delete planning refuses unreadable evidence; branch
+  menu labels remain neutral. A successful scan with no match still returns
+  `None` and never unblocks deletion.
+- An unrelated root (`--orphan`) has no common ancestor and therefore no
+  squash evidence. Only `merge_base`'s `NotFound` + `Merge` error is the normal
+  `None` case; missing-object `NotFound` errors still propagate. Its delete
+  plan remains available with the existing unmerged warning and two-stage
+  confirmation rather than being blocked by an ancestry read failure.
 
 ## Consequences
 
-- This is **not** a force delete. The delete only unblocks when a byte-exact
-  copy of the change is already in HEAD, so nothing can be lost. ADR-0014 stands:
-  a genuinely unmerged branch is still blocked, and `-D` still does not exist.
-  `a_genuinely_unmerged_branch_is_still_blocked` in `tests/delete_branch_test.rs`
-  is the guard against this becoming a back door.
+- Squash proof still requires a byte-exact copy of the change already in HEAD.
+  It never classifies genuinely unmerged work as merged. The later #584 delete
+  policy permits such branches only through the existing unmerged warning,
+  two confirmations and retained recovery tip; it is not an alternate force
+  execution path. Unreadable evidence still prevents planning (#1699).
 - Rebase-and-merge is not detected: it replays each commit separately, so no
   combined patch-id matches. Detecting it means matching every commit of
   `base..tip` individually (N×M diffs). Marked `ponytail:` in the source; add

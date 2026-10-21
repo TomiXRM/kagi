@@ -87,11 +87,12 @@ impl KagiApp {
     }
 
     fn render_branch_menu_overlay(
-        &self,
+        &mut self,
         state: BranchMenuState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
+        self.start_branch_menu_merge_check(cx);
         let ctx = self.branch_menu_context(&state);
         let groups = branch_menu::branch_context_menu_items(&ctx);
         let header = branch_menu::header(&ctx);

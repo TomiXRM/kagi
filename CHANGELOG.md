@@ -10,6 +10,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Disclose Smart Commit's actual provider, external CLI account and possible charges, and request fresh consent after switching providers. Show staged `.env`/secret warnings on file rows and above Commit in wide and compact layouts, retaining explicit confirmation only for these safety findings. Persist PR comment/review drafts through the same isolated atomic draft store as Issue composers, preserving newer edits after posting. (#1702)
 - Keep secret-warning identities byte-exact for non-UTF-8 staged paths. Block PR submission until its saved draft is restored, and retire the posted composer input even when Graph replaced PR mode before completion. (#1702 review)
 - Limit Commit Panel secret classification to each staged blob's first 8 KiB, without running the full conflict-marker checklist during status refresh. (#1702 review)
+- Keep branch deletion labels neutral until the existing merged/squash judgment is known, and identify branch-cleanup targets in English and Japanese. Report merge/rebase conflicts as stopped rather than completed, distinguish failed/successful/unknown operations when their log cannot be saved, and explain up-to-date current-branch fast-forward Pulls. (#1699)
+  - Preserve the immediate Operation Log undo/restore warning for successful or partially applied operations whose recording failed, without showing it for unchanged failures or refusals.
+  - Propagate unreadable ancestry and squash evidence, so missing Git objects leave deletion menus neutral instead of falsely warning that a branch is unmerged.
+  - Keep unrelated orphan branches deletable through the normal unmerged two-confirmation path, while preserving actual missing-object failures.
+  - Surface failed Operation Log persistence immediately alongside a conflict-stopped notice, without a completion toast or fabricated durable receipt.
 ### Changed
 
 - Reuse existing Git helpers for plan status summaries, cherry-pick/revert conflict paths, and push remote selection without changing displayed text or operation safety ordering. (#1705)

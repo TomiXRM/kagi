@@ -206,22 +206,53 @@ pub fn op_plan_failed_contract(op: Op, err: impl std::fmt::Display) -> String {
     }
 }
 
-/// The operation finished, but Kagi could not persist its oplog record.
-///
-/// Kagi's promise is that every operation leaves a record to recover and audit
-/// from. Swallowing this failure leaves the user trusting a log that is missing
-/// the entry — and the in-session panel still shows it, so nothing looks wrong
-/// until the next launch (#643 A1).
-pub fn oplog_write_failed(err: impl std::fmt::Display) -> String {
+/// The operation's result, independent of whether its receipt was saved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordingOutcome {
+    Succeeded,
+    Failed,
+    Refused,
+    Partial,
+    Unknown,
+}
+
+/// Keep the actual operation result separate from the recording error.
+pub fn oplog_write_failed(outcome: RecordingOutcome, err: impl std::fmt::Display) -> String {
     let raw = err.to_string();
     let err = user_text::diagnostic(&raw);
+    let result = match (lang(), outcome) {
+        (Lang::En, RecordingOutcome::Succeeded) => "The operation completed.",
+        (Lang::En, RecordingOutcome::Failed) => "The operation failed.",
+        (Lang::En, RecordingOutcome::Refused) => "The operation was not started.",
+        (Lang::En, RecordingOutcome::Partial) => "The operation only partly completed.",
+        (Lang::En, RecordingOutcome::Unknown) => {
+            "The operation's result could not be confirmed. Check the repository before retrying."
+        }
+        (Lang::Ja, RecordingOutcome::Succeeded) => "操作は完了しました。",
+        (Lang::Ja, RecordingOutcome::Failed) => "操作は失敗しました。",
+        (Lang::Ja, RecordingOutcome::Refused) => "操作は開始されませんでした。",
+        (Lang::Ja, RecordingOutcome::Partial) => "操作は一部のみ完了しました。",
+        (Lang::Ja, RecordingOutcome::Unknown) => {
+            "操作の結果を確認できませんでした。再試行する前に repository を確認してください。"
+        }
+    };
+    let recovery = match (lang(), outcome) {
+        (Lang::En, RecordingOutcome::Succeeded | RecordingOutcome::Partial) => {
+            "\nYou cannot undo this operation or restore from its record in the Operation Log."
+        }
+        (Lang::Ja, RecordingOutcome::Succeeded | RecordingOutcome::Partial) => {
+            "\nこの操作は操作ログからは取り消せません。この操作の記録からの復元もできません。"
+        }
+        _ => "",
+    };
     match lang() {
         Lang::En => format!(
-            "The operation finished, but it could not be saved to the Operation Log ({err}). \
-             You cannot undo it from there."
+            "{result}\nOperation Log recording failed: {err}\n\
+             This result will not be available in the Operation Log after restart.{recovery}"
         ),
         Lang::Ja => format!(
-            "操作は完了しましたが、操作ログに保存できませんでした({err})。操作ログからは取り消せません。"
+            "{result}\n操作ログへの記録に失敗しました: {err}\n\
+             この結果は再起動後の操作ログには残りません。{recovery}"
         ),
     }
 }

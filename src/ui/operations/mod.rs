@@ -73,6 +73,26 @@ pub(crate) fn outcome_text(op: &str, outcome: &kagi_git::oplog::OpOutcome) -> St
     }
 }
 
+struct StoppedConflicts {
+    count: Option<usize>,
+}
+
+/// Use execution evidence, not receipt summaries or the plan's prediction.
+/// Rebase's typed outcome has no paths, so count the actual unmerged index.
+fn stopped_conflicts(outcome: &OperationOutcome, repo_path: &Path) -> Option<StoppedConflicts> {
+    let count = match outcome {
+        OperationOutcome::MergeIntoConflict(files) => Some(files.len()),
+        OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Conflicted) => {
+            kagi_git::Backend::open(repo_path)
+                .and_then(|repo| repo.working_tree_status())
+                .ok()
+                .map(|status| status.conflicted.len())
+        }
+        _ => return None,
+    };
+    Some(StoppedConflicts { count })
+}
+
 /// A failure handed to a family's `on_done` by [`KagiApp::finish_recorded`]:
 /// the historical localized contract text plus the receipt's typed code
 /// (ADR-0195), so a family can special-case a code without matching prose.
@@ -464,16 +484,25 @@ impl KagiApp {
                 drop(job);
                 return None;
             }
-            Some(job.run())
+            let completion = job.run();
+            // Observe while the operation still owns its lease, off the UI
+            // thread. Presentation never changes the completion or receipt.
+            let stopped = completion.report.result.as_ref().ok().and_then(|outcome| {
+                stopped_conflicts(
+                    outcome,
+                    Path::new(&completion.report.recording.entry().repo),
+                )
+            });
+            Some((completion, stopped))
         });
         cx.spawn(async move |this, acx| {
             let completion = task.fallible().await.flatten();
             let _ = this.update(acx, move |app, cx| {
-                let completion = match completion {
+                let (completion, stopped) = match completion {
                     Some(completion) => completion,
                     None => {
                         klog!("op panicked: {} — busy_op cleared", op_name);
-                        abandonment.into_completion()
+                        (abandonment.into_completion(), None)
                     }
                 };
                 let deliveries = app::apply(&mut app.app_sessions, completion);
@@ -588,9 +617,31 @@ impl KagiApp {
                         continue;
                     }
                     failed = report.result.is_err();
+                    let stopped_notice =
+                        stopped.map(|stopped| Msg::conflict_stopped(stopped.count));
+                    let stopped_for_conflicts = stopped_notice.is_some();
                     let recorded_status = if let Some(finished) = finished {
                         klog!("async: {} {}", op_name, finished);
-                        app.present_recorded(&report.recording, cx);
+                        if let Some(notice) = stopped_notice {
+                            let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                                &report.recording,
+                            );
+                            if let Recording::Failed { error, .. } = &report.recording {
+                                // The stopped notice describes Git's state; it
+                                // must not hide the independent loss of its
+                                // durable recovery record.
+                                app.present_oplog_write_failure(&entry, error, cx);
+                            }
+                            app.record_op_with_notice(
+                                entry,
+                                cx,
+                                false,
+                                None,
+                                Some((ToastKind::Info, notice.into())),
+                            );
+                        } else {
+                            app.present_recorded(&report.recording, cx);
+                        }
                         Some(app.status_footer.clone())
                     } else {
                         klog!(
@@ -615,7 +666,8 @@ impl KagiApp {
                         failure_display.as_deref().or(failure_message.as_deref()),
                         notice_override,
                     );
-                    if matches!(report.recording, Recording::Failed { .. })
+                    if stopped_for_conflicts
+                        || matches!(report.recording, Recording::Failed { .. })
                         || !matches!(
                             report.recording.entry().outcome,
                             kagi_git::oplog::OpOutcome::Success { .. }
@@ -863,6 +915,7 @@ impl KagiApp {
                 crate::ui::i18n::op::user_text::operations::recording_failed(
                     repo.display(),
                     op,
+                    record::recording_outcome(&recording.entry().outcome),
                     &error.to_string(),
                 )
                 .into(),

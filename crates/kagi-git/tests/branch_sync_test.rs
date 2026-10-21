@@ -107,6 +107,126 @@ impl Checkout {
     }
 }
 
+#[test]
+fn pull_ff_up_to_date_is_typed_noop_with_frozen_identity() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for current in [false, true] {
+        for ahead in [false, true] {
+            let (r, _) = setup();
+            if current || ahead {
+                git(&r.local, &["checkout", "-q", "feature/x"]);
+            }
+            if ahead {
+                git(&r.local, &["commit", "-qm", "local ahead", "--allow-empty"]);
+            }
+            if !current && ahead {
+                git(&r.local, &["checkout", "-q", "main"]);
+            }
+            write_file(&r.local, "base.txt", "staged local content\n");
+            git(&r.local, &["add", "base.txt"]);
+            write_file(&r.local, "base.txt", "unstaged local content\n");
+            write_file(&r.local, "untracked.txt", "preserve untracked\n");
+            let before = Checkout::read(&r.local);
+            let refs_before = git_output(&r.local, &["show-ref"]);
+            let repo = Repository::open(&r.local).unwrap();
+            let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+            assert_eq!(
+                plan.disposition,
+                kagi_domain::plan_note::PlanDisposition::NoOp(
+                    kagi_domain::plan_note::NoOpKind::PullUpToDate
+                )
+            );
+            assert!(plan.blockers.is_empty());
+            assert_eq!(plan.predicted.head, plan.current.head);
+            if current {
+                assert_eq!(plan.predicted.dirty, plan.current.dirty);
+            }
+            let identity = plan.pull_identity.as_ref().expect("fresh no-op identity");
+            assert_eq!(identity.branch, "feature/x");
+            assert_eq!(identity.remote, "origin");
+            assert_eq!(identity.local_oid.0, rev_parse(&r.local, "feature/x"));
+            assert_eq!(identity.upstream_ref, "refs/remotes/origin/feature/x");
+            assert_eq!(Checkout::read(&r.local), before);
+            assert_eq!(git_output(&r.local, &["show-ref"]), refs_before);
+        }
+    }
+}
+
+#[test]
+fn pull_ff_equal_tips_do_not_hide_current_conflicts() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (r, _) = setup();
+    git(&r.local, &["checkout", "-qb", "conflicting"]);
+    write_file(&r.local, "base.txt", "other committed content\n");
+    commit_all(&r.local, "other conflict side");
+    git(&r.local, &["checkout", "-q", "main"]);
+    write_file(&r.local, "base.txt", "main committed content\n");
+    commit_all(&r.local, "main conflict side");
+    git(&r.local, &["push", "-q", "origin", "main"]);
+    assert!(!git_fixture::git_succeeds(
+        &r.local,
+        &["merge", "--no-commit", "conflicting"]
+    ));
+    let before = Checkout::read(&r.local);
+    let refs_before = git_output(&r.local, &["show-ref"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "main").unwrap();
+    assert_eq!(
+        rev_parse(&r.local, "main"),
+        rev_parse(&r.local, "origin/main")
+    );
+    assert_eq!(
+        plan.disposition,
+        kagi_domain::plan_note::PlanDisposition::Blocked
+    );
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::Common(
+            kagi_domain::plan_note::CommonNote::ConflictedFiles { .. }
+        )
+    )));
+    assert!(plan.pull_identity.is_none());
+    assert_eq!(Checkout::read(&r.local), before);
+    assert_eq!(git_output(&r.local, &["show-ref"]), refs_before);
+}
+
+#[test]
+fn pull_ff_equal_tips_do_not_hide_worktree_occupation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (r, _) = setup();
+    let linked = r.local.parent().unwrap().join("linked");
+    git(
+        &r.local,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "feature/x",
+        ],
+    );
+    let before = Checkout::read(&r.local);
+    let linked_before = Checkout::read(&linked);
+    let refs_before = git_output(&r.local, &["show-ref"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    assert_eq!(
+        plan.disposition,
+        kagi_domain::plan_note::PlanDisposition::Blocked
+    );
+    assert!(!plan.blockers.is_empty());
+    assert!(plan.pull_identity.is_none());
+    assert_eq!(Checkout::read(&r.local), before);
+    assert_eq!(Checkout::read(&linked), linked_before);
+    assert_eq!(git_output(&r.local, &["show-ref"]), refs_before);
+}
+
 fn advance_feature(other: &Path) -> String {
     git(other, &["checkout", "-q", "feature/x"]);
     write_file(other, "feature.txt", "updated tracked content\n");

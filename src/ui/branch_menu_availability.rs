@@ -322,10 +322,10 @@ pub(super) fn push_label(ctx: &BranchMenuContext) -> String {
 }
 
 pub(super) fn delete_label(ctx: &BranchMenuContext) -> &'static str {
-    if ctx.merged_into_current {
-        "Delete branch..."
+    if ctx.merged_into_current == Some(false) {
+        Msg::BcmDeleteUnmerged.t()
     } else {
-        "Delete branch... (unmerged)"
+        Msg::BcmDeleteBranch.t()
     }
 }
 

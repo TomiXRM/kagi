@@ -169,3 +169,22 @@ staleness and deletion eligibility remain unchanged. Regression coverage compare
 JST, UTC and US DST transition instants, UTC midnight edges, negative epoch
 seconds and leap day against Detail's date portion.
 
+
+## Amendment — 2026-10-21: observed deletion labels (#1699)
+
+Branch menus share the local delete plan's exact ancestry / patch-proven squash
+classification. A single background read is bound to the menu's session visit,
+read generation, branch name and tip, with HEAD and tip checked by the Backend.
+Unknown, pending or unreadable classifications remain neutral; only a known
+unmerged tip receives the unmerged warning. Closing the menu or changing its
+owner discards the result. Classification is cached for that menu, never walked
+on each paint; execution still plans and preflights independently.
+The shared ancestry / squash proof propagates object, history and diff read
+errors. A missing commit or tree is unknown to the menu, never `unmerged`;
+delete planning also refuses unreadable evidence rather than classifying it.
+
+Cleanup's preview names branches to delete in EN/JA, rather than calling branch
+names commits to push. The visible heading and accessibility group share the
+same localized label; the frozen local/remote targets and deletion guards do not
+change.
+

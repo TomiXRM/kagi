@@ -80,6 +80,16 @@ Pair with `cargo test -p kagi-git --lib panel_secret_scan_bounds_work_for_thousa
 1,000 staged 1 MiB text entries must reach only the secret predicate with
 8 KiB per file and never the full conflict-marker checklist. This is a
 classification-work bound, not a bound on libgit2 object decoding or I/O.
+For #1706 W3 use
+`KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. Shared helpers own byte-exact repository
+collection, presentation setup, squash observations and writer polling, never
+scenario expected values. Presentation teardown restores language, zoom and
+palette before saved settings drop; each matrix leg unmounts its own window.
+Keep the runner's shared-state and window-leak checks enabled. Run
+`cargo test -p kagi --test repository_state_test` with a fresh `KAGI_LOG_DIR`
+for non-UTF8 witness bytes and absent/empty/error oplog regression coverage.
+No product rendering or behavior changes, so Tier B is not required.
 
 For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_detail_select_copy'`
 with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while

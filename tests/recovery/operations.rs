@@ -16,16 +16,27 @@ mod git_fixture;
 use git_fixture::git_output as output;
 
 pub(super) fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    wait_idle_with_timeout(
+        cx,
+        app,
+        Duration::from_secs(10),
+        "mutation did not release busy state",
+    );
+}
+
+pub(crate) fn wait_idle_with_timeout(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    timeout: Duration,
+    diagnostic: &str,
+) {
+    let deadline = Instant::now() + timeout;
     loop {
         cx.run_until_parked();
         if cx.read(|cx| app.read(cx).write_busy_op.is_none()) {
             return;
         }
-        assert!(
-            Instant::now() < deadline,
-            "mutation did not release busy state"
-        );
+        assert!(Instant::now() < deadline, "{diagnostic}");
         std::thread::sleep(Duration::from_millis(2));
     }
 }

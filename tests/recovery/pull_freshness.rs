@@ -1948,6 +1948,38 @@ pub fn scenario_pull_ff_only_current_tree_consistency(cx: &mut VisualTestAppCont
     eprintln!("[gui-e2e] PASS pull_ff_only_current_tree_consistency");
 }
 
+fn assert_strict_ff_overlap_choice(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(!app.app_sessions.has_leases());
+        let modal = app
+            .branch_plan_modal()
+            .expect("actual strict FF overlap retains its choice");
+        assert!(matches!(
+            &modal.plan.title,
+            kagi_domain::plan_note::PlanTitle::Pull(
+                kagi_domain::plan_note::PullTitle::PullBranchFf { branch, .. }
+            ) if branch == "main"
+        ));
+        assert!(modal.plan.sync_needs_choice());
+        assert!(modal.error.is_none());
+        assert!(modal.plan.blockers.is_empty());
+    });
+    e2e::clear_control_bounds(window.window_id(), "plan-cancel");
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "plan-cancel").is_some(),
+        "overlap confirmation is actually drawn"
+    );
+    assert_eq!(latest_count(cx, app), 0);
+}
+
 /// The strict FF card uses the generic Cancel/Pull footer, not ordinary
 /// Pull's stash/review choices. Both cancelling and attempting it keep work.
 fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm: bool) {
@@ -1966,7 +1998,7 @@ fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm
     let before = Checkout::read(&repo);
     let (app, window) = mount(cx, &repo);
     click_branch_sync(cx, window, "main", true);
-    assert_fresh_branch_confirm(cx, &app, window, "main");
+    assert_strict_ff_overlap_choice(cx, &app, window);
     let refs_before = output(&repo, &["show-ref"]);
     button_style::clear_recorded_modal_buttons();
     draw(cx, window);

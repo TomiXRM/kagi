@@ -32,8 +32,8 @@ pub enum WorktreeNote {
     /// blocker (`plan_create_worktree_impl`) — the branch is already checked
     /// out in a different worktree.
     BranchInOtherWorktree { branch: String, path: String },
-    /// warning (`plan_create_worktree_impl`) — describes the linked worktree
-    /// that will be created.
+    /// Neutral AFTER context describing the approved linked worktree scope,
+    /// not an actionable warning.
     CreatesLinkedWorktree {
         path: String,
         branch: String,

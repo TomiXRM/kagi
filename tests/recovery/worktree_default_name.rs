@@ -151,8 +151,30 @@ pub fn scenario_worktree_create_default_name(cx: &mut VisualTestAppContext) {
             assert!(modal.path_input.ends_with("/fresh-topic"));
             assert!(!modal.path_touched);
             assert!(modal.plan.plan().unwrap().blockers.is_empty());
+            assert!(
+                modal.plan.plan().unwrap().warnings.is_empty(),
+                "plain worktree creation has neutral scope, not a caution"
+            );
             assert!(!modal.allow_existing_branch);
         });
+        let expected_scope = cx.read(|cx| {
+            let modal = app.read(cx).create_worktree_modal().unwrap();
+            let plan = modal.plan.plan().unwrap();
+            let kagi_domain::plan_note::PlanTitle::Worktree(
+                kagi_domain::plan_note::WorktreeTitle::CreateWorktree { branch, start },
+            ) = &plan.title
+            else {
+                panic!("worktree title must capture its branch and start")
+            };
+            assert_eq!(branch, "fresh/topic");
+            assert!(!start.is_empty());
+            i18n_scope(plan, &modal.path_input, branch, start)
+        });
+        let (_, after) = kagi::ui::dialog_a11y::recorded_note("plan-state-after").unwrap();
+        assert!(
+            after.contains(&expected_scope),
+            "worktree AFTER lost path/branch/start: {after}"
+        );
         let primary =
             kagi::ui::button_style::recorded_modal_button("create-worktree-confirm").unwrap();
         assert_eq!(primary.label, Msg::InputCreate.t());
@@ -187,4 +209,24 @@ pub fn scenario_worktree_create_default_name(cx: &mut VisualTestAppContext) {
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS worktree_create_default_name");
+}
+
+fn i18n_scope(
+    plan: &kagi_domain::plan::OperationPlan,
+    path: &str,
+    branch: &str,
+    start: &str,
+) -> String {
+    let scope = kagi_ui_core::i18n::plan_note_text(&kagi_domain::plan_note::PlanNote::Worktree(
+        kagi_domain::plan_note::WorktreeNote::CreatesLinkedWorktree {
+            path: path.into(),
+            branch: branch.into(),
+            start: start.into(),
+        },
+    ));
+    assert!(
+        kagi_ui_core::i18n::plan::plan_after_state_detail(plan).contains(&scope),
+        "approved worktree scope must survive without warning notes"
+    );
+    scope
 }

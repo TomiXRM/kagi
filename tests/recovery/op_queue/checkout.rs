@@ -109,18 +109,22 @@ pub fn scenario_queue_checkout_transient_blocker_clears(cx: &mut VisualTestAppCo
     eprintln!("[gui-e2e] PASS queue_checkout_transient_blocker_clears");
 }
 
-/// Non-busy opens the ordinary plan now. Busy skips dirty inspection, shows
-/// the strip immediately, then the head's fresh carry-over warning asks.
-pub fn scenario_queue_busy_checkout_replans_warning(cx: &mut VisualTestAppContext) {
+/// Busy checkout replans unrelated staged/untracked work without inventing a
+/// carry-over caution; the safe queued checkout runs and preserves local work.
+pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestAppContext) {
     let fixture = branches_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    std::fs::write(repo.join("queue-untracked.txt"), "keep untracked\n").unwrap();
+    let index_before = git_output(&repo, &["ls-files", "--stage"]);
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.open_plan_modal("a", cx));
-    assert!(cx.read(|cx| app
-        .read(cx)
-        .plan_modal()
-        .is_some_and(|m| m.queued.is_none())));
+    assert!(cx.read(
+        |cx| app.read(cx).plan_modal().is_some_and(|m| m.queued.is_none()
+            && m.plan.warnings.is_empty()
+            && m.plan.blockers.is_empty())
+    ));
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_run_for_e2e(hold);
     app.update(cx, |app, cx| app.start_checkout(cx));
@@ -135,18 +139,26 @@ pub fn scenario_queue_busy_checkout_replans_warning(cx: &mut VisualTestAppContex
     );
     assert!(drawn(cx, window, "queue-strip"));
     release.send(());
-    tick_until(cx, &app, "the queued warning modal", |app| {
-        app.plan_modal().is_some_and(|modal| modal.queued.is_some())
+    tick_until(cx, &app, "the safe queued checkout to finish", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
     });
-    cx.read(|cx| {
-        let modal = app.read(cx).plan_modal().unwrap();
-        assert!(modal.plan.blockers.is_empty());
-        assert!(!modal.plan.warnings.is_empty(), "fresh carry-over warning");
-    });
-    assert_eq!(head(&repo), "a", "checkout b still needs confirmation");
-    click(cx, window, "plan-cancel");
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+    assert_eq!(head(&repo), "b");
+    assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index_before);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("README.md")).unwrap(),
+        "# fixture\nlocal edit\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("queue-untracked.txt")).unwrap(),
+        "keep untracked\n"
+    );
+    assert!(
+        klog_index("[kagi] queue: run checkout b (clean plan)").is_some(),
+        "a safe carry-over plan must run without a caution modal"
+    );
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS queue_busy_checkout_replans_warning");
+    eprintln!("[gui-e2e] PASS queue_busy_checkout_preserves_local_changes");
 }
 
 /// Missing refs are static and refused with a reason, without a queued plan.

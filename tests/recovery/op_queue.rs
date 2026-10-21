@@ -283,47 +283,73 @@ pub fn scenario_queue_trip_lists_cancelled(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS queue_trip_lists_cancelled");
 }
 
-/// A replan with a warning asks, as a checkout always does: confirming runs
-/// it, declining cancels it and lists it as declined.
+/// Detached checkout has a real risk: queued confirmation must still allow
+/// accepting one target and declining the next without executing it.
 pub fn scenario_queue_confirms_a_warned_plan(cx: &mut VisualTestAppContext) {
     let fixture = branches_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    for branch in ["b", "c"] {
+        git(&repo, &["checkout", "-q", branch]);
+        git(&repo, &["commit", "--allow-empty", "-qm", branch]);
+    }
+    let b = kagi_git::CommitId(rev_parse(&repo, &["b"]));
+    let c = kagi_git::CommitId(rev_parse(&repo, &["c"]));
+    git(&repo, &["checkout", "-q", "main"]);
     let (app, window) = mount(cx, &repo);
 
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_run_for_e2e(hold);
     app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
     cx.run_until_parked();
-    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
-    app.update(cx, |app, cx| app.dblclick_checkout_branch("c", cx));
-    // Local changes: every later checkout plan carries a warning.
-    std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+    app.update(cx, |app, cx| app.open_checkout_commit_modal(b.clone(), cx));
+    app.update(cx, |app, cx| app.open_checkout_commit_modal(c.clone(), cx));
     release.send(());
     let queued_modal = |app: &KagiApp| app.plan_modal().and_then(|m| m.queued).is_some();
-    tick_until(cx, &app, "b's confirmation", queued_modal);
+    tick_until(cx, &app, "b's detached confirmation", queued_modal);
     assert_eq!(head(&repo), "a");
+    cx.read(|cx| {
+        let modal = app.read(cx).plan_modal().unwrap();
+        assert!(matches!(
+            &modal.target,
+            kagi::ui::modals::CheckoutPlanTarget::Commit(target) if target == &b
+        ));
+        assert!(modal.plan.warnings.iter().any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Checkout(
+                kagi_domain::plan_note::CheckoutNote::WillDetachHead
+            )
+        )));
+    });
     assert_eq!(
-        rows(&strip(cx, &app)),
-        vec![
-            ("checkout b".to_string(), "confirming".to_string()),
-            ("checkout c".to_string(), "queued".to_string()),
-        ]
+        rows(&strip(cx, &app))
+            .iter()
+            .map(|row| row.1.as_str())
+            .collect::<Vec<_>>(),
+        vec!["confirming", "queued"]
     );
     app.update(cx, |app, cx| app.start_checkout(cx));
     tick_until(cx, &app, "c's confirmation after b", |app| {
-        queued_modal(app) && head_is(app, "b")
+        queued_modal(app) && rev_parse(&repo, &["HEAD"]) == b.0
     });
-    assert_eq!(head(&repo), "b");
-
+    assert_eq!(head(&repo), "HEAD", "the accepted checkout is detached");
+    cx.read(|cx| {
+        assert!(matches!(
+            &app.read(cx).plan_modal().unwrap().target,
+            kagi::ui::modals::CheckoutPlanTarget::Commit(target) if target == &c
+        ));
+    });
     app.update(cx, |app, _| app.cancel_modal());
     tick_until(cx, &app, "the decline to land", |app| {
         rows(&app.queue_strip_for_e2e(std::time::Instant::now())).is_empty()
     });
+    let cancelled = strip(cx, &app).unwrap().2;
+    assert_eq!(cancelled.len(), 1);
+    assert_eq!(cancelled[0].1, "declined");
     assert_eq!(
-        strip(cx, &app).unwrap().2,
-        vec![("checkout c".to_string(), "declined".to_string())]
+        rev_parse(&repo, &["HEAD"]),
+        b.0,
+        "the declined checkout never ran"
     );
-    assert_eq!(head(&repo), "b", "the declined checkout never ran");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_confirms_a_warned_plan");
 }

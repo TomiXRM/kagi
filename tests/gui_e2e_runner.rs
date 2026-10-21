@@ -2893,8 +2893,8 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_checkout_transient_blocker_clears),
             ),
             (
-                "queue_busy_checkout_replans_warning",
-                Box::new(crate::op_queue::scenario_queue_busy_checkout_replans_warning),
+                "queue_busy_checkout_preserves_local_changes",
+                Box::new(crate::op_queue::scenario_queue_busy_checkout_preserves_local_changes),
             ),
             (
                 "queue_checkout_missing_ref_refuses",

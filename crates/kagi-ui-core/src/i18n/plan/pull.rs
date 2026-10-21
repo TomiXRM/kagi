@@ -11,8 +11,6 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_AUTO_STASH: &str =
     "working tree に{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
 
-pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
-    "working tree に{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
@@ -22,10 +20,6 @@ pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
     "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
-pub(crate) const ADVICE_PULL_CONFLICTED_REF_ONLY: &str =
-    "conflict ファイルが {} 件あります。この ref-only pull は working tree に影響しません。";
-pub(crate) const ADVICE_PULL_DIRTY_REF_ONLY: &str =
-    "working tree に変更があります。この ref-only pull は working tree に影響しません。";
 pub(crate) const ADVICE_PULL_CANNOT_FAST_FORWARD: &str =
     "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。";
 pub(crate) const ADVICE_PULL_REMOTE_DIVERGED: &str =
@@ -70,9 +64,6 @@ fn path_block_ja(paths: &[String]) -> String {
 /// Japanese rendering of one pull note.
 pub fn note_ja(note: &PullNote) -> String {
     match note {
-        PullNote::DirtyPullGuard { parts } => {
-            super::advice_text(Msg::AdvicePullDirtyPullGuard, &[&parts_ja(parts)])
-        }
         PullNote::AutoStash { parts, untracked } => {
             let mut changes = Vec::new();
             let tracked = parts_ja(parts);
@@ -99,10 +90,6 @@ pub fn note_ja(note: &PullNote) -> String {
             Msg::AdvicePullRestoreConflictPossible,
             &[&path_block_ja(paths)],
         ),
-        PullNote::ConflictedRefOnly { count } => {
-            super::advice_text(Msg::AdvicePullConflictedRefOnly, &[count])
-        }
-        PullNote::DirtyRefOnly => super::advice_text(Msg::AdvicePullDirtyRefOnly, &[]),
         PullNote::NoUpstream { branch, err } => {
             format!(
                 "branch `{}` に upstream が設定されていません: {}",

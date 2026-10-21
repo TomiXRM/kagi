@@ -4,8 +4,7 @@
 //!
 use super::*;
 use kagi_domain::plan_note::{
-    CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, DirtyParts, OpPhrase, UntrackedCtx,
-    WorktreeNote,
+    CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, OpPhrase, WorktreeNote,
 };
 use kagi_domain::remote::shell_quote;
 
@@ -70,7 +69,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     // prose. `message_en()` renders the exact legacy strings for
     // oplog/klog/EN display (golden-tested in kagi-domain).
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = Vec::new();
+    let warnings: Vec<PlanNote> = Vec::new();
 
     // Branch existence check.
     let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
@@ -117,27 +116,11 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
             .ok()
             .and_then(|b| b.get().peel_to_commit().ok())
             .map(|c| c.id());
-        match target_oid.and_then(|oid| predict_checkout_conflict(repo, &head, oid, &status)) {
-            Some(blocker) => blockers.push(blocker),
-            None => {
-                let parts = DirtyParts {
-                    staged: status.staged.len(),
-                    modified: status.unstaged.len(),
-                };
-                warnings.push(PlanNote::Checkout(CheckoutNote::DirtyCarriedOver {
-                    parts,
-                    branch: branch.to_string(),
-                }));
-            }
+        if let Some(blocker) =
+            target_oid.and_then(|oid| predict_checkout_conflict(repo, &head, oid, &status))
+        {
+            blockers.push(blocker);
         }
-    }
-
-    // Untracked files — warning only (safe checkout leaves them alone).
-    if !status.untracked.is_empty() {
-        warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
-            count: status.untracked.len(),
-            ctx: UntrackedCtx::AfterSwitchingBranches,
-        }));
     }
 
     // ── 4. Predicted StateSummary ─────────────────────────────

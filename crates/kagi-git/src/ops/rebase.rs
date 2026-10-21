@@ -20,8 +20,8 @@ use kagi_domain::remote::shell_quote;
 /// Analyse whether rebasing the current branch onto `onto` is safe and
 /// return an [`OperationPlan`]. Guarded-class (ADR-0004): dirty tree and
 /// detached HEAD block; a predicted conflict is not knowable ahead of time
-/// for a multi-commit rebase (unlike merge's single in-memory merge), so it
-/// is always surfaced as an unconditional warning instead.
+/// for a multi-commit rebase (unlike merge's single in-memory merge), so a
+/// nonempty replay scope carries a may-conflict warning instead.
 ///
 /// # Blocker conditions
 ///
@@ -48,7 +48,6 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
     };
 
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let warnings: Vec<PlanNote> = vec![PlanNote::Rebase(RebaseNote::MayConflict)];
 
     let branch_name = match &head {
         Head::Attached { branch, .. } => Some(branch.clone()),
@@ -170,6 +169,15 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
             total_commits,
         });
     }
+
+    let warnings = if rebase_scope
+        .as_ref()
+        .is_some_and(|scope| scope.total_commits > 0)
+    {
+        vec![PlanNote::Rebase(RebaseNote::MayConflict)]
+    } else {
+        Vec::new()
+    };
 
     Ok(OperationPlan {
         rebase_scope,

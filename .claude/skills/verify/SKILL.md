@@ -4158,8 +4158,8 @@ click on `queue-strip-remove-<id>`, the queued checkout runs only after the held
 one settles, with no modal on a clean replan, and its row reads `running · 2 s`),
 `queue_trip_lists_cancelled` (the held checkout fails, both successors are
 listed as `previous step failed` until `queue-strip-clear`),
-`queue_confirms_a_warned_plan` (a replan with a warning opens the queued
-modal; confirm runs it, Cancel lists it as `declined`),
+`queue_confirms_a_warned_plan` (detached commit checkout retains its genuine
+warning and queued modal; confirm runs one target, Cancel declines the next),
 `queue_strip_owner_only` (tab B never draws tab A's strip; A's head waits for A
 to return, and the queue hears of A's held activation read before A itself
 through `sync_queue_for_e2e`), `queue_skips_auto_fetch` (a quiet fetch is
@@ -4173,8 +4173,9 @@ and `queue_refuses_a_blocked_checkout` (a dirty-tree blocker no longer prevents
 busy enqueue; its fresh head plan refuses without writing), plus #1028's
 `queue_checkout_transient_blocker_clears` (a staged overlap initially blocks
 checkout, the held predecessor commits it, then the fresh clean checkout runs),
-`queue_busy_checkout_replans_warning` (idle opens the modal normally; busy
-shows the strip at once, then asks about the fresh carry-over warning) and
+`queue_busy_checkout_preserves_local_changes` (idle opens the modal normally;
+busy shows the strip at once, then safely carries unrelated staged and untracked
+work through checkout without a caution modal, preserving index content and files) and
 `queue_checkout_missing_ref_refuses` (a missing ref is statically rejected with
 the localized footer/toast and a durable refusal receipt), and
 `queue_checkout_linked_worktree_refuses` (a branch checked out in another

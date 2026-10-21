@@ -9,6 +9,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, including Pull freshness/conflict scenarios, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
 
+### Fixed
+
+- Reserve generic-operation cautions for actual fetched-path overlap or nonempty rebase replay. Show retained checkout changes, ref-only Pull, sidebar publish safety, tag publication and linked-worktree creation as neutral English/Japanese previews instead of amber warnings; preserve execution guards and approved identities. (#1696)
+
 ## [0.47.0] - 2026-10-21
 
 ### Added

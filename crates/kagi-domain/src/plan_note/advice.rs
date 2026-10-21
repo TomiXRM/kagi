@@ -22,9 +22,6 @@ macro_rules! advice_template_en {
     (UntrackedAfterRevert) => {
         "{} untracked file(s) will remain untouched after revert."
     };
-    (UntrackedPullFetchMayTouch) => {
-        "{} untracked file(s) will remain untouched unless fetched changes need the same path."
-    };
     (UntrackedUntouched) => {
         "{} untracked file(s) will remain untouched."
     };
@@ -358,9 +355,6 @@ macro_rules! advice_template_en {
     (CheckoutCheckoutOverlap) => {
         "Working tree has local changes to {} file(s) that the target also modifies: {}. Safe checkout would be refused (the conflict prevents checkout). Stash or commit these changes first."
     };
-    (CheckoutDirtyCarriedOver) => {
-        "{} will be carried over to '{}'."
-    };
     (CheckoutDirtyMayFail) => {
         "Working tree is dirty ({}). Safe checkout may fail; stash or commit first."
     };
@@ -472,9 +466,6 @@ macro_rules! advice_template_en {
     (PushUpstreamNotPresentLocally) => {
         "Remote-tracking branch '{}' is not present locally; fetch it before setting upstream."
     };
-    (PullDirtyPullGuard) => {
-        "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths."
-    };
     (PullNoUpstreamWithHint) => {
         "No upstream configured for branch '{}': {}. Set one with `git branch --set-upstream-to=<remote>/<branch>`."
     };
@@ -489,12 +480,6 @@ macro_rules! advice_template_en {
     };
     (PullRestoreConflictMore) => {
         "\n  - … and {} more"
-    };
-    (PullConflictedRefOnly) => {
-        "Repository has {} conflicted file(s); this ref-only pull will not touch the working tree."
-    };
-    (PullDirtyRefOnly) => {
-        "Working tree is dirty; this ref-only pull will not touch the working tree."
     };
     (PullCannotFastForward) => {
         "Branch '{}' cannot be fast-forwarded to its upstream; pull it while checked out to merge."

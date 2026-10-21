@@ -122,6 +122,7 @@ fn covered_rail_is_inert(
 /// compact suspension repaints while Tab crosses the rail and card controls.
 pub fn scenario_neighbor_plan_labels(cx: &mut VisualTestAppContext) {
     let _presentation = Presentation::keep();
+    checkout_and_ref_only_preview(cx);
     let fixture = build_fixture();
     let repo = fixture.path();
     git(repo, &["checkout", "-qb", "side", "HEAD~1"]);
@@ -188,6 +189,95 @@ pub fn scenario_neighbor_plan_labels(cx: &mut VisualTestAppContext) {
             crate::keyboard_nav::keys(cx, window, "escape");
             paint(cx, window);
             assert_eq!(repo_fingerprint(repo), before, "Escape is read-only");
+        }
+    });
+}
+
+/// #1696: quiet plans retain their safety guarantees in AFTER and Copy all.
+fn checkout_and_ref_only_preview(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{
+        dialog_a11y,
+        modals::{BranchPlanKind, BranchPlanModal},
+    };
+    use std::sync::Arc;
+
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "preview-side"]);
+    git(repo, &["branch", "--set-upstream-to=main", "preview-side"]);
+    git(
+        repo,
+        &["commit", "--allow-empty", "-qm", "advance upstream"],
+    );
+    std::fs::write(repo.join("README.md"), "local retained change\n").unwrap();
+    git(repo, &["add", "README.md"]);
+    std::fs::write(repo.join("preview-untracked.txt"), "retained\n").unwrap();
+    let before = repo_fingerprint(repo);
+    each_presentation(cx, repo, |cx, app, window| {
+        for ref_only in [false, true] {
+            app.update(cx, |app, cx| {
+                if ref_only {
+                    let plan = kagi_git::Backend::open(repo)
+                        .unwrap()
+                        .plan(&kagi_git::Operation::PullBranchFf {
+                            branch_name: "preview-side".into(),
+                        })
+                        .unwrap();
+                    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+                    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+                    app.set_branch_plan_modal(BranchPlanModal {
+                        kind: BranchPlanKind::PullFfOnly,
+                        branch_name: "preview-side".into(),
+                        plan: Arc::new(plan),
+                        error: None,
+                        confirm_armed: false,
+                        fetch_owner: None,
+                        dirty_digest: None,
+                        fetched_refs: None,
+                    });
+                } else {
+                    app.open_plan_modal("preview-side", cx);
+                    let plan = &app.plan_modal().unwrap().plan;
+                    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+                    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+                }
+                cx.notify();
+            });
+            paint(cx, window);
+            let expected = match (ref_only, i18n::lang()) {
+                (false, i18n::Lang::En) => "Local changes and untracked files remain after switching branches.",
+                (false, i18n::Lang::Ja) => "ローカルの変更と未追跡ファイルは branch を切り替えた後も保持されます。",
+                (true, i18n::Lang::En) => "Only the selected branch reference is updated; the current working tree and index are unchanged.",
+                (true, i18n::Lang::Ja) => "選択した branch の参照のみを更新します。現在の working tree と index は変更しません。",
+            };
+            let (_, after) = dialog_a11y::recorded_note("plan-state-after").unwrap();
+            assert!(
+                after.contains(expected),
+                "neutral AFTER context missing: {after}"
+            );
+            assert!(
+                !button_style::recorded_modal_button("plan-confirm")
+                    .unwrap()
+                    .disabled
+            );
+            let copy = e2e::control_bounds(window.window_id(), "plan-card-copy").unwrap();
+            cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            let copied = cx.read_from_clipboard().unwrap().text().unwrap();
+            assert!(
+                copied.contains(expected),
+                "Copy all lost neutral context: {copied}"
+            );
+            assert!(
+                !copied.contains("\nwarning:"),
+                "quiet plans must not manufacture cautions"
+            );
+            assert_eq!(
+                repo_fingerprint(repo),
+                before,
+                "preview/copy must not write"
+            );
+            crate::keyboard_nav::keys(cx, window, "escape");
         }
     });
 }

@@ -209,7 +209,6 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
     };
 
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if repo.find_reference(&format!("refs/tags/{}", name)).is_err() {
         blockers.push(PlanNote::Tag(TagNote::NotFound {
@@ -227,16 +226,6 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
     } else {
         None
     };
-
-    if blockers.is_empty() {
-        warnings.push(PlanNote::Tag(TagNote::PushRemoteSideEffect {
-            remote: remote_name.clone(),
-            name: name.to_string(),
-        }));
-        warnings.push(PlanNote::Tag(TagNote::PushRejectedIfMoved {
-            name: name.to_string(),
-        }));
-    }
 
     let recovery = remote.as_ref().map(|r| PlanRecovery {
         kind: RecoveryKind::Tag(TagRecovery::PushTag {
@@ -261,7 +250,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
         }),
         current,
         predicted,
-        warnings,
+        warnings: Vec::new(),
         blockers,
         recovery,
         head_at_plan: head,

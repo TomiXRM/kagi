@@ -79,14 +79,14 @@ remote と同一とは仮定しない。非 current branch は、どの worktree
 **current branch の ff-only は checkout も整合させる（PR #1088 review）。**
 `Operation::PullBranchFf` の strict policy は維持し、通常の merge 可能な Pull には
 切り替えない。current branch の計画は backend でも working-tree digest を凍結し、
-conflict は blocker、dirty は実際の checkout に対応した warning として示す。
+conflict は blocker とし、取得済みの更新とローカルの変更が重なる path がある場合のみ warning を示す（#1696）。
 実行時は取得した tree が dirty path に触れないことを既存の guard で検査し、
 HEAD が旧 tree を指す間に `checkout_tree(safe)` で index と tracked files を更新してから
 branch ref を進める。成功時は変更・追加・削除が新しい HEAD と一致し、ref だけが先に進んで
 逆向きの staged diff を作ることはない。乖離した履歴は拒否し、merge commit は作らない。
 current 用の EN/JA recovery も index / working tree の更新と strict policy を説明する。
 generic な ff-only title は EN/JA とも `ref-only` と断定しない。current / non-current で
-異なる checkout の扱いは計画の warning と typed recovery で説明し、strict policy は共通に示す。
+異なる checkout の扱いは中立の AFTER 説明と typed recovery で示し、strict policy は共通に示す（#1696）。
 
 checkout 後の ref transaction が失敗した場合は、試行したという理由だけで `Partial`
 にはしない。backend が実際の index（path / OID / mode / conflict stage の digest）、

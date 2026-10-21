@@ -177,7 +177,7 @@ fn checkout_recovery_command_round_trips_shell_metacharacters() {
 
 // README.md is identical on `main` and `feature/one` (feature only adds
 // feat.txt), so a local edit to it does NOT overlap the checkout. The user
-// should be able to switch directly: no blocker, a "carried over" warning, and
+// should be able to switch directly: no blocker or warning, and
 // a safe checkout that preserves the edit and moves HEAD.
 #[test]
 fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
@@ -197,13 +197,7 @@ fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
         "non-overlapping dirty change should NOT block, got: {:?}",
         plan.blockers
     );
-    assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.message_en().contains("carried over")),
-        "should warn that changes carry over, got: {:?}",
-        plan.warnings
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 
     // And the safe checkout actually succeeds, preserving the edit + moving HEAD.
     preflight_check(&repo, &plan).expect("preflight failed");
@@ -242,6 +236,7 @@ fn test_plan_dirty_staged_non_overlapping_no_blocker() {
         "non-overlapping staged change should NOT block, got: {:?}",
         plan.blockers
     );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 // When a locally-modified tracked file IS part of the checkout diff, a safe
@@ -281,11 +276,11 @@ fn test_plan_dirty_overlapping_has_blocker() {
 }
 
 // ────────────────────────────────────────────────────────────
-// Test 3: untracked only — no blocker, has warning, execute succeeds
+// Test 3: untracked only — no blocker or warning, execute succeeds
 // ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_plan_untracked_only_no_blocker_warning() {
+fn test_plan_untracked_only_needs_no_warning() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -302,10 +297,7 @@ fn test_plan_untracked_only_no_blocker_warning() {
         "untracked-only should have no blockers, got: {:?}",
         plan.blockers
     );
-    assert!(
-        !plan.warnings.is_empty(),
-        "untracked-only should have a warning about untracked files"
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 #[test]

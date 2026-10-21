@@ -289,6 +289,7 @@ pub enum Msg {
     /// copied. Says where to look, never that the entry was durably saved —
     /// an append failure is one of the notices this card carries.
     AppNoticeDetailsInOpLog,
+    AppReconcileRequired,
     AppReconcileAcknowledge,
     AppReconcileInspect,
     AppReconcileConfirm,
@@ -2557,6 +2558,8 @@ impl Msg {
             (Ja, AppReconcileInspect) => "現在の状態を照会",
             (En, AppReconcileConfirm) => "I've checked",
             (Ja, AppReconcileConfirm) => "確認しました",
+            (En, AppReconcileRequired) => "Check the previous operation's result before continuing.",
+            (Ja, AppReconcileRequired) => "前の操作の結果を確認してから続行してください。",
             (En, AppReconcileAcknowledge) => "The operation stopped. Confirm you have checked the current state to continue. Nothing is retried.",
             (Ja, AppReconcileAcknowledge) => "操作は停止しました。現在の状態を確認したら続行できます。再実行はしません。",
             (En, AppReconcileUnobservable) => "The operation stopped, but Kagi couldn't confirm what happened on the remote. You can continue without checking; nothing is retried.",

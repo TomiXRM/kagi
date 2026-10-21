@@ -21,6 +21,9 @@ pub(super) fn diagnostic(value: &str) -> Option<String> {
             return Some(message.t().to_string());
         }
     }
+    if value == "NeedsReconcile" {
+        return Some(Msg::AppReconcileRequired.t().into());
+    }
     let fixed = match value {
         "worktree identity changed; reopen the repository" => Some((
             "The repository changed. Reopen it before continuing.",

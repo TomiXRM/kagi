@@ -463,9 +463,6 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             matches!(app.status_footer, kagi::ui::FooterStatus::Failed(_)),
             "a refused admission must reach the footer"
         );
-        let notice = app.app_notice().expect("the refusal must remain actionable");
-        assert_eq!(notice.inspect, Some(parked[0]));
-        assert!(notice.acknowledge.is_none(), "inspection precedes release");
         assert_eq!(
             app.app_sessions.reconcile_ids(),
             parked,
@@ -475,6 +472,14 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             app.pr_merge_modal().is_some(),
             "a refused admission keeps the confirmation"
         );
+        // The retained confirmation owns the slot until the user cancels it.
+        app.cancel_pr_merge_modal();
+        e2e::present_app_notice(app);
+        let notice = app
+            .app_notice()
+            .expect("the refusal must remain actionable");
+        assert_eq!(notice.inspect, Some(parked[0]));
+        assert!(notice.acknowledge.is_none(), "inspection precedes release");
         // And an unconfirmable promise must not be closed on the user's behalf.
         assert!(
             kagi::app::acknowledge(&mut app.app_sessions, read).is_err(),

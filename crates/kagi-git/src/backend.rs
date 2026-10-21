@@ -974,7 +974,8 @@ impl Backend {
         self.run_recorded(op, plan).result
     }
 
-    /// Secret findings from the same index-BLOB checklist used by commit plans.
+    /// Rule-5 findings using the commit plan's filename/content predicates.
+    /// Classifies only the 8 KiB content prefix; never scans conflict markers.
     /// The caller supplies its status read so panel loading needs no second walk.
     pub fn staged_secret_paths(
         &self,

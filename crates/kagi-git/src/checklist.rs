@@ -7,18 +7,25 @@
 //! migration.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use git2::Repository;
 
 use super::{status::WorkingTreeStatus, GitError};
 use crate::ops::PlanNote;
-use kagi_domain::plan_note::ChecklistNote;
 
 pub use kagi_domain::checklist::*;
 
 /// Environment variable name for overriding the large-binary threshold.
 const LARGE_BLOB_ENV: &str = "KAGI_LARGE_BLOB_BYTES";
+
+#[cfg(test)]
+thread_local! {
+    // Full-checklist calls must never enter the panel's secret-only read.
+    static SCAN_WORK: std::cell::Cell<(usize, usize)> = const {
+        std::cell::Cell::new((0, 0))
+    };
+}
 
 /// Run the staged-content checklist rules (ADR-0043 rules 4/5/6) over the
 /// repository's **index** and return `(blockers, warnings)`.
@@ -48,12 +55,40 @@ pub fn checklist(
 ) -> Result<(Vec<PlanNote>, Vec<PlanNote>), GitError> {
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
-    for_each_finding(
-        repo,
-        status,
-        |note| blockers.push(PlanNote::Checklist(note)),
-        |_, note| warnings.push(PlanNote::Checklist(note)),
-    )?;
+    let large_threshold = large_blob_threshold();
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+
+    for file in &status.staged {
+        let path = file.path.as_path();
+        warnings.extend(
+            evaluate_staged_path(path)
+                .into_iter()
+                .map(PlanNote::Checklist),
+        );
+        // Deletions and gitlinks have no readable index BLOB.
+        let Some(entry) = index.get_path(path, 0) else {
+            continue;
+        };
+        if entry.id.is_zero() {
+            continue;
+        }
+        let Ok(blob) = repo.find_blob(entry.id) else {
+            continue;
+        };
+        let content = blob.content();
+        let is_binary = blob_is_binary(&blob, content);
+        #[cfg(test)]
+        SCAN_WORK.with(|work| {
+            let (full_checks, bytes) = work.get();
+            work.set((full_checks + 1, bytes + content.len().min(1024 * 1024)));
+        });
+        let (file_blockers, file_warnings) =
+            evaluate_staged_blob_content(path, content, is_binary, large_threshold);
+        blockers.extend(file_blockers.into_iter().map(PlanNote::Checklist));
+        warnings.extend(file_warnings.into_iter().map(PlanNote::Checklist));
+    }
     Ok((blockers, warnings))
 }
 
@@ -63,65 +98,39 @@ pub(crate) fn staged_secret_paths(
     repo: &Repository,
     status: &WorkingTreeStatus,
 ) -> Result<HashSet<PathBuf>, GitError> {
-    let mut paths = HashSet::new();
-    for_each_finding(
-        repo,
-        status,
-        |_| {},
-        |path, note| {
-            if note.is_secret() && !paths.contains(path) {
-                paths.insert(path.to_path_buf());
-            }
-        },
-    )?;
-    Ok(paths)
-}
-
-fn for_each_finding(
-    repo: &Repository,
-    status: &WorkingTreeStatus,
-    mut on_blocker: impl FnMut(ChecklistNote),
-    mut on_warning: impl FnMut(&Path, ChecklistNote),
-) -> Result<(), GitError> {
-    let large_threshold = large_blob_threshold();
-
     let index = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-
+    let mut paths = HashSet::new();
     for file in &status.staged {
         let path = file.path.as_path();
-        for note in evaluate_staged_path(path) {
-            on_warning(path, note);
+        if path_is_secret_name(path) {
+            paths.insert(path.to_path_buf());
+            continue;
         }
-
-        // Look up the staged index entry → BLOB. A deletion or a gitlink has
-        // no readable BLOB; skip content rules for those.
-        let entry = match index.get_path(path, 0) {
-            Some(e) => e,
-            None => continue,
+        let Some(entry) = index.get_path(path, 0) else {
+            continue;
         };
         if entry.id.is_zero() {
             continue;
         }
-        let blob = match repo.find_blob(entry.id) {
-            Ok(b) => b,
-            Err(_) => continue, // not a blob (e.g. submodule) — skip content rules
+        let Ok(blob) = repo.find_blob(entry.id) else {
+            continue;
         };
         let content = blob.content();
-        let is_binary = blob_is_binary(&blob, content);
-        let (file_blockers, file_warnings) =
-            evaluate_staged_blob_content(path, content, is_binary, large_threshold);
-
-        for note in file_blockers {
-            on_blocker(note);
-        }
-        for note in file_warnings {
-            on_warning(path, note);
+        let prefix = &content[..content.len().min(SECRET_SCAN_BYTES)];
+        #[cfg(test)]
+        SCAN_WORK.with(|work| {
+            let (full_checks, bytes) = work.get();
+            work.set((full_checks, bytes + prefix.len()));
+        });
+        // Rule 5 only: no marker scan, large-binary rule or display-note
+        // allocation. Both predicates are shared with the full commit plan.
+        if !blob_is_binary(&blob, prefix) && content_has_secret(prefix) {
+            paths.insert(path.to_path_buf());
         }
     }
-
-    Ok(())
+    Ok(paths)
 }
 
 /// Resolve the large-binary byte threshold from `KAGI_LARGE_BLOB_BYTES`,
@@ -152,6 +161,55 @@ mod tests {
         // Default when unset.
         std::env::remove_var(LARGE_BLOB_ENV);
         assert_eq!(large_blob_threshold(), DEFAULT_LARGE_BLOB_BYTES);
+    }
+
+    #[test]
+    fn panel_secret_scan_bounds_work_for_thousand_staged_files() {
+        use kagi_domain::status::{ChangeKind, FileStatus};
+
+        const FILES: usize = 1000;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let mut content = vec![b'a'; 1024 * 1024];
+        content[..4].copy_from_slice(b"ghp_");
+        let oid = repo.blob(&content).unwrap();
+        let mut index = repo.index().unwrap();
+        let mut status = WorkingTreeStatus::default();
+        for number in 0..FILES {
+            let path = format!("ordinary/file-{number}.txt");
+            index
+                .add(&git2::IndexEntry {
+                    ctime: git2::IndexTime::new(0, 0),
+                    mtime: git2::IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: 0o100644,
+                    uid: 0,
+                    gid: 0,
+                    file_size: content.len() as u32,
+                    id: oid,
+                    flags: 0,
+                    flags_extended: 0,
+                    path: path.as_bytes().to_vec(),
+                })
+                .unwrap();
+            status.staged.push(FileStatus {
+                path: path.into(),
+                change: ChangeKind::Added,
+            });
+        }
+        index.write().unwrap();
+        SCAN_WORK.with(|work| work.set((0, 0)));
+        let backend = crate::backend::Backend::open(dir.path()).unwrap();
+        let found = backend.staged_secret_paths(&status).unwrap();
+        assert_eq!(found.len(), FILES, "all prefixes contain a secret");
+        let (full_checks, bytes) = SCAN_WORK.with(std::cell::Cell::get);
+        assert_eq!(full_checks, 0, "panel reads must not scan conflict markers");
+        assert_eq!(
+            bytes,
+            FILES * 8 * 1024,
+            "panel content classification must receive only 8 KiB per staged blob"
+        );
     }
 
     /// Unlike the Linux filesystem fixture, raw index entries exercise invalid

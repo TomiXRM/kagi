@@ -76,6 +76,11 @@ restore. `pr_draft_post_after_graph` holds the admitted comment write, leaves
 PR mode through Graph, and requires reopening to retain an empty composer and
 one transport write. Both use fail-closed local gh fixtures.
 
+Pair with `cargo test -p kagi-git --lib panel_secret_scan_bounds_work_for_thousand_staged_files`:
+1,000 staged 1 MiB text entries must reach only the secret predicate with
+8 KiB per file and never the full conflict-marker checklist. This is a
+classification-work bound, not a bound on libgit2 object decoding or I/O.
+
 For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_detail_select_copy'`
 with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
 selecting both Nagi presets, checks native focus-ring and graph-selection

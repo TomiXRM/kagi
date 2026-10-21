@@ -114,7 +114,10 @@ fn branch_menu_orphan_is_unmerged_and_delete_plan_keeps_unmerged_warning() {
         .unwrap());
     let plan = backend.plan_delete_branch("orphan").unwrap();
     assert!(plan.blockers.is_empty());
-    assert!(plan.destructive);
+    assert!(plan.recovery.as_ref().is_some_and(|recovery| recovery
+        .commands
+        .iter()
+        .any(|command| command.contains(&tip.0))));
     assert!(plan
         .warnings
         .iter()

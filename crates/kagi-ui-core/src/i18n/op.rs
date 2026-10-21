@@ -236,14 +236,23 @@ pub fn oplog_write_failed(outcome: RecordingOutcome, err: impl std::fmt::Display
             "操作の結果を確認できませんでした。再試行する前に repository を確認してください。"
         }
     };
+    let recovery = match (lang(), outcome) {
+        (Lang::En, RecordingOutcome::Succeeded | RecordingOutcome::Partial) => {
+            "\nYou cannot undo this operation or restore from its record in the Operation Log."
+        }
+        (Lang::Ja, RecordingOutcome::Succeeded | RecordingOutcome::Partial) => {
+            "\nこの操作は操作ログからは取り消せません。この操作の記録からの復元もできません。"
+        }
+        _ => "",
+    };
     match lang() {
         Lang::En => format!(
             "{result}\nOperation Log recording failed: {err}\n\
-             This result will not be available in the Operation Log after restart."
+             This result will not be available in the Operation Log after restart.{recovery}"
         ),
         Lang::Ja => format!(
             "{result}\n操作ログへの記録に失敗しました: {err}\n\
-             この結果は再起動後の操作ログには残りません。"
+             この結果は再起動後の操作ログには残りません。{recovery}"
         ),
     }
 }

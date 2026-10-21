@@ -214,8 +214,12 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                         assert!(!message.contains(completed), "{message}");
                     }
                 }
-                assert!(!message.contains("cannot undo"), "{message}");
-                assert!(!message.contains("取り消せません"), "{message}");
+                let (undo, restore) = match language {
+                    Lang::En => ("cannot undo", "restore from"),
+                    Lang::Ja => ("取り消せません", "復元もできません"),
+                };
+                assert_eq!(message.contains(undo), result == "success", "{message}");
+                assert_eq!(message.contains(restore), result == "success", "{message}");
                 assert!(state
                     .toast_stack
                     .as_ref()

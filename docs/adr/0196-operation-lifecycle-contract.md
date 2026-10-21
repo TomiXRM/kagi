@@ -536,6 +536,11 @@ unchanged failed operation is never called completed or impossible to undo.
 Attempted Unknown/Partial evidence is retained in the in-memory log even when
 the durable append fails; the recording diagnostic is supplementary, not a
 replacement operation result.
+Success and partial-application notices also explain that the unrecorded operation
+cannot be undone or restored from its Operation Log record immediately, not only
+that the history will be absent after restart. The in-memory entry has no trusted
+ref-move evidence for those recovery actions. Failure/refusal notices do not claim
+that an unchanged operation needs undo.
 
 Current strict-FF Pull uses the existing typed `NoOp(PullUpToDate)` presentation
 after its successful freshness fetch. Equal or locally ahead tips show the same

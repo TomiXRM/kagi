@@ -301,8 +301,6 @@ mod tests {
                 assert!(shown.contains(expected), "{shown}");
                 assert!(shown.contains("fixture record error"), "{shown}");
                 assert!(shown.contains("/repo"), "{shown}");
-                assert!(!shown.contains("cannot undo"), "{shown}");
-                assert!(!shown.contains("取り消せません"), "{shown}");
                 assert!(
                     shown.lines().count() >= 3,
                     "separate result and recording error"
@@ -314,6 +312,37 @@ mod tests {
                     assert!(!shown.contains("operation completed"), "{shown}");
                     assert!(!shown.contains("操作は完了"), "{shown}");
                 }
+            }
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn recording_failure_warns_about_recovery_only_for_changed_outcomes() {
+        use crate::i18n::op::RecordingOutcome;
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            let (undo, restore) = match language {
+                Lang::En => ("cannot undo", "restore from"),
+                Lang::Ja => ("取り消せません", "復元もできません"),
+            };
+            for outcome in [
+                RecordingOutcome::Succeeded,
+                RecordingOutcome::Partial,
+                RecordingOutcome::Failed,
+                RecordingOutcome::Refused,
+                RecordingOutcome::Unknown,
+            ] {
+                let shown = recording_failed("/repo", "fetch", outcome, "fixture record error");
+                let changed = matches!(
+                    outcome,
+                    RecordingOutcome::Succeeded | RecordingOutcome::Partial
+                );
+                assert_eq!(shown.contains(undo), changed, "{outcome:?}: {shown}");
+                assert_eq!(shown.contains(restore), changed, "{outcome:?}: {shown}");
             }
         }
         set_lang_no_persist(previous);

@@ -579,3 +579,61 @@ fn push_plan_subject_boundary_matrix_for_both_producers() {
         );
     }
 }
+
+#[test]
+fn set_upstream_selects_origin_then_first_remote() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.local, &["branch", "--unset-upstream", "main"]);
+    for remote in ["aaa", "zzz"] {
+        git(
+            &r.local,
+            &["remote", "add", remote, r.remote.to_str().unwrap()],
+        );
+    }
+    let repo = Repository::open(&r.local).unwrap();
+    for expected in ["origin", "aaa"] {
+        let plan = plan_push(&repo).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        assert!(matches!(
+            &plan.title,
+            kagi_git::ops::PlanTitle::Push(
+                kagi_domain::plan_note::PushTitle::Push { remote, set_upstream: true, .. }
+            ) if remote == expected
+        ));
+        let outcome = execute_push(&repo, &r.local).unwrap();
+        assert!(outcome.set_upstream);
+        assert_eq!(
+            git_output(&r.local, &["config", "branch.main.remote"]),
+            expected
+        );
+        git(&r.local, &["branch", "--unset-upstream", "main"]);
+        git(&r.local, &["remote", "remove", expected]);
+    }
+}
+
+#[test]
+fn no_remote_keeps_typed_push_blocker_and_branch_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.local, &["remote", "remove", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_push(&repo).unwrap();
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        kagi_git::ops::PlanNote::Push(
+            kagi_domain::plan_note::PushNote::NoUpstreamNoRemotes { branch }
+        ) if branch == "main"
+    )));
+    let branch_plan = kagi_git::plan_push_branch(&repo, "main", true).unwrap();
+    assert!(branch_plan.blockers.iter().any(|note| matches!(
+        note,
+        kagi_git::ops::PlanNote::Common(
+            kagi_domain::plan_note::CommonNote::GitErrorPassthrough { message }
+        ) if message.contains("No remote configured. Cannot push.")
+    )));
+}

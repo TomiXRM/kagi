@@ -11,7 +11,7 @@ use kagi::ui::{
     i18n::{self, Lang, Msg},
     theme, FooterStatus, KagiApp, ToastKind,
 };
-use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
+use kagi_git::oplog::OpOutcome;
 
 use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, mount, unmount};
@@ -318,7 +318,7 @@ fn auto_stash_guard_drift(
         output(&repo, &["show", ":README.md"]),
         "approved staged content"
     );
-    assert_eq!(records(&repo, "pull").len(), 0);
+    assert_eq!(oplog::records(&repo, "pull", 100, true).len(), 0);
     press_enter(cx, &app, window);
     wait_idle(cx, &app);
     cx.run_until_parked();
@@ -339,14 +339,14 @@ fn auto_stash_guard_drift(
         "stash OID stack is unchanged"
     );
     assert!(
-        records(&repo, "stash-push").is_empty(),
+        oplog::records(&repo, "stash-push", 100, true).is_empty(),
         "refusal must precede any stash write"
     );
     assert!(
-        records(&repo, "stash-pop").is_empty(),
+        oplog::records(&repo, "stash-pop", 100, true).is_empty(),
         "refusal must not need restoration"
     );
-    let pulls = records(&repo, "pull");
+    let pulls = oplog::records(&repo, "pull", 100, true);
     assert_eq!(pulls.len(), 1, "one actual Pull refusal receipt");
     let OpOutcome::Refused { blockers } = &pulls[0].outcome else {
         panic!(
@@ -527,15 +527,15 @@ pub fn scenario_pull_auto_stash_same_upstream_advancement(cx: &mut VisualTestApp
             "newer same upstream content"
         );
         assert_eq!(output(&repo, &["stash", "list", "--format=%H"]), stash);
-        let pulls = records(&repo, "pull");
+        let pulls = oplog::records(&repo, "pull", 100, true);
         assert_eq!(pulls.len(), 1);
         assert!(
             matches!(pulls[0].outcome, OpOutcome::Success { .. }),
             "{:?}",
             pulls[0].outcome
         );
-        assert_eq!(records(&repo, "stash-push").len(), 1);
-        assert_eq!(records(&repo, "stash-pop").len(), 1);
+        assert_eq!(oplog::records(&repo, "stash-push", 100, true).len(), 1);
+        assert_eq!(oplog::records(&repo, "stash-pop", 100, true).len(), 1);
         cx.read(|cx| {
             let state = app.read(cx);
             assert!(!matches!(state.status_footer, FooterStatus::Failed(_)));
@@ -565,12 +565,8 @@ pub fn scenario_pull_auto_stash_same_upstream_advancement(cx: &mut VisualTestApp
     eprintln!("[gui-e2e] PASS pull_auto_stash_same_upstream_advancement");
 }
 
-fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
-    read_oplog_tail_for_repo(repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == op)
-        .collect()
-}
+#[path = "../support/oplog.rs"]
+mod oplog;
 
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
@@ -648,9 +644,9 @@ pub fn scenario_pull_safe_dirty_intent(cx: &mut VisualTestAppContext) {
         } else {
             assert_eq!(after, before, "up-to-date dirty intent is not a write");
         }
-        assert!(records(&repo, "stash-push").is_empty());
-        assert!(records(&repo, "stash-pop").is_empty());
-        let pulls = records(&repo, "pull");
+        assert!(oplog::records(&repo, "stash-push", 100, true).is_empty());
+        assert!(oplog::records(&repo, "stash-pop", 100, true).is_empty());
+        let pulls = oplog::records(&repo, "pull", 100, true);
         assert_eq!(pulls.len(), usize::from(advance));
         assert!(pulls
             .iter()
@@ -691,8 +687,8 @@ pub fn scenario_pull_safe_merge_intent(cx: &mut VisualTestAppContext) {
         "fresh upstream content"
     );
     assert!(output(&repo, &["status", "--porcelain"]).is_empty());
-    assert!(records(&repo, "stash-push").is_empty());
-    let pulls = records(&repo, "pull");
+    assert!(oplog::records(&repo, "stash-push", 100, true).is_empty());
+    let pulls = oplog::records(&repo, "pull", 100, true);
     assert_eq!(pulls.len(), 1);
     assert!(matches!(pulls[0].outcome, OpOutcome::Success { .. }));
     cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
@@ -740,7 +736,7 @@ pub fn scenario_push_safe_intent(cx: &mut VisualTestAppContext) {
         output(&origin.other, &["ls-remote", "origin", "refs/heads/main"]),
         format!("{}\trefs/heads/main", before.head)
     );
-    let pushes = records(&repo, "push");
+    let pushes = oplog::records(&repo, "push", 100, true);
     assert_eq!(pushes.len(), 1);
     assert!(matches!(pushes[0].outcome, OpOutcome::Success { .. }));
     cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
@@ -771,7 +767,7 @@ pub fn scenario_pull_history_conflict_choice(cx: &mut VisualTestAppContext) {
         );
     });
     assert_eq!(Checkout::read(&repo), before);
-    assert!(records(&repo, "pull").is_empty());
+    assert!(oplog::records(&repo, "pull", 100, true).is_empty());
     press_enter(cx, &app, window);
     cx.run_until_parked();
     cx.read(|cx| {
@@ -797,9 +793,9 @@ pub fn scenario_pull_history_conflict_choice(cx: &mut VisualTestAppContext) {
     assert_eq!(output(&repo, &["rev-parse", "HEAD"]), before.head);
     assert_eq!(output(&repo, &["rev-parse", "MERGE_HEAD"]), incoming);
     assert!(output(&repo, &["ls-files", "--unmerged"]).contains("upstream.txt"));
-    assert!(records(&repo, "stash-push").is_empty());
-    assert!(records(&repo, "stash-pop").is_empty());
-    assert_eq!(records(&repo, "merge").len(), 1);
+    assert!(oplog::records(&repo, "stash-push", 100, true).is_empty());
+    assert!(oplog::records(&repo, "stash-pop", 100, true).is_empty());
+    assert_eq!(oplog::records(&repo, "merge", 100, true).len(), 1);
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.pull_modal().is_none());
@@ -842,11 +838,11 @@ pub fn scenario_pull_quiet_late_dirty_refuses(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(output(&repo, &["rev-parse", "origin/main"]), incoming);
     assert!(
-        records(&repo, "stash-push").is_empty(),
+        oplog::records(&repo, "stash-push", 100, true).is_empty(),
         "intent never approved stash"
     );
-    assert!(records(&repo, "stash-pop").is_empty());
-    let pulls = records(&repo, "pull");
+    assert!(oplog::records(&repo, "stash-pop", 100, true).is_empty());
+    let pulls = oplog::records(&repo, "pull", 100, true);
     assert_eq!(
         pulls.len(),
         1,
@@ -891,7 +887,7 @@ pub fn scenario_push_non_ff_refuses(cx: &mut VisualTestAppContext) {
         format!("{incoming}\trefs/heads/main"),
         "ordinary intent cannot force a remote tip"
     );
-    let pushes = records(&repo, "push");
+    let pushes = oplog::records(&repo, "push", 100, true);
     assert_eq!(pushes.len(), 1);
     assert!(matches!(pushes[0].outcome, OpOutcome::Failed { .. }));
     cx.read(|cx| {
@@ -1026,7 +1022,7 @@ fn assert_waiting(
         "fetch planning cannot change HEAD/index/worktree"
     );
     assert!(
-        records(repo, "pull").is_empty(),
+        oplog::records(repo, "pull", 100, true).is_empty(),
         "no Pull execution before confirmation"
     );
 }
@@ -1138,7 +1134,7 @@ fn clean_updates_from(
         before.files[Path::new("README.md")]
     );
     assert!(output(&repo, &["status", "--porcelain"]).is_empty());
-    let durable = records(&repo, "pull");
+    let durable = oplog::records(&repo, "pull", 100, true);
     assert_eq!(durable.len(), 1, "one confirmed Pull, one durable receipt");
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     cx.read(|cx| {
@@ -1252,7 +1248,7 @@ fn current_configured_upstream_updates(
     );
     release.send(());
     cx.run_until_parked();
-    let fetches = records(&repo, "fetch");
+    let fetches = oplog::records(&repo, "fetch", 100, true);
     assert!(
         fetches
             .iter()
@@ -1294,12 +1290,15 @@ fn current_configured_upstream_updates(
         actual_local_refs, expected_refs,
         "ordinary Pull changes only its selected local branch"
     );
-    let durable = records(&repo, "pull");
+    let durable = oplog::records(&repo, "pull", 100, true);
     assert_eq!(durable.len(), 1, "one ordinary Pull durable receipt");
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
-    assert_eq!(records(&repo, "fetch").len(), fetches.len());
-    assert!(records(&repo, "stash-push").is_empty());
-    assert!(records(&repo, "stash-pop").is_empty());
+    assert_eq!(
+        oplog::records(&repo, "fetch", 100, true).len(),
+        fetches.len()
+    );
+    assert!(oplog::records(&repo, "stash-push", 100, true).is_empty());
+    assert!(oplog::records(&repo, "stash-pop", 100, true).is_empty());
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.pull_modal().is_none());
@@ -1348,7 +1347,7 @@ pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
     });
     assert_eq!(Checkout::read(&repo), before);
     assert!(
-        records(&repo, "pull").is_empty(),
+        oplog::records(&repo, "pull", 100, true).is_empty(),
         "latest never manufactures a Pull receipt"
     );
     unmount(cx, app, window);
@@ -1410,7 +1409,7 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
             0,
             "failed fetch must never report latest"
         );
-        let failures = records(&repo, "fetch");
+        let failures = oplog::records(&repo, "fetch", 100, true);
         assert_eq!(failures.len(), 1, "one flight owns one durable receipt");
         assert!(matches!(failures[0].outcome, OpOutcome::Failed { .. }));
         cx.read(|cx| {
@@ -1447,7 +1446,7 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
                 .any(|entry| entry.id == failures[0].id));
         });
         assert_eq!(Checkout::read(&repo), before);
-        assert!(records(&repo, "pull").is_empty());
+        assert!(oplog::records(&repo, "pull", 100, true).is_empty());
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS pull_freshness_fetch_failure");
@@ -1482,11 +1481,11 @@ pub fn scenario_pull_freshness_joins_held_fetch(cx: &mut VisualTestAppContext) {
     assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
     assert_eq!(output(&repo, &["rev-parse", "HEAD"]), expected);
     assert_eq!(
-        records(&repo, "pull").len(),
+        oplog::records(&repo, "pull", 100, true).len(),
         1,
         "joined requests execute once"
     );
-    assert!(records(&repo, "stash-push").is_empty());
+    assert!(oplog::records(&repo, "stash-push", 100, true).is_empty());
     cx.read(|cx| assert!(app.read(cx).pull_modal().is_none()));
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pull_freshness_joins_held_fetch");
@@ -1538,7 +1537,7 @@ fn assert_reload_invalidates(
         changed,
         "neither accepted reload nor Enter may consume the stale approval"
     );
-    assert!(records(repo, "pull").is_empty());
+    assert!(oplog::records(repo, "pull", 100, true).is_empty());
     assert_eq!(latest_count(cx, app), 0);
 }
 
@@ -1672,8 +1671,8 @@ pub fn scenario_pull_freshness_closed_modal_displaces(cx: &mut VisualTestAppCont
         );
         assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
         assert_eq!(Checkout::read(&repo), before);
-        assert!(records(&repo, "pull").is_empty());
-        assert!(records(&repo, "create-branch").is_empty());
+        assert!(oplog::records(&repo, "pull", 100, true).is_empty());
+        assert!(oplog::records(&repo, "create-branch", 100, true).is_empty());
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS pull_freshness_closed_modal_displaces");
@@ -1808,7 +1807,7 @@ pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppConte
             assert_eq!(Checkout::read(&repo), changed);
             assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
             assert_eq!(latest_count(cx, &app), 0);
-            assert!(records(&repo, "pull").is_empty());
+            assert!(oplog::records(&repo, "pull", 100, true).is_empty());
             assert!(output(&repo, &["stash", "list"]).is_empty());
             unmount(cx, app, window);
         }
@@ -2001,7 +2000,7 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
         "the menu's real fetch must finish before confirmation"
     );
     assert!(
-        records(&repo, "fetch")
+        oplog::records(&repo, "fetch", 100, true)
             .iter()
             .all(|entry| matches!(entry.outcome, OpOutcome::Success { .. })),
         "a dot upstream fetch failure is a different prerequisite, not a title mismatch"
@@ -2062,8 +2061,8 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
     }
     assert_eq!(Checkout::read(&repo), before);
     assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
-    assert!(records(&repo, "pull").is_empty());
-    let fetches = records(&repo, "fetch");
+    assert!(oplog::records(&repo, "pull", 100, true).is_empty());
+    let fetches = oplog::records(&repo, "fetch", 100, true);
     assert_eq!(
         fetches.len(),
         usize::from(!local_upstream),
@@ -2135,16 +2134,16 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
         expected_refs,
         "confirmed Pull moves only the selected local ref"
     );
-    let durable = records(&repo, "pull");
+    let durable = oplog::records(&repo, "pull", 100, true);
     assert_eq!(durable.len(), 1);
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     assert_eq!(
-        records(&repo, "fetch").len(),
+        oplog::records(&repo, "fetch", 100, true).len(),
         fetches.len(),
         "execution adds no extra fetch receipt"
     );
-    assert!(records(&repo, "stash-push").is_empty());
-    assert!(records(&repo, "stash-pop").is_empty());
+    assert!(oplog::records(&repo, "stash-push", 100, true).is_empty());
+    assert!(oplog::records(&repo, "stash-pop", 100, true).is_empty());
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.branch_plan_modal().is_none());

@@ -10,6 +10,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Disclose Smart Commit's actual provider, external CLI account and possible charges, and request fresh consent after switching providers. Show staged `.env`/secret warnings on file rows and above Commit in wide and compact layouts, retaining explicit confirmation only for these safety findings. Persist PR comment/review drafts through the same isolated atomic draft store as Issue composers, preserving newer edits after posting. (#1702)
 - Keep secret-warning identities byte-exact for non-UTF-8 staged paths. Block PR submission until its saved draft is restored, and retire the posted composer input even when Graph replaced PR mode before completion. (#1702 review)
 - Limit Commit Panel secret classification to each staged blob's first 8 KiB, without running the full conflict-marker checklist during status refresh. (#1702 review)
+### Changed
+
+- Reuse existing Git helpers for plan status summaries, cherry-pick/revert conflict paths, and push remote selection without changing displayed text or operation safety ordering. (#1705)
+- Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, including Pull freshness/conflict scenarios, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
 
 ## [0.47.0] - 2026-10-21
 

@@ -20,6 +20,21 @@ The measured app-layer slices below now live in `src/app` and existing `Sessions
 they do not establish the original `kagi-app` crate, universal worker dispatch, or
 zero-copy tab ownership target.
 
+### Structure W1 (2026-10-21, #1704)
+
+Git remote setup, application fixtures and low-level snapshot/oplog collection now
+live in `tests/support/`; all T02/T05/T06/T10 callers use those owners. Backend
+integrations retain #515's relative `#[path]` inclusion. Snapshot types and safety
+oracles remain scenario-owned, including the distinction between raw index bytes
+and staged-content identity. No production owner or migration-stage status changes.
+
+Measured Rust physical LOC (including blank/comment lines): production is unchanged
+at 306,273 LOC / 771 files; tests/support moves from 208,198 LOC / 476 files to
+208,249 LOC / 478 files (+51 LOC, including new collection regressions). This is
+not the planning estimate of a 200-line net reduction. Files over 800 remain 115;
+AST functions over 80 remain 875, with 19 parser-error files under pinned
+tree-sitter 0.25.2 / tree-sitter-rust 0.24.0. No physical move is counted as a saving.
+
 ## Invariants held at every step
 - `cargo test --workspace` green.
 - Every v0.2.0 feature (`inventory.md` §2) and safety guarantee (`§3`) preserved.
@@ -192,6 +207,38 @@ green (739 tests):
 Deferred (bigger / behavioral): remaining VMs + moving headless assertions onto VM
 unit tests (P5); the full `RepoSession`/`OperationController` zero-copy swap
 (ADR-0075, beyond the P2 slice).
+
+## Structure W2 — derived Git plan data (#1705, 2026-10-21)
+
+- Reused `ops::status_summary_display` with a private `state_summary` adapter
+  across the scoped branch/checkout/cherry-pick/revert/stash/pull/push planners.
+  Backend and conflict summaries reuse only the dirty formatter; their distinct
+  HEAD displays remain with their existing owners.
+- Cherry-pick/revert prediction uses `conflict_paths_from_index` with the same
+  lossy path conversion and errors. Continue's unmerged-entry check uses the
+  existing byte-preserving `conflicts::conflict_path`.
+- Push planning/execution and tag selection use one `choose_push_remote`.
+  Absence stays distinct from remote lookup failure, preserving each planner's
+  typed blocker or error and execution's existing error text.
+- No lifecycle, lock/ref order, operation triple, UI or migration-stage ownership
+  changed; see ADR-0073's W2 amendment.
+- Physical Rust LOC (including comments/blanks): production paths, including
+  colocated unit tests, 306,273 → 306,061 (**−212**); integration/GUI tests
+  204,915 → 204,973 (+58); `tests/support` unchanged at 3,283. Total:
+  514,471 → 514,317 (**−154**, no file moves).
+- Files over 800 LOC remain 115; explicit AST functions over 80 lines fall
+  875 → 874. Parser: tree-sitter 0.25.2 / tree-sitter-rust 0.24.0, with the same
+  19 parser-error files before/after. No new source file was added.
+- The plan's default-limit jscpd 4.0.5 strict / Rust / 60-token / 8-line scan
+  reports 1,262 → 1,282 clones and 13,934 → 14,175 duplicated lines, over
+  403,560/1,184 → 404,485/1,185 scanner lines/sources. This is not a comparable
+  reduction: the default 1,000-line source limit previously excluded the
+  1,007-line `cherry_revert.rs`, now included at 934 lines.
+- A separate before/after pair with identical `--max-lines 100000 --max-size
+  10mb` covers all 1,247 sources (514,471 → 514,317 scanner lines) without changing
+  strict mode or minimum thresholds: **1,706 → 1,699 clones (−7)** and
+  **18,967 → 18,733 duplicated lines (−234)**. The before scan uses the immutable
+  base commit `658c5465`, not files being edited.
 
 ## Tooling note
 Heavy mechanical-but-intricate extraction (S4, parts of S3/S6) may be delegated to

@@ -7,75 +7,24 @@
 #[path = "../../../tests/support/backend_ops.rs"]
 mod backend_ops;
 use backend_ops::fetch_remote_branch;
-use std::path::PathBuf;
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git, init_repo, write_file};
+use git_fixture::{commit_all, git, repo_with_bare_origin_seed, write_file, RemoteFixture};
 
 use git2::Repository;
-use tempfile::TempDir;
 
 /// Layout: tmp/remote.git (bare, `main` only at setup) + tmp/local (clone,
 /// tracks only `main`) + tmp/other (a second clone used to push `feature/x`
 /// "from elsewhere" without `local` ever fetching it).
-struct Repos {
-    _tmp: TempDir,
-    local: PathBuf,
-    #[allow(dead_code)] // kept so `_tmp`'s directory (and thus `other`) stays alive
-    other: PathBuf,
-}
-
-fn setup() -> Repos {
-    let tmp = TempDir::new().expect("tempdir");
-    let remote = tmp.path().join("remote.git");
-    let local = tmp.path().join("local");
-    let other = tmp.path().join("other");
-
-    git(
-        tmp.path(),
-        &[
-            "init",
-            "-q",
-            "--bare",
-            "-b",
-            "main",
-            remote.to_str().unwrap(),
-        ],
-    );
-
-    std::fs::create_dir(&local).unwrap();
-    init_repo(&local, "main");
-    git(
-        &local,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    );
-    write_file(&local, "base.txt", "base\n");
-    commit_all(&local, "base");
-    git(&local, &["push", "-q", "-u", "origin", "main"]);
-
-    git(
-        tmp.path(),
-        &[
-            "clone",
-            "-q",
-            remote.to_str().unwrap(),
-            other.to_str().unwrap(),
-        ],
-    );
-    git(&other, &["config", "user.name", "Other"]);
-    git(&other, &["config", "user.email", "other@example.com"]);
-    git(&other, &["config", "commit.gpgsign", "false"]);
+fn setup() -> RemoteFixture {
+    let r = repo_with_bare_origin_seed("main", "base.txt", "base\n", "base");
+    let other = r.clone_other();
     git(&other, &["checkout", "-qb", "feature/x"]);
     write_file(&other, "feat.txt", "feature\n");
     commit_all(&other, "feature work");
     git(&other, &["push", "-q", "-u", "origin", "feature/x"]);
-
-    Repos {
-        _tmp: tmp,
-        local,
-        other,
-    }
+    r
 }
 
 #[test]

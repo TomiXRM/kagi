@@ -675,6 +675,9 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                 assert!(!toast.message.contains(repo.to_str().unwrap()));
                 assert!(!toast.message.contains("missing-remote"));
             });
+            if lang == i18n::Lang::Ja {
+                crate::native_ax::activate(cx);
+            }
             draw(cx, window);
             let action = e2e::control_bounds(window.window_id(), "operation-result-details")
                 .expect("failure detail action is actually drawn on this screen");

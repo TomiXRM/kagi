@@ -35,10 +35,12 @@ fn pushes_a_local_tag_to_the_remote() {
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_push_tag(&repo, "v1.0.0").unwrap();
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
-    assert!(
-        !plan.warnings.is_empty(),
-        "publishing to a remote must be stated, not silent"
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    let identity = plan.tag_push_identity.as_ref().expect("approved tag scope");
+    assert_eq!(identity.name, "v1.0.0");
+    assert_eq!(identity.remote, "origin");
+    assert_eq!(identity.object_oid, local_sha);
+    assert_eq!(identity.peeled_oid, local_sha);
     assert!(!plan.destructive);
 
     execute_push_tag(&r.local, "origin", "v1.0.0").expect("push");

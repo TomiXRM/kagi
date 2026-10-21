@@ -63,6 +63,9 @@ fn create_worktree_success_creates_branch_and_linked_repo() {
         "unexpected blockers: {:?}",
         plan.blockers
     );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    assert_eq!(plan.predicted.head, plan.current.head);
+    assert_eq!(plan.predicted.dirty, plan.current.dirty);
 
     preflight_check(&repo, &plan).expect("preflight");
     execute_create_worktree(&repo, "wt-feature", &path, &at).expect("execute_create_worktree");

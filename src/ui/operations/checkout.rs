@@ -10,6 +10,30 @@ use crate::ui::blocking_ops::*;
 use super::RunPresentation;
 use crate::ui::*;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CHECKOUT_CAUTION: std::cell::RefCell<Option<kagi_domain::plan_note::PlanNote>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Inject one note after backend planning, before either UI admission path.
+    pub fn caution_next_checkout_for_e2e(note: kagi_domain::plan_note::PlanNote) {
+        CHECKOUT_CAUTION.with(|slot| assert!(slot.borrow_mut().replace(note).is_none()));
+    }
+
+    pub(crate) fn apply_checkout_caution_for_e2e(
+        mut plan: kagi_domain::plan::OperationPlan,
+    ) -> kagi_domain::plan::OperationPlan {
+        CHECKOUT_CAUTION.with(|slot| {
+            if let Some(note) = slot.borrow_mut().take() {
+                plan.warnings.push(note);
+            }
+        });
+        plan
+    }
+}
 impl KagiApp {
     /// Open a checkout plan for `branch`. Busy tabs queue the target without
     /// reading a working tree that the preceding write is still changing.
@@ -43,6 +67,8 @@ impl KagiApp {
 
         match repo.plan_checkout(&branch) {
             Ok(plan) => {
+                #[cfg(feature = "gui-e2e")]
+                let plan = Self::apply_checkout_caution_for_e2e(plan);
                 eprintln!(
                     "[kagi] plan: checkout {} blockers={} warnings={}",
                     branch,
@@ -68,11 +94,10 @@ impl KagiApp {
     ///
     /// Reuses [`open_plan_modal`](Self::open_plan_modal) to plan the checkout
     /// (and emit the same `[kagi] plan: checkout …` contract line + set the
-    /// modal). When the plan is completely clean — no blockers **and** no
-    /// warnings — the switch runs straight away via
-    /// [`start_checkout`](Self::start_checkout), which consumes the modal before
-    /// any render so the user never sees a popup. If the plan carries blockers
-    /// or warnings the modal stays open so the user can review them first.
+    /// modal). When the typed checkout policy allows a quiet switch, it runs
+    /// straight away via [`start_checkout`](Self::start_checkout), which consumes
+    /// the modal before any render. Cautions, blockers and unknown notes retain
+    /// the modal so the user can review them first.
     pub fn dblclick_checkout_branch(&mut self, branch: impl Into<String>, cx: &mut Context<Self>) {
         let branch = branch.into();
         self.open_plan_modal(branch.clone(), cx);
@@ -83,7 +108,7 @@ impl KagiApp {
         let clean = self
             .plan_modal()
             .filter(|m| matches!(&m.target, CheckoutPlanTarget::Branch(b) if b == &branch))
-            .map(|m| m.plan.blockers.is_empty() && m.plan.warnings.is_empty())
+            .map(|m| !m.plan.checkout_needs_choice())
             .unwrap_or(false);
         if clean {
             klog!("dblclick checkout: {} (clean, no modal)", branch);

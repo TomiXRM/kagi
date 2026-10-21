@@ -70,9 +70,6 @@ pub(crate) fn untracked_advice_ja(ctx: UntrackedCtx) -> &'static str {
         }
         UntrackedCtx::AfterCherryPick => "未追跡ファイル {} 件は cherry-pick の影響を受けません。",
         UntrackedCtx::AfterRevert => "未追跡ファイル {} 件は revert の影響を受けません。",
-        UntrackedCtx::PullFetchMayTouch => {
-            "未追跡ファイル {} 件は、取得した変更が同じパスに触れない限りそのまま残ります。"
-        }
         UntrackedCtx::Untouched => "未追跡ファイル {} 件はそのまま残ります。",
     }
 }

@@ -535,7 +535,7 @@ impl OperationPlan {
     /// Unknown warnings/families stay explicit; informational notes are matched
     /// by type, never by their localized text or their mere presence.
     pub fn sync_needs_choice(&self) -> bool {
-        use crate::plan_note::{PullNote, PullTitle, PushNote, PushTitle};
+        use crate::plan_note::{PullTitle, PushNote, PushTitle};
 
         if self.destructive || !self.blockers.is_empty() {
             return true;
@@ -545,17 +545,43 @@ impl OperationPlan {
                 .warnings
                 .iter()
                 .any(|note| !matches!(note, PlanNote::Push(PushNote::NoForceUsed { .. }))),
-            PlanTitle::Pull(PullTitle::Pull { .. }) => !self.warnings.is_empty(),
-            PlanTitle::Pull(PullTitle::PullBranchFf { .. }) => self.warnings.iter().any(|note| {
-                !matches!(
-                    note,
-                    PlanNote::Pull(PullNote::DirtyRefOnly | PullNote::ConflictedRefOnly { .. })
-                )
-            }),
+            PlanTitle::Pull(PullTitle::Pull { .. } | PullTitle::PullBranchFf { .. }) => {
+                !self.warnings.is_empty()
+            }
             // Remote Pull cannot predict fetched checkout safety. Other
             // operations (notably destructive Sync-to-remote) keep their choice.
             _ => true,
         }
+    }
+
+    /// Whether a checkout must retain its confirmation/refusal surface.
+    ///
+    /// Only a ready, non-destructive branch checkout may run quietly. Dirty
+    /// summaries are not cautions: the backend's collision analysis and
+    /// preflight remain authoritative. Detached checkout and unrecognized
+    /// notes always retain the choice. `true` never authorizes a blocked plan.
+    pub fn checkout_needs_choice(&self) -> bool {
+        use crate::plan_note::{CheckoutTitle, CommonNote, UntrackedCtx};
+
+        if !matches!(
+            self.title,
+            PlanTitle::Checkout(CheckoutTitle::Checkout { .. })
+        ) || self.disposition != PlanDisposition::Ready
+            || self.destructive
+            || !self.blockers.is_empty()
+        {
+            return true;
+        }
+        self.warnings.iter().any(|note| match note {
+            // This describes preserved files, not an operation risk.
+            PlanNote::Common(CommonNote::UntrackedRemain {
+                ctx: UntrackedCtx::AfterCheckout,
+                ..
+            }) => false,
+            // No checkout caution (including future variants) is informational
+            // unless explicitly admitted above.
+            _ => true,
+        })
     }
 
     /// Return the stash entry count captured at plan time.
@@ -612,6 +638,9 @@ impl OperationPlan {
         format!("{:016x}", h.finish())
     }
 }
+
+#[cfg(test)]
+mod checkout_admission_tests;
 
 #[cfg(test)]
 mod sync_admission_tests;

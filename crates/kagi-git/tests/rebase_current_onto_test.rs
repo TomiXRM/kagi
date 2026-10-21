@@ -62,12 +62,9 @@ fn test_plan_normal_no_blockers() {
         plan.blockers
     );
     assert!(!plan.destructive, "rebase is Guarded, not Destructive");
-    assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.message_en().contains("conflict")),
-        "expected a may-conflict warning, got: {:?}",
-        plan.warnings
+    assert_eq!(
+        plan.warnings,
+        vec![PlanNote::Rebase(RebaseNote::MayConflict)]
     );
 }
 
@@ -94,6 +91,7 @@ fn test_plan_invalid_onto_blocker() {
 
     let plan = plan_rebase_current_onto(&repo, "no-such-branch").expect("plan failed");
     assert!(!plan.blockers.is_empty(), "invalid onto should block");
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 /// A detached HEAD has no branch ref to move, so there is nothing to rebase
@@ -118,6 +116,7 @@ fn test_plan_detached_head_blocker() {
         "expected RebaseNote::DetachedHead, got: {:?}",
         plan.blockers
     );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 #[test]
@@ -133,6 +132,7 @@ fn test_plan_already_up_to_date_blocker() {
         !plan.blockers.is_empty(),
         "rebasing onto self should block (nothing to replay)"
     );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 #[test]

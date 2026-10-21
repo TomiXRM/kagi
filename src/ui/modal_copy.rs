@@ -117,11 +117,7 @@ pub(crate) fn plan_clipboard_text(
     shell: kagi_domain::plan_note::ShellKind,
 ) -> String {
     let mut out = String::new();
-    let predicted_dirty = if plan.rebase_scope.is_some() {
-        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
-    } else {
-        plan::after_state_detail(&plan.title, &plan.predicted.dirty)
-    };
+    let predicted_dirty = plan::plan_after_state_detail(plan);
     let (current_head, predicted_head) = plan_display_heads(plan);
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');

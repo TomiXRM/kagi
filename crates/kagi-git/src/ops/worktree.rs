@@ -447,13 +447,6 @@ fn plan_create_worktree_impl(
             format!("git branch -d {}", shell_quote(branch)),
         ],
     });
-    plan.warnings
-        .push(PlanNote::Worktree(WorktreeNote::CreatesLinkedWorktree {
-            path: target_path.display().to_string(),
-            branch: branch.to_string(),
-            start: start.short().to_string(),
-        }));
-
     // issue #339: preview the .worktreeinclude copy set (no-op if absent).
     let sel = worktree_include_selection(repo, repo_root);
     plan.warnings.extend(worktree_include_warnings(&sel));

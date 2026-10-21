@@ -307,6 +307,8 @@ impl KagiApp {
                 (
                     i18n::Op::Checkout,
                     result.map(|plan| {
+                        #[cfg(feature = "gui-e2e")]
+                        let plan = Self::apply_checkout_caution_for_e2e(plan);
                         QueuedPlan::Checkout(CheckoutPlanModal {
                             target,
                             stash_first: false,
@@ -371,7 +373,7 @@ impl KagiApp {
 
     /// Replanned commit requires a confirmation when its draft or staging
     /// differs from the frozen request, or the plan has notes; checkout uses
-    /// its usual clean-plan rule.
+    /// the domain's typed checkout choice policy.
     fn confirm_or_run_queued(&mut self, id: IntentId, cx: &mut Context<Self>) {
         let Some(mut modal) = self.op_queue.plans.get(&id).cloned() else {
             return;
@@ -382,7 +384,7 @@ impl KagiApp {
             return;
         }
         let asks = match &mut modal {
-            QueuedPlan::Checkout(m) => !m.plan.blockers.is_empty() || !m.plan.warnings.is_empty(),
+            QueuedPlan::Checkout(m) => m.plan.checkout_needs_choice(),
             QueuedPlan::Commit(m) => {
                 let draft = self
                     .ui()

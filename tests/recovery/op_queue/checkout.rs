@@ -145,23 +145,33 @@ pub fn scenario_queue_checkout_transient_blocker_clears(cx: &mut VisualTestAppCo
     eprintln!("[gui-e2e] PASS queue_checkout_transient_blocker_clears");
 }
 
-/// Non-busy opens the ordinary plan now. Busy skips dirty inspection, shows
-/// the strip immediately, then the head's fresh carry-over warning asks.
-pub fn scenario_queue_busy_checkout_replans_warning(cx: &mut VisualTestAppContext) {
+/// Both idle double-click and queued checkout quietly preserve unrelated staged,
+/// unstaged and untracked work; concrete blockers and unknown cautions stop them.
+pub fn scenario_queue_busy_checkout_preserves_local_changes(cx: &mut VisualTestAppContext) {
+    checkout_untracked_blockers(cx);
+    checkout_unknown_cautions(cx);
+    checkout_staged_admission(cx);
     let fixture = branches_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    std::fs::write(
+        repo.join("README.md"),
+        "# fixture\nlocal edit\nunstaged edit\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("queue-untracked.txt"), "keep untracked\n").unwrap();
+    let index_before = git_output(&repo, &["ls-files", "--stage"]);
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.open_plan_modal("a", cx));
-    assert!(cx.read(|cx| app
-        .read(cx)
-        .plan_modal()
-        .is_some_and(|m| m.queued.is_none())));
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_run_for_e2e(hold);
-    app.update(cx, |app, cx| app.start_checkout(cx));
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_none()),
+        "idle double-click quietly admits unrelated local work"
+    );
 
     app.update(cx, |app, cx| app.open_plan_modal("b", cx));
     assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
@@ -171,18 +181,337 @@ pub fn scenario_queue_busy_checkout_replans_warning(cx: &mut VisualTestAppContex
     );
     assert!(drawn(cx, window, "queue-strip"));
     release.send(());
-    tick_until(cx, &app, "the queued warning modal", |app| {
-        app.plan_modal().is_some_and(|modal| modal.queued.is_some())
+    tick_until(cx, &app, "the safe queued checkout to finish", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+    });
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+    assert_eq!(head(&repo), "b");
+    assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index_before);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("README.md")).unwrap(),
+        "# fixture\nlocal edit\nunstaged edit\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("queue-untracked.txt")).unwrap(),
+        "keep untracked\n"
+    );
+    assert!(
+        klog_index("[kagi] queue: run checkout b (clean plan)").is_some(),
+        "a safe carry-over plan must run without a caution modal"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_busy_checkout_preserves_local_changes");
+}
+
+fn checkout_unknown_cautions(cx: &mut VisualTestAppContext) {
+    use kagi_domain::plan_note::{CommonNote, PlanNote};
+
+    for queued in [false, true] {
+        let fixture = branches_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let (app, window) = mount(cx, &repo);
+        let release = queued.then(|| hold_checkout(cx, &app, "a"));
+        let caution = PlanNote::Common(CommonNote::GitIdentityUnavailable);
+        KagiApp::caution_next_checkout_for_e2e(caution.clone());
+        app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+        if let Some(release) = release {
+            release.send(());
+        }
+        tick_until(cx, &app, "the unrecognized checkout caution", |app| {
+            app.plan_modal().is_some()
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let modal = state.plan_modal().unwrap();
+            assert_eq!(modal.queued.is_some(), queued);
+            assert_eq!(modal.plan.warnings, vec![caution]);
+            assert!(modal.plan.blockers.is_empty());
+            assert!(
+                !state.app_sessions.has_leases(),
+                "confirmation owns no writer"
+            );
+        });
+        assert!(drawn(cx, window, "plan-confirm"));
+        let before = crate::macos::repo_fingerprint(&repo);
+        let receipts = read_oplog_tail_for_repo(&repo, 100).len();
+        assert_eq!(receipts, usize::from(queued), "only the predecessor ran");
+        assert_eq!(head(&repo), if queued { "a" } else { "main" });
+        advance(cx, 4);
+        assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+        assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), receipts);
+        assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+        click(cx, window, "plan-confirm");
+        tick_until(cx, &app, "the explicitly confirmed checkout", |app| {
+            app.plan_modal().is_none()
+                && !app.app_sessions.has_leases()
+                && app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+        });
+        assert_eq!(head(&repo), "b");
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.len(), receipts + 1);
+        assert!(entries
+            .iter()
+            .all(|entry| matches!(&entry.outcome, OpOutcome::Success { .. })));
+        unmount(cx, app, window);
+    }
+}
+
+fn checkout_staged_admission(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for language in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        kagi_ui_core::i18n::set_lang(language);
+        for queued in [false, true] {
+            for path in ["feat.txt/local.txt", "incoming", "README.md"] {
+                checkout_staged_blocker_case(cx, path, queued);
+            }
+            checkout_nonoverlapping_rename(cx, queued);
+        }
+    }
+}
+
+fn staged_checkout_fixture(path: &str, overlap: bool) -> tempfile::TempDir {
+    let fixture = branches_fixture();
+    let repo = fixture.path();
+    git(repo, &["checkout", "-qb", "staged-target"]);
+    std::fs::write(repo.join("feat.txt"), "target file\n").unwrap();
+    std::fs::create_dir_all(repo.join("incoming")).unwrap();
+    std::fs::write(repo.join("incoming/child.txt"), "target child\n").unwrap();
+    let changed = if overlap {
+        "README.md"
+    } else {
+        "README.md-neighbour/child.txt"
+    };
+    std::fs::create_dir_all(repo.join(changed).parent().unwrap()).unwrap();
+    std::fs::write(repo.join(changed), "target bytes\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "staged checkout target"]);
+    git(repo, &["checkout", "-q", "main"]);
+    let local = if path == "README.md" {
+        git(repo, &["mv", "README.md", "renamed-README.md"]);
+        "renamed-README.md"
+    } else {
+        std::fs::create_dir_all(repo.join(path).parent().unwrap()).unwrap();
+        std::fs::write(repo.join(path), "staged bytes\n").unwrap();
+        git(repo, &["add", path]);
+        path
+    };
+    // An unstaged rename entry can expose the source separately and mask
+    // missing Renamed::from handling. Keep that negative case staged-only.
+    if path != "README.md" || !overlap {
+        std::fs::write(repo.join(local), "unstaged bytes\n").unwrap();
+    }
+    fixture
+}
+
+fn checkout_staged_blocker_case(cx: &mut VisualTestAppContext, path: &str, queued: bool) {
+    use kagi::ui::button_style;
+    use kagi_domain::plan_note::{CheckoutNote, PlanNote};
+
+    let fixture = staged_checkout_fixture(path, true);
+    let repo = fixture.path().canonicalize().unwrap();
+    let initial_oid = rev_parse(&repo, &["HEAD"]);
+    let index_before = git_output(&repo, &["ls-files", "--stage"]);
+    let diff_before = git_output(&repo, &["diff", "--binary", "HEAD"]);
+    let (app, window) = mount(cx, &repo);
+    let release = queued.then(|| hold_checkout(cx, &app, "a"));
+    app.update(cx, |app, cx| {
+        app.dblclick_checkout_branch("staged-target", cx)
+    });
+    if let Some(release) = release {
+        release.send(());
+    }
+    tick_until(cx, &app, "the staged checkout obstruction", |app| {
+        app.plan_modal().is_some()
     });
     cx.read(|cx| {
-        let modal = app.read(cx).plan_modal().unwrap();
-        assert!(modal.plan.blockers.is_empty());
-        assert!(!modal.plan.warnings.is_empty(), "fresh carry-over warning");
+        let state = app.read(cx);
+        let modal = state.plan_modal().unwrap();
+        assert_eq!(modal.queued.is_some(), queued);
+        assert_eq!(
+            modal.plan.blockers,
+            vec![PlanNote::Checkout(CheckoutNote::CheckoutOverlap {
+                count: 1,
+                files: vec![path.into()],
+            })]
+        );
+        assert!(
+            !state.app_sessions.has_leases(),
+            "no target checkout started"
+        );
     });
-    assert_eq!(head(&repo), "a", "checkout b still needs confirmation");
-    click(cx, window, "plan-cancel");
+    assert_eq!(head(&repo), if queued { "a" } else { "main" });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), initial_oid);
+    assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index_before);
+    assert_eq!(
+        git_output(&repo, &["diff", "--binary", "HEAD"]),
+        diff_before
+    );
+    let before = crate::macos::repo_fingerprint(&repo);
+    let receipts = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(
+        receipts.len(),
+        usize::from(queued),
+        "only the predecessor ran"
+    );
+    assert!(receipts
+        .iter()
+        .all(|entry| matches!(&entry.outcome, OpOutcome::Success { .. })));
+    button_style::clear_recorded_modal_buttons();
+    assert!(drawn(cx, window, &format!("plan-note-path-{path}")));
+    assert!(
+        button_style::recorded_modal_button("plan-confirm")
+            .unwrap()
+            .disabled
+    );
+    click(cx, window, "plan-confirm");
+    advance(cx, 4);
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), receipts.len());
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS queue_busy_checkout_replans_warning");
+}
+
+fn checkout_nonoverlapping_rename(cx: &mut VisualTestAppContext, queued: bool) {
+    let fixture = staged_checkout_fixture("README.md", false);
+    let repo = fixture.path().canonicalize().unwrap();
+    let renamed_paths = [
+        "ls-files",
+        "--stage",
+        "--",
+        "README.md",
+        "renamed-README.md",
+    ];
+    let index_before = git_output(&repo, &renamed_paths);
+    let (app, window) = mount(cx, &repo);
+    let release = queued.then(|| hold_checkout(cx, &app, "a"));
+    app.update(cx, |app, cx| {
+        app.dblclick_checkout_branch("staged-target", cx)
+    });
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+    if let Some(release) = release {
+        release.send(());
+    }
+    tick_until(
+        cx,
+        &app,
+        "the nonoverlapping staged rename checkout",
+        |app| {
+            app.plan_modal().is_none()
+                && !app.app_sessions.has_leases()
+                && app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+        },
+    );
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+    assert_eq!(head(&repo), "staged-target");
+    assert_eq!(git_output(&repo, &renamed_paths), index_before);
+    assert!(!repo.join("README.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("renamed-README.md")).unwrap(),
+        "unstaged bytes\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("README.md-neighbour/child.txt")).unwrap(),
+        "target bytes\n"
+    );
+    let receipts = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(receipts.len(), 1 + usize::from(queued));
+    assert!(receipts
+        .iter()
+        .all(|entry| matches!(&entry.outcome, OpOutcome::Success { .. })));
+    unmount(cx, app, window);
+}
+
+/// Exercise the idle double-click admission that would otherwise execute a
+/// warning-free plan immediately, alongside the shared detached checkout plan.
+fn checkout_untracked_blockers(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for language in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        kagi_ui_core::i18n::set_lang(language);
+        for (path, content) in [
+            ("feat.txt", "untracked local bytes\n"),
+            ("feat.txt", "target bytes\n"),
+            ("feat.txt/local.txt", "untracked child\n"),
+            ("incoming", "untracked file\n"),
+        ] {
+            checkout_untracked_blocker_case(cx, path, content);
+        }
+    }
+}
+
+fn checkout_untracked_blocker_case(cx: &mut VisualTestAppContext, path: &str, content: &str) {
+    use kagi::ui::{button_style, dialog_a11y};
+    use kagi_domain::plan_note::{CheckoutNote, PlanNote};
+    use kagi_ui_core::i18n::Msg;
+
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["checkout", "-qb", "collision"]);
+    std::fs::write(repo.join("feat.txt"), "target bytes\n").unwrap();
+    std::fs::create_dir_all(repo.join("incoming")).unwrap();
+    std::fs::write(repo.join("incoming/child.txt"), "target child\n").unwrap();
+    git(&repo, &["add", "feat.txt", "incoming/child.txt"]);
+    git(&repo, &["commit", "-qm", "checkout targets"]);
+    let target = kagi_git::CommitId(rev_parse(&repo, &["HEAD"]));
+    git(&repo, &["checkout", "-q", "main"]);
+    std::fs::create_dir_all(repo.join(path).parent().unwrap()).unwrap();
+    std::fs::write(repo.join(path), content).unwrap();
+    let before = crate::macos::repo_fingerprint(&repo);
+    let index_before = git_output(&repo, &["ls-files", "--stage"]);
+    let (app, window) = mount(cx, &repo);
+
+    for (attempt, detached) in [false, true].into_iter().enumerate() {
+        app.update(cx, |app, cx| {
+            if detached {
+                app.open_checkout_commit_modal(target.clone(), cx);
+            } else {
+                app.dblclick_checkout_branch("collision", cx);
+            }
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let modal = state.plan_modal().expect("collision must stop admission");
+            assert_eq!(
+                modal.plan.blockers,
+                vec![PlanNote::Checkout(CheckoutNote::CheckoutOverlap {
+                    count: 1,
+                    files: vec![path.into()],
+                })]
+            );
+            assert!(!state.app_sessions.has_leases(), "no checkout admitted");
+        });
+        assert!(drawn(cx, window, &format!("plan-note-path-{path}")));
+        assert_eq!(
+            dialog_a11y::recorded_note("plan-blocker-0").unwrap().1,
+            Msg::PlanOverlapSummary.t().replace("{}", "1"),
+            "the actual blocker summary is localized"
+        );
+        assert!(
+            button_style::recorded_modal_button("plan-confirm")
+                .unwrap()
+                .disabled
+        );
+        assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), attempt);
+        click(cx, window, "plan-confirm");
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+        // Bypass the disabled button only to prove the existing execution
+        // safeguard records Refused rather than starting a failing checkout.
+        app.update(cx, |app, cx| app.start_checkout(cx));
+        cx.run_until_parked();
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.len(), attempt + 1);
+        assert!(entries.iter().all(|entry| matches!(
+            &entry.outcome,
+            OpOutcome::Refused { blockers } if blockers.iter().any(|note| note.contains(path))
+        )));
+        assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+        assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+        assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index_before);
+        assert_eq!(std::fs::read_to_string(repo.join(path)).unwrap(), content);
+    }
+    unmount(cx, app, window);
 }
 
 /// Missing refs are static and refused with a reason, without a queued plan.

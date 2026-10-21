@@ -177,7 +177,7 @@ fn checkout_recovery_command_round_trips_shell_metacharacters() {
 
 // README.md is identical on `main` and `feature/one` (feature only adds
 // feat.txt), so a local edit to it does NOT overlap the checkout. The user
-// should be able to switch directly: no blocker, a "carried over" warning, and
+// should be able to switch directly: no blocker or warning, and
 // a safe checkout that preserves the edit and moves HEAD.
 #[test]
 fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
@@ -197,13 +197,7 @@ fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
         "non-overlapping dirty change should NOT block, got: {:?}",
         plan.blockers
     );
-    assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.message_en().contains("carried over")),
-        "should warn that changes carry over, got: {:?}",
-        plan.warnings
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 
     // And the safe checkout actually succeeds, preserving the edit + moving HEAD.
     preflight_check(&repo, &plan).expect("preflight failed");
@@ -242,6 +236,7 @@ fn test_plan_dirty_staged_non_overlapping_no_blocker() {
         "non-overlapping staged change should NOT block, got: {:?}",
         plan.blockers
     );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 // When a locally-modified tracked file IS part of the checkout diff, a safe
@@ -281,11 +276,11 @@ fn test_plan_dirty_overlapping_has_blocker() {
 }
 
 // ────────────────────────────────────────────────────────────
-// Test 3: untracked only — no blocker, has warning, execute succeeds
+// Test 3: untracked only — no blocker or warning, execute succeeds
 // ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_plan_untracked_only_no_blocker_warning() {
+fn test_plan_untracked_only_needs_no_warning() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -302,10 +297,7 @@ fn test_plan_untracked_only_no_blocker_warning() {
         "untracked-only should have no blockers, got: {:?}",
         plan.blockers
     );
-    assert!(
-        !plan.warnings.is_empty(),
-        "untracked-only should have a warning about untracked files"
-    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 #[test]
@@ -336,6 +328,508 @@ fn test_execute_untracked_only_file_remains() {
     let head_ref = repo2.head().expect("head");
     let branch = head_ref.shorthand().unwrap_or("");
     assert_eq!(branch, "feature/one", "HEAD should be on feature/one");
+}
+
+// Match libgit2 SAFE, not just a target-tree membership check. A newly added
+// target refuses even identical untracked bytes; component-wise obstructions
+// also refuse, while unrelated and unchanged paths remain safe.
+#[test]
+fn test_untracked_checkout_obstructions_block_branch_and_commit_with_paths() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for (local_path, contents) in [
+        ("feat.txt", "my untracked work\n"),
+        ("feat.txt", "feature work\n"),
+        ("feat.txt/local.txt", "untracked directory child\n"),
+        ("incoming", "untracked file obstructing a directory\n"),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, _) = build_two_branch_repo(&tmp);
+        git(&repo_dir, &["checkout", "-q", "feature/one"]);
+        std::fs::create_dir_all(repo_dir.join("incoming")).unwrap();
+        write_file(&repo_dir, "incoming/child.txt", "target directory child\n");
+        git(&repo_dir, &["add", "incoming/child.txt"]);
+        git(&repo_dir, &["commit", "-qm", "target directory"]);
+        let target = CommitId(git_output(&repo_dir, &["rev-parse", "HEAD"]));
+        git(&repo_dir, &["checkout", "-q", "main"]);
+        std::fs::create_dir_all(repo_dir.join(local_path).parent().unwrap()).unwrap();
+        write_file(&repo_dir, local_path, contents);
+        write_file(&repo_dir, "unrelated.txt", "keep me\n");
+
+        let repo = Repository::open(&repo_dir).unwrap();
+        let head_before = repo.head().unwrap().target().unwrap();
+        let index_before = std::fs::read(repo.path().join("index")).unwrap();
+        let branch_plan = plan_checkout(&repo, "feature/one").unwrap();
+        let commit_plan = plan_checkout_commit(&repo, &target).unwrap();
+        for plan in [&branch_plan, &commit_plan] {
+            assert_eq!(
+                plan.blockers,
+                vec![kagi_domain::plan_note::PlanNote::Checkout(
+                    kagi_domain::plan_note::CheckoutNote::CheckoutOverlap {
+                        count: 1,
+                        files: vec![local_path.into()],
+                    }
+                )],
+                "{local_path}"
+            );
+        }
+        assert!(branch_plan.warnings.is_empty());
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before,
+            "planning must not write the index"
+        );
+
+        // Independent execution oracle: SAFE itself refuses this fixture.
+        let object = repo.revparse_single(&target.0).unwrap();
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe();
+        assert!(
+            repo.checkout_tree(&object, Some(&mut checkout)).is_err(),
+            "{local_path}: the blocker must match actual safe checkout"
+        );
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &repo_dir,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        for (operation, plan) in [
+            (
+                kagi_git::Operation::Checkout {
+                    branch: "feature/one".into(),
+                },
+                &branch_plan,
+            ),
+            (
+                kagi_git::Operation::CheckoutCommit { id: target.clone() },
+                &commit_plan,
+            ),
+        ] {
+            assert!(backend.run(&operation, plan).is_err());
+        }
+        assert_eq!(repo.head().unwrap().target().unwrap(), head_before);
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join(local_path)).unwrap(),
+            contents
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("unrelated.txt")).unwrap(),
+            "keep me\n"
+        );
+    }
+}
+
+fn checkout_overlap_state(repo_dir: &Path) -> (String, String, Vec<u8>, String, usize) {
+    let repo = Repository::open(repo_dir).unwrap();
+    (
+        git_output(repo_dir, &["symbolic-ref", "HEAD"]),
+        git_output(repo_dir, &["show-ref"]),
+        std::fs::read(repo.path().join("index")).unwrap(),
+        git_output(repo_dir, &["diff", "--binary", "HEAD"]),
+        kagi_git::oplog::read_oplog_tail_for_repo(repo_dir, 100).len(),
+    )
+}
+
+fn assert_checkout_obstruction_read_only(repo_dir: &Path, target: CommitId, path: &str) {
+    let backend = kagi_git::Backend::open_with_policy(
+        repo_dir,
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let before = checkout_overlap_state(repo_dir);
+    for operation in [
+        kagi_git::Operation::Checkout {
+            branch: "feature/one".into(),
+        },
+        kagi_git::Operation::CheckoutCommit { id: target },
+    ] {
+        let plan = backend.plan(&operation).unwrap();
+        assert_eq!(
+            plan.blockers,
+            vec![kagi_domain::plan_note::PlanNote::Checkout(
+                kagi_domain::plan_note::CheckoutNote::CheckoutOverlap {
+                    count: 1,
+                    files: vec![path.into()],
+                }
+            )]
+        );
+        assert!(
+            plan.checkout_needs_choice(),
+            "a blocker cannot quietly admit"
+        );
+        assert_eq!(checkout_overlap_state(repo_dir), before);
+    }
+}
+
+#[test]
+fn test_staged_checkout_directory_file_obstructions_block_read_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for local_path in ["feat.txt/local.txt", "incoming"] {
+        for unstaged_edit in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let (repo_dir, _) = build_two_branch_repo(&tmp);
+            git(&repo_dir, &["checkout", "-q", "feature/one"]);
+            std::fs::create_dir_all(repo_dir.join("incoming")).unwrap();
+            write_file(&repo_dir, "incoming/child.txt", "target child\n");
+            git(&repo_dir, &["add", "incoming/child.txt"]);
+            git(&repo_dir, &["commit", "-qm", "target directory"]);
+            let target = CommitId(git_output(&repo_dir, &["rev-parse", "HEAD"]));
+            git(&repo_dir, &["checkout", "-q", "main"]);
+            std::fs::create_dir_all(repo_dir.join(local_path).parent().unwrap()).unwrap();
+            write_file(&repo_dir, local_path, "staged local bytes\n");
+            git(&repo_dir, &["add", local_path]);
+            if unstaged_edit {
+                write_file(&repo_dir, local_path, "unstaged local bytes\n");
+            }
+            assert_checkout_obstruction_read_only(&repo_dir, target, local_path);
+        }
+    }
+}
+
+fn build_staged_checkout_rename(
+    tmp: &TempDir,
+    overlap: bool,
+    unstaged_edit: bool,
+) -> (std::path::PathBuf, CommitId) {
+    let repo_dir = tmp.path();
+    init_repo(repo_dir, "main");
+    write_file(repo_dir, "old.txt", "rename base\n");
+    git(repo_dir, &["add", "old.txt"]);
+    git(repo_dir, &["commit", "-qm", "rename base"]);
+    git(repo_dir, &["checkout", "-qb", "feature/one"]);
+    let target_path = if overlap {
+        "old.txt"
+    } else {
+        "old.txt-neighbour/child.txt"
+    };
+    std::fs::create_dir_all(repo_dir.join(target_path).parent().unwrap()).unwrap();
+    write_file(repo_dir, target_path, "target bytes\n");
+    git(repo_dir, &["add", target_path]);
+    git(repo_dir, &["commit", "-qm", "checkout target"]);
+    let target = CommitId(git_output(repo_dir, &["rev-parse", "HEAD"]));
+    git(repo_dir, &["checkout", "-q", "main"]);
+    git(repo_dir, &["mv", "old.txt", "new.txt"]);
+    if unstaged_edit {
+        write_file(repo_dir, "new.txt", "unstaged rename bytes\n");
+    }
+    (repo_dir.to_path_buf(), target)
+}
+
+#[test]
+fn test_staged_checkout_rename_sources_block_read_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for unstaged_edit in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, target) = build_staged_checkout_rename(&tmp, true, unstaged_edit);
+        assert_checkout_obstruction_read_only(&repo_dir, target, "old.txt");
+    }
+}
+
+#[test]
+fn test_nonoverlapping_staged_checkout_rename_remains_quiet() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for detached in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, target) = build_staged_checkout_rename(&tmp, false, true);
+        let renamed_index = git_output(
+            &repo_dir,
+            &["ls-files", "--stage", "--", "old.txt", "new.txt"],
+        );
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &repo_dir,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        let operation = if detached {
+            kagi_git::Operation::CheckoutCommit { id: target.clone() }
+        } else {
+            kagi_git::Operation::Checkout {
+                branch: "feature/one".into(),
+            }
+        };
+        let plan = backend.plan(&operation).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        if !detached {
+            assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+            assert!(!plan.checkout_needs_choice());
+        }
+        backend.run(&operation, &plan).unwrap();
+        assert_eq!(git_output(&repo_dir, &["rev-parse", "HEAD"]), target.0);
+        assert_eq!(
+            git_output(
+                &repo_dir,
+                &["ls-files", "--stage", "--", "old.txt", "new.txt"]
+            ),
+            renamed_index
+        );
+        assert!(!repo_dir.join("old.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("new.txt")).unwrap(),
+            "unstaged rename bytes\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("old.txt-neighbour/child.txt")).unwrap(),
+            "target bytes\n"
+        );
+    }
+}
+
+/// Retain existing branch/commit targets while giving checkout an unborn HEAD
+/// and an empty index, rather than creating an empty baseline commit/tree.
+fn build_unborn_checkout_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, CommitId) {
+    let (repo_dir, _) = build_two_branch_repo(tmp);
+    git(&repo_dir, &["checkout", "-q", "feature/one"]);
+    std::fs::create_dir_all(repo_dir.join("incoming")).unwrap();
+    write_file(&repo_dir, "incoming/child.txt", "target directory child\n");
+    git(&repo_dir, &["add", "incoming/child.txt"]);
+    git(&repo_dir, &["commit", "-qm", "target directory"]);
+    let target = CommitId(git_output(&repo_dir, &["rev-parse", "HEAD"]));
+    git(&repo_dir, &["checkout", "-q", "main"]);
+    git(&repo_dir, &["symbolic-ref", "HEAD", "refs/heads/unborn"]);
+    git(&repo_dir, &["read-tree", "--empty"]);
+    std::fs::remove_file(repo_dir.join("README.md")).unwrap();
+    let repo = Repository::open(&repo_dir).unwrap();
+    (repo_dir, repo, target)
+}
+
+#[test]
+fn test_unborn_checkout_obstructions_block_branch_and_commit_read_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for (local_path, contents) in [
+        ("feat.txt", "my untracked work\n"),
+        ("feat.txt", "feature work\n"),
+        ("feat.txt/local.txt", "untracked directory child\n"),
+        ("incoming", "untracked file obstructing a directory\n"),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, repo, target) = build_unborn_checkout_repo(&tmp);
+        std::fs::create_dir_all(repo_dir.join(local_path).parent().unwrap()).unwrap();
+        write_file(&repo_dir, local_path, contents);
+        write_file(&repo_dir, "unrelated.txt", "keep me\n");
+        let head_before = std::fs::read(repo.path().join("HEAD")).unwrap();
+        let index_before = std::fs::read(repo.path().join("index")).unwrap();
+        let refs_before = git_output(&repo_dir, &["show-ref"]);
+        let object_ids = || {
+            let mut ids = Vec::new();
+            repo.odb()
+                .unwrap()
+                .foreach(|oid| {
+                    ids.push(*oid);
+                    true
+                })
+                .unwrap();
+            ids.sort();
+            ids
+        };
+        let objects_before = object_ids();
+        let branch_plan = plan_checkout(&repo, "feature/one").unwrap();
+        let commit_plan = plan_checkout_commit(&repo, &target).unwrap();
+        for plan in [&branch_plan, &commit_plan] {
+            assert_eq!(
+                plan.blockers,
+                vec![kagi_domain::plan_note::PlanNote::Checkout(
+                    kagi_domain::plan_note::CheckoutNote::CheckoutOverlap {
+                        count: 1,
+                        files: vec![local_path.into()],
+                    }
+                )],
+                "{local_path}"
+            );
+        }
+        assert!(branch_plan.warnings.is_empty());
+        assert_eq!(
+            object_ids(),
+            objects_before,
+            "planning must not write objects"
+        );
+        assert_eq!(git_output(&repo_dir, &["show-ref"]), refs_before);
+        assert_eq!(
+            std::fs::read(repo.path().join("HEAD")).unwrap(),
+            head_before
+        );
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join(local_path)).unwrap(),
+            contents
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("unrelated.txt")).unwrap(),
+            "keep me\n"
+        );
+
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &repo_dir,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        for (operation, plan) in [
+            (
+                kagi_git::Operation::Checkout {
+                    branch: "feature/one".into(),
+                },
+                &branch_plan,
+            ),
+            (
+                kagi_git::Operation::CheckoutCommit { id: target.clone() },
+                &commit_plan,
+            ),
+        ] {
+            assert!(backend.run(&operation, plan).is_err());
+        }
+        assert_eq!(
+            std::fs::read(repo.path().join("HEAD")).unwrap(),
+            head_before
+        );
+        assert!(matches!(repo.head(), Err(error) if error.code() == git2::ErrorCode::UnbornBranch));
+        assert_eq!(git_output(&repo_dir, &["show-ref"]), refs_before);
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join(local_path)).unwrap(),
+            contents
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("unrelated.txt")).unwrap(),
+            "keep me\n"
+        );
+    }
+}
+
+#[test]
+fn test_unborn_checkout_unrelated_untracked_is_preserved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for detached in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, repo, target) = build_unborn_checkout_repo(&tmp);
+        std::fs::create_dir_all(repo_dir.join("incoming-neighbour")).unwrap();
+        write_file(&repo_dir, "incoming-neighbour/local.txt", "keep me\n");
+        let plan = if detached {
+            plan_checkout_commit(&repo, &target).unwrap()
+        } else {
+            plan_checkout(&repo, "feature/one").unwrap()
+        };
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        if !detached {
+            assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        }
+        preflight_check(&repo, &plan).unwrap();
+        if detached {
+            execute_checkout_commit(&repo, &target).unwrap();
+        } else {
+            execute_checkout(&repo, "feature/one").unwrap();
+        }
+        assert_eq!(repo.head().unwrap().target().unwrap().to_string(), target.0);
+        assert_eq!(repo.head_detached().unwrap(), detached);
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("feat.txt")).unwrap(),
+            "feature work\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("incoming-neighbour/local.txt")).unwrap(),
+            "keep me\n"
+        );
+    }
+}
+
+#[test]
+fn test_untracked_unchanged_target_path_is_quiet_and_preserved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for detached in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, repo) = build_two_branch_repo(&tmp);
+        // README is tracked with the same contents in HEAD and target. Removing
+        // only its index entry makes it untracked, but checkout need not rewrite
+        // it. Do not invent an obstruction from arbitrary target-tree paths.
+        git(&repo_dir, &["rm", "--cached", "README.md"]);
+        std::fs::create_dir_all(repo_dir.join("feat.txt-neighbour")).unwrap();
+        write_file(&repo_dir, "feat.txt-neighbour/local.txt", "unrelated\n");
+        let target = CommitId(git_output(&repo_dir, &["rev-parse", "feature/one"]));
+        let plan = if detached {
+            plan_checkout_commit(&repo, &target).unwrap()
+        } else {
+            plan_checkout(&repo, "feature/one").unwrap()
+        };
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        if !detached {
+            assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        }
+        preflight_check(&repo, &plan).unwrap();
+        if detached {
+            execute_checkout_commit(&repo, &target).unwrap();
+        } else {
+            execute_checkout(&repo, "feature/one").unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("README.md")).unwrap(),
+            "# test\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("feat.txt-neighbour/local.txt")).unwrap(),
+            "unrelated\n"
+        );
+        assert_eq!(repo.head().unwrap().target().unwrap().to_string(), target.0);
+    }
+}
+
+#[test]
+fn test_checkout_safe_guard_refuses_untracked_collision_created_after_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for detached in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let (repo_dir, repo) = build_two_branch_repo(&tmp);
+        let target = CommitId(git_output(&repo_dir, &["rev-parse", "feature/one"]));
+        let mut backend = kagi_git::Backend::open_with_policy(
+            &repo_dir,
+            kagi_git::backend::ExecutionPolicy::human(false),
+        )
+        .unwrap();
+        let operation = if detached {
+            kagi_git::Operation::CheckoutCommit { id: target }
+        } else {
+            kagi_git::Operation::Checkout {
+                branch: "feature/one".into(),
+            }
+        };
+        let plan = backend.plan(&operation).unwrap();
+        assert!(plan.blockers.is_empty());
+        let head_before = repo.head().unwrap().target().unwrap();
+        let index_before = std::fs::read(repo.path().join("index")).unwrap();
+        write_file(&repo_dir, "feat.txt", "late local work\n");
+        assert!(backend.run(&operation, &plan).is_err());
+        assert_eq!(repo.head().unwrap().target().unwrap(), head_before);
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo_dir.join("feat.txt")).unwrap(),
+            "late local work\n"
+        );
+    }
 }
 
 // ────────────────────────────────────────────────────────────

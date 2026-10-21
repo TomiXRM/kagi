@@ -127,3 +127,44 @@ unchanged. Blocked predictions and user-owned branch/subject data remain verbati
 Presenter unit coverage includes Japanese user data in English and blocked
 predictions. Native `revert_card_en_summary` checks the card plus the exact
 legacy footer klog line and successful receipt AFTER state.
+
+## Amendment — 2026-10-21: actionable caution, neutral previews (#1696)
+
+Warning vectors describe a concrete condition requiring attention, not an intended
+effect or a safety guarantee. Current strict fast-forward Pull reuses ordinary
+Pull's fetched incoming-path overlap prediction; unrelated staged, unstaged and
+untracked paths create no warning. Non-current Pull remains ref-only, including
+with a dirty or conflicted active checkout. Its unchanged working tree/index is
+neutral AFTER context, not a caution.
+Strict ff-only Pull uses its own overlap note: commit or stash the listed paths,
+then retry. Only ordinary Pull's choice card may suggest its Stash & Pull or
+Review changes actions; the generic ff-only card must not advertise absent buttons.
+
+Sidebar Push's no-force guarantee, tag publication/refusal guarantees, linked
+worktree creation scope, and checkout's retained local changes are neutral EN/JA
+preview/AFTER details. They remain visible to accessibility and Copy all through
+one approved-plan presenter. Tag identity/destination and worktree branch/path/
+start remain explicit without amber triangles. Rebase conflict caution requires
+at least one replay candidate in its typed scope; zero replay creates no caution.
+
+Checkout's typed `OperationPlan::checkout_needs_choice` policy admits unrelated
+local changes without confirmation; warning-vector emptiness is not an approval
+token. Both idle double-click and queued checkout use that policy. Blockers,
+destructive/non-checkout plans and unknown caution variants stay fail-closed;
+only explicitly recognized informational notes may bypass a choice.
+Untracked paths that safe checkout would overwrite remain concrete path blockers,
+including file/directory collisions. Unborn HEAD uses an empty tree baseline, not
+an exemption from overlap prediction. Retained unrelated paths are neutral context.
+Tracked staged/unstaged entries use the same component-wise target-write
+obstruction check as untracked paths. A rename contributes both its destination
+and source; a rewritten source is a concrete blocker even when status exposes
+the destination as its primary path. Component neighbours and nonoverlapping
+renames remain quiet. Planning and a disabled confirmation do not start a writer
+or create an execution receipt; an already-running queued predecessor is separate.
+After integrating #1697, Pull/Push's adjacent typed `sync_needs_choice` policy
+admits quiet current/ref-only fast-forwards without retired informational warning
+variants. Unknown warnings remain choices; remote publication ambiguity remains
+explicit. Neither policy removes overlap checks, safe checkout, frozen
+identity/digest preflight, worktree occupancy checks, lifecycle verification or
+receipts.
+

@@ -1939,7 +1939,133 @@ pub fn scenario_pull_freshness_branch_entries(cx: &mut VisualTestAppContext) {
 pub fn scenario_pull_ff_only_current_tree_consistency(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
     branch_ref_updates(cx, true, true, "origin");
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        for confirm in [false, true] {
+            strict_ff_overlap_card(cx, language, confirm);
+        }
+    }
     eprintln!("[gui-e2e] PASS pull_ff_only_current_tree_consistency");
+}
+
+fn assert_strict_ff_overlap_choice(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(!app.app_sessions.has_leases());
+        let modal = app
+            .branch_plan_modal()
+            .expect("actual strict FF overlap retains its choice");
+        assert!(matches!(
+            &modal.plan.title,
+            kagi_domain::plan_note::PlanTitle::Pull(
+                kagi_domain::plan_note::PullTitle::PullBranchFf { branch, .. }
+            ) if branch == "main"
+        ));
+        assert!(modal.plan.sync_needs_choice());
+        assert!(modal.error.is_none());
+        assert!(modal.plan.blockers.is_empty());
+    });
+    e2e::clear_control_bounds(window.window_id(), "plan-cancel");
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "plan-cancel").is_some(),
+        "overlap confirmation is actually drawn"
+    );
+    assert_eq!(latest_count(cx, app), 0);
+}
+
+/// The strict FF card uses the generic Cancel/Pull footer, not ordinary
+/// Pull's stash/review choices. Both cancelling and attempting it keep work.
+fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm: bool) {
+    use kagi::ui::{button_style, dialog_a11y};
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    std::fs::write(origin.other.join("README.md"), "incoming README\n").unwrap();
+    git(&origin.other, &["commit", "-qam", "incoming overlap"]);
+    git(&origin.other, &["push", "-q", "origin", "main"]);
+    std::fs::write(repo.join("README.md"), "local staged README\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    std::fs::write(repo.join("README.md"), "local unstaged README\n").unwrap();
+    std::fs::write(repo.join("untracked.txt"), "preserved untracked\n").unwrap();
+    let before = Checkout::read(&repo);
+    let (app, window) = mount(cx, &repo);
+    click_branch_sync(cx, window, "main", true);
+    assert_strict_ff_overlap_choice(cx, &app, window);
+    let refs_before = output(&repo, &["show-ref"]);
+    button_style::clear_recorded_modal_buttons();
+    draw(cx, window);
+    let (_, advice) =
+        dialog_a11y::recorded_note("plan-warning-0").expect("actual strict FF caution is rendered");
+    let expected = match language {
+        Lang::En => "Incoming changes would overwrite local changes in:\n  - README.md\nCancel this pull, commit or stash the changes to these paths, then retry the fast-forward-only pull.",
+        Lang::Ja => "incoming の変更が次のローカル変更を上書きします:\n  - README.md\nこの Pull をキャンセルし、対象パスの変更を commit または stash してから、fast-forward のみの Pull を再試行してください。",
+    };
+    assert_eq!(advice, expected);
+    for nonexistent in [
+        "Stash & Pull",
+        "Review changes",
+        "StashしてPull",
+        "変更を確認",
+    ] {
+        assert!(!advice.contains(nonexistent), "{advice}");
+    }
+    for id in ["pull-stash-changes", "pull-review-changes"] {
+        assert!(
+            button_style::recorded_modal_button(id).is_none(),
+            "strict FF must not claim ordinary Pull choices"
+        );
+    }
+    assert_eq!(
+        button_style::recorded_modal_button("plan-cancel")
+            .unwrap()
+            .label,
+        Msg::PlanCancel.t()
+    );
+    assert!(
+        !button_style::recorded_modal_button("plan-confirm")
+            .unwrap()
+            .disabled
+    );
+    let action = if confirm {
+        "plan-confirm"
+    } else {
+        "plan-cancel"
+    };
+    let bounds = e2e::control_bounds(window.window_id(), action).unwrap();
+    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    wait_idle(cx, &app);
+    assert_eq!(Checkout::read(&repo), before);
+    assert_eq!(output(&repo, &["show-ref"]), refs_before);
+    assert!(output(&repo, &["stash", "list"]).is_empty());
+    for op in ["stash-push", "stash-pop"] {
+        assert!(oplog::records(&repo, op, 100, true).is_empty());
+    }
+    if confirm {
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                matches!(&state.status_footer, FooterStatus::Failed(_))
+                    || state
+                        .branch_plan_modal()
+                        .is_some_and(|modal| modal.error.is_some()),
+                "strict FF execution must report its dirty-path refusal"
+            );
+        });
+    } else {
+        assert!(oplog::records(&repo, "branch-pull-ff", 100, true).is_empty());
+        cx.read(|cx| assert!(app.read(cx).branch_plan_modal().is_none()));
+    }
+    cx.read(|cx| assert!(!app.read(cx).app_sessions.has_leases()));
+    unmount(cx, app, window);
 }
 
 pub fn scenario_pull_branch_slash_remote_current(cx: &mut VisualTestAppContext) {

@@ -12,12 +12,12 @@ use super::DirtyParts;
 /// Plan notes for the pull op family (ADR-0129 appendix §B-4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PullNote {
-    /// warning (`plan_pull`): dirty working tree may block the pull if the
-    /// fetched update touches the same paths.
-    DirtyPullGuard { parts: DirtyParts },
     /// Direct Pull would touch these locally changed paths. Explicitly save
     /// them (stash or commit) before executing; this is not a history conflict.
     LocalChangesOverlap { paths: Vec<String> },
+    /// Strict FF would overwrite these local paths. Its generic confirmation
+    /// has no stash/review choices: save the changes separately, then retry.
+    StrictFfLocalChangesOverlap { paths: Vec<String> },
     /// warning (`KagiApp` local pull orchestration): dirty work will be saved
     /// before pull and restored afterwards.
     AutoStash { parts: DirtyParts, untracked: usize },
@@ -51,12 +51,6 @@ pub enum PullNote {
     /// Deliberately separate wording from [`PullNote::RestoreConflict`]: this
     /// one says *may*.
     RestoreConflictPossible { paths: Vec<String> },
-    /// warning (`plan_pull_branch_ff`): conflicted files exist; this
-    /// ref-only pull will not touch the working tree regardless.
-    ConflictedRefOnly { count: usize },
-    /// warning (`plan_pull_branch_ff`): working tree is dirty; this
-    /// ref-only pull will not touch the working tree regardless.
-    DirtyRefOnly,
     /// blocker (`plan_pull_branch_ff`): no upstream configured for the
     /// target branch (no set-upstream hint — distinct wording from
     /// [`PullNote::NoUpstreamWithHint`]).
@@ -124,12 +118,12 @@ impl PullNote {
     /// Byte-identical to the legacy `ops/pull.rs` strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
-            PullNote::DirtyPullGuard { parts } => format!(
-                crate::advice_template_en!(PullDirtyPullGuard),
-                parts.parts_en()
-            ),
             PullNote::LocalChangesOverlap { paths } => format!(
                 "Incoming changes would overwrite local changes in:\n{}\nChoose Stash & Pull to save and restore your changes, or Review changes to inspect, edit, or commit them first.",
+                path_block_en(paths)
+            ),
+            PullNote::StrictFfLocalChangesOverlap { paths } => format!(
+                crate::advice_template_en!(PullStrictFfLocalChangesOverlap),
                 path_block_en(paths)
             ),
             PullNote::AutoStash { parts, untracked } => {
@@ -161,10 +155,6 @@ impl PullNote {
                 crate::advice_template_en!(PullRestoreConflictPossible),
                 path_block_en(paths)
             ),
-            PullNote::ConflictedRefOnly { count } => {
-                format!(crate::advice_template_en!(PullConflictedRefOnly), count)
-            }
-            PullNote::DirtyRefOnly => crate::advice_template_en!(PullDirtyRefOnly).to_string(),
             PullNote::NoUpstream { branch, err } => {
                 format!("No upstream configured for branch '{}': {}.", branch, err)
             }
@@ -366,27 +356,21 @@ mod tests {
     // ── PullNote golden tests ──────────────────────────────────────────
 
     #[test]
-    fn dirty_pull_guard_staged_and_modified() {
-        assert_eq!(
-            PullNote::DirtyPullGuard {
-                parts: DirtyParts {
-                    staged: 2,
-                    modified: 1
-                }
-            }
-            .message_en(),
-            "Working tree has 2 staged, 1 modified. Pull will proceed only if fetched changes do not touch those paths."
-        );
-        assert_eq!(
-            PullNote::DirtyPullGuard {
-                parts: DirtyParts {
-                    staged: 0,
-                    modified: 3
-                }
-            }
-            .message_en(),
-            "Working tree has 3 modified. Pull will proceed only if fetched changes do not touch those paths."
-        );
+    fn strict_ff_overlap_names_paths_and_requires_separate_protection() {
+        let note = PullNote::StrictFfLocalChangesOverlap {
+            paths: vec!["shared.txt".into(), "日本語.rs".into()],
+        };
+        let expected = "Incoming changes would overwrite local changes in:\n  - shared.txt\n  - 日本語.rs\nCancel this pull, commit or stash the changes to these paths, then retry the fast-forward-only pull.";
+        assert_eq!(note.message_en(), expected);
+        assert_eq!(note.message_display_en(), expected);
+        assert!(!expected.contains("Stash & Pull"));
+        assert!(!expected.contains("Review changes"));
+        let ordinary = PullNote::LocalChangesOverlap {
+            paths: vec!["shared.txt".into()],
+        }
+        .message_display_en();
+        assert!(ordinary.contains("Stash & Pull"));
+        assert!(ordinary.contains("Review changes"));
     }
 
     #[test]
@@ -488,22 +472,6 @@ mod tests {
             "Plan-time merge prediction: the current upstream tip would conflict with HEAD. \
              Execute is NOT blocked (fetch may change things), but be aware that if the \
              upstream has not changed, execute will fail safely leaving the repo untouched."
-        );
-    }
-
-    #[test]
-    fn conflicted_ref_only() {
-        assert_eq!(
-            PullNote::ConflictedRefOnly { count: 2 }.message_en(),
-            "Repository has 2 conflicted file(s); this ref-only pull will not touch the working tree."
-        );
-    }
-
-    #[test]
-    fn dirty_ref_only() {
-        assert_eq!(
-            PullNote::DirtyRefOnly.message_en(),
-            "Working tree is dirty; this ref-only pull will not touch the working tree."
         );
     }
 

@@ -19,6 +19,18 @@ fn modal(
 ) -> RebaseCurrentOntoModal {
     let op = kagi_git::Operation::RebaseCurrentOnto { onto: onto.into() };
     let mut plan = kagi_git::Backend::open(repo).unwrap().plan(&op).unwrap();
+    if let Some(scope) = &plan.rebase_scope {
+        assert_eq!(
+            plan.warnings.iter().any(|note| matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Rebase(
+                    kagi_domain::plan_note::RebaseNote::MayConflict
+                )
+            )),
+            scope.total_commits > 0,
+            "only a nonempty rebase sequence warrants a conflict caution"
+        );
+    }
     plan.title = PlanTitle::Rebase(if replay {
         RebaseTitle::ReplayOnto {
             branch: branch.into(),
@@ -93,6 +105,13 @@ fn rebase_keys(cx: &mut VisualTestAppContext, branch: &str, onto: &str, key: &st
         let modal = app.read(cx).rebase_current_onto_modal().unwrap();
         assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
         assert!(matches!(&modal.op, kagi_git::Operation::RebaseCurrentOnto { onto: actual } if actual == onto));
+        assert!(modal.plan.rebase_scope.as_ref().unwrap().total_commits > 0);
+        assert!(modal.plan.warnings.iter().any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Rebase(
+                kagi_domain::plan_note::RebaseNote::MayConflict
+            )
+        )), "a real rebase sequence must retain its conflict caution");
     });
     assert_eq!(
         repo_fingerprint(repo),
@@ -249,11 +268,17 @@ fn push_subject_case(
     window: AnyWindowHandle,
     repo: &Path,
     expected: &[String],
+    sidebar: bool,
 ) {
     let before = repo_fingerprint(repo);
     // This scenario tests retained plan-card subject rendering/copy, not the
     // toolbar's ordinary safe Push intent (which intentionally has no card).
-    let plan = kagi_git::Backend::open(repo).unwrap().plan_push().unwrap();
+    let backend = kagi_git::Backend::open(repo).unwrap();
+    let plan = if sidebar {
+        backend.plan_push_branch("main", true).unwrap()
+    } else {
+        backend.plan_push().unwrap()
+    };
     app.update(cx, |app, _| {
         app.set_push_modal(kagi::ui::modals::PushPlanModal {
             plan: std::sync::Arc::new(plan),
@@ -263,6 +288,23 @@ fn push_subject_case(
     e2e::plan_subjects::clear();
     paint(cx, window);
     let plan = cx.read(|cx| app.read(cx).push_modal().unwrap().plan.clone());
+    let no_force = i18n::plan_note_text(&kagi_domain::plan_note::PlanNote::Push(
+        kagi_domain::plan_note::PushNote::NoForceUsed {
+            punct: kagi_domain::plan_note::push::PushPunct::Semicolon,
+        },
+    ));
+    if sidebar {
+        assert!(
+            plan.warnings.is_empty(),
+            "sidebar Push is quiet: {:?}",
+            plan.warnings
+        );
+        let (_, after) = dialog_a11y::recorded_note("plan-state-after").unwrap();
+        assert!(
+            after.contains(&no_force),
+            "AFTER must preserve the no-force guarantee: {after}"
+        );
+    }
     for subject in expected {
         assert!(
             plan.preview_commits
@@ -290,6 +332,16 @@ fn push_subject_case(
         let copied = cx.read_from_clipboard().unwrap().text().unwrap();
         for subject in expected {
             assert!(copied.contains(subject), "{control}: full subject");
+        }
+        if control == "plan-card-copy" && sidebar {
+            assert!(
+                copied.contains(&no_force),
+                "Copy all must preserve the no-force guarantee"
+            );
+            assert!(
+                !copied.contains("\nwarning:"),
+                "sidebar Push must not copy a caution"
+            );
         }
         if control == "plan-commits-copy" {
             assert_eq!(copied, plan.preview_commits.join("\n"));
@@ -341,7 +393,9 @@ pub fn scenario_push_plan_subjects(cx: &mut VisualTestAppContext) {
             git(fixture.path(), &["commit", "--allow-empty", "-qm", subject]);
         }
         each_presentation(cx, fixture.path(), |cx, app, window| {
-            push_subject_case(cx, app, window, fixture.path(), &expected)
+            for sidebar in [false, true] {
+                push_subject_case(cx, app, window, fixture.path(), &expected, sidebar);
+            }
         });
         assert_eq!(
             git_fixture::git_output(

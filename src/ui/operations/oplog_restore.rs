@@ -47,7 +47,7 @@ pub(crate) fn op_log_panel(
 }
 
 impl KagiApp {
-    pub(super) fn oplog_restore_owner_matches(&self, path: &std::path::Path) -> bool {
+    pub(in crate::ui) fn oplog_restore_owner_matches(&self, path: &std::path::Path) -> bool {
         !self.home_in_front()
             && self.remote_view.is_none()
             && self.active_session().is_some()

@@ -35,6 +35,32 @@ not the planning estimate of a 200-line net reduction. Files over 800 remain 115
 AST functions over 80 remain 875, with 19 parser-error files under pinned
 tree-sitter 0.25.2 / tree-sitter-rust 0.24.0. No physical move is counted as a saving.
 
+### Structure W3 (2026-10-21, #1706)
+
+Native conversation no-write witnesses now live in `tests/support/repository_state.rs`,
+reusing W1's explicit working-tree traversal options without decoding Git/file/oplog
+bytes. Plan-card presentation setup and squash scan projections live in focused
+`tests/recovery` support; writer polling uses caller-owned timeout/diagnostics.
+Pull remote/dirty setup and checkout refusal setup remain family-local. Expected
+values, failure-injection timing, scenario registration and unmount stay unchanged.
+The presentation guard restores language, zoom and palette before `SavedKeys` drops.
+No production ownership or migration-stage status changes.
+
+After W2, measured Rust physical LOC is unchanged in production (306,061 / 771
+files); tests/support moves from 208,307 / 478 files to 208,217 / 481 files
+(−90 LOC). Physical diff: 515 removed, 144 caller/family-local-helper/wiring
+additions, 199 focused shared-support additions, and 82 new regression-test lines.
+These include moved helper bodies; 515 is not a claim of pure clone removal.
+The planning estimate was −284, not this final net result. Files over 800 remain
+115; AST functions over 80 move 874 → 873, with 19 parser-error files under the
+same pinned tree-sitter 0.25.2 / tree-sitter-rust 0.24.0 measurement.
+
+Pinned jscpd 4.0.5, Rust/strict/min60tokens/min8lines, same roots and default
+scanner limits: clones 1,270 → 1,260 (−10), duplicated lines 13,931 → 13,695
+(−236), scanner lines 404,585 → 404,498, sources 1,187 → 1,190. Scanner lines
+are not physical LOC and are not compared with the original survey's detector
+baseline. Reports live in worktree-local `target/structure-w3/final-{before,after}`.
+
 ## Invariants held at every step
 - `cargo test --workspace` green.
 - Every v0.2.0 feature (`inventory.md` §2) and safety guarantee (`§3`) preserved.

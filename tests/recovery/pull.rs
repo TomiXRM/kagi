@@ -18,6 +18,45 @@ use git_fixture::git_output as output;
 mod oplog;
 use oplog::records;
 
+struct DirtyPullFixture<'a> {
+    repo: &'a Path,
+    remote_root: tempfile::TempDir,
+    bare: std::path::PathBuf,
+}
+
+impl<'a> DirtyPullFixture<'a> {
+    fn new(repo: &'a Path) -> Self {
+        let remote_root = tempfile::tempdir().expect("remote root");
+        let bare = remote_root.path().join("origin.git");
+        let other = remote_root.path().join("other");
+        let bare_path = bare.to_str().unwrap();
+        let other_path = other.to_str().unwrap();
+
+        git(repo, &["init", "--bare", "-q", bare_path]);
+        git(repo, &["remote", "add", "origin", bare_path]);
+        git(repo, &["push", "-q", "-u", "origin", "main"]);
+        git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+        std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
+        git(&other, &["add", "upstream.txt"]);
+        git(&other, &["commit", "-q", "-m", "upstream"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+
+        Self {
+            repo,
+            remote_root,
+            bare,
+        }
+    }
+
+    fn stage_local_change(&self, untracked: Option<(&str, &str)>) {
+        std::fs::write(self.repo.join("README.md"), "local staged change\n").unwrap();
+        if let Some((path, contents)) = untracked {
+            std::fs::write(self.repo.join(path), contents).unwrap();
+        }
+        git(self.repo, &["add", "README.md"]);
+    }
+}
+
 fn assert_stash_push_recovery(repo: &Path) {
     let pushes = records(repo, "stash-push", 100, true);
     assert_eq!(pushes.len(), 1, "auto-stash must be recorded exactly once");
@@ -70,25 +109,10 @@ pub fn scenario_pull_auto_stash_success(cx: &mut VisualTestAppContext) {
     git(repo, &["update-index", "--add", "--cacheinfo", &cacheinfo]);
     git(repo, &["commit", "-qm", "add unpopulated gitlink"]);
     std::fs::create_dir_all(repo.join(gitlink_path)).unwrap();
-    let remote_root = tempfile::tempdir().expect("remote root");
-    let bare = remote_root.path().join("origin.git");
-    let other = remote_root.path().join("other");
-    let bare_path = bare.to_str().unwrap();
-    let other_path = other.to_str().unwrap();
+    let dirty = DirtyPullFixture::new(repo);
+    let upstream_head = protection_collision(repo, dirty.remote_root.path());
 
-    git(repo, &["init", "--bare", "-q", bare_path]);
-    git(repo, &["remote", "add", "origin", bare_path]);
-    git(repo, &["push", "-q", "-u", "origin", "main"]);
-    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
-    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
-    git(&other, &["add", "upstream.txt"]);
-    git(&other, &["commit", "-q", "-m", "upstream"]);
-    git(&other, &["push", "-q", "origin", "main"]);
-    let upstream_head = protection_collision(repo, remote_root.path());
-
-    std::fs::write(repo.join("README.md"), "local staged change\n").unwrap();
-    std::fs::write(repo.join("scratch.txt"), "local untracked change\n").unwrap();
-    git(repo, &["add", "README.md"]);
+    dirty.stage_local_change(Some(("scratch.txt", "local untracked change\n")));
 
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, cx| app.open_pull_modal(cx));
@@ -819,23 +843,9 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     let fixture = build_fixture();
     let repo = fixture.path();
     protection_baseline(repo);
-    let remote_root = tempfile::tempdir().expect("remote root");
-    let bare = remote_root.path().join("origin.git");
-    let other = remote_root.path().join("other");
-    let bare_path = bare.to_str().unwrap();
-    let other_path = other.to_str().unwrap();
-
-    git(repo, &["init", "--bare", "-q", bare_path]);
-    git(repo, &["remote", "add", "origin", bare_path]);
-    git(repo, &["push", "-q", "-u", "origin", "main"]);
-    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
-    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
-    git(&other, &["add", "upstream.txt"]);
-    git(&other, &["commit", "-q", "-m", "upstream"]);
-    git(&other, &["push", "-q", "origin", "main"]);
-    std::fs::write(repo.join("README.md"), "local staged change\n").unwrap();
-    git(repo, &["add", "README.md"]);
-    protection_collision(repo, remote_root.path());
+    let dirty = DirtyPullFixture::new(repo);
+    dirty.stage_local_change(None);
+    protection_collision(repo, dirty.remote_root.path());
 
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, cx| app.open_pull_modal(cx));
@@ -852,7 +862,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     // The leak is installed only after the confirmation exists: a dirty Pull
     // fetches before it opens the modal (#625), and that read must succeed —
     // execution's own fetch is the one whose termination must be unproven.
-    let helper = leaky_helper(remote_root.path(), "upload-pack");
+    let helper = leaky_helper(dirty.remote_root.path(), "upload-pack");
     git(repo, &["config", "remote.origin.uploadpack", &helper]);
 
     press_enter(cx, &app, window);
@@ -1263,23 +1273,10 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
     let fixture = build_fixture();
     let repo = fixture.path();
     protection_baseline(repo);
-    let remote_root = tempfile::tempdir().expect("remote root");
-    let bare = remote_root.path().join("origin.git");
-    let other = remote_root.path().join("other");
-    let bare_path = bare.to_str().unwrap();
-    let other_path = other.to_str().unwrap();
-
-    git(repo, &["init", "--bare", "-q", bare_path]);
-    git(repo, &["remote", "add", "origin", bare_path]);
-    git(repo, &["push", "-q", "-u", "origin", "main"]);
-    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
-    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
-    git(&other, &["add", "upstream.txt"]);
-    git(&other, &["commit", "-q", "-m", "upstream"]);
-    git(&other, &["push", "-q", "origin", "main"]);
+    let dirty = DirtyPullFixture::new(repo);
     // Behind by one, by local knowledge: the confirmation opens without a fetch.
     git(repo, &["fetch", "-q", "origin"]);
-    protection_collision(repo, remote_root.path());
+    protection_collision(repo, dirty.remote_root.path());
     let other_tab = build_fixture();
 
     let (app, window) = mount(cx, repo);
@@ -1300,7 +1297,7 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
             "tab A must have a confirmation to press"
         );
     });
-    std::fs::remove_dir_all(&bare).unwrap();
+    std::fs::remove_dir_all(&dirty.bare).unwrap();
 
     // Confirm and leave in one synchronous turn, so the job is queued and has
     // not run yet: the executor is driven only after the switch, which makes
@@ -1445,24 +1442,10 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
     protection_baseline(repo);
-    let remote_root = tempfile::tempdir().expect("remote root");
-    let bare = remote_root.path().join("origin.git");
-    let other = remote_root.path().join("other");
-    let bare_path = bare.to_str().unwrap();
-    let other_path = other.to_str().unwrap();
+    let dirty = DirtyPullFixture::new(repo);
 
-    git(repo, &["init", "--bare", "-q", bare_path]);
-    git(repo, &["remote", "add", "origin", bare_path]);
-    git(repo, &["push", "-q", "-u", "origin", "main"]);
-    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
-    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
-    git(&other, &["add", "upstream.txt"]);
-    git(&other, &["commit", "-q", "-m", "upstream"]);
-    git(&other, &["push", "-q", "origin", "main"]);
-
-    std::fs::write(repo.join("README.md"), "local staged change\n").unwrap();
-    git(repo, &["add", "README.md"]);
-    protection_collision(repo, remote_root.path());
+    dirty.stage_local_change(None);
+    protection_collision(repo, dirty.remote_root.path());
 
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, cx| app.open_pull_modal(cx));

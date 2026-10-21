@@ -61,11 +61,24 @@ fn assert_refusal(
     draw(cx, window);
     let (_, explanation) = dialog_a11y::recorded_note("plan-blocker-0")
         .expect("the actual refusal reason is drawn");
-    assert!(!explanation.trim().is_empty());
+    assert!(
+        explanation.contains("main"),
+        "the rendered refusal identifies the selected branch"
+    );
     assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_some());
     if let Some(confirm) = button_style::recorded_modal_button("plan-confirm") {
         assert!(confirm.disabled, "a blocked explanation cannot authorize Pull");
     }
+}
+
+fn protected_refs(repo: &Path, upstream_ref: &str) -> (String, String) {
+    (
+        output(
+            repo,
+            &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"],
+        ),
+        output(repo, &["rev-parse", "--verify", upstream_ref]),
+    )
 }
 
 fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) {
@@ -85,7 +98,7 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
         format!("refs/remotes/{remote}/main")
     };
     let before = Checkout::read(&repo);
-    let refs_before = output(&repo, &["show-ref"]);
+    let refs_before = protected_refs(&repo, &upstream_ref);
     let (app, window) = mount(cx, &repo);
     click_branch_sync(cx, window, "main", true);
     assert_refusal(cx, &app, window, remote, &upstream_ref);
@@ -106,26 +119,35 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
         });
         assert_refusal(cx, &app, window, remote, &upstream_ref);
         assert_eq!(Checkout::read(&repo), before);
-        assert_eq!(output(&repo, &["show-ref"]), refs_before);
+        assert_eq!(protected_refs(&repo, &upstream_ref), refs_before);
     }
     let cancel = e2e::control_bounds(window.window_id(), "plan-cancel").unwrap();
     cx.simulate_click(window, cancel.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     cx.read(|cx| assert!(app.read(cx).branch_plan_modal().is_none()));
     assert_eq!(Checkout::read(&repo), before);
-    assert_eq!(output(&repo, &["show-ref"]), refs_before);
+    assert_eq!(protected_refs(&repo, &upstream_ref), refs_before);
 
     // A new request is admitted; an older captured snapshot cannot keep its
     // explanation after live HEAD, checkout, upstream mapping or visit drift.
     click_branch_sync(cx, window, "main", true);
     assert_refusal(cx, &app, window, remote, &upstream_ref);
-    app.update(cx, |app, cx| app.reload_external(cx));
+    let (owner, revision) = app.update(cx, |app, cx| {
+        let owner = app.active_session().unwrap();
+        app.reload_external(cx);
+        (owner, app.reads.revision(owner))
+    });
     let dispatcher = cx.background_executor.dispatcher().as_test().unwrap();
-    let mut ticks = 0;
-    while dispatcher.tick(true) {
-        ticks += 1;
-    }
-    assert!(ticks > 0, "the real snapshot was captured before drift");
+    while dispatcher.tick(true) {}
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.reads.is_loading(owner),
+            "captured snapshot has not been published"
+        );
+        assert_eq!(app.reads.revision(owner), revision);
+        assert!(app.branch_plan_modal().is_some(), "original refusal is still shown");
+    });
     match drift {
         Drift::Head => git(
             &repo,
@@ -180,7 +202,7 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
         }
     }
     let changed = Checkout::read(&repo);
-    let changed_refs = output(&repo, &["show-ref"]);
+    let changed_refs = protected_refs(&repo, &upstream_ref);
     cx.run_until_parked();
     cx.read(|cx| {
         let app = app.read(cx);
@@ -191,7 +213,7 @@ fn refusal_lifecycle(cx: &mut VisualTestAppContext, remote: &str, drift: Drift) 
     wait_idle(cx, &app);
     cx.run_until_parked();
     assert_eq!(Checkout::read(&repo), changed);
-    assert_eq!(output(&repo, &["show-ref"]), changed_refs);
+    assert_eq!(protected_refs(&repo, &upstream_ref), changed_refs);
     assert!(output(&repo, &["stash", "list"]).is_empty());
     for operation in ["pull", "branch-pull-ff", "stash-push", "stash-pop"] {
         assert!(oplog::records(&repo, operation, 100, true).is_empty());

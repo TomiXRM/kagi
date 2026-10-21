@@ -489,11 +489,14 @@ stealing. The pinned GPUI API has no live-region/priority setter; these are
 Status metadata assertions, not native speech or exactly-once announcements.
 Clone checks operation-named elapsed Status across Reduce Motion and running
 ticks, keyboard Hide owner retention, and real success/error settlement.
-Inspection checks row Enter, Tab to named Refresh/local URL Buttons,
-Enter/Space once-only activation, inner-focus retention, Escape row return,
-owner departure, no-port absence, painted extra-small URL chip text and native
-Tab-map exclusion of pointer-only hover actions. All cover 940×660/1392×883, EN/JA,
-100%/167% and Apple Light/Dark. Neighbor filter:
+Inspection checks the wide pane's row Enter, Tab to named Refresh/local URL
+Buttons, Enter/Space once-only activation, inner-focus retention, Escape row
+return, owner departure and no-port absence. Compact viewports open the real
+Worktrees rail and check Enter navigation/dismissal for both port states instead
+of expecting the wide inspection card. Both layouts retain pointer-only hover
+actions, painted extra-small URL chip text and native Tab-map exclusion.
+Inspection covers 1000×720/1392×883, EN/JA, 100%/167% and Apple Light/Dark;
+the neighboring status scenarios use 940×660/1392×883. Neighbor filter:
 `KAGI_GUI_E2E_ONLY='diff_,toast_,clone_,worktree_inspection'`.
 Native VoiceOver, Full Keyboard Access and real-window focus remain Tier B.
 
@@ -4301,8 +4304,8 @@ click on `queue-strip-remove-<id>`, the queued checkout runs only after the held
 one settles, with no modal on a clean replan, and its row reads `running · 2 s`),
 `queue_trip_lists_cancelled` (the held checkout fails, both successors are
 listed as `previous step failed` until `queue-strip-clear`),
-`queue_confirms_a_warned_plan` (a replan with a warning opens the queued
-modal; confirm runs it, Cancel lists it as `declined`),
+`queue_confirms_a_warned_plan` (detached commit checkout retains its genuine
+warning and queued modal; confirm runs one target, Cancel declines the next),
 `queue_strip_owner_only` (tab B never draws tab A's strip; A's head waits for A
 to return, and the queue hears of A's held activation read before A itself
 through `sync_queue_for_e2e`), `queue_skips_auto_fetch` (a quiet fetch is
@@ -4316,12 +4319,45 @@ and `queue_refuses_a_blocked_checkout` (a dirty-tree blocker no longer prevents
 busy enqueue; its fresh head plan refuses without writing), plus #1028's
 `queue_checkout_transient_blocker_clears` (a staged overlap initially blocks
 checkout, the held predecessor commits it, then the fresh clean checkout runs),
-`queue_busy_checkout_replans_warning` (idle opens the modal normally; busy
-shows the strip at once, then asks about the fresh carry-over warning) and
+`queue_busy_checkout_preserves_local_changes` (idle checkout safely carries
+unrelated staged and untracked work without a caution modal; busy shows the
+strip at once and preserves those contents after replan. Untracked target-path
+collisions instead produce a concrete-path blocker before idle admission) and
 `queue_checkout_missing_ref_refuses` (a missing ref is statically rejected with
 the localized footer/toast and a durable refusal receipt), and
 `queue_checkout_linked_worktree_refuses` (a branch checked out in another
 worktree cannot enter the busy queue; its typed blocker reaches the oplog).
+
+For #1696 review regressions, scope
+`KAGI_GUI_E2E_ONLY='pull_ff_only_current_tree_consistency,queue_busy_checkout_preserves_local_changes'`.
+The strict ff-only card shows its own EN/JA commit/stash-and-retry overlap note,
+never buttons offered only by ordinary Pull. Cancel and execution refusal retain
+the dirty files, index and refs. Checkout distinguishes unrelated untracked files
+from target paths that safe checkout would overwrite; the latter refuse before
+execution. Both idle double-click and queue use typed checkout admission: unrelated
+dirty work stays quiet, while unknown cautions require confirmation and blockers
+refuse. Backend checkout tests also cover file/directory collisions, an empty-tree
+baseline for unborn HEAD, and paths unchanged between HEAD and the destination.
+Also exercise staged child-vs-target-file and staged file-vs-target-directory
+obstructions, plus a purely staged rename whose source is rewritten by the target.
+Do not add an unstaged edit to that negative rename fixture: its status entry can
+expose the source separately and mask missing `Renamed::from` handling.
+Idle double-click and queued admission must show the concrete-path blocker before
+starting a target writer; a disabled confirm must leave refs, index, bytes and
+receipt count unchanged (only an existing queued predecessor may have run).
+The same entrypoints must execute a nonoverlapping staged rename quietly and
+preserve its index entry and split unstaged bytes. Backend `ops_test` counterparts
+use the public `Backend::plan` for branch and detached checkout and assert read-only
+planning, including component-prefix neighbours that must not be mistaken for
+file/directory collisions.
+After #1697 integration, also include `entry_consistency_` in the scoped run.
+Current ff-only and non-current Pull must execute without a card for clean and
+unrelated dirty fixtures, while unknown typed cautions retain their choice. In
+Tier B, take fresh EN/JA captures from the integrated default-feature binary:
+perform the disposable fixture's quiet Pull/checkout/publish actions, inspect
+receipts and retained dirty bytes, then capture neutral tag/worktree previews and
+zero-replay rebase without confirming them. Retain the released before captures.
+
 #1032 adds `queue_commit_checkout_busy_replans` (direct busy
 `open_checkout_commit_modal` freezes the target OID; the head plan reads the
 predecessor's new HEAD; an external HEAD change after confirm makes preflight

@@ -19,9 +19,9 @@ pub enum RebaseNote {
     /// blocker (`plan_rebase_current_onto`) — `onto` is the branch's own
     /// current tip; nothing to replay.
     AlreadyUpToDate { branch: String, onto: String },
-    /// warning (unconditional) — rebase may produce conflicts partway
-    /// through; the user resolves each in kagi's conflict editor, one commit
-    /// at a time, same as merge/cherry-pick/revert conflicts.
+    /// Warning when at least one commit will be replayed: rebase may conflict
+    /// partway through. The user resolves each commit in the conflict editor,
+    /// one at a time, as with merge/cherry-pick/revert conflicts.
     MayConflict,
     /// blocker (`plan_replay_onto`, #344) — the range contains a merge
     /// commit; `git replay` cannot replay merges (`fatal: replaying merge

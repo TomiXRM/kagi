@@ -43,6 +43,14 @@ pub fn scenario_push_tag_card_scope(cx: &mut VisualTestAppContext) {
             let (app, window) = mount(cx, path);
             app.update(cx, |app, cx| app.open_push_tag_modal(name.into(), cx));
             cx.run_until_parked();
+            cx.read(|cx| {
+                let plan = &app.read(cx).push_tag_modal().unwrap().plan;
+                assert!(
+                    plan.warnings.is_empty(),
+                    "publication guarantees are neutral preview context"
+                );
+                assert!(plan.blockers.is_empty());
+            });
             let identity = cx.read(|cx| {
                 app.read(cx)
                     .push_tag_modal()
@@ -93,6 +101,15 @@ pub fn scenario_push_tag_card_scope(cx: &mut VisualTestAppContext) {
                 Lang::En => "Tag to publish",
                 Lang::Ja => "公開する tag",
             }));
+            let refusal = i18n::plan_note_text(&kagi_domain::plan_note::PlanNote::Tag(
+                kagi_domain::plan_note::TagNote::PushRejectedIfMoved { name: name.into() },
+            ));
+            for line in refusal.lines() {
+                assert!(
+                    tree.contains(line),
+                    "safe refusal belongs in the neutral scope: {tree}"
+                );
+            }
             for secret in [
                 "secret-user",
                 "secret-token",
@@ -124,6 +141,14 @@ pub fn scenario_push_tag_card_scope(cx: &mut VisualTestAppContext) {
             ] {
                 assert!(copied.contains(value), "Copy all omits {value}: {copied}");
             }
+            assert!(
+                copied.contains(&refusal),
+                "Copy all must preserve safe refusal"
+            );
+            assert!(
+                !copied.contains("\nwarning:"),
+                "ordinary publication has no caution"
+            );
             for secret in [
                 "secret-user",
                 "secret-token",

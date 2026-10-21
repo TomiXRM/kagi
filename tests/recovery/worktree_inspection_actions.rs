@@ -65,10 +65,30 @@ fn fixture() -> (tempfile::TempDir, PathBuf, u16) {
 fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, case: Case) {
     cx.run_until_parked();
     probes::clear_actions();
-    for id in [CARD, REFRESH, URL, "sidebar-worktree-keyboard-card"] {
+    for id in [
+        CARD,
+        REFRESH,
+        URL,
+        "sidebar-worktree-keyboard-card",
+        "compact-sidebar-popover",
+        "sidebar-worktree-with-port",
+        "sidebar-worktree-no-port",
+    ] {
         e2e::clear_control_bounds(window.window_id(), id);
     }
     draw(cx, window, case.dimensions);
+}
+
+fn reveal_worktrees(cx: &mut VisualTestAppContext, window: AnyWindowHandle, case: Case) {
+    paint(cx, window, case);
+    if let Some(trigger) = e2e::control_bounds(window.window_id(), "compact-rail-worktrees") {
+        if e2e::control_bounds(window.window_id(), "compact-sidebar-popover").is_none() {
+            cx.simulate_click(window, trigger.center(), Modifiers::none());
+            for _ in 0..3 {
+                paint(cx, window, case);
+            }
+        }
+    }
 }
 
 fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, case: Case, key: &str) {
@@ -103,6 +123,7 @@ fn focus_row(
     case: Case,
     path: &Path,
 ) {
+    reveal_worktrees(cx, window, case);
     let key = format!("worktree:{}", path.display());
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
@@ -167,6 +188,33 @@ fn assert_url_typography(window: AnyWindowHandle) {
         (f32::from(url_font) - f32::from(theme::scaled_px(12.))).abs() < 0.001,
         "local URL preserves extra-small chip typography: {url_font:?}"
     );
+}
+
+fn compact_keyboard_selection(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    case: Case,
+    repo: &Path,
+) {
+    let owner = cx.read(|cx| app.read(cx).active_tab);
+    for name in ["with-port", "no-port"] {
+        let path = repo.join(name);
+        focus_row(cx, app, window, case, &path);
+        press(cx, window, case, "enter");
+        assert_eq!(cx.read(|cx| app.read(cx).repo_path.clone()), Some(path));
+        assert!(
+            e2e::control_bounds(window.window_id(), "compact-sidebar-popover").is_none(),
+            "compact Enter selects the worktree and dismisses its navigator"
+        );
+        assert!(
+            cx.read(|cx| app.read(cx).sidebar_keyboard_card_for_e2e().is_none()),
+            "compact selection does not open the wide inspection card"
+        );
+        app.update(cx, |app, cx| app.switch_repo(owner, cx));
+        paint(cx, window, case);
+        assert!(e2e::control_bounds(window.window_id(), CARD).is_none());
+    }
 }
 
 fn keyboard_actions(
@@ -333,6 +381,7 @@ fn hover_actions(
     case: Case,
     port: u16,
 ) {
+    reveal_worktrees(cx, window, case);
     cx.update_window(window, |_, window, cx| {
         let root = app.read(cx).root_focus.clone().unwrap();
         root.focus(window, cx);
@@ -389,16 +438,20 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         locale,
                     };
                     let (app, window) = open(cx, &repo, case);
-                    keyboard_actions(cx, &app, window, case, &repo.join("with-port"), port);
-                    no_port(cx, &app, window, case, &repo.join("no-port"));
-                    owner_switch(
-                        cx,
-                        &app,
-                        window,
-                        case,
-                        &repo.join("with-port"),
-                        other.path(),
-                    );
+                    if e2e::control_bounds(window.window_id(), "compact-rail-worktrees").is_some() {
+                        compact_keyboard_selection(cx, &app, window, case, &repo);
+                    } else {
+                        keyboard_actions(cx, &app, window, case, &repo.join("with-port"), port);
+                        no_port(cx, &app, window, case, &repo.join("no-port"));
+                        owner_switch(
+                            cx,
+                            &app,
+                            window,
+                            case,
+                            &repo.join("with-port"),
+                            other.path(),
+                        );
+                    }
                     hover_actions(cx, &app, window, case, port);
                     unmount(cx, app, window);
                 }
@@ -406,5 +459,5 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         }
     }
     assert!(theme::set_active(&original_theme));
-    eprintln!("[gui-e2e] PASS worktree_inspection_actions: names/focus, row Enter → Tab Refresh → Tab URL, Enter/Space once, retained focus, Escape return, owner switch, no-port, hover; EN/JA 100/167 Apple Light/Dark 1000×720/1392×883");
+    eprintln!("[gui-e2e] PASS worktree_inspection_actions: wide card names/focus, row Enter → Tab Refresh → Tab URL, Enter/Space once, retained focus, Escape return, owner switch, no-port; compact Enter navigation/dismissal; hover in both layouts; EN/JA 100/167 Apple Light/Dark 1000×720/1392×883");
 }

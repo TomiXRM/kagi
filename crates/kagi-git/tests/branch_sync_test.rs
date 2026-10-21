@@ -53,6 +53,7 @@ fn non_current_pull_ff_updates_ref_only() {
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_pull_branch_ff(&repo, "feature/x").expect("plan");
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 
     let outcome = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x").expect("execute");
     assert!(matches!(outcome, PullOutcome::FastForward { .. }));
@@ -65,6 +66,36 @@ fn non_current_pull_ff_updates_ref_only() {
     assert!(
         !r.local.join("remote.txt").exists(),
         "working tree must not change"
+    );
+}
+
+#[test]
+fn non_current_pull_ff_is_quiet_and_preserves_unrelated_dirty_checkout() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (r, other) = setup();
+    advance_feature(&other);
+    git(&r.local, &["fetch", "-q", "origin"]);
+    write_file(&r.local, "base.txt", "staged local bytes\n");
+    git(&r.local, &["add", "base.txt"]);
+    write_file(&r.local, "base.txt", "unstaged local bytes\n");
+    write_file(&r.local, "untracked.txt", "untracked local bytes\n");
+    let before = Checkout::read(&r.local);
+    let staged = git_output(&r.local, &["ls-files", "--stage"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    assert_eq!(plan.predicted.dirty, "working tree unchanged");
+    let outcome = execute_pull_branch_ff(&repo, &r.local, &plan, "feature/x").unwrap();
+    assert!(matches!(outcome, PullOutcome::FastForward { .. }));
+    assert_eq!(rev_parse(&r.local, "feature/x"), rev_parse(&other, "HEAD"));
+    assert_eq!(Checkout::read(&r.local), before);
+    assert_eq!(git_output(&r.local, &["ls-files", "--stage"]), staged);
+    assert_eq!(
+        std::fs::read(r.local.join("untracked.txt")).unwrap(),
+        b"untracked local bytes\n"
     );
 }
 
@@ -276,9 +307,29 @@ fn current_pull_ff_keeps_dirty_paths_safe_and_accepts_newer_approved_upstream() 
         git(&r.local, &["add", dirty]);
         write_file(&r.local, dirty, "approved unstaged local content\n");
         write_file(&r.local, "untracked.txt", "preserve untracked content\n");
+        let before_plan = Checkout::read(&r.local);
+        let local_refs = git_output(&r.local, &["show-ref", "--heads"]);
         let repo = Repository::open(&r.local).unwrap();
         let plan = plan_pull_branch_ff(&repo, "feature/x").unwrap();
         assert!(plan.blockers.is_empty());
+        assert_eq!(Checkout::read(&r.local), before_plan);
+        assert_eq!(git_output(&r.local, &["show-ref", "--heads"]), local_refs);
+        if overlapping {
+            assert!(plan.warnings.iter().any(|note| matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Pull(
+                    kagi_domain::plan_note::PullNote::StrictFfLocalChangesOverlap { paths }
+                ) if paths == &[dirty.to_string()]
+            )));
+            assert!(!plan.warnings.iter().any(|note| matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Pull(
+                    kagi_domain::plan_note::PullNote::LocalChangesOverlap { .. }
+                )
+            )));
+        } else {
+            assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        }
         let before = Checkout::read(&r.local);
         let staged = git_output(&r.local, &["ls-files", "--stage", "--", dirty]);
         // The same approved tracking ref may discover a newer tip at execution.
@@ -292,6 +343,7 @@ fn current_pull_ff_keeps_dirty_paths_safe_and_accepts_newer_approved_upstream() 
                 "strict FF must never overwrite dirty paths"
             );
             assert_eq!(Checkout::read(&r.local), before);
+            assert_eq!(git_output(&r.local, &["show-ref", "--heads"]), local_refs);
         } else {
             assert!(matches!(outcome.unwrap(), PullOutcome::FastForward { .. }));
             assert_eq!(rev_parse(&r.local, "HEAD"), rev_parse(&other, "HEAD"));
@@ -535,6 +587,7 @@ fn non_current_push_uses_branch_upstream() {
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_push_branch(&repo, "feature/x", false).expect("plan");
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
     let outcome = execute_push_branch(&repo, &r.local, &plan, "feature/x", false).expect("push");
     assert_eq!(outcome.pushed, 1);
     assert_eq!(rev_parse(&r.remote, "refs/heads/feature/x"), feature_tip);
@@ -569,6 +622,7 @@ fn non_current_push_of_branch_tracking_base_moves_upstream() {
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_push_branch(&repo, "topic/base", false).expect("plan");
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
     let outcome = execute_push_branch(&repo, &r.local, &plan, "topic/base", false).expect("push");
     assert!(outcome.set_upstream);
     assert_eq!(outcome.pushed, 1);

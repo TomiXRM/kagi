@@ -18,8 +18,6 @@
 //! by the ADR appendix) while [`kagi-ui-core`]'s JA rendering keeps the
 //! CURRENT Japanese wording byte-for-byte.
 
-use super::common::DirtyParts;
-
 /// Plan notes for the checkout op family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutNote {
@@ -30,8 +28,8 @@ pub enum CheckoutNote {
     /// (no-op family).
     CommitAlreadyHead,
     /// blocker (helper `predict_checkout_conflict`, shared by `plan_checkout`
-    /// and `plan_checkout_commit`) — locally modified tracked paths overlap
-    /// the target tree; a safe-mode checkout would be refused.
+    /// and `plan_checkout_commit`) — local edits or untracked obstructions
+    /// overlap target writes; a safe-mode checkout would be refused.
     ///
     /// `files` is the **list**, not a pre-joined string (#454): the UI renders
     /// it as a scrollable list instead of a comma wall inside the sentence —
@@ -39,9 +37,6 @@ pub enum CheckoutNote {
     /// renderers below join it, so `message_en`/`message_ja` (oplog, CLI, MCP)
     /// are byte-identical to before.
     CheckoutOverlap { count: usize, files: Vec<String> },
-    /// warning (`plan_checkout`) — non-overlapping staged/modified changes
-    /// carry over to the target branch.
-    DirtyCarriedOver { parts: DirtyParts, branch: String },
     /// warning (`plan_checkout_commit`) — dirty working tree may make a safe
     /// checkout fail.
     DirtyMayFail { display: String },
@@ -68,11 +63,6 @@ impl CheckoutNote {
                 crate::advice_template_en!(CheckoutCheckoutOverlap),
                 count,
                 files.join(", ")
-            ),
-            CheckoutNote::DirtyCarriedOver { parts, branch } => format!(
-                crate::advice_template_en!(CheckoutDirtyCarriedOver),
-                parts.parts_en(),
-                branch
             ),
             CheckoutNote::DirtyMayFail { display } => {
                 format!(crate::advice_template_en!(CheckoutDirtyMayFail), display)
@@ -222,32 +212,6 @@ mod tests {
             "Working tree has local changes to 12 file(s) that the target also modifies: \
              a.rs, b.rs, c.rs, .... Safe checkout would be refused (the conflict prevents \
              checkout). Stash or commit these changes first."
-        );
-    }
-
-    #[test]
-    fn dirty_carried_over_both_parts_and_single_part() {
-        assert_eq!(
-            CheckoutNote::DirtyCarriedOver {
-                parts: DirtyParts {
-                    staged: 2,
-                    modified: 1
-                },
-                branch: "feature/x".into()
-            }
-            .message_en(),
-            "2 staged, 1 modified will be carried over to 'feature/x'."
-        );
-        assert_eq!(
-            CheckoutNote::DirtyCarriedOver {
-                parts: DirtyParts {
-                    staged: 1,
-                    modified: 0
-                },
-                branch: "main".into()
-            }
-            .message_en(),
-            "1 staged will be carried over to 'main'."
         );
     }
 

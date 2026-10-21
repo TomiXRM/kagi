@@ -255,6 +255,9 @@ fn plan_state(
     let detail = kagi_ui_core::i18n::op::user_text::state_text(
         display_dirty.map_or(dirty, |(_, detail)| detail),
     );
+    let (status, context) = dirty
+        .split_once('\n')
+        .map_or((dirty, None), |(status, context)| (status, Some(context)));
     let full = SharedString::from(format!("{label}: {head} [{detail}]"));
     apply_group(id, div().id(id), full.clone())
         .relative()
@@ -311,7 +314,7 @@ fn plan_state(
                         }
                     }
                     chips.extend(plan_status_chips(
-                        display_dirty.map_or(dirty, |(short, _)| short),
+                        display_dirty.map_or(status, |(short, _)| short),
                     ));
                     div()
                         .flex()
@@ -319,6 +322,14 @@ fn plan_state(
                         .flex_wrap()
                         .gap(theme::scaled_px(6.))
                         .children(chips)
+                })
+                .when_some(context, |column, context| {
+                    column.child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(current_theme().text_sub))
+                            .child(SharedString::from(context.to_string())),
+                    )
                 }),
         )
         .when(cfg!(feature = "gui-e2e"), |row| {
@@ -335,13 +346,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
         return super::modal_renderers_plan::render_tag_push_scope(identity);
     }
     let (current_head, predicted_head) = super::modal_copy::plan_display_heads(plan);
-    let predicted_detail =
-        kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
-    let predicted_detail = if plan.rebase_scope.is_some() {
-        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
-    } else {
-        predicted_detail
-    };
+    let predicted_detail = kagi_ui_core::i18n::plan::plan_after_state_detail(plan);
     div()
         .id("plan-state-comparison")
         .relative()

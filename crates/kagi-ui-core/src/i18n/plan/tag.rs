@@ -122,6 +122,18 @@ pub fn push_scope_rows(identity: &kagi_domain::plan::TagPushIdentity) -> Vec<Str
             display_push_url(url)
         )
     }));
+    // Publication effects and safe refusal are preview context, not cautions.
+    rows.push(super::plan_note_text(
+        &kagi_domain::plan_note::PlanNote::Tag(TagNote::PushRemoteSideEffect {
+            remote: identity.remote.clone(),
+            name: identity.name.clone(),
+        }),
+    ));
+    rows.push(super::plan_note_text(
+        &kagi_domain::plan_note::PlanNote::Tag(TagNote::PushRejectedIfMoved {
+            name: identity.name.clone(),
+        }),
+    ));
     rows
 }
 

@@ -112,8 +112,6 @@ pub enum UntrackedCtx {
     AfterCherryPick,
     /// "…will remain untouched after revert."
     AfterRevert,
-    /// "…will remain untouched unless fetched changes need the same path."
-    PullFetchMayTouch,
     /// "…will remain untouched."
     Untouched,
 }
@@ -224,10 +222,6 @@ impl CommonNote {
                 UntrackedCtx::AfterRevert => {
                     format!(crate::advice_template_en!(UntrackedAfterRevert), count)
                 }
-                UntrackedCtx::PullFetchMayTouch => format!(
-                    crate::advice_template_en!(UntrackedPullFetchMayTouch),
-                    count
-                ),
                 UntrackedCtx::Untouched => {
                     format!(crate::advice_template_en!(UntrackedUntouched), count)
                 }
@@ -516,11 +510,6 @@ mod tests {
                 3,
                 UntrackedCtx::AfterRevert,
                 "3 untracked file(s) will remain untouched after revert.",
-            ),
-            (
-                42,
-                UntrackedCtx::PullFetchMayTouch,
-                "42 untracked file(s) will remain untouched unless fetched changes need the same path.",
             ),
             (
                 3,

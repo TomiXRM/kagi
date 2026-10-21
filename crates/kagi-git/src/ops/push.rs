@@ -517,9 +517,7 @@ pub fn plan_push_branch(
     // site gets its own `PushNote` variant (this text is shared in English
     // with pull-ff's blocker, but that category is a separate fan-out PR).
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
-        punct: PushPunct::Semicolon,
-    })];
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     let local_oid = match local_branch_oid(repo, branch_name) {
         Ok(oid) => oid,

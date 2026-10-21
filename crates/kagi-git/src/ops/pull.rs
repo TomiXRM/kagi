@@ -12,7 +12,7 @@
 use super::pull_conflict::{checkout_pull_tree, plan_pull_restore_conflicts};
 use super::remote_common::{capture_pull_identity, local_branch_oid, short_oid_string};
 use super::*;
-use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+use kagi_domain::plan_note::{CommonNote, OpPhrase, PlanOp};
 use kagi_domain::plan_note::{PullNote, PullRecovery, PullTitle, WorktreeNote};
 use kagi_domain::remote::shell_quote;
 
@@ -565,33 +565,11 @@ pub(crate) fn plan_pull_branch_ff_with_status(
     let mut warnings: Vec<PlanNote> = Vec::new();
     let mut blockers: Vec<PlanNote> = Vec::new();
 
-    if is_current {
-        if !status.conflicted.is_empty() {
-            blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
-                count: status.conflicted.len(),
-                before: OpPhrase::Pulling,
-            }));
-        }
-        if !status.staged.is_empty() || !status.unstaged.is_empty() {
-            warnings.push(PlanNote::Pull(PullNote::DirtyPullGuard {
-                parts: DirtyParts {
-                    staged: status.staged.len(),
-                    modified: status.unstaged.len(),
-                },
-            }));
-        }
-        if !status.untracked.is_empty() {
-            warnings.push(PlanNote::Common(CommonNote::UntrackedRemain {
-                count: status.untracked.len(),
-                ctx: UntrackedCtx::PullFetchMayTouch,
-            }));
-        }
-    } else if !status.conflicted.is_empty() {
-        warnings.push(PlanNote::Pull(PullNote::ConflictedRefOnly {
+    if is_current && !status.conflicted.is_empty() {
+        blockers.push(PlanNote::Common(CommonNote::ConflictedFiles {
             count: status.conflicted.len(),
+            before: OpPhrase::Pulling,
         }));
-    } else if status.is_dirty() {
-        warnings.push(PlanNote::Pull(PullNote::DirtyRefOnly));
     }
     if let Some(blocker) = pull_branch_checkout_blocker(repo, branch_name, is_current)? {
         blockers.push(blocker);
@@ -636,6 +614,17 @@ pub(crate) fn plan_pull_branch_ff_with_status(
                     branch: branch_name.to_string(),
                 }));
             }
+        }
+    }
+
+    // Strict FF checks the same fetched incoming delta as ordinary Pull.
+    // A dirty checkout alone is not risk, and ref-only Pull never touches it.
+    if is_current && blockers.is_empty() && !up_to_date {
+        let prediction = plan_pull_restore_conflicts(repo, branch_name)?;
+        if !prediction.overlapping.is_empty() {
+            warnings.push(PlanNote::Pull(PullNote::StrictFfLocalChangesOverlap {
+                paths: prediction.overlapping,
+            }));
         }
     }
 

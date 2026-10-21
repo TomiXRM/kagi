@@ -101,11 +101,8 @@ fn sync_admission_push_and_publish_ignore_only_no_force_information() {
 #[test]
 fn sync_admission_pull_keeps_every_risk_and_blocker_explicit() {
     let risks = [
-        PullNote::DirtyPullGuard {
-            parts: DirtyParts {
-                staged: 1,
-                modified: 0,
-            },
+        PullNote::StrictFfLocalChangesOverlap {
+            paths: vec!["README.md".into()],
         },
         PullNote::LocalChangesOverlap {
             paths: vec!["README.md".into()],
@@ -146,24 +143,17 @@ fn sync_admission_pull_keeps_every_risk_and_blocker_explicit() {
 }
 
 #[test]
-fn sync_admission_ref_only_information_does_not_authorize_checkout_risk() {
-    let [current_title, ref_only_title] = pull_titles();
-    for note in [
-        PullNote::DirtyRefOnly,
-        PullNote::ConflictedRefOnly { count: 1 },
-    ] {
-        let mut ref_only = plan(ref_only_title.clone());
-        ref_only.warnings.push(PlanNote::Pull(note.clone()));
-        assert!(!ref_only.sync_needs_choice());
-        let mut current = plan(current_title.clone());
-        current.warnings.push(PlanNote::Pull(note));
-        assert!(current.sync_needs_choice());
-        ref_only
-            .warnings
-            .push(PlanNote::Pull(PullNote::LocalChangesOverlap {
-                paths: vec!["a".into()],
-            }));
-        assert!(ref_only.sync_needs_choice());
+fn sync_admission_pull_does_not_accept_other_operation_information() {
+    for title in pull_titles() {
+        let mut plan = plan(title);
+        assert!(!plan.sync_needs_choice());
+        plan.warnings.push(PlanNote::Push(PushNote::NoForceUsed {
+            punct: PushPunct::Semicolon,
+        }));
+        assert!(
+            plan.sync_needs_choice(),
+            "push information must not silently admit a Pull plan"
+        );
     }
 }
 

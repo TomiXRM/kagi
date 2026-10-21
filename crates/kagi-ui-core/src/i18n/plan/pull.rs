@@ -11,10 +11,10 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_AUTO_STASH: &str =
     "working tree に{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
 
-pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
-    "working tree に{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
+pub(crate) const ADVICE_PULL_STRICT_FF_LOCAL_CHANGES_OVERLAP: &str =
+    "incoming の変更が次のローカル変更を上書きします:{}\nこの Pull をキャンセルし、対象パスの変更を commit または stash してから、fast-forward のみの Pull を再試行してください。";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
     "commit 済みの履歴が conflict する見込みです。stash では解決できません。解決方法を確認してから、merge して Conflict Mode で解決するか、キャンセルできます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
@@ -22,10 +22,6 @@ pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
     "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
-pub(crate) const ADVICE_PULL_CONFLICTED_REF_ONLY: &str =
-    "conflict ファイルが {} 件あります。この ref-only pull は working tree に影響しません。";
-pub(crate) const ADVICE_PULL_DIRTY_REF_ONLY: &str =
-    "working tree に変更があります。この ref-only pull は working tree に影響しません。";
 pub(crate) const ADVICE_PULL_CANNOT_FAST_FORWARD: &str =
     "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。";
 pub(crate) const ADVICE_PULL_REMOTE_DIVERGED: &str =
@@ -70,9 +66,6 @@ fn path_block_ja(paths: &[String]) -> String {
 /// Japanese rendering of one pull note.
 pub fn note_ja(note: &PullNote) -> String {
     match note {
-        PullNote::DirtyPullGuard { parts } => {
-            super::advice_text(Msg::AdvicePullDirtyPullGuard, &[&parts_ja(parts)])
-        }
         PullNote::AutoStash { parts, untracked } => {
             let mut changes = Vec::new();
             let tracked = parts_ja(parts);
@@ -92,6 +85,10 @@ pub fn note_ja(note: &PullNote) -> String {
             "incoming の変更が次のローカル変更に触れます:{}\n「StashしてPull」で変更を保存・復元するか、「変更を確認」で先に確認・編集・commit できます。",
             path_block_ja(paths)
         ),
+        PullNote::StrictFfLocalChangesOverlap { paths } => super::advice_text(
+            Msg::AdvicePullStrictFfLocalChangesOverlap,
+            &[&path_block_ja(paths)],
+        ),
         PullNote::RestoreConflict { paths } => {
             super::advice_text(Msg::AdvicePullRestoreConflict, &[&path_block_ja(paths)])
         }
@@ -99,10 +96,6 @@ pub fn note_ja(note: &PullNote) -> String {
             Msg::AdvicePullRestoreConflictPossible,
             &[&path_block_ja(paths)],
         ),
-        PullNote::ConflictedRefOnly { count } => {
-            super::advice_text(Msg::AdvicePullConflictedRefOnly, &[count])
-        }
-        PullNote::DirtyRefOnly => super::advice_text(Msg::AdvicePullDirtyRefOnly, &[]),
         PullNote::NoUpstream { branch, err } => {
             format!(
                 "branch `{}` に upstream が設定されていません: {}",
@@ -212,6 +205,23 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_ff_overlap_ja_golden_and_ordinary_choices_stay_distinct() {
+        let paths = vec!["shared.txt".into(), "日本語.rs".into()];
+        let text = note_ja(&PullNote::StrictFfLocalChangesOverlap {
+            paths: paths.clone(),
+        });
+        assert_eq!(
+            text,
+            "incoming の変更が次のローカル変更を上書きします:\n  - shared.txt\n  - 日本語.rs\nこの Pull をキャンセルし、対象パスの変更を commit または stash してから、fast-forward のみの Pull を再試行してください。"
+        );
+        assert!(!text.contains("StashしてPull"));
+        assert!(!text.contains("変更を確認"));
+        let ordinary = note_ja(&PullNote::LocalChangesOverlap { paths });
+        assert!(ordinary.contains("StashしてPull"));
+        assert!(ordinary.contains("変更を確認"));
+    }
 
     #[test]
     fn contract_preserves_legacy_bytes_and_raw_paths() {

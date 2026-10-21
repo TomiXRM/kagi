@@ -83,6 +83,7 @@ fn rebase_linear_ancestor_is_noop_like_git() {
     let plan = kagi_git::ops::plan_rebase_current_onto(&repo, "main").unwrap();
     assert!(plan.preview_commits.is_empty());
     assert_eq!(plan.rebase_scope.as_ref().unwrap().total_commits, 0);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
     assert!(plan.blockers.iter().any(|note| matches!(
         note,
         kagi_domain::plan_note::PlanNote::Rebase(
@@ -91,6 +92,20 @@ fn rebase_linear_ancestor_is_noop_like_git() {
     )));
     git(path, &["rebase", "main"]);
     assert_eq!(git_output(path, &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn rebase_fast_forward_without_replay_has_no_conflict_warning() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = range_fixture(0, true);
+    let repo = git2::Repository::open(dir.path()).unwrap();
+    let plan = kagi_git::ops::plan_rebase_current_onto(&repo, "main").unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert_eq!(plan.rebase_scope.as_ref().unwrap().total_commits, 0);
+    assert!(plan.preview_commits.is_empty());
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 }
 
 #[test]

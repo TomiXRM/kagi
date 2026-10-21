@@ -81,6 +81,71 @@ pub fn after_state_detail<'a>(title: &PlanTitle, predicted: &'a str) -> std::bor
     }
 }
 
+/// Neutral AFTER context comes from the approved plan, never its warning list.
+/// Keep this projection shared by the visible card, accessibility and Copy all.
+pub fn plan_after_state_detail(
+    plan: &kagi_domain::plan::OperationPlan,
+) -> std::borrow::Cow<'_, str> {
+    use kagi_domain::{
+        head::Head,
+        plan_note::{
+            push::PushPunct, CheckoutTitle, PlanDisposition, PushNote, WorktreeNote,
+            WorktreeRecovery,
+        },
+    };
+    use std::borrow::Cow;
+
+    if plan.rebase_scope.is_some() {
+        return Cow::Borrowed(Msg::PlanRebaseResultUnknown.t());
+    }
+    let detail = after_state_detail(&plan.title, &plan.predicted.dirty);
+    // Do not promise effects for a blocked or no-op operation.
+    if plan.disposition != PlanDisposition::Ready || !plan.blockers.is_empty() {
+        return detail;
+    }
+    let context = match &plan.title {
+        PlanTitle::Checkout(CheckoutTitle::Checkout { .. }) if plan.current.dirty != "clean" => {
+            Some(match lang() {
+                Lang::En => "Local changes and untracked files remain after switching branches.".to_string(),
+                Lang::Ja => "ローカルの変更と未追跡ファイルは branch を切り替えた後も保持されます。".to_string(),
+            })
+        }
+        PlanTitle::Pull(PullTitle::PullBranchFf { branch, .. })
+            if !matches!(&plan.head_at_plan, Head::Attached { branch: current, .. } if current == branch) =>
+        {
+            Some(match lang() {
+                Lang::En => "Only the selected branch reference is updated; the current working tree and index are unchanged.".to_string(),
+                Lang::Ja => "選択した branch の参照のみを更新します。現在の working tree と index は変更しません。".to_string(),
+            })
+        }
+        PlanTitle::Push(PushTitle::PushBranch { .. }) => {
+            Some(plan_note_text(&PlanNote::Push(PushNote::NoForceUsed {
+                punct: PushPunct::Semicolon,
+            })))
+        }
+        PlanTitle::Worktree(WorktreeTitle::CreateWorktree { branch, start }) => {
+            match plan.recovery.as_ref().map(|recovery| &recovery.kind) {
+                Some(RecoveryKind::Worktree(WorktreeRecovery::CreateWorktree { path, .. })) => {
+                    Some(plan_note_text(&PlanNote::Worktree(WorktreeNote::CreatesLinkedWorktree {
+                        path: path.clone(),
+                        branch: branch.clone(),
+                        start: start.clone(),
+                    })))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    match context {
+        Some(context) => {
+            let status = super::op::user_text::state_text(&detail);
+            Cow::Owned(format!("{status}\n{context}"))
+        }
+        None => detail,
+    }
+}
+
 /// Interpolate the JA catalog once; inserted branch names are never templates.
 pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
     use std::fmt::Write;

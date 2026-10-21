@@ -4113,6 +4113,30 @@ no-op repetition, failure details, Pull and Quit; keep non-key/no-activate and
 report occluded byte-identical frames as stale, not evidence of the new screen.
 
 
+### Presentation-only Busy progress close (#1719)
+
+Select `busy_read_dismiss,busy_pull_progress_dismiss,busy_hidden_failure_reaches_details,slow_read_explained,clone_hidden_status,queue_merge_plan_after_departure`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. These consumers use actual repository reads,
+Fetch admission, queued planning and clone dispatch held by existing deferred
+backend seams. The readonly `slow_reads_inflight_for_e2e` observer reports real
+unfinished handle lifetimes, including superseded reads; it never creates work.
+`busy_dismiss_focus` observes the rendered control's handle; keyboard coverage
+must reach it through real Tab navigation rather than assigning test focus.
+
+Cover all reads already in flight, a newly admitted read, another owner and tab
+round trips, read-phase retention, read/write overlap, the freshness Fetch → Pull
+execution lease handoff and a same-clock next request. Hidden failure must still
+reach its exact durable receipt through the actual details Button. Existing Skip,
+writer/quit guards, clone completion and stale queued-plan disposal stay active.
+
+Tier B uses an ordinary isolated binary, actual linked-worktree status work and
+Terminal, EN/JA × Apple Light/Dark, desktop width ≥1000 plus the 940 compact leg.
+After pointer/keyboard close, click and type into Terminal at the former card's
+coordinates (including its lower edge), verify the resulting file, then observe
+natural completion and final failure detail. Absence of painted controls alone is
+not proof that no invisible hit target remains. Keep an independent empty toast
+entity mounted so later terminal results remain deliverable.
+
 ### Hunk staging (#842, Refs #357)
 
 G: `cargo test -p kagi-git --test hunk_staging_test` (a 20-line file edited at

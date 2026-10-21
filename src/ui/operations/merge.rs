@@ -36,7 +36,7 @@ impl KagiApp {
         else {
             return;
         };
-        self.planning = Some("merge-plan");
+        self.mark_planning_busy("merge-plan");
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from("Planning merge…"),
         ));
@@ -166,7 +166,7 @@ impl KagiApp {
         else {
             return;
         };
-        self.planning = Some("merge-plan");
+        self.mark_planning_busy("merge-plan");
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from("Planning merge…"),
         ));

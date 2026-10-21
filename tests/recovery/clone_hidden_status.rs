@@ -136,6 +136,12 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
     settings_busy_feedback(cx, &app, window);
     reopen_same(cx, &app, window, &owner);
     home_hidden(cx, &app, window);
+    crate::busy_dismiss::close_by_pointer(cx, &app, window);
+    cx.read(|cx| {
+        assert!(app.read(cx).home_github.cloning.is_some());
+        assert!(e2e::op_latched(app.read(cx)));
+    });
+    assert_eq!(e2e::take_clone_dispatches(), 0, "hiding never dispatches again");
     cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
     for _ in 0..3 {
         crate::keyboard_nav::keys(cx, window, "cmd-q");

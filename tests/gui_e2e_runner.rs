@@ -411,6 +411,9 @@ mod op_queue;
 #[cfg(target_os = "macos")]
 #[path = "recovery/slow_read.rs"]
 mod slow_read;
+#[cfg(target_os = "macos")]
+#[path = "recovery/busy_dismiss.rs"]
+mod busy_dismiss;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
@@ -2832,6 +2835,18 @@ mod macos {
             (
                 "slow_write_explained",
                 Box::new(crate::slow_read::scenario_slow_write_explained),
+            ),
+            (
+                "busy_read_dismiss",
+                Box::new(crate::busy_dismiss::scenario_busy_read_dismiss),
+            ),
+            (
+                "busy_pull_progress_dismiss",
+                Box::new(crate::busy_dismiss::scenario_busy_pull_progress_dismiss),
+            ),
+            (
+                "busy_hidden_failure_reaches_details",
+                Box::new(crate::busy_dismiss::scenario_busy_hidden_failure_reaches_details),
             ),
             (
                 "slow_write_cleared_after_panic",

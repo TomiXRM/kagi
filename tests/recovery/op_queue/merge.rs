@@ -381,6 +381,12 @@ pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) 
                 queue_text(QueueText::Planning).to_string(),
             )]
     });
+    crate::busy_dismiss::close_by_pointer(cx, &app, window);
+    cx.read(|cx| {
+        assert!(app.read(cx).planning.is_some());
+        assert!(e2e::op_latched(app.read(cx)));
+        assert!(app.read(cx).merge_modal().is_none());
+    });
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     plan_release.send(());
     cx.run_until_parked();

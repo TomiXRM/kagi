@@ -74,3 +74,25 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
 - `[kagi] busy: slow write <kind> after 2s` は開始した write ごとに 1 回。
   実行が終わっても Unknown の lease が保持される場合、admission と
   reconcile の既存契約は変えない。
+
+## Amendment (2026-10-21): presentation-only progress dismissal (#1719)
+
+- `Tracked.hidden` is independent of `skipped` and the read's completion handle.
+  Close hides all currently tracked reads belonging to the displayed tab, not
+  only the oldest slow read. Phase transitions preserve it; newly admitted reads
+  start visible. Skip remains an explicit, separate ahead/behind decision.
+- A card can represent a running write and slow reads simultaneously. Closing
+  hides both represented presentations, not either operation. Neither timing,
+  one-time `[kagi] busy:` diagnostics nor safety admission changes.
+- Worktree phase includes real status collection for linked worktrees. The
+  collector joins their working-tree status reads, including recursive untracked
+  paths, before finishing. The handle remains alive while that work runs; its
+  natural drop marks completion and the existing tick retires the explanation.
+  A long phase alone is not evidence of a stale UI state.
+- Investigation used an isolated two-worktree fixture with 240,000 real untracked
+  files in the linked worktree: ordinary native Kagi showed the Worktrees phase,
+  then naturally removed it after status completed. The user's registered
+  worktree count was metadata only, not a scan or proof of that specific delay.
+  No timeout extension, forced cancellation or broad status/performance redesign
+  is part of dismissal. Pull's redundant terminal snapshot is addressed by #1720.
+

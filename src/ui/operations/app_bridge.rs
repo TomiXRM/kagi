@@ -254,6 +254,7 @@ impl KagiApp {
     pub(crate) fn refresh_write_busy(&mut self) {
         let has_leases = self.app_sessions.has_leases();
         super::super::busy::settle_write_busy(&mut self.write_busy_op, has_leases);
+        self.retire_hidden_busy_progress();
     }
     pub(crate) fn dispatch_job(&mut self, approved: Approved, cx: &mut Context<Self>) {
         let (name, label) = match &approved.prepared {
@@ -801,6 +802,7 @@ impl KagiApp {
         // before queued notices are presented so the fresh drop confirmation
         // is not stranded after its conflict has been continued.
         self.present_stash_followup(cx);
+        self.retire_busy_control_focus(cx);
     }
 }
 

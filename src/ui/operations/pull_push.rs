@@ -80,7 +80,7 @@ impl KagiApp {
                     cached_remote_dirty,
                 },
             );
-            self.planning = Some("pull");
+            let progress_request = self.mark_planning_busy("pull");
             let task = cx.background_spawn(async move { job.run() });
             cx.spawn(async move |this, cx| {
                 let completion = task.fallible().await;
@@ -120,6 +120,7 @@ impl KagiApp {
                                         error: None,
                                         dirty_digest: None,
                                         fetch_owner: None,
+                                        progress_request: Some(progress_request),
                                     };
                                     // SSH planning freezes the live identity,
                                     // but does not predict fetched merge or
@@ -337,6 +338,7 @@ impl KagiApp {
                     modal.plan.warnings.len()
                 );
                 modal.fetch_owner = self.pull_modal().and_then(|current| current.fetch_owner);
+                modal.progress_request = self.pull_modal().and_then(|current| current.progress_request);
                 self.update_pull_plan_from_async(modal);
             }
             Ok(None) => {
@@ -451,6 +453,7 @@ impl KagiApp {
             error: None,
             dirty_digest,
             fetch_owner: None,
+            progress_request: None,
         }))
     }
 
@@ -480,6 +483,12 @@ impl KagiApp {
             None => return,
         };
 
+        let progress_identity = modal
+            .progress_request
+            .map(crate::ui::busy::BusyIdentity::Planning)
+            .or_else(|| modal.fetch_owner.map(crate::ui::busy::BusyIdentity::pull));
+        let progress_hidden = self.busy_request_hidden(progress_identity);
+
         if let Some(rv) = self.remote_view.as_ref() {
             let PlanState::Ready {
                 token,
@@ -503,7 +512,10 @@ impl KagiApp {
                 token,
                 app::Policy::Stash(kagi_git::backend::ExecutionPolicy::default()),
             ) {
-                Ok(approved) => self.dispatch_job(approved, cx),
+                Ok(approved) => {
+                    self.dispatch_job(approved, cx);
+                    self.continue_busy_request(progress_identity, progress_hidden);
+                }
                 Err(error) => self.report_admission_refusal(error, cx),
             }
             return;

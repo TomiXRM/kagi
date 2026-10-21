@@ -2622,6 +2622,16 @@ impl KagiApp {
             head: format!("branch: {}", self.view().status_summary.branch),
             dirty: "unchanged".to_string(),
         };
+        if pull_confirm.is_some() {
+            // A newly admitted request may share the runner's frozen clock
+            // with a completed one; joining the same live waiter above does
+            // not reset dismissal. Unrelated fetches never erase its owner.
+            self.start_busy_request(super::busy::BusyIdentity::pull((
+                owner,
+                visit,
+                request_started,
+            )));
+        }
         self.fetch_in_flight = Some(FetchFlight {
             owner,
             visit,

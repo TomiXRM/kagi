@@ -492,7 +492,7 @@ impl KagiApp {
         });
         // The PR merge plan is a merge plan: it takes the merge planning tag,
         // and with it the existing EN/JA snackbar label.
-        self.planning = Some("merge-plan");
+        self.mark_planning_busy("merge-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(
             kagi_ui_core::i18n::busy_label("merge-plan"),
         ));

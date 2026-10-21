@@ -29,6 +29,10 @@ pub const TOAST_ROUTINE_LIFETIME: Duration = Duration::from_secs(4);
 /// A card was removed, including cap eviction; the parent repairs lost focus.
 pub(super) struct ToastRemoved(Vec<(gpui::WindowId, gpui::FocusHandle)>);
 impl ToastRemoved {
+    pub(super) fn from_control(focus: &super::types::ToastCloseFocus) -> Self {
+        Self(std::mem::take(&mut *focus.borrow_mut()))
+    }
+
     pub fn was_focused(&self, window: &gpui::Window) -> bool {
         let id = window.window_handle().window_id();
         self.0

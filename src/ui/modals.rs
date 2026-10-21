@@ -87,6 +87,8 @@ pub struct PullPlanModal {
     /// Successful-fetch origin: requesting tab, visit, and original request time.
     /// Only these confirmations may survive their own unchanged repository reload.
     pub fetch_owner: Option<(crate::app::SessionId, u64, std::time::Instant)>,
+    /// Presentation origin of an SSH planning request, independent of approval.
+    pub progress_request: Option<crate::app::RequestId>,
 }
 
 /// State for an in-progress operation-history Undo/Redo confirmation

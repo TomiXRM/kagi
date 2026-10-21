@@ -1308,6 +1308,10 @@ pub struct KagiApp {
     /// The lease's presentation mirror — the in-flight write's name, for the
     /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
     pub write_busy_op: Option<&'static str>,
+    busy_write_origin: Option<(crate::app::OperationId, busy::BusyIdentity)>,
+    busy_plan_request: Option<crate::app::RequestId>,
+    hidden_busy_job: Option<busy::BusyIdentity>,
+    busy_close_focus: types::ToastCloseFocus,
     /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
     /// lease, but it owns the modal slot. Ask [`KagiApp::op_latched`], never
     /// this field alone (ADR-0196).
@@ -1592,6 +1596,10 @@ impl KagiApp {
             github_host_logins: Default::default(),
             github_host_login_requests: Default::default(),
             write_busy_op: None,
+            busy_write_origin: None,
+            busy_plan_request: None,
+            hidden_busy_job: None,
+            busy_close_focus: Default::default(),
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),

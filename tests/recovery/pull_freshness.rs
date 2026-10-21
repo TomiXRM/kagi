@@ -917,7 +917,7 @@ fn click_current_ff(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     click_branch_sync(cx, window, "main", true);
 }
 
-fn click_branch_sync(
+pub(super) fn click_branch_sync(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
     branch: &str,

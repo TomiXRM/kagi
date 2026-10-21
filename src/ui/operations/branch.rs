@@ -434,6 +434,8 @@ impl KagiApp {
             return;
         }
 
+        let progress_identity = modal.fetch_owner.map(crate::ui::busy::BusyIdentity::pull);
+        let progress_hidden = self.busy_request_hidden(progress_identity);
         self.clear_branch_plan_modal();
         self.status_footer = FooterStatus::Busy(
             i18n::op::user_text::operations::branch_progress(op_name, &modal.branch_name).into(),
@@ -449,7 +451,7 @@ impl KagiApp {
             BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => i18n::Op::Push,
         };
         let request_started = modal.fetch_owner.map(|(_, _, started)| started);
-        self.finish_run(
+        let admitted = self.finish_run(
             cx,
             op_name,
             op,
@@ -485,6 +487,9 @@ impl KagiApp {
                 presentation
             },
         );
+        if admitted {
+            self.continue_busy_request(progress_identity, progress_hidden);
+        }
     }
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
@@ -959,7 +964,7 @@ impl KagiApp {
             return;
         };
         let repo_path = owner.path.clone();
-        self.planning = Some("delete-branch-plan");
+        self.mark_planning_busy("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from(Msg::BusyDeleteBranchPlan.t()),
         ));

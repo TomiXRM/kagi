@@ -25,6 +25,11 @@ impl KagiApp {
         repo_path: PathBuf,
     ) -> bool {
         use crate::app::{self, Delivery, FamilyEvidence, PullPresentation};
+        let progress_identity = modal
+            .progress_request
+            .map(crate::ui::busy::BusyIdentity::Planning)
+            .or_else(|| modal.fetch_owner.map(crate::ui::busy::BusyIdentity::pull));
+        let progress_hidden = self.busy_request_hidden(progress_identity);
         self.refresh_write_busy();
         // The lease answers for every other writer; the UI latch is what a
         // planning task in flight is refused by (ADR-0196 Wave 3).
@@ -75,6 +80,7 @@ impl KagiApp {
             }
         };
         self.mark_write_busy("pull", cx);
+        self.continue_busy_request(progress_identity, progress_hidden);
         // Admission consumes the decision. Keep the card on refusal, but never
         // leave a runnable confirmation above an admitted background writer.
         self.clear_pull_modal();

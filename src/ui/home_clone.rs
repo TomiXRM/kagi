@@ -162,6 +162,7 @@ impl KagiApp {
             request.dest.display()
         );
         self.home_github.cloning = Some(card);
+        self.hidden_busy_job = None;
         let run = request.clone();
         let context = self.clone_card_context();
         #[cfg(feature = "gui-e2e")]

@@ -66,7 +66,7 @@ impl KagiApp {
             .attachment(intent.owner)
             .expect("checked owner");
         let (source, into) = (source.clone(), into.clone());
-        self.planning = Some("merge-plan");
+        self.mark_planning_busy("merge-plan");
         // This is the queue's own plan job, not an external PlanSlotTaken.
         self.op_queue.planning = true;
         klog!("async: merge plan started for {}", source);

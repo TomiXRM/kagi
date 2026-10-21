@@ -624,3 +624,30 @@ remote names, local upstreams and display shorthand never replace canonical
 identity. Ordinary merge-capable Pull and explicit strict-FF remain different
 policies; this change does not rewrite Git configuration or their admission.
 
+
+## Amendment — 2026-10-21: dismiss progress, not the request (#1719)
+
+- The existing Busy snackbar owns its own accessible EN/JA close Button. Closing
+  it changes presentation only: no cancellation, Skip probe, lease, approval,
+  durable receipt, final result, recording-failure notice or Quit guard changes.
+  Reuse the existing toast-control focus adapter and removal event, including
+  Settings; repair focus when the control disappears or work finishes.
+- Hidden read state belongs to the existing per-tab tracked read. Hide every
+  read already represented by the card, including simultaneous unfinished reads,
+  not just the oldest slow one. Phase changes do not reset dismissal. A read
+  admitted afterward and another tab's own read remain independently visible.
+- Global work uses its existing admitted operation identity. A local Pull's
+  `(session, visit, request_started)` follows the freshness waiter and confirmation
+  into its distinct execution lease, including non-current branch fast-forward.
+  Remote planning retains its admitted request identity into approved execution;
+  clone retains its current card's start identity. No operation-name matching,
+  notification controller or parallel delivery store is introduced.
+- Retire suppression with the actual owner. A new admission cannot inherit a
+  completed same-clock request's hidden state; joining the same live waiter does
+  not resurrect it. An unrelated Fetch must not erase a still-owned Pull's
+  dismissal. The existing independent toast entity stays mounted for later
+  results, without retaining the closed Busy card's paint or pointer target.
+- Closing progress never dismisses terminal feedback. Failed/Unknown/Partial
+  and oplog append failure keep the one-request/result and inspect/ack contracts
+  above. Natural completion retires the work; hiding is not completion evidence.
+

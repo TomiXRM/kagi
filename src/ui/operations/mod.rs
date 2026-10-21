@@ -619,7 +619,11 @@ impl KagiApp {
                             (
                                 Recording::Appended { entry, .. },
                                 Some(FooterStatus::Success(text)),
-                            ) if matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) => {
+                            ) if matches!(
+                                entry.outcome,
+                                kagi_git::oplog::OpOutcome::Success { .. }
+                            ) =>
+                            {
                                 Some(text.clone())
                             }
                             _ => None,

@@ -965,8 +965,7 @@ fn open_branch_sync_menu(
         Some(None),
         "the selected Pull consumer must be enabled before accepting its intent"
     );
-    e2e::control_bounds(window.window_id(), id)
-        .expect("branch context-menu Pull action is drawn")
+    e2e::control_bounds(window.window_id(), id).expect("branch context-menu Pull action is drawn")
 }
 
 /// Deliver an already-admitted branch-menu intent after a background fetch
@@ -982,7 +981,10 @@ fn join_existing_fetch(
     let _ = open_branch_sync_menu(cx, window, "main", ff_only);
     let intent = app.update(cx, |app, cx| {
         assert!(!app.app_sessions.has_leases());
-        let intent = app.branch_menu.take().expect("the actual selected branch intent");
+        let intent = app
+            .branch_menu
+            .take()
+            .expect("the actual selected branch intent");
         assert!(app.fetch_async_for(true, None, cx));
         intent
     });
@@ -1128,8 +1130,11 @@ pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
     clean_updates_from(cx, click_pull);
     clean_updates_from(cx, click_branch_pull);
     for ff_only in [false, true] {
-        let click: fn(&mut VisualTestAppContext, AnyWindowHandle) =
-            if ff_only { click_current_ff } else { click_pull };
+        let click: fn(&mut VisualTestAppContext, AnyWindowHandle) = if ff_only {
+            click_current_ff
+        } else {
+            click_pull
+        };
         for join_existing in [false, true] {
             clean_updates_from_timed(cx, click, true, join_existing, ff_only);
         }

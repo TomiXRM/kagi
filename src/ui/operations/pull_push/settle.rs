@@ -309,9 +309,9 @@ impl KagiApp {
     ) {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
         let success = matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. });
-        let shown = success_text
-            .filter(|_| success)
-            .unwrap_or_else(|| crate::ui::operations::outcome_text(&entry.op, &entry.outcome).into());
+        let shown = success_text.filter(|_| success).unwrap_or_else(|| {
+            crate::ui::operations::outcome_text(&entry.op, &entry.outcome).into()
+        });
         self.push_operation_result(
             &entry,
             &entry.op,

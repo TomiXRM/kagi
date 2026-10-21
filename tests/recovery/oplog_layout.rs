@@ -377,7 +377,10 @@ fn assert_inspection_only(
         .read_from_clipboard()
         .and_then(|item| item.text())
         .expect("copied receipt");
-    assert_ne!(copied, "before-copy", "the actual Copy button writes the clipboard");
+    assert_ne!(
+        copied, "before-copy",
+        "the actual Copy button writes the clipboard"
+    );
     let moves = recorded.ref_moves.as_ref().expect("recorded ref moves");
     assert!(!moves.is_empty());
     for movement in moves {

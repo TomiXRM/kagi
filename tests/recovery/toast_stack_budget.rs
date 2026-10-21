@@ -604,7 +604,10 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
             });
             cx.update_window(window, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    assert!(app.fetch_async_for(false, None, cx), "manual Fetch is admitted");
+                    assert!(
+                        app.fetch_async_for(false, None, cx),
+                        "manual Fetch is admitted"
+                    );
                     if let Some(other) = &other {
                         assert!(app.open_repository(other.path().to_path_buf(), cx));
                     } else {

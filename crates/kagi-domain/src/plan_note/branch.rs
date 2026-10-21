@@ -79,6 +79,12 @@ pub enum BranchNote {
         tip: String,
         commits: usize,
     },
+    /// Refuse before writes when ordinary-ref reachability changed since approval.
+    DeleteReachabilityChanged {
+        name: String,
+        approved: usize,
+        current: usize,
+    },
     /// warning (`plan_delete_branch`) — the branch has an upstream that is not
     /// deleted by this operation.
     DeleteKeepsRemote {
@@ -150,6 +156,10 @@ impl BranchNote {
             BranchNote::DeleteUnmerged { name, tip, commits } => format!(
                 crate::advice_template_en!(DeleteUnmerged),
                 name, tip, commits
+            ),
+            BranchNote::DeleteReachabilityChanged { name, approved, current } => format!(
+                crate::advice_template_en!(BranchDeleteReachabilityChanged),
+                name, approved, current
             ),
             BranchNote::DeleteSquashMerged { name, squash } => format!(
                 crate::advice_template_en!(BranchDeleteSquashMerged),

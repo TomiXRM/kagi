@@ -371,8 +371,8 @@ pub(crate) fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitE
 /// - HEAD is a **root commit** (no parent) when folding staged changes is not
 ///   possible — root-commit amend keeps the single-parent invariant simple, so
 ///   it is refused in MVP.
-/// - HEAD commit has been **pushed** to its upstream (ADR-0040 案B) — amending
-///   published history is refused; commit a new fixup instead.
+/// - HEAD is published through its configured upstream or any remote-tracking
+///   ref, and the current branch is protected. Ordinary branches warn instead.
 /// - `Staged` / `Both`: nothing is staged (nothing to fold in).
 /// - `MessageOnly` / `Both`: the new message is empty.
 /// - Checklist (ADR-0043) blockers, run over the staged contents.
@@ -422,16 +422,16 @@ pub fn plan_amend(
     }
 
     // ── 3. Resolve HEAD commit (only when attached) ──────────
-    let (head_commit_opt, branch_name_opt) = match &head {
-        Head::Attached { target, branch } => {
+    let head_commit_opt = match &head {
+        Head::Attached { target, .. } => {
             let oid = git2::Oid::from_str(target)
                 .map_err(|e| GitError::Other(format!("HEAD OID parse failed: {}", e.message())))?;
             let commit = repo.find_commit(oid).map_err(|e| {
                 GitError::Other(format!("HEAD commit lookup failed: {}", e.message()))
             })?;
-            (Some(commit), Some(branch.clone()))
+            Some(commit)
         }
-        _ => (None, None),
+        _ => None,
     };
 
     let mut old_short = String::new();
@@ -466,43 +466,14 @@ pub fn plan_amend(
             }));
         }
 
-        // Pushed check (ADR-0040 案B): refuse if HEAD is reachable from upstream.
-        // Mirrors plan_undo_commit's graph_descendant_of(upstream, head) test.
-        if let Some(branch_name) = &branch_name_opt {
-            if let Ok(branch) = repo.find_branch(branch_name, BranchType::Local) {
-                if let Ok(upstream) = branch.upstream() {
-                    if let Some(upstream_oid) = upstream.get().target() {
-                        let head_oid = commit.id();
-                        let pushed = upstream_oid == head_oid
-                            || repo
-                                .graph_descendant_of(upstream_oid, head_oid)
-                                .unwrap_or(false);
-                        if pushed {
-                            // ADR-0040 案C: a pushed amend is allowed on an
-                            // ordinary branch — the result is published with
-                            // the force-with-lease push of ADR-0130 — but
-                            // never on a branch other people build on, where
-                            // no confirmation makes the rewrite recoverable
-                            // for the clones that already fetched it.
-                            if kagi_domain::refs::is_protected_branch(branch_name) {
-                                blockers.push(PlanNote::History(
-                                    HistoryNote::PushedHistoryRewrite {
-                                        sha: old_short.clone(),
-                                        op: HistoryOp::Amend,
-                                    },
-                                ));
-                            } else {
-                                warnings.push(PlanNote::History(
-                                    HistoryNote::AmendDivergesFromRemote {
-                                        sha: old_short.clone(),
-                                        branch: branch_name.clone(),
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-                // No upstream → local-only branch → always allowed.
+        if let Some(note) = amend_publication_note(repo, &head)? {
+            if matches!(
+                note,
+                PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
+            ) {
+                blockers.push(note);
+            } else {
+                warnings.push(note);
             }
         }
     }
@@ -534,9 +505,11 @@ pub fn plan_amend(
         // SHA is only known after execute; we predict "new" as a placeholder
         // because the new OID depends on tree+committer.  The旧→新 transition is
         // spelled out in the dirty line and recovery text.
-        match &branch_name_opt {
-            Some(b) => format!("branch: {} (amended commit, new SHA)", b),
-            None => current.head.clone(),
+        match &head {
+            Head::Attached { branch, .. } => {
+                format!("branch: {} (amended commit, new SHA)", branch)
+            }
+            _ => current.head.clone(),
         }
     };
 
@@ -614,17 +587,93 @@ pub fn plan_amend(
             kagi_domain::plan_note::commit::CommitNote::IdentityUnavailable,
         ))
     {
-        preflight_amend(repo, &plan)?;
+        preflight_commit(repo, &plan)?;
     }
     Ok(plan)
 }
 
+/// Publication is evidence from any known remote, not just the configured
+/// upstream. A removed upstream does not make an already published commit local.
+fn amend_publication_note(repo: &Repository, head: &Head) -> Result<Option<PlanNote>, GitError> {
+    let Head::Attached { target, branch } = head else {
+        return Ok(None);
+    };
+    let head_oid = git2::Oid::from_str(target)
+        .map_err(|e| GitError::Other(format!("HEAD OID parse failed: {}", e.message())))?;
+    let contains_head = |reference: &git2::Reference<'_>| -> Result<bool, GitError> {
+        let tip = reference
+            .peel_to_commit()
+            .map_err(|e| {
+                GitError::Other(format!("publication ref lookup failed: {}", e.message()))
+            })?
+            .id();
+        Ok(tip == head_oid
+            || repo.graph_descendant_of(tip, head_oid).map_err(|e| {
+                GitError::Other(format!("publication graph lookup failed: {}", e.message()))
+            })?)
+    };
+    let local = repo
+        .find_branch(branch, BranchType::Local)
+        .map_err(|e| GitError::Other(format!("branch lookup failed: {}", e.message())))?;
+    let mut published = match local.upstream() {
+        Ok(upstream) => contains_head(upstream.get())?,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => false,
+        Err(e) => {
+            return Err(GitError::Other(format!(
+                "upstream lookup failed: {}",
+                e.message()
+            )));
+        }
+    };
+    if !published {
+        let references = repo.references_glob("refs/remotes/*").map_err(|e| {
+            GitError::Other(format!("remote ref enumeration failed: {}", e.message()))
+        })?;
+        for reference in references {
+            let reference = reference.map_err(|e| {
+                GitError::Other(format!("remote ref lookup failed: {}", e.message()))
+            })?;
+            if contains_head(&reference)? {
+                published = true;
+                break;
+            }
+        }
+    }
+    if !published {
+        return Ok(None);
+    }
+    let sha = target.get(..8).unwrap_or(target).to_string();
+    Ok(Some(PlanNote::History(
+        if kagi_domain::refs::is_protected_branch(branch) {
+            HistoryNote::PushedHistoryRewrite {
+                sha,
+                op: HistoryOp::Amend,
+            }
+        } else {
+            HistoryNote::AmendDivergesFromRemote {
+                sha,
+                branch: branch.clone(),
+            }
+        },
+    )))
+}
+
 pub fn preflight_amend(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
     if plan.approved_index_digest.is_some() {
-        preflight_commit(repo, plan)
+        preflight_commit(repo, plan)?;
     } else {
-        super::commit::check_commit_identity(repo)
+        super::commit::check_commit_identity(repo)?;
     }
+    if let Some(note) = amend_publication_note(repo, &resolve_head(repo)?)? {
+        let blocked = matches!(
+            note,
+            PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
+        );
+        if blocked || !plan.warnings.contains(&note) {
+            return Err(GitError::Blocked(Box::new(note)));
+        }
+    }
+    Ok(())
 }
 
 /// Execute an amend through Git with hooks/signing (ADR-0039 amendment).

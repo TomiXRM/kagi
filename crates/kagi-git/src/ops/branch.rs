@@ -1002,7 +1002,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     })
 }
 
-/// Commits whose only ref reachability is the branch being removed.
+/// Commits losing ordinary ref reachability, regardless of recovery retention.
 fn delete_unreachable_commits(
     repo: &Repository,
     name: &str,
@@ -1016,7 +1016,7 @@ fn delete_unreachable_commits(
         .map_err(|e| GitError::Other(e.to_string()))?
     {
         let reference = reference.map_err(|e| GitError::Other(e.to_string()))?;
-        if super::branch_delete_safety::depends_on(repo, reference.clone(), &deleting)? {
+        if !super::branch_delete_safety::retains_after_delete(repo, reference.clone(), &deleting)? {
             continue;
         }
         if let Ok(commit) = reference.peel_to_commit() {
@@ -1032,6 +1032,35 @@ fn delete_unreachable_commits(
         oid.map(|_| count + 1)
             .map_err(|e| GitError::Other(e.to_string()))
     })
+}
+
+pub(crate) fn delete_branch_loss_count(plan: &OperationPlan) -> usize {
+    plan.warnings
+        .iter()
+        .find_map(|note| match note {
+            PlanNote::Branch(BranchNote::DeleteUnmerged { commits, .. }) => Some(*commits),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// Bind approval to the loss count, not merely the unchanged HEAD and tip.
+pub(crate) fn preflight_delete_reachability(
+    plan: &OperationPlan,
+    name: &str,
+    current: usize,
+) -> Result<(), GitError> {
+    let approved = delete_branch_loss_count(plan);
+    if approved != current {
+        return Err(GitError::Blocked(Box::new(PlanNote::Branch(
+            BranchNote::DeleteReachabilityChanged {
+                name: name.to_owned(),
+                approved,
+                current,
+            },
+        ))));
+    }
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1121,6 +1150,16 @@ pub(crate) fn execute_delete_branch(
         return Err(GitError::Other(
             "worktree registrations changed; please re-plan".into(),
         ));
+    }
+    // Recheck the unmerged route under the existing locks before retention or
+    // reflog/config writes. Merged/squash-proven routes keep their own proof.
+    if plan
+        .warnings
+        .iter()
+        .any(|note| matches!(note, PlanNote::Branch(BranchNote::DeleteUnmerged { .. })))
+    {
+        preflight_delete_reachability(plan, name, delete_unreachable_commits(repo, name, tip)?)
+            .map_err(|error| GitError::Preflight(Box::new(error)))?;
     }
     let reference = super::backup::retain_object(repo, &super::backup::operation_id(), 0, tip)?;
     backup_refs.push(reference.clone());

@@ -737,3 +737,131 @@ fn test_plan_amend_pushed_on_protected_branch_says_why() {
 
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
+
+fn assert_review_1695_publication_policy(path: &Path, protected: bool) {
+    use kagi_domain::plan_note::{HistoryNote, PlanNote};
+
+    let repo = Repository::open(path).unwrap();
+    let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("review reword")).unwrap();
+    assert_eq!(
+        plan.blockers.iter().any(|note| matches!(
+            note,
+            PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
+        )),
+        protected,
+        "publication must block protected branches: {:?}",
+        plan.blockers
+    );
+    assert_eq!(
+        plan.warnings.iter().any(|note| matches!(
+            note,
+            PlanNote::History(HistoryNote::AmendDivergesFromRemote { .. })
+        )),
+        !protected,
+        "publication must warn on ordinary branches: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn review_1695_amend_remote_ref_without_upstream() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for branch in ["main", "feat/x"] {
+        let r = setup_local();
+        git(&r.path, &["branch", "-m", branch]);
+        git(
+            &r.path,
+            &["update-ref", "refs/remotes/other/published", "HEAD"],
+        );
+        assert_review_1695_publication_policy(&r.path, branch == "main");
+    }
+}
+
+#[test]
+fn review_1695_amend_upstream_unset_after_push() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for branch in ["main", "feat/x"] {
+        let r = setup_with_remote_on(branch);
+        git(&r.local, &["branch", "--unset-upstream"]);
+        assert_review_1695_publication_policy(&r.local, branch == "main");
+    }
+}
+
+#[test]
+fn review_1695_amend_other_remote_descendant_of_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for branch in ["main", "feat/x"] {
+        let r = setup_with_remote_on(branch);
+        git(&r.local, &["reset", "--hard", "HEAD~1"]);
+        write_file(
+            &r.local,
+            "target.txt",
+            "unpublished on configured upstream\n",
+        );
+        commit_all(&r.local, "amend target");
+        let target = head_sha(&r.local);
+        write_file(&r.local, "descendant.txt", "published descendant\n");
+        commit_all(&r.local, "descendant");
+        git(
+            &r.local,
+            &["update-ref", "refs/remotes/other/review", "HEAD"],
+        );
+        git(&r.local, &["reset", "--hard", &target]);
+        assert_review_1695_publication_policy(&r.local, branch == "main");
+    }
+}
+
+#[test]
+fn review_1695_amend_genuinely_local_head_is_unpublished() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup_with_remote_on("main");
+    write_file(&r.local, "local.txt", "local only\n");
+    commit_all(&r.local, "local target");
+    git(&r.local, &["branch", "--unset-upstream"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("local reword")).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+}
+
+#[test]
+fn review_1695_amend_preflight_rechecks_publication() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for branch in ["main", "feat/x"] {
+        let r = setup_local();
+        git(&r.path, &["branch", "-m", branch]);
+        let repo = Repository::open(&r.path).unwrap();
+        let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("reword")).unwrap();
+        git(
+            &r.path,
+            &["update-ref", "refs/remotes/other/published", "HEAD"],
+        );
+        let error = kagi_git::ops::preflight_amend(&repo, &plan)
+            .expect_err("new publication must require re-planning");
+        let note = error
+            .blocker()
+            .expect("publication refusal must stay typed");
+        use kagi_domain::plan_note::{HistoryNote, PlanNote};
+        if branch == "main" {
+            assert!(matches!(
+                note,
+                PlanNote::History(HistoryNote::PushedHistoryRewrite { .. })
+            ));
+        } else {
+            assert!(matches!(
+                note,
+                PlanNote::History(HistoryNote::AmendDivergesFromRemote { .. })
+            ));
+        }
+    }
+}

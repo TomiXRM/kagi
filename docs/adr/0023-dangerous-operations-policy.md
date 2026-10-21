@@ -49,12 +49,20 @@ identity / tip / digest / lease の再検査と blocker は緩和しない。
 | force-with-lease / remote 破壊 / 公開済み履歴の書き換え | 二段を維持 | 他者への影響。force-with-lease の最終確認は remote branch と承認時の正確な期待 tip を表示 |
 | backup なしの削除 | 二段を維持 | 復元手段がないことと削除対象 |
 
-ここで「到達不能になる commit 数」は recovery ref を作る前に計算する通常 ref の
-到達可能性であり、0 件を「未 merge」というだけで再確認しない。1 件以上は従来の
-二段確認を維持する。Discard は backup から内容を完全復元できる一方、branch 削除は
-recovery ref を知らないと履歴を見失うため、この到達可能性も確認基準とする。
+ここで「到達不能になる commit 数」は通常 ref の到達可能性であり、新規作成前か
+既存かを問わず backup / snapshot / recovery / oplog 専用 ref を保持先に数えない。
+0 件を「未 merge」というだけで再確認しない。1 件以上は従来の二段確認を維持する。
+Discard は backup から内容を完全復元できる一方、branch 削除は recovery ref を
+知らないと履歴を見失うため、この到達可能性も確認基準とする。実行前にも承認した
+到達不能 commit 数を再検査し、通常 ref の削除・移動で変化したら typed refusal と
+して新しい plan の確認を要求する。
 文言は条件に一致させ、回復可能な plan に「取り消せません」
 「Permanently」を併記しない。force-with-lease の復元も remote が再び動いていない
 場合の条件付き操作であり、他者の取得済み履歴までは元に戻せないため二段のままとする。
 EN/JA の同一条件で同じ確認段数を使い、JA に英語の追確認説明を残さない。
+
+「未公開 Amend」は upstream 設定の有無から推定しない。設定済み upstream に加え、
+すべての remote-tracking ref の履歴に HEAD が含まれていないことを検査する。
+upstream が未設定・解除済みでも remote-tracking ref が HEAD またはその子孫を
+指していれば公開済みとして二段確認を維持し、protected branch の blocker も維持する。
 

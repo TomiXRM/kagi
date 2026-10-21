@@ -44,12 +44,45 @@ pub(super) fn checked_out_at(
 /// Follow each hop (resolve() alone loses the dependency information).
 pub(super) fn depends_on<'repo>(
     repo: &'repo Repository,
-    mut reference: git2::Reference<'repo>,
+    reference: git2::Reference<'repo>,
     deleting: &str,
+) -> Result<bool, GitError> {
+    matches_reference(repo, reference, |name| name == deleting.as_bytes())
+}
+
+/// Recovery roots and aliases through them do not provide ordinary retention.
+/// PR refs remain ordinary roots; do not exclude the entire `refs/kagi/` tree.
+pub(super) fn retains_after_delete<'repo>(
+    repo: &'repo Repository,
+    reference: git2::Reference<'repo>,
+    deleting: &str,
+) -> Result<bool, GitError> {
+    matches_reference(repo, reference, |name| {
+        name == deleting.as_bytes()
+            || [
+                super::backup::PREFIX,
+                super::snapshot::SNAPSHOT_REF_PREFIX,
+                "refs/kagi/recovery/",
+                "refs/kagi/oplog/",
+                "refs/backups/",
+                "refs/snapshots/",
+                "refs/recovery/",
+                "refs/oplog/",
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix.as_bytes()))
+    })
+    .map(|excluded| !excluded)
+}
+
+fn matches_reference<'repo>(
+    repo: &'repo Repository,
+    mut reference: git2::Reference<'repo>,
+    matches: impl Fn(&[u8]) -> bool,
 ) -> Result<bool, GitError> {
     let mut visited = std::collections::HashSet::new();
     loop {
-        if reference.name().ok() == Some(deleting) {
+        if matches(reference.name_bytes()) {
             return Ok(true);
         }
         let Some(target) = reference
@@ -59,7 +92,7 @@ pub(super) fn depends_on<'repo>(
         else {
             return Ok(false);
         };
-        if target == deleting {
+        if matches(target.as_bytes()) {
             return Ok(true);
         }
         if !visited.insert(target.clone()) {

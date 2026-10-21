@@ -131,6 +131,13 @@ the fixed operation still arms. Never represent an arm-only check as execution.
 real backend Push plan through the existing modal setter. A normal safe Push
 entry now runs directly (#1693); these fixtures must not perform that write
 just to obtain a confirmation card. They prove presentation, not Push routing.
+Backend regression filter `cargo test -p kagi-git review_1695_ -- --nocapture`
+also covers recovery-only ref retention versus ordinary zero-loss refs, stale
+branch reachability before execution, and Amend publication without upstream
+or through another remote's descendant of HEAD. Publication/reachability
+changes after approval must refuse before writes, not reuse a one-stage plan.
+For safety fixes record assertion failures before implementation and successes
+afterward; a compile error or a no-op filtered run is not red/green evidence.
 
 
 For #1646 use `KAGI_GUI_E2E_ONLY='sync_footer_cancel_visible,modal_compact,modal_scale_notes,modal_scale_targets,sync_to_remote_armed,modal_polish_editor_fs,modal_polish_remote,modal_polish_stash_after,primary_button_states,create_branch_warnings,branch_rename_neutral_state,stash_entry_identity,pull_fetch_preserves_conflict_blocker'`.

@@ -65,6 +65,9 @@ macro_rules! advice_template_en {
     (DeleteUnmerged) => {
         "Branch '{}' is unmerged (tip {}). Deleting it makes {} commits unreachable from other refs; a recovery ref will retain them. Confirm twice to delete."
     };
+    (BranchDeleteReachabilityChanged) => {
+        "Branch '{}' reachability changed after confirmation ({} commits losing ordinary-ref reachability approved, {} now). Review a new delete plan before deleting."
+    };
     // `StashNote::UntrackedExcluded` — count.
     (UntrackedExcluded) => {
         "{} untracked file(s) will NOT be included in the stash \

@@ -295,7 +295,11 @@ fn staged_checkout_fixture(path: &str, overlap: bool) -> tempfile::TempDir {
         git(repo, &["add", path]);
         path
     };
-    std::fs::write(repo.join(local), "unstaged bytes\n").unwrap();
+    // An unstaged rename entry can expose the source separately and mask
+    // missing Renamed::from handling. Keep that negative case staged-only.
+    if path != "README.md" || !overlap {
+        std::fs::write(repo.join(local), "unstaged bytes\n").unwrap();
+    }
     fixture
 }
 

@@ -4299,7 +4299,9 @@ dirty work stays quiet, while unknown cautions require confirmation and blockers
 refuse. Backend checkout tests also cover file/directory collisions, an empty-tree
 baseline for unborn HEAD, and paths unchanged between HEAD and the destination.
 Also exercise staged child-vs-target-file and staged file-vs-target-directory
-obstructions, plus a staged rename whose source is rewritten by the target.
+obstructions, plus a purely staged rename whose source is rewritten by the target.
+Do not add an unstaged edit to that negative rename fixture: its status entry can
+expose the source separately and mask missing `Renamed::from` handling.
 Idle double-click and queued admission must show the concrete-path blocker before
 starting a target writer; a disabled confirm must leave refs, index, bytes and
 receipt count unchanged (only an existing queued predecessor may have run).

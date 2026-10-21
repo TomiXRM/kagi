@@ -16,6 +16,7 @@ pub fn scenario_fetch_changed_ref_recording_failure(cx: &mut VisualTestAppContex
     let _settings = SettingsGuard::install();
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_language = i18n::lang();
+    let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
     for language in [Lang::En, Lang::Ja] {
         // The appended control must retain its ordinary result. The departed
         // failed-receipt case must not clear another repository's footer.
@@ -91,6 +92,8 @@ pub fn scenario_fetch_changed_ref_recording_failure(cx: &mut VisualTestAppContex
                 if recording_failure {
                     let notice = state.app_notice().expect("failed append requires acknowledgment");
                     assert!(notice.message.contains(&recorded_repo));
+                    assert!(notice.message.contains(&append_diagnostic),
+                        "acknowledgment must retain the actual failed append diagnostic");
                     assert!(toasts.is_empty(), "no green or error result beside required acknowledgment");
                     if departed {
                         assert_eq!(format!("{:?}", state.status_footer), before_presentation.2);
@@ -100,13 +103,14 @@ pub fn scenario_fetch_changed_ref_recording_failure(cx: &mut VisualTestAppContex
                     }
                     match &rows[0].outcome {
                         OpOutcome::Partial { after, error } => {
-                            assert!(!error.is_empty());
+                            assert!(error.contains(&append_diagnostic),
+                                "the attempted row must retain the append's actual IO cause");
                             assert_eq!(after.head, rows[0].before.head);
                             assert_eq!(after.dirty, rows[0].before.dirty);
                         }
                         other => panic!("an unsaved success must remain explicitly incomplete: {other:?}"),
                     }
-                    assert!(rows[0].ref_moves.is_none(), "unsaved ref moves cannot enable restore");
+                    assert!(rows[0].ref_moves.is_none(), "an unsaved attempt has no restore ref information");
                 } else {
                     assert!(state.app_notice().is_none());
                     assert!(matches!(rows[0].outcome, OpOutcome::Success { .. }));

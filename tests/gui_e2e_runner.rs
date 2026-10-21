@@ -2526,9 +2526,9 @@ mod macos {
                 ),
             ),
             (
-                "run_success_unrecorded_keeps_partial_footer",
+                "run_success_unrecorded_requires_acknowledgment",
                 Box::new(
-                    crate::recovery_operations::scenario_run_success_unrecorded_keeps_partial_footer,
+                    crate::recovery_operations::scenario_run_success_unrecorded_requires_acknowledgment,
                 ),
             ),
             (

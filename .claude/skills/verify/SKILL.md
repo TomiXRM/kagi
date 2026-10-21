@@ -188,7 +188,7 @@ Changes/Inspector file cards are not the shared MenuGroup renderer: Changes
 places its red Discard last without a separator; Inspector has no danger action.
 Branch Delete stays in the top-level management group by ADR-0049 / #1253.
 
-For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure,run_success_unrecorded_keeps_partial_footer,fetch_failure_reaches_the_oplog,pull_current_'`
+For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure,run_success_unrecorded_requires_acknowledgment,fetch_failure_reaches_the_oplog,pull_current_'`
 with KEEP_GOING. `branch_menu_merge_labels` compares real merged, squash-proven
 and unmerged tips in EN/JA after the owner-bound classification; it temporarily
 moves the unmerged tip's tree object aside to prove read failure keeps the final

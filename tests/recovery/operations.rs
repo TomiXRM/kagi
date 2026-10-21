@@ -2185,14 +2185,16 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
     eprintln!("[gui-e2e] PASS create_branch_execution_failure_keeps_input");
 }
 
-/// ADR-0196 Wave 3 / #501: a write that happened but could not be recorded is
-/// presented as "changed but not recorded"; a family's own success footer must
-/// not paper over it. Delete-branch stands in for every `finish_run` family
-/// that sets a success footer. The oplog lock is held so the append fails.
-pub fn scenario_run_success_unrecorded_keeps_partial_footer(cx: &mut VisualTestAppContext) {
+/// ADR-0196 / #1698: a write that happened but could not be recorded needs
+/// explicit acknowledgement, not an ordinary partial/success footer or toast.
+/// Delete-branch exercises the generic finish_run family, including its
+/// family-specific success status after the failed append.
+pub fn scenario_run_success_unrecorded_requires_acknowledgment(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     git(&repo, &["branch", "merged-delete"]);
+    let durable_before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len();
+    let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
     let (app, window) = mount(cx, &repo);
     let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
         .join("operations.jsonl.lock");
@@ -2224,24 +2226,28 @@ pub fn scenario_run_success_unrecorded_keeps_partial_footer(cx: &mut VisualTestA
             .find(|e| e.op == "delete-branch")
             .expect("the attempted receipt is shown");
         assert!(
-            matches!(shown.outcome, OpOutcome::Partial { .. }),
+            matches!(&shown.outcome, OpOutcome::Partial { error, .. }
+                if error.contains(&append_diagnostic)),
             "unrecorded success is presented as partial: {:?}",
             shown.outcome
         );
-        match &app.status_footer {
-            FooterStatus::Success(text) => panic!("success footer hid the missing record: {text}"),
-            FooterStatus::Failed(text) | FooterStatus::Idle(text) => assert!(
-                text.contains("not recorded"),
-                "the footer must say the record is missing: {text}"
-            ),
-            other => panic!("unexpected footer: {other:?}"),
-        }
+        let notice = app.app_notice().expect("the missing receipt needs acknowledgment");
+        assert!(notice.message.contains(&repo.display().to_string()));
+        assert!(notice.message.contains(&append_diagnostic));
+        assert!(app.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
+            "no ordinary result may compete with required acknowledgment");
+        assert!(matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+            "the family's own status must not override failed recording");
+        assert!(shown.ref_moves.is_none(), "an unsaved attempt has no restore ref information");
     });
 
     drop(lock);
     let _ = std::fs::remove_file(&lock_path);
+    cx.run_until_parked();
+    assert_eq!(kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(), durable_before,
+        "the displayed attempt is neither a forged receipt nor an automatic retry");
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS run_success_unrecorded_keeps_partial_footer");
+    eprintln!("[gui-e2e] PASS run_success_unrecorded_requires_acknowledgment");
 }
 
 pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {

@@ -128,13 +128,14 @@ fn assert_recording_failure(
     repo: &std::path::Path,
     operation: &str,
 ) {
+    let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
     cx.read(|cx| {
         let app = app.read(cx);
         let notice = app
             .app_notice()
             .expect("failed append must be immediately visible");
         assert!(notice.message.contains(&repo.display().to_string()));
-        assert!(!notice.message.trim().is_empty());
+        assert!(notice.message.contains(&append_diagnostic));
         assert!(app.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
             "a failed append must not add a stopped or error toast beside its acknowledgment");
         let panel = app.op_log.as_ref().unwrap().read(cx);
@@ -145,7 +146,7 @@ fn assert_recording_failure(
             .collect();
         assert_eq!(entries.len(), 1, "no duplicate in-memory receipts");
         assert!(matches!(&entries[0].outcome,
-            kagi_git::oplog::OpOutcome::Partial { error, .. } if !error.is_empty()));
+            kagi_git::oplog::OpOutcome::Partial { error, .. } if error.contains(&append_diagnostic)));
     });
 }
 

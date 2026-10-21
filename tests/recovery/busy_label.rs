@@ -176,6 +176,7 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
 
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_language = i18n::lang();
+    let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
         for result in ["failed", "success", "unknown"] {
@@ -231,7 +232,7 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 let notice = state.app_notice().expect("recording failure notice");
                 let message = notice.message.as_str();
                 assert!(message.contains(&repo.display().to_string()), "{message}");
-                assert!(!message.trim().is_empty());
+                assert!(message.contains(&append_diagnostic));
                 assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
                     "the mandatory acknowledgment, not another result toast, owns this failure");
                 assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
@@ -250,7 +251,7 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                             "the missing durable receipt cannot discard the backend diagnostic");
                     }
                     (OpOutcome::Partial { after, error }, "success") => {
-                        assert!(!error.is_empty());
+                        assert!(error.contains(&append_diagnostic));
                         assert_eq!(after.head, "branch: main");
                         assert_eq!(after.dirty, "clean");
                     }

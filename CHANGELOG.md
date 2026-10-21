@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Changed
 
 - Consolidate Git/app integration fixtures, low-level working-tree snapshots and oplog collection in `tests/support`, including Pull freshness/conflict scenarios, preserving hermetic setup, environment/drop lifetimes and independent safety assertions. No product behavior changes. (#1704)
+- Share native GUI test repository witnesses, presentation matrices, squash evidence projections, writer waits and Pull/checkout fixtures while retaining scenario-owned safety assertions and teardown. No product behavior changes. (#1706)
 
 ## [0.47.0] - 2026-10-21
 

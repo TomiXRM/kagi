@@ -1,28 +1,10 @@
 //! #717: squash evidence settles only against the read model generation it scanned.
-use crate::evidence_support::{deferred, Reply};
+use crate::evidence_support::{ghost_rows, graph_signature, link, queue_scan};
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::VisualTestAppContext;
-use kagi::ui::{build_tab_view, e2e, graph_squash::GHOST_COLOR, KagiApp, TabViewState};
-use kagi_git::ops::SquashLink;
-use kagi_git::{Backend, CommitId};
+use kagi::ui::{build_tab_view, TabViewState};
+use kagi_git::Backend;
 use std::path::Path;
-
-type ScanResult = Result<Vec<SquashLink>, kagi_git::GitError>;
-type GraphSignature = Vec<(String, usize, usize, Vec<(usize, usize, String, usize)>)>;
-
-fn queue_scan(cx: &mut VisualTestAppContext) -> Reply<ScanResult> {
-    let (task, reply) = deferred(cx);
-    e2e::queue_squash_scan(task);
-    reply
-}
-
-fn link(tip: &CommitId, squash: &CommitId, branch: &str) -> SquashLink {
-    SquashLink {
-        branch: branch.into(),
-        tip: tip.0.clone(),
-        squash: squash.0.clone(),
-    }
-}
 
 fn build_view(repo: &Path) -> TabViewState {
     let mut backend = Backend::open(repo).expect("open fixture backend");
@@ -32,42 +14,6 @@ fn build_view(repo: &Path) -> TabViewState {
         .and_then(|name| name.to_str())
         .expect("fixture repository name");
     build_tab_view(&snapshot, name)
-}
-
-fn graph_signature(app: &KagiApp, owner: kagi::app::SessionId) -> GraphSignature {
-    app.reads
-        .get(Some(owner))
-        .rows
-        .iter()
-        .map(|row| {
-            (
-                row.id.0.clone(),
-                row.lane,
-                row.lane_count,
-                row.edges
-                    .iter()
-                    .map(|edge| {
-                        (
-                            edge.from_lane,
-                            edge.to_lane,
-                            format!("{:?}", edge.kind),
-                            edge.color,
-                        )
-                    })
-                    .collect(),
-            )
-        })
-        .collect()
-}
-
-fn ghost_rows(app: &KagiApp, owner: kagi::app::SessionId) -> Vec<String> {
-    app.reads
-        .get(Some(owner))
-        .rows
-        .iter()
-        .filter(|row| row.edges.iter().any(|edge| edge.color == GHOST_COLOR))
-        .map(|row| row.id.0.clone())
-        .collect()
 }
 
 fn accept_while_background_invalidates_same_revision_scan(cx: &mut VisualTestAppContext) {

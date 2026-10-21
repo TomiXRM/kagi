@@ -35,6 +35,17 @@ not the planning estimate of a 200-line net reduction. Files over 800 remain 115
 AST functions over 80 remain 875, with 19 parser-error files under pinned
 tree-sitter 0.25.2 / tree-sitter-rust 0.24.0. No physical move is counted as a saving.
 
+### Structure W3 (2026-10-21, #1706)
+
+Native conversation no-write witnesses now live in `tests/support/repository_state.rs`,
+reusing W1's explicit working-tree traversal options without decoding Git/file/oplog
+bytes. Plan-card presentation setup and squash scan projections live in focused
+`tests/recovery` support; writer polling uses caller-owned timeout/diagnostics.
+Pull remote/dirty setup and checkout refusal setup remain family-local. Expected
+values, failure-injection timing, scenario registration and unmount stay unchanged.
+The presentation guard restores language, zoom and palette before `SavedKeys` drops.
+No production ownership or migration-stage status changes.
+
 ## Invariants held at every step
 - `cargo test --workspace` green.
 - Every v0.2.0 feature (`inventory.md` §2) and safety guarantee (`§3`) preserved.

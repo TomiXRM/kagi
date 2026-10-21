@@ -113,18 +113,12 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
 
 /// The PR ref fetch must settle before Apply can be admitted.
 fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    loop {
-        cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).write_busy_op.is_none()) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the PR tab's ref fetch never settled"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(2));
-    }
+    crate::recovery_operations::wait_idle_with_timeout(
+        cx,
+        app,
+        std::time::Duration::from_secs(15),
+        "the PR tab's ref fetch never settled",
+    );
 }
 
 fn pr_edit_entries(repo: &Path) -> Vec<OpOutcome> {

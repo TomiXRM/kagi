@@ -401,8 +401,10 @@ mod tests {
             "no paste-able block for cmd.exe:\n{windows}"
         );
         assert!(
-            windows.contains("git cat-file -p <blob-sha>"),
-            "the explanation keeps its text:\n{windows}"
+            windows.contains(&kagi_ui_core::i18n::plan_recovery_text(
+                plan.recovery.as_ref()
+            )),
+            "the complete localized explanation stays even without shell commands:\n{windows}"
         );
 
         plan.equivalent_command = Some("git checkout -- main".into());

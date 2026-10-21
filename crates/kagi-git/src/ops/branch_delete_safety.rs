@@ -44,12 +44,96 @@ pub(super) fn checked_out_at(
 /// Follow each hop (resolve() alone loses the dependency information).
 pub(super) fn depends_on<'repo>(
     repo: &'repo Repository,
-    mut reference: git2::Reference<'repo>,
+    reference: git2::Reference<'repo>,
     deleting: &str,
+) -> Result<bool, GitError> {
+    matches_reference(repo, reference, |name| Ok(name == deleting.as_bytes()))
+}
+
+/// Recovery roots and aliases through them do not provide ordinary retention.
+/// PR refs remain ordinary roots; do not exclude the entire `refs/kagi/` tree.
+pub(super) fn retains_after_delete<'repo>(
+    repo: &'repo Repository,
+    reference: git2::Reference<'repo>,
+    deleting: &str,
+) -> Result<bool, GitError> {
+    matches_reference(repo, reference, |name| {
+        Ok(name == deleting.as_bytes()
+            || [
+                super::backup::PREFIX,
+                super::snapshot::SNAPSHOT_REF_PREFIX,
+                "refs/kagi/recovery/",
+                "refs/kagi/oplog/",
+                "refs/backups/",
+                "refs/snapshots/",
+                "refs/recovery/",
+                "refs/oplog/",
+            ]
+            .iter()
+            .any(|prefix| name.starts_with(prefix.as_bytes())))
+    })
+    .map(|excluded| !excluded)
+}
+
+/// Snapshot the names whose ordinary commit reachability execution may use.
+/// Include every symbolic hop and HEAD's targets, not just resolved terminals.
+pub(super) fn retention_refs(
+    repo: &Repository,
+    deleting: &str,
+) -> Result<std::collections::BTreeSet<String>, GitError> {
+    let mut references = std::collections::BTreeSet::new();
+    let mut collect = |name: &[u8]| {
+        let name = std::str::from_utf8(name)
+            .map_err(|_| GitError::Other("non-UTF-8 retention reference".into()))?;
+        if !references.contains(name) {
+            references.insert(name.to_owned());
+        }
+        Ok(false)
+    };
+    for reference in repo.references().map_err(error)? {
+        let reference = reference.map_err(error)?;
+        if retains_after_delete(repo, reference.clone(), deleting)?
+            && reference.peel_to_commit().is_ok()
+        {
+            matches_reference(repo, reference, &mut collect)?;
+        }
+    }
+    if let Ok(head) = repo.find_reference("HEAD") {
+        if head.peel_to_commit().is_ok() {
+            matches_reference(repo, head, &mut collect)?;
+        }
+    }
+    Ok(references)
+}
+
+/// Newly appearing roots or retargeted symbolic chains must not become
+/// unprotected witnesses in the final loss calculation.
+pub(super) fn require_retention_locked<'repo>(
+    repo: &'repo Repository,
+    reference: git2::Reference<'repo>,
+    locked: &std::collections::BTreeSet<String>,
+) -> Result<(), GitError> {
+    matches_reference(repo, reference, |name| {
+        let name = std::str::from_utf8(name)
+            .map_err(|_| GitError::Other("non-UTF-8 retention reference".into()))?;
+        if !locked.contains(name) {
+            return Err(GitError::Other(
+                "ordinary retention refs changed while locking; please re-plan".into(),
+            ));
+        }
+        Ok(false)
+    })
+    .map(|_| ())
+}
+
+fn matches_reference<'repo>(
+    repo: &'repo Repository,
+    mut reference: git2::Reference<'repo>,
+    mut matches: impl FnMut(&[u8]) -> Result<bool, GitError>,
 ) -> Result<bool, GitError> {
     let mut visited = std::collections::HashSet::new();
     loop {
-        if reference.name().ok() == Some(deleting) {
+        if matches(reference.name_bytes())? {
             return Ok(true);
         }
         let Some(target) = reference
@@ -59,7 +143,7 @@ pub(super) fn depends_on<'repo>(
         else {
             return Ok(false);
         };
-        if target == deleting {
+        if matches(target.as_bytes())? {
             return Ok(true);
         }
         if !visited.insert(target.clone()) {
@@ -107,13 +191,16 @@ fn delete_reflog(repo: &Repository, name: &str) -> Result<(), git2::Error> {
 
 pub(super) fn commit(transaction: git2::Transaction<'_>) -> Result<(), GitError> {
     #[cfg(test)]
-    if matches!(
-        FAULT.with(|fault| fault.take()),
-        Some(DeleteFault::CommitFailure)
-    ) {
-        return Err(GitError::Other(
-            "injected branch ref transaction failure".into(),
-        ));
+    if let Some(fault) = FAULT.with(|fault| fault.take()) {
+        match fault {
+            DeleteFault::CommitFailure => {
+                return Err(GitError::Other(
+                    "injected branch ref transaction failure".into(),
+                ));
+            }
+            DeleteFault::BeforeCommit(observe) => observe(),
+            DeleteFault::ReflogFailure => {}
+        }
     }
     transaction.commit().map_err(error)
 }
@@ -129,6 +216,7 @@ thread_local! {
 enum DeleteFault {
     CommitFailure,
     ReflogFailure,
+    BeforeCommit(fn()),
 }
 
 #[cfg(test)]

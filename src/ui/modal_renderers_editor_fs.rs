@@ -157,9 +157,7 @@ pub(crate) fn render_editor_fs_prompt_modal(
 }
 
 /// Render the Delete (Trash) confirmation. No `OperationPlan`/text input —
-/// single explicit confirm click (a Trash move is recoverable; see
-/// `KagiApp::confirm_editor_delete`'s doc comment for why this skips
-/// `DiscardModal`'s two-stage arm).
+/// a single explicit confirmation moves the target to recoverable Trash.
 pub(crate) fn render_editor_delete_confirm_modal(
     modal: EditorDeleteConfirmModal,
     cx: &mut Context<KagiApp>,

@@ -111,8 +111,9 @@ with KEEP_GOING. `modal_scale_targets` uses a real 500-file Discard plan and
 collects every row only when fully painted inside the list/clip, including the
 last path. `modal_scale_notes` deliberately supplies 200 typed warning/blocker
 notes as renderer stress input, not a claim about backend-generated counts.
-Its 940×660 matrix covers Apple Light/Dark, EN/JA, 100%/167%, inert blocked
-confirms and arm-only ready confirms, then cancels and verifies the fixture.
+Its 940×660 matrix covers Apple Light/Dark, EN/JA, 100%/167% and inert blocked
+confirms. Ready ref-only Reset is inspected then cancelled without executing
+the renderer-only stress payload (#1695).
 `modal_scale_note_paths` traverses 200 unique structured paths and the adjacent
 mandatory notes, both inside an independently bounded note panel and inside a
 Merge card's shared body scroller, across the same theme/locale/zoom matrix.
@@ -124,6 +125,38 @@ Retain target/required-warning visibility, default-closed supporting commands,
 and separate note/body scroll ownership. Tier B must inspect real narrow
 windows, reach the final file, exercise optional disclosure and compare both
 Apple themes/locales/zooms; never execute a stress plan to validate presentation.
+
+For #1695 use `KAGI_GUI_E2E_ONLY='destructive_modal_return,modal_scale_,plan_labels,neighbor_plan_labels,modal_no_fallthrough,blocked_plan_command,unmerged_branch_delete_armed,amend,discard,modal_compact,dialog_a11y_roles'`
+with KEEP_GOING. `modal_no_fallthrough` also confirms a real ref-only Reset once
+in EN/JA, checks retained index/working files and its single receipt, then arms
+Force-with-lease without writing the remote and checks the exact target/lease.
+`unmerged_branch_delete_armed` keeps the nonzero-loss two-stage regression and
+adds a remote-retained, zero-loss branch deleted with one confirmation.
+Amend/Discard scenarios must assert one approval for local recovery-backed
+plans and retained arm for genuinely irreversible plans, not duplicate confirms.
+Tier B compares release/fixed Reset, unpublished Amend, backed-up Discard,
+zero-loss local branch deletion and Force-with-lease in EN/JA on the same
+disposable fixtures. Cancel presentation plans; record both stages only where
+the fixed operation still arms. Never represent an arm-only check as execution.
+`modal_compact` and the `plan_recovery_` renderer cases explicitly install a
+real backend Push plan through the existing modal setter. A normal safe Push
+entry now runs directly (#1693); these fixtures must not perform that write
+just to obtain a confirmation card. They prove presentation, not Push routing.
+Backend regression filter `cargo test -p kagi-git review_1695_ -- --nocapture`
+also covers recovery-only ref retention versus ordinary zero-loss refs, stale
+branch reachability before execution, and Amend publication without upstream
+or through another remote's descendant of HEAD. Publication/reachability
+changes after approval must refuse before writes, not reuse a one-stage plan.
+For safety fixes record assertion failures before implementation and successes
+afterward; a compile error or a no-op filtered run is not red/green evidence.
+For inline review follow-ups use `cargo test -p kagi-git --lib inline_1695_ -- --nocapture`
+and `cargo test -p kagi-git --test amend_test inline_1695_amend_ -- --nocapture`.
+These check the actual API plan projection, retention refs/annotated tags/symbolic
+chains held until deletion, typed late-publication refusal, and external writes
+blocked from real Git hooks while Amend runs. Assert external writes can resume
+after guard release. The Amend guard freezes existing publication refs only;
+new remote-ref creation is outside its namespace-lock guarantee (ADR-0023).
+
 
 For #1646 use `KAGI_GUI_E2E_ONLY='sync_footer_cancel_visible,modal_compact,modal_scale_notes,modal_scale_targets,sync_to_remote_armed,modal_polish_editor_fs,modal_polish_remote,modal_polish_stash_after,primary_button_states,create_branch_warnings,branch_rename_neutral_state,stash_entry_identity,pull_fetch_preserves_conflict_blocker'`.
 `sync_footer_cancel_visible` covers Apple Light/Dark × EN/JA × 100%/167%

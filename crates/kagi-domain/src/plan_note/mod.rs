@@ -396,10 +396,12 @@ impl PlanRecovery {
             RecoveryKind::Maintenance(r) => r.message_display_en(),
             RecoveryKind::OplogRestore(r) => r.message_display_en(),
             RecoveryKind::Discard => {
-                "This discards your unstaged changes to the selected file(s): \
-                 tracked files are restored from the index, untracked files are deleted from \
-                 disk. A backup of each file is saved to the Operation Log first; \
-                 recover with `git cat-file -p <blob-sha>`."
+                "This discards unstaged changes: tracked files are restored from the index \
+                 and untracked files are removed from disk. Each file's current content and \
+                 Git type/mode are saved first under a retained backup ref. The Operation Log \
+                 receipt lists the exact refs. Export content with `git cat-file blob <backup-ref>:file` \
+                 and inspect type/mode with `git ls-tree <backup-ref>`. Recovery is manual; \
+                 Kagi does not restore these files automatically."
                     .to_string()
             }
         }
@@ -580,6 +582,24 @@ mod tests {
              disk. Either way a backup blob of each file's current content is recorded in \
              the oplog (op=\"discard\") first; recover with `git cat-file -p <blob-sha>`."
         );
+    }
+
+    #[test]
+    fn discard_display_explains_manual_retained_backup_recovery() {
+        let warning = DiscardNote::UntrackedWillBeDeleted { count: 3 }.message_display_en();
+        assert!(warning.contains("3 untracked file(s) will be removed"));
+        assert!(!warning.contains("PERMANENTLY"));
+        assert!(warning.contains("retained Git ref"));
+        assert!(warning.contains("git cat-file blob <backup-ref>:file"));
+        let recovery = PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: vec!["git cat-file blob <backup-ref>:file".into()],
+        }
+        .message_display_en();
+        assert!(recovery.contains("Git type/mode"));
+        assert!(recovery.contains("git ls-tree <backup-ref>"));
+        assert!(recovery.contains("Recovery is manual"));
+        assert!(recovery.contains("does not restore these files automatically"));
     }
 
     /// Every `PlanNote` category arm must forward to its own enum's

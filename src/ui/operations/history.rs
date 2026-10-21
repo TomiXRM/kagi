@@ -431,9 +431,8 @@ impl KagiApp {
         self.clear_amend_modal();
     }
 
-    /// W15-ASYNCOPS: UI-path amend. The two-stage confirm (armed state) stays on
-    /// the main thread; only the final armed execute (history rewrite — tree
-    /// build + commit replace) runs on a background thread.
+    /// UI-path amend: only published history needs a separate arm.
+    /// The confirmed execute still runs through the background safety pipeline.
     /// #493: the single amend entry — the modal button and the root Enter
     /// dispatch both land here.
     pub fn start_amend(&mut self, cx: &mut Context<Self>) {
@@ -464,8 +463,8 @@ impl KagiApp {
             return;
         }
 
-        // First click only arms (main thread); Enter cannot skip the stage.
-        if !modal.confirm_armed {
+        // Published-history rewrites retain a separate explicit arm.
+        if modal.requires_two_stage() && !modal.confirm_armed {
             self.set_amend_modal(AmendPlanModal {
                 confirm_armed: true,
                 ..modal
@@ -474,7 +473,7 @@ impl KagiApp {
             return;
         }
 
-        // Armed → background execute. Refuse a concurrent background op.
+        // Confirmed → background execute. Refuse a concurrent background op.
         if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;

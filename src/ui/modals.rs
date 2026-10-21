@@ -110,10 +110,8 @@ pub use super::conflict_abort::{ConflictAbortModal, ConflictContinuePlanModal};
 
 /// State for an in-progress amend confirmation (T-COMMIT-011, ADR-0040).
 ///
-/// Amend is history-rewriting (ADR-0023) so the modal requires a **two-stage
-/// confirmation**: the first Confirm click *arms* the action (`confirm_armed`
-/// flips to `true` and the button text changes to a final, explicit confirm),
-/// and only the second click executes.
+/// Unpublished, recovery-backed amendments need one explicit confirmation.
+/// Published history retains the two-stage arm.
 #[derive(Clone)]
 pub struct AmendPlanModal {
     pub plan: std::sync::Arc<OperationPlan>,
@@ -124,6 +122,25 @@ pub struct AmendPlanModal {
     pub message: String,
     /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
     pub confirm_armed: bool,
+}
+
+impl AmendPlanModal {
+    pub fn requires_two_stage(&self) -> bool {
+        use kagi_domain::plan_note::{HistoryNote, PlanNote};
+        self.plan
+            .warnings
+            .iter()
+            .chain(&self.plan.blockers)
+            .any(|note| {
+                matches!(
+                    note,
+                    PlanNote::History(
+                        HistoryNote::AmendDivergesFromRemote { .. }
+                            | HistoryNote::PushedHistoryRewrite { .. }
+                    )
+                )
+            })
+    }
 }
 
 /// State for an in-progress stash-pop confirmation (T-HT-007).
@@ -437,10 +454,9 @@ pub use delete_branch::DeleteBranchModal;
 /// State for an in-progress delete-remote-branch confirmation
 /// (branch-menu "Advanced / Dangerous" group).
 ///
-/// Two-stage confirm (mirrors `DiscardModal`'s `confirm_armed`): the first
-/// click only arms the button (label switches to an explicit "really
-/// delete" warning); the second click executes. Deleting a remote branch is
-/// `destructive: true` in the plan and, unlike local delete-branch, kagi
+/// Two-stage confirm: the first click arms the remote deletion; the second
+/// explicitly confirms its shared-state impact and executes.
+/// Deleting a remote branch is `destructive: true` and, unlike local deletion, kagi
 /// cannot verify "merged" status against the remote before doing it.
 #[derive(Clone)]
 pub struct DeleteRemoteBranchModal {
@@ -457,8 +473,8 @@ pub struct DeleteRemoteBranchModal {
 /// State for an in-progress reset-current-to-HEAD confirmation
 /// (branch-menu "Advanced / Dangerous" group).
 ///
-/// Two-stage confirm (mirrors `DeleteRemoteBranchModal`'s `confirm_armed`):
-/// the first click only arms the button; the second click executes.
+/// A single explicit confirmation moves only the branch ref; recovery records
+/// the previous tip, and neither index nor working tree is changed.
 #[derive(Clone)]
 pub struct ResetCurrentModal {
     /// The commit the current branch will be reset to.
@@ -467,15 +483,13 @@ pub struct ResetCurrentModal {
     pub plan: std::sync::Arc<OperationPlan>,
     /// Error message to show if preflight or execute failed.
     pub error: Option<SharedString>,
-    /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
-    pub confirm_armed: bool,
 }
 
 /// State for an in-progress force-with-lease push confirmation
 /// (branch-menu "Advanced / Dangerous" group).
 ///
-/// Two-stage confirm (mirrors `ResetCurrentModal`'s `confirm_armed`): the
-/// first click only arms the button; the second click executes.
+/// Two-stage confirmation: the first click arms the remote history rewrite;
+/// the second executes with the frozen lease.
 #[derive(Clone)]
 pub struct ForceLeasePushModal {
     /// The computed plan.
@@ -513,14 +527,10 @@ pub struct RenameBranchModal {
 
 /// State for an in-progress discard confirmation (W17-DISCARD, ADR-0046).
 ///
-/// Danger modal: shows the target file list, any skipped (untracked/conflicted)
-/// files, the recovery note, and a red Discard button. `paths` is the exact set
-/// passed to `execute_discard` (untracked/conflicted already excluded).
-///
-/// Two-stage confirm (T-REARCH-014, mirrors `AmendPlanModal::confirm_armed`):
-/// the first click arms the red Discard button (label becomes the explicit
-/// "Permanently discard N files"); only the second click executes. Discard is
-/// the most destructive working-tree op (checkout -- + untracked deletion).
+/// Danger modal: target files, skipped files, recovery and an explicit Discard.
+/// `paths` is the exact set passed to `execute_discard`, including untracked
+/// files retained by the mandatory backup. Recovery-backed plans confirm once;
+/// a plan without the discard backup contract retains the two-stage arm.
 #[derive(Clone)]
 pub struct DiscardModal {
     /// The computed plan (`destructive: true`).
@@ -545,6 +555,15 @@ pub struct DiscardModal {
     pub error: Option<SharedString>,
     /// Two-stage confirm gate: `false` = first click pending, `true` = armed.
     pub confirm_armed: bool,
+}
+
+impl DiscardModal {
+    pub fn requires_two_stage(&self) -> bool {
+        !matches!(
+            self.plan.recovery.as_ref().map(|recovery| &recovery.kind),
+            Some(kagi_domain::plan_note::RecoveryKind::Discard)
+        )
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -642,11 +661,8 @@ pub struct EditorFsPromptModal {
     pub error: Option<SharedString>,
 }
 
-/// State for the Delete (Trash) confirmation. Not a two-stage arm like
-/// `DiscardModal` — a Trash move is recoverable (`~/.Trash`), unlike
-/// `git checkout --`/untracked deletion, so a single explicit confirm click
-/// is enough (ponytail: matches the risk level instead of copying the
-/// heavier discard gate everywhere).
+/// State for the Delete (Trash) confirmation. A Trash move is recoverable
+/// (`~/.Trash`), so a single explicit confirmation is enough.
 #[derive(Clone)]
 pub struct EditorDeleteConfirmModal {
     /// Repo-relative path to trash.

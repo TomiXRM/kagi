@@ -93,6 +93,9 @@ mod pr_detail_a11y;
 #[path = "recovery/pr_lane_keys.rs"]
 mod pr_lane_keys;
 #[cfg(target_os = "macos")]
+#[path = "recovery/presentation_support.rs"]
+mod presentation_support;
+#[cfg(target_os = "macos")]
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
@@ -101,6 +104,9 @@ mod recovery_editor_tree_motion;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_tree_motion.rs"]
 mod recovery_sidebar_tree_motion;
+#[cfg(target_os = "macos")]
+#[path = "support/repository_state.rs"]
+mod repository_state;
 #[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;

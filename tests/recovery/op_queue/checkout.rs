@@ -1,6 +1,42 @@
 use super::*;
 use kagi_git::oplog::{read_oplog_tail_for_repo, FailureCode, OpOutcome};
 use kagi_ui_core::i18n::{queue_text, QueueText};
+
+fn hold_checkout(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    branch: &str,
+) -> crate::evidence_support::Reply<()> {
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch(branch, cx));
+    cx.run_until_parked();
+    release
+}
+
+fn static_refusal_matches(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    expected: &str,
+) -> (bool, bool) {
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let footer = matches!(
+            &state.status_footer,
+            kagi::ui::FooterStatus::Failed(text) if text.contains(expected)
+        );
+        let toast = state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| toast.message.contains(expected));
+        (footer, toast)
+    })
+}
+
 /// A blocker derived from the tree during another checkout is not an
 /// enqueue-time veto. The fresh head plan still refuses it before any write.
 pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) {
@@ -154,10 +190,7 @@ pub fn scenario_queue_checkout_missing_ref_refuses(cx: &mut VisualTestAppContext
     let fixture = branches_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
-    let (hold, release) = deferred::<()>(cx);
-    KagiApp::hold_next_run_for_e2e(hold);
-    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
-    cx.run_until_parked();
+    let release = hold_checkout(cx, &app, "a");
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
 
     app.update(cx, |app, cx| app.open_plan_modal("missing", cx));
@@ -168,21 +201,9 @@ pub fn scenario_queue_checkout_missing_ref_refuses(cx: &mut VisualTestAppContext
             in_repo: true,
         },
     ));
-    cx.read(|cx| {
-        let state = app.read(cx);
-        assert!(matches!(
-            &state.status_footer,
-            kagi::ui::FooterStatus::Failed(text) if text.contains(&expected)
-        ));
-        assert!(state
-            .toast_stack
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .toasts()
-            .iter()
-            .any(|toast| toast.message.contains(&expected)));
-    });
+    let (footer_matches, toast_matches) = static_refusal_matches(cx, &app, &expected);
+    assert!(footer_matches);
+    assert!(toast_matches);
     let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
         .into_iter()
         .filter(|entry| entry.op == "checkout")
@@ -228,10 +249,7 @@ pub fn scenario_queue_checkout_linked_worktree_refuses(cx: &mut VisualTestAppCon
         .worktrees
         .iter()
         .any(|worktree| { worktree.branch.as_deref() == Some("b") && !worktree.is_current })));
-    let (hold, release) = deferred::<()>(cx);
-    KagiApp::hold_next_run_for_e2e(hold);
-    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
-    cx.run_until_parked();
+    let release = hold_checkout(cx, &app, "a");
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
 
     app.update(cx, |app, cx| app.open_plan_modal("b", cx));
@@ -240,21 +258,9 @@ pub fn scenario_queue_checkout_linked_worktree_refuses(cx: &mut VisualTestAppCon
         "linked branch must not enter the queue"
     );
     let expected = kagi::ui::i18n::plan_note_text(&blocker);
-    cx.read(|cx| {
-        let state = app.read(cx);
-        assert!(matches!(
-            &state.status_footer,
-            kagi::ui::FooterStatus::Failed(text) if text.contains(&expected)
-        ));
-        assert!(state
-            .toast_stack
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .toasts()
-            .iter()
-            .any(|toast| toast.message.contains(&expected)));
-    });
+    let (footer_matches, toast_matches) = static_refusal_matches(cx, &app, &expected);
+    assert!(footer_matches);
+    assert!(toast_matches);
     let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
         .into_iter()
         .filter(|entry| entry.op == "checkout")

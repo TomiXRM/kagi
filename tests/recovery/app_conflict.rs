@@ -4,7 +4,7 @@ use gpui::{Focusable, SharedString, VisualTestAppContext};
 use kagi::ui::e2e;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[path = "conflict_refusal.rs"]
 mod refusal;
@@ -79,15 +79,12 @@ pub(crate) fn click_control(
 }
 
 pub(crate) fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).write_busy_op.is_none()) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "conflict adapter did not settle");
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    crate::recovery_operations::wait_idle_with_timeout(
+        cx,
+        app,
+        Duration::from_secs(15),
+        "conflict adapter did not settle",
+    );
 }
 
 pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {

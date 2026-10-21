@@ -21,6 +21,10 @@ use crate::recovery_operations::{press_enter, wait_idle};
 mod git_fixture;
 use git_fixture::{git, git_output as output};
 
+#[path = "pull_freshness/ff_refusal.rs"]
+mod ff_refusal;
+pub use ff_refusal::scenario_pull_ff_only_diverged_refusal;
+
 pub(super) struct SettingsGuard {
     _saved: crate::gui_isolation::SavedKeys,
     language: Lang,

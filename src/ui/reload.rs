@@ -12,6 +12,7 @@
 //! HEAD-versioned overlay refresh (ADR-0119 follow-up), and commit-graph
 //! paging (`load_more_commits`, in `reload/paging.rs`).
 
+mod fetched_pull;
 mod paging;
 
 use gpui::{prelude::*, Context, SharedString};
@@ -216,66 +217,18 @@ impl KagiApp {
                     && modal.plan.head_at_plan == snap.head
                     && modal.dirty_digest.as_ref() == Some(&snap.status.digest())
             });
-        let keep_fetched_branch_pull = !self.op_latched()
-            && self.branch_plan_modal().is_some_and(|modal| {
-                modal.kind == crate::ui::BranchPlanKind::PullFfOnly
-                    && modal.error.is_none()
-                    && modal.fetch_owner.is_some()
-                    && modal.fetch_owner
-                        == self
-                            .app_sessions
-                            .visit(session)
-                            .map(|visit| (session, visit))
-                    && modal.plan.head_at_plan == snap.head
-                    && modal.dirty_digest.as_ref() == Some(&snap.status.digest())
-                    && modal.fetched_refs.as_ref().is_some_and(
-                        |(target, upstream_name, upstream_target)| {
-                            snap.branches.iter().any(|branch| {
-                                branch.name == modal.branch_name
-                                    && &branch.target == target
-                                    && branch.upstream.as_ref().is_some_and(|upstream| {
-                                        &upstream.remote_branch == upstream_name
-                                    })
-                            }) && modal.plan.pull_identity.as_ref().is_some_and(|identity| {
-                                // Snapshot remote/name fields partition a display
-                                // shorthand, not the configured remote identity.
-                                // Match the approved full ref in its namespace.
-                                if let Some(name) =
-                                    identity.upstream_ref.strip_prefix("refs/heads/")
-                                {
-                                    snap.branches.iter().any(|branch| {
-                                        branch.name == name && &branch.target == upstream_target
-                                    })
-                                } else {
-                                    identity
-                                        .upstream_ref
-                                        .strip_prefix("refs/remotes/")
-                                        .is_some_and(|upstream| {
-                                            snap.remote_branches.iter().any(|branch| {
-                                                upstream
-                                                    .strip_prefix(branch.remote.as_str())
-                                                    .and_then(|name| name.strip_prefix('/'))
-                                                    .is_some_and(|name| name == branch.name)
-                                                    && &branch.target == upstream_target
-                                            })
-                                        })
-                                }
-                            })
-                        },
-                    )
-                    && self.ui().repo_session.as_ref().is_some_and(|session| {
-                        let backend = session.backend();
-                        backend.preflight_check(&modal.plan).is_ok()
-                            && backend
-                                .pull_branch_ref_state(&modal.branch_name)
-                                .ok()
-                                .as_ref()
-                                == modal.fetched_refs.as_ref()
-                            && backend.working_tree_status().is_ok_and(|status| {
-                                modal.dirty_digest.as_ref() == Some(&status.digest())
-                            })
-                    })
-            });
+        let retained_fetched_branch_pull = (!self.op_latched())
+            .then(|| {
+                fetched_pull::retained_plan(
+                    self.branch_plan_modal()?,
+                    self.ui().repo_session.as_ref()?.backend(),
+                    &snap,
+                    self.app_sessions
+                        .visit(session)
+                        .map(|visit| (session, visit)),
+                )
+            })
+            .flatten();
         self.clear_plan_modal();
         if !keep_pull_error && !replan_dirty_pull && !replan_fetch_pull {
             self.clear_pull_modal();
@@ -283,7 +236,14 @@ impl KagiApp {
         self.clear_amend_modal();
         self.clear_pop_modal();
         self.clear_stash_drop_modal();
-        if !keep_fetched_branch_pull {
+        if let Some(plan) = retained_fetched_branch_pull {
+            if let Some(modal) = self.branch_plan_modal_mut() {
+                modal.plan = plan;
+                if !modal.plan.blockers.is_empty() {
+                    modal.confirm_armed = false;
+                }
+            }
+        } else {
             self.clear_branch_plan_modal();
         }
         self.clear_set_upstream_modal();

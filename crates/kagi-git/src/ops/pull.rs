@@ -16,6 +16,19 @@ use kagi_domain::plan_note::{CommonNote, OpPhrase, PlanOp};
 use kagi_domain::plan_note::{PullNote, PullRecovery, PullTitle, WorktreeNote};
 use kagi_domain::remote::shell_quote;
 
+/// Freeze the exact upstream mapping even when the ff-only plan is blocked.
+/// This is read identity for a refusal card, not authorization to execute it.
+pub fn pull_branch_ref_state(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<(kagi_domain::plan::PullIdentity, CommitId), GitError> {
+    let identity = capture_pull_identity(repo, branch_name)?;
+    let upstream = repo
+        .refname_to_id(&identity.upstream_ref)
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    Ok((identity, CommitId(upstream.to_string())))
+}
+
 // Pull titles name the configured remote, not a prefix of the upstream's
 // shorthand: remote names may contain '/', and '.' denotes a local upstream.
 fn resolve_pull_upstream_info(

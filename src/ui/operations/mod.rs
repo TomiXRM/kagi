@@ -689,7 +689,13 @@ impl KagiApp {
                         // preview remains localized independently.
                         let preview = failure_display.clone();
                         app.record_op_result(
-                            entry, cx, false, preview, None, announce, None,
+                            entry,
+                            cx,
+                            false,
+                            preview,
+                            None,
+                            announce,
+                            None,
                             matches!(report.recording, Recording::Failed { .. }),
                         );
                         None
@@ -980,7 +986,13 @@ impl KagiApp {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
         let announce = self.operation_result_toast_needed(false);
         self.record_op_result(
-            entry, cx, false, None, None, announce, None,
+            entry,
+            cx,
+            false,
+            None,
+            None,
+            announce,
+            None,
             matches!(recording, Recording::Failed { .. }),
         );
     }

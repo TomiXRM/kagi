@@ -241,9 +241,7 @@ impl KagiApp {
             if background {
                 self.insert_recorded_row(recording, cx);
             } else {
-                self.record_op_result(
-                    entry, cx, false, None, None, announce, Some("pull"), true,
-                );
+                self.record_op_result(entry, cx, false, None, None, announce, Some("pull"), true);
             }
             return;
         }
@@ -271,8 +269,7 @@ impl KagiApp {
         let kind = if matches!(
             report.terminal.presentation,
             crate::app::PullPresentation::Success { .. }
-        )
-        {
+        ) {
             ToastKind::Success
         } else {
             ToastKind::Error
@@ -324,7 +321,10 @@ impl KagiApp {
         success_text: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        if matches!(recording, kagi_git::backend::recording::Recording::Failed { .. }) {
+        if matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        ) {
             self.insert_recorded_row(recording, cx);
             return;
         }

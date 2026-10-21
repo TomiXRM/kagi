@@ -144,8 +144,10 @@ impl KagiApp {
             OpOutcome::Success { .. } | OpOutcome::Unknown { .. }
         );
         let recording = kagi_git::backend::recording::finalize(entry);
-        let recording_failed =
-            matches!(recording, kagi_git::backend::recording::Recording::Failed { .. });
+        let recording_failed = matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        );
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
             self.app_notices.push_back(
@@ -253,8 +255,17 @@ impl KagiApp {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
         let announce = self.operation_result_toast_needed(false);
         self.record_op_result(
-            entry, cx, false, typed_refusal(op, blockers), None, announce, None,
-            matches!(report.recording, kagi_git::backend::recording::Recording::Failed { .. }),
+            entry,
+            cx,
+            false,
+            typed_refusal(op, blockers),
+            None,
+            announce,
+            None,
+            matches!(
+                report.recording,
+                kagi_git::backend::recording::Recording::Failed { .. }
+            ),
         );
     }
 }

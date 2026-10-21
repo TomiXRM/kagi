@@ -88,10 +88,16 @@ impl KagiApp {
                     report.recording,
                     kagi_git::backend::recording::Recording::Failed { .. }
                 );
-                let announce =
-                    report.result.is_err() && self.operation_result_toast_needed(false);
+                let announce = report.result.is_err() && self.operation_result_toast_needed(false);
                 self.record_op_result(
-                    entry, cx, false, display, None, announce, None, recording_failed,
+                    entry,
+                    cx,
+                    false,
+                    display,
+                    None,
+                    announce,
+                    None,
+                    recording_failed,
                 );
             }
             Err(e) => {

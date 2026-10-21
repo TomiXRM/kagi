@@ -1946,7 +1946,14 @@ impl KagiApp {
     ) -> bool {
         let announce = self.operation_result_toast_needed(false);
         self.record_op_result(
-            entry, cx, persist, display_override, notice, announce, None, recording_failed,
+            entry,
+            cx,
+            persist,
+            display_override,
+            notice,
+            announce,
+            None,
+            recording_failed,
         )
     }
 

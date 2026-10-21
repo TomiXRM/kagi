@@ -233,10 +233,20 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 let message = notice.message.as_str();
                 assert!(message.contains(&repo.display().to_string()), "{message}");
                 assert!(message.contains(&append_diagnostic));
-                assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
-                    "the mandatory acknowledgment, not another result toast, owns this failure");
-                assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
-                    "a result footer must not override required acknowledgment");
+                assert!(
+                    state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .is_empty(),
+                    "the mandatory acknowledgment, not another result toast, owns this failure"
+                );
+                assert!(
+                    matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+                    "a result footer must not override required acknowledgment"
+                );
                 let panel = state.op_log.as_ref().unwrap().read(cx);
                 let op = if result == "failed" {
                     "fetch"
@@ -247,8 +257,10 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 match (&entry.outcome, result) {
                     (OpOutcome::Failed { error }, "failed") => {
                         assert!(error.contains("no-such-remote"));
-                        assert!(message.contains(error.as_str()),
-                            "the missing durable receipt cannot discard the backend diagnostic");
+                        assert!(
+                            message.contains(error.as_str()),
+                            "the missing durable receipt cannot discard the backend diagnostic"
+                        );
                     }
                     (OpOutcome::Partial { after, error }, "success") => {
                         assert!(error.contains(&append_diagnostic));
@@ -257,8 +269,10 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                     }
                     (OpOutcome::Unknown { evidence, .. }, "unknown") => {
                         assert!(evidence.contains("fixture result unconfirmed"));
-                        assert!(message.contains("fixture result unconfirmed"),
-                            "uncertainty evidence must remain inspectable without a saved receipt");
+                        assert!(
+                            message.contains("fixture result unconfirmed"),
+                            "uncertainty evidence must remain inspectable without a saved receipt"
+                        );
                     }
                     (outcome, _) => panic!("recording failure changed {result}: {outcome:?}"),
                 }

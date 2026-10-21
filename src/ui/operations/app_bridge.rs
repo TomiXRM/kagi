@@ -144,7 +144,9 @@ impl KagiApp {
         }
         if let Some(panel) = &self.op_log {
             panel.update(cx, |panel, cx| {
-                panel.push(oplog_panel::OpLogPanel::entry_for_recording(&report.recording));
+                panel.push(oplog_panel::OpLogPanel::entry_for_recording(
+                    &report.recording,
+                ));
                 cx.notify();
             });
         }
@@ -497,7 +499,9 @@ impl KagiApp {
                 }
                 if let Some(panel) = self.op_log.clone() {
                     panel.update(cx, |panel, cx| {
-                        panel.push(oplog_panel::OpLogPanel::entry_for_recording(&report.recording));
+                        panel.push(oplog_panel::OpLogPanel::entry_for_recording(
+                            &report.recording,
+                        ));
                         cx.notify();
                     });
                 }
@@ -594,7 +598,9 @@ impl KagiApp {
         }
         if let Some(panel) = &self.op_log {
             panel.update(cx, |panel, cx| {
-                panel.push(oplog_panel::OpLogPanel::entry_for_recording(&report.recording));
+                panel.push(oplog_panel::OpLogPanel::entry_for_recording(
+                    &report.recording,
+                ));
                 cx.notify();
             });
         }

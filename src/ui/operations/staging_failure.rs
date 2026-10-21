@@ -120,8 +120,17 @@ impl KagiApp {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
         let announce = self.operation_result_toast_needed(false);
         self.record_op_result(
-            entry, cx, false, Some(failure.footer.clone()), None, announce, None,
-            matches!(failure.recording, kagi_git::backend::recording::Recording::Failed { .. }),
+            entry,
+            cx,
+            false,
+            Some(failure.footer.clone()),
+            None,
+            announce,
+            None,
+            matches!(
+                failure.recording,
+                kagi_git::backend::recording::Recording::Failed { .. }
+            ),
         );
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());

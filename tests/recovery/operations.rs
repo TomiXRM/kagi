@@ -2231,21 +2231,38 @@ pub fn scenario_run_success_unrecorded_requires_acknowledgment(cx: &mut VisualTe
             "unrecorded success is presented as partial: {:?}",
             shown.outcome
         );
-        let notice = app.app_notice().expect("the missing receipt needs acknowledgment");
+        let notice = app
+            .app_notice()
+            .expect("the missing receipt needs acknowledgment");
         assert!(notice.message.contains(&repo.display().to_string()));
         assert!(notice.message.contains(&append_diagnostic));
-        assert!(app.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty(),
-            "no ordinary result may compete with required acknowledgment");
-        assert!(matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()),
-            "the family's own status must not override failed recording");
-        assert!(shown.ref_moves.is_none(), "an unsaved attempt has no restore ref information");
+        assert!(
+            app.toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .is_empty(),
+            "no ordinary result may compete with required acknowledgment"
+        );
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+            "the family's own status must not override failed recording"
+        );
+        assert!(
+            shown.ref_moves.is_none(),
+            "an unsaved attempt has no restore ref information"
+        );
     });
 
     drop(lock);
     let _ = std::fs::remove_file(&lock_path);
     cx.run_until_parked();
-    assert_eq!(kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(), durable_before,
-        "the displayed attempt is neither a forged receipt nor an automatic retry");
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+        durable_before,
+        "the displayed attempt is neither a forged receipt nor an automatic retry"
+    );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS run_success_unrecorded_requires_acknowledgment");
 }

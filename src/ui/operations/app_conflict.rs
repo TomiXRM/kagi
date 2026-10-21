@@ -53,7 +53,9 @@ impl KagiApp {
         };
         if let Some(panel) = &self.op_log {
             panel.update(cx, |panel, cx| {
-                panel.push(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording));
+                panel.push(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                    &recording,
+                ));
                 cx.notify();
             });
         }

@@ -103,21 +103,34 @@ fn assert_stopped(
         assert!(!mode.can_continue(), "unresolved files disable Continue");
         let stack = app.toast_stack.as_ref().unwrap().read(cx);
         if recording_failure {
-            assert!(stack.toasts().is_empty(),
-                "required recording acknowledgment is the only result presentation");
+            assert!(
+                stack.toasts().is_empty(),
+                "required recording acknowledgment is the only result presentation"
+            );
             assert!(matches!(&app.status_footer,
                 FooterStatus::Idle(text) if text.is_empty()));
         } else {
-            assert!(matches!(&app.status_footer, FooterStatus::Idle(_)),
-                "unresolved conflicts must not leave a successful footer");
-            let notices: Vec<_> = stack.toasts().iter()
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Idle(_)),
+                "unresolved conflicts must not leave a successful footer"
+            );
+            let notices: Vec<_> = stack
+                .toasts()
+                .iter()
                 .filter(|toast| toast.kind == ToastKind::Info)
                 .collect();
             assert_eq!(notices.len(), 1);
-            assert!(notices[0].message.contains(&observed.to_string()),
-                "the stopped result must report the actual unresolved-file count");
-            assert!(stack.toasts().iter().all(|toast| toast.kind != ToastKind::Success),
-                "unresolved conflicts and disabled Continue cannot coexist with green completion");
+            assert!(
+                notices[0].message.contains(&observed.to_string()),
+                "the stopped result must report the actual unresolved-file count"
+            );
+            assert!(
+                stack
+                    .toasts()
+                    .iter()
+                    .all(|toast| toast.kind != ToastKind::Success),
+                "unresolved conflicts and disabled Continue cannot coexist with green completion"
+            );
         }
     });
 }

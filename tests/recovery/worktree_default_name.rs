@@ -168,7 +168,7 @@ pub fn scenario_worktree_create_default_name(cx: &mut VisualTestAppContext) {
             };
             assert_eq!(branch, "fresh/topic");
             assert!(!start.is_empty());
-            i18n_scope(plan, &modal.path_input, branch, start)
+            i18n_scope(plan, branch, start)
         });
         let (_, after) = kagi::ui::dialog_a11y::recorded_note("plan-state-after").unwrap();
         assert!(
@@ -211,12 +211,14 @@ pub fn scenario_worktree_create_default_name(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS worktree_create_default_name");
 }
 
-fn i18n_scope(
-    plan: &kagi_domain::plan::OperationPlan,
-    path: &str,
-    branch: &str,
-    start: &str,
-) -> String {
+fn i18n_scope(plan: &kagi_domain::plan::OperationPlan, branch: &str, start: &str) -> String {
+    let Some(kagi_domain::plan_note::RecoveryKind::Worktree(
+        kagi_domain::plan_note::WorktreeRecovery::CreateWorktree { path, .. },
+    )) = plan.recovery.as_ref().map(|recovery| &recovery.kind)
+    else {
+        panic!("approved worktree plan must retain its destination")
+    };
+    assert!(std::path::Path::new(path).ends_with("fresh-topic"));
     let scope = kagi_ui_core::i18n::plan_note_text(&kagi_domain::plan_note::PlanNote::Worktree(
         kagi_domain::plan_note::WorktreeNote::CreatesLinkedWorktree {
             path: path.into(),

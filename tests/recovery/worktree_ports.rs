@@ -314,7 +314,7 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     );
     let refused = footer(cx, &app);
     assert!(
-        refused.contains("nonconcurrent") && refused.contains(side.to_str().unwrap()),
+        refused.contains(side.to_str().unwrap()) && refused.contains(repo.to_str().unwrap()),
         "the footer names the running worktree: {refused}"
     );
 

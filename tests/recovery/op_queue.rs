@@ -354,10 +354,6 @@ pub fn scenario_queue_confirms_a_warned_plan(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS queue_confirms_a_warned_plan");
 }
 
-fn head_is(app: &KagiApp, branch: &str) -> bool {
-    app.view().status_summary.branch == branch
-}
-
 /// Q3 (+ the background half of Q10): tab B never shows tab A's intents, and
 /// A's head waits for A to be on screen before it runs.
 pub fn scenario_queue_strip_owner_only(cx: &mut VisualTestAppContext) {

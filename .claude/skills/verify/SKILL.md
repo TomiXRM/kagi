@@ -415,11 +415,14 @@ stealing. The pinned GPUI API has no live-region/priority setter; these are
 Status metadata assertions, not native speech or exactly-once announcements.
 Clone checks operation-named elapsed Status across Reduce Motion and running
 ticks, keyboard Hide owner retention, and real success/error settlement.
-Inspection checks row Enter, Tab to named Refresh/local URL Buttons,
-Enter/Space once-only activation, inner-focus retention, Escape row return,
-owner departure, no-port absence, painted extra-small URL chip text and native
-Tab-map exclusion of pointer-only hover actions. All cover 940×660/1392×883, EN/JA,
-100%/167% and Apple Light/Dark. Neighbor filter:
+Inspection checks the wide pane's row Enter, Tab to named Refresh/local URL
+Buttons, Enter/Space once-only activation, inner-focus retention, Escape row
+return, owner departure and no-port absence. Compact viewports open the real
+Worktrees rail and check Enter navigation/dismissal for both port states instead
+of expecting the wide inspection card. Both layouts retain pointer-only hover
+actions, painted extra-small URL chip text and native Tab-map exclusion.
+Inspection covers 1000×720/1392×883, EN/JA, 100%/167% and Apple Light/Dark;
+the neighboring status scenarios use 940×660/1392×883. Neighbor filter:
 `KAGI_GUI_E2E_ONLY='diff_,toast_,clone_,worktree_inspection'`.
 Native VoiceOver, Full Keyboard Access and real-window focus remain Tier B.
 

@@ -370,6 +370,20 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
         shell_live(cx, &app),
         "the side shell that ignores hangups starts"
     );
+    // PTY creation precedes script startup. Wait until the script has installed
+    // its HUP trap before closing the tab, rather than racing shell readiness.
+    let shell_pid = shell_dir.path().join("shell.pid");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !std::fs::read_to_string(&shell_pid)
+        .is_ok_and(|pid| pid.trim().parse::<u32>().is_ok())
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the hangup-proof shell never became ready"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
     app.update(cx, |app, cx| app.close_tab(side_tab, cx));
@@ -383,7 +397,7 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
         !shell_live(cx, &app),
         "a closed tab's shell that is still running keeps blocking"
     );
-    crate::recovery_worktree_remove_shell::kill_recorded(&shell_dir.path().join("shell.pid"));
+    crate::recovery_worktree_remove_shell::kill_recorded(&shell_pid);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while !shell_live(cx, &app) {
         assert!(

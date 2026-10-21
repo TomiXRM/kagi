@@ -4068,7 +4068,7 @@ attempted failure stays visible with the recording error; it is not a success.
 
 ### One requested operation, one result (#1698)
 
-Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_'`
+Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_,oplog_revert_eligibility'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Real repeated no-op Push is footer-only when
 attended; the existing `set_window_active_for_e2e` input selects inactive
 presentation without activating an OS window, where the same result replaces one
@@ -4083,6 +4083,11 @@ The toast budget scenario also starts real Fetch failures before entering Home o
 another tab, then invokes the actual detail Button to reveal the same recorded ID.
 Closed-owner and removed-worktree legs must paint the shared log, not only mutate
 hidden panel state. The action is dismissed only after navigation succeeds.
+`oplog_revert_eligibility` also clicks unavailable restore/revert actions in EN/JA
+from Home, another repository, a remote view and after all owner tabs close:
+the reason remains visible, no plan/write/receipt appears, and the same receipt
+still copies its complete details. The ordinary matching-owner plan and existing
+backend preflight remain the positive control.
 Long freshness-fetch no-op/write legs retain each request's own elapsed time,
 including shared fetches; Unknown receipts override a Partial workflow preview.
 Run the EN/JA lock-classification boundary unit regression: an `index.lock` path

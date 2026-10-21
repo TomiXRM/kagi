@@ -234,7 +234,103 @@ pub fn scenario_oplog_revert_eligibility(cx: &mut VisualTestAppContext) {
             cx.read(|cx| app.read(cx).oplog_restore_modal().is_some()),
             "nonempty record still replans"
         );
+        crate::recovery_operations::press_key(cx, &app, window, "escape");
+        let other = build_fixture();
+        let unchanged_owner = std::fs::read(fixture.path().join(".git/index")).unwrap();
+        let unchanged_other = std::fs::read(other.path().join(".git/index")).unwrap();
+        for context in ["other-repository", "home", "remote", "closed-owner"] {
+            app.update(cx, |app, cx| {
+                assert!(app.open_repository(fixture.path().to_path_buf(), cx));
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| match context {
+                    "other-repository" => {
+                        assert!(app.open_repository(other.path().to_path_buf(), cx));
+                    }
+                    "home" => app.open_home_tab(window, cx),
+                    "remote" => app.enter_remote_view(
+                        kagi_domain::remote::RemoteHost {
+                            user: None,
+                            host: "log-inspection.invalid".into(),
+                            port: None,
+                            identity_file: None,
+                        },
+                        "/srv/log-inspection".into(),
+                        Backend::open(fixture.path())
+                            .unwrap()
+                            .snapshot(10_000)
+                            .unwrap(),
+                        cx,
+                    ),
+                    "closed-owner" => {
+                        for index in (0..app.tabs.len()).rev() {
+                            app.close_tab(index, cx);
+                        }
+                    }
+                    _ => unreachable!(),
+                });
+            })
+            .unwrap();
+            assert_inspection_only(cx, &app, window, &recorded);
+            assert_eq!(
+                std::fs::read(fixture.path().join(".git/index")).unwrap(),
+                unchanged_owner
+            );
+            assert_eq!(
+                std::fs::read(other.path().join(".git/index")).unwrap(),
+                unchanged_other
+            );
+        }
         drop(panel);
         unmount(cx, app, window);
     }
+}
+
+fn assert_inspection_only(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: AnyWindowHandle,
+    recorded: &kagi_git::oplog::OpLogEntry,
+) {
+    let before_receipts = kagi_git::oplog::read_oplog_tail(200).len();
+    paint(cx, window);
+    bounds(window, "oplog-revert-reason-0");
+    for action in ["revert", "restore"] {
+        let disabled = bounds(window, &format!("oplog-{action}-0-disabled"));
+        cx.simulate_click(window, disabled.center(), Modifiers::none());
+        paint(cx, window);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                state.oplog_restore_modal().is_none(),
+                "unavailable restoration cannot open a plan"
+            );
+            assert!(
+                !state.app_sessions.has_leases(),
+                "inspection cannot admit a writer"
+            );
+            let panel = state.op_log.as_ref().unwrap().read(cx);
+            assert_eq!(panel.expanded(), Some(0), "the receipt remains inspectable");
+            assert_eq!(panel.entries()[0].id, recorded.id);
+        });
+    }
+    let copy = bounds(window, "oplog-copy-0");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("before-copy".into()));
+    cx.simulate_mouse_move(window, copy.center(), None, Modifiers::none());
+    paint(cx, window);
+    cx.simulate_click(window, copy.center(), Modifiers::none());
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("copied receipt");
+    assert!(
+        copied.contains(&recorded.repo),
+        "inspection keeps complete receipt copying"
+    );
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail(200).len(),
+        before_receipts,
+        "unavailable restoration must not manufacture a write receipt"
+    );
 }

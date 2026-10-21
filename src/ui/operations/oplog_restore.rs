@@ -32,7 +32,14 @@ pub(crate) fn op_log_panel(
     cx.subscribe(
         &panel,
         |app, _panel, event: &OpLogPanelEvent, cx| match event {
-            OpLogPanelEvent::Restore(op) => app.open_oplog_restore_modal(op.clone(), cx),
+            OpLogPanelEvent::Restore { op, entry } => {
+                // Rendering is only an affordance. Recheck the receipt's owner
+                // after queued input / tab changes before planning any write.
+                if app.oplog_restore_owner_matches(entry.owner_path()) {
+                    app.open_oplog_restore_modal(op.clone(), cx);
+                }
+                cx.notify();
+            }
         },
     )
     .detach();
@@ -40,6 +47,14 @@ pub(crate) fn op_log_panel(
 }
 
 impl KagiApp {
+    pub(super) fn oplog_restore_owner_matches(&self, path: &std::path::Path) -> bool {
+        !self.home_in_front()
+            && self.remote_view.is_none()
+            && self.active_session().is_some()
+            && self.ui().repo_session.is_some()
+            && self.repo_path.as_deref() == Some(path)
+    }
+
     /// A result's detail action follows its owner, never the currently visible
     /// repository. The shared log can still show a receipt after its tab closes.
     pub(crate) fn open_operation_result(

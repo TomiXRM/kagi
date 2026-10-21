@@ -103,7 +103,10 @@ pub enum ReflogDetail {
 /// active repository and shows the card.
 #[derive(Debug, Clone)]
 pub enum OpLogPanelEvent {
-    Restore(kagi_git::Operation),
+    Restore {
+        op: kagi_git::Operation,
+        entry: EntryKey,
+    },
 }
 
 impl gpui::EventEmitter<OpLogPanelEvent> for OpLogPanel {}

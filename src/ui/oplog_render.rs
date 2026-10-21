@@ -105,11 +105,32 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         let expanded = self.expanded();
         let reflog = self.reflog_detail().cloned();
         let entity = cx.entity();
+        let restore_owner_available =
+            expanded
+                .and_then(|i| self.entries().get(i))
+                .is_some_and(|entry| {
+                    window
+                        .root::<gpui_component::Root>()
+                        .flatten()
+                        .and_then(|root| {
+                            root.read(cx)
+                                .view()
+                                .clone()
+                                .downcast::<super::KagiApp>()
+                                .ok()
+                        })
+                        .is_some_and(|app| {
+                            app.read(cx)
+                                .oplog_restore_owner_matches(std::path::Path::new(
+                                    oplog_panel::entry_worktree(entry),
+                                ))
+                        })
+                });
 
         let oplog_list = gpui::list(scroll_handle, move |i, _window, _cx| match entries.get(i) {
             Some(entry) => {
                 let detail = (expanded == Some(i)).then_some(reflog.as_ref());
-                render_row(i, entry, detail, &entity, &rows)
+                render_row(i, entry, detail, &entity, &rows, restore_owner_available)
             }
             None => div().into_any_element(),
         })
@@ -148,6 +169,7 @@ fn render_row(
     detail: Option<Option<&oplog_panel::ReflogDetail>>,
     entity: &Entity<oplog_panel::OpLogPanel>,
     rows: &std::rc::Rc<super::keyboard_nav::RowList>,
+    restore_owner_available: bool,
 ) -> gpui::AnyElement {
     let stable_key = SharedString::from(oplog_panel::keyboard::entry_key(entry));
     // `bg_row_alt` is the zebra token; this used to be `panel`, which only
@@ -185,7 +207,12 @@ fn render_row(
                 Some(moves) => row.child(render_ref_moves(i, moves)),
                 None => row.child(render_reflog(i, reflog)),
             };
-            row.child(render_restore_actions(i, entry, entity))
+            row.child(render_restore_actions(
+                i,
+                entry,
+                entity,
+                restore_owner_available,
+            ))
         })
         .into_any_element()
 }
@@ -669,10 +696,13 @@ fn render_restore_actions(
     i: usize,
     entry: &OpLogEntry,
     entity: &Entity<oplog_panel::OpLogPanel>,
+    owner_available: bool,
 ) -> gpui::AnyElement {
-    let restore_enabled = oplog_panel::restorable(entry);
-    let revert_enabled = oplog_panel::revertible(entry);
-    let reason = if !restore_enabled {
+    let restore_enabled = owner_available && oplog_panel::restorable(entry);
+    let revert_enabled = owner_available && oplog_panel::revertible(entry);
+    let reason = if !owner_available {
+        Some(Msg::OplogPanel(P::RestoreOwnerUnavailable).t())
+    } else if !restore_enabled {
         Some(Msg::OplogPanel(P::RestoreUnavailable).t())
     } else if !revert_enabled {
         Some(Msg::OplogPanel(P::RevertNoMoves).t())
@@ -685,6 +715,7 @@ fn render_restore_actions(
                   enabled: bool,
                   op: kagi_git::Operation| {
         let entity = entity.clone();
+        let entry = oplog_panel::EntryKey::of(entry);
         let state = if enabled { "enabled" } else { "disabled" };
         div()
             .relative()
@@ -698,8 +729,9 @@ fn render_restore_actions(
                     .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
                         if enabled {
                             let op = op.clone();
+                            let entry = entry.clone();
                             entity.update(cx, |_, cx| {
-                                cx.emit(oplog_panel::OpLogPanelEvent::Restore(op))
+                                cx.emit(oplog_panel::OpLogPanelEvent::Restore { op, entry })
                             });
                         }
                     }),

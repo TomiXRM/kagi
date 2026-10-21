@@ -575,6 +575,9 @@ refusal or fabricates a write receipt.
   詳細 action は receipt の確定 id に紐づき、Home / 別 tab から操作 owner を表示して展開する。
   owner tab が閉じられた場合も worktree の再 open / remote 再接続を要求せず、同じ既存 log panel を
   Home で表示できる。到達できると確認する前に toast / action を消さない。
+  Home / 別 repository / remote 表示では当該 local owner が実行画面にいないため、復元 / revert は
+  翻訳済みの理由付きで無効化する。inspection / copy は維持し、操作 event の受信時にも owner を
+  再確認してから既存の backend plan / preflight へ渡す。並列の所有 state は持たない。
   `index.lock` という path だけを lock 競合の証拠にせず、既存 lock の診断が無ければ安全な要約を使う。
   既存 `[kagi] bottom-panel: open (Failed auto-open)` は harness 互換の契約行として残るが、
   表示状態を変更する指示ではない。

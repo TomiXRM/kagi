@@ -652,7 +652,8 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                 .into_iter()
                 .find(|entry| entry.op == "fetch")
                 .expect("real failed Fetch is durable");
-            assert!(recorded.id > 0);
+            // The first durable receipt legitimately has ID zero. Verify its
+            // complete identity through the actual detail action below.
             assert!(matches!(
                 recorded.outcome,
                 kagi_git::oplog::OpOutcome::Failed { .. }
@@ -708,7 +709,11 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                 let expanded = panel
                     .expanded()
                     .expect("detail action expands its own receipt");
-                assert_eq!(panel.entries()[expanded].id, recorded.id);
+                let revealed = &panel.entries()[expanded];
+                assert_eq!(revealed.id, recorded.id);
+                assert_eq!(revealed.timestamp, recorded.timestamp);
+                assert_eq!(revealed.op, recorded.op);
+                assert_eq!(revealed.repo, recorded.repo);
                 assert!(
                     panel.scroll_handle().bounds_for_item(expanded).is_some(),
                     "the selected receipt is painted, not hidden behind Home"

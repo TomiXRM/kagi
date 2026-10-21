@@ -342,6 +342,7 @@ pub fn plan_delete_merged_branches(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Cleanup(CleanupTitle::CleanupDelete {

@@ -27,6 +27,11 @@ pub enum PushNote {
     /// `plan_push` uses [`PushPunct::EmDash`]; `plan_push_branch` uses
     /// [`PushPunct::Semicolon`].
     NoForceUsed { punct: PushPunct },
+    /// Publishing without an upstream has multiple candidate remotes and no
+    /// conventional `origin`; the proposed destination needs explicit review.
+    PublishRemoteAmbiguous { candidates: Vec<String> },
+    /// Refusal — the approved branch, upstream or publish destination changed.
+    PushIdentityChanged,
     /// blocker (`plan_push`) — no upstream configured and no remote exists
     /// anywhere in the repo.
     NoUpstreamNoRemotes { branch: String },
@@ -57,6 +62,13 @@ impl PushNote {
                     crate::advice_template_en!(NoForceUsedSemicolon).to_string()
                 }
             },
+            PushNote::PublishRemoteAmbiguous { candidates } => format!(
+                "No origin remote; multiple publish destinations are configured: {}.",
+                candidates.join(", ")
+            ),
+            PushNote::PushIdentityChanged => {
+                "Push destination or branch changed. Review a new plan before pushing.".to_string()
+            }
             PushNote::NoUpstreamNoRemotes { branch } => {
                 format!(crate::advice_template_en!(PushNoUpstreamNoRemotes), branch)
             }

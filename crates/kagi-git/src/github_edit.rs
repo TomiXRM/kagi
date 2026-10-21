@@ -180,6 +180,7 @@ pub fn plan_pr_edit(pr: &PullRequest, edit: &PrFieldEdit) -> OperationPlan {
     OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready

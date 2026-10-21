@@ -234,6 +234,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
@@ -564,6 +565,7 @@ pub fn plan_amend(
     let plan = OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
@@ -1055,6 +1057,7 @@ fn plan_history_move(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::History(HistoryTitle::HistoryMove {

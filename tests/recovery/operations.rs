@@ -4343,8 +4343,12 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
         let before_status = output(repo, &["status", "--porcelain"]);
 
         let (app, window) = mount(cx, repo);
-        app.update(cx, |app, _| {
-            app.open_branch_plan_modal("main".to_string(), kagi::ui::BranchPlanKind::SyncToRemote)
+        app.update(cx, |app, cx| {
+            app.open_branch_plan_modal(
+                "main".to_string(),
+                kagi::ui::BranchPlanKind::SyncToRemote,
+                cx,
+            )
         });
         wait_idle(cx, &app);
         cx.read(|cx| {

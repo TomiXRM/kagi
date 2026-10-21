@@ -45,6 +45,13 @@ use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, Main
 mod detail_controls;
 pub mod threads;
 pub mod viewed;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static COMMENT_RESTORE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// One open PR tab.
 pub struct PrTab {
     pub pr: PullRequest,
@@ -956,7 +963,12 @@ impl KagiApp {
         else {
             return;
         };
-        let mut reset_input = false;
+        // The input outlives PR mode when Graph takes over. A consumed storage
+        // version invalidates its original owner's box even without a tab.
+        let mut reset_input = self
+            .pr_comment_for
+            .as_ref()
+            .is_some_and(|(held, key)| Some(*held) == owner && key == pr);
         for (session, ui) in &mut self.ui {
             if let Some(mode) = ui.pr_mode.as_mut() {
                 let matches = mode
@@ -1089,7 +1101,13 @@ impl KagiApp {
             tab.comment_storage_version = version;
             tab.comment_loading = true;
         }
+        #[cfg(feature = "gui-e2e")]
+        let hold = COMMENT_RESTORE_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |this, acx| {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let read_repo = repo.clone();
             let read_pr = pr.clone();
             let loaded = acx
@@ -2229,6 +2247,12 @@ mod pr_fixture_tests {
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn hold_next_pr_comment_restore_for_e2e(hold: gpui::Task<()>) {
+        COMMENT_RESTORE_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace(hold).is_none());
+        });
+    }
+
     pub fn pr_mode_reload_conversation_for_e2e(&mut self, cx: &mut Context<Self>) {
         let Some(pr) = self
             .pr_mode()

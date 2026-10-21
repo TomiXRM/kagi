@@ -689,6 +689,7 @@ impl KagiApp {
         let Some((number, body)) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .filter(|tab| !tab.comment_loading)
             .map(|t| (t.pr.number, t.comment_draft.clone()))
         else {
             return;
@@ -788,6 +789,7 @@ impl KagiApp {
         let Some((pr, body)) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .filter(|tab| !tab.comment_loading)
             .map(|t| (t.pr.clone(), t.comment_draft.clone()))
         else {
             return;

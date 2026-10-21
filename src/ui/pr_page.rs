@@ -630,14 +630,14 @@ pub(super) fn render_composer(
                                     super::e2e::pr_detail::record_button_state(
                                         "pr-review-request-changes",
                                         true,
-                                        empty || review_held,
+                                        tab.comment_loading || empty || review_held,
                                         Some(super::button_style::ButtonRole::Warning),
                                     );
                                 }
                                 button
                             })
                             .small()
-                            .disabled(empty || review_held)
+                            .disabled(tab.comment_loading || empty || review_held)
                             .on_click(request_changes),
                         )
                         .child(
@@ -649,13 +649,13 @@ pub(super) fn render_composer(
                                 cx,
                             )
                             .small()
-                            .disabled(review_held)
+                            .disabled(tab.comment_loading || review_held)
                             .on_click(approve),
                         )
                         .child(super::timeline_row::submit(
                             "pr-comment-post",
                             Msg::PrCommentPost.t(),
-                            empty || held,
+                            tab.comment_loading || empty || held,
                             post,
                         )),
                 ),

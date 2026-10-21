@@ -980,16 +980,7 @@ impl Backend {
         &self,
         status: &WorkingTreeStatus,
     ) -> Result<std::collections::HashSet<std::path::PathBuf>, GitError> {
-        let (_, warnings) = crate::checklist::checklist(&self.repo, status)?;
-        Ok(warnings
-            .into_iter()
-            .filter_map(|note| match note {
-                kagi_domain::plan_note::PlanNote::Checklist(note) => {
-                    note.secret_path().map(std::path::PathBuf::from)
-                }
-                _ => None,
-            })
-            .collect())
+        crate::checklist::staged_secret_paths(&self.repo, status)
     }
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {

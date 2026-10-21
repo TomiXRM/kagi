@@ -450,6 +450,11 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
 - **state**: `PrModeState::comment_preview` は view flag。#1702 で PrTab に
   persistence version / loading / saving / error 状態を追加した。投稿時の version を
   completion へ渡すが、owner 固定と transport 記録の境界は変更しない。
+  保存済み draft の復元中は Comment / Approve / Request Changes の dispatch を拒否する。
+  空本文で許可される Approve も、まだ表示していない保存版を消費してはいけない。
+  成功 completion の共有 input 失効は投稿時の session + PrKey と保存版で判定し、
+  PR mode / tab の存続には依存しない。Graph へ移動して mode が破棄された後も、
+  再表示が投稿済み本文を新規編集として queue し直してはいけない。
 - **i18n**: 両方が使う文言は `ComposerWrite` / `ComposerPreview` /
   `ComposerDraftSaved` / `ComposerDraftSaving` に改名した（EN/JA の文字列は不変）。
 

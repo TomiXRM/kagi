@@ -630,6 +630,10 @@ mod pr_fields_focus;
 mod pr_same_number;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_draft_races.rs"]
+mod pr_draft_races;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_viewed.rs"]
 mod pr_viewed;
 
@@ -3496,6 +3500,14 @@ mod macos {
             (
                 "pr_same_number",
                 Box::new(crate::pr_same_number::scenario_pr_same_number),
+            ),
+            (
+                "pr_draft_loading_blocks_review",
+                Box::new(crate::pr_draft_races::scenario_loading_blocks_review),
+            ),
+            (
+                "pr_draft_post_after_graph",
+                Box::new(crate::pr_draft_races::scenario_post_after_graph),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             ("pr_lane_keyboard", Box::new(crate::pr_lane_keys::scenario_pr_lane_keyboard)),

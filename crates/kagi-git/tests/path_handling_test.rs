@@ -265,5 +265,69 @@ fn non_utf8_name_appears_in_status_with_exact_bytes() {
     );
 }
 
+/// #1702: display-only checklist paths must not become warning identities.
+/// Linux-only: macOS/APFS rejects invalid UTF-8 directory names, so this
+/// filesystem fixture is deliberately skipped there.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_staged_secret_paths_retain_exact_name_and_content_identities() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use std::collections::HashSet;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::PathBuf;
+
+    let tmp = TempDir::new().unwrap();
+    let (dir, _repo) = init_repo(&tmp);
+    std::fs::write(dir.join("README.md"), "hi\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-m", "init"]);
+
+    let private_dir = PathBuf::from(OsStr::from_bytes(b"private-\xff"));
+    let named_secret = private_dir.join(".env");
+    let content_secret = private_dir.join("generated.lock");
+    // This distinct, valid UTF-8 path has the same lossy display as the
+    // content secret, but its staged BLOB is clean. Never reverse-match it.
+    let display_twin = PathBuf::from("private-\u{fffd}/generated.lock");
+    std::fs::create_dir_all(dir.join(&private_dir)).unwrap();
+    std::fs::create_dir_all(dir.join(display_twin.parent().unwrap())).unwrap();
+    std::fs::write(dir.join(&named_secret), "EXAMPLE=ordinary\n").unwrap();
+    std::fs::write(
+        dir.join(&content_secret),
+        "-----BEGIN PRIVATE KEY-----\nfixture\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join(&display_twin), "ordinary staged content\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    // Content findings still come from the index, not these changed WT files.
+    std::fs::write(dir.join(&content_secret), "ordinary now\n").unwrap();
+    std::fs::write(
+        dir.join(&display_twin),
+        "-----BEGIN PRIVATE KEY-----\nunstaged only\n",
+    )
+    .unwrap();
+
+    let backend = kagi_git::Backend::open(&dir).unwrap();
+    let status = backend.working_tree_status().unwrap();
+    for path in [&named_secret, &content_secret] {
+        assert!(
+            status.staged.iter().any(|file| &file.path == path),
+            "staged status must retain the exact original path: {path:?}"
+        );
+    }
+    let found = backend.staged_secret_paths(&status).unwrap();
+    let expected: HashSet<_> = [named_secret, content_secret].into_iter().collect();
+    assert_eq!(
+        found, expected,
+        "name and index-content warning identities must preserve non-UTF-8 bytes"
+    );
+    assert!(
+        !found.contains(&display_twin),
+        "a clean staged file sharing only the lossy display must not be warned"
+    );
+}
+
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;

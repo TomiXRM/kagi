@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Disclose Smart Commit's actual provider, external CLI account and possible charges, and request fresh consent after switching providers. Show staged `.env`/secret warnings on file rows and above Commit in wide and compact layouts, retaining explicit confirmation only for these safety findings. Persist PR comment/review drafts through the same isolated atomic draft store as Issue composers, preserving newer edits after posting. (#1702)
+- Keep secret-warning identities byte-exact for non-UTF-8 staged paths. Block PR submission until its saved draft is restored, and retire the posted composer input even when Graph replaced PR mode before completion. (#1702 review)
 
 ## [0.47.0] - 2026-10-21
 

@@ -6,10 +6,14 @@
 //! entry points so existing `crate::checklist::*` paths resolve during the
 //! migration.
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
 use git2::Repository;
 
 use super::{status::WorkingTreeStatus, GitError};
 use crate::ops::PlanNote;
+use kagi_domain::plan_note::ChecklistNote;
 
 pub use kagi_domain::checklist::*;
 
@@ -42,9 +46,43 @@ pub fn checklist(
     repo: &Repository,
     status: &WorkingTreeStatus,
 ) -> Result<(Vec<PlanNote>, Vec<PlanNote>), GitError> {
-    let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = Vec::new();
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+    for_each_finding(
+        repo,
+        status,
+        |note| blockers.push(PlanNote::Checklist(note)),
+        |_, note| warnings.push(PlanNote::Checklist(note)),
+    )?;
+    Ok((blockers, warnings))
+}
 
+/// Collect rule-5 identities directly from the staged status paths, not from
+/// plan notes: their display strings can replace invalid UTF-8 bytes.
+pub(crate) fn staged_secret_paths(
+    repo: &Repository,
+    status: &WorkingTreeStatus,
+) -> Result<HashSet<PathBuf>, GitError> {
+    let mut paths = HashSet::new();
+    for_each_finding(
+        repo,
+        status,
+        |_| {},
+        |path, note| {
+            if note.is_secret() && !paths.contains(path) {
+                paths.insert(path.to_path_buf());
+            }
+        },
+    )?;
+    Ok(paths)
+}
+
+fn for_each_finding(
+    repo: &Repository,
+    status: &WorkingTreeStatus,
+    mut on_blocker: impl FnMut(ChecklistNote),
+    mut on_warning: impl FnMut(&Path, ChecklistNote),
+) -> Result<(), GitError> {
     let large_threshold = large_blob_threshold();
 
     let index = repo
@@ -53,11 +91,9 @@ pub fn checklist(
 
     for file in &status.staged {
         let path = file.path.as_path();
-        warnings.extend(
-            evaluate_staged_path(path)
-                .into_iter()
-                .map(PlanNote::Checklist),
-        );
+        for note in evaluate_staged_path(path) {
+            on_warning(path, note);
+        }
 
         // Look up the staged index entry → BLOB. A deletion or a gitlink has
         // no readable BLOB; skip content rules for those.
@@ -77,11 +113,15 @@ pub fn checklist(
         let (file_blockers, file_warnings) =
             evaluate_staged_blob_content(path, content, is_binary, large_threshold);
 
-        blockers.extend(file_blockers.into_iter().map(PlanNote::Checklist));
-        warnings.extend(file_warnings.into_iter().map(PlanNote::Checklist));
+        for note in file_blockers {
+            on_blocker(note);
+        }
+        for note in file_warnings {
+            on_warning(path, note);
+        }
     }
 
-    Ok((blockers, warnings))
+    Ok(())
 }
 
 /// Resolve the large-binary byte threshold from `KAGI_LARGE_BLOB_BYTES`,
@@ -112,5 +152,70 @@ mod tests {
         // Default when unset.
         std::env::remove_var(LARGE_BLOB_ENV);
         assert_eq!(large_blob_threshold(), DEFAULT_LARGE_BLOB_BYTES);
+    }
+
+    /// Unlike the Linux filesystem fixture, raw index entries exercise invalid
+    /// UTF-8 identities on macOS too, without creating forbidden filenames.
+    #[cfg(unix)]
+    #[test]
+    fn raw_index_secret_paths_preserve_non_utf8_name_and_content_identities() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        use kagi_domain::status::{ChangeKind, FileStatus};
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let mut index = repo.index().unwrap();
+        let mut status = WorkingTreeStatus::default();
+        let entries: &[(&[u8], &[u8])] = &[
+            (b"private-\xff/.env", b"EXAMPLE=ordinary\n"),
+            (
+                b"private-\xff/generated.lock",
+                b"-----BEGIN PRIVATE KEY-----\nfixture\n",
+            ),
+            (
+                b"private-\xef\xbf\xbd/generated.lock",
+                b"ordinary staged content\n",
+            ),
+        ];
+        for &(raw_path, content) in entries {
+            index
+                .add(&git2::IndexEntry {
+                    ctime: git2::IndexTime::new(0, 0),
+                    mtime: git2::IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: 0o100644,
+                    uid: 0,
+                    gid: 0,
+                    file_size: content.len() as u32,
+                    id: repo.blob(content).unwrap(),
+                    flags: 0,
+                    flags_extended: 0,
+                    path: raw_path.to_vec(),
+                })
+                .unwrap();
+            status.staged.push(FileStatus {
+                path: PathBuf::from(OsStr::from_bytes(raw_path)),
+                change: ChangeKind::Added,
+            });
+        }
+        index.write().unwrap();
+
+        let backend = crate::backend::Backend::open(dir.path()).unwrap();
+        let found = backend.staged_secret_paths(&status).unwrap();
+        let expected: HashSet<_> = status.staged[..2]
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        assert_eq!(
+            found, expected,
+            "both rule-5 warning kinds must retain original staged path bytes"
+        );
+        assert!(
+            !found.contains(&status.staged[2].path),
+            "lossy display twins must not acquire another file's warning"
+        );
     }
 }

@@ -962,7 +962,7 @@ impl KagiApp {
                 let has_blockers = !plan.blockers.is_empty();
                 let has_secret_warning = plan.warnings.iter().any(|note| {
                     matches!(note, kagi_domain::plan_note::PlanNote::Checklist(note)
-                        if note.secret_path().is_some())
+                        if note.is_secret())
                 });
                 eprintln!(
                     "[kagi] plan: commit blockers={} warnings={}",

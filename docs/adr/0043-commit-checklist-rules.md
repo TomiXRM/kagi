@@ -86,3 +86,10 @@ detected path set. Unstaging refreshes that set; unstaged content is never
 mistaken for content being committed. The localized row warning is compact,
 and its tooltip/accessible description carries the review/exclusion advice.
 
+Rule-5 file identity is the original staged status `PathBuf`, retained when the
+shared filename/BLOB rules detect a finding. Checklist plan notes contain
+display-only text and must never be decoded or reverse-matched to identify a
+file: invalid UTF-8 bytes can be replaced in that text. The panel warning set
+uses the original paths for both row warnings and generated/artifact fold
+exclusion, including a valid secret basename beneath a non-UTF-8 directory.
+

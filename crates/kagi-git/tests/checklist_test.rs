@@ -110,17 +110,22 @@ fn panel_secret_paths_match_plan_and_scan_index_not_worktree() {
         .collect();
     assert_eq!(found, expected);
     let plan = backend.plan_commit("review").unwrap();
-    let plan_paths = plan
+    let plan_display_paths: std::collections::HashSet<_> = plan
         .warnings
         .iter()
         .filter_map(|note| match note {
-            kagi_git::ops::PlanNote::Checklist(note) => {
-                note.secret_path().map(std::path::PathBuf::from)
-            }
+            kagi_git::ops::PlanNote::Checklist(
+                kagi_domain::plan_note::ChecklistNote::PossibleSecretFileStaged { path }
+                | kagi_domain::plan_note::ChecklistNote::PossibleSecretContentStaged { path },
+            ) => Some(path.clone()),
             _ => None,
         })
         .collect();
-    assert_eq!(found, plan_paths);
+    let found_display_paths: std::collections::HashSet<_> = found
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(found_display_paths, plan_display_paths);
     git(&dir, &["restore", "--staged", ".env", "key.txt"]);
     let status = backend.working_tree_status().unwrap();
     assert!(backend.staged_secret_paths(&status).unwrap().is_empty());

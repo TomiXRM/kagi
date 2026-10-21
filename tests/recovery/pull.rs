@@ -1297,7 +1297,7 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
         );
         assert!(
             matches!(&app.status_footer, kagi::ui::FooterStatus::Failed(text)
-                if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull"))
+                if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
                     && !text.contains("stash-pop") && !text.contains("stash-push")),
             "the workflow footer names Pull, not its restore"
         );
@@ -1433,7 +1433,7 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
                 && !toast.message.contains(&durable[0].repo)
                 && toast
                     .message
-                    .contains(kagi::ui::i18n::op::user_text::operation_label("pull"))
+                    .contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
                 && !toast.message.contains("stash-pop")
                 && !toast.message.contains("stash-push"),
             "the toast is labelled with tab A's repository: {}",
@@ -1575,7 +1575,7 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
         let app = app.read(cx);
         assert!(
             matches!(&app.status_footer, kagi::ui::FooterStatus::Success(text)
-                if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull"))
+                if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
                     && !text.contains("stash-push") && !text.contains("stash-pop")),
             "one workflow footer names Pull, never its children: {:?}",
             app.status_footer

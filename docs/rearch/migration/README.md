@@ -30,7 +30,7 @@ and staged-content identity. No production owner or migration-stage status chang
 
 Measured Rust physical LOC (including blank/comment lines): production is unchanged
 at 306,273 LOC / 771 files; tests/support moves from 208,198 LOC / 476 files to
-208,254 LOC / 478 files (+56 LOC, including new collection regressions). This is
+208,249 LOC / 478 files (+51 LOC, including new collection regressions). This is
 not the planning estimate of a 200-line net reduction. Files over 800 remain 115;
 AST functions over 80 remain 875, with 19 parser-error files under pinned
 tree-sitter 0.25.2 / tree-sitter-rust 0.24.0. No physical move is counted as a saving.

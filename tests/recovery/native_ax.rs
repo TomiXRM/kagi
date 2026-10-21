@@ -73,6 +73,25 @@ pub fn focus_named(cx: &mut VisualTestAppContext, win: AnyWindowHandle, role: &s
 
 /// Deliver the standard native Press action, not a renderer callback or key.
 pub fn press(cx: &mut VisualTestAppContext, win: AnyWindowHandle, label: &str) -> bool {
+    press_scoped(cx, win, label, None)
+}
+
+/// Press a named control only inside its named native accessibility ancestor.
+pub fn press_in(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    scope: &str,
+    label: &str,
+) -> bool {
+    press_scoped(cx, win, label, Some(scope))
+}
+
+fn press_scoped(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    label: &str,
+    scope: Option<&str>,
+) -> bool {
     // NSApplication can retain native windows after GPUI unmounts their roots.
     // Mark only this live window, so a stale adapter cannot consume the request.
     let marker = format!("kagi-native-ax-{:?}", win.window_id());
@@ -85,17 +104,25 @@ pub fn press(cx: &mut VisualTestAppContext, win: AnyWindowHandle, label: &str) -
         .unwrap();
     let delivered = cx.update(|_| unsafe {
         use objc2::{class, msg_send, runtime::AnyObject};
-        unsafe fn find(object: *mut AnyObject, label: &str, depth: usize) -> bool {
+        unsafe fn find(
+            object: *mut AnyObject,
+            label: &str,
+            scope: Option<&str>,
+            mut inside: bool,
+            depth: usize,
+        ) -> bool {
             if object.is_null() || depth > 64 {
                 return false;
             }
             let name: *mut AnyObject = unsafe { msg_send![object, accessibilityTitle] };
             if !name.is_null() {
                 let bytes: *const std::ffi::c_char = unsafe { msg_send![name, UTF8String] };
-                if !bytes.is_null()
-                    && unsafe { std::ffi::CStr::from_ptr(bytes) }.to_string_lossy() == label
-                {
-                    return unsafe { msg_send![object, accessibilityPerformPress] };
+                if !bytes.is_null() {
+                    let name = unsafe { std::ffi::CStr::from_ptr(bytes) }.to_string_lossy();
+                    inside |= scope == Some(name.as_ref());
+                    if inside && name == label {
+                        return unsafe { msg_send![object, accessibilityPerformPress] };
+                    }
                 }
             }
             let children: *mut AnyObject = unsafe { msg_send![object, accessibilityChildren] };
@@ -105,7 +132,7 @@ pub fn press(cx: &mut VisualTestAppContext, win: AnyWindowHandle, label: &str) -
             let count: usize = unsafe { msg_send![children, count] };
             for index in 0..count {
                 let child: *mut AnyObject = unsafe { msg_send![children, objectAtIndex: index] };
-                if unsafe { find(child, label, depth + 1) } {
+                if unsafe { find(child, label, scope, inside, depth + 1) } {
                     return true;
                 }
             }
@@ -122,7 +149,7 @@ pub fn press(cx: &mut VisualTestAppContext, win: AnyWindowHandle, label: &str) -
                 continue;
             }
             let view: *mut AnyObject = msg_send![window, contentView];
-            if find(view, label, 0) {
+            if find(view, label, scope, scope.is_none(), 0) {
                 return true;
             }
         }

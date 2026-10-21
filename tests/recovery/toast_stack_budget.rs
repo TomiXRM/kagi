@@ -664,7 +664,7 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                     std::fs::remove_dir_all(&repo).unwrap();
                 }
             }
-            cx.read(|cx| {
+            let preview = cx.read(|cx| {
                 let state = app.read(cx);
                 assert!(!state.bottom_panel_open, "failure never auto-opens details");
                 let stack = state.toast_stack.as_ref().unwrap().read(cx);
@@ -674,6 +674,7 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                 assert!(toast.result_key.is_some() && toast.action.is_some());
                 assert!(!toast.message.contains(repo.to_str().unwrap()));
                 assert!(!toast.message.contains("missing-remote"));
+                toast.message.clone()
             });
             if lang == i18n::Lang::Ja {
                 crate::native_ax::activate(cx);
@@ -682,9 +683,10 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
             let action = e2e::control_bounds(window.window_id(), "operation-result-details")
                 .expect("failure detail action is actually drawn on this screen");
             if lang == i18n::Lang::Ja {
-                assert!(crate::native_ax::press(
+                assert!(crate::native_ax::press_in(
                     cx,
                     window,
+                    &preview,
                     i18n::Msg::BottomTabOperationLog.t()
                 ));
             } else {

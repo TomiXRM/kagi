@@ -4086,6 +4086,9 @@ The toast budget scenario also starts real Fetch failures before entering Home o
 another tab, then invokes the actual detail Button to reveal the same recorded ID.
 Closed-owner and removed-worktree legs must paint the shared log, not only mutate
 hidden panel state. The action is dismissed only after navigation succeeds.
+The JA leg activates the native accessibility adapter before drawing and scopes
+AppKit Press to the toast's named Status ancestor; the ordinary Operation Log tab
+has the same caption and must not consume the detail-action regression.
 `oplog_revert_eligibility` also clicks unavailable restore/revert actions in EN/JA
 from Home, another repository, a remote view and after all owner tabs close:
 the reason remains visible, no plan/write/receipt appears, and the same receipt

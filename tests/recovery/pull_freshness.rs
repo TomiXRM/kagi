@@ -1316,6 +1316,140 @@ fn current_configured_upstream_updates(
     unmount(cx, app, window);
 }
 
+/// Current normal and strict-FF Pull share the same fresh, localized no-op.
+pub fn scenario_pull_current_up_to_date(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        for ff_only in [false, true] {
+            for ahead in [false, true] {
+                current_up_to_date(cx, ff_only, ahead);
+            }
+        }
+    }
+    eprintln!("[gui-e2e] PASS pull_current_up_to_date");
+}
+
+fn current_up_to_date(cx: &mut VisualTestAppContext, ff_only: bool, ahead: bool) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let _origin = Origin::new(&repo);
+    git(&repo, &["remote", "set-head", "origin", "-a"]);
+    if ahead {
+        git(&repo, &["commit", "-qm", "local ahead", "--allow-empty"]);
+    }
+    std::fs::write(repo.join("README.md"), "staged local content\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    std::fs::write(repo.join("README.md"), "unstaged local content\n").unwrap();
+    std::fs::write(repo.join("untracked.txt"), "untracked local content\n").unwrap();
+    let before = Checkout::read(&repo);
+    let refs_before = output(&repo, &["show-ref"]);
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_fetch_for_e2e(hold);
+    if ff_only {
+        click_branch_sync(cx, window, "main", true);
+    } else {
+        click_pull(cx, window);
+    }
+    assert_waiting(cx, &app, &repo, &before);
+    release.send(());
+    cx.run_until_parked();
+    assert_eq!(latest_count(cx, &app), 1, "fresh Pull explains its no-op");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(!app.app_sessions.has_leases());
+        assert!(app.pull_modal().is_none());
+        assert!(app.branch_plan_modal().is_none());
+        let toasts = app
+            .toast_stack
+            .as_ref()
+            .expect("Pull outcome toast")
+            .read(cx);
+        let latest = toasts.toasts().last().expect("explanatory Pull toast");
+        assert_eq!(latest.kind, ToastKind::Sync);
+        assert_eq!(latest.message.as_ref(), Msg::AlreadyUpToDatePull.t());
+        assert!(matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()));
+    });
+    // The fetch's watcher must neither lose the explanation nor open a card.
+    app.update(cx, |app, cx| app.reload_external(cx));
+    cx.run_until_parked();
+    assert_eq!(latest_count(cx, &app), 1);
+    assert_eq!(Checkout::read(&repo), before);
+    assert_eq!(output(&repo, &["show-ref"]), refs_before);
+    for op in ["pull", "branch-pull-ff", "stash-push", "stash-pop"] {
+        assert!(
+            oplog::records(&repo, op, 100, true).is_empty(),
+            "no fabricated {op} execution"
+        );
+    }
+    unmount(cx, app, window);
+}
+
+/// Equal tips do not erase a conflict that appears during the freshness fetch.
+pub fn scenario_pull_current_ff_only_blocker(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        git(&repo, &["checkout", "-qb", "conflicting"]);
+        std::fs::write(repo.join("README.md"), "other committed content\n").unwrap();
+        git(&repo, &["commit", "-qam", "other conflict side"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        std::fs::write(repo.join("README.md"), "main committed content\n").unwrap();
+        git(&repo, &["commit", "-qam", "main conflict side"]);
+        let _origin = Origin::new(&repo);
+        git(&repo, &["remote", "set-head", "origin", "-a"]);
+        let (app, window) = mount(cx, &repo);
+        let before_fetch = Checkout::read(&repo);
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_fetch_for_e2e(hold);
+        click_branch_sync(cx, window, "main", true);
+        assert_waiting(cx, &app, &repo, &before_fetch);
+        assert!(!git_fixture::git_succeeds(
+            &repo,
+            &["merge", "--no-commit", "conflicting"]
+        ));
+        let conflicted = Checkout::read(&repo);
+        let refs_before = output(&repo, &["show-ref"]);
+        let merge_head = std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap();
+        release.send(());
+        cx.run_until_parked();
+        let fetched = std::fs::read_to_string(repo.join(".git/FETCH_HEAD"))
+            .expect("freshness fetch completed");
+        assert!(fetched.contains(&before_fetch.head));
+        assert!(oplog::records(&repo, "fetch", 100, true)
+            .iter()
+            .all(|entry| matches!(entry.outcome, OpOutcome::Success { .. })));
+        let plan = kagi_git::Backend::open(&repo)
+            .unwrap()
+            .plan_pull_branch_ff("main")
+            .unwrap();
+        assert_eq!(plan.disposition, kagi_git::ops::PlanDisposition::Blocked);
+        assert!(plan.blockers.iter().any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Common(
+                kagi_domain::plan_note::CommonNote::ConflictedFiles { .. }
+            )
+        )));
+        assert_eq!(latest_count(cx, &app), 0, "conflicts are not a Pull no-op");
+        assert_eq!(Checkout::read(&repo), conflicted);
+        assert_eq!(output(&repo, &["show-ref"]), refs_before);
+        assert_eq!(
+            std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
+            merge_head
+        );
+        for op in ["pull", "branch-pull-ff", "stash-push", "stash-pop"] {
+            assert!(oplog::records(&repo, op, 100, true).is_empty());
+        }
+        cx.read(|cx| assert!(!app.read(cx).app_sessions.has_leases()));
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS pull_current_ff_only_blocker");
+}
+
 /// Even a genuinely synced checkout owes the user a successful freshness check.
 pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();

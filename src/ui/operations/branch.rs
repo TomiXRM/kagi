@@ -270,6 +270,18 @@ impl KagiApp {
             self.report_plan_failure(i18n::Op::Pull, Msg::PullUpstreamChangedDuringFetch.t());
             return;
         }
+        // Freshness and the exact upstream identity have both been checked.
+        // A real blocker must never be hidden by the no-op presentation.
+        if modal.plan.blockers.is_empty()
+            && matches!(
+                modal.plan.disposition,
+                kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PullUpToDate)
+            )
+        {
+            self.clear_branch_plan_modal();
+            self.present_pull_up_to_date(cx);
+            return;
+        }
         let Some(repo) = self.ui().repo_session.as_ref() else {
             return;
         };

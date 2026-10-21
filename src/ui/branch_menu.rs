@@ -14,6 +14,9 @@ use super::{
 mod availability;
 use availability::*;
 
+#[path = "branch_menu_merge.rs"]
+mod merge_status;
+
 const MENU_W: f32 = 300.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +37,9 @@ pub struct BranchMenuState {
     pub target: CommitId,
     pub kind: BranchKind,
     pub position: Point<Pixels>,
+    /// None until the owner-bound background read has classified this tip.
+    pub merged_into_current: Option<bool>,
+    pub merge_check_started: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,7 +102,7 @@ pub struct BranchMenuContext {
     /// out in (`None` for the current worktree, or when it is not checked out
     /// anywhere else). Drives the "Open worktree" item.
     pub worktree_path: Option<std::path::PathBuf>,
-    pub merged_into_current: bool,
+    pub merged_into_current: Option<bool>,
     pub is_pushed: bool,
     pub detached_head: bool,
     pub busy: bool,
@@ -140,7 +146,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 BranchAction::DeleteBranch,
                 delete_label(ctx),
                 delete_state(ctx),
-                true,
+                ctx.merged_into_current == Some(false),
             ),
         ]),
         group(vec![

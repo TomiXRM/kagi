@@ -15,6 +15,17 @@ use kagi_domain::plan_note::PlanNote;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::ops::StateSummary;
 
+pub(crate) fn recording_outcome(outcome: &OpOutcome) -> i18n::op::RecordingOutcome {
+    use i18n::op::RecordingOutcome;
+    match outcome {
+        OpOutcome::Success { .. } => RecordingOutcome::Succeeded,
+        OpOutcome::Failed { .. } => RecordingOutcome::Failed,
+        OpOutcome::Refused { .. } => RecordingOutcome::Refused,
+        OpOutcome::Partial { .. } => RecordingOutcome::Partial,
+        OpOutcome::Unknown { .. } => RecordingOutcome::Unknown,
+    }
+}
+
 impl KagiApp {
     /// UI-side operation recording (toast / footer / history panel).
     ///
@@ -101,10 +112,11 @@ impl KagiApp {
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
             self.app_notices.push_back(
-                format!(
-                    "{}: {}",
+                i18n::op::user_text::operations::recording_failed(
                     repo_path.display(),
-                    i18n::oplog_write_failed(error)
+                    op,
+                    recording_outcome(&recording.entry().outcome),
+                    &error.to_string(),
                 )
                 .into(),
             );

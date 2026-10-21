@@ -481,6 +481,9 @@ mod keyboard_nav;
 #[cfg(target_os = "macos")]
 #[path = "recovery/lists_keyboard.rs"]
 mod lists_keyboard;
+#[cfg(target_os = "macos")]
+#[path = "recovery/state_labels.rs"]
+mod state_labels;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -489,6 +492,10 @@ mod conflict_abort_slot;
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_continue_cache.rs"]
 mod conflict_continue_cache;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_stopped.rs"]
+mod conflict_stopped;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_controls.rs"]
@@ -2333,6 +2340,14 @@ mod macos {
                 Box::new(crate::branch_menu_compact::scenario_branch_menu_compact),
             ),
             (
+                "branch_menu_merge_labels",
+                Box::new(crate::state_labels::branch_menu_merge_labels),
+            ),
+            (
+                "branch_cleanup_target_heading",
+                Box::new(crate::state_labels::branch_cleanup_target_heading),
+            ),
+            (
                 "context_menu_keys",
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys),
             ),
@@ -2563,6 +2578,14 @@ mod macos {
             (
                 "pull_freshness_clean_updates",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
+            ),
+            (
+                "pull_current_up_to_date",
+                Box::new(crate::pull_freshness::scenario_pull_current_up_to_date),
+            ),
+            (
+                "pull_current_ff_only_blocker",
+                Box::new(crate::pull_freshness::scenario_pull_current_ff_only_blocker),
             ),
             (
                 "pull_current_slash_remote",
@@ -3011,6 +3034,10 @@ mod macos {
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
             ),
             (
+                "oplog_append_failure_conflict_stopped",
+                Box::new(crate::conflict_stopped::scenario_oplog_append_failure_conflict_stopped),
+            ),
+            (
                 "pr_merge_delete_branch_return_cancel",
                 Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
             ),
@@ -3041,6 +3068,18 @@ mod macos {
             (
                 "editor_save_buffer_identity",
                 Box::new(crate::app_writer_admission::scenario_editor_save_buffer_identity),
+            ),
+            (
+                "conflict_merge_stopped_toast",
+                Box::new(crate::conflict_stopped::scenario_conflict_merge_stopped_toast),
+            ),
+            (
+                "conflict_rebase_stopped_toast",
+                Box::new(crate::conflict_stopped::scenario_conflict_rebase_stopped_toast),
+            ),
+            (
+                "branch_menu_orphan_delete",
+                Box::new(crate::state_labels::branch_menu_orphan_delete),
             ),
             (
                 "editor_external_change_banner",

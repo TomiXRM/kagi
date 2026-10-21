@@ -124,7 +124,7 @@ fn a_whitespace_only_difference_is_not_a_squash_merge() {
     );
 
     assert_eq!(
-        kagi_git::ops::squash_merged_as(&repo, tip, head),
+        kagi_git::ops::squash_merged_as(&repo, tip, head).expect("read squash evidence"),
         None,
         "a whitespace-only difference must not unblock the delete"
     );
@@ -164,6 +164,15 @@ fn a_net_zero_branch_is_not_squash_merged_by_an_empty_commit() {
     git(p, &["commit", "-q", "--allow-empty", "-m", "retrigger ci"]);
 
     let repo = git2::Repository::open(p).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap().id();
+    for branch in ["nulldiff", "nulldiff2"] {
+        let tip = repo.revparse_single(branch).unwrap().id();
+        assert_eq!(
+            kagi_git::ops::squash_merged_as(&repo, tip, head).unwrap(),
+            None,
+            "an empty change is a negative proof, not an unreadable object",
+        );
+    }
     let links = kagi_git::ops::collect_squash_links(&repo).unwrap();
     assert!(
         links.is_empty(),

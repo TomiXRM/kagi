@@ -155,6 +155,36 @@ Changes/Inspector file cards are not the shared MenuGroup renderer: Changes
 places its red Discard last without a separator; Inspector has no danger action.
 Branch Delete stays in the top-level management group by ADR-0049 / #1253.
 
+For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure,run_success_unrecorded_keeps_partial_footer,fetch_failure_reaches_the_oplog,pull_current_'`
+with KEEP_GOING. `branch_menu_merge_labels` compares real merged, squash-proven
+and unmerged tips in EN/JA after the owner-bound classification; it temporarily
+moves the unmerged tip's tree object aside to prove read failure keeps the final
+menu label neutral, then restores the object. Pending/unknown labels stay neutral.
+`branch_menu_classification_test` covers missing tip/ancestor commits and a missing
+squash-proof tree at the Backend boundary.
+`branch_menu_orphan_delete` also covers unrelated roots: a known-unmerged EN/JA
+menu, a ready delete plan, arming without a write, and deletion only after the
+second confirmation. Backend tests distinguish no common ancestor from missing
+commit/tree objects without suppressing either read-failure regression.
+`branch_cleanup_target_heading` checks the actual plan preview group and cancels
+without deleting. `conflict_merge_stopped_toast` and
+`conflict_rebase_stopped_toast` execute one/three-file conflicts and require a
+localized non-success stopped notice, real unresolved index entries and disabled
+Continue. The existing oplog failure scenario covers failed Fetch plus success
+and Unknown attempts under a real sidecar lock.
+`oplog_append_failure_conflict_stopped` locks the real oplog sidecar while merge
+and rebase stop on one/three-file conflicts in EN/JA. Require both the stopped
+Info toast and a separate Error toast plus immediate recording-failure AppNotice,
+one non-durable Partial row, no Success toast, no durable receipt/retry and a
+released known-outcome lease.
+`pull_current_up_to_date` covers equal/ahead strict/ordinary Pull without changing
+local edits; its blocker neighbor rejects a conflict arriving during the freshness
+fetch. Tier B compares
+the released and fixed real-window menu, cleanup confirmation and conflict
+settlement on the same EN/JA fixtures, preserving viewport/theme/zoom. Menu and
+cleanup captures cancel; conflict operations run only in disposable repositories.
+
+
 For #1628 use `KAGI_GUI_E2E_ONLY='inspector_directory_accordion'` with KEEP_GOING.
 This includes wide, compact and frozen-clock directory motion scenarios.
 Exercise nested collapse, compressed chains, equal basenames, Path/Tree retention,

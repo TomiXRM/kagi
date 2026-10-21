@@ -1770,6 +1770,41 @@ impl Backend {
         ops::plan_delete_branch(&self.repo, name)
     }
 
+    /// Read the delete plan's merge/squash classification without constructing a plan.
+    pub fn branch_is_merged_into_head(
+        &self,
+        name: &str,
+        expected_tip: &CommitId,
+        expected_head: &str,
+    ) -> Result<bool, GitError> {
+        let branch = self
+            .repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        let tip = branch
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Other("branch has no target OID".into()))?;
+        let head = self
+            .repo
+            .head()
+            .map_err(|e| GitError::Other(e.to_string()))?
+            .target()
+            .ok_or_else(|| GitError::Other("HEAD has no target OID".into()))?;
+        let expected_head =
+            git2::Oid::from_str(expected_head).map_err(|e| GitError::Other(e.to_string()))?;
+        let expected_tip =
+            git2::Oid::from_str(&expected_tip.0).map_err(|e| GitError::Other(e.to_string()))?;
+        if head != expected_head || tip != expected_tip {
+            return Err(GitError::Other(
+                "branch or HEAD changed during branch menu read".into(),
+            ));
+        }
+        let (merged, squash) = ops::branch_merge_status(&self.repo, tip, Some(head))
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        Ok(merged || squash.is_some())
+    }
+
     pub(crate) fn execute_delete_branch(
         &self,
         plan: &OperationPlan,

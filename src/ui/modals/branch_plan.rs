@@ -27,10 +27,9 @@ pub struct BranchPlanModal {
     /// Successful-fetch origin: requesting tab, visit, and original request time.
     pub fetch_owner: Option<(crate::app::SessionId, u64, std::time::Instant)>,
     pub dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
-    /// Local tip, upstream name and upstream tip; external ref/config moves sweep it.
+    /// Exact configured upstream mapping and tip; never a display shorthand.
     pub fetched_refs: Option<(
-        kagi_domain::commit::CommitId,
-        String,
+        kagi_domain::plan::PullIdentity,
         kagi_domain::commit::CommitId,
     )>,
 }

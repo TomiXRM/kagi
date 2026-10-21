@@ -2604,6 +2604,10 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
             ),
             (
+                "pull_ff_only_diverged_refusal",
+                Box::new(crate::pull_freshness::scenario_pull_ff_only_diverged_refusal),
+            ),
+            (
                 "pull_branch_slash_remote_current",
                 Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_current),
             ),

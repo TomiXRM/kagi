@@ -597,4 +597,30 @@ refusal or fabricates a write receipt.
 - Tier A の所有: `toast_stack_budget`（実 no-op Push 連打 / keyed 置換）、`stage_failure_notice` /
   `hunk_staging`、`pull_presents_backend_receipts` / departed-owner Pull、host dirty guard / clone close。
   Busy のこの実装は #1700 の統合依存であり、同 issue で第二の通知 owner は追加しない。
+## Amendment — 2026-10-21: Pull terminal observation and retained refusal (#1720)
+
+Pull's three successful-execution terminal paths read only the existing
+`Backend::head_state().display()` for the `verified: pull after = ...` diagnostic.
+They do not collect a repository snapshot, which recursively reads unrelated
+linked worktrees and unnecessarily retains the finished write's lease. The FF
+and merge execution paths already return their typed result only after safe
+checkout and the branch-ref transaction commit. A receipt's predicted
+`Success.after` is not an observed HEAD and is not substituted for this read.
+
+This final read is display-only. Failure logs that the actual HEAD was
+unavailable, without a fabricated `verified` prediction; it does not alter the
+already determined result, receipts or settlement classification. Other callers
+of the shared after-snapshot helper retain their existing contract.
+
+A fetched strict-FF refusal is a blocked explanation, not an execution-ready
+approval: its intentionally absent executable Pull identity cannot pass
+preflight. Retention freezes the exact configured remote, full upstream ref,
+local/upstream tips, current HEAD, dirty digest and owning tab visit. A matching
+snapshot also requires current backend identity/state to match. A refusal is
+replanned only to refresh a still-blocked explanation; an executable/no-op
+replacement invalidates the old request rather than starting it. Ready choices
+retain their original executable identity and preflight requirements. Slash
+remote names, local upstreams and display shorthand never replace canonical
+identity. Ordinary merge-capable Pull and explicit strict-FF remain different
+policies; this change does not rewrite Git configuration or their admission.
 

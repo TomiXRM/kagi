@@ -1498,35 +1498,12 @@ impl Backend {
         Ok((plan, status.digest()))
     }
 
-    /// Ref identities used to retain a fetched ff-only preview across unchanged reads.
+    /// Exact upstream identity and tip used to retain an unchanged fetched preview.
     pub fn pull_branch_ref_state(
         &self,
         name: &str,
-    ) -> Result<(CommitId, String, CommitId), GitError> {
-        let branch = self
-            .repo
-            .find_branch(name, git2::BranchType::Local)
-            .map_err(|error| GitError::Other(error.to_string()))?;
-        let upstream = branch
-            .upstream()
-            .map_err(|error| GitError::Other(error.to_string()))?;
-        let target = branch
-            .get()
-            .target()
-            .ok_or_else(|| GitError::Other("branch has no target".into()))?;
-        let upstream_target = upstream
-            .get()
-            .target()
-            .ok_or_else(|| GitError::Other("upstream has no target".into()))?;
-        let upstream_name = upstream
-            .name()
-            .map_err(|error| GitError::Other(error.to_string()))?
-            .ok_or_else(|| GitError::Other("upstream has no name".into()))?;
-        Ok((
-            CommitId(target.to_string()),
-            upstream_name.to_owned(),
-            CommitId(upstream_target.to_string()),
-        ))
+    ) -> Result<(kagi_domain::plan::PullIdentity, CommitId), GitError> {
+        ops::pull_branch_ref_state(&self.repo, name)
     }
 
     pub(crate) fn execute_pull_branch_ff(

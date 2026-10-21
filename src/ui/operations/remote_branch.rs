@@ -621,7 +621,8 @@ impl KagiApp {
 
     /// Persist the fetch failure for its frozen repository and push its
     /// receipt into the shared Operation Log panel even after a tab switch.
-    /// Only the still-current owner may open the panel or show an error.
+    /// Only the still-current owner may open the panel. Return the recording
+    /// so a departed manual Fetch can link its result to the appended receipt.
     // The frozen receipt and owner stamp arrive separately from two fetch jobs.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_ref_fetch_failure(
@@ -635,7 +636,7 @@ impl KagiApp {
         technical_detail: Option<String>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
-    ) {
+    ) -> kagi_git::backend::recording::Recording {
         let mut entry =
             kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
                 .with_ref_moves(ref_moves);
@@ -674,6 +675,7 @@ impl KagiApp {
             self.bottom_panel_open = true;
             self.bottom_tab = BottomTab::OperationLog;
         }
+        recording
     }
 }
 

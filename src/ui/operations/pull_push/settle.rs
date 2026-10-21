@@ -300,15 +300,18 @@ impl KagiApp {
     }
 
     /// Put a background owner's receipt in the window-global Operation Log and
-    /// announce a non-success without changing the active tab's footer/panes.
+    /// announce its result without changing the active tab's footer/panes.
     pub(in crate::ui::operations) fn present_recorded_background(
         &mut self,
         recording: &kagi_git::backend::recording::Recording,
+        success_text: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
         let success = matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. });
-        let shown = crate::ui::operations::outcome_text(&entry.op, &entry.outcome);
+        let shown = success_text
+            .filter(|_| success)
+            .unwrap_or_else(|| crate::ui::operations::outcome_text(&entry.op, &entry.outcome).into());
         self.push_operation_result(
             &entry,
             &entry.op,
@@ -317,7 +320,7 @@ impl KagiApp {
             } else {
                 ToastKind::Error
             },
-            shown.into(),
+            shown,
             cx,
         );
         self.insert_recorded_row(recording, cx);

@@ -605,20 +605,37 @@ impl KagiApp {
                             cx,
                         );
                     }
+                    let announce = !current
+                        || app.operation_result_toast_needed(
+                            cx.background_executor().now().saturating_duration_since(
+                                presentation.request_started.unwrap_or(result_started),
+                            ) >= std::time::Duration::from_secs(2),
+                        );
+                    // Moving a successful result away from its footer must
+                    // retain its useful target/detail. Only a durable Success
+                    // may reuse the operation's success-specific presentation.
+                    let success_text = if announce {
+                        match (&report.recording, &presentation.status) {
+                            (
+                                Recording::Appended { entry, .. },
+                                Some(FooterStatus::Success(text)),
+                            ) if matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) => {
+                                Some(text.clone())
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                     if !current {
                         // Foreground presentation belongs to the frozen owner,
                         // while Operation Log is window-global and must still
                         // receive the durable result after a tab switch.
-                        app.present_recorded_background(&report.recording, cx);
+                        app.present_recorded_background(&report.recording, success_text, cx);
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }
                     failed = report.result.is_err();
-                    let announce = app.operation_result_toast_needed(
-                        cx.background_executor().now().saturating_duration_since(
-                            presentation.request_started.unwrap_or(result_started),
-                        ) >= std::time::Duration::from_secs(2),
-                    );
                     if announce {
                         presentation.status = None;
                     }
@@ -648,7 +665,15 @@ impl KagiApp {
                             let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                                 &report.recording,
                             );
-                            app.record_op_result(entry, cx, false, None, None, announce, None);
+                            app.record_op_result(
+                                entry,
+                                cx,
+                                false,
+                                None,
+                                success_text.map(|text| (ToastKind::Success, text)),
+                                announce,
+                                None,
+                            );
                         }
                         Some(app.status_footer.clone())
                     } else {

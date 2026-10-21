@@ -604,7 +604,7 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
             });
             cx.update_window(window, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    app.fetch_async(false, cx);
+                    assert!(app.fetch_async_for(false, None, cx), "manual Fetch is admitted");
                     if let Some(other) = &other {
                         assert!(app.open_repository(other.path().to_path_buf(), cx));
                     } else {
@@ -635,11 +635,17 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "background failure presents its detail action"
+                    "{lang:?}/{destination}: background failure presents its detail action"
                 );
                 std::thread::sleep(Duration::from_millis(2));
             }
-            let recorded = kagi_git::read_oplog_tail_for_repo(&repo, 100)
+            let entries = kagi_git::read_oplog_tail_for_repo(&repo, 100);
+            assert_eq!(
+                entries.iter().filter(|entry| entry.op == "fetch").count(),
+                1,
+                "the departed manual Fetch retains exactly one durable receipt"
+            );
+            let recorded = entries
                 .into_iter()
                 .find(|entry| entry.op == "fetch")
                 .expect("real failed Fetch is durable");
@@ -655,10 +661,15 @@ fn operation_result_details(cx: &mut VisualTestAppContext) {
                 }
             }
             cx.read(|cx| {
-                assert!(
-                    !app.read(cx).bottom_panel_open,
-                    "failure never auto-opens details"
-                )
+                let state = app.read(cx);
+                assert!(!state.bottom_panel_open, "failure never auto-opens details");
+                let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                assert_eq!(stack.toasts().len(), 1, "one departed workflow result");
+                let toast = &stack.toasts()[0];
+                assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+                assert!(toast.result_key.is_some() && toast.action.is_some());
+                assert!(!toast.message.contains(repo.to_str().unwrap()));
+                assert!(!toast.message.contains("missing-remote"));
             });
             draw(cx, window);
             let action = e2e::control_bounds(window.window_id(), "operation-result-details")

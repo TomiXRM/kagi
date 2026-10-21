@@ -2799,7 +2799,7 @@ impl KagiApp {
                                     requested_op,
                                 );
                             } else {
-                                app.record_ref_fetch_failure(
+                                let recording = app.record_ref_fetch_failure(
                                     "fetch",
                                     Some(flight.owner),
                                     Some(flight.visit),
@@ -2813,6 +2813,24 @@ impl KagiApp {
                                     &repo_path_guard,
                                     cx,
                                 );
+                                // The frozen owner is away, so leave the live
+                                // footer/panes alone and offer its durable result.
+                                // A Pull waiter owns the requested name; a quiet
+                                // auto-fetch with no waiter has no notification.
+                                if !silent || !flight.waiters.is_empty() {
+                                    let entry = recording.entry();
+                                    app.push_operation_result(
+                                        entry,
+                                        requested_op,
+                                        ToastKind::Error,
+                                        crate::ui::operations::outcome_text(
+                                            requested_op,
+                                            &entry.outcome,
+                                        )
+                                        .into(),
+                                        cx,
+                                    );
+                                }
                             }
                         }
                         Ok((outcome, _)) if current_waiter => {

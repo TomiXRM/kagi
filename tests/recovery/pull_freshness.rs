@@ -919,6 +919,16 @@ fn click_branch_sync(
     branch: &str,
     ff_only: bool,
 ) {
+    let pull = open_branch_sync_menu(cx, window, branch, ff_only);
+    cx.simulate_click(window, pull.center(), gpui::Modifiers::none());
+}
+
+fn open_branch_sync_menu(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    branch: &str,
+    ff_only: bool,
+) -> gpui::Bounds<gpui::Pixels> {
     draw(cx, window);
     let row = e2e::control_bounds(window.window_id(), &format!("sidebar-local-{branch}"))
         .expect("selected branch row is drawn");
@@ -950,9 +960,45 @@ fn click_branch_sync(
     } else {
         "branch-menu-item-1-0"
     };
-    let pull = e2e::control_bounds(window.window_id(), id)
-        .expect("branch context-menu Pull action is drawn");
-    cx.simulate_click(window, pull.center(), gpui::Modifiers::none());
+    assert_eq!(
+        kagi::ui::menu_overlay::recorded_item_description(id),
+        Some(None),
+        "the selected Pull consumer must be enabled before accepting its intent"
+    );
+    e2e::control_bounds(window.window_id(), id)
+        .expect("branch context-menu Pull action is drawn")
+}
+
+/// Deliver an already-admitted branch-menu intent after a background fetch
+/// acquires the lease. Fresh toolbar/menu entries are correctly disabled then;
+/// the callback race still owes this intent a same-owner freshness result.
+fn join_existing_fetch(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    ff_only: bool,
+    flight_age: Duration,
+) {
+    let _ = open_branch_sync_menu(cx, window, "main", ff_only);
+    let intent = app.update(cx, |app, cx| {
+        assert!(!app.app_sessions.has_leases());
+        let intent = app.branch_menu.take().expect("the actual selected branch intent");
+        assert!(app.fetch_async_for(true, None, cx));
+        intent
+    });
+    cx.run_until_parked();
+    cx.advance_clock(flight_age);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let action = if ff_only {
+                kagi::ui::branch_menu::BranchAction::PullFfOnly
+            } else {
+                kagi::ui::branch_menu::BranchAction::Pull
+            };
+            app.dispatch_branch_action(action, intent, window, cx);
+        });
+    })
+    .unwrap();
 }
 
 fn assert_cached_zero(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: &Path) {
@@ -1081,9 +1127,11 @@ pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
     clean_updates_from(cx, click_pull);
     clean_updates_from(cx, click_branch_pull);
-    for click in [click_pull, click_current_ff] {
+    for ff_only in [false, true] {
+        let click: fn(&mut VisualTestAppContext, AnyWindowHandle) =
+            if ff_only { click_current_ff } else { click_pull };
         for join_existing in [false, true] {
-            clean_updates_from_timed(cx, click, true, join_existing);
+            clean_updates_from_timed(cx, click, true, join_existing, ff_only);
         }
     }
     eprintln!("[gui-e2e] PASS pull_freshness_clean_updates");
@@ -1093,7 +1141,7 @@ pub(super) fn clean_updates_from(
     cx: &mut VisualTestAppContext,
     click: fn(&mut VisualTestAppContext, AnyWindowHandle),
 ) {
-    clean_updates_from_timed(cx, click, false, false);
+    clean_updates_from_timed(cx, click, false, false, false);
 }
 
 fn clean_updates_from_timed(
@@ -1101,6 +1149,7 @@ fn clean_updates_from_timed(
     click: fn(&mut VisualTestAppContext, AnyWindowHandle),
     long_running: bool,
     join_existing: bool,
+    ff_only: bool,
 ) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -1116,10 +1165,10 @@ fn clean_updates_from_timed(
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
     if join_existing {
-        app.update(cx, |app, cx| app.fetch_async(true, cx));
-        cx.run_until_parked();
+        join_existing_fetch(cx, &app, window, ff_only, Duration::ZERO);
+    } else {
+        click(cx, window);
     }
-    click(cx, window);
     assert_waiting(cx, &app, &repo, &before);
     if long_running {
         cx.advance_clock(Duration::from_secs(2));
@@ -1434,12 +1483,9 @@ fn current_up_to_date(
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
     if join_existing {
-        app.update(cx, |app, cx| app.fetch_async(true, cx));
-        cx.run_until_parked();
         // Time before this Pull request must not make a short joined request long.
-        cx.advance_clock(Duration::from_secs(3));
-    }
-    if ff_only {
+        join_existing_fetch(cx, &app, window, ff_only, Duration::from_secs(3));
+    } else if ff_only {
         click_branch_sync(cx, window, "main", true);
     } else {
         click_pull(cx, window);

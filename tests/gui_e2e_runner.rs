@@ -370,6 +370,10 @@ mod recovery_pull;
 mod pull_freshness;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/entry_consistency.rs"]
+mod entry_consistency;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pull_fetch_blocker.rs"]
 mod pull_fetch_blocker;
 
@@ -2538,6 +2542,30 @@ mod macos {
             (
                 "push_safe_intent",
                 Box::new(crate::pull_freshness::scenario_push_safe_intent),
+            ),
+            (
+                "entry_consistency_sidebar_push_safe_intent",
+                Box::new(crate::entry_consistency::scenario_sidebar_push_safe_intent),
+            ),
+            (
+                "entry_consistency_sidebar_publish_safe_intent",
+                Box::new(crate::entry_consistency::scenario_sidebar_publish_safe_intent),
+            ),
+            (
+                "entry_consistency_sidebar_publish_ambiguous_remote",
+                Box::new(crate::entry_consistency::scenario_sidebar_publish_ambiguous_remote),
+            ),
+            (
+                "entry_consistency_palette_pull_push_safe_intent",
+                Box::new(crate::entry_consistency::scenario_palette_pull_push_safe_intent),
+            ),
+            (
+                "entry_consistency_shortcut_pull_push_safe_intent",
+                Box::new(crate::entry_consistency::scenario_shortcut_pull_push_safe_intent),
+            ),
+            (
+                "entry_consistency_sidebar_noncurrent_pull_safe_intent",
+                Box::new(crate::entry_consistency::scenario_sidebar_noncurrent_pull_safe_intent),
             ),
             (
                 "pull_quiet_late_dirty_refuses",

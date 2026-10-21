@@ -47,13 +47,13 @@ impl Drop for SettingsGuard {
     }
 }
 
-struct Origin {
+pub(super) struct Origin {
     _root: tempfile::TempDir,
     other: PathBuf,
 }
 
 impl Origin {
-    fn new(repo: &Path) -> Self {
+    pub(super) fn new(repo: &Path) -> Self {
         Self::new_named(repo, "origin")
     }
 
@@ -79,7 +79,7 @@ impl Origin {
         Self { _root: root, other }
     }
 
-    fn advance(&self) -> String {
+    pub(super) fn advance(&self) -> String {
         std::fs::write(self.other.join("upstream.txt"), "fresh upstream content\n").unwrap();
         git(&self.other, &["add", "upstream.txt"]);
         git(
@@ -1091,7 +1091,7 @@ pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pull_freshness_clean_updates");
 }
 
-fn clean_updates_from(
+pub(super) fn clean_updates_from(
     cx: &mut VisualTestAppContext,
     click: fn(&mut VisualTestAppContext, AnyWindowHandle),
 ) {
@@ -1109,7 +1109,7 @@ fn clean_updates_from(
     release.send(());
     wait_idle(cx, &app);
     cx.run_until_parked();
-    cx.read(|cx| assert!(app.read(cx).pull_modal().is_none()));
+    cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
     assert_eq!(
         output(&repo, &["rev-parse", "origin/main"]),
         expected,
@@ -1135,11 +1135,11 @@ fn clean_updates_from(
     );
     assert!(output(&repo, &["status", "--porcelain"]).is_empty());
     let durable = oplog::records(&repo, "pull", 100, true);
-    assert_eq!(durable.len(), 1, "one confirmed Pull, one durable receipt");
+    assert_eq!(durable.len(), 1, "one Pull intent, one durable receipt");
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     cx.read(|cx| {
         let app = app.read(cx);
-        assert!(app.pull_modal().is_none());
+        assert!(!e2e::active_modal_present(app));
         assert!(!app.app_sessions.has_leases());
         let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
         let shown: Vec<_> = panel
@@ -1812,7 +1812,9 @@ pub fn scenario_pull_freshness_closed_modal_displaces(cx: &mut VisualTestAppCont
     eprintln!("[gui-e2e] PASS pull_freshness_closed_modal_displaces");
 }
 
-/// A captured unchanged snapshot cannot authorize a replan of a changed checkout.
+/// A captured unchanged snapshot cannot authorize a retained risk choice after
+/// the checkout changes. Safe branch FF has no retained choice after #1697;
+/// its immediate admission and held-run invariants live in branch_ref_updates.
 pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
     #[derive(Clone, Copy)]
@@ -1821,130 +1823,101 @@ pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppConte
         Worktree,
         Upstream,
     }
-    for branch_ff in [false, true] {
-        for drift in [Drift::Head, Drift::Worktree, Drift::Upstream] {
-            let fixture = build_fixture();
-            let repo = fixture.path().canonicalize().unwrap();
-            let origin = Origin::new(&repo);
-            if branch_ff {
-                git(&repo, &["branch", "feature"]);
-                git(
-                    &repo,
-                    &["branch", "--set-upstream-to=origin/main", "feature"],
-                );
-            }
-            if !branch_ff {
-                std::fs::write(repo.join("upstream.txt"), "local committed side\n").unwrap();
-                git(&repo, &["add", "upstream.txt"]);
-                git(&repo, &["commit", "-qm", "conflicting local history"]);
-            }
-            let (app, window) = mount(cx, &repo);
-            let expected = origin.advance();
-            if matches!(drift, Drift::Upstream) {
-                git(&origin.other, &["push", "-q", "origin", "main:alternate"]);
-            }
-            let before = Checkout::read(&repo);
-            if branch_ff {
-                click_branch_sync(cx, window, "feature", true);
-                assert_fresh_branch_confirm(cx, &app, window, "feature");
-            } else {
-                fetch_and_confirm(cx, &app, window, &repo, &before);
-            }
-
-            let (owner, revision) = app.update(cx, |app, cx| {
-                let owner = app.active_session().unwrap();
-                app.reload_external(cx);
-                (owner, app.reads.revision(owner))
-            });
-            // Existing GPUI scheduler control: finish the real synchronous snapshot
-            // worker, but do not let its foreground acceptance closure run yet.
-            let dispatcher = cx.background_executor.dispatcher().as_test().unwrap();
-            let mut ticks = 0;
-            while dispatcher.tick(true) {
-                ticks += 1;
-            }
-            assert!(ticks > 0, "the real snapshot worker ran");
-            cx.read(|cx| {
-                let app = app.read(cx);
-                assert!(
-                    app.reads.is_loading(owner),
-                    "captured read is not yet accepted"
-                );
-                assert!(
-                    if branch_ff {
-                        app.branch_plan_modal().is_some()
-                    } else {
-                        app.pull_modal().is_some()
-                    },
-                    "original approval is still shown"
-                );
-            });
-            if matches!(drift, Drift::Head) {
-                git(
-                    &repo,
-                    &[
-                        "commit",
-                        "-q",
-                        "--allow-empty",
-                        "-m",
-                        "drift after snapshot",
-                    ],
-                );
-            } else if matches!(drift, Drift::Worktree) {
-                std::fs::write(repo.join("README.md"), "edit after captured snapshot\n").unwrap();
-            } else {
-                let branch = if branch_ff { "feature" } else { "main" };
-                git(
-                    &repo,
-                    &["branch", "--set-upstream-to=origin/alternate", branch],
-                );
-            }
-            let changed = Checkout::read(&repo);
-            if matches!(drift, Drift::Upstream) {
-                assert_eq!(changed, before, "upstream drift changes only config");
-            } else {
-                assert_ne!(changed, before);
-            }
-            assert_eq!(changed.index, before.index);
-            cx.run_until_parked();
-            cx.read(|cx| {
-                let app = app.read(cx);
-                assert_eq!(app.reads.revision(owner), revision, "the captured read won");
-                assert!(
-                    !app.reads.is_loading(owner),
-                    "the captured read was accepted"
-                );
-                assert!(
-                    !app.view().is_dirty,
-                    "accepted snapshot predates the live edit"
-                );
-                assert_eq!(
-                    app.view().status_summary.ahead,
-                    Some(usize::from(!branch_ff))
-                );
-                assert_eq!(app.view().status_summary.behind, Some(1));
-                assert!(
-                    if branch_ff {
-                        app.branch_plan_modal().is_none()
-                    } else {
-                        app.pull_modal().is_none()
-                    },
-                    "live replan must invalidate, not rewrite the old clean approval"
-                );
-            });
-            e2e::clear_control_bounds(window.window_id(), "plan-cancel");
-            draw(cx, window);
-            assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_none());
-            press_enter(cx, &app, window);
-            wait_idle(cx, &app);
-            cx.run_until_parked();
-            assert_eq!(Checkout::read(&repo), changed);
-            assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
-            assert_eq!(latest_count(cx, &app), 0);
-            assert!(oplog::records(&repo, "pull", 100, true).is_empty());
-            assert!(output(&repo, &["stash", "list"]).is_empty());
-            unmount(cx, app, window);
+    for drift in [Drift::Head, Drift::Worktree, Drift::Upstream] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let origin = Origin::new(&repo);
+        std::fs::write(repo.join("upstream.txt"), "local committed side\n").unwrap();
+        git(&repo, &["add", "upstream.txt"]);
+        git(&repo, &["commit", "-qm", "conflicting local history"]);
+        let (app, window) = mount(cx, &repo);
+        let expected = origin.advance();
+        if matches!(drift, Drift::Upstream) {
+            git(&origin.other, &["push", "-q", "origin", "main:alternate"]);
         }
+        let before = Checkout::read(&repo);
+        fetch_and_confirm(cx, &app, window, &repo, &before);
+
+        let (owner, revision) = app.update(cx, |app, cx| {
+            let owner = app.active_session().unwrap();
+            app.reload_external(cx);
+            (owner, app.reads.revision(owner))
+        });
+        // Finish the real snapshot worker without accepting its read yet.
+        let dispatcher = cx.background_executor.dispatcher().as_test().unwrap();
+        let mut ticks = 0;
+        while dispatcher.tick(true) {
+            ticks += 1;
+        }
+        assert!(ticks > 0, "the real snapshot worker ran");
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(
+                app.reads.is_loading(owner),
+                "captured read is not yet accepted"
+            );
+            assert!(
+                app.pull_modal().is_some(),
+                "original risk choice is still shown"
+            );
+        });
+        match drift {
+            Drift::Head => git(
+                &repo,
+                &[
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "drift after snapshot",
+                ],
+            ),
+            Drift::Worktree => {
+                std::fs::write(repo.join("README.md"), "edit after captured snapshot\n").unwrap();
+            }
+            Drift::Upstream => git(
+                &repo,
+                &["branch", "--set-upstream-to=origin/alternate", "main"],
+            ),
+        }
+        let changed = Checkout::read(&repo);
+        if matches!(drift, Drift::Upstream) {
+            assert_eq!(changed, before, "upstream drift changes only config");
+        } else {
+            assert_ne!(changed, before);
+        }
+        assert_eq!(changed.index, before.index);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.reads.revision(owner), revision, "the captured read won");
+            assert!(
+                !app.reads.is_loading(owner),
+                "the captured read was accepted"
+            );
+            assert!(
+                !app.view().is_dirty,
+                "accepted snapshot predates the live edit"
+            );
+            assert_eq!(app.view().status_summary.ahead, Some(1));
+            assert_eq!(app.view().status_summary.behind, Some(1));
+            assert!(
+                app.pull_modal().is_none(),
+                "live replan must invalidate, not rewrite the old risk choice"
+            );
+        });
+        e2e::clear_control_bounds(window.window_id(), "plan-cancel");
+        draw(cx, window);
+        assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_none());
+        press_enter(cx, &app, window);
+        wait_idle(cx, &app);
+        cx.run_until_parked();
+        assert_eq!(Checkout::read(&repo), changed);
+        assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
+        assert_eq!(latest_count(cx, &app), 0);
+        assert!(oplog::records(&repo, "pull", 100, true).is_empty());
+        assert!(output(&repo, &["stash", "list"]).is_empty());
+        unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS pull_freshness_captured_reload_drift");
 }
@@ -2091,42 +2064,12 @@ pub fn scenario_pull_branch_local_upstream_noncurrent(cx: &mut VisualTestAppCont
     eprintln!("[gui-e2e] PASS pull_branch_local_upstream_noncurrent");
 }
 
-fn assert_fresh_branch_confirm(
+pub(super) fn branch_ref_updates(
     cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    branch: &str,
+    current: bool,
+    ff_only: bool,
+    remote: &str,
 ) {
-    cx.run_until_parked();
-    cx.read(|cx| {
-        let app = app.read(cx);
-        assert!(app.fetch_in_flight.is_none());
-        assert!(!app.app_sessions.has_leases());
-        assert!(app.pull_modal().is_none());
-        let modal = app
-            .branch_plan_modal()
-            .expect("fetched branch opens confirmation");
-        assert_eq!(modal.branch_name, branch);
-        assert!(modal.error.is_none());
-        assert!(
-            modal.plan.blockers.is_empty(),
-            "fetched branch can fast-forward"
-        );
-        assert!(
-            !matches!(
-                modal.plan.disposition,
-                kagi_git::ops::PlanDisposition::NoOp(_)
-            ),
-            "stale tracking equality must not survive the fetch"
-        );
-    });
-    e2e::clear_control_bounds(window.window_id(), "plan-cancel");
-    draw(cx, window);
-    assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_some());
-    assert_eq!(latest_count(cx, app), 0);
-}
-
-fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: bool, remote: &str) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     if current {
@@ -2208,6 +2151,8 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
     assert_ne!(target_before, expected);
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
+    let (run_hold, run_release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(run_hold);
     click_branch_sync(cx, window, branch, ff_only);
     assert_waiting(cx, &app, &repo, &before);
     assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
@@ -2225,7 +2170,7 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
     assert_ne!(
         std::fs::read(repo.join(".git/FETCH_HEAD")).ok(),
         fetch_head_before,
-        "the menu's real fetch must finish before confirmation"
+        "the menu's real fetch must finish before execution"
     );
     assert!(
         oplog::records(&repo, "fetch", 100, true)
@@ -2271,17 +2216,21 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
             format!("refs/remotes/{remote}/main")
         }
     );
-    assert_fresh_branch_confirm(cx, &app, window, branch);
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app.branch_plan_modal().unwrap();
-        let fresh_identity = modal.plan.pull_identity.as_ref().unwrap();
-        assert_eq!(
-            fresh_identity, identity,
-            "confirmation preserves exact branch/upstream identity"
+        assert!(
+            !e2e::active_modal_present(app),
+            "safe branch Pull stays quiet"
         );
-        assert!(modal.fetch_owner.is_some());
-        assert!(modal.fetched_refs.is_some());
+        assert!(
+            app.app_sessions.has_leases(),
+            "normal lifecycle owns the run"
+        );
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Busy(message) if message.contains(branch)),
+            "progress identifies selected target {branch}: {:?}",
+            app.status_footer
+        );
     });
     assert_eq!(output(&repo, &["rev-parse", &tracking]), expected);
     if different_remote {
@@ -2308,7 +2257,8 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
         });
         app.update(cx, |app, cx| app.reload_external(cx));
         cx.advance_clock(Duration::from_secs(1));
-        assert_fresh_branch_confirm(cx, &app, window, branch);
+        cx.run_until_parked();
+        cx.read(|cx| assert!(!e2e::active_modal_present(app.read(cx))));
         cx.read(|cx| {
             let app = app.read(cx);
             assert!(app.reads.revision(owner) > revision);
@@ -2321,7 +2271,7 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
         assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
     }
 
-    press_enter(cx, &app, window);
+    run_release.send(());
     wait_idle(cx, &app);
     cx.run_until_parked();
     assert_eq!(output(&repo, &["rev-parse", &target_ref]), expected);
@@ -2360,7 +2310,7 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
     assert_eq!(
         refs(),
         expected_refs,
-        "confirmed Pull moves only the selected local ref"
+        "quiet Pull moves only the selected local ref"
     );
     let durable = oplog::records(&repo, "pull", 100, true);
     assert_eq!(durable.len(), 1);
@@ -2375,7 +2325,12 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.branch_plan_modal().is_none());
-        assert!(app.pull_modal().is_none());
+        assert!(!e2e::active_modal_present(app));
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Success(message) if message.contains(branch)),
+            "completion identifies selected target {branch}: {:?}",
+            app.status_footer
+        );
         assert!(!app.app_sessions.has_leases());
         let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
         let shown: Vec<_> = panel
@@ -2386,16 +2341,17 @@ fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: boo
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].id, durable[0].id);
         let toasts = app.toast_stack.as_ref().expect("toast stack").read(cx);
+        let pull_prefix = format!("{}:", i18n::op::user_text::operation_label("pull"));
         assert_eq!(
             toasts
                 .toasts()
                 .iter()
                 .filter(|toast| {
-                    toast.kind == ToastKind::Success && toast.message.starts_with("pull:")
+                    toast.kind == ToastKind::Success && toast.message.starts_with(&pull_prefix)
                 })
                 .count(),
             1,
-            "one confirmed Pull delivers one success toast"
+            "one Pull intent delivers one success toast"
         );
     });
     unmount(cx, app, window);

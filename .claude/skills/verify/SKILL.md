@@ -3036,6 +3036,35 @@ The current suite covers:
   Pull is still running. Restore the fixture config afterward. In Japanese,
   inspect committed-conflict choice → Merge review → Cancel and verify unchanged
   HEAD, index and working files. Never use the user's checkout for these writes.
+- Consistent local sync entry admission (#1697): run
+  `KAGI_GUI_E2E_ONLY='entry_consistency_,pull_freshness_clean_updates,push_safe_intent,pull_safe_dirty_intent,pull_current_'`
+  with KEEP_GOING. Exercise actual toolbar, sidebar menu, command palette and
+  configured shortcut routes, not a direct call to the shared admission helper.
+  Safe Push/publish must admit exactly one recorded operation without another
+  card and without changing staged content or working files. For non-current
+  clean FF Pull, hold the admitted write after its owned fetch: progress names
+  the target branch, no card remains, and release advances only that branch.
+  Require the target in the result footer and a successful persisted receipt;
+  checked-out HEAD, staged content and working files remain unchanged.
+  `entry_consistency_sidebar_publish_ambiguous_remote` checks EN/JA with
+  `company` and `personal` but no `origin`: the card names the proposed
+  destination and both typed candidates, takes no lease, and Escape preserves
+  both remote refs, checkout and the absent Push receipt. Pair it with
+  `publish_remote_ambiguity_requires_choice_for_both_plan_producers` in
+  `kagi-git`'s `push_test`: current/sidebar plans require a choice only for
+  ambiguous publication; `origin` or a sole remote remains quiet.
+  Also run `cargo test -p kagi-git --test push_identity_test`: execute the
+  **original approved plan**, without replanning, after adding `origin`,
+  changing the selected URL/pushurl, or renaming/replacing its remote. Both
+  current and non-current sidebar publish must produce typed identity refusal,
+  one durable Refused receipt, no upstream and unchanged refs/index/worktree
+  on every remote. An unchanged approved ambiguity plan publishes once only
+  to its named destination. Retain execution-time destination identity checks.
+  Typed risk/blocker coverage retains explicit choices; warning-generation
+  cleanup is independent of this admission policy. Tier B compares released
+  versus fixed sidebar publish and non-current clean Pull in EN/JA, using
+  disposable local remotes, identical viewport/theme/zoom, isolated profiles
+  and only self-launched PID/window captures.
 - Pull freshness (`tests/recovery/pull_freshness.rs`):
   `KAGI_GUI_E2E_ONLY=pull_freshness_,pull_current_` exercises a real held fetch
   before execution or a necessary choice, an advanced upstream unknown to the
@@ -4269,6 +4298,13 @@ execution. Both idle double-click and queue use typed checkout admission: unrela
 dirty work stays quiet, while unknown cautions require confirmation and blockers
 refuse. Backend checkout tests also cover file/directory collisions, an empty-tree
 baseline for unborn HEAD, and paths unchanged between HEAD and the destination.
+After #1697 integration, also include `entry_consistency_` in the scoped run.
+Current ff-only and non-current Pull must execute without a card for clean and
+unrelated dirty fixtures, while unknown typed cautions retain their choice. In
+Tier B, take fresh EN/JA captures from the integrated default-feature binary:
+perform the disposable fixture's quiet Pull/checkout/publish actions, inspect
+receipts and retained dirty bytes, then capture neutral tag/worktree previews and
+zero-replay rebase without confirming them. Retain the released before captures.
 
 #1032 adds `queue_commit_checkout_busy_replans` (direct busy
 `open_checkout_commit_modal` freezes the target OID; the head plan reads the

@@ -239,14 +239,13 @@ impl KagiApp {
                         .visit(session)
                         .map(|visit| (session, visit))
                 });
-                let needs_choice =
-                    !modal.plan.blockers.is_empty() || !modal.plan.warnings.is_empty();
+                let needs_choice = modal.plan.sync_needs_choice();
                 let offered = self.offer_plan_from_async(AsyncPlanOffer::new(
                     i18n::Op::Pull,
                     ActiveModal::Pull(modal),
                 ));
                 if offered && !needs_choice {
-                    // The toolbar request is already the user's intent. Keep
+                    // The Pull request is already the user's intent. Keep
                     // the same approval/preflight path without painting a card.
                     self.start_pull(cx);
                 }
@@ -555,13 +554,7 @@ impl KagiApp {
                     self.status_footer = FooterStatus::Idle(SharedString::from(""));
                     return;
                 }
-                let needs_choice = !plan.blockers.is_empty()
-                    || plan.warnings.iter().any(|note| {
-                        !matches!(
-                            note,
-                            PlanNote::Push(kagi_domain::plan_note::PushNote::NoForceUsed { .. })
-                        )
-                    });
+                let needs_choice = plan.sync_needs_choice();
                 self.set_push_modal(PushPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,

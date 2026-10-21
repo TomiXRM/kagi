@@ -234,6 +234,7 @@ mod tests {
             stash_count_at_plan: 0,
             stash_identity: None,
             pull_identity: None,
+            push_identity: None,
             tag_push_identity: None,
             rebase_scope: None,
             approved_index_digest: None,

@@ -95,8 +95,8 @@ fn cancel_case(
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     let refs = git_fixture::git_output(repo, &["show-ref"]);
     let bytes = std::fs::read(repo.join("README.md")).unwrap();
-    app.update(cx, |app, _| {
-        app.open_branch_plan_modal("main".into(), BranchPlanKind::SyncToRemote)
+    app.update(cx, |app, cx| {
+        app.open_branch_plan_modal("main".into(), BranchPlanKind::SyncToRemote, cx)
     });
     cx.run_until_parked();
     cx.read(|cx| {

@@ -371,6 +371,7 @@ fn plan_create_worktree_impl(
         OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             // `title`/`recovery` are always overwritten below (both branches
@@ -657,6 +658,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Worktree(WorktreeTitle::UnlockWorktree {

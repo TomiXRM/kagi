@@ -367,6 +367,36 @@ index / HEAD / status の変化を観測した場合だけ Partial、変化が�
 観測不能なら TerminationUnknown として止める。後二者を推測した成功状態で埋めず、
 不確実な checkout に一時 stash を自動復元しない。
 
+### 5. 入口に依存しない quiet admission（#1697）
+
+toolbar・sidebar menu・command palette・shortcut の local Push / publish /
+Pull / Pull ff-only は `OperationPlan::sync_needs_choice` を共用する。
+判定は typed warning の種類で行い、通常 Push の `NoForceUsed` と ref-only
+Pull の `DirtyRefOnly` / `ConflictedRefOnly` は情報として扱う。空の warning も
+同じ判定を通るため、警告の生成条件を整理しても入口ごとの分岐は復活しない。
+未知の warning、実際の overlap / restore / history conflict、blocker、
+destructive plan は確認を維持する。SSH Pull と Sync-to-remote の明示確認は変えない。
+
+未設定 upstream の publish は `origin` があればそれを、remote が 1 つならその
+remote を一意な送信先とする。`origin` がなく複数 remote がある場合は current /
+sidebar の両 plan に `PushNote::PublishRemoteAmbiguous { candidates }` を積み、
+候補名と提案された送信先を確認 card に示す。先頭 remote への推測を quiet な
+公開承認にしてはならない（#1712 独立レビュー P1）。曖昧な plan を
+`sync_needs_choice` の未知 warning 保守規則で明示確認に戻す。
+current / sidebar 両 plan に `PushIdentity`（branch tip、upstream mapping、
+remote 名、`git remote get-url --push --all` で解決した全送信先）を凍結する。
+preflight と write 直前に選択規則・送信先・branch identity を再照合し、`origin`
+追加、remote rename / URL / pushurl 変更などの drift は typed
+`PushNote::PushIdentityChanged` と Refused receipt で拒否する。execute は
+承認済みの remote と branch を使い、live config から送信先を再選択しない。
+
+非 current branch の clean FF Pull は owned fetch 成功後に upstream identity、
+session / visit、fetched refs を凍結してから同じ admission を通し、card を描かず
+既存の `start_branch_plan` へ進む。対象 branch 名は進行 footer と完了 footer に残す。
+quiet は承認 UI の省略だけであり、実行時の identity / digest / occupancy 再検査、
+preflight / execute / verify / oplog は変更しない。
+
+
 ## Consequences
 
 - overlap fixture では確定前に対象パスが出る。`pull_auto_stash_overlap_preview` は

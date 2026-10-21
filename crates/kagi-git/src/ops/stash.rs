@@ -192,6 +192,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Apply { index }),
@@ -385,6 +386,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Pop { index }),
@@ -555,6 +557,7 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
     OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Stash(StashTitle::DropRemote {
@@ -641,6 +644,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Drop { index }),

@@ -155,7 +155,10 @@ only explicitly recognized informational notes may bypass a choice.
 Untracked paths that safe checkout would overwrite remain concrete path blockers,
 including file/directory collisions. Unborn HEAD uses an empty tree baseline, not
 an exemption from overlap prediction. Retained unrelated paths are neutral context.
-Pull/Push entrypoint policy remains owned by #1697. None of these presentation
-changes removes overlap checks, safe checkout, frozen identity/digest preflight,
-worktree occupancy checks, lifecycle verification or receipts.
+After integrating #1697, Pull/Push's adjacent typed `sync_needs_choice` policy
+admits quiet current/ref-only fast-forwards without retired informational warning
+variants. Unknown warnings remain choices; remote publication ambiguity remains
+explicit. Neither policy removes overlap checks, safe checkout, frozen
+identity/digest preflight, worktree occupancy checks, lifecycle verification or
+receipts.
 

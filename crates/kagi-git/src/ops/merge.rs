@@ -143,6 +143,7 @@ pub fn plan_merge_branch(
         |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: title.clone(),
@@ -299,6 +300,7 @@ pub fn plan_merge_branch(
         OperationPlan {
             rebase_scope: None,
             tag_push_identity: None,
+            push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title,

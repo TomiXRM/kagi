@@ -19,6 +19,10 @@ use kagi_domain::plan_note::push::PushPunct;
 use kagi_domain::plan_note::{CommonNote, PlanOp, PushNote, PushRecovery, PushTitle, RecoveryKind};
 use kagi_domain::remote::shell_quote;
 
+mod identity;
+pub(crate) use identity::preflight_push;
+use identity::{capture_push_identity, identity_changed};
+
 /// A branch created from `origin/master` tracks it as its *base*, not as where
 /// it is published. Pushing it publishes `origin/<branch>` and moves the
 /// upstream there, as VS Code's Publish does (a plain `git push` refuses it
@@ -91,7 +95,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     // reproduces the exact legacy strings for oplog/klog/EN (golden-tested
     // in kagi-domain's `plan_note::push`).
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
+    let mut warnings: Vec<PlanNote> = vec![PlanNote::Push(PushNote::NoForceUsed {
         punct: PushPunct::EmDash,
     })];
 
@@ -121,6 +125,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
             return Ok(OperationPlan {
                 rebase_scope: None,
                 tag_push_identity: None,
+                push_identity: None,
                 approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
                 title: PlanTitle::Push(PushTitle::PushBlocked),
@@ -178,7 +183,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 .unwrap_or((0, 0));
             (true, remote, ahead)
         }
-        Err(_) => match choose_push_remote(repo)? {
+        Err(_) => match choose_push_remote(repo, Some(&mut warnings))? {
             Some(remote) => (false, remote, usize::MAX), // MAX sentinel: compute below
             None => {
                 blockers.push(PlanNote::Push(PushNote::NoUpstreamNoRemotes {
@@ -253,10 +258,21 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
             "git reflog".to_string(),
         ],
     };
+    let push_identity = if blockers.is_empty() {
+        Some(capture_push_identity(
+            repo,
+            &branch_name,
+            &remote_name,
+            is_set_upstream_flow,
+        )?)
+    } else {
+        None
+    };
 
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity,
         approved_index_digest: None,
         disposition: if nothing_to_push {
             PlanDisposition::NoOp(NoOpKind::PushUpToDate)
@@ -309,82 +325,19 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any failure.
-pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, GitError> {
-    // ── 1. Resolve current branch ─────────────────────────────
-    let head_ref = repo
-        .head()
-        .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
-    let branch_name = head_ref
-        .shorthand()
-        .map_err(|e| GitError::Other(format!("HEAD shorthand failed: {}", e.message())))?
-        .to_string();
-
-    // ── 2. Check for upstream ─────────────────────────────────
-    let upstream_result = push_upstream_info(repo, &branch_name);
-    let (has_upstream, remote_name) = match upstream_result {
-        Ok((_, remote, _)) => (true, remote),
-        Err(_) => (false, choose_push_remote(repo)?.ok_or_else(no_push_remote)?),
-    };
-
-    // ── 3. Compute ahead count for PushOutcome.pushed ────────
-    let pushed_count = if has_upstream {
-        let branch_ref2 = repo
-            .find_branch(&branch_name, BranchType::Local)
-            .map_err(|e| {
-                GitError::Other(format!(
-                    "branch '{}' not found: {}",
-                    branch_name,
-                    e.message()
-                ))
-            })?;
-        let upstream_ref = branch_ref2
-            .upstream()
-            .map_err(|e| GitError::Other(format!("upstream lookup failed: {}", e.message())))?;
-        let head_oid2 = branch_ref2
-            .get()
-            .target()
-            .ok_or_else(|| GitError::Other("branch has no target".to_string()))?;
-        let upstream_oid2 = upstream_ref
-            .get()
-            .target()
-            .ok_or_else(|| GitError::Other("upstream has no target".to_string()))?;
-        let (ahead, _) = repo
-            .graph_ahead_behind(head_oid2, upstream_oid2)
-            .unwrap_or((0, 0));
-        ahead
-    } else {
-        // Set-upstream flow: use revwalk count.
-        build_push_preview(repo, &branch_name, &remote_name, false)
-            .map(|v| v.len())
-            .unwrap_or(0)
-    };
-
-    // ── 4. Build git args (no --force, ever) ─────────────────
-    // `--` + leading-dash reject (#291): both names come from the repo's own
-    // config/refs.
-    check_operand("remote", &remote_name)?;
-    check_operand("branch", &branch_name)?;
-    let args: Vec<&str> = if has_upstream {
-        vec!["push", "--", &remote_name, &branch_name]
-    } else {
-        vec!["push", "-u", "--", &remote_name, &branch_name]
-    };
-
-    // ── 5. Run git push via CLI ───────────────────────────────
-    let out = run_git(repo_path, &args).map_err(|e| crate::cli::context("push failed", e))?;
-
-    if out.status != 0 {
-        return Err(GitError::Other(format!(
-            "push failed (exit {}): {}",
-            out.status,
-            out.stderr.trim()
-        )));
+pub(crate) fn execute_push(
+    repo: &Repository,
+    repo_path: &Path,
+    plan: &OperationPlan,
+) -> Result<PushOutcome, GitError> {
+    preflight_check(repo, plan)?;
+    preflight_push(repo, plan)?;
+    let approved = plan.push_identity.as_ref().ok_or_else(identity_changed)?;
+    let head = repo.head().map_err(|_| identity_changed())?;
+    if head.shorthand().ok() != Some(approved.branch.as_str()) {
+        return Err(identity_changed());
     }
-
-    Ok(PushOutcome {
-        pushed: pushed_count,
-        set_upstream: !has_upstream,
-    })
+    execute_approved_push(repo, repo_path, approved)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -461,23 +414,39 @@ fn build_push_preview(
     Ok(result)
 }
 
-/// The remote a push targets when the caller has not named one: `origin` if it
-/// exists, otherwise the first configured remote. Absence is not a lookup error:
-/// planners translate it to their own typed blocker.
-pub(crate) fn choose_push_remote(repo: &Repository) -> Result<Option<String>, GitError> {
+/// Prefer `origin`, otherwise propose the first configured remote. Planners
+/// retain an explicit choice when that fallback is ambiguous. Preflight uses
+/// the selector only to detect drift; tag selection keeps its existing policy.
+pub(crate) fn choose_push_remote(
+    repo: &Repository,
+    publish_warnings: Option<&mut Vec<PlanNote>>,
+) -> Result<Option<String>, GitError> {
     let remotes = repo
         .remotes()
         .map_err(|e| GitError::Other(format!("failed to list remotes: {}", e.message())))?;
-    let remote_names: Vec<String> = remotes
+    if remotes
         .iter()
-        .filter_map(|s| s.ok().flatten())
-        .map(|s| s.to_owned())
-        .collect();
-    if remote_names.iter().any(|r| r == "origin") {
-        Ok(Some("origin".to_string()))
-    } else {
-        Ok(remote_names.into_iter().next())
+        .any(|remote| remote.ok().flatten() == Some("origin"))
+    {
+        return Ok(Some("origin".to_string()));
     }
+    let mut names = remotes
+        .iter()
+        .filter_map(|remote| remote.ok().flatten())
+        .peekable();
+    let first = names.next();
+    let selected = first.map(str::to_owned);
+    if let (Some(warnings), Some(first)) = (publish_warnings, first) {
+        if names.peek().is_some() {
+            warnings.push(PlanNote::Push(PushNote::PublishRemoteAmbiguous {
+                candidates: std::iter::once(first)
+                    .chain(names)
+                    .map(str::to_owned)
+                    .collect(),
+            }));
+        }
+    }
+    Ok(selected)
 }
 
 fn no_push_remote() -> GitError {
@@ -548,7 +517,7 @@ pub fn plan_push_branch(
     // site gets its own `PushNote` variant (this text is shared in English
     // with pull-ff's blocker, but that category is a separate fan-out PR).
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let warnings: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     let local_oid = match local_branch_oid(repo, branch_name) {
         Ok(oid) => oid,
@@ -561,7 +530,9 @@ pub fn plan_push_branch(
     };
 
     let (remote_name, upstream_oid, has_upstream) = if set_upstream {
-        match choose_push_remote(repo).and_then(|remote| remote.ok_or_else(no_push_remote)) {
+        match choose_push_remote(repo, Some(&mut warnings))
+            .and_then(|remote| remote.ok_or_else(no_push_remote))
+        {
             Ok(remote) => (remote, None, false),
             Err(e) => {
                 blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
@@ -620,10 +591,21 @@ pub fn plan_push_branch(
         remote: remote_name.clone(),
         set_upstream,
     });
+    let push_identity = if blockers.is_empty() {
+        Some(capture_push_identity(
+            repo,
+            branch_name,
+            &remote_name,
+            set_upstream,
+        )?)
+    } else {
+        None
+    };
 
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity,
         approved_index_digest: None,
         disposition: if nothing_to_push {
             PlanDisposition::NoOp(NoOpKind::PushUpToDate)
@@ -661,36 +643,46 @@ pub(crate) fn execute_push_branch(
     branch_name: &str,
     set_upstream: bool,
 ) -> Result<PushOutcome, GitError> {
-    let set_upstream = set_upstream || tracks_other_branch(repo, branch_name);
     preflight_check(repo, plan)?;
-    let local_oid = local_branch_oid(repo, branch_name)?;
+    preflight_push(repo, plan)?;
+    let approved = plan.push_identity.as_ref().ok_or_else(identity_changed)?;
+    if approved.branch != branch_name
+        || approved.set_upstream != (set_upstream || tracks_other_branch(repo, branch_name))
+    {
+        return Err(identity_changed());
+    }
+    execute_approved_push(repo, repo_path, approved)
+}
 
-    let (remote_name, upstream_oid) = if set_upstream {
-        (choose_push_remote(repo)?.ok_or_else(no_push_remote)?, None)
-    } else {
-        let (_, remote, _) = resolve_upstream_info(repo, branch_name)?;
-        let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
-        (remote, upstream_oid)
-    };
-
+/// Use only the approved branch and destination, never select from live config.
+fn execute_approved_push(
+    repo: &Repository,
+    repo_path: &Path,
+    approved: &kagi_domain::plan::PushIdentity,
+) -> Result<PushOutcome, GitError> {
+    let branch = approved.branch.as_str();
+    let remote = approved.remote.as_str();
+    let local_oid = git2::Oid::from_str(&approved.local_oid.0).map_err(|_| identity_changed())?;
+    let upstream_oid = (!approved.set_upstream)
+        .then(|| resolve_upstream_oid(repo, branch, remote).ok())
+        .flatten();
     let pushed = if let Some(upstream_oid) = upstream_oid {
         repo.graph_ahead_behind(local_oid, upstream_oid)
             .map(|(ahead, _)| ahead)
             .unwrap_or(0)
     } else {
-        build_push_preview_for_oid(repo, local_oid, None, &remote_name)
+        build_push_preview_for_oid(repo, local_oid, None, remote)
             .map(|commits| commits.len())
             .unwrap_or(0)
     };
-
-    check_operand("remote", &remote_name)?;
-    check_operand("branch", branch_name)?;
-    let args: Vec<&str> = if set_upstream {
-        vec!["push", "-u", "--", &remote_name, branch_name]
+    check_operand("remote", remote)?;
+    check_operand("branch", branch)?;
+    let out = if approved.set_upstream {
+        run_git(repo_path, &["push", "-u", "--", remote, branch])
     } else {
-        vec!["push", "--", &remote_name, branch_name]
-    };
-    let out = run_git(repo_path, &args).map_err(|e| crate::cli::context("push failed", e))?;
+        run_git(repo_path, &["push", "--", remote, branch])
+    }
+    .map_err(|error| crate::cli::context("push failed", error))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(
             "push failed (exit {}): {}",
@@ -698,9 +690,8 @@ pub(crate) fn execute_push_branch(
             out.stderr.trim()
         )));
     }
-
     Ok(PushOutcome {
         pushed,
-        set_upstream,
+        set_upstream: approved.set_upstream,
     })
 }

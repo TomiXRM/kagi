@@ -414,6 +414,17 @@ pub struct PullIdentity {
     pub upstream_ref: String,
 }
 
+/// Frozen branch, upstream mapping and transports approved for ordinary Push.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushIdentity {
+    pub branch: String,
+    pub local_oid: CommitId,
+    pub remote: String,
+    pub push_urls: Vec<String>,
+    pub set_upstream: bool,
+    pub upstream_ref: Option<String>,
+}
+
 /// Whether the published ref points at a tag object or directly at its target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagKind {
@@ -478,6 +489,7 @@ pub struct OperationPlan {
     /// Frozen local Pull operand, checked before and after execution's fetch.
     /// `None` for non-Pull and remote-snapshot plans.
     pub pull_identity: Option<PullIdentity>,
+    pub push_identity: Option<PushIdentity>,
     pub tag_push_identity: Option<TagPushIdentity>,
     pub rebase_scope: Option<RebaseScope>,
     /// Read-only digest of approved index paths, OIDs, modes and conflict stages.
@@ -516,17 +528,30 @@ pub struct OperationPlan {
 }
 
 impl OperationPlan {
-    /// Return the stash entry count captured at plan time.
+    /// Whether a local Pull/Push intent needs an additional user choice.
     ///
-    /// Pass this value to `preflight_check_stash` to verify that the stash
-    /// list has not changed since the plan was generated.
-    pub fn stash_count_at_plan(&self) -> usize {
-        self.stash_count_at_plan
-    }
+    /// This is presentation admission, not execution authorization: quiet plans
+    /// still pass the same approval, preflight, identity and write lifecycle.
+    /// Unknown warnings/families stay explicit; informational notes are matched
+    /// by type, never by their localized text or their mere presence.
+    pub fn sync_needs_choice(&self) -> bool {
+        use crate::plan_note::{PullTitle, PushNote, PushTitle};
 
-    /// The working-tree digest captured at plan time, if this op depends on it.
-    pub fn worktree_digest(&self) -> Option<crate::status::WorktreeDigest> {
-        self.worktree_digest
+        if self.destructive || !self.blockers.is_empty() {
+            return true;
+        }
+        match &self.title {
+            PlanTitle::Push(PushTitle::Push { .. } | PushTitle::PushBranch { .. }) => self
+                .warnings
+                .iter()
+                .any(|note| !matches!(note, PlanNote::Push(PushNote::NoForceUsed { .. }))),
+            PlanTitle::Pull(PullTitle::Pull { .. } | PullTitle::PullBranchFf { .. }) => {
+                !self.warnings.is_empty()
+            }
+            // Remote Pull cannot predict fetched checkout safety. Other
+            // operations (notably destructive Sync-to-remote) keep their choice.
+            _ => true,
+        }
     }
 
     /// Whether a checkout must retain its confirmation/refusal surface.
@@ -557,6 +582,19 @@ impl OperationPlan {
             // unless explicitly admitted above.
             _ => true,
         })
+    }
+
+    /// Return the stash entry count captured at plan time.
+    ///
+    /// Pass this value to `preflight_check_stash` to verify that the stash
+    /// list has not changed since the plan was generated.
+    pub fn stash_count_at_plan(&self) -> usize {
+        self.stash_count_at_plan
+    }
+
+    /// The working-tree digest captured at plan time, if this op depends on it.
+    pub fn worktree_digest(&self) -> Option<crate::status::WorktreeDigest> {
+        self.worktree_digest
     }
 
     /// A content-derived id for this plan (#330). Deterministic across process
@@ -603,3 +641,6 @@ impl OperationPlan {
 
 #[cfg(test)]
 mod checkout_admission_tests;
+
+#[cfg(test)]
+mod sync_admission_tests;

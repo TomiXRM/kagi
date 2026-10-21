@@ -6,7 +6,7 @@ use kagi_domain::remote::shell_quote;
 /// The remote a tag push targets. `origin` when it exists, else the first
 /// configured remote — the same rule `plan_push` uses, so the two agree.
 fn tag_push_remote(repo: &Repository) -> Option<String> {
-    super::push::choose_push_remote(repo).ok().flatten()
+    super::push::choose_push_remote(repo, None).ok().flatten()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -121,6 +121,7 @@ pub fn plan_create_tag(
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Tag(TagTitle::CreateTag {
@@ -242,6 +243,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity,
+        push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Tag(TagTitle::PushTag {

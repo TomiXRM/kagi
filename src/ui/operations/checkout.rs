@@ -23,7 +23,9 @@ impl KagiApp {
         CHECKOUT_CAUTION.with(|slot| assert!(slot.borrow_mut().replace(note).is_none()));
     }
 
-    pub(crate) fn apply_checkout_caution_for_e2e(mut plan: OperationPlan) -> OperationPlan {
+    pub(crate) fn apply_checkout_caution_for_e2e(
+        mut plan: kagi_domain::plan::OperationPlan,
+    ) -> kagi_domain::plan::OperationPlan {
         CHECKOUT_CAUTION.with(|slot| {
             if let Some(note) = slot.borrow_mut().take() {
                 plan.warnings.push(note);

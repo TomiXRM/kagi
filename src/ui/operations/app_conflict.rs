@@ -108,11 +108,12 @@ impl KagiApp {
                 FooterStatus::Failed(display.into())
             };
         }
-        if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             self.app_notices.push_back(
                 i18n::op::user_text::operations::recording_failed(
                     &entry.repo,
                     &entry.op,
+                    super::record::recording_outcome(&recording.entry().outcome),
                     &error.to_string(),
                 )
                 .into(),

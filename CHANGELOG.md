@@ -5,6 +5,13 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep branch deletion labels neutral until the existing merged/squash judgment is known, and identify branch-cleanup targets in English and Japanese. Report merge/rebase conflicts as stopped rather than completed, distinguish failed/successful/unknown operations when their log cannot be saved, and explain up-to-date current-branch fast-forward Pulls. (#1699)
+  - Preserve the immediate Operation Log undo/restore warning for successful or partially applied operations whose recording failed, without showing it for unchanged failures or refusals.
+  - Propagate unreadable ancestry and squash evidence, so missing Git objects leave deletion menus neutral instead of falsely warning that a branch is unmerged.
+  - Keep unrelated orphan branches deletable through the normal unmerged two-confirmation path, while preserving actual missing-object failures.
+  - Surface failed Operation Log persistence immediately alongside a conflict-stopped notice, without a completion toast or fabricated durable receipt.
 ### Changed
 
 - Reuse existing Git helpers for plan status summaries, cherry-pick/revert conflict paths, and push remote selection without changing displayed text or operation safety ordering. (#1705)

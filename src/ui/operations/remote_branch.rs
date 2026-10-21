@@ -649,13 +649,14 @@ impl KagiApp {
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
             if current {
-                self.present_oplog_write_failure(error, cx);
+                self.present_oplog_write_failure(recording.entry(), error, cx);
             } else {
                 self.app_notices.push_back(
-                    format!(
-                        "{}: {}",
+                    i18n::op::user_text::operations::recording_failed(
                         repo_path.display(),
-                        i18n::oplog_write_failed(error)
+                        op,
+                        super::record::recording_outcome(&recording.entry().outcome),
+                        &error.to_string(),
                     )
                     .into(),
                 );

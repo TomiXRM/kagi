@@ -880,6 +880,13 @@ fn render_plan_modal_card_styled(
     // separately, and shows a localized remainder without rendering it.
     if !plan.preview_commits.is_empty() {
         let visible = plan.preview_commits.len();
+        let preview_heading = match &plan.title {
+            kagi_domain::plan_note::PlanTitle::Cleanup(_) => Msg::PlanBranchesToDelete.t(),
+            kagi_domain::plan_note::PlanTitle::Rebase(
+                kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. },
+            ) => Msg::PlanRebaseCandidates.t(),
+            _ => Msg::PlanCommitsToPush.t(),
+        };
         let total = plan
             .rebase_scope
             .as_ref()
@@ -893,16 +900,11 @@ fn render_plan_modal_card_styled(
             .min_h(gpui::px(0.))
             .max_h(modal_list_max_h(visible))
             .overflow_y_scroll();
-        if matches!(
-            &plan.title,
-            kagi_domain::plan_note::PlanTitle::Rebase(
-                kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
-            )
-        ) {
-            list = list
-                .role(gpui::Role::Group)
-                .aria_label(format!("{}: {total}", Msg::PlanRebaseCandidates.t()));
-        }
+        list = apply_group(
+            "plan-preview",
+            list,
+            format!("{preview_heading}: {total}").into(),
+        );
         #[cfg(feature = "gui-e2e")]
         {
             list = list
@@ -930,18 +932,7 @@ fn render_plan_modal_card_styled(
             list = list.child(row);
         }
         body = body.child(modal_list_panel(
-            SharedString::from(
-                if matches!(
-                    &plan.title,
-                    kagi_domain::plan_note::PlanTitle::Rebase(
-                        kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
-                    )
-                ) {
-                    Msg::PlanRebaseCandidates.t()
-                } else {
-                    "Commits to push"
-                },
-            ),
+            SharedString::from(preview_heading),
             total,
             Some({
                 let plan = plan.clone();

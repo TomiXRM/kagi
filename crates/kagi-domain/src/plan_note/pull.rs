@@ -52,9 +52,6 @@ pub enum PullNote {
     /// target branch (no set-upstream hint — distinct wording from
     /// [`PullNote::NoUpstreamWithHint`]).
     NoUpstream { branch: String, err: String },
-    /// blocker (`plan_pull_branch_ff`): branch is already up to date with
-    /// its upstream.
-    AlreadyUpToDate { branch: String },
     /// blocker (`plan_pull_branch_ff`): branch cannot be fast-forwarded to
     /// its upstream.
     CannotFastForward { branch: String },
@@ -154,10 +151,6 @@ impl PullNote {
             PullNote::NoUpstream { branch, err } => {
                 format!("No upstream configured for branch '{}': {}.", branch, err)
             }
-            PullNote::AlreadyUpToDate { branch } => format!(
-                "Branch '{}' is already up to date with its upstream.",
-                branch
-            ),
             PullNote::CannotFastForward { branch } => {
                 format!(crate::advice_template_en!(PullCannotFastForward), branch)
             }
@@ -466,17 +459,6 @@ mod tests {
             }
             .message_en(),
             "No upstream configured for branch 'feat/x': no upstream branch."
-        );
-    }
-
-    #[test]
-    fn already_up_to_date() {
-        assert_eq!(
-            PullNote::AlreadyUpToDate {
-                branch: "main".into()
-            }
-            .message_en(),
-            "Branch 'main' is already up to date with its upstream."
         );
     }
 

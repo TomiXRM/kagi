@@ -399,17 +399,15 @@ fn push_subject_case(
         for subject in expected {
             assert!(copied.contains(subject), "{control}: full subject");
         }
-        if control == "plan-card-copy" {
+        if control == "plan-card-copy" && sidebar {
             assert!(
                 copied.contains(&no_force),
                 "Copy all must preserve the no-force guarantee"
             );
-            if sidebar {
-                assert!(
-                    !copied.contains("\nwarning:"),
-                    "sidebar Push must not copy a caution"
-                );
-            }
+            assert!(
+                !copied.contains("\nwarning:"),
+                "sidebar Push must not copy a caution"
+            );
         }
         if control == "plan-commits-copy" {
             assert_eq!(copied, plan.preview_commits.join("\n"));

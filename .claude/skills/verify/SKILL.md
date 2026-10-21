@@ -4068,7 +4068,7 @@ attempted failure stays visible with the recording error; it is not a success.
 
 ### One requested operation, one result (#1698)
 
-Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_,oplog_revert_eligibility'`
+Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_failure_presents_only_the_decisive_receipt,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,push_unknown_,pull_auto_stash_success,pull_auto_stash_failure_restores,pull_refuses_when_the_dirty_set_moved,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_,oplog_revert_eligibility,worktree_panel_discard_recording_failure'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Real repeated no-op Push is footer-only when
 attended; the existing `set_window_active_for_e2e` input selects inactive
 presentation without activating an OS window, where the same result replaces one
@@ -4088,8 +4088,16 @@ from Home, another repository, a remote view and after all owner tabs close:
 the reason remains visible, no plan/write/receipt appears, and the same receipt
 still copies its complete details. The ordinary matching-owner plan and existing
 backend preflight remain the positive control.
+Local owner fixtures use canonical paths as production startup does. Readonly
+Copy must preserve complete ref names and old/new OIDs; do not require a repository
+locator header absent from the existing clipboard format.
 Long freshness-fetch no-op/write legs retain each request's own elapsed time,
 including shared fetches; Unknown receipts override a Partial workflow preview.
+The executed-Pull → no-op sequence checks actual replacement rather than a full
+key-format string. Joined-flight legs first accept a rendered enabled branch-menu
+intent, then deliver its production callback after the held Fetch acquires its
+lease; a new toolbar click while that lease is held must remain unavailable.
+Long branch results must retain the selected target in their final notification.
 Run the EN/JA lock-classification boundary unit regression: an `index.lock` path
 alone, a permission denial or a remote URL is not evidence of an existing lock.
 Stash local/remote success coverage checks attended footer versus inactive toast,

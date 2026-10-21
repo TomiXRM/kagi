@@ -559,6 +559,8 @@ refusal or fabricates a write receipt.
   通常の現在の Graph 操作は footer のみ。window が非 active、別画面、別 tab、
   または開始から 2 秒以上の run / Pull / Fetch は toast のみで通知し、完了後に Busy footer を残さない。
   background owner の結果は現在の tab の footer / panes を変更しない。
+  footer から toast へ移しても成功対象 / 有用な成功詳細を失わない。操作固有の Success 文は
+  実際に append 済みの Success receipt にだけ利用し、Unknown / Partial / 記録失敗の提示を上書きしない。
 - Pull の fetch と一時 stash push / pop は内部手順であり、独立の成功 toast を出さない。
   backend が記録した全 child receipt と順序 / id はそのまま既存 Operation Log に挿入し、
   workflow の要求名 **Pull** と最終結果だけを一度提示する。記録失敗した child を成功で隠さない。
@@ -568,6 +570,8 @@ refusal or fabricates a write receipt.
 - 同じ repository + 要求操作 + outcome の toast は既存 card を置換する。
   件数、close focus、詳細 action を増やさず、repository は操作名の後に短い名前だけを示す。
   no-op Pull / Push は write receipt を捏造しない。
+  receipt と表示 owner の repository locator に末尾 separator の差があっても同じ key とし、
+  実行済み Pull から no-op Pull に続けて要求した場合も同じ成功 card を置換する。
 - Failed / Refused は EN/JA の短い原因と次の行動を表示する。Partial / Unknown は意味を保ち、
   Unknown は再試行禁止を明示する。raw stderr / exit code / 絶対 path は durable receipt の
   詳細に保持し、未知の診断は安全な翻訳済み要約にする。toast の操作ログ button と常設
@@ -575,6 +579,9 @@ refusal or fabricates a write receipt.
   詳細 action は receipt の確定 id に紐づき、Home / 別 tab から操作 owner を表示して展開する。
   owner tab が閉じられた場合も worktree の再 open / remote 再接続を要求せず、同じ既存 log panel を
   Home で表示できる。到達できると確認する前に toast / action を消さない。
+  manual Fetch の途中で Home / 別 tab へ移動した場合も、一度記録した同じ failure receipt の
+  結果 / 詳細 action を離席通知として届ける。quiet auto-fetch は単独通知を作らず、Pull の待機が
+  あれば最終要求名 Pull として一度だけ提示する。
   Home / 別 repository / remote 表示では当該 local owner が実行画面にいないため、復元 / revert は
   翻訳済みの理由付きで無効化する。inspection / copy は維持し、操作 event の受信時にも owner を
   再確認してから既存の backend plan / preflight へ渡す。並列の所有 state は持たない。

@@ -2277,7 +2277,7 @@ fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm
         assert_eq!((state.bottom_panel_open, state.bottom_tab), before_panel);
     });
     if confirm {
-        let receipts = oplog::records(&repo, "branch-pull-ff", 100, true);
+        let receipts = oplog::records(&repo, "pull", 100, true);
         assert_eq!(receipts.len(), 1);
         assert!(matches!(
             receipts[0].outcome,
@@ -2319,7 +2319,7 @@ fn strict_ff_overlap_card(cx: &mut VisualTestAppContext, language: Lang, confirm
             );
         });
     } else {
-        assert!(oplog::records(&repo, "branch-pull-ff", 100, true).is_empty());
+        assert!(oplog::records(&repo, "pull", 100, true).is_empty());
         cx.read(|cx| assert!(app.read(cx).branch_plan_modal().is_none()));
     }
     cx.read(|cx| assert!(!app.read(cx).app_sessions.has_leases()));

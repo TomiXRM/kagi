@@ -94,6 +94,13 @@ pub fn scenario_busy_hidden_failure_reaches_details(cx: &mut VisualTestAppContex
                     (row.id, row.timestamp, &row.op, &row.repo),
                     (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
                 );
+            });
+            cx.advance_clock(std::time::Duration::from_millis(
+                kagi::ui::toast_stack::TOAST_REMOVE_MS + 1,
+            ));
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let state = app.read(cx);
                 assert!(state
                     .toast_stack
                     .as_ref()

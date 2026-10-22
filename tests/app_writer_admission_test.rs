@@ -635,9 +635,15 @@ fn continue_post_read_failure_retains_lease_and_registers_unknown() {
         ],
     );
     std::fs::create_dir(fixture.repo.join("module")).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let modules = fixture.repo.join(".gitmodules");
     std::fs::write(&modules, "[submodule \"observer\"\n").unwrap();
-    let result = backend.execute_conflict_continue(&session, &buffer);
+    let result = backend.execute_conflict_continue(&session, &buffer, &expected);
     std::fs::remove_file(modules).unwrap();
     assert!(
         matches!(&result, Err(GitError::TerminationUnknown(t)) if t.child_stopped()),
@@ -684,6 +690,12 @@ fn continue_pre_execution_failure_and_known_staged_result_release_normally() {
     let _log = TestLog::new();
     let (fixture, session, mut buffer) = continue_stash_fixture();
     let backend = Backend::open(&fixture.repo).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut sessions = Sessions::new();
     let index_before = std::fs::read(fixture.repo.join(".git/index")).unwrap();
     let file_before = std::fs::read(fixture.repo.join("file")).unwrap();
@@ -691,7 +703,7 @@ fn continue_pre_execution_failure_and_known_staged_result_release_normally() {
         .write_lease(&fixture.repo)
         .unwrap()
         .for_op("conflict-continue");
-    let refused = backend.execute_conflict_continue(&session, &buffer);
+    let refused = backend.execute_conflict_continue(&session, &buffer, &expected);
     assert!(matches!(refused, Err(GitError::Other(_))));
     assert!(settle_conflict_write(
         guard,
@@ -720,7 +732,7 @@ fn continue_pre_execution_failure_and_known_staged_result_release_normally() {
         .write_lease(&fixture.repo)
         .expect("the refused attempt must admit a resolved continuation")
         .for_op("conflict-continue");
-    let result = backend.execute_conflict_continue(&session, &buffer);
+    let result = backend.execute_conflict_continue(&session, &buffer, &expected);
     let known = result.as_ref().unwrap();
     assert!(matches!(known.outcome, kagi_git::ContinueOutcome::Staged));
     assert!(settle_conflict_write(guard, &result, known.after.clone()).is_none());

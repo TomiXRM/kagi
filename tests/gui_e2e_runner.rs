@@ -517,6 +517,10 @@ mod conflict_continue_cache;
 mod conflict_draft_revision;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_continue_approval.rs"]
+mod conflict_continue_approval;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_draft_inspection.rs"]
 mod conflict_draft_inspection;
 
@@ -3193,6 +3197,22 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "conflict_continue_approval_replacement_queued",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_replacement_queued),
+            ),
+            (
+                "conflict_continue_approval_stage0_queued",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_stage0_queued),
+            ),
+            (
+                "conflict_continue_approval_modal_revision_replaced",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_modal_revision_replaced),
+            ),
+            (
+                "conflict_continue_approval_unrelated_replan",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_unrelated_replan),
             ),
             (
                 "conflict_draft_revision_audit",

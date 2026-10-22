@@ -1403,6 +1403,19 @@ The current suite covers:
   ordinary receipt Copy remain separate across Back and an open EN→JA→EN language
   switch; only the existing private test clipboard is used. The Terminal neighbors and
   real merge-Continue consumers cover the shared bottom-panel/staging routes.
+  Add the narrow `KAGI_GUI_E2E_ONLY='conflict_continue_approval_'` selection for
+  original Continue approval across a replaced same-step rebase, changed stage-0
+  content, accepted mode replacement while the original modal remains open, and
+  a new explicit plan after an unrelated index refresh. Save all conflicts first,
+  retain the original confirmation, and use the existing `CONTINUE_CONFIRM_HOLD`
+  to change real Git state after admission but before backend dispatch. Require
+  the actual worker/completion boundary and a durable no-write refusal, not just
+  a watcher dismissing the modal. Check HEAD, index, WT, sequencer and objects;
+  only a fresh explicit plan/approval may advance the replacement state.
+  Scoped cleanup must release any consumed hold and clear the existing confirm
+  and completion slots even after failed assertions. No new production hold,
+  controller or clipboard store is required; host clipboard operations remain
+  forbidden.
   Pair with `cargo test -p kagi-git --test conflicts_test draft_` for exact known
   identity, unknown/legacy preservation, raw paths/modes, failed autosave,
   undo-to-null and two-live-buffer recency. `cargo test -p kagi-git --test

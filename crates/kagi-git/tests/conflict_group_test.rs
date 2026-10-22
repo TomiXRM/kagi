@@ -125,6 +125,13 @@ fn continue_empty_cherry_pick_surfaces_error() {
     git_allow_fail(dir, &["cherry-pick", "side"]);
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).expect("cherry-pick conflict session");
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
 
     // Resolve by KEEPING CURRENT ("MAIN") — identical to HEAD, so the pick is
     // now empty and `git cherry-pick --continue` refuses with a non-zero exit.
@@ -133,7 +140,7 @@ fn continue_empty_cherry_pick_surfaces_error() {
         .apply_choice(Path::new("f.txt"), ResolutionChoice::Current)
         .unwrap();
 
-    let result = execute_conflict_continue(&repo, dir, &session, &buffer);
+    let result = execute_conflict_continue(&repo, dir, &session, &buffer, &expected);
     assert!(
         result.is_err(),
         "an empty cherry-pick --continue (exit != 0) must surface as an error, got {result:?}"
@@ -184,6 +191,13 @@ fn binary_conflict_take_current_and_incoming_are_byte_identical() {
         let dir = tmp.path();
         let repo = Repository::open(dir).unwrap();
         let session = detect_conflict_session(&repo).unwrap();
+        let expected = kagi_git::Backend::open(dir)
+            .unwrap()
+            .conflict_snapshot()
+            .unwrap()
+            .unwrap()
+            .observation
+            .revision;
         assert_eq!(session.files[0].kind, ConflictKind::Binary);
 
         let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -212,7 +226,7 @@ fn binary_conflict_take_current_and_incoming_are_byte_identical() {
             "binary conflict Continue must enable once a side is chosen"
         );
 
-        let result = execute_conflict_continue(&repo, dir, &session, &buffer)
+        let result = execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
             .expect("continue binary merge");
         assert!(matches!(result.outcome, ContinueOutcome::Committed(_)));
 
@@ -282,6 +296,13 @@ fn submodule_conflict_resolves_via_raw_oid() {
     git_allow_fail(dir, &["merge", "side"]);
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).expect("gitlink conflict session");
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let sub = session
         .files
         .iter()
@@ -300,7 +321,8 @@ fn submodule_conflict_resolves_via_raw_oid() {
         .unwrap()
         .is_empty());
 
-    execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue gitlink merge");
+    execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
+        .expect("continue gitlink merge");
     let (mode, oid) = head_tree_entry(&repo, "sub");
     assert_eq!(
         mode, 0o160000,
@@ -356,8 +378,15 @@ fn exec_bit_preserved_and_save_continue_agree() {
     let tmp_a = exec_content_conflict();
     let repo_a = Repository::open(tmp_a.path()).unwrap();
     let session_a = detect_conflict_session(&repo_a).unwrap();
+    let expected = kagi_git::Backend::open(tmp_a.path())
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let buf_a = resolved_buffer(&repo_a, "run.sh", resolved);
-    stage_conflict_resolution(&repo_a, &session_a, &buf_a).unwrap();
+    stage_conflict_resolution(&repo_a, &session_a, &buf_a, &expected).unwrap();
     let mut idx_a = repo_a.index().unwrap();
     idx_a.read(true).unwrap();
     let mode_continue = idx_a.get_path(Path::new("run.sh"), 0).unwrap().mode;
@@ -456,11 +485,19 @@ fn conflicted_symlink_never_written_through() {
         let dir = tmp.path();
         let repo = Repository::open(dir).unwrap();
         let session = detect_conflict_session(&repo).unwrap();
+        let expected = kagi_git::Backend::open(dir)
+            .unwrap()
+            .conflict_snapshot()
+            .unwrap()
+            .unwrap()
+            .observation
+            .revision;
         let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
         buffer
             .apply_choice(Path::new("link"), ResolutionChoice::Incoming)
             .unwrap();
-        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue symlink merge");
+        execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
+            .expect("continue symlink merge");
         assert_eq!(
             outside_bytes(),
             b"SECRET-DO-NOT-TOUCH",
@@ -602,6 +639,13 @@ fn rename_rename_not_collapsed() {
     git_allow_fail(dir, &["merge", "side"]);
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let paths: Vec<String> = session
         .files
         .iter()
@@ -677,8 +721,8 @@ fn binary_choice_works_and_survives_reload_through_autosave() {
     );
 
     // And it actually commits the chosen (current) bytes.
-    let result =
-        execute_conflict_continue(&repo, dir, &session, &buffer2).expect("continue binary merge");
+    let result = execute_conflict_continue(&repo, dir, &session, &buffer2, &expected)
+        .expect("continue binary merge");
     assert!(matches!(result.outcome, ContinueOutcome::Committed(_)));
     assert_eq!(head_blob_bytes(&repo, "blob.bin"), main_bytes);
 

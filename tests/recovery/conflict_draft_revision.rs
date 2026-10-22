@@ -103,7 +103,7 @@ fn assert_unmerged(repo: &Path) {
     );
 }
 
-fn paint(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn paint(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     app.update(cx, |_, cx| cx.notify());
     cx.update_window(window, |_, window, cx| {
         window.refresh();
@@ -154,7 +154,7 @@ pub(super) fn detect(
     paint(cx, app, window);
 }
 
-fn result_input(
+pub(super) fn result_input(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -175,11 +175,11 @@ fn result_input(
     })
 }
 
-fn conflict_read<'a>(app: &'a Entity<KagiApp>, cx: &'a gpui::App) -> &'a ConflictView {
+pub(super) fn conflict_read<'a>(app: &'a Entity<KagiApp>, cx: &'a gpui::App) -> &'a ConflictView {
     app.read(cx).ui().conflict.as_ref().unwrap().read(cx)
 }
 
-fn replace_result(
+pub(super) fn replace_result(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -221,7 +221,11 @@ pub(super) fn assert_unresolved(cx: &mut VisualTestAppContext, app: &Entity<Kagi
     });
 }
 
-fn open_continue(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn open_continue(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     let repo = cx.read(|cx| app.read(cx).repo_path.clone()).unwrap();
     let before = RepositoryState::read(&repo);
     click_control(cx, window, "conflict-continue");

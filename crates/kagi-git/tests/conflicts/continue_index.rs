@@ -9,12 +9,18 @@ fn open_backend(path: &Path) -> Backend {
 fn replay_first(backend: &Backend, path: &Path) {
     let repo = Repository::open(path).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     buffer
         .set_manual_text(Path::new("file.txt"), "RESOLVED ONE\n")
         .unwrap();
     backend
-        .execute_conflict_continue(&session, &buffer)
+        .execute_conflict_continue(&session, &buffer, &expected)
         .unwrap();
     assert_eq!(git_output(path, &["show", "HEAD:file.txt"]), "RESOLVED ONE");
 }
@@ -32,13 +38,19 @@ fn public_continue_reloads_cached_index_after_separate_save() {
     let cached_index = repo.index().unwrap();
     assert!(cached_index.has_conflicts());
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     buffer
         .set_manual_text(Path::new("file.txt"), "RESOLVED TWO\n")
         .unwrap();
     // Prime the same public UI backend while its index is still unmerged.
     assert!(backend
-        .plan_conflict_continue_route(&session, &buffer, "side")
+        .plan_conflict_continue_route(&session, &buffer, "side", &expected)
         .is_ok());
     open_backend(path)
         .execute_conflict_save(&buffer, Path::new("file.txt"))
@@ -51,12 +63,18 @@ fn public_continue_reloads_cached_index_after_separate_save() {
 
     let fresh = Repository::open(path).unwrap();
     let saved_session = detect_conflict_session(&fresh).unwrap();
+    let expected = open_backend(path)
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert!(saved_session.files.is_empty());
     let saved_buffer = ResolutionBuffer::from_repo(&fresh).unwrap();
     let index_before = std::fs::read(path.join(".git/index")).unwrap();
     let file_before = std::fs::read(path.join("file.txt")).unwrap();
     let route = backend
-        .plan_conflict_continue_route(&saved_session, &saved_buffer, "side")
+        .plan_conflict_continue_route(&saved_session, &saved_buffer, "side", &expected)
         .unwrap();
     match route {
         ContinueRoute::SequencerPlan(plan) => assert!(plan.blockers.is_empty()),
@@ -68,7 +86,7 @@ fn public_continue_reloads_cached_index_after_separate_save() {
     );
     assert_eq!(std::fs::read(path.join("file.txt")).unwrap(), file_before);
     backend
-        .execute_conflict_continue(&saved_session, &saved_buffer)
+        .execute_conflict_continue(&saved_session, &saved_buffer, &expected)
         .unwrap();
     assert_eq!(git_output(path, &["show", "HEAD:file.txt"]), "RESOLVED TWO");
     assert_eq!(
@@ -93,12 +111,18 @@ fn public_continue_propagates_unreadable_index_without_writing() {
         let backend = open_backend(path);
         let repo = Repository::open(path).unwrap();
         let session = detect_conflict_session(&repo).unwrap();
+        let expected = backend
+            .conflict_snapshot()
+            .unwrap()
+            .unwrap()
+            .observation
+            .revision;
         let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
         buffer
             .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
             .unwrap();
         assert!(backend
-            .plan_conflict_continue_route(&session, &buffer, "main")
+            .plan_conflict_continue_route(&session, &buffer, "main", &expected)
             .is_ok());
         let index_path = path.join(".git/index");
         let original_index = std::fs::read(&index_path).unwrap();
@@ -112,15 +136,17 @@ fn public_continue_propagates_unreadable_index_without_writing() {
         }
         assert!(continue_blockers(&repo, &session, &buffer).is_err());
         assert!(backend.continue_blockers(&session, &buffer).is_err());
-        assert!(backend.plan_conflict_continue(&session, &buffer).is_err());
         assert!(backend
-            .plan_conflict_continue_route(&session, &buffer, "main")
+            .plan_conflict_continue(&session, &buffer, &expected)
             .is_err());
         assert!(backend
-            .execute_conflict_continue(&session, &buffer)
+            .plan_conflict_continue_route(&session, &buffer, "main", &expected)
             .is_err());
         assert!(backend
-            .stage_conflict_resolution(&session, &buffer)
+            .execute_conflict_continue(&session, &buffer, &expected)
+            .is_err());
+        assert!(backend
+            .stage_conflict_resolution(&session, &buffer, &expected)
             .is_err());
         assert_eq!(std::fs::read(path.join("file.txt")).unwrap(), original_file);
         assert_eq!(git_output(path, &["rev-parse", "HEAD"]), original_head);
@@ -146,8 +172,14 @@ fn public_continue_still_refuses_untracked_unmerged_path() {
     let backend = open_backend(path);
     let repo = Repository::open(path).unwrap();
     let mut session = detect_conflict_session(&repo).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     session.files.clear();
-    let buffer = ResolutionBuffer::new(path);
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let original_index = std::fs::read(path.join(".git/index")).unwrap();
     let original_file = std::fs::read(path.join("file.txt")).unwrap();
     let blockers = backend.continue_blockers(&session, &buffer).unwrap();
@@ -156,13 +188,13 @@ fn public_continue_still_refuses_untracked_unmerged_path() {
             if paths.iter().any(|path| path == "file.txt")
     )));
     assert!(backend
-        .plan_conflict_continue_route(&session, &buffer, "main")
+        .plan_conflict_continue_route(&session, &buffer, "main", &expected)
         .is_err());
     assert!(backend
-        .execute_conflict_continue(&session, &buffer)
+        .execute_conflict_continue(&session, &buffer, &expected)
         .is_err());
     assert!(backend
-        .stage_conflict_resolution(&session, &buffer)
+        .stage_conflict_resolution(&session, &buffer, &expected)
         .is_err());
     assert_eq!(
         std::fs::read(path.join(".git/index")).unwrap(),

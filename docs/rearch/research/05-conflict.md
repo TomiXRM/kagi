@@ -98,6 +98,12 @@ In `conflicts.rs`, all flow ops are `plan_* → execute_*` on the existing
   sequencers return `Staged`). `plan_conflict_continue_route` → `ContinueRoute::
   {MergeCommitPanel{message}, SequencerPlan(OperationPlan)}` (ADR-0068 — merge
   does NOT commit on Continue; it routes to the commit panel).
+  Backend Continue plan/route/stage/execute additionally require the original
+  expected `ConflictRevision`; planning and prewrite compare it against a fresh
+  full observation, including stage-0 content even when no conflict paths remain.
+  The sequencer modal freezes that accepted revision at opening, not from the
+  mode at Confirm. The buffer separately retains live operation/repository
+  provenance, so edit preservation cannot reauthorize an older confirmation.
 - `execute_conflict_save` — per-file Save→stage with a hard marker-residue block
   (ADR-0066/0068). `execute_merge_commit` — the commit-panel sink, refuses on
   remaining unmerged entries.

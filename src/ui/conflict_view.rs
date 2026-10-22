@@ -406,8 +406,9 @@ impl ConflictView {
 /// `side_labels` left role.
 #[derive(Clone)]
 pub struct ConflictMode {
-    /// Exact repository conflict identity observed by the Backend. Save and
-    /// D/F intents must bind this value; path/count equality is insufficient.
+    /// Full repository conflict identity accepted from the Backend. Save, D/F
+    /// and Continue approvals freeze this value, including all staged content.
+    /// Same-file input retention instead uses the narrower file identity.
     pub revision: kagi_domain::conflict_family::ConflictRevision,
     /// The detected conflict session (operation + files), with per-file `status`
     /// recomputed from the buffer at detection time.

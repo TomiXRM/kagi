@@ -26,6 +26,7 @@ fn assert_unresolved_continue_preserves_repository(
     dir: &Path,
     session: &kagi_git::ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) {
     let index = std::fs::read(dir.join(".git/index")).unwrap();
     let worktree = std::fs::read(dir.join("file.txt")).unwrap();
@@ -36,7 +37,9 @@ fn assert_unresolved_continue_preserves_repository(
         .unwrap()
         .iter()
         .any(|blocker| blocker.code() == "unresolved-files"));
-    assert!(backend.execute_conflict_continue(session, buffer).is_err());
+    assert!(backend
+        .execute_conflict_continue(session, buffer, expected)
+        .is_err());
     assert_eq!(index, std::fs::read(dir.join(".git/index")).unwrap());
     assert_eq!(worktree, std::fs::read(dir.join("file.txt")).unwrap());
     assert_eq!(head, git_output(dir, &["rev-parse", "HEAD"]));
@@ -53,6 +56,12 @@ fn continue_completion_keeps_durable_draft_without_ui_adoption() {
     let path = Path::new("file.txt");
     let backend = open_backend(dir);
     let first_session = backend.detect_conflict_session().unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let first_step = std::fs::read(dir.join(".git/REBASE_HEAD")).unwrap();
     let mut first = backend.resolution_buffer_from_repo().unwrap();
     let first_identity = first.file_identity(path).unwrap().clone();
@@ -60,7 +69,7 @@ fn continue_completion_keeps_durable_draft_without_ui_adoption() {
     let saved_path = first.autosave().unwrap();
     let first_document = std::fs::read(&saved_path).unwrap();
     let result = backend
-        .execute_conflict_continue(&first_session, &first)
+        .execute_conflict_continue(&first_session, &first, &expected)
         .unwrap();
     assert!(matches!(result.outcome, ContinueOutcome::Staged));
     assert_ne!(
@@ -76,6 +85,12 @@ fn continue_completion_keeps_durable_draft_without_ui_adoption() {
 
     let backend = open_backend(dir);
     let second_session = backend.detect_conflict_session().unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let second = backend.resolution_buffer_from_repo_with_autosave().unwrap();
     assert_ne!(second.file_identity(path), Some(&first_identity));
     assert_inspection_only(&second, &["RESOLVED ONE\n"]);
@@ -83,7 +98,13 @@ fn continue_completion_keeps_durable_draft_without_ui_adoption() {
         second.recovery_drafts().next().unwrap().identity,
         Some(&first_identity)
     );
-    assert_unresolved_continue_preserves_repository(&backend, dir, &second_session, &second);
+    assert_unresolved_continue_preserves_repository(
+        &backend,
+        dir,
+        &second_session,
+        &second,
+        &expected,
+    );
     assert_eq!(saved_path, second.autosave().unwrap());
     let mut second = open_backend(dir)
         .resolution_buffer_from_repo_with_autosave()
@@ -92,7 +113,7 @@ fn continue_completion_keeps_durable_draft_without_ui_adoption() {
     second.set_manual_text(path, "RESOLVED TWO\n").unwrap();
     assert_eq!(saved_path, second.autosave().unwrap());
     let result = backend
-        .execute_conflict_continue(&second_session, &second)
+        .execute_conflict_continue(&second_session, &second, &expected)
         .unwrap();
     assert!(matches!(result.outcome, ContinueOutcome::Committed(_)));
     drop(second);
@@ -136,10 +157,16 @@ fn skip_completion_keeps_each_discarded_draft_inspection_only() {
 
     let backend = open_backend(dir);
     let session = backend.detect_conflict_session().unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut second = backend.resolution_buffer_from_repo_with_autosave().unwrap();
     assert_ne!(second.file_identity(path), Some(&first_identity));
     assert_inspection_only(&second, &["SKIPPED ONE\n"]);
-    assert_unresolved_continue_preserves_repository(&backend, dir, &session, &second);
+    assert_unresolved_continue_preserves_repository(&backend, dir, &session, &second, &expected);
     second.set_manual_text(path, "SKIPPED TWO\n").unwrap();
     assert_eq!(saved_path, second.autosave().unwrap());
     let result = backend.execute_conflict_skip(&session, &second).unwrap();
@@ -175,12 +202,18 @@ fn merge_commit_completion_keeps_durable_draft_inspection_only() {
     let path = Path::new("file.txt");
     let mut backend = open_backend(dir);
     let session = backend.detect_conflict_session().unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut buffer = backend.resolution_buffer_from_repo().unwrap();
     buffer.set_manual_text(path, "MERGE RESULT\n").unwrap();
     let saved_path = buffer.autosave().unwrap();
     let saved_document = std::fs::read(&saved_path).unwrap();
     backend
-        .stage_conflict_resolution(&session, &buffer)
+        .stage_conflict_resolution(&session, &buffer, &expected)
         .unwrap();
     let operation = Operation::MergeCommit {
         message: "Merge feature with retained recovery".into(),

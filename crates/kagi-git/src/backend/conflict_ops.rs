@@ -615,8 +615,9 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
+        expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<OperationPlan, GitError> {
-        conflicts::plan_conflict_continue(&self.repo, session, buffer)
+        conflicts::plan_conflict_continue(&self.repo, session, buffer, expected)
     }
 
     pub fn plan_conflict_continue_route(
@@ -624,17 +625,25 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
         current_branch: &str,
+        expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ContinueRoute, GitError> {
-        conflicts::plan_conflict_continue_route(&self.repo, session, buffer, current_branch)
+        conflicts::plan_conflict_continue_route(
+            &self.repo,
+            session,
+            buffer,
+            current_branch,
+            expected,
+        )
     }
 
     pub fn execute_conflict_continue(
         &self,
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
+        expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ContinueResult, GitError> {
         self.require_trust()?;
-        conflicts::execute_conflict_continue(&self.repo, &self.path, session, buffer)
+        conflicts::execute_conflict_continue(&self.repo, &self.path, session, buffer, expected)
     }
 
     pub fn execute_conflict_save(
@@ -677,9 +686,10 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
+        expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<(), GitError> {
         self.require_trust()?;
-        conflicts::stage_conflict_resolution(&self.repo, session, buffer)
+        conflicts::stage_conflict_resolution(&self.repo, session, buffer, expected)
     }
 
     pub(crate) fn execute_merge_commit(

@@ -632,8 +632,9 @@ pub fn execute_conflict_continue(
     repo_path: &Path,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueResult, GitError> {
-    let result = backend(repo)?.execute_conflict_continue(session, buffer);
+    let result = backend(repo)?.execute_conflict_continue(session, buffer, expected);
     refresh_fixture_index(repo, result)
 }
 
@@ -641,8 +642,9 @@ pub fn stage_conflict_resolution(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<(), GitError> {
-    let result = backend(repo)?.stage_conflict_resolution(session, buffer);
+    let result = backend(repo)?.stage_conflict_resolution(session, buffer, expected);
     refresh_fixture_index(repo, result)
 }
 

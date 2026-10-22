@@ -185,6 +185,8 @@ impl FileResolution {
 pub struct ResolutionBuffer {
     /// Absolute path to the repository working tree (the autosave key).
     repo_path: PathBuf,
+    /// Frozen live operation and canonical git directory; never decoded authority.
+    live_context: Option<(ConflictRevision, PathBuf)>,
     /// Per-file resolutions, ordered by path for deterministic serialization.
     files: BTreeMap<PathBuf, FileResolution>,
     /// Presentation-only aggregate, updated at each Result replacement.
@@ -212,6 +214,7 @@ impl Clone for ResolutionBuffer {
         }
         Self {
             repo_path: self.repo_path.clone(),
+            live_context: self.live_context.clone(),
             files,
             marker_residue_count: self.marker_residue_count,
             hunks: self.hunks.clone(),
@@ -234,6 +237,7 @@ impl ResolutionBuffer {
     pub fn new(repo_path: &Path) -> Self {
         ResolutionBuffer {
             repo_path: repo_path.to_path_buf(),
+            live_context: None,
             files: BTreeMap::new(),
             marker_residue_count: 0,
             hunks: BTreeMap::new(),
@@ -252,32 +256,33 @@ impl ResolutionBuffer {
             .workdir()
             .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
         let mut buffer = ResolutionBuffer::new(workdir);
+
+        let mut index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        index
+            .read(true)
+            .map_err(|error| GitError::Other(error.message().to_owned()))?;
         let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo).and_then(
             |context| {
                 let git_dir = repo.path().canonicalize().ok()?;
                 Some((context, git_dir))
             },
         );
-
-        let index = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        buffer.live_context = context;
         let conflicts = index
             .conflicts()
             .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
 
         for entry in conflicts {
-            let conflict = match entry {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+            let conflict = entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
             let path = match conflict_path(&conflict) {
                 Some(p) => p,
                 None => continue,
             };
 
             let mut fr = FileResolution::empty();
-            fr.identity = context.as_ref().map(|(context, git_dir)| {
+            fr.identity = buffer.live_context.as_ref().map(|(context, git_dir)| {
                 drafts::file_identity(git_dir, context, &path, &conflict)
             });
             fr.current_text = blob_text(repo, conflict.our.as_ref());

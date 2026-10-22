@@ -57,6 +57,13 @@
   operation context、各 conflict stage の有無・OID・mode を含む。
   HEAD または必要な operation metadata を確認できなければ identity は不明とする。
   表示用 observation の best-effort 読み取りと、draft 適用の認可を分離する。
+- live buffer は空 session も含め、元 repository と strict な operation context を
+  メモリ内の書込 provenance として保持する。clone は元の値を保持し、JSON decode や
+  `new` は権限を作らない。`retain_drafts` は受け手の live provenance を上書きしない。
+  recorded Save の最小 buffer は、元の frozen observation と file/payload binding が
+  現在値に一致した preflight 境界でのみ、その検証済み context を受け取る。
+  この provenance と、確認済み Continue が凍結する全 staged content の revision は
+  別の権限である。入力保持のために古い Continue の承認を新しい観測へ付け替えない。
 - `identity` / `path_bytes` / `editing_origin` / `draft_state` と、同じ document 内の
   `recoveries` を保存する。旧形式、不明 identity、不一致の本文は自動 overlay しないが
   黙って削除しない。明示した undo-to-unresolved の null は「未編集の初期状態」と区別し、

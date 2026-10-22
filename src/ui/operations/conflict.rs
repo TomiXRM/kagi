@@ -59,6 +59,11 @@ impl KagiApp {
     pub fn hold_next_continue_confirm_for_e2e(hold: gpui::Task<()>) {
         CONTINUE_CONFIRM_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
     }
+    pub fn clear_continue_confirm_hold_for_e2e() {
+        CONTINUE_CONFIRM_HOLD.with(|slot| {
+            drop(slot.borrow_mut().take());
+        });
+    }
     /// Pause after real background execution, before foreground recording/reload.
     /// The returned flag signals that the completion has reached this boundary.
     pub fn hold_next_continue_completion_for_e2e(
@@ -303,6 +308,7 @@ impl KagiApp {
             &mode.session,
             &mode.buffer,
             &mode.current_branch,
+            &mode.revision,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -352,13 +358,14 @@ impl KagiApp {
                 let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
                     return;
                 };
-                let session = mode.session.clone();
-                let buffer = mode.buffer.clone();
                 let before = StateSummary {
                     head: format!("op={}", mode.session.op.slug()),
                     dirty: "resolving".to_string(),
                 };
                 let session_op = mode.session.op.slug().to_string();
+                let expected_revision = mode.revision;
+                let session = mode.session;
+                let buffer = mode.buffer;
                 let owner = owner.session;
                 let visit = self.app_sessions.visit(owner);
                 let abandonment = guard.abandonment();
@@ -378,8 +385,9 @@ impl KagiApp {
                             std::panic::catch_unwind(|| panic!("injected merge continue panic"));
                         return None;
                     }
-                    let result = kagi_git::Backend::open(&bg_path)
-                        .and_then(|backend| backend.stage_conflict_resolution(&session, &buffer));
+                    let result = kagi_git::Backend::open(&bg_path).and_then(|backend| {
+                        backend.stage_conflict_resolution(&session, &buffer, &expected_revision)
+                    });
                     let unknown = app::settle_conflict_write(guard, &result, before);
                     Some((result, unknown))
                 });
@@ -466,6 +474,8 @@ impl KagiApp {
                 );
                 self.set_conflict_continue_modal(ConflictContinuePlanModal {
                     plan: std::sync::Arc::new(*plan),
+                    revision: mode.revision,
+                    operation_kind: mode.session.op.kind(),
                     error: None,
                 });
             }
@@ -478,12 +488,13 @@ impl KagiApp {
                 };
                 let owner = owner.session;
                 let visit = self.app_sessions.visit(owner);
-                let session = mode.session.clone();
-                let buffer = mode.buffer.clone();
                 let before = StateSummary {
                     head: format!("op={}", mode.session.op.slug()),
                     dirty: "resolving".to_string(),
                 };
+                let expected_revision = mode.revision;
+                let session = mode.session;
+                let buffer = mode.buffer;
                 let abandonment = guard.abandonment();
                 let supervision = abandonment.supervision();
                 let bg_path = repo_path.clone();
@@ -497,8 +508,9 @@ impl KagiApp {
                         return None;
                     }
                     let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
-                        Ok(backend) => backend
-                            .observe_ref_moves(|b| b.execute_conflict_continue(&session, &buffer)),
+                        Ok(backend) => backend.observe_ref_moves(|b| {
+                            b.execute_conflict_continue(&session, &buffer, &expected_revision)
+                        }),
                         Err(error) => (Err(error), None),
                     };
                     let unknown = app::settle_conflict_write(guard, &result, bg_before);
@@ -591,15 +603,16 @@ impl KagiApp {
             );
             return;
         }
-        let op_name = format!("{}-continue", mode.session.op.slug());
+        let op_name = format!("{}-continue", modal.operation_kind.slug());
 
         let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
             return;
         };
         let owner = self.active_session();
         let visit = owner.and_then(|id| self.app_sessions.visit(id));
-        let session = mode.session.clone();
-        let buffer = mode.buffer.clone();
+        let session = mode.session;
+        let buffer = mode.buffer;
+        let expected_revision = modal.revision;
         let before = plan.current.clone();
         let modal_plan = plan.clone();
         let abandonment = guard.abandonment();
@@ -622,9 +635,9 @@ impl KagiApp {
                 return None;
             }
             let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
-                Ok(backend) => {
-                    backend.observe_ref_moves(|b| b.execute_conflict_continue(&session, &buffer))
-                }
+                Ok(backend) => backend.observe_ref_moves(|b| {
+                    b.execute_conflict_continue(&session, &buffer, &expected_revision)
+                }),
                 Err(error) => (Err(error), None),
             };
             let unknown = app::settle_conflict_write(guard, &result, bg_before);

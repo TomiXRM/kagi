@@ -86,13 +86,23 @@ pub(crate) fn short_text_hash(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>, GitError> {
+    let mut index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    index
+        .read(true)
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    for entry in index
+        .conflicts()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?
+    {
+        entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
+    }
     let Some(session) = conflicts::detect_conflict_session(repo) else {
         return Ok(None);
     };
     let (mut parts, operation_tail, _) = operation_parts(repo, &session, false);
-    let mut entries: Vec<Vec<u8>> = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?
+    let mut entries: Vec<Vec<u8>> = index
         .iter()
         .map(|entry| {
             let mut value = entry.path;

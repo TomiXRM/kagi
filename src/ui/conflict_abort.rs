@@ -17,7 +17,7 @@ use std::sync::Arc;
 use gpui::{Context, SharedString, Window};
 use gpui_component::IconName;
 
-use kagi_domain::conflict_family::{ConflictOperationKind, ObservedOperation};
+use kagi_domain::conflict_family::{ConflictOperationKind, ConflictRevision, ObservedOperation};
 use kagi_git::OperationPlan;
 
 use super::dialog_a11y::ConfirmStage;
@@ -35,6 +35,10 @@ use crate::app;
 pub struct ConflictContinuePlanModal {
     /// The computed `<op> --continue` plan.
     pub plan: Arc<OperationPlan>,
+    /// The accepted full repository revision shown by this original plan,
+    /// including staged content. Never replace it from the mode at Confirm.
+    pub revision: ConflictRevision,
+    pub operation_kind: ConflictOperationKind,
     /// Error message to show if execute failed (replaces the confirm button).
     pub error: Option<SharedString>,
 }

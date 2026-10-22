@@ -41,13 +41,31 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
   一致しない場合は、既存 `ObservationChanged` として書込前に拒否する。同じ path が
   次 conflict に存在するだけでは旧 Result の権限にならない。旧 session の path が
   既に stage 0 なら再 materialize せず再読込を要求し、fresh な空 session の Continue は許す。
-  空 session でも必要な operation metadata の既知性を先に検証し、不明なら
-  index/tree 作成前に拒否する。path が空の場合に gitdir の canonicalize は行わない。
+  空 session でも元の repository / strict operation context と現在値の一致を先に検証し、
+  不明・別 repository・別 operation なら index/tree 作成前に拒否する。
+  現在の context を取得できることだけでは元の承認の根拠にならない。
 - text / raw の直接 Save も fresh index と同じ file identity を書込前に照合する。
   recorded Save の既存 `BufferRevision` は payload と producer の file identity を
   一緒に凍結し、plan / run の global observation 検証に加えて照合する。現在の
   observation を旧 payload に添えても新 identity を無条件に与えない。
   無関係な index entry の更新は per-file identity を変えない。
+
+### 確認済み Continue の revision（#1721）
+
+- 同 file の編集を保持できることと、古い確認から書き込めることは別である。
+  Continue は全 staged content を commit し得るため、確認を開く時の accepted full
+  `ConflictRevision` を保持する。元の operation metadata と index の path/OID/mode を含む
+  revision を、Confirm 時の新しい mode や実行直前の観測から作り直さない。
+- `Backend` の Continue plan / route / stage / execute は必須の expected revision を受ける。
+  計画時と実書込前の両方で fresh index を使って既存の正規 observation と照合し、
+  既知の不一致を Ready として提示しない。読取失敗は伝播し、None や旧 cache で通さない。
+- sequencer modal は元の revision と operation kind を持ち、queued background dispatch
+  まで同じ値を渡す。merge / stash の明示 plan も元の accepted revision を渡す。
+  同 commit / step / total のまま別 base へ rebase を開始し直した場合や、同 operation の
+  stage 0 本文だけが変わった場合も、古い承認からは WT/index/object/ref を変更しない。
+- 無関係な index 更新で同 file の入力を破棄する必要はない。一方、staged content が
+  変わった古い確認を再利用してはならず、現在の観測から新しく明示計画・承認する。
+  正当な Save 後の fresh-empty session はこの新しい承認で引き続き Continue できる。
 
 ### Abort(常に可能 = 安全弁)
 - 確認ダイアログを出す。**保存済み resolution が失われる可能性**を明示

@@ -40,17 +40,23 @@ fn public_continue_refuses_old_result_after_external_same_path_advance() {
     let old_backend = Backend::open_with_policy(path, policy()).unwrap();
     let repo = Repository::open(path).unwrap();
     let old_session = detect_conflict_session(&repo).unwrap();
+    let expected = old_backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut old_buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     old_buffer
         .set_manual_text(Path::new("file.txt"), "RESOLVED ONE\n")
         .unwrap();
     let first = physical_state(path);
     assert!(old_backend
-        .plan_conflict_continue_route(&old_session, &old_buffer, "side")
+        .plan_conflict_continue_route(&old_session, &old_buffer, "side", &expected)
         .is_ok());
     Backend::open_with_policy(path, policy())
         .unwrap()
-        .execute_conflict_continue(&old_session, &old_buffer)
+        .execute_conflict_continue(&old_session, &old_buffer, &expected)
         .unwrap();
     let before = physical_state(path);
     assert_ne!(before.head, first.head);
@@ -63,17 +69,18 @@ fn public_continue_refuses_old_result_after_external_same_path_advance() {
         .continue_blockers(&old_session, &old_buffer)
         .is_err());
     assert!(old_backend
-        .plan_conflict_continue(&old_session, &old_buffer)
+        .plan_conflict_continue(&old_session, &old_buffer, &expected)
         .is_err());
     assert!(old_backend
-        .stage_conflict_resolution(&old_session, &old_buffer)
+        .stage_conflict_resolution(&old_session, &old_buffer, &expected)
         .is_err());
     assert!(old_backend
         .execute_conflict_save(&old_buffer, Path::new("file.txt"))
         .is_err());
     assert_eq!(physical_state(path), before);
-    let plan = old_backend.plan_conflict_continue_route(&old_session, &old_buffer, "side");
-    let execution = old_backend.execute_conflict_continue(&old_session, &old_buffer);
+    let plan =
+        old_backend.plan_conflict_continue_route(&old_session, &old_buffer, "side", &expected);
+    let execution = old_backend.execute_conflict_continue(&old_session, &old_buffer, &expected);
     let after = physical_state(path);
     assert!(
         plan.is_err() && execution.is_err() && before == after,
@@ -135,10 +142,10 @@ fn same_operation_stage_change_refuses_text_and_raw_old_results() {
         assert!(backend.continue_blockers(&old.session, &buffer).is_err());
         assert!(backend.execute_conflict_save(&buffer, rel).is_err());
         assert!(backend
-            .stage_conflict_resolution(&old.session, &buffer)
+            .stage_conflict_resolution(&old.session, &buffer, &old.observation.revision)
             .is_err());
         assert!(backend
-            .execute_conflict_continue(&old.session, &buffer)
+            .execute_conflict_continue(&old.session, &buffer, &old.observation.revision)
             .is_err());
         assert_eq!(physical_file_state(path, file), before);
 
@@ -225,6 +232,12 @@ fn unrelated_index_change_is_allowed_but_old_session_cannot_replace_saved_result
     let backend = open_backend(path);
     let repo = Repository::open(path).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let original_approval = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     buffer
         .set_manual_text(Path::new("file.txt"), "MY RESOLUTION\n")
@@ -232,7 +245,22 @@ fn unrelated_index_change_is_allowed_but_old_session_cannot_replace_saved_result
     write_file(path, "unrelated.txt", "independently staged\n");
     git(path, &["add", "unrelated.txt"]);
     assert!(backend
-        .plan_conflict_continue_route(&session, &buffer, "main")
+        .plan_conflict_continue_route(&session, &buffer, "main", &original_approval)
+        .is_err());
+    assert!(backend
+        .continue_blockers(&session, &buffer)
+        .unwrap()
+        .is_empty());
+    // The same file draft survives an unrelated accepted read, but Continue
+    // requires a new explicit plan against the newly observed staged set.
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
+    assert!(backend
+        .plan_conflict_continue_route(&session, &buffer, "main", &expected)
         .is_ok());
     backend
         .execute_conflict_save(&buffer, Path::new("file.txt"))
@@ -252,10 +280,10 @@ fn unrelated_index_change_is_allowed_but_old_session_cannot_replace_saved_result
     git(path, &["add", "file.txt"]);
     let before = physical_state(path);
     assert!(backend
-        .stage_conflict_resolution(&session, &buffer)
+        .stage_conflict_resolution(&session, &buffer, &expected)
         .is_err());
     assert!(backend
-        .execute_conflict_continue(&session, &buffer)
+        .execute_conflict_continue(&session, &buffer, &expected)
         .is_err());
     assert!(backend
         .execute_conflict_save(&buffer, Path::new("file.txt"))
@@ -264,10 +292,16 @@ fn unrelated_index_change_is_allowed_but_old_session_cannot_replace_saved_result
 
     let fresh = Repository::open(path).unwrap();
     let session = detect_conflict_session(&fresh).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert!(session.files.is_empty());
     let buffer = ResolutionBuffer::from_repo(&fresh).unwrap();
     backend
-        .execute_conflict_continue(&session, &buffer)
+        .execute_conflict_continue(&session, &buffer, &expected)
         .unwrap();
     assert_eq!(
         git_output(path, &["show", "HEAD:file.txt"]),
@@ -291,6 +325,12 @@ fn unknown_current_identity_cannot_authorize_save_or_continue() {
     std::fs::write(path.join(".git/MERGE_HEAD"), "not a commit identity\n").unwrap();
     let repo = Repository::open(path).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let file = Path::new("file.txt");
     assert!(buffer.file_identity(file).is_none());
@@ -300,10 +340,10 @@ fn unknown_current_identity_cannot_authorize_save_or_continue() {
     let before = physical_state(path);
     assert!(backend.execute_conflict_save(&buffer, file).is_err());
     assert!(backend
-        .stage_conflict_resolution(&session, &buffer)
+        .stage_conflict_resolution(&session, &buffer, &expected)
         .is_err());
     assert!(backend
-        .execute_conflict_continue(&session, &buffer)
+        .execute_conflict_continue(&session, &buffer, &expected)
         .is_err());
     let snapshot = backend.conflict_snapshot().unwrap().unwrap();
     assert!(Backend::conflict_save_request(
@@ -341,14 +381,20 @@ fn empty_session_requires_known_operation_before_any_continue_write() {
     std::fs::write(path.join(".git/MERGE_HEAD"), "not a commit identity\n").unwrap();
     let fresh = Repository::open(path).unwrap();
     let session = detect_conflict_session(&fresh).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert!(session.files.is_empty());
     let buffer = ResolutionBuffer::from_repo(&fresh).unwrap();
     let before = physical_state(path);
     let objects_before = git_output(path, &["count-objects", "-v"]);
     let blockers = backend.continue_blockers(&session, &buffer);
-    let plan = backend.plan_conflict_continue_route(&session, &buffer, "main");
-    let staging = backend.stage_conflict_resolution(&session, &buffer);
-    let execution = backend.execute_conflict_continue(&session, &buffer);
+    let plan = backend.plan_conflict_continue_route(&session, &buffer, "main", &expected);
+    let staging = backend.stage_conflict_resolution(&session, &buffer, &expected);
+    let execution = backend.execute_conflict_continue(&session, &buffer, &expected);
     let after = physical_state(path);
     let objects_after = git_output(path, &["count-objects", "-v"]);
     assert!(
@@ -399,10 +445,11 @@ fn empty_saved_session_refuses_replacement_rebase_with_same_commit_and_step() {
         .execute_conflict_save(&resolving, Path::new("file.txt"))
         .unwrap();
     let original = open_backend(path).conflict_snapshot().unwrap().unwrap();
+    let expected = original.observation.revision.clone();
     assert!(original.session.files.is_empty());
     let approved_buffer = open_backend(path).resolution_buffer_from_repo().unwrap();
     let approved_route = backend
-        .plan_conflict_continue_route(&original.session, &approved_buffer, "side")
+        .plan_conflict_continue_route(&original.session, &approved_buffer, "side", &expected)
         .unwrap();
     let original_state = physical_state(path);
 
@@ -422,9 +469,15 @@ fn empty_saved_session_refuses_replacement_rebase_with_same_commit_and_step() {
     let objects_before = git_output(path, &["count-objects", "-v"]);
 
     let blockers = backend.continue_blockers(&original.session, &approved_buffer);
-    let plan = backend.plan_conflict_continue_route(&original.session, &approved_buffer, "side");
-    let staging = backend.stage_conflict_resolution(&original.session, &approved_buffer);
-    let execution = backend.execute_conflict_continue(&original.session, &approved_buffer);
+    let plan = backend.plan_conflict_continue_route(
+        &original.session,
+        &approved_buffer,
+        "side",
+        &expected,
+    );
+    let staging = backend.stage_conflict_resolution(&original.session, &approved_buffer, &expected);
+    let execution =
+        backend.execute_conflict_continue(&original.session, &approved_buffer, &expected);
     let after = physical_state(path);
     let objects_after = git_output(path, &["count-objects", "-v"]);
     assert!(
@@ -450,4 +503,214 @@ fn empty_saved_session_refuses_replacement_rebase_with_same_commit_and_step() {
         execution.is_ok(),
         execution.as_ref().err().map(ToString::to_string),
     );
+}
+
+#[test]
+fn empty_saved_approval_refuses_staged_only_replacement_until_explicit_replan() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = rebase_conflict_repo();
+    let path = fixture.path();
+    let backend = open_backend(path);
+    let mut resolving = backend.resolution_buffer_from_repo().unwrap();
+    resolving
+        .set_manual_text(Path::new("file.txt"), "FIRST SAVED RESULT\n")
+        .unwrap();
+    backend
+        .execute_conflict_save(&resolving, Path::new("file.txt"))
+        .unwrap();
+    let original = backend.conflict_snapshot().unwrap().unwrap();
+    let buffer = backend.resolution_buffer_from_repo().unwrap();
+    assert!(original.session.files.is_empty());
+    backend
+        .plan_conflict_continue_route(
+            &original.session,
+            &buffer,
+            "side",
+            &original.observation.revision,
+        )
+        .unwrap();
+
+    // Keep the operation intact: only the stage-zero blob changes externally.
+    write_file(path, "file.txt", "OTHER SAVED RESULT\n");
+    git(path, &["add", "file.txt"]);
+    let current = backend.conflict_snapshot().unwrap().unwrap();
+    let independent = open_backend(path).conflict_snapshot().unwrap().unwrap();
+    assert_eq!(current.observation, independent.observation);
+    assert_eq!(current.session.op, original.session.op);
+    assert_ne!(current.observation.revision, original.observation.revision);
+    assert!(backend
+        .continue_blockers(&original.session, &buffer)
+        .unwrap()
+        .is_empty());
+    let before = physical_state(path);
+    let objects = git_output(path, &["count-objects", "-v"]);
+    assert!(backend
+        .plan_conflict_continue(&original.session, &buffer, &original.observation.revision,)
+        .is_err());
+    assert!(backend
+        .plan_conflict_continue_route(
+            &original.session,
+            &buffer,
+            "side",
+            &original.observation.revision,
+        )
+        .is_err());
+    assert!(backend
+        .stage_conflict_resolution(&original.session, &buffer, &original.observation.revision,)
+        .is_err());
+    assert!(backend
+        .execute_conflict_continue(&original.session, &buffer, &original.observation.revision,)
+        .is_err());
+    assert_eq!(physical_state(path), before);
+    assert_eq!(git_output(path, &["count-objects", "-v"]), objects);
+
+    // A new explicit approval may continue the same operation with its new tree.
+    backend
+        .plan_conflict_continue_route(
+            &current.session,
+            &buffer,
+            "side",
+            &current.observation.revision,
+        )
+        .unwrap();
+    backend
+        .execute_conflict_continue(&current.session, &buffer, &current.observation.revision)
+        .unwrap();
+    assert_eq!(
+        git_output(path, &["show", "HEAD:file.txt"]),
+        "OTHER SAVED RESULT"
+    );
+    assert_eq!(
+        Repository::open(path).unwrap().state(),
+        git2::RepositoryState::Clean
+    );
+}
+
+fn copy_fixture_tree(source: &Path, target: &Path) {
+    std::fs::create_dir(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let destination = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_fixture_tree(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+#[test]
+fn empty_live_buffer_cannot_authorize_identical_repository_at_another_root() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = rebase_conflict_repo();
+    let path = fixture.path();
+    let source = open_backend(path);
+    let mut resolving = source.resolution_buffer_from_repo().unwrap();
+    resolving
+        .set_manual_text(Path::new("file.txt"), "SAVED FOR THIS ROOT\n")
+        .unwrap();
+    source
+        .execute_conflict_save(&resolving, Path::new("file.txt"))
+        .unwrap();
+    let original = source.conflict_snapshot().unwrap().unwrap();
+    let buffer = source.resolution_buffer_from_repo().unwrap();
+    assert!(original.session.files.is_empty());
+    let destination = tempfile::tempdir().unwrap();
+    let copy = destination.path().join("copy");
+    copy_fixture_tree(path, &copy);
+    let other = open_backend(&copy);
+    let current = other.conflict_snapshot().unwrap().unwrap();
+    assert_eq!(original.observation, current.observation);
+    let before = physical_state(&copy);
+    let objects = git_output(&copy, &["count-objects", "-v"]);
+    assert!(other.continue_blockers(&current.session, &buffer).is_err());
+    assert!(other
+        .plan_conflict_continue_route(
+            &current.session,
+            &buffer,
+            "side",
+            &current.observation.revision,
+        )
+        .is_err());
+    assert!(other
+        .stage_conflict_resolution(&current.session, &buffer, &current.observation.revision,)
+        .is_err());
+    assert!(other
+        .execute_conflict_continue(&current.session, &buffer, &current.observation.revision,)
+        .is_err());
+    assert_eq!(physical_state(&copy), before);
+    assert_eq!(git_output(&copy, &["count-objects", "-v"]), objects);
+    assert!(source
+        .continue_blockers(&original.session, &buffer)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn empty_buffer_clone_keeps_frozen_context_but_decode_and_new_never_gain_authority() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = rebase_conflict_repo();
+    let path = fixture.path();
+    let backend = open_backend(path);
+    let mut resolving = backend.resolution_buffer_from_repo().unwrap();
+    resolving
+        .set_manual_text(Path::new("file.txt"), "SAVED ORIGINAL\n")
+        .unwrap();
+    backend
+        .execute_conflict_save(&resolving, Path::new("file.txt"))
+        .unwrap();
+    let original = backend.conflict_snapshot().unwrap().unwrap();
+    let live = backend.resolution_buffer_from_repo().unwrap();
+    let mut cloned = live.clone();
+    assert!(backend
+        .continue_blockers(&original.session, &cloned)
+        .unwrap()
+        .is_empty());
+    live.autosave().unwrap();
+    let mut decoded = ResolutionBuffer::load(path).unwrap();
+    let mut new = ResolutionBuffer::new(path);
+    decoded.retain_drafts(live.clone());
+    new.retain_drafts(live.clone());
+    let before = physical_state(path);
+    for unauthorized in [&decoded, &new] {
+        assert!(backend
+            .continue_blockers(&original.session, unauthorized)
+            .is_err());
+        assert!(backend
+            .stage_conflict_resolution(
+                &original.session,
+                unauthorized,
+                &original.observation.revision,
+            )
+            .is_err());
+        assert!(backend
+            .execute_conflict_continue(
+                &original.session,
+                unauthorized,
+                &original.observation.revision,
+            )
+            .is_err());
+    }
+    assert_eq!(physical_state(path), before);
+
+    replace_saved_rebase_onto_another_base(path);
+    let current = backend.conflict_snapshot().unwrap().unwrap();
+    assert_eq!(current.session.op, original.session.op);
+    // Retaining a newly read buffer must not overwrite the receiving clone's
+    // original operation provenance, even though both buffers have zero files.
+    cloned.retain_drafts(backend.resolution_buffer_from_repo().unwrap());
+    let before = physical_state(path);
+    assert!(backend
+        .continue_blockers(&current.session, &cloned)
+        .is_err());
+    assert!(backend
+        .execute_conflict_continue(&current.session, &cloned, &current.observation.revision,)
+        .is_err());
+    assert_eq!(physical_state(path), before);
 }

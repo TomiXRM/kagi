@@ -425,10 +425,17 @@ fn continue_blocked_until_resolved_and_marker_free() {
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(tmp.path())
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
 
     // 1. Empty buffer → unresolved blocker.
-    let empty = ResolutionBuffer::new(tmp.path());
-    let plan = plan_conflict_continue(&repo, &session, &empty).unwrap();
+    let empty = ResolutionBuffer::from_repo(&repo).unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &empty, &expected).unwrap();
     assert!(
         plan.blockers
             .iter()
@@ -445,7 +452,7 @@ fn continue_blocked_until_resolved_and_marker_free() {
             "<<<<<<< HEAD\nMAIN\n=======\nFEATURE\n>>>>>>> feature\n",
         )
         .unwrap();
-    let plan = plan_conflict_continue(&repo, &session, &markered).unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &markered, &expected).unwrap();
     assert!(
         plan.blockers
             .iter()
@@ -459,7 +466,7 @@ fn continue_blocked_until_resolved_and_marker_free() {
     clean
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
         .unwrap();
-    let plan = plan_conflict_continue(&repo, &session, &clean).unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &clean, &expected).unwrap();
     assert!(
         plan.blockers.is_empty(),
         "clean resolution should have no blockers, got {:?}",
@@ -532,13 +539,21 @@ fn execute_continue_merge_creates_merge_commit() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     buffer
         .apply_choice(Path::new("file.txt"), ResolutionChoice::BothCurrentFirst)
         .unwrap();
 
-    let outcome = execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue merge");
+    let outcome = execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
+        .expect("continue merge");
     match outcome.outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // The new commit is a merge (two parents).
@@ -569,6 +584,13 @@ fn execute_continue_cherry_pick_advances_and_finishes() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -576,8 +598,8 @@ fn execute_continue_cherry_pick_advances_and_finishes() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
 
-    let outcome =
-        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue cherry-pick");
+    let outcome = execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
+        .expect("continue cherry-pick");
     match outcome.outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // A real commit was created (not just staged) with a single parent
@@ -614,6 +636,13 @@ fn execute_continue_rebase_advances_and_finishes() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert!(matches!(session.op, ConflictOp::Rebase { .. }));
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -621,8 +650,8 @@ fn execute_continue_rebase_advances_and_finishes() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
 
-    let outcome =
-        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue rebase");
+    let outcome = execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
+        .expect("continue rebase");
     assert!(
         matches!(outcome.outcome, kagi_git::ContinueOutcome::Committed(_)),
         "single-commit rebase should finish in one continue, got {:?}",
@@ -662,6 +691,13 @@ fn stage_then_merge_commit_without_per_file_save() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
 
     // Resolve only in the buffer — do NOT call execute_conflict_save.
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -676,7 +712,8 @@ fn stage_then_merge_commit_without_per_file_save() {
     );
 
     // Continue route stages the resolution into the index.
-    backend_ops::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
+    backend_ops::stage_conflict_resolution(&repo, &session, &buffer, &expected)
+        .expect("stage on continue");
 
     let index = repo.index().unwrap();
     assert!(
@@ -833,7 +870,14 @@ fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
     assert!(buffer.has_cached_marker_residue());
 
     let session = detect_conflict_session(&repo).unwrap();
-    let plan = plan_conflict_continue(&repo, &session, &buffer).unwrap();
+    let expected = kagi_git::Backend::open(repo.workdir().unwrap())
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
+    let plan = plan_conflict_continue(&repo, &session, &buffer, &expected).unwrap();
     assert!(
         !plan.blockers.is_empty(),
         "marker residue from a reset hunk must block continue"
@@ -854,7 +898,7 @@ fn continue_gate_reports_specific_blocker_codes() {
     let session = detect_conflict_session(&repo).unwrap();
 
     // Empty buffer → unresolved-files blocker code is present.
-    let empty = ResolutionBuffer::new(tmp.path());
+    let empty = ResolutionBuffer::from_repo(&repo).unwrap();
     let blockers = continue_blockers(&repo, &session, &empty).unwrap();
     assert!(
         blockers.iter().any(|b| b.code() == "unresolved-files"),
@@ -886,7 +930,7 @@ fn continue_gate_flags_unresolved_binary_conflict() {
     assert_eq!(session.files[0].kind, ConflictKind::Binary);
 
     // Binary file unresolved → both unresolved-files AND binary-unresolved.
-    let empty = ResolutionBuffer::new(tmp.path());
+    let empty = ResolutionBuffer::from_repo(&repo).unwrap();
     let codes: Vec<&str> = continue_blockers(&repo, &session, &empty)
         .unwrap()
         .iter()
@@ -1132,6 +1176,13 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let path = Path::new("file.txt");
 
     let head_before = git_output(dir, &["rev-parse", "HEAD"]);
@@ -1141,7 +1192,8 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
         .apply_choice(path, ResolutionChoice::Current)
         .unwrap();
 
-    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main").expect("route");
+    let route =
+        plan_conflict_continue_route(&repo, &session, &buffer, "main", &expected).expect("route");
     match route {
         ContinueRoute::MergeCommitPanel { message } => {
             assert!(
@@ -1235,6 +1287,13 @@ fn sequencer_continue_produces_a_plan() {
     let tmp = cherry_pick_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(tmp.path())
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
     let path = Path::new("file.txt");
 
@@ -1243,7 +1302,8 @@ fn sequencer_continue_produces_a_plan() {
         .apply_choice(path, ResolutionChoice::Incoming)
         .unwrap();
 
-    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main").expect("route");
+    let route =
+        plan_conflict_continue_route(&repo, &session, &buffer, "main", &expected).expect("route");
     match route {
         ContinueRoute::SequencerPlan(plan) => {
             assert!(plan.blockers.is_empty(), "resolved → no blockers");

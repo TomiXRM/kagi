@@ -4,6 +4,13 @@ use super::*;
 use kagi_domain::conflict_family::{BufferRevision, ConflictRequest};
 use kagi_domain::plan_note::{ConflictsNote, PlanNote};
 
+/// Owned facts from the exact file/payload binding check, not a later read.
+pub(crate) struct SaveBinding {
+    identity: ConflictRevision,
+    context: ConflictRevision,
+    git_dir: PathBuf,
+}
+
 fn observation_changed() -> GitError {
     GitError::Blocked(Box::new(PlanNote::Conflicts(
         ConflictsNote::ObservationChanged,
@@ -44,14 +51,25 @@ impl ResolutionBuffer {
         // Even a fully staged session needs a known operation before Continue
         // can write the index/tree or advance the sequencer.
         let context = identity_context(repo)?;
-        let mut paths = paths.into_iter().peekable();
-        if paths.peek().is_none() {
-            return Ok(());
-        }
         let git_dir = repo
             .path()
             .canonicalize()
             .map_err(|error| GitError::Other(error.to_string()))?;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(observation_changed)?
+            .canonicalize()
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let Some((origin_context, origin_git_dir)) = &self.live_context else {
+            return Err(observation_changed());
+        };
+        let buffer_workdir = self
+            .repo_path
+            .canonicalize()
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        if origin_context != &context || origin_git_dir != &git_dir || buffer_workdir != workdir {
+            return Err(observation_changed());
+        }
         for path in paths {
             let current = current_file_identity(index, &context, &git_dir, path)?;
             if self.file_identity(path) != Some(&current) {
@@ -69,7 +87,7 @@ impl ResolutionBuffer {
         path: &Path,
         draft: &kagi_domain::conflict_family::ConflictDraft,
         expected: &BufferRevision,
-    ) -> Result<ConflictRevision, GitError> {
+    ) -> Result<SaveBinding, GitError> {
         let mut index = repo
             .index()
             .map_err(|error| GitError::Other(error.to_string()))?;
@@ -87,7 +105,11 @@ impl ResolutionBuffer {
         {
             return Err(observation_changed());
         }
-        Ok(identity)
+        Ok(SaveBinding {
+            identity,
+            context,
+            git_dir,
+        })
     }
 
     pub fn conflict_action_summary(&self, path: &Path) -> String {
@@ -145,13 +167,19 @@ impl ResolutionBuffer {
         else {
             return Err(observation_changed());
         };
-        let identity = Self::validate_save_binding(repo, path, draft, buffer_revision)?;
+        let snapshot = crate::backend::conflict_ops::conflict_observe::observation(repo)?
+            .ok_or_else(observation_changed)?;
+        if &snapshot.observation.revision != request.revision() {
+            return Err(observation_changed());
+        }
+        let binding = Self::validate_save_binding(repo, path, draft, buffer_revision)?;
         let repo_path = repo
             .workdir()
             .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
         let mut buffer = Self::new(repo_path);
+        buffer.live_context = Some((binding.context, binding.git_dir));
         let mut file = FileResolution::empty();
-        file.identity = Some(identity);
+        file.identity = Some(binding.identity);
         file.draft_state = true;
         match draft {
             kagi_domain::conflict_family::ConflictDraft::Text(bytes) => {

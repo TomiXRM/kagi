@@ -942,11 +942,15 @@ pub struct SaveOutcome {
 ///   detection (ADR-0043 rule 4).
 ///
 /// The repository is not modified by this function.
+/// `expected` is the full observation approved by the caller, including all
+/// staged entries. Planning cannot renew an older approval from current state.
 pub fn plan_conflict_continue(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<OperationPlan, GitError> {
+    preflight_continue_revision(repo, expected)?;
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
@@ -1010,18 +1014,19 @@ pub fn plan_conflict_continue(
 /// continue-a-sequence API, and reimplementing rebase's step machine by hand
 /// would duplicate real git's own sequencer.
 ///
-/// The caller previews the plan first. The shared staging boundary revalidates
-/// the full canonical checklist and its live index before any materialization.
+/// The caller previews the plan first. The shared staging boundary compares
+/// that full frozen approval, then revalidates the canonical live checklist.
 pub(crate) fn execute_conflict_continue(
     repo: &Repository,
     repo_path: &Path,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueResult, GitError> {
     // 1. Materialize each resolved buffer file to the working tree and stage it
     //    (collapses stage 1/2/3 → stage 0), so the index carries no unmerged
     //    entries.
-    stage_conflict_resolution(repo, session, buffer)?;
+    stage_conflict_resolution(repo, session, buffer, expected)?;
 
     // These reads happen only after the continuation has changed repository
     // state. Failure means the effect is unknown, not that execution failed.
@@ -1137,6 +1142,20 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
     }
 }
 
+/// Compare the original full approval, never an execution-time replacement.
+fn preflight_continue_revision(
+    repo: &Repository,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<(), GitError> {
+    let live = crate::backend::conflict_ops::conflict_observe::observation(repo)?;
+    if live.as_ref().map(|snapshot| &snapshot.observation.revision) != Some(expected) {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::ObservationChanged,
+        ))));
+    }
+    Ok(())
+}
+
 /// Materialize every resolved buffer file to the working tree and stage it,
 /// collapsing index stages 1/2/3 → stage 0 (resolution).
 ///
@@ -1147,12 +1166,14 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
 /// [`execute_merge_commit`] refuses the still-conflicted index. Writes nothing
 /// to refs and creates no commit.
 ///
-/// Revalidates the canonical Continue checklist before any WT/index write.
+/// Revalidates the frozen full approval and canonical checklist before any write.
 pub(crate) fn stage_conflict_resolution(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<(), GitError> {
+    preflight_continue_revision(repo, expected)?;
     // Both sequencer execution and the merge-panel route must fail closed if
     // the live index cannot be read or another unmerged path is untracked.
     let blockers = continue_blockers(repo, session, buffer)?;
@@ -1557,7 +1578,9 @@ pub fn plan_conflict_continue_route(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
     current_branch: &str,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueRoute, GitError> {
+    preflight_continue_revision(repo, expected)?;
     // Hard gate: refuse to route while any blocker stands (ADR-0067).
     let blockers = continue_blockers(repo, session, buffer)?;
     if let Some(first) = blockers.first() {
@@ -1572,7 +1595,7 @@ pub fn plan_conflict_continue_route(
         // #309: staging is the whole continue for a stash conflict.
         ConflictOp::StashConflict => Ok(ContinueRoute::StashComplete),
         _ => {
-            let plan = plan_conflict_continue(repo, session, buffer)?;
+            let plan = plan_conflict_continue(repo, session, buffer, expected)?;
             Ok(ContinueRoute::SequencerPlan(Box::new(plan)))
         }
     }

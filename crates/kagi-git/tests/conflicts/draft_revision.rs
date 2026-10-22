@@ -37,13 +37,20 @@ fn continue_same_path_requires_distinct_second_revision_input() {
     let path = Path::new("file.txt");
     let repo = Repository::open(dir).unwrap();
     let first_session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let first_rebase_head = std::fs::read(dir.join(".git/REBASE_HEAD")).unwrap();
     let mut first = ResolutionBuffer::from_repo(&repo).unwrap();
     let first_identity = first.file_identity(path).unwrap().clone();
     first.set_manual_text(path, "RESOLVED ONE\n").unwrap();
     let saved_path = first.autosave().unwrap();
     let first_disk = std::fs::read(&saved_path).unwrap();
-    execute_conflict_continue(&repo, dir, &first_session, &first).unwrap();
+    execute_conflict_continue(&repo, dir, &first_session, &first, &expected).unwrap();
     assert_ne!(
         first_rebase_head,
         std::fs::read(dir.join(".git/REBASE_HEAD")).unwrap()
@@ -52,6 +59,13 @@ fn continue_same_path_requires_distinct_second_revision_input() {
     assert!(git_output(dir, &["status", "--porcelain"]).contains("UU file.txt"));
     let repo = Repository::open(dir).unwrap();
     let second_session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     let conflict = repo
         .index()
         .unwrap()
@@ -86,7 +100,7 @@ fn continue_same_path_requires_distinct_second_revision_input() {
     assert!(continue_blockers(&repo, &second_session, &second)
         .unwrap()
         .is_empty());
-    execute_conflict_continue(&repo, dir, &second_session, &second).unwrap();
+    execute_conflict_continue(&repo, dir, &second_session, &second, &expected).unwrap();
     assert!(detect_conflict_session(&Repository::open(dir).unwrap()).is_none());
     assert_eq!(git_output(dir, &["show", "HEAD:file.txt"]), "RESOLVED TWO");
     assert_eq!(git_output(dir, &["show", "HEAD^:file.txt"]), "RESOLVED ONE");

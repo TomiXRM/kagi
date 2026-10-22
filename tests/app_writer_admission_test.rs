@@ -617,13 +617,28 @@ fn continue_post_read_failure_retains_lease_and_registers_unknown() {
         .unwrap()
         .for_op("conflict-continue");
 
-    // Staging does not need HEAD, but the post-execution summary does. Break
-    // only that read after constructing the real conflict and its resolution.
-    let head_ref = fixture.repo.join(".git/refs/heads/main");
-    let original = std::fs::read(&head_ref).unwrap();
-    std::fs::write(&head_ref, "unreadable object id\n").unwrap();
+    // Keep the conflict identity valid. The post-write status scan reads this
+    // submodule configuration, whereas resolution staging does not.
+    let head = git2::Repository::open(&fixture.repo)
+        .unwrap()
+        .head()
+        .unwrap()
+        .target()
+        .unwrap();
+    git(
+        &fixture.repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{head},module"),
+        ],
+    );
+    std::fs::create_dir(fixture.repo.join("module")).unwrap();
+    let modules = fixture.repo.join(".gitmodules");
+    std::fs::write(&modules, "[submodule \"observer\"\n").unwrap();
     let result = backend.execute_conflict_continue(&session, &buffer);
-    std::fs::write(&head_ref, original).unwrap();
+    std::fs::remove_file(modules).unwrap();
     assert!(
         matches!(&result, Err(GitError::TerminationUnknown(t)) if t.child_stopped()),
         "{result:?}"

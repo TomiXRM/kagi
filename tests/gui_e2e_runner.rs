@@ -7424,8 +7424,9 @@ mod macos {
     /// even if the owner generation changes before the background result arrives.
     fn scenario_worktree_panel_discard_recording_failure(cx: &mut VisualTestAppContext) {
         for stale in [false, true] {
-            let (_fixture, repo_path, wt_a, _wt_b) = build_two_worktree_fixture();
+            let (_fixture, repo_path, wt_a, wt_b) = build_two_worktree_fixture();
             let original = std::fs::read(wt_a.join("dirty.txt")).unwrap();
+            let foreign_before = repo_fingerprint(&wt_b);
             let (kagi, win) = mount(cx, &repo_path);
             let index = cx.read(|app| {
                 kagi.read(app)
@@ -7454,28 +7455,48 @@ mod macos {
                 .truncate(false)
                 .open(log_dir.join("operations.jsonl.lock"))
                 .unwrap();
+            let presentation = |cx: &mut VisualTestAppContext| {
+                cx.read(|app| {
+                    let state = kagi.read(app);
+                    (
+                        format!("{:?}", state.status_footer),
+                        (state.bottom_panel_open, state.bottom_tab),
+                    )
+                })
+            };
+            let mut presentation_before = presentation(cx);
+            let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+            kagi::ui::KagiApp::hold_next_run_for_e2e(hold);
+            kagi.update(cx, |app, cx| app.start_discard(cx));
+            cx.run_until_parked();
+            cx.read(|app| assert!(kagi.read(app).app_sessions.has_leases()));
+            assert_eq!(std::fs::read(wt_a.join("dirty.txt")).unwrap(), original);
+            if stale {
+                // Change the actual consumer context while the admitted run
+                // remains held, instead of retiring an otherwise-active visit.
+                let foreign = wt_b.canonicalize().unwrap();
+                kagi.update(cx, |app, cx| {
+                    assert!(app.open_repository(foreign.clone(), cx))
+                });
+                cx.run_until_parked();
+                cx.read(|app| {
+                    assert_eq!(kagi.read(app).repo_path.as_ref(), Some(&foreign));
+                });
+                presentation_before = presentation(cx);
+            }
             lock.lock().unwrap();
-            let presentation_before = cx.read(|app| {
-                let state = kagi.read(app);
-                (
-                    format!("{:?}", state.status_footer),
-                    (state.bottom_panel_open, state.bottom_tab),
-                )
-            });
-            kagi.update(cx, |app, cx| {
-                app.start_discard(cx);
-                if stale {
-                    // ADR-0196: leaving the tab ends the owner's visit.
-                    let session = app.active_session().expect("attached");
-                    app.app_sessions.depart(session);
-                }
-            });
+            release.send(());
             cx.run_until_parked();
             drop(lock);
             assert_eq!(
                 repo_fingerprint(&wt_a).1,
                 "",
                 "mutation must already have completed"
+            );
+            assert_eq!(
+                repo_fingerprint(&wt_b),
+                foreign_before,
+                "the foreign worktree is not a target of the frozen discard"
             );
             assert_eq!(
                 std::fs::read(&log_path).unwrap_or_default(),

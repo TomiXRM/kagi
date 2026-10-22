@@ -7455,6 +7455,14 @@ mod macos {
                 .open(log_dir.join("operations.jsonl.lock"))
                 .unwrap();
             lock.lock().unwrap();
+            let presentation_before = cx.read(|app| {
+                let state = kagi.read(app);
+                (
+                    format!("{:?}", state.status_footer),
+                    state.status_footer_text.clone(),
+                    (state.bottom_panel_open, format!("{:?}", state.bottom_tab)),
+                )
+            });
             kagi.update(cx, |app, cx| {
                 app.start_discard(cx);
                 if stale {
@@ -7479,33 +7487,42 @@ mod macos {
                 let state = kagi.read(app);
                 let notice =
                     e2e::app_notice_message(state).expect("owner-named recording failure notice");
+                let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
                 assert!(
-                    notice.contains(wt_a.to_str().unwrap())
-                        && notice.contains(
-                            kagi::ui::i18n::op::user_text::operation_label("discard").as_ref()
-                        ),
+                    notice.contains(wt_a.to_str().unwrap()) && notice.contains(&append_diagnostic),
                     "{notice}"
                 );
-                assert!(!matches!(
-                    state.status_footer,
-                    kagi::ui::types::FooterStatus::Success(_)
-                ));
+                assert!(
+                    !e2e::queued_notice_contains(state, wt_a.to_str().unwrap()),
+                    "one failed recording must not queue another owner-named acknowledgment"
+                );
+                assert!(state.toast_stack.read(app).toasts().is_empty());
+                assert_eq!(
+                    (state.bottom_panel_open, format!("{:?}", state.bottom_tab)),
+                    presentation_before.2,
+                    "only explicit inspection may switch the existing panel"
+                );
+                if stale {
+                    assert_eq!(format!("{:?}", state.status_footer), presentation_before.0);
+                    assert_eq!(state.status_footer_text, presentation_before.1);
+                } else {
+                    assert!(matches!(
+                        state.status_footer,
+                        kagi::ui::types::FooterStatus::Idle
+                    ));
+                    assert!(state.status_footer_text.is_empty());
+                }
                 assert!(
                     state.discard_modal().is_none(),
                     "must not offer to repeat a completed mutation"
                 );
                 if !stale {
-                    let kagi::ui::types::FooterStatus::Failed(message) = &state.status_footer
-                    else {
-                        panic!("expected failure footer")
-                    };
-                    assert!(!message.is_empty());
                     let panel = state.op_log.as_ref().unwrap().read(app);
                     let entry = panel.entries().front().unwrap();
-                    assert!(matches!(
-                        entry.outcome,
-                        kagi_git::oplog::OpOutcome::Partial { .. }
-                    ));
+                    let kagi_git::oplog::OpOutcome::Partial { error, .. } = &entry.outcome else {
+                        panic!("unrecorded discard must remain an attempted partial row")
+                    };
+                    assert!(error.contains(&append_diagnostic), "{entry:?}");
                     assert_eq!(entry.backup_refs.len(), 1);
                     let output = Command::new("git")
                         .current_dir(&wt_a)
@@ -7531,6 +7548,18 @@ mod macos {
                     );
                 }
             });
+            kagi.update(cx, |app, cx| app.confirm_app_notice(cx));
+            cx.run_until_parked();
+            cx.read(|app| {
+                let state = kagi.read(app);
+                assert!(e2e::app_notice_message(state).is_none());
+                assert!(!e2e::queued_notice_contains(state, wt_a.to_str().unwrap()));
+            });
+            assert_eq!(
+                std::fs::read(&log_path).unwrap_or_default(),
+                before_log,
+                "acknowledging lost recording must not replay or invent a receipt"
+            );
             unmount(cx, kagi, win);
         }
         eprintln!("[gui-e2e] PASS worktree_panel_discard_recording_failure current + stale owner");

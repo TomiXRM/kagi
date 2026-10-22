@@ -524,7 +524,7 @@ impl KagiApp {
                                 app.record_operation_completion(
                                     &op_name,
                                     before,
-                                    unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg }),
+                                    unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
                                     ref_moves,
                                     &repo_path,
                                     current,
@@ -666,7 +666,7 @@ impl KagiApp {
                         app.record_operation_completion(
                             &op_name,
                             before,
-                            unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg }),
+                            unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
                             ref_moves,
                             &repo_path,
                             current,

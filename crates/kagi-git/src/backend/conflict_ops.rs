@@ -199,13 +199,13 @@ impl Backend {
         kind: kagi_domain::conflict_family::ConflictOperationKind,
         before_text: &str,
     ) -> Result<ConflictRequest, GitError> {
-        let draft = buffer.conflict_draft(path).ok_or_else(|| {
-            GitError::Other(format!("no resolution draft for {}", path.display()))
-        })?;
         let identity = buffer.file_identity(path).ok_or_else(|| {
             GitError::Blocked(Box::new(PlanNote::Conflicts(
                 ConflictsNote::ObservationChanged,
             )))
+        })?;
+        let draft = buffer.conflict_draft(path).ok_or_else(|| {
+            GitError::Other(format!("no resolution draft for {}", path.display()))
         })?;
         Ok(ConflictRequest::Save {
             path: path.to_path_buf(),

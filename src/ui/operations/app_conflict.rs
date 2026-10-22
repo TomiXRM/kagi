@@ -80,6 +80,7 @@ impl KagiApp {
                 None,
                 notice,
                 announce,
+                true,
                 None,
                 recording_failed,
                 None,
@@ -95,7 +96,7 @@ impl KagiApp {
                 });
             }
             if let Some((kind, message)) = notice {
-                self.push_operation_result(entry, &entry.op, kind, message, cx);
+                let _ = self.push_operation_result(entry, &entry.op, kind, message, cx);
             }
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {

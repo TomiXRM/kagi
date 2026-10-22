@@ -96,6 +96,7 @@ impl KagiApp {
                     display,
                     None,
                     announce,
+                    true,
                     None,
                     recording_failed,
                     None,

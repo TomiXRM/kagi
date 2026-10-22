@@ -163,10 +163,11 @@ impl KagiApp {
             report.recording,
             kagi_git::backend::recording::Recording::Failed { .. }
         );
-        let current = self.active_session() == Some(owner.session);
+        let current = self.active_session() == Some(owner.session)
+            && self.app_sessions.visit(owner.session) == Some(owner.visit);
         let announce = !current || self.operation_result_toast_needed(false);
         if announce && !recording_failed {
-            self.push_operation_result(
+            let _ = self.push_operation_result(
                 entry,
                 name,
                 if success {
@@ -619,7 +620,7 @@ impl KagiApp {
         );
         let announce = !active || self.operation_result_toast_needed(false);
         if announce && !recording_failed {
-            self.push_operation_result(
+            let _ = self.push_operation_result(
                 entry,
                 "stash-drop",
                 if success {
@@ -706,7 +707,7 @@ impl KagiApp {
         match &report.result {
             Ok(summary) => {
                 klog!("async: remote pull finished — {summary}");
-                self.present_recorded(&report.recording, cx);
+                let _ = self.present_recorded(&report.recording, true, cx);
                 if recorded_clean {
                     self.status_footer = FooterStatus::Success(
                         i18n::op::user_text::operations::pull_summary(summary).into(),
@@ -717,7 +718,7 @@ impl KagiApp {
             Err(error) => {
                 let err_msg = error.to_string();
                 klog!("async: remote pull failed — {err_msg}");
-                self.present_recorded(&report.recording, cx);
+                let _ = self.present_recorded(&report.recording, true, cx);
                 self.refresh_remote_view(cx);
                 self.enqueue_run_outcome_notice(
                     app::OperationId(report.recording.entry().id),

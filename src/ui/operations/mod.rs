@@ -77,6 +77,12 @@ struct StoppedConflicts {
     count: Option<usize>,
 }
 
+/// Delivery facts from this presentation, never a second notification owner.
+pub(in crate::ui) struct RecordedPresentation {
+    pub recording_failed: bool,
+    pub toast_id: Option<u64>,
+}
+
 /// Use execution evidence, not receipt summaries or the plan's prediction.
 /// Rebase's typed outcome has no paths, so count the actual unmerged index.
 fn stopped_conflicts(outcome: &OperationOutcome, repo_path: &Path) -> Option<StoppedConflicts> {
@@ -680,6 +686,7 @@ impl KagiApp {
                                 None,
                                 success_text.map(|text| (ToastKind::Success, text)),
                                 announce,
+                                true,
                                 None,
                                 matches!(report.recording, Recording::Failed { .. }),
                                 None,
@@ -706,6 +713,7 @@ impl KagiApp {
                             preview,
                             None,
                             announce,
+                            true,
                             None,
                             matches!(report.recording, Recording::Failed { .. }),
                             None,
@@ -964,7 +972,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         self.notice_recording_failure(op_name, &report.recording, repo_path, None);
-        self.present_recorded(&report.recording, cx);
+        let _ = self.present_recorded(&report.recording, true, cx);
     }
 
     /// Owner-named notice for a record the execution boundary could not append
@@ -991,15 +999,20 @@ impl KagiApp {
         }
     }
 
-    /// Present an outcome the execution boundary already recorded. When the
-    /// append failed there is no durable trace at all, so a mutation that DID
-    /// happen is presented as "changed but not recorded" — never a clean
-    /// success toast (#501). A failure that changed nothing stands as it is.
-    pub(crate) fn present_recorded(&mut self, recording: &Recording, cx: &mut Context<Self>) {
+    /// Present an attempted receipt for its frozen context. A departed context
+    /// always uses the existing toast owner and never changes the live footer.
+    /// Returns only this call's actual result toast, never a preexisting notice;
+    /// failed recording leaves ordinary presentation to its required notice.
+    pub(crate) fn present_recorded(
+        &mut self,
+        recording: &Recording,
+        current: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
         // Presentation consumes the attempted receipt, never reconstructs its
         // structured recovery/owner metadata and never retries persistence.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        let announce = self.operation_result_toast_needed(false);
+        let announce = !current || self.operation_result_toast_needed(false);
         self.record_op_result(
             entry,
             cx,
@@ -1007,11 +1020,13 @@ impl KagiApp {
             None,
             None,
             announce,
+            current,
             None,
             matches!(recording, Recording::Failed { .. }),
             None,
             None,
-        );
+        )
+        .toast_id
     }
 }
 

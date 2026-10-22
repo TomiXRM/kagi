@@ -126,6 +126,7 @@ impl KagiApp {
             Some(failure.footer.clone()),
             None,
             announce,
+            true,
             None,
             matches!(
                 failure.recording,

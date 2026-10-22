@@ -130,18 +130,21 @@ impl KagiApp {
             .with_ref_moves(ref_moves);
         if current {
             let announce = self.operation_result_toast_needed(false);
-            return self.record_op_result(
-                entry,
-                cx,
-                true,
-                None,
-                None,
-                announce,
-                None,
-                false,
-                stopped.then(|| i18n::Msg::conflict_stopped(None).into()),
-                None,
-            );
+            return self
+                .record_op_result(
+                    entry,
+                    cx,
+                    true,
+                    None,
+                    None,
+                    announce,
+                    true,
+                    None,
+                    false,
+                    stopped.then(|| i18n::Msg::conflict_stopped(None).into()),
+                    None,
+                )
+                .recording_failed;
         }
         let (footer_msg, _) =
             Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
@@ -192,7 +195,7 @@ impl KagiApp {
                     super::outcome_text(op, &entry.outcome),
                 )
             };
-            self.push_operation_result(entry, op, kind, message.into(), cx);
+            let _ = self.push_operation_result(entry, op, kind, message.into(), cx);
         }
         recording_failed
     }
@@ -278,6 +281,7 @@ impl KagiApp {
             typed_refusal(op, blockers),
             None,
             announce,
+            true,
             None,
             matches!(
                 report.recording,

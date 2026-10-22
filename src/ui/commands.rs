@@ -1999,6 +1999,7 @@ impl FetchFailure {
             None,
             Some((ToastKind::Error, preview.into())),
             announce,
+            true,
             Some(requested_op),
             false,
             None,
@@ -2843,7 +2844,7 @@ impl KagiApp {
                                     )
                                 {
                                     let entry = recording.entry();
-                                    app.push_operation_result(
+                                    let _ = app.push_operation_result(
                                         entry,
                                         requested_op,
                                         ToastKind::Error,

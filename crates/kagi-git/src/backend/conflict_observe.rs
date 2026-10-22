@@ -14,6 +14,9 @@ use kagi_domain::conflict_family::{
 };
 use sha2::{Digest, Sha256};
 
+#[path = "conflict_observe/approval_metadata.rs"]
+mod approval_metadata;
+
 #[derive(Clone, Debug)]
 pub struct ConflictSnapshot {
     pub session: conflicts::ConflictSession,
@@ -95,7 +98,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     let Some(session) = conflicts::detect_conflict_session_from_index(repo, &index)? else {
         return Ok(None);
     };
-    let (mut parts, operation_tail, _) = operation_parts(repo, &session, false);
+    let (mut parts, operation_tail, _) = operation_parts(repo, &session, false)?;
     let mut entries: Vec<Vec<u8>> = index
         .iter()
         .map(|entry| {
@@ -122,8 +125,8 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     }))
 }
 
-/// The operation context shared by draft identities, without unrelated index
-/// entries. Keep the full observation's prefix/index/tail ordering unchanged.
+/// Stable operation ownership for per-file drafts, not a full write approval.
+/// Message, authorship and replay options belong only to the full observation.
 pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
     // Only operation metadata participates; do not classify/read every file's
     // blob content again at the live write-identity boundary.
@@ -131,7 +134,7 @@ pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
         op: conflicts::classify_op(repo, repo.state())?,
         files: Vec::new(),
     };
-    let (mut parts, tail, known) = operation_parts(repo, &session, true);
+    let (mut parts, tail, known) = operation_parts(repo, &session, true).ok()?;
     if !known {
         return None;
     }
@@ -143,7 +146,7 @@ fn operation_parts(
     repo: &Repository,
     session: &conflicts::ConflictSession,
     strict_draft: bool,
-) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, bool) {
+) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>, bool), GitError> {
     let mut known = false;
     let mut prefix = vec![
         format!("{:?}", repo.state()).into_bytes(),
@@ -160,42 +163,14 @@ fn operation_parts(
         );
     }
     let mut parts = Vec::new();
-    let git_dir = repo.path();
-    for relative in [
-        "MERGE_HEAD",
-        "REBASE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        // #707 review: where an abort would restore *to*. Without these the
-        // fingerprint is blind to an external `ORIG_HEAD` move (or a rebase's
-        // pre-op branch changing) while the confirmation is open, so the
-        // frozen request and the live preflight both pass and the abort then
-        // restores somewhere the user was never shown.
-        "ORIG_HEAD",
-        "sequencer/head",
-        "sequencer/todo",
-        "sequencer/abort-safety",
-        "rebase-merge/head-name",
-        "rebase-apply/head-name",
-        "rebase-merge/done",
-        "rebase-merge/git-rebase-todo",
-        "rebase-merge/msgnum",
-        "rebase-merge/end",
-        "rebase-apply/next",
-        "rebase-apply/last",
-    ] {
-        let path = git_dir.join(relative);
-        match std::fs::read(path) {
-            Ok(bytes) => {
-                parts.push(relative.as_bytes().to_vec());
-                parts.push(bytes);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => known = false,
-        }
-    }
     if strict_draft {
+        known &= read_draft_metadata(repo.path(), &mut parts);
         known = known && draft_metadata_known(repo, session, &parts);
+    } else {
+        // Full approval owns the persisted inputs Git will consume, not just
+        // the minimal revision used to retain edits to the same conflict file.
+        parts.push(b"operation-state-v1".to_vec());
+        parts.push(approval_metadata::digest(repo)?);
     }
     // #707 review: the ref an abort would *overwrite*, and where it points now.
     // `head-name` names it, but during a rebase HEAD is detached, so nothing
@@ -217,7 +192,39 @@ fn operation_parts(
         }
         None => parts.push(b"detached".to_vec()),
     }
-    (prefix, parts, known)
+    Ok((prefix, parts, known))
+}
+
+fn read_draft_metadata(git_dir: &Path, parts: &mut Vec<Vec<u8>>) -> bool {
+    let mut known = true;
+    for relative in [
+        "MERGE_HEAD",
+        "REBASE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "ORIG_HEAD",
+        "sequencer/head",
+        "sequencer/todo",
+        "sequencer/abort-safety",
+        "rebase-merge/head-name",
+        "rebase-apply/head-name",
+        "rebase-merge/done",
+        "rebase-merge/git-rebase-todo",
+        "rebase-merge/msgnum",
+        "rebase-merge/end",
+        "rebase-apply/next",
+        "rebase-apply/last",
+    ] {
+        match std::fs::read(git_dir.join(relative)) {
+            Ok(bytes) => {
+                parts.push(relative.as_bytes().to_vec());
+                parts.push(bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => known = false,
+        }
+    }
+    known
 }
 
 /// Optional absent files are not failures. Required operation metadata must be

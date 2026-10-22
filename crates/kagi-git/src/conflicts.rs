@@ -1086,10 +1086,10 @@ pub(crate) fn execute_conflict_continue(
     }
 
     // 3. Sequencer operations (rebase / cherry-pick / revert): advance via the
-    // real git CLI. `--continue` commits the resolved step with the original
-    // message (no editor is opened) and, for rebase, keeps auto-continuing
-    // through any further non-conflicting commits until it either finishes or
-    // stops at the next conflict.
+    // real git CLI. `--continue` consumes the approved sequencer metadata
+    // (without opening an editor), including any explicitly reapproved message
+    // or authorship, and for rebase auto-continues through non-conflicting
+    // commits until it finishes or stops at the next conflict.
     // A bounded loop nudges once per resolved step.
     // #296(a): `--continue` exit status is authoritative. EVERY other run_git
     // caller checks `out.status`; this site used to ignore it, so a hard

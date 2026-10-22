@@ -2239,5 +2239,11 @@ mod continue_flags;
 #[path = "conflicts/continue_metadata.rs"]
 mod continue_metadata;
 
+#[path = "conflicts/continue_operands.rs"]
+mod continue_operands;
+
+#[path = "conflicts/continue_autostash.rs"]
+mod continue_autostash;
+
 #[path = "conflicts/draft_completion.rs"]
 mod draft_completion;

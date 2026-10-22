@@ -109,8 +109,14 @@ impl KagiApp {
             return;
         };
         let panel_id = panel.entity_id();
+        #[cfg(feature = "gui-e2e")]
+        let hold = crate::ui::oplog_panel::drafts::take_load_hold();
         let read = cx.background_spawn(async move {
             let result = crate::ui::oplog_panel::drafts::load(&owner);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             (owner, result)
         });
         cx.spawn(async move |this, cx| {

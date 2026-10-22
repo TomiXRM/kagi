@@ -61,6 +61,10 @@
   `recoveries` を保存する。旧形式、不明 identity、不一致の本文は自動 overlay しないが
   黙って削除しない。明示した undo-to-unresolved の null は「未編集の初期状態」と区別し、
   過去の本文を復活させない。既存 clear/save/adoption 経路も保全を共有する。
+- Continue / Skip / merge 完了は永続 document を先に消さない。foreground の再検出・
+  adoption より前に終了しても、既に保存した本文を同じ document から復元できる。
+  完了または次 step への遷移で失効した identity は inspection-only に落ちるため、
+  自動適用を防ぐ目的の completion-time clear は不要である。
 - `editing_origin` は編集 owner の来歴であり、再読込や clone に書込権限を与えない。
   新しい実編集・undo/redo だけが未保存 intent を進め、保存成功時にその intent を消費する。
   保存失敗時は保持する。古い live recovery の再保存は後の durable 本文より新しくならず、
@@ -70,4 +74,6 @@
   閲覧は現在の conflict に適用せず、普通の receipt 選択・Copy の意味を変えない。
   attachment の session / visit / path / worktree と request generation を固定し、
   実 gitdir の owner を再確認してから読み出す。古い完了を別 owner へ表示・コピーしない。
+  inspection は読込済みの構造化本文を保持し、表示・専用 Copy の翻訳だけを現在の
+  language で構築する。language 切替で repository を再読込したり owner を付け直さない。
 

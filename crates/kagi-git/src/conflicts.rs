@@ -304,7 +304,7 @@ pub fn detect_conflict_session(repo: &Repository) -> Option<ConflictSession> {
 
 /// Map a [`RepositoryState`] to a [`ConflictOp`], reading the `.git/` state
 /// files for the extra context.  Returns `None` for non-conflict states.
-fn classify_op(repo: &Repository, state: RepositoryState) -> Option<ConflictOp> {
+pub(crate) fn classify_op(repo: &Repository, state: RepositoryState) -> Option<ConflictOp> {
     let git_dir = repo.path();
     match state {
         RepositoryState::Merge => {
@@ -704,6 +704,20 @@ pub fn continue_blockers(
     index
         .read(true)
         .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    if classify_op(repo, repo.state()).as_ref() != Some(&session.op) {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::ObservationChanged,
+        ))));
+    }
+    buffer.validate_current_paths(
+        repo,
+        &index,
+        session
+            .files
+            .iter()
+            .filter(|file| buffer.has_resolution(&file.path))
+            .map(|file| file.path.as_path()),
+    )?;
     let mut out: Vec<ContinueBlocker> = Vec::new();
 
     // 1. Every detected file must have a resolution draft.
@@ -1432,13 +1446,17 @@ pub(crate) fn execute_conflict_save_with_progress(
     path: &Path,
     mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
 ) -> Result<SaveOutcome, GitError> {
+    let mut index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    index
+        .read(true)
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    buffer.validate_current_paths(repo, &index, std::iter::once(path))?;
     // #297/#298: a raw (binary / symlink / gitlink) resolution stages the chosen
     // side's OID directly — no working-tree write, so a conflicted symlink is
     // never dereferenced and a binary is saved byte-for-byte, mode intact.
     if let Some(raw) = buffer.raw_resolution(path) {
-        let mut index = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
         stage_raw_entry(&mut index, path, raw)?;
         index
             .write()
@@ -1493,9 +1511,6 @@ pub(crate) fn execute_conflict_save_with_progress(
     progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten);
 
     // 2. Stage the path: index.add_path collapses stage 1/2/3 → stage 0.
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
     index.add_path(path).map_err(|e| {
         GitError::Other(format!("stage {} failed: {}", path.display(), e.message()))
     })?;
@@ -1724,7 +1739,7 @@ pub(crate) fn execute_conflict_skip(
     }
 
     // 1. Preserve the buffer first (never lose partial work).
-    let mut buffer_preserved_at = buffer.autosave().ok();
+    let buffer_preserved_at = buffer.autosave().ok();
 
     // 2. Run the skip, then judge it by the state git left behind (#540).
     //    The exit code alone cannot: `rebase --skip` that drops the step and
@@ -1792,12 +1807,6 @@ pub(crate) fn execute_conflict_skip(
             )
         }
     };
-
-    if matches!(progress, SkipProgress::Advanced | SkipProgress::Finished)
-        && ResolutionBuffer::clear(&workdir).is_ok()
-    {
-        buffer_preserved_at = None;
-    }
 
     Ok(SkipOutcome {
         head: head_sha,

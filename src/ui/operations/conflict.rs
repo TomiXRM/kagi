@@ -483,9 +483,6 @@ impl KagiApp {
                         Err(error) => (Err(error), None),
                     };
                     let unknown = app::settle_conflict_write(guard, &result, bg_before);
-                    if result.is_ok() {
-                        let _ = kagi_git::ResolutionBuffer::clear(&bg_path);
-                    }
                     Some((result, ref_moves, unknown))
                 });
                 cx.spawn(async move |this, acx| {
@@ -549,7 +546,8 @@ impl KagiApp {
 
     /// Confirm the sequencer `<op> --continue` plan (T-CONFLICT-FLOW-032): run
     /// `execute_conflict_continue` (which stages the resolution and advances the
-    /// sequencer), record the oplog, drop the autosaved buffer, and reload.
+    /// sequencer), record the oplog, and reload. Keep the revision-bound autosave
+    /// available for recovery even if the UI never adopts the next observation.
     pub fn confirm_conflict_continue(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -609,9 +607,6 @@ impl KagiApp {
                 Err(error) => (Err(error), None),
             };
             let unknown = app::settle_conflict_write(guard, &result, bg_before);
-            if result.is_ok() {
-                let _ = kagi_git::ResolutionBuffer::clear(&bg_path);
-            }
             Some((result, ref_moves, unknown))
         });
         cx.spawn(async move |this, acx| {

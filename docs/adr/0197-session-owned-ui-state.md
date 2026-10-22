@@ -156,6 +156,9 @@ entity と seed の二重 owner を作る。A4 の決定文とも衝突する。
   Backend で実 worktree owner を再確認する。普通の receipt 選択・clipboard 経路は共有しない。
   Conflict route も通常画面と同じ bottom-panel slot を一回だけ描画し、
   Operation Log / Terminal / Activity を editor と同じ layout 内に置く。
+  inspection は読込時の構造化 draft を保持し、language は表示 cache の key とする。
+  EN / JA 切替時は同じ保全本文の表示・専用 Copy だけを翻訳し直し、attachment /
+  generation / repository owner と普通の receipt 選択・Copy は変更しない。
 
 
 ### Main Diff の image read と retained refresh（#1075）

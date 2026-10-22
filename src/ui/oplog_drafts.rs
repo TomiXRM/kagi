@@ -1,9 +1,9 @@
 //! Explicit read-only preservation inspection inside the existing Operation Log.
-//! The owner and loaded text are view metadata, never resolution authority.
+//! The owner and loaded data are view metadata, never resolution authority.
 
 use super::{OpLogPanel, OpLogPanelEvent};
 use crate::app::{Attachment, SessionId};
-use crate::ui::i18n::Msg;
+use crate::ui::i18n::{self, Lang, Msg};
 use crate::ui::{button_style, e2e, oplog_render, render_helpers, theme};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -13,7 +13,19 @@ use gpui::{
 use gpui_component::button::Button;
 use gpui_component::{Disableable as _, Sizable as _};
 use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
+use std::cell::RefCell;
 use std::path::Path;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static LOAD_HOLD: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
+}
+
+/// Delay admission of a real read, not its backend result (Tier A only).
+#[cfg(feature = "gui-e2e")]
+pub(in crate::ui) fn take_load_hold() -> Option<gpui::Task<()>> {
+    LOAD_HOLD.with(|slot| slot.borrow_mut().take())
+}
 
 pub(super) struct DraftOwner {
     attachment: Attachment,
@@ -22,8 +34,30 @@ pub(super) struct DraftOwner {
 
 pub(super) enum DraftInspection {
     Loading,
-    Loaded(Option<SharedString>),
+    Loaded(Option<DraftSnapshot>),
     Unavailable(SharedString),
+}
+
+/// Frozen inspection data, with presentation cached only for the current language.
+/// Changing language neither reloads the repository nor grants draft authority.
+pub(super) struct DraftSnapshot {
+    buffer: kagi_git::ResolutionBuffer,
+    localized: RefCell<Option<(Lang, SharedString)>>,
+}
+
+impl DraftSnapshot {
+    fn text(&self) -> SharedString {
+        let language = i18n::lang();
+        let mut localized = self.localized.borrow_mut();
+        if let Some((cached_language, text)) = localized.as_ref() {
+            if *cached_language == language {
+                return text.clone();
+            }
+        }
+        let text = SharedString::from(snapshot(&self.buffer));
+        *localized = Some((language, text.clone()));
+        text
+    }
 }
 
 fn same_owner(left: &Attachment, right: &Attachment) -> bool {
@@ -34,6 +68,12 @@ fn same_owner(left: &Attachment, right: &Attachment) -> bool {
 }
 
 impl OpLogPanel {
+    /// Hold the next real inspection result before its owner/generation checks.
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_preserved_conflict_draft_for_e2e(hold: gpui::Task<()>) {
+        LOAD_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
     /// Compare borrowed attachment metadata before cloning only on an owner
     /// change in the parent render-sync pass.
     pub(crate) fn preserved_draft_owner_matches(
@@ -90,7 +130,7 @@ impl OpLogPanel {
         &mut self,
         owner: &Attachment,
         generation: u64,
-        result: Result<Option<SharedString>, String>,
+        result: Result<Option<kagi_git::ResolutionBuffer>, String>,
         cx: &mut Context<Self>,
     ) {
         if self.draft_generation != generation
@@ -103,12 +143,11 @@ impl OpLogPanel {
             return;
         }
         self.draft_inspection = Some(match result {
-            Ok(text) => DraftInspection::Loaded(text),
-            Err(error) => DraftInspection::Unavailable(
-                kagi_ui_core::i18n::op::user_text::diagnostic(&error)
-                    .into_owned()
-                    .into(),
-            ),
+            Ok(buffer) => DraftInspection::Loaded(buffer.map(|buffer| DraftSnapshot {
+                buffer,
+                localized: RefCell::new(None),
+            })),
+            Err(error) => DraftInspection::Unavailable(error.into()),
         });
         cx.notify();
     }
@@ -132,9 +171,9 @@ impl OpLogPanel {
         )
     }
 
-    pub fn preserved_conflict_draft_text(&self) -> Option<&str> {
+    pub fn preserved_conflict_draft_text(&self) -> Option<SharedString> {
         match self.draft_inspection.as_ref()? {
-            DraftInspection::Loaded(Some(text)) => Some(text.as_ref()),
+            DraftInspection::Loaded(Some(snapshot)) => Some(snapshot.text()),
             _ => None,
         }
     }
@@ -154,10 +193,7 @@ impl OpLogPanel {
         {
             return None;
         }
-        match self.draft_inspection.as_ref()? {
-            DraftInspection::Loaded(Some(text)) => Some(text.clone()),
-            _ => None,
-        }
+        self.preserved_conflict_draft_text()
     }
 
     fn request_preserved_conflict_drafts(&self, cx: &mut Context<Self>) {
@@ -180,7 +216,9 @@ impl OpLogPanel {
     }
 }
 
-pub(in crate::ui) fn load(owner: &Attachment) -> Result<Option<SharedString>, String> {
+pub(in crate::ui) fn load(
+    owner: &Attachment,
+) -> Result<Option<kagi_git::ResolutionBuffer>, String> {
     let backend = kagi_git::Backend::open(&owner.path).map_err(|error| error.to_string())?;
     if owner.worktree.is_none()
         || backend.write_worktree_id().ok().as_ref() != owner.worktree.as_ref()
@@ -190,13 +228,13 @@ pub(in crate::ui) fn load(owner: &Attachment) -> Result<Option<SharedString>, St
     let buffer = backend
         .resolution_buffer_from_repo_with_autosave()
         .map_err(|error| error.to_string())?;
-    Ok(snapshot(&buffer).map(SharedString::from))
+    let has_drafts = buffer.recovery_drafts().next().is_some();
+    Ok(has_drafts.then_some(buffer))
 }
 
-fn snapshot(buffer: &kagi_git::ResolutionBuffer) -> Option<String> {
+fn snapshot(buffer: &kagi_git::ResolutionBuffer) -> String {
     use std::fmt::Write as _;
-    let mut drafts = buffer.recovery_drafts().peekable();
-    drafts.peek()?;
+    let drafts = buffer.recovery_drafts();
     let mut text = Msg::OplogPanel(P::PreservedDraftSnapshot).t().to_string();
     for draft in drafts {
         text.push_str("\n\n");
@@ -225,7 +263,7 @@ fn snapshot(buffer: &kagi_git::ResolutionBuffer) -> Option<String> {
             let _ = writeln!(text, "OID: {} / mode {:o}", raw.oid, raw.mode);
         }
     }
-    Some(text)
+    text
 }
 
 pub(in crate::ui) fn render_header(
@@ -306,7 +344,8 @@ pub(in crate::ui) fn render_inspection(
     let Some(state) = panel.draft_inspection.as_ref() else {
         return div().into_any_element();
     };
-    let copyable = panel.preserved_conflict_draft_text().is_some();
+    let text = panel.preserved_conflict_draft_text();
+    let copyable = text.is_some();
     let reason = match state {
         DraftInspection::Loading => Some(P::PreservedDraftLoading),
         DraftInspection::Loaded(None) => Some(P::PreservedDraftEmpty),
@@ -329,14 +368,18 @@ pub(in crate::ui) fn render_inspection(
         .py_2()
         .text_xs()
         .text_color(rgb(theme::theme().text_sub));
-    body = match state {
-        DraftInspection::Loaded(Some(text)) => body.child(
-            oplog_render::selectable_text("oplog-preserved-drafts-text".into(), text)
+    body = match (state, text) {
+        (DraftInspection::Loaded(Some(_)), Some(text)) => body.child(
+            oplog_render::selectable_text("oplog-preserved-drafts-text".into(), &text)
                 .selectable(text.len() <= oplog_render::SELECTABLE_DETAIL_MAX),
         ),
-        DraftInspection::Unavailable(error) => body
+        (DraftInspection::Unavailable(error), _) => body
             .child(Msg::OplogPanel(P::PreservedDraftUnavailable).t())
-            .child(div().pt_2().child(error.clone())),
+            .child(
+                div()
+                    .pt_2()
+                    .child(kagi_ui_core::i18n::op::user_text::diagnostic(error).into_owned()),
+            ),
         _ => body.child(Msg::OplogPanel(reason.unwrap_or(P::PreservedDraftEmpty)).t()),
     };
     div()

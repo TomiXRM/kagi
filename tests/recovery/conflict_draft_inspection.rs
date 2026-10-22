@@ -8,6 +8,7 @@ use crate::repository_state::RepositoryState;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, oplog_panel::entry_clipboard_text, BottomTab, KagiApp};
 use kagi_git::resolution::ResolutionBuffer;
+use kagi_ui_core::i18n::Lang;
 use std::path::{Path, PathBuf};
 
 #[path = "../support/git_fixture.rs"]
@@ -89,7 +90,7 @@ fn draft_text(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<St
             .unwrap()
             .read(cx)
             .preserved_conflict_draft_text()
-            .map(str::to_owned)
+            .map(|text| text.to_string())
     })
 }
 
@@ -100,6 +101,15 @@ fn open_drafts(
     expected: &str,
 ) -> String {
     click_control(cx, window, "oplog-preserved-drafts-open");
+    wait_drafts(cx, app, window, expected)
+}
+
+fn wait_drafts(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    expected: &str,
+) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         cx.run_until_parked();
@@ -200,6 +210,141 @@ fn copy_receipt(
     Some(copied)
 }
 
+fn inspection_labels(text: &str, path: &Path, identity: Option<&str>, body: &str) -> Vec<String> {
+    let (heading, document) = text.split_once("\n\n").unwrap();
+    let mut fields = document.splitn(3, '\n');
+    let (file_label, displayed_path) = fields.next().unwrap().split_once(": ").unwrap();
+    let (identity_label, displayed_identity) = fields.next().unwrap().split_once(": ").unwrap();
+    assert_eq!(displayed_path, path.to_string_lossy());
+    assert_eq!(
+        fields.next().unwrap(),
+        body,
+        "raw draft body stays byte-exact"
+    );
+    let mut labels = vec![
+        heading.to_owned(),
+        file_label.to_owned(),
+        identity_label.to_owned(),
+    ];
+    if let Some(identity) = identity {
+        assert_eq!(
+            displayed_identity, identity,
+            "bound draft identity stays exact"
+        );
+    } else {
+        labels.push(displayed_identity.to_owned());
+    }
+    labels
+}
+
+fn switch_inspection_language(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    language: Lang,
+) {
+    // This is the same command used by View → Language, not a translation probe.
+    app.update(cx, |app, cx| app.set_lang(language, cx));
+    paint(cx, app, window);
+    assert!(e2e::control_bounds(window.window_id(), "oplog-preserved-drafts-back").is_some());
+    assert!(
+        draft_text(cx, app).is_some(),
+        "language changes keep the loaded inspection open"
+    );
+}
+
+fn pending_language_drafts(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    expected: &str,
+) -> String {
+    use kagi::ui::oplog_panel::OpLogPanel;
+    let (old, release_old) = crate::evidence_support::deferred(cx);
+    OpLogPanel::hold_next_preserved_conflict_draft_for_e2e(old);
+    click_control(cx, window, "oplog-preserved-drafts-open");
+    paint(cx, app, window);
+    for language in [Lang::Ja, Lang::En] {
+        app.update(cx, |app, cx| app.set_lang(language, cx));
+        paint(cx, app, window);
+        assert_eq!(
+            draft_text(cx, app),
+            None,
+            "the real result is still pending"
+        );
+        assert!(e2e::control_bounds(window.window_id(), "oplog-preserved-drafts-back").is_some());
+    }
+    back(cx, app, window);
+    let (current, release_current) = crate::evidence_support::deferred(cx);
+    OpLogPanel::hold_next_preserved_conflict_draft_for_e2e(current);
+    click_control(cx, window, "oplog-preserved-drafts-open");
+    paint(cx, app, window);
+    for language in [Lang::Ja, Lang::En, Lang::Ja] {
+        app.update(cx, |app, cx| app.set_lang(language, cx));
+        paint(cx, app, window);
+        assert_eq!(draft_text(cx, app), None);
+    }
+    // Same Attachment, newer inspection: the old real result cannot settle it.
+    release_old.send(());
+    cx.run_until_parked();
+    assert_eq!(
+        draft_text(cx, app),
+        None,
+        "old generation cannot replace Loading"
+    );
+    let panel = panel(cx, app);
+    assert!(!cx.read(|cx| panel.read(cx).preserved_conflict_draft_unavailable()));
+    release_current.send(());
+    wait_drafts(cx, app, window, expected)
+}
+
+fn copy_inspection_languages(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+    expected: &str,
+) {
+    let buffer = kagi_git::Backend::open(repo)
+        .unwrap()
+        .resolution_buffer_from_repo_with_autosave()
+        .unwrap();
+    let drafts: Vec<_> = buffer.recovery_drafts().collect();
+    assert_eq!(drafts.len(), 1, "this fixture has one preserved draft");
+    let draft = drafts[0];
+    assert_eq!(
+        draft
+            .result
+            .map(kagi_git::resolution::lines_to_text)
+            .as_deref(),
+        Some(expected)
+    );
+    assert!(draft.raw_result.is_none());
+    let identity = draft.identity.map(|identity| identity.as_str());
+    // The accepted real read completed in EN but was held until the UI is JA.
+    let japanese_text = pending_language_drafts(cx, app, window, expected);
+    copy_drafts(cx, app, window, &japanese_text);
+    let japanese = inspection_labels(&japanese_text, draft.path, identity, expected);
+    switch_inspection_language(cx, app, window, Lang::En);
+    let text = draft_text(cx, app).unwrap();
+    let english = inspection_labels(&text, draft.path, identity, expected);
+    assert_ne!(japanese_text, text);
+    assert_eq!(japanese.len(), english.len());
+    for (translated, original) in japanese.iter().zip(&english) {
+        assert_ne!(
+            translated, original,
+            "each user-facing label follows the new language"
+        );
+    }
+    copy_drafts(cx, app, window, &text);
+    switch_inspection_language(cx, app, window, Lang::Ja);
+    assert_eq!(draft_text(cx, app).as_deref(), Some(japanese_text.as_str()));
+    copy_drafts(cx, app, window, &japanese_text);
+    switch_inspection_language(cx, app, window, Lang::En);
+    assert_eq!(draft_text(cx, app).as_deref(), Some(text.as_str()));
+    copy_drafts(cx, app, window, &text);
+}
+
 pub(super) fn inspect_saved_recovery(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -208,6 +353,11 @@ pub(super) fn inspect_saved_recovery(
     expected: &str,
 ) {
     let before = RepositoryState::read(repo);
+    let _presentation = crate::presentation_support::Presentation::keep();
+    let draft_directory =
+        PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap()).join("conflicts");
+    let saved_drafts = git_files(&draft_directory);
+    app.update(cx, |app, cx| app.set_lang(Lang::En, cx));
     let presentation = cx.read(|cx| {
         let state = app.read(cx);
         (
@@ -228,8 +378,7 @@ pub(super) fn inspect_saved_recovery(
             .scroll_handle()
             .logical_scroll_top()
     });
-    let text = open_drafts(cx, app, window, expected);
-    copy_drafts(cx, app, window, &text);
+    copy_inspection_languages(cx, app, window, repo, expected);
     back(cx, app, window);
     assert_eq!(
         cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded()),
@@ -248,6 +397,24 @@ pub(super) fn inspect_saved_recovery(
     assert_eq!(after_scroll.item_ix, scroll.item_ix);
     assert_eq!(after_scroll.offset_in_item, scroll.offset_in_item);
     assert_eq!(copy_receipt(cx, app, window, repo), receipt);
+    app.update(cx, |app, cx| app.set_lang(Lang::Ja, cx));
+    paint(cx, app, window);
+    assert_eq!(
+        copy_receipt(cx, app, window, repo).is_some(),
+        receipt.is_some()
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded()),
+        selected
+    );
+    app.update(cx, |app, cx| app.set_lang(Lang::En, cx));
+    paint(cx, app, window);
+    assert_eq!(copy_receipt(cx, app, window, repo), receipt);
+    assert_eq!(
+        git_files(&draft_directory),
+        saved_drafts,
+        "inspection, language changes and Copy never rewrite the durable draft"
+    );
     assert_eq!(
         before,
         RepositoryState::read(repo),
@@ -358,6 +525,7 @@ fn assert_scope_cleared(
 
 pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppContext) {
     let _isolated = IsolatedLog::new();
+    let _presentation = crate::presentation_support::Presentation::keep();
     let first = RebaseFixture::new();
     let repo_a = first.path();
     let second = content_fixture();
@@ -369,11 +537,19 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     save_live_buffer(cx, &app);
     let before_a = RepositoryState::read(&repo_a);
     let before_b = RepositoryState::read(&repo_b);
+    app.update(cx, |app, cx| app.set_lang(Lang::En, cx));
     show_log(cx, &app, window);
     let receipt = copy_receipt(cx, &app, window, &repo_a).unwrap();
     let selected = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded());
+    let (old, release_old) = crate::evidence_support::deferred(cx);
+    kagi::ui::oplog_panel::OpLogPanel::hold_next_preserved_conflict_draft_for_e2e(old);
     // Change Attachment without waiting for A's requested snapshot.
     click_control(cx, window, "oplog-preserved-drafts-open");
+    for language in [Lang::Ja, Lang::En] {
+        app.update(cx, |app, cx| app.set_lang(language, cx));
+        paint(cx, &app, window);
+        assert_eq!(draft_text(cx, &app), None);
+    }
     app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b.clone(), cx))
     });
@@ -381,6 +557,11 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     assert_scope_cleared(cx, &app, window);
     let text_b = open_drafts(cx, &app, window, OTHER);
     assert!(!text_b.contains(FIRST));
+    copy_drafts(cx, &app, window, &text_b);
+    release_old.send(());
+    cx.run_until_parked();
+    paint(cx, &app, window);
+    assert_eq!(draft_text(cx, &app).as_deref(), Some(text_b.as_str()));
     copy_drafts(cx, &app, window, &text_b);
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     crate::busy_dismiss::ready(cx, &app);

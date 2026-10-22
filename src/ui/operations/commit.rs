@@ -1169,8 +1169,9 @@ impl KagiApp {
 
     /// Create the 2-parent merge commit for the continued-merge flow (ADR-0068 /
     /// T-CONFLICT-FLOW-031): `execute_merge_commit` (HEAD + MERGE_HEAD parents +
-    /// cleanup_state), then drop the resolution buffer, clear the merge-pending /
-    /// commit-panel state, oplog, and reload (which clears Conflict Mode).
+    /// cleanup_state), then clear the merge-pending / commit-panel state, oplog,
+    /// and reload (which clears Conflict Mode). Retain the revision-bound draft
+    /// for inspection after completion, not as a fresh resolution.
     fn finish_merge_commit(&mut self, message: &str, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -1209,7 +1210,6 @@ impl KagiApp {
         match &report.result {
             Ok(kagi_git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
-                let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.view().status_summary.branch.clone();
                 let _ = kagi_git::clear_draft(&repo_path, &branch);
                 if let Some(entity) = self.ui().commit_panel.clone() {

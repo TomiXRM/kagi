@@ -1,8 +1,90 @@
 //! Conversion between the mutable resolution buffer and C1's frozen draft.
 
 use super::*;
+use kagi_domain::conflict_family::{BufferRevision, ConflictRequest};
+use kagi_domain::plan_note::{ConflictsNote, PlanNote};
+
+fn observation_changed() -> GitError {
+    GitError::Blocked(Box::new(PlanNote::Conflicts(
+        ConflictsNote::ObservationChanged,
+    )))
+}
+
+fn identity_context(repo: &Repository) -> Result<(ConflictRevision, PathBuf), GitError> {
+    let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo)
+        .ok_or_else(observation_changed)?;
+    let git_dir = repo
+        .path()
+        .canonicalize()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    Ok((context, git_dir))
+}
+
+fn current_file_identity(
+    index: &git2::Index,
+    context: &ConflictRevision,
+    git_dir: &Path,
+    path: &Path,
+) -> Result<ConflictRevision, GitError> {
+    let conflict = index.conflict_get(path).map_err(|error| {
+        if error.code() == git2::ErrorCode::NotFound {
+            observation_changed()
+        } else {
+            GitError::Other(error.message().to_owned())
+        }
+    })?;
+    Ok(drafts::file_identity(git_dir, context, path, &conflict))
+}
 
 impl ResolutionBuffer {
+    /// Live write authority is the same exact identity as draft adoption, not
+    /// merely a path still present in an older session. The caller reloads the
+    /// index before this check; missing/unknown identities never authorize writes.
+    pub(crate) fn validate_current_paths<'a>(
+        &self,
+        repo: &Repository,
+        index: &git2::Index,
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Result<(), GitError> {
+        let mut paths = paths.into_iter().peekable();
+        if paths.peek().is_none() {
+            return Ok(());
+        }
+        let (context, git_dir) = identity_context(repo)?;
+        for path in paths {
+            let current = current_file_identity(index, &context, &git_dir, path)?;
+            if self.file_identity(path) != Some(&current) {
+                return Err(observation_changed());
+            }
+        }
+        Ok(())
+    }
+
+    /// A prepared Save freezes bytes AND their originating file identity.
+    /// Never grant old bytes today's identity merely because today's global
+    /// observation was supplied to the request factory.
+    pub(crate) fn validate_save_binding(
+        repo: &Repository,
+        path: &Path,
+        draft: &kagi_domain::conflict_family::ConflictDraft,
+        expected: &BufferRevision,
+    ) -> Result<ConflictRevision, GitError> {
+        let mut index = repo
+            .index()
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        index
+            .read(true)
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let (context, git_dir) = identity_context(repo)?;
+        let identity = current_file_identity(&index, &context, &git_dir, path)?;
+        if crate::backend::conflict_ops::conflict_observe::buffer_revision(path, draft, &identity)
+            != *expected
+        {
+            return Err(observation_changed());
+        }
+        Ok(identity)
+    }
+
     pub fn conflict_action_summary(&self, path: &Path) -> String {
         self.hunk_model(path)
             .map(|model| {
@@ -43,14 +125,28 @@ impl ResolutionBuffer {
             .map(|text| kagi_domain::conflict_family::ConflictDraft::Text(text.into_bytes()))
     }
 
-    /// Rebuild the minimum Backend buffer consumed by the established Save executor.
-    pub(crate) fn from_conflict_draft(
-        repo_path: &Path,
-        path: &Path,
-        draft: &kagi_domain::conflict_family::ConflictDraft,
+    /// Rebuild the minimum Save buffer only after the global preflight and the
+    /// frozen file-bound payload both match the live repository.
+    pub(crate) fn from_conflict_save(
+        repo: &Repository,
+        request: &ConflictRequest,
     ) -> Result<Self, GitError> {
+        let ConflictRequest::Save {
+            path,
+            draft,
+            buffer_revision,
+            ..
+        } = request
+        else {
+            return Err(observation_changed());
+        };
+        let identity = Self::validate_save_binding(repo, path, draft, buffer_revision)?;
+        let repo_path = repo
+            .workdir()
+            .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
         let mut buffer = Self::new(repo_path);
         let mut file = FileResolution::empty();
+        file.identity = Some(identity);
         file.draft_state = true;
         match draft {
             kagi_domain::conflict_family::ConflictDraft::Text(bytes) => {

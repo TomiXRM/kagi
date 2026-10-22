@@ -105,14 +105,6 @@ impl KagiApp {
             };
             let settlement = skip_settlement(&result);
             let unknown = app::settle_conflict_write(guard, &settlement, bg_before);
-            if result.as_ref().is_ok_and(|outcome| {
-                matches!(
-                    outcome.progress,
-                    SkipProgress::Finished | SkipProgress::Advanced
-                )
-            }) {
-                let _ = kagi_git::ResolutionBuffer::clear(&bg_path);
-            }
             Some((result, ref_moves, unknown))
         });
         cx.spawn(async move |this, acx| {

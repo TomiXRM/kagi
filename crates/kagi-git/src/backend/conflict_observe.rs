@@ -50,20 +50,26 @@ pub(crate) fn digest_part(hash: &mut Sha256, part: &[u8]) {
     hash.update(part);
 }
 
-pub(crate) fn buffer_revision(path: &Path, draft: &ConflictDraft) -> BufferRevision {
-    let mut parts = vec![path.as_os_str().as_encoded_bytes().to_vec()];
+pub(crate) fn buffer_revision(
+    path: &Path,
+    draft: &ConflictDraft,
+    identity: &ConflictRevision,
+) -> BufferRevision {
+    let mut hash = Sha256::new();
+    digest_part(&mut hash, path.as_os_str().as_encoded_bytes());
+    digest_part(&mut hash, identity.as_str().as_bytes());
     match draft {
         ConflictDraft::Text(bytes) => {
-            parts.push(b"text".to_vec());
-            parts.push(bytes.clone());
+            digest_part(&mut hash, b"text");
+            digest_part(&mut hash, bytes);
         }
         ConflictDraft::Raw { oid, mode } => {
-            parts.push(b"raw".to_vec());
-            parts.push(oid.as_bytes().to_vec());
-            parts.push(mode.to_be_bytes().to_vec());
+            digest_part(&mut hash, b"raw");
+            digest_part(&mut hash, oid.as_bytes());
+            digest_part(&mut hash, &mode.to_be_bytes());
         }
     }
-    BufferRevision::from_fingerprint(digest(parts))
+    BufferRevision::from_fingerprint(hex::encode(hash.finalize()))
 }
 
 pub(crate) fn revision_label(revision: &ConflictRevision) -> String {
@@ -114,7 +120,12 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
 /// The operation context shared by draft identities, without unrelated index
 /// entries. Keep the full observation's prefix/index/tail ordering unchanged.
 pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
-    let session = conflicts::detect_conflict_session(repo)?;
+    // Only operation metadata participates; do not classify/read every file's
+    // blob content again at the live write-identity boundary.
+    let session = conflicts::ConflictSession {
+        op: conflicts::classify_op(repo, repo.state())?,
+        files: Vec::new(),
+    };
     let (mut parts, tail, known) = operation_parts(repo, &session, true);
     if !known {
         return None;

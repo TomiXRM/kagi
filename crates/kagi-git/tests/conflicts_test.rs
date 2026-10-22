@@ -1022,9 +1022,18 @@ fn skip_cherry_pick_drops_current_step() {
     );
     assert!(!content.contains("<<<<<<<"), "no markers should remain");
 
-    // A finished skip must not offer a draft from the discarded step.
-    assert!(outcome.buffer_preserved_at.is_none());
-    assert!(ResolutionBuffer::load(dir).is_none());
+    // Finishing expires adoption authority, not the user's durable body.
+    assert!(outcome
+        .buffer_preserved_at
+        .as_ref()
+        .is_some_and(|path| path.exists()));
+    let restored = kagi_git::Backend::open(dir)
+        .unwrap()
+        .resolution_buffer_from_repo_with_autosave()
+        .unwrap();
+    assert!(!restored.has_resolution(Path::new("file.txt")));
+    assert!(draft_revision::recovery_texts(&restored)
+        .contains(&buffer.resolved_text(Path::new("file.txt")).unwrap()));
 }
 
 // ────────────────────────────────────────────────────────────
@@ -2029,7 +2038,11 @@ fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
         !buffer2.has_resolution(Path::new("file.txt")),
         "skipped draft must not resolve the next conflict"
     );
-    assert!(ResolutionBuffer::load(dir).is_none());
+    assert!(first
+        .buffer_preserved_at
+        .as_ref()
+        .is_some_and(|path| path.exists()));
+    assert!(draft_revision::recovery_texts(&buffer2).contains(&"WRONG OLD DRAFT\n".into()));
     let second = execute_conflict_skip(&repo2, &next, &buffer2).expect("skip must not error");
     assert_eq!(second.progress, SkipProgress::Finished);
     assert!(second.error.is_none(), "a finished sequence exits zero");
@@ -2159,3 +2172,6 @@ mod continue_index;
 
 #[path = "conflicts/continue_revision.rs"]
 mod continue_revision;
+
+#[path = "conflicts/draft_completion.rs"]
+mod draft_completion;

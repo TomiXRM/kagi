@@ -36,6 +36,16 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
   sequencer の公開 execute と merge Commit Panel 向け準備のどちらもこの境界を通り、
   読取不能または session 外の unmerged path があれば書込前に拒否する。
   Save 済みだから通す例外や、通常の coverage 判定の緩和はしない。
+- session の operation が現在と異なる場合、または解決済み path の既存 file identity
+  （canonical gitdir / operation context / stage の有無・OID・mode）が live index と
+  一致しない場合は、既存 `ObservationChanged` として書込前に拒否する。同じ path が
+  次 conflict に存在するだけでは旧 Result の権限にならない。旧 session の path が
+  既に stage 0 なら再 materialize せず再読込を要求し、fresh な空 session の Continue は許す。
+- text / raw の直接 Save も fresh index と同じ file identity を書込前に照合する。
+  recorded Save の既存 `BufferRevision` は payload と producer の file identity を
+  一緒に凍結し、plan / run の global observation 検証に加えて照合する。現在の
+  observation を旧 payload に添えても新 identity を無条件に与えない。
+  無関係な index entry の更新は per-file identity を変えない。
 
 ### Abort(常に可能 = 安全弁)
 - 確認ダイアログを出す。**保存済み resolution が失われる可能性**を明示

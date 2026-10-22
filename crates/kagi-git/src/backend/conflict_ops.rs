@@ -202,10 +202,15 @@ impl Backend {
         let draft = buffer.conflict_draft(path).ok_or_else(|| {
             GitError::Other(format!("no resolution draft for {}", path.display()))
         })?;
+        let identity = buffer.file_identity(path).ok_or_else(|| {
+            GitError::Blocked(Box::new(PlanNote::Conflicts(
+                ConflictsNote::ObservationChanged,
+            )))
+        })?;
         Ok(ConflictRequest::Save {
             path: path.to_path_buf(),
             revision,
-            buffer_revision: buffer_revision(path, &draft),
+            buffer_revision: buffer_revision(path, &draft, identity),
             draft,
             kind,
             before_hash: short_text_hash(before_text.as_bytes()),
@@ -256,11 +261,7 @@ impl Backend {
                         "conflict operation changed since it was observed".into(),
                     ));
                 }
-                if buffer_revision(path, draft) != *expected {
-                    return Err(GitError::Other(
-                        "resolution buffer changed since it was prepared".into(),
-                    ));
-                }
+                ResolutionBuffer::validate_save_binding(&backend.repo, path, draft, expected)?;
                 if !snapshot.session.files.iter().any(|file| &file.path == path) {
                     return Err(GitError::Other(format!(
                         "{} is not in the observed conflict",
@@ -449,7 +450,7 @@ impl Backend {
                             ));
                         }
                         let buffer =
-                            ResolutionBuffer::from_conflict_draft(&plan.repo, path, draft)?;
+                            ResolutionBuffer::from_conflict_save(&backend.repo, &plan.request)?;
                         conflicts::execute_conflict_save_with_progress(
                             &backend.repo,
                             &buffer,

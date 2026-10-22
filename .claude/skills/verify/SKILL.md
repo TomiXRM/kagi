@@ -1395,14 +1395,21 @@ The current suite covers:
   Inspection cases reach the explicit preserved-draft action with zero receipts
   and after a real unrecorded restart; frozen attachment/generation and a replaced
   gitdir cannot deliver or copy another owner's body. Dedicated draft Copy and
-  ordinary receipt Copy remain separate across Back. The Terminal neighbors and
+  ordinary receipt Copy remain separate across Back and an open EN→JA→EN language
+  switch; only the existing private test clipboard is used. The Terminal neighbors and
   real merge-Continue consumers cover the shared bottom-panel/staging routes.
   Pair with `cargo test -p kagi-git --test conflicts_test draft_` for exact known
   identity, unknown/legacy preservation, raw paths/modes, failed autosave,
   undo-to-null and two-live-buffer recency. `cargo test -p kagi-git --test
   conflicts_test continue_index` checks separately saved resolutions on a cached
   Backend, session-external unmerged paths, and malformed/directory index failures
-  through planning and both public execute/stage boundaries. These are native
+  through planning and both public execute/stage boundaries. Add `conflicts_test
+  continue_revision` for real external two-conflict advancement, same-operation
+  text/raw stage changes, old payload plus new observation, unknown identity,
+  unrelated index entries and fresh empty-session Continue. `conflicts_test
+  draft_completion` reopens real Backend state before any UI adoption: Continue,
+  Skip Advanced/Finished and merge completion must retain durable inspection-only
+  bodies, never delete them before the foreground callback. These are native
   Tier A/backend checks, not plain-app Tier B evidence.
 - repository-health proposal (`KAGI_GUI_E2E_ONLY=repo_health_proposal`,
   `tests/recovery/repo_health.rs`): #358 / ADR-0205. Analyze's Health axis
@@ -3496,6 +3503,10 @@ applying it to the second conflict. Verify Git is unchanged until explicit new
 input / Save / Continue, then finish the correct two commits. Also compare valid
 identity-unknown legacy documents: inspect their preserved EN/JA bodies without
 resolving the live conflict, then use Back to return to ordinary history.
+Keep inspection open and use the real View→Language command for EN→JA→EN: header,
+file/identity labels and readonly body must stay coherent without reopening the
+repository or applying the preserved Result. Do not press either Copy on the host;
+the matching dedicated/receipt payload checks run only on the private Tier A clipboard.
 Dedicated/ordinary Copy consumer contracts belong to the existing Tier A private
 `VisualTestPlatform` / `TestAppContext` clipboard coverage described above.
 Never use the user's host clipboard for Copy/Paste, reads, snapshots or restoration,

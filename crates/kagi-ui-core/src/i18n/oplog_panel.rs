@@ -169,14 +169,14 @@ impl OplogPanelMsg {
                 "Preserved conflict drafts — read-only, not applied to the current conflict"
             }
             (Lang::Ja, PreservedDraftSnapshot) => {
-                "保全した競合下書き（閲覧専用・現在の競合には未適用）"
+                "保全した conflict の下書き（閲覧専用・現在の conflict には未適用）"
             }
             (Lang::En, PreservedDraftIdentity) => "Draft context",
             (Lang::Ja, PreservedDraftIdentity) => "草稿の文脈",
             (Lang::En, PreservedDraftUnbound) => "Legacy or unknown — inspection only",
             (Lang::Ja, PreservedDraftUnbound) => "旧形式または不明 — 閲覧専用",
             (Lang::En, PreservedDraftOpen) => "Preserved conflict drafts",
-            (Lang::Ja, PreservedDraftOpen) => "保全した競合下書き",
+            (Lang::Ja, PreservedDraftOpen) => "保全した conflict の下書き",
             (Lang::En, PreservedDraftBack) => "Back to operation log",
             (Lang::Ja, PreservedDraftBack) => "操作履歴に戻る",
             (Lang::En, PreservedDraftCopy) => "Copy preserved drafts",
@@ -190,7 +190,7 @@ impl OplogPanelMsg {
             (Lang::En, PreservedDraftLoading) => "Reading preserved drafts…",
             (Lang::Ja, PreservedDraftLoading) => "保全した下書きを読み込み中…",
             (Lang::En, PreservedDraftEmpty) => "No separate preserved conflict drafts",
-            (Lang::Ja, PreservedDraftEmpty) => "別途保持されている競合下書きはありません",
+            (Lang::Ja, PreservedDraftEmpty) => "別途保持されている conflict の下書きはありません",
             (Lang::En, PreservedDraftUnavailable) => "Could not read preserved drafts",
             (Lang::Ja, PreservedDraftUnavailable) => "保全した下書きを読み込めませんでした",
             (Lang::En, RestoreConfirm) => "Restore",

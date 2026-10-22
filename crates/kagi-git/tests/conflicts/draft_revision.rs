@@ -14,6 +14,13 @@ fn write_document(path: &Path, document: &serde_json::Value) {
     std::fs::write(path, serde_json::to_vec(document).unwrap()).unwrap();
 }
 
+fn write_index_conflict(index: &mut git2::Index, conflict: &git2::IndexConflict) {
+    // Index::add preserves each entry's stage bits and raw path bytes.
+    for entry in [&conflict.ancestor, &conflict.our, &conflict.their].into_iter().flatten() {
+        index.add(entry).unwrap();
+    }
+}
+
 #[test]
 fn continue_same_path_requires_distinct_second_revision_input() {
     if !test_support::run_isolated() { return; }
@@ -159,18 +166,20 @@ fn exact_file_identity_excludes_unrelated_saves_and_includes_stages() {
     assert_eq!(ResolutionBuffer::from_repo(&repo).unwrap().file_identity(path), Some(&original));
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
     conflict.our.as_mut().unwrap().mode = 0o100755;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     let changed_mode = ResolutionBuffer::from_repo(&repo).unwrap().file_identity(path).unwrap().clone();
     assert_ne!(original, changed_mode);
     conflict.our.as_mut().unwrap().mode = 0o100644;
     conflict.their.as_mut().unwrap().id = repo.blob(b"different incoming\n").unwrap();
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     let changed_oid = ResolutionBuffer::from_repo(&repo).unwrap().file_identity(path).unwrap().clone();
     assert_ne!(original, changed_oid);
     assert_ne!(changed_mode, changed_oid);
-    index.conflict_add(None, conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    index.remove(path, 1).unwrap();
+    conflict.ancestor = None;
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     assert_ne!(ResolutionBuffer::from_repo(&repo).unwrap().file_identity(path), Some(&changed_oid));
 }
@@ -186,7 +195,7 @@ fn raw_oid_mode_and_text_incompatibilities_remain_recovery_only() {
     let saved_path = current.autosave().unwrap();
     let original = saved_document(&saved_path);
     let chosen = current.raw_resolution(path).unwrap();
-    for (oid, mode) in [(git2::Oid::zero(), chosen.mode), (chosen.oid, 0o100755)] {
+    for (oid, mode) in [(git2::Oid::ZERO_SHA1, chosen.mode), (chosen.oid, 0o100755)] {
         let mut document = original.clone();
         document["files"][0]["raw_result"] = serde_json::json!({"oid":oid.to_string(),"mode":mode});
         write_document(&saved_path, &document);
@@ -221,7 +230,7 @@ fn recoveries_survive_fresh_autosave_clear_and_return_to_exact_context() {
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
     let original_mode = conflict.our.as_ref().unwrap().mode;
     conflict.our.as_mut().unwrap().mode = 0o100755;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     for _ in 0..3 {
         // Deliberately do not load the previous document before saving.
@@ -233,7 +242,7 @@ fn recoveries_survive_fresh_autosave_clear_and_return_to_exact_context() {
     ResolutionBuffer::clear(tmp.path()).unwrap();
     assert_eq!(recovery_texts(&ResolutionBuffer::load(tmp.path()).unwrap()), ["known original\n"]);
     conflict.our.as_mut().unwrap().mode = original_mode;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     let restored = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
     assert_eq!(restored.file_identity(path), Some(&first_identity));
@@ -255,7 +264,7 @@ fn raw_non_utf8_stage_paths_round_trip_without_lossy_alias_authority() {
     for entry in [&mut conflict.ancestor, &mut conflict.our, &mut conflict.their].into_iter().flatten() {
         entry.path = bytes.to_vec();
     }
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     let path = Path::new(std::ffi::OsStr::from_bytes(bytes));
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -324,13 +333,13 @@ fn returning_context_uses_latest_known_body_without_deleting_older_recoveries() 
     let mut index = repo.index().unwrap();
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
     conflict.our.as_mut().unwrap().mode = 0o100755;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     for _ in 0..3 {
         ResolutionBuffer::from_repo(&repo).unwrap().autosave().unwrap();
     }
     conflict.our.as_mut().unwrap().mode = 0o100644;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     let mut current = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
     assert_eq!(current.resolved_text(path).as_deref(), Some("latest known body\n"));
@@ -407,7 +416,7 @@ fn explicit_null_survives_fresh_autosave_and_context_return_without_reviving_old
     let mut index = repo.index().unwrap();
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
     conflict.our.as_mut().unwrap().mode = 0o100755;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     for _ in 0..3 {
         ResolutionBuffer::from_repo(&repo).unwrap().autosave().unwrap();
@@ -416,7 +425,7 @@ fn explicit_null_survives_fresh_autosave_and_context_return_without_reviving_old
         assert_eq!(recovery_texts(&other), ["older body stays inspectable\n"]);
     }
     conflict.our.as_mut().unwrap().mode = 0o100644;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     for _ in 0..3 {
         let returned = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
@@ -454,7 +463,7 @@ fn failed_autosave_latest_live_null_moves_duplicate_intent_after_newer_disk_body
     let mut index = repo.index().unwrap();
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
     conflict.our.as_mut().unwrap().mode = 0o100755;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     let mut other = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
     other.retain_drafts(live);
@@ -462,7 +471,7 @@ fn failed_autosave_latest_live_null_moves_duplicate_intent_after_newer_disk_body
     other.autosave().unwrap();
     assert_eq!(saved_document(&saved_path)["recoveries"].as_array().unwrap().len(), 2);
     conflict.our.as_mut().unwrap().mode = 0o100644;
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     for _ in 0..3 {
         let returned = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
@@ -558,7 +567,7 @@ fn unknown_same_live_autosaves_do_not_multiply_result_or_large_side_texts() {
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
     conflict.our.as_mut().unwrap().id = repo.blob(current_side.as_bytes()).unwrap();
     conflict.their.as_mut().unwrap().id = repo.blob(incoming_side.as_bytes()).unwrap();
-    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    write_index_conflict(&mut index, &conflict);
     index.write().unwrap();
     std::fs::write(repo.path().join("HEAD"), "ref: refs/heads/missing-draft-context\n").unwrap();
     let mut live = ResolutionBuffer::from_repo(&repo).unwrap();

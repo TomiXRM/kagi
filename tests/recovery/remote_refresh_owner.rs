@@ -9,7 +9,7 @@ type Reply = Result<kagi_git::RepoSnapshot, String>;
 
 // A pending future yields to TestDispatcher rather than blocking a child thread.
 // Only the SSH transport is substituted; the production launch/accept path runs.
-fn defer_refresh(cx: &mut VisualTestAppContext) -> impl FnOnce(Reply) {
+pub(super) fn defer_refresh(cx: &mut VisualTestAppContext) -> impl FnOnce(Reply) {
     let state = Arc::new(Mutex::new((None::<Reply>, None::<Waker>)));
     let pending = state.clone();
     e2e::queue_remote_refresh(

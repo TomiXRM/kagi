@@ -156,6 +156,9 @@ mod clone_progress_status;
 #[cfg(target_os = "macos")]
 #[path = "recovery/completion_visit_owner.rs"]
 mod completion_visit_owner;
+#[cfg(target_os = "macos")]
+#[path = "recovery/remote_pull_result_owner.rs"]
+mod remote_pull_result_owner;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection_actions.rs"]
@@ -2479,6 +2482,22 @@ mod macos {
             (
                 "remote_stash_revisit_result_owner",
                 Box::new(crate::completion_visit_owner::scenario_remote_stash_revisit_result_owner),
+            ),
+            (
+                "remote_pull_current_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_current_result_owner),
+            ),
+            (
+                "remote_pull_inactive_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_inactive_result_owner),
+            ),
+            (
+                "remote_pull_away_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_away_result_owner),
+            ),
+            (
+                "remote_pull_revisit_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_revisit_result_owner),
             ),
             (
                 "smart_commit_generation_owner",

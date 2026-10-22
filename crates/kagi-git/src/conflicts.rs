@@ -293,13 +293,31 @@ pub fn resolve_selected_file(files: &[ConflictFile], prev_path: Option<&Path>) -
 /// distinguish via [`ConflictSession::total_count`].
 ///
 /// Detection never mutates the repository.
+/// This best-effort read retains the operation with no files if the index
+/// cannot be collected. Canonical observations use the fallible detector below.
 pub fn detect_conflict_session(repo: &Repository) -> Option<ConflictSession> {
     let state = repo.state();
     let op = classify_op(repo, state)?;
 
-    let files = collect_conflict_files(repo).unwrap_or_default();
+    let files = repo
+        .index()
+        .ok()
+        .and_then(|index| collect_conflict_files(repo, &index).ok())
+        .unwrap_or_default();
 
     Some(ConflictSession { op, files })
+}
+
+/// Detect against the caller's refreshed index without hiding collection errors.
+pub(crate) fn detect_conflict_session_from_index(
+    repo: &Repository,
+    index: &git2::Index,
+) -> Result<Option<ConflictSession>, GitError> {
+    let Some(op) = classify_op(repo, repo.state()) else {
+        return Ok(None);
+    };
+    let files = collect_conflict_files(repo, index)?;
+    Ok(Some(ConflictSession { op, files }))
 }
 
 /// Map a [`RepositoryState`] to a [`ConflictOp`], reading the `.git/` state
@@ -430,11 +448,10 @@ pub(crate) fn short_sha(sha: &str) -> String {
 }
 
 /// Walk the index conflict iterator and classify every conflicting path.
-fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-
+fn collect_conflict_files(
+    repo: &Repository,
+    index: &git2::Index,
+) -> Result<Vec<ConflictFile>, GitError> {
     let conflicts = index
         .conflicts()
         .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
@@ -449,10 +466,7 @@ fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitErr
 
     let mut files: Vec<ConflictFile> = Vec::new();
     for entry in conflicts {
-        let conflict = match entry {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+        let conflict = entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
         let path = match conflict_path(&conflict) {
             Some(p) => p,
             None => continue,
@@ -951,15 +965,23 @@ pub fn plan_conflict_continue(
     expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<OperationPlan, GitError> {
     preflight_continue_revision(repo, expected)?;
+    // The full ADR-0067 checklist includes unresolved text, markers, unmerged
+    // index paths, binary/deletion choices and the merge message.
+    let structured = continue_blockers(repo, session, buffer)?;
+    continue_plan_after_preflight(repo, session, &structured)
+}
+
+/// Build the descriptive plan from the checklist verified by either entry point.
+fn continue_plan_after_preflight(
+    repo: &Repository,
+    session: &ConflictSession,
+    structured: &[ContinueBlocker],
+) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
     let mut warnings: Vec<PlanNote> = Vec::new();
 
-    // The full ADR-0067 checklist (T-043/044): unresolved + marker residue +
-    // index unmerged + binary unresolved + undecided deletion + empty merge
-    // message.  Each structured blocker is rendered to a typed plan note here.
-    let structured = continue_blockers(repo, session, buffer)?;
     let blockers: Vec<PlanNote> = structured.iter().map(blocker_note).collect();
 
     if session.files.is_empty() && structured.is_empty() {
@@ -1595,7 +1617,7 @@ pub fn plan_conflict_continue_route(
         // #309: staging is the whole continue for a stash conflict.
         ConflictOp::StashConflict => Ok(ContinueRoute::StashComplete),
         _ => {
-            let plan = plan_conflict_continue(repo, session, buffer, expected)?;
+            let plan = continue_plan_after_preflight(repo, session, &blockers)?;
             Ok(ContinueRoute::SequencerPlan(Box::new(plan)))
         }
     }

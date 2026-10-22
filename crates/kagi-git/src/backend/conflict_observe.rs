@@ -92,13 +92,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     index
         .read(true)
         .map_err(|error| GitError::Other(error.message().to_owned()))?;
-    for entry in index
-        .conflicts()
-        .map_err(|error| GitError::Other(error.message().to_owned()))?
-    {
-        entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
-    }
-    let Some(session) = conflicts::detect_conflict_session(repo) else {
+    let Some(session) = conflicts::detect_conflict_session_from_index(repo, &index)? else {
         return Ok(None);
     };
     let (mut parts, operation_tail, _) = operation_parts(repo, &session, false);

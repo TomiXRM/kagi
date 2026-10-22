@@ -114,7 +114,8 @@ impl KagiApp {
         let read = cx.background_spawn(async move {
             let result = crate::ui::oplog_panel::drafts::load(&owner);
             #[cfg(feature = "gui-e2e")]
-            if let Some(hold) = hold {
+            if let Some((hold, reached)) = hold {
+                reached.store(true, std::sync::atomic::Ordering::Release);
                 hold.await;
             }
             (owner, result)

@@ -1392,6 +1392,11 @@ The current suite covers:
   They enter a genuinely new Result, click Save, inspect its actual stage-0 blob,
   then Continue on the same long-lived Backend to verify the exact two replayed
   commit bodies. Do not reopen the Backend to hide an index-cache defect.
+  The first real UI Continue pauses only after background completion and before
+  foreground receipt/reload/adoption: its original durable bytes must still
+  exist, and reopening Backend must expose the first body only as recovery for
+  the actual second conflict. Release the one-shot hold through a scoped cleanup
+  and continue normally; a backend-only consumer does not prove this UI boundary.
   Inspection cases reach the explicit preserved-draft action with zero receipts
   and after a real unrecorded restart; frozen attachment/generation and a replaced
   gitdir cannot deliver or copy another owner's body. Dedicated draft Copy and

@@ -15,15 +15,18 @@ use gpui_component::{Disableable as _, Sizable as _};
 use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
 use std::cell::RefCell;
 use std::path::Path;
+#[cfg(feature = "gui-e2e")]
+use std::sync::{atomic::AtomicBool, Arc};
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
-    static LOAD_HOLD: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
+    static LOAD_HOLD: RefCell<Option<(gpui::Task<()>, Arc<AtomicBool>)>> =
+        const { RefCell::new(None) };
 }
 
 /// Delay admission of a real read, not its backend result (Tier A only).
 #[cfg(feature = "gui-e2e")]
-pub(in crate::ui) fn take_load_hold() -> Option<gpui::Task<()>> {
+pub(in crate::ui) fn take_load_hold() -> Option<(gpui::Task<()>, Arc<AtomicBool>)> {
     LOAD_HOLD.with(|slot| slot.borrow_mut().take())
 }
 
@@ -69,9 +72,21 @@ fn same_owner(left: &Attachment, right: &Attachment) -> bool {
 
 impl OpLogPanel {
     /// Hold the next real inspection result before its owner/generation checks.
+    /// The returned flag is published only after the actual backend read returns.
     #[cfg(feature = "gui-e2e")]
-    pub fn hold_next_preserved_conflict_draft_for_e2e(hold: gpui::Task<()>) {
-        LOAD_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    pub fn hold_next_preserved_conflict_draft_for_e2e(hold: gpui::Task<()>) -> Arc<AtomicBool> {
+        let reached = Arc::new(AtomicBool::new(false));
+        LOAD_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace((hold, reached.clone())).is_none());
+        });
+        reached
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn clear_preserved_conflict_draft_hold_for_e2e() {
+        LOAD_HOLD.with(|slot| {
+            drop(slot.borrow_mut().take());
+        });
     }
 
     /// Compare borrowed attachment metadata before cloning only on an owner

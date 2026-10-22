@@ -37,6 +37,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static CONTINUE_CONFIRM_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
         const { std::cell::RefCell::new(None) };
+    static CONTINUE_COMPLETION_HOLD: std::cell::RefCell<
+        Option<(gpui::Task<()>, std::sync::Arc<std::sync::atomic::AtomicBool>)>
+    > = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -55,6 +58,22 @@ impl KagiApp {
     }
     pub fn hold_next_continue_confirm_for_e2e(hold: gpui::Task<()>) {
         CONTINUE_CONFIRM_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+    /// Pause after real background execution, before foreground recording/reload.
+    /// The returned flag signals that the completion has reached this boundary.
+    pub fn hold_next_continue_completion_for_e2e(
+        hold: gpui::Task<()>,
+    ) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        let reached = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        CONTINUE_COMPLETION_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace((hold, reached.clone())).is_none());
+        });
+        reached
+    }
+    pub fn clear_continue_completion_hold_for_e2e() {
+        CONTINUE_COMPLETION_HOLD.with(|slot| {
+            drop(slot.borrow_mut().take());
+        });
     }
 }
 
@@ -589,6 +608,8 @@ impl KagiApp {
         let bg_before = before.clone();
         #[cfg(feature = "gui-e2e")]
         let hold = CONTINUE_CONFIRM_HOLD.with(|slot| slot.borrow_mut().take());
+        #[cfg(feature = "gui-e2e")]
+        let completion_hold = CONTINUE_COMPLETION_HOLD.with(|slot| slot.borrow_mut().take());
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
             #[cfg(feature = "gui-e2e")]
@@ -616,6 +637,11 @@ impl KagiApp {
                     let unknown = conflict_unknown(&error, before.clone());
                     (Err(error), None, unknown)
                 });
+            #[cfg(feature = "gui-e2e")]
+            if let Some((hold, reached)) = completion_hold {
+                reached.store(true, std::sync::atomic::Ordering::Release);
+                hold.await;
+            }
             let _ = this.update(acx, |app, cx| {
                 app.refresh_write_busy();
                 let current = owner.is_some_and(|id| {

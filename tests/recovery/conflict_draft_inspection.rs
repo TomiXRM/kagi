@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
 
+#[path = "conflict_draft_inspection_hold.rs"]
+mod inspection_hold;
+
 const OTHER: &str = "OTHER REPOSITORY PRESERVED RESULT\n";
 
 // Like the existing theme_custom sandbox: restore the runner-owned environment
@@ -253,51 +256,6 @@ fn switch_inspection_language(
     );
 }
 
-fn pending_language_drafts(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    expected: &str,
-) -> String {
-    use kagi::ui::oplog_panel::OpLogPanel;
-    let (old, release_old) = crate::evidence_support::deferred(cx);
-    OpLogPanel::hold_next_preserved_conflict_draft_for_e2e(old);
-    click_control(cx, window, "oplog-preserved-drafts-open");
-    paint(cx, app, window);
-    for language in [Lang::Ja, Lang::En] {
-        app.update(cx, |app, cx| app.set_lang(language, cx));
-        paint(cx, app, window);
-        assert_eq!(
-            draft_text(cx, app),
-            None,
-            "the real result is still pending"
-        );
-        assert!(e2e::control_bounds(window.window_id(), "oplog-preserved-drafts-back").is_some());
-    }
-    back(cx, app, window);
-    let (current, release_current) = crate::evidence_support::deferred(cx);
-    OpLogPanel::hold_next_preserved_conflict_draft_for_e2e(current);
-    click_control(cx, window, "oplog-preserved-drafts-open");
-    paint(cx, app, window);
-    for language in [Lang::Ja, Lang::En, Lang::Ja] {
-        app.update(cx, |app, cx| app.set_lang(language, cx));
-        paint(cx, app, window);
-        assert_eq!(draft_text(cx, app), None);
-    }
-    // Same Attachment, newer inspection: the old real result cannot settle it.
-    release_old.send(());
-    cx.run_until_parked();
-    assert_eq!(
-        draft_text(cx, app),
-        None,
-        "old generation cannot replace Loading"
-    );
-    let panel = panel(cx, app);
-    assert!(!cx.read(|cx| panel.read(cx).preserved_conflict_draft_unavailable()));
-    release_current.send(());
-    wait_drafts(cx, app, window, expected)
-}
-
 fn copy_inspection_languages(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -322,7 +280,7 @@ fn copy_inspection_languages(
     assert!(draft.raw_result.is_none());
     let identity = draft.identity.map(|identity| identity.as_str());
     // The accepted real read completed in EN but was held until the UI is JA.
-    let japanese_text = pending_language_drafts(cx, app, window, expected);
+    let japanese_text = inspection_hold::pending_language_drafts(cx, app, window, expected);
     copy_drafts(cx, app, window, &japanese_text);
     let japanese = inspection_labels(&japanese_text, draft.path, identity, expected);
     switch_inspection_language(cx, app, window, Lang::En);
@@ -541,10 +499,10 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     show_log(cx, &app, window);
     let receipt = copy_receipt(cx, &app, window, &repo_a).unwrap();
     let selected = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded());
-    let (old, release_old) = crate::evidence_support::deferred(cx);
-    kagi::ui::oplog_panel::OpLogPanel::hold_next_preserved_conflict_draft_for_e2e(old);
+    let old = inspection_hold::LoadHold::new(cx);
     // Change Attachment without waiting for A's requested snapshot.
     click_control(cx, window, "oplog-preserved-drafts-open");
+    old.wait(cx, &app);
     for language in [Lang::Ja, Lang::En] {
         app.update(cx, |app, cx| app.set_lang(language, cx));
         paint(cx, &app, window);
@@ -558,7 +516,7 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     let text_b = open_drafts(cx, &app, window, OTHER);
     assert!(!text_b.contains(FIRST));
     copy_drafts(cx, &app, window, &text_b);
-    release_old.send(());
+    drop(old);
     cx.run_until_parked();
     paint(cx, &app, window);
     assert_eq!(draft_text(cx, &app).as_deref(), Some(text_b.as_str()));

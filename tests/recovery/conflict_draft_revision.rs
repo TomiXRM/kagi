@@ -9,6 +9,8 @@ use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use std::path::{Path, PathBuf};
 
+#[path = "conflict_draft_completion.rs"]
+mod completion;
 #[path = "../support/git_fixture.rs"]
 mod fixture_git;
 #[path = "../support/oplog.rs"]
@@ -570,7 +572,7 @@ pub(super) fn advance_first(
     open_continue(cx, app, window);
     // Fail only the actual run's append, never plan or test setup.
     let lock = recording_failure.then(append_lock);
-    confirm_continue(cx, app, window);
+    completion::confirm_first_continue(cx, app, window, fixture, &identity);
     let first_replay = head(&repo);
     let next_input = result_input(cx, app, window);
     assert_ne!(next_input.entity_id(), input.entity_id());

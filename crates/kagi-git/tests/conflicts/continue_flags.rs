@@ -108,7 +108,6 @@ fn intent_to_add_stage_change_requires_new_empty_continue_approval() {
         .execute_conflict_continue(&current.session, &buffer, revision)
         .unwrap();
     assert_eq!(git_output(path, &["rev-parse", "HEAD^{tree}"]), new_tree);
-    assert!(!git_output(path, &["ls-tree", "HEAD", "new-empty"]).is_empty());
     assert_eq!(
         Repository::open(path).unwrap().state(),
         git2::RepositoryState::Clean

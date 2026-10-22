@@ -639,13 +639,6 @@ fn rename_rename_not_collapsed() {
     git_allow_fail(dir, &["merge", "side"]);
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
-    let expected = kagi_git::Backend::open(dir)
-        .unwrap()
-        .conflict_snapshot()
-        .unwrap()
-        .unwrap()
-        .observation
-        .revision;
     let paths: Vec<String> = session
         .files
         .iter()
@@ -682,6 +675,13 @@ fn binary_choice_works_and_survives_reload_through_autosave() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
     assert_eq!(session.files[0].kind, ConflictKind::Binary);
 
     // Simulate the on-open autosave BEFORE any choice (this is what used to

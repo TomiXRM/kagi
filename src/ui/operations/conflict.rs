@@ -666,9 +666,7 @@ impl KagiApp {
                         app.record_operation_completion(
                             &op_name,
                             before,
-                            unknown.unwrap_or_else(|| OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            }),
+                            unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg }),
                             ref_moves,
                             &repo_path,
                             current,
@@ -676,11 +674,10 @@ impl KagiApp {
                             cx,
                         );
                         if modal_matches {
-                            if let Some(modal) = app.conflict_continue_modal_mut() {
-                                modal.error = Some(SharedString::from(
-                                    unknown_evidence.clone().unwrap_or(err_msg),
-                                ));
-                            }
+                            // This admitted request is terminal. Retire only
+                            // its frozen confirmation so its result/required
+                            // inspection can use the existing presentation slot.
+                            app.clear_conflict_continue_modal();
                             if let Some(evidence) = unknown_evidence {
                                 app.report_unknown_notice(&repo_path, evidence);
                             }

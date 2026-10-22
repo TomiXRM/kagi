@@ -8,11 +8,12 @@ fn new_empty_entry(repo: &Repository) -> git2::IndexEntry {
     index.get_path(Path::new("new-empty"), 0).unwrap()
 }
 
-#[test]
-fn intent_to_add_stage_change_requires_new_empty_continue_approval() {
-    if !test_support::run_isolated() {
-        return;
-    }
+fn saved_rebase_with_intent() -> (
+    tempfile::TempDir,
+    kagi_git::Backend,
+    Repository,
+    git2::IndexEntry,
+) {
     let fixture = rebase_conflict_repo();
     let path = fixture.path();
     let backend = open_backend(path);
@@ -29,6 +30,16 @@ fn intent_to_add_stage_change_requires_new_empty_continue_approval() {
     let repo = Repository::open(path).unwrap();
     let intent = new_empty_entry(&repo);
     assert_eq!(intent.flags_extended & 0x6000, 0x6000);
+    (fixture, backend, repo, intent)
+}
+
+#[test]
+fn intent_to_add_stage_change_requires_new_empty_continue_approval() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (fixture, backend, repo, intent) = saved_rebase_with_intent();
+    let path = fixture.path();
     let old_tree = git_output(path, &["write-tree"]);
     let approved = backend.conflict_snapshot().unwrap().unwrap();
     let session = &approved.session;

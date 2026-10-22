@@ -54,8 +54,10 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
 
 - 同 file の編集を保持できることと、古い確認から書き込めることは別である。
   Continue は全 staged content を commit し得るため、確認を開く時の accepted full
-  `ConflictRevision` を保持する。元の operation metadata と index の path/OID/mode を含む
-  revision を、Confirm 時の新しい mode や実行直前の観測から作り直さない。
+  `ConflictRevision` を保持する。元の operation metadata と index の path/OID/mode、
+  `flags` / `flags_extended` を含む revision を、Confirm 時の新しい mode や実行直前の
+  観測から作り直さない。intent-to-add と skip-worktree が併存すると、path/OID/mode と
+  short flags が同じでも intent-to-add の解除で commit tree が変わるため、拡張 flag も必須である。
 - `Backend` の Continue plan / route / stage / execute は必須の expected revision を受ける。
   計画時と実書込前の両方で fresh index を使って既存の正規 observation と照合し、
   既知の不一致を Ready として提示しない。読取失敗は伝播し、None や旧 cache で通さない。

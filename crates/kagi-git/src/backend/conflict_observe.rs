@@ -102,6 +102,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
             let mut value = entry.path;
             value.extend_from_slice(&entry.mode.to_be_bytes());
             value.extend_from_slice(&entry.flags.to_be_bytes());
+            value.extend_from_slice(&entry.flags_extended.to_be_bytes());
             value.extend_from_slice(entry.id.as_bytes());
             value
         })

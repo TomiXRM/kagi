@@ -142,11 +142,13 @@ pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
     Some(ConflictRevision::from_fingerprint(digest(parts)))
 }
 
+type OperationParts = (Vec<Vec<u8>>, Vec<Vec<u8>>, bool);
+
 fn operation_parts(
     repo: &Repository,
     session: &conflicts::ConflictSession,
     strict_draft: bool,
-) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>, bool), GitError> {
+) -> Result<OperationParts, GitError> {
     let mut known = false;
     let mut prefix = vec![
         format!("{:?}", repo.state()).into_bytes(),

@@ -234,6 +234,11 @@ impl ResolutionBuffer {
             if let Some(index) = recoveries.iter()
                 .position(|(path, file)| *path == entry.path.as_path() && same_draft(file, &entry.file))
             {
+                // A decoded historical duplicate is not a newer edit. Moving it
+                // after newer disk history could restore the older Result.
+                if !entry.file.live_editing_origin {
+                    continue;
+                }
                 recoveries.remove(index);
             }
             recoveries.push((&entry.path, &entry.file));

@@ -352,6 +352,12 @@ fn returning_context_uses_latest_known_body_without_deleting_older_recoveries() 
     let inspection = ResolutionBuffer::load(tmp.path()).unwrap();
     assert!(!inspection.has_resolution(path));
     assert_eq!(recovery_texts(&inspection), ["older preserved body\n", "latest known body\n"]);
+    for _ in 0..3 {
+        let restored = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+        assert_eq!(restored.resolved_text(path).as_deref(), Some("latest known body\n"));
+        assert_eq!(recovery_texts(&restored), ["older preserved body\n"]);
+        restored.autosave().unwrap();
+    }
 }
 
 #[test]

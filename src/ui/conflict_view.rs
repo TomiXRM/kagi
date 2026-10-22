@@ -35,6 +35,7 @@ use gpui::{
     WeakEntity, Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable as _, Sizable as _};
 

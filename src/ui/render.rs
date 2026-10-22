@@ -199,6 +199,7 @@ impl Render for KagiApp {
         // A published read owes the retained panes a pass (#722; no-op unless
         // queued), and a replaced view re-arms the scans that decorate it.
         self.revalidate_retained_panes(cx);
+        self.sync_oplog_draft_owner(cx);
         if self.scans_stale {
             self.scans_stale = false;
             self.start_branch_cleanup_scan(cx);

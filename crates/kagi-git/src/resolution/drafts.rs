@@ -127,11 +127,17 @@ impl ResolutionBuffer {
     }
 
     pub(super) fn preserve_recovery(&mut self, path: PathBuf, file: FileResolution) {
-        if has_draft_state(&file)
-            && !self.recoveries.iter().any(|entry| entry.path == path && same_draft(&entry.file, &file))
-        {
-            self.recoveries.push(RecoveryEntry { path, file });
+        if !has_draft_state(&file) {
+            return;
         }
+        if let Some(index) = self.recoveries.iter()
+            .position(|entry| entry.path == path && same_draft(&entry.file, &file))
+        {
+            self.recoveries.remove(index);
+        }
+        // Equality deduplicates content, not recency: a latest live undo may
+        // equal an older null preceding a subsequently preserved body.
+        self.recoveries.push(RecoveryEntry { path, file });
     }
 
     /// Consume the latest buffer. Only a known matching identity authorizes a
@@ -206,15 +212,23 @@ impl ResolutionBuffer {
                     same_draft(current, file)
                         || (!preserved && compatible(current, file) && has_draft_state(current))
                 });
-                if !superseded && !recoveries.iter().any(|(old_path, old)| *old_path == path && same_draft(old, file)) {
+                if !superseded {
+                    if let Some(index) = recoveries.iter()
+                        .position(|(old_path, old)| *old_path == path && same_draft(old, file))
+                    {
+                        recoveries.remove(index);
+                    }
                     recoveries.push((path, file));
                 }
             }
         }
         for entry in &self.recoveries {
-            if !recoveries.iter().any(|(path, file)| *path == entry.path.as_path() && same_draft(file, &entry.file)) {
-                recoveries.push((&entry.path, &entry.file));
+            if let Some(index) = recoveries.iter()
+                .position(|(path, file)| *path == entry.path.as_path() && same_draft(file, &entry.file))
+            {
+                recoveries.remove(index);
             }
+            recoveries.push((&entry.path, &entry.file));
         }
         #[derive(serde::Serialize)]
         struct Record<'a> {

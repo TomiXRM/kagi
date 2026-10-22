@@ -83,7 +83,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     let Some(session) = conflicts::detect_conflict_session(repo) else {
         return Ok(None);
     };
-    let (mut parts, operation_tail) = operation_parts(repo, &session);
+    let (mut parts, operation_tail, _) = operation_parts(repo, &session, false);
     let mut entries: Vec<Vec<u8>> = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?
@@ -115,7 +115,10 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
 /// entries. Keep the full observation's prefix/index/tail ordering unchanged.
 pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
     let session = conflicts::detect_conflict_session(repo)?;
-    let (mut parts, tail) = operation_parts(repo, &session);
+    let (mut parts, tail, known) = operation_parts(repo, &session, true);
+    if !known {
+        return None;
+    }
     parts.extend(tail);
     Some(ConflictRevision::from_fingerprint(digest(parts)))
 }
@@ -123,12 +126,15 @@ pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
 fn operation_parts(
     repo: &Repository,
     session: &conflicts::ConflictSession,
-) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    strict_draft: bool,
+) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, bool) {
+    let mut known = false;
     let mut prefix = vec![
         format!("{:?}", repo.state()).into_bytes(),
         format!("{:?}", session.op).into_bytes(),
     ];
     if let Ok(head) = repo.head() {
+        known = head.target().is_some();
         prefix.push(head.name_bytes().to_vec());
         prefix.push(
             head.target()
@@ -163,10 +169,17 @@ fn operation_parts(
         "rebase-apply/last",
     ] {
         let path = git_dir.join(relative);
-        if let Ok(bytes) = std::fs::read(path) {
-            parts.push(relative.as_bytes().to_vec());
-            parts.push(bytes);
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                parts.push(relative.as_bytes().to_vec());
+                parts.push(bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => known = false,
         }
+    }
+    if strict_draft {
+        known = known && draft_metadata_known(repo, session, &parts);
     }
     // #707 review: the ref an abort would *overwrite*, and where it points now.
     // `head-name` names it, but during a rebase HEAD is detached, so nothing
@@ -177,6 +190,7 @@ fn operation_parts(
     parts.push(b"restore-ref".to_vec());
     match crate::ops::conflict_abort::restore_ref(repo, session) {
         Some(restore) => {
+            known &= restore.target.is_some();
             parts.push(restore.name.into_bytes());
             parts.push(
                 restore
@@ -187,7 +201,71 @@ fn operation_parts(
         }
         None => parts.push(b"detached".to_vec()),
     }
-    (prefix, parts)
+    (prefix, parts, known)
+}
+
+/// Optional absent files are not failures. Required operation metadata must be
+/// present and parseable before a best-effort observation can authorize drafts.
+fn draft_metadata_known(
+    repo: &Repository,
+    session: &conflicts::ConflictSession,
+    parts: &[Vec<u8>],
+) -> bool {
+    let metadata = |name: &str| {
+        parts.chunks_exact(2).find(|pair| pair[0] == name.as_bytes())
+            .map(|pair| pair[1].as_slice())
+    };
+    let text = |name| metadata(name).and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .map(str::trim).filter(|text| !text.is_empty());
+    let oid = |name| text(name).is_some_and(|text| {
+        text.lines().all(|line| git2::Oid::from_str(line.trim()).is_ok())
+    });
+    for name in ["ORIG_HEAD", "sequencer/head", "sequencer/abort-safety"] {
+        if metadata(name).is_some() && !oid(name) {
+            return false;
+        }
+    }
+    if matches!(repo.state(),
+        git2::RepositoryState::CherryPickSequence | git2::RepositoryState::RevertSequence)
+        && (!oid("sequencer/head") || metadata("sequencer/todo").is_none())
+    {
+        return false;
+    }
+    match &session.op {
+        conflicts::ConflictOp::Merge { .. } => oid("MERGE_HEAD"),
+        conflicts::ConflictOp::CherryPick { .. } => oid("CHERRY_PICK_HEAD"),
+        conflicts::ConflictOp::Revert { .. } => oid("REVERT_HEAD"),
+        conflicts::ConflictOp::StashConflict => true,
+        conflicts::ConflictOp::Rebase { .. } => {
+            // These also feed the detector's operation description. A read
+            // error must not silently turn its source into a fallback label.
+            for name in ["rebase-merge/stopped-sha", "rebase-merge/orig-head",
+                "rebase-apply/original-commit", "rebase-apply/orig-head"] {
+                match std::fs::read(repo.path().join(name)) {
+                    Ok(bytes) => {
+                        if !std::str::from_utf8(&bytes).ok()
+                            .is_some_and(|text| git2::Oid::from_str(text.trim()).is_ok())
+                        {
+                            return false;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return false,
+                }
+            }
+            let (head, step, total, merge) = match repo.state() {
+                git2::RepositoryState::Rebase => (
+                    "rebase-apply/head-name", "rebase-apply/next", "rebase-apply/last", false),
+                _ => ("rebase-merge/head-name", "rebase-merge/msgnum", "rebase-merge/end", true),
+            };
+            let progress = text(step).and_then(|value| value.parse::<usize>().ok())
+                .zip(text(total).and_then(|value| value.parse::<usize>().ok()))
+                .is_some_and(|(step, total)| step > 0 && total >= step);
+            oid("REBASE_HEAD") && text(head).is_some() && progress
+                && (!merge || (metadata("rebase-merge/done").is_some()
+                    && metadata("rebase-merge/git-rebase-todo").is_some()))
+        }
+    }
 }
 pub(crate) fn text_mode(repo: &Repository, path: &Path) -> u32 {
     let executable = repo

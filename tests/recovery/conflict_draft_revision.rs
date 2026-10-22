@@ -14,11 +14,11 @@ mod fixture_git;
 #[path = "../support/oplog.rs"]
 mod oplog;
 
-const FILE: &str = "file.txt";
-const FIRST: &str = "RESOLVED ONE\n";
+pub(super) const FILE: &str = "file.txt";
+pub(super) const FIRST: &str = "RESOLVED ONE\n";
 const SECOND: &str = "DISTINCT SECOND RESULT\n";
 
-struct RebaseFixture {
+pub(super) struct RebaseFixture {
     directory: tempfile::TempDir,
     first: git2::Oid,
     second: git2::Oid,
@@ -26,7 +26,7 @@ struct RebaseFixture {
 }
 
 impl RebaseFixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let repo = directory.path();
         fixture_git::init_repo(repo, "main");
@@ -48,7 +48,7 @@ impl RebaseFixture {
         Self { directory, first, second, main }
     }
 
-    fn path(&self) -> PathBuf {
+    pub(super) fn path(&self) -> PathBuf {
         self.directory.path().canonicalize().unwrap()
     }
 }
@@ -94,7 +94,7 @@ fn conflict(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Entity<Conf
     cx.read(|cx| app.read(cx).ui().conflict.clone()).expect("live conflict editor")
 }
 
-fn detect(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn detect(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     // Accepted reloads re-arm detection and synchronously adopt its payload.
     // Calling detect_conflict_mode alone can return at its run-once guard.
     let (owner, builds) = app.update(cx, |app, cx| {
@@ -158,7 +158,7 @@ fn replace_result(
     });
 }
 
-fn assert_unresolved(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+pub(super) fn assert_unresolved(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     cx.read(|cx| {
         let view = conflict_read(app, cx);
         let mode = view.mode.as_ref().unwrap();
@@ -404,7 +404,7 @@ fn assert_second_stage(fixture: &RebaseFixture, first_replay: git2::Oid) {
     assert_unmerged(&repo);
 }
 
-fn advance_first(
+pub(super) fn advance_first(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -510,7 +510,7 @@ pub fn scenario_conflict_draft_revision_saved_stale(cx: &mut VisualTestAppContex
             buffer.autosave().unwrap();
         });
         assert_recovery(&ResolutionBuffer::load(&repo).unwrap(), Some(&identity));
-        inspect_saved_recovery(cx, &app, window, &repo);
+        crate::conflict_draft_inspection::inspect_saved_recovery(cx, &app, window, &repo, FIRST);
         assert_eq!(before, RepositoryState::read(&repo));
         drop(input);
         unmount(cx, app, window);
@@ -552,6 +552,7 @@ pub fn scenario_conflict_draft_revision_saved_legacy(cx: &mut VisualTestAppConte
             buffer.autosave().unwrap();
         });
         assert_recovery(&ResolutionBuffer::load(&repo).unwrap(), None);
+        crate::conflict_draft_inspection::inspect_saved_recovery(cx, &app, window, &repo, FIRST);
         assert_eq!(replay_head(&repo), fixture.first);
         assert_eq!(head(&repo), fixture.main);
         assert_eq!(before, RepositoryState::read(&repo));
@@ -560,60 +561,3 @@ pub fn scenario_conflict_draft_revision_saved_legacy(cx: &mut VisualTestAppConte
     }
 }
 
-fn inspect_saved_recovery(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-    repo: &Path,
-) {
-    let before = RepositoryState::read(repo);
-    let presentation = app.update(cx, |app, cx| {
-        let old = (app.bottom_panel_open, app.bottom_tab, app.bottom_panel_height);
-        app.bottom_panel_open = true;
-        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
-        app.bottom_panel_height = 520.;
-        cx.notify();
-        old
-    });
-    paint(cx, app, window);
-    let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
-    let row = cx.read(|cx| panel.read(cx).entries().iter()
-        .position(|entry| entry.op == "rebase-continue"
-            && kagi::ui::oplog_panel::entry_worktree(entry) == repo.to_string_lossy())
-        .expect("the actual first Continue receipt"));
-    cx.read(|cx| panel.read(cx).scroll_handle().scroll_to_reveal_item(row));
-    paint(cx, app, window);
-    let summary = cx.read(|cx| panel.read(cx).scroll_handle().bounds_for_item(row))
-        .expect("receipt summary is painted");
-    let position = summary.origin + gpui::point(gpui::px(40.), gpui::px(8.));
-    cx.simulate_mouse_move(window, position, None, gpui::Modifiers::none());
-    cx.simulate_click(window, position, gpui::Modifiers::none());
-    cx.run_until_parked();
-    paint(cx, app, window);
-    let preserved = cx.read(|cx| {
-        let panel = panel.read(cx);
-        assert_eq!(panel.expanded(), Some(row));
-        panel.preserved_conflict_draft_text()
-            .expect("existing expanded receipt loads current-repository preserved drafts")
-            .to_string()
-    });
-    assert!(preserved.contains(FIRST), "preserved result body is inspectable");
-    let copy = kagi::ui::e2e::control_bounds(window.window_id(), &format!("oplog-copy-{row}"))
-        .expect("existing receipt Copy control is painted");
-    cx.write_to_clipboard(gpui::ClipboardItem::new_string("before-copy".into()));
-    cx.simulate_mouse_move(window, copy.center(), None, gpui::Modifiers::none());
-    cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
-    cx.run_until_parked();
-    let copied = cx.read_from_clipboard().and_then(|item| item.text()).unwrap();
-    assert!(copied.contains(&preserved), "receipt Copy includes the inspected snapshot");
-    assert_eq!(before, RepositoryState::read(repo), "inspection and Copy are read-only");
-    app.update(cx, |app, cx| {
-        app.bottom_panel_open = presentation.0;
-        app.bottom_tab = presentation.1;
-        app.bottom_panel_height = presentation.2;
-        cx.notify();
-    });
-    drop(panel);
-    paint(cx, app, window);
-    assert_unresolved(cx, app);
-}

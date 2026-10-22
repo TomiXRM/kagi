@@ -508,6 +508,10 @@ mod conflict_continue_cache;
 mod conflict_draft_revision;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_inspection.rs"]
+mod conflict_draft_inspection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_stopped.rs"]
 mod conflict_stopped;
 
@@ -3160,6 +3164,18 @@ mod macos {
             (
                 "conflict_draft_revision_saved_legacy",
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
+            ),
+            (
+                "conflict_draft_inspection_empty_legacy",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
+            ),
+            (
+                "conflict_draft_inspection_unrecorded_restart",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_unrecorded_restart),
+            ),
+            (
+                "conflict_draft_inspection_scope_change",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_scope_change),
             ),
             (
                 "conflict_reset_disarm",

@@ -40,6 +40,12 @@ pub(crate) fn op_log_panel(
                 }
                 cx.notify();
             }
+            OpLogPanelEvent::InspectPreservedDrafts { owner } => {
+                app.open_preserved_conflict_drafts(owner.clone(), cx);
+            }
+            OpLogPanelEvent::CopyPreservedDrafts { owner, generation } => {
+                app.copy_preserved_conflict_drafts(owner, *generation, cx);
+            }
         },
     )
     .detach();
@@ -47,6 +53,88 @@ pub(crate) fn op_log_panel(
 }
 
 impl KagiApp {
+    /// Keep the shared panel's read-only draft scope tied to the actual local
+    /// attachment, even when there are no operation receipts to select.
+    pub(crate) fn sync_oplog_draft_owner(&mut self, cx: &mut Context<Self>) {
+        let Some(panel) = self.op_log.as_ref() else {
+            return;
+        };
+        let session = if !self.home_in_front() && self.remote_view.is_none()
+            && self.repo_path.is_some() && self.ui().repo_session.is_some()
+        {
+            self.active_session()
+        } else {
+            None
+        };
+        let visit = session.and_then(|session| self.app_sessions.visit(session));
+        let path = session.and(self.repo_path.as_deref());
+        let worktree = session.and_then(|session| self.app_sessions.worktree_of(session));
+        if panel.read(cx).preserved_draft_owner_matches(session, visit, path, worktree) {
+            return;
+        }
+        let owner = session.and_then(|session| self.app_sessions.attachment(session));
+        panel.update(cx, |panel, cx| panel.set_preserved_draft_owner(owner, cx));
+    }
+
+    fn preserved_draft_owner_current(&self, owner: &crate::app::Attachment) -> bool {
+        if !self.oplog_restore_owner_matches(&owner.path)
+            || self.active_session() != Some(owner.session) || owner.worktree.is_none()
+        {
+            return false;
+        }
+        self.app_sessions.visit(owner.session) == Some(owner.visit)
+            && self.app_sessions.worktree_of(owner.session) == owner.worktree.as_ref()
+    }
+
+    fn open_preserved_conflict_drafts(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+        if !self.preserved_draft_owner_current(&owner) {
+            return;
+        }
+        let Some(panel) = self.op_log.as_ref() else {
+            return;
+        };
+        let Some(generation) = panel.update(cx, |panel, cx| {
+            panel.begin_preserved_conflict_drafts(&owner, cx)
+        }) else {
+            return;
+        };
+        let panel_id = panel.entity_id();
+        let read = cx.background_spawn(async move {
+            let result = crate::ui::oplog_panel::drafts::load(&owner);
+            (owner, result)
+        });
+        cx.spawn(async move |this, cx| {
+            let (owner, result) = read.await;
+            let _ = this.update(cx, |app, cx| {
+                if !app.preserved_draft_owner_current(&owner) {
+                    return;
+                }
+                if let Some(panel) = app.op_log.as_ref().filter(|panel| panel.entity_id() == panel_id) {
+                    panel.update(cx, |panel, cx| {
+                        panel.finish_preserved_conflict_drafts(&owner, generation, result, cx);
+                    });
+                }
+            });
+        }).detach();
+    }
+
+    fn copy_preserved_conflict_drafts(
+        &mut self,
+        owner: &crate::app::Attachment,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.preserved_draft_owner_current(owner) {
+            return;
+        }
+        let text = self.op_log.as_ref().and_then(|panel| {
+            panel.read(cx).preserved_conflict_draft_copy(owner, generation)
+        });
+        if let Some(text) = text {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));
+        }
+    }
+
     pub(in crate::ui) fn oplog_restore_owner_matches(&self, path: &std::path::Path) -> bool {
         !self.home_in_front()
             && self.remote_view.is_none()

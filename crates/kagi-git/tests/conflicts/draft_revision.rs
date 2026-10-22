@@ -428,3 +428,120 @@ fn explicit_null_survives_fresh_autosave_and_context_return_without_reviving_old
         returned.autosave().unwrap();
     }
 }
+
+#[test]
+fn failed_autosave_latest_live_null_moves_duplicate_intent_after_newer_disk_body() {
+    if !test_support::run_isolated() { return; }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+    let mut live = ResolutionBuffer::from_repo(&repo).unwrap();
+    live.set_manual_text(path, "Y remains inspectable\n").unwrap();
+    let saved_path = live.autosave().unwrap();
+    let body = saved_document(&saved_path)["files"][0].clone();
+    assert!(live.undo(path));
+    live.autosave().unwrap();
+    let null = saved_document(&saved_path)["files"][0].clone();
+    assert!(live.redo(path));
+    assert!(live.undo(path));
+    // A real write failure leaves the latest undo only in the live buffer.
+    std::fs::remove_file(&saved_path).unwrap();
+    std::fs::create_dir(&saved_path).unwrap();
+    assert!(live.autosave().is_err());
+    std::fs::remove_dir(&saved_path).unwrap();
+    let disk = serde_json::json!({"files":[],"recoveries":[null,body]});
+    write_document(&saved_path, &disk);
+    let mut index = repo.index().unwrap();
+    let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();
+    conflict.our.as_mut().unwrap().mode = 0o100755;
+    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    index.write().unwrap();
+    let mut other = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    other.retain_drafts(live);
+    assert_eq!(recovery_texts(&other), ["Y remains inspectable\n"]);
+    other.autosave().unwrap();
+    assert_eq!(saved_document(&saved_path)["recoveries"].as_array().unwrap().len(), 2);
+    conflict.our.as_mut().unwrap().mode = 0o100644;
+    index.conflict_add(conflict.ancestor.as_ref(), conflict.our.as_ref(), conflict.their.as_ref()).unwrap();
+    index.write().unwrap();
+    for _ in 0..3 {
+        let returned = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+        assert!(!returned.has_resolution(path), "latest equal null must be newer than Y");
+        assert_eq!(recovery_texts(&returned), ["Y remains inspectable\n"]);
+        returned.autosave().unwrap();
+    }
+}
+
+fn assert_unreadable_context_is_inspection_only(repo: &Repository, path: &Path) {
+    let mut unknown = ResolutionBuffer::from_repo_with_autosave(repo).unwrap();
+    assert_eq!(unknown.file_identity(path), None);
+    assert!(!unknown.has_resolution(path));
+    unknown.set_manual_text(path, "written while context unreadable\n").unwrap();
+    unknown.autosave().unwrap();
+    for _ in 0..3 {
+        let restored = ResolutionBuffer::from_repo_with_autosave(repo).unwrap();
+        assert_eq!(restored.file_identity(path), None);
+        assert!(!restored.has_resolution(path));
+        assert!(recovery_texts(&restored).contains(&"written while context unreadable\n".to_string()));
+        restored.autosave().unwrap();
+    }
+}
+
+#[test]
+fn unreadable_head_never_issues_or_restores_known_draft_identity() {
+    if !test_support::run_isolated() { return; }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let head_path = repo.path().join("HEAD");
+    let head = std::fs::read(&head_path).unwrap();
+    std::fs::write(&head_path, "ref: refs/heads/missing-context-head\n").unwrap();
+    assert_unreadable_context_is_inspection_only(&repo, Path::new("file.txt"));
+    std::fs::write(head_path, head).unwrap();
+}
+
+#[test]
+fn optional_metadata_absence_is_known_but_actual_read_error_is_not() {
+    if !test_support::run_isolated() { return; }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let metadata = repo.path().join("ORIG_HEAD");
+    let original = std::fs::read(&metadata).unwrap();
+    std::fs::remove_file(&metadata).unwrap();
+    let path = Path::new("file.txt");
+    let mut known = ResolutionBuffer::from_repo(&repo).unwrap();
+    assert!(known.file_identity(path).is_some(), "legitimate optional absence is observable");
+    known.set_manual_text(path, "known with optional absence\n").unwrap();
+    known.autosave().unwrap();
+    assert!(ResolutionBuffer::from_repo_with_autosave(&repo).unwrap().has_resolution(path));
+    // A directory causes read() to fail even when fixture permissions are ignored.
+    std::fs::create_dir(&metadata).unwrap();
+    assert_unreadable_context_is_inspection_only(&repo, path);
+    std::fs::remove_dir(&metadata).unwrap();
+    std::fs::write(metadata, original).unwrap();
+}
+
+#[test]
+fn missing_required_rebase_progress_cannot_authorize_saved_drafts() {
+    if !test_support::run_isolated() { return; }
+    let tmp = rebase_two_conflicting_steps_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let metadata = repo.path().join("rebase-merge/msgnum");
+    let original = std::fs::read(&metadata).unwrap();
+    std::fs::remove_file(&metadata).unwrap();
+    assert_unreadable_context_is_inspection_only(&repo, Path::new("file.txt"));
+    std::fs::write(metadata, original).unwrap();
+}
+
+#[test]
+fn unreadable_rebase_source_fallback_is_not_a_known_operation_context() {
+    if !test_support::run_isolated() { return; }
+    let tmp = rebase_two_conflicting_steps_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let metadata = repo.path().join("rebase-merge/stopped-sha");
+    let original = std::fs::read(&metadata).unwrap();
+    std::fs::remove_file(&metadata).unwrap();
+    std::fs::create_dir(&metadata).unwrap();
+    assert_unreadable_context_is_inspection_only(&repo, Path::new("file.txt"));
+    std::fs::remove_dir(&metadata).unwrap();
+    std::fs::write(metadata, original).unwrap();
+}

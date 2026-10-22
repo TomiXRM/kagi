@@ -1008,3 +1008,199 @@ pub fn scenario_worktree_prune_repair_receipt(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS worktree_prune_repair_receipt: prune and repair record that nothing moved"
     );
 }
+
+/// Every admin-only completion uses the same one-result owner. A real append
+/// failure must not be followed by a caller's green footer assignment.
+pub fn scenario_worktree_admin_result_owner(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let language = i18n::lang();
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        for recording_failure in [false, true] {
+            for operation in [
+                "lock-worktree",
+                "unlock-worktree",
+                "prune-worktrees",
+                "repair-worktrees",
+            ] {
+                let fixture = build_fixture();
+                let repo = fixture.path().canonicalize().unwrap();
+                let linked_root = tempfile::tempdir().unwrap();
+                let linked = linked_root.path().join("linked");
+                git(
+                    &repo,
+                    &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+                );
+                if operation == "unlock-worktree" {
+                    git(
+                        &repo,
+                        &[
+                            "worktree",
+                            "lock",
+                            "--reason",
+                            "manual: fixture",
+                            linked.to_str().unwrap(),
+                        ],
+                    );
+                }
+                let stale = linked_root.path().join("wt-stale");
+                if operation == "prune-worktrees" {
+                    git(
+                        &repo,
+                        &["worktree", "add", "-b", "wt-stale", stale.to_str().unwrap()],
+                    );
+                    std::fs::write(repo.join(".git/worktrees/wt-stale/.kagi-created"), "").unwrap();
+                    std::fs::remove_dir_all(&stale).unwrap();
+                }
+                i18n::set_lang(lang);
+                let (app, window) = mount(cx, &repo);
+                app.update(cx, |app, cx| {
+                    // A supported model seam, not a native activation claim:
+                    // unattended healthy results toast, attended failed appends acknowledge.
+                    app.set_window_active_for_e2e(recording_failure, cx);
+                });
+                paint(cx, window);
+                let refs = git_output(&repo, &["show-ref"]);
+                let head = git_output(&repo, &["rev-parse", "HEAD"]);
+                let index = git_output(&repo, &["ls-files", "--stage"]);
+                let worktree = git_output(&repo, &["status", "--porcelain=v1"]);
+                let recording_lock = recording_failure.then(|| {
+                    let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                        .join("operations.jsonl.lock");
+                    let lock = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .write(true)
+                        .open(path)
+                        .unwrap();
+                    lock.lock().unwrap();
+                    lock
+                });
+                if operation == "lock-worktree" {
+                    enter_reason(cx, &app, window, "manual: result-owner");
+                    click(cx, window, "worktree-lock-reason-review");
+                    app.update(cx, |app, cx| app.confirm_lock_worktree(cx));
+                } else {
+                    app.update(cx, |app, cx| match operation {
+                        "unlock-worktree" => {
+                            app.open_unlock_worktree_modal("linked".into());
+                            app.confirm_unlock_worktree(cx);
+                        }
+                        "prune-worktrees" => {
+                            app.open_prune_worktrees_modal();
+                            app.confirm_prune_worktrees(cx);
+                        }
+                        "repair-worktrees" => {
+                            app.open_repair_worktrees_modal();
+                            app.confirm_repair_worktrees(cx);
+                        }
+                        _ => unreachable!(),
+                    });
+                }
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                loop {
+                    paint(cx, window);
+                    let delivered = cx.read(|cx| {
+                        let state = app.read(cx);
+                        if recording_failure {
+                            state.app_notice().is_some()
+                        } else {
+                            state.toast_stack.as_ref().unwrap().read(cx).toasts().len() == 1
+                        }
+                    });
+                    if delivered {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "{operation} result was not delivered"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                match operation {
+                    "lock-worktree" => {
+                        assert_eq!(lock_reason(&repo).as_deref(), Some("manual: result-owner"))
+                    }
+                    "unlock-worktree" => assert_eq!(lock_reason(&repo), None),
+                    "prune-worktrees" => assert!(!repo.join(".git/worktrees/wt-stale").exists()),
+                    "repair-worktrees" => {
+                        assert_eq!(git_output(&linked, &["rev-parse", "HEAD"]), head)
+                    }
+                    _ => unreachable!(),
+                }
+                let metadata = git_output(&repo, &["worktree", "list", "--porcelain"]);
+                let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                    .into_iter()
+                    .filter(|entry| entry.op == operation)
+                    .collect();
+                assert_eq!(receipts.len(), usize::from(!recording_failure));
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(
+                        !matches!(state.status_footer, kagi::ui::FooterStatus::Success(_)),
+                        "a toast or mandatory acknowledgment must not gain a second green footer"
+                    );
+                    let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                    if recording_failure {
+                        let notice = state.app_notice().unwrap();
+                        assert!(notice
+                            .message
+                            .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                        assert!(toasts.is_empty());
+                        let panel = state.op_log.as_ref().unwrap().read(cx);
+                        let rows: Vec<_> = panel
+                            .entries()
+                            .iter()
+                            .filter(|entry| {
+                                entry.op == operation
+                                    && std::path::Path::new(&entry.repo) == repo.as_path()
+                            })
+                            .collect();
+                        assert_eq!(rows.len(), 1);
+                        assert!(matches!(rows[0].outcome, OpOutcome::Partial { .. }));
+                        assert!(
+                            rows[0].ref_moves.is_none(),
+                            "failed persistence cannot advertise recorded restore data"
+                        );
+                    } else {
+                        assert!(state.app_notice().is_none());
+                        assert_eq!(toasts.len(), 1);
+                        assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Success);
+                        if matches!(operation, "lock-worktree" | "unlock-worktree") {
+                            assert!(
+                                toasts[0].message.contains("linked"),
+                                "the actual target survives presentation"
+                            );
+                        }
+                        if operation == "prune-worktrees" {
+                            assert!(
+                                toasts[0].message.contains('1'),
+                                "the actual removed count survives presentation"
+                            );
+                        }
+                        assert!(matches!(receipts[0].outcome, OpOutcome::Success { .. }));
+                        assert_eq!(receipts[0].ref_moves, Some(Vec::new()));
+                    }
+                });
+                drop(recording_lock);
+                if recording_failure {
+                    click(cx, window, "app-notice-confirm");
+                    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+                }
+                assert_eq!(git_output(&repo, &["show-ref"]), refs);
+                assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), head);
+                assert_eq!(git_output(&repo, &["ls-files", "--stage"]), index);
+                assert_eq!(git_output(&repo, &["status", "--porcelain=v1"]), worktree);
+                assert_eq!(
+                    git_output(&repo, &["worktree", "list", "--porcelain"]),
+                    metadata,
+                    "acknowledgment is not another maintenance execution"
+                );
+                assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), receipts.len());
+                unmount(cx, app, window);
+            }
+        }
+    }
+    i18n::set_lang(language);
+}

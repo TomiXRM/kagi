@@ -1748,6 +1748,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_prune_repair_receipt),
             ),
             (
+                "worktree_admin_result_owner",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_admin_result_owner),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),
@@ -3086,6 +3090,10 @@ mod macos {
                 Box::new(crate::conflict_stopped::scenario_oplog_append_failure_conflict_stopped),
             ),
             (
+                "conflict_continue_stopped_result_owner",
+                Box::new(crate::conflict_stopped::scenario_conflict_continue_stopped_result_owner),
+            ),
+            (
                 "pr_merge_delete_branch_return_cancel",
                 Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
             ),
@@ -3343,8 +3351,20 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),
             (
+                "conflict_continue_refusal_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_continue_refusal_result_owner),
+            ),
+            (
                 "conflict_dir_file_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
+            ),
+            (
+                "conflict_family_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_family_result_owner),
+            ),
+            (
+                "conflict_continue_failure_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_continue_failure_result_owner),
             ),
             (
                 "operation_strip_startup",

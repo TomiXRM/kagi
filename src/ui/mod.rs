@@ -1796,7 +1796,7 @@ impl KagiApp {
             let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
             stack.update(cx, |stack, cx| {
                 stack.push_keyed_notify(kind, message, Some(key), cx);
-                if kind == ToastKind::Error {
+                if matches!(kind, ToastKind::Error | ToastKind::Info) {
                     stack.set_latest_action(
                         types::ToastAction::OpenOperationLog(oplog_panel::EntryKey::of(entry)),
                         cx,
@@ -1956,12 +1956,16 @@ impl KagiApp {
             announce,
             None,
             recording_failed,
+            None,
+            None,
         )
     }
 
     /// Returns whether this call's receipt could not be appended. An already
     /// attempted receipt supplies that fact explicitly; its required notice,
     /// not an ordinary result toast/footer, owns presentation of every outcome.
+    /// A footer-only contract preserves a family's original log line even
+    /// when its displayed row is an unrecorded stand-in; it adds no panel log.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_op_result(
         &mut self,
@@ -1973,25 +1977,38 @@ impl KagiApp {
         announce: bool,
         requested_op: Option<&str>,
         mut recording_failed: bool,
+        stopped_notice: Option<SharedString>,
+        footer_only_contract: Option<(SharedString, bool)>,
     ) -> bool {
         let op = entry.op.as_str();
         let before = &entry.before;
         let outcome = &entry.outcome;
-        let (footer_msg, footer_ok) = Self::operation_footer_contract(op, before, outcome);
+        // A typed sequencer stop describes request progress, not a different
+        // receipt outcome. Never let it downgrade uncertainty or failure.
+        let stopped_notice =
+            stopped_notice.filter(|_| matches!(outcome, OpOutcome::Success { .. }));
+        let stopped_for_conflicts = stopped_notice.is_some();
+        let footer_only = footer_only_contract.is_some();
+        let (footer_msg, footer_ok) = footer_only_contract
+            .unwrap_or_else(|| Self::operation_footer_contract(op, before, outcome));
 
         // Ordinary results stay in context; only unattended / long operations
         // use the existing toast owner.
-        let toast_kind = notice.as_ref().map_or_else(
-            || {
-                if matches!(outcome, OpOutcome::Success { .. }) {
-                    ToastKind::Success
-                } else {
-                    ToastKind::Error
-                }
-            },
-            |(kind, _)| *kind,
-        );
-        let is_failed = matches!(outcome, OpOutcome::Failed { .. });
+        let toast_kind = if stopped_for_conflicts {
+            ToastKind::Info
+        } else {
+            notice.as_ref().map_or_else(
+                || {
+                    if matches!(outcome, OpOutcome::Success { .. }) {
+                        ToastKind::Success
+                    } else {
+                        ToastKind::Error
+                    }
+                },
+                |(kind, _)| *kind,
+            )
+        };
+        let log_failed_panel = !footer_only && matches!(outcome, OpOutcome::Failed { .. });
 
         // Callers choose persistence. Already-recorded/attempted receipts are
         // presentation-only, including Refused outcomes: never append twice.
@@ -2008,7 +2025,7 @@ impl KagiApp {
                 klog!("oplog: write failed (non-fatal): {}", error);
                 // Recording failure does not change the operation's outcome.
                 // Keep failure, success and uncertainty distinct in the notice.
-                self.present_oplog_write_failure(&entry, error, cx);
+                self.present_oplog_write_failure(&entry, error, stopped_notice.as_deref(), cx);
             }
             shown = Some(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                 &recording,
@@ -2016,6 +2033,8 @@ impl KagiApp {
         }
         let display_footer_msg = if recording_failed {
             SharedString::default()
+        } else if let Some(stopped_notice) = stopped_notice {
+            stopped_notice
         } else {
             notice
                 .as_ref()
@@ -2047,7 +2066,7 @@ impl KagiApp {
         }
 
         // Preserve the historical contract line, not the disruptive auto-open.
-        if is_failed {
+        if log_failed_panel {
             klog!("bottom-panel: open (Failed auto-open)");
         }
         if announce || recording_failed {
@@ -2055,6 +2074,7 @@ impl KagiApp {
         }
 
         if footer_ok
+            && !stopped_for_conflicts
             && notice
                 .as_ref()
                 .is_none_or(|(kind, _)| *kind == ToastKind::Success)
@@ -2064,9 +2084,10 @@ impl KagiApp {
                 return recording_failed;
             }
             self.status_footer = FooterStatus::Success(display_footer_msg);
-        } else if notice
-            .as_ref()
-            .is_some_and(|(kind, _)| matches!(kind, ToastKind::Info | ToastKind::Sync))
+        } else if stopped_for_conflicts
+            || notice
+                .as_ref()
+                .is_some_and(|(kind, _)| matches!(kind, ToastKind::Info | ToastKind::Sync))
         {
             klog!("footer: {}", footer_msg);
             if announce || recording_failed {

@@ -35,6 +35,8 @@ static PANIC_NEXT_CONTINUE_CONFIRM: std::sync::atomic::AtomicBool =
 thread_local! {
     static CONTINUE_MERGE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
         const { std::cell::RefCell::new(None) };
+    static CONTINUE_CONFIRM_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -50,6 +52,9 @@ impl KagiApp {
     }
     pub fn hold_next_continue_merge_for_e2e(hold: gpui::Task<()>) {
         CONTINUE_MERGE_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+    pub fn hold_next_continue_confirm_for_e2e(hold: gpui::Task<()>) {
+        CONTINUE_CONFIRM_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
     }
 }
 
@@ -283,16 +288,22 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("refused: {} blocked: {}", op_name, e);
-                // Surface the specific (localized) blocking reason (ADR-0067).
-                if let Some(first) = repo.continue_blockers(&mode.session, &mode.buffer).first() {
-                    self.push_toast(ToastKind::Error, conflict_view::blocker_msg(first).t(), cx);
-                } else {
-                    self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
-                }
+                // Preserve the typed localized blocker in the single result
+                // owner; an append failure takes priority over this preview.
+                let notice = repo
+                    .continue_blockers(&mode.session, &mode.buffer)
+                    .first()
+                    .map(|first| {
+                        (
+                            ToastKind::Error,
+                            conflict_view::blocker_msg(first).t().into(),
+                        )
+                    });
                 // Refused at planning: nothing ran, so "recorded, nothing
                 // moved" — not a missing record that blocks a restore (#891).
-                self.record_op_persist_moves(
+                let entry = kagi_git::oplog::OpLogEntry::new(
                     &op_name,
+                    repo_path.display().to_string(),
                     StateSummary {
                         head: format!("op={}", mode.session.op.slug()),
                         dirty: "blocked".to_string(),
@@ -300,10 +311,9 @@ impl KagiApp {
                     OpOutcome::Refused {
                         blockers: vec![format!("{}", e)],
                     },
-                    Some(Vec::new()),
-                    &repo_path,
-                    cx,
-                );
+                )
+                .with_ref_moves(Some(Vec::new()));
+                self.record_op_with_notice(entry, cx, true, None, notice, false);
                 cx.notify();
                 return;
             }
@@ -383,6 +393,7 @@ impl KagiApp {
                                 None,
                                 &repo_path,
                                 current,
+                                false,
                                 cx,
                             );
                         }
@@ -400,17 +411,7 @@ impl KagiApp {
                             cx.notify();
                             return;
                         }
-                        if let Err(e) = result {
-                            if !matches!(e, kagi_git::GitError::TerminationUnknown(_)) {
-                                app.push_toast(
-                                    ToastKind::Error,
-                                    SharedString::from(format!(
-                                        "Could not stage resolution: {}",
-                                        e
-                                    )),
-                                    cx,
-                                );
-                            }
+                        if result.is_err() {
                             cx.notify();
                             return;
                         }
@@ -509,6 +510,7 @@ impl KagiApp {
                                     ref_moves,
                                     &repo_path,
                                     current,
+                                    false,
                                     cx,
                                 );
                                 if current {
@@ -522,10 +524,11 @@ impl KagiApp {
                                 app.record_operation_completion(
                                     &op_name,
                                     before,
-                                    unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg }),
+                                    unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
                                     ref_moves,
                                     &repo_path,
                                     current,
+                                    false,
                                     cx,
                                 );
                             }
@@ -585,8 +588,14 @@ impl KagiApp {
         let supervision = abandonment.supervision();
         let bg_path = repo_path.clone();
         let bg_before = before.clone();
+        #[cfg(feature = "gui-e2e")]
+        let hold = CONTINUE_CONFIRM_HOLD.with(|slot| slot.borrow_mut().take());
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             #[cfg(feature = "gui-e2e")]
             if PANIC_NEXT_CONTINUE_CONFIRM.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 let _ = std::panic::catch_unwind(|| panic!("injected sequencer continue panic"));
@@ -623,15 +632,17 @@ impl KagiApp {
                 match result {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
+                        let stopped = matches!(&result.outcome, kagi_git::ContinueOutcome::Staged);
                         app.record_operation_completion(
                             &op_name,
                             before,
                             OpOutcome::Success {
-                                after: result.after.clone(),
+                                after: result.after,
                             },
                             ref_moves,
                             &repo_path,
                             current,
+                            stopped,
                             cx,
                         );
                         if modal_matches {
@@ -655,20 +666,18 @@ impl KagiApp {
                         app.record_operation_completion(
                             &op_name,
                             before,
-                            unknown.unwrap_or_else(|| OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            }),
+                            unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
                             ref_moves,
                             &repo_path,
                             current,
+                            false,
                             cx,
                         );
                         if modal_matches {
-                            if let Some(modal) = app.conflict_continue_modal_mut() {
-                                modal.error = Some(SharedString::from(
-                                    unknown_evidence.clone().unwrap_or(err_msg),
-                                ));
-                            }
+                            // This admitted request is terminal. Retire only
+                            // its frozen confirmation so its result/required
+                            // inspection can use the existing presentation slot.
+                            app.clear_conflict_continue_modal();
                             if let Some(evidence) = unknown_evidence {
                                 app.report_unknown_notice(&repo_path, evidence);
                             }

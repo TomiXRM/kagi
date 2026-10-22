@@ -9,6 +9,10 @@ use std::time::Duration;
 #[path = "conflict_refusal.rs"]
 mod refusal;
 
+pub fn scenario_conflict_continue_refusal_result_owner(cx: &mut VisualTestAppContext) {
+    refusal::continue_result_owner(cx);
+}
+
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
 use git_fixture::git_succeeds;
@@ -670,6 +674,7 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.
@@ -753,26 +758,28 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()),
         "the confirmation closes with the operation it confirmed"
     );
-    // #704 review P2: an abort saves nothing, so it must not be announced with
-    // the Save family's wording.
-    let toast = cx
-        .read(|cx| {
-            app.read(cx).toast_stack.as_ref().map(|stack| {
-                stack
-                    .read(cx)
-                    .toasts()
-                    .last()
-                    .map(|toast| toast.message.to_string())
-                    .unwrap_or_default()
-            })
-        })
-        .unwrap_or_default();
-    assert_eq!(
-        toast,
-        kagi::ui::i18n::Msg::ConflictAborted.t(),
-        "the success toast names the abort, not a saved resolution"
-    );
-    assert_ne!(toast, kagi::ui::i18n::Msg::EditorSavedResolved.t());
+    // The actual abort action, not a copied localized sentence, owns this result.
+    let receipts = read_oplog_tail_for_repo(&repo, 100);
+    let aborts: Vec<_> = receipts
+        .iter()
+        .filter(|entry| entry.op == "merge-abort")
+        .collect();
+    assert_eq!(aborts.len(), 1);
+    assert!(matches!(aborts[0].outcome, OpOutcome::Success { .. }));
+    assert!(!receipts
+        .iter()
+        .any(|entry| entry.op.starts_with("conflict-save:")));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.app_notice().is_none());
+        let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Success);
+        assert!(!matches!(
+            state.status_footer,
+            kagi::ui::FooterStatus::Success(_)
+        ));
+    });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
 }
@@ -1027,11 +1034,12 @@ fn assert_panicked_conflict(
         );
         assert_eq!(state.app_sessions.reconcile_ids().len(), 1);
         assert!(
-            state.app_notice().is_some()
-                || state
-                    .conflict_continue_modal()
-                    .is_some_and(|modal| modal.error.is_some()),
-            "reconcile notice must be visible or queued behind the confirmation"
+            state.conflict_continue_modal().is_none(),
+            "a terminal Unknown must not leave a consumed Confirm available"
+        );
+        assert!(
+            state.app_notice().is_some(),
+            "the production terminal callback must expose the required reconcile notice"
         );
     });
 }
@@ -1112,20 +1120,6 @@ pub fn scenario_conflict_confirm_continue_panic(cx: &mut VisualTestAppContext) {
     kagi::ui::KagiApp::panic_next_continue_confirm_for_e2e();
     app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
     assert_panicked_conflict(cx, &app, &repo, "cherry-pick-continue");
-    assert!(cx.read(|cx| app
-        .read(cx)
-        .conflict_continue_modal()
-        .unwrap()
-        .error
-        .is_some()));
-    app.update(cx, |app, _| {
-        app.cancel_conflict_continue();
-        e2e::present_app_notice(app);
-        assert!(
-            app.app_notice().is_some(),
-            "reconcile notice must appear after modal closes"
-        );
-    });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_confirm_continue_panic");
 }
@@ -1184,106 +1178,191 @@ pub fn scenario_conflict_confirm_dismissed_still_reloads(cx: &mut VisualTestAppC
     eprintln!("[gui-e2e] PASS conflict_confirm_dismissed_still_reloads");
 }
 
-/// A failed merge-stage write uses the normal footer/toast contract while its
-/// owner is current, and durable receipt + notice without B's footer on leave.
+/// A failed merge-stage write has one result with canonical Details. The
+/// English legacy panel line is retained without opening or switching panels.
 pub fn scenario_conflict_merge_failure_contract(cx: &mut VisualTestAppContext) {
     for departed in [false, true] {
-        let fixture = content_fixture();
-        let repo = fixture.path().canonicalize().unwrap();
-        let other = build_fixture();
-        let other_repo = other.path().canonicalize().unwrap();
-        let (app, window) = mount(cx, &repo);
-        if departed {
-            app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+        for recording_failure in [false, true] {
+            let fixture = content_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let other = build_fixture();
+            let other_repo = other.path().canonicalize().unwrap();
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+            if departed {
+                app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+                cx.run_until_parked();
+                app.update(cx, |app, cx| app.switch_repo(0, cx));
+                cx.run_until_parked();
+            }
+            app.update(cx, |app, cx| app.detect_conflict_mode(cx));
             cx.run_until_parked();
-            app.update(cx, |app, cx| app.switch_repo(0, cx));
-            cx.run_until_parked();
-        }
-        app.update(cx, |app, cx| app.detect_conflict_mode(cx));
-        cx.run_until_parked();
-        app.update(cx, |app, cx| {
-            app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
-                view.mode
-                    .as_mut()
-                    .unwrap()
-                    .buffer
-                    .apply_choice(Path::new("file.txt"), kagi_git::ResolutionChoice::Incoming)
-                    .unwrap();
-            });
-        });
-        let before_footer = kagi_ui_core::klog::tail()
-            .iter()
-            .filter(|line| line.starts_with("[kagi] footer: merge-continue: failed — "))
-            .count();
-        let before_panel = kagi_ui_core::klog::tail()
-            .iter()
-            .filter(|line| line.as_str() == "[kagi] bottom-panel: open (Failed auto-open)")
-            .count();
-        let (hold, release) = crate::evidence_support::deferred::<()>(cx);
-        kagi::ui::KagiApp::hold_next_continue_merge_for_e2e(hold);
-        cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {
-                let owner = app
-                    .app_sessions
-                    .attachment(app.active_session().unwrap())
-                    .unwrap();
-                app.conflict_continue(owner, window, cx);
+                app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                    view.mode
+                        .as_mut()
+                        .unwrap()
+                        .buffer
+                        .apply_choice(Path::new("file.txt"), kagi_git::ResolutionChoice::Incoming)
+                        .unwrap();
+                });
             });
-        })
-        .unwrap();
-        cx.run_until_parked();
-        if departed {
-            app.update(cx, |app, cx| {
-                app.switch_repo(1, cx);
-                app.status_footer = kagi::ui::FooterStatus::Idle("other tab sentinel".into());
-            });
-        }
-        let panel_before = cx.read(|cx| app.read(cx).bottom_panel_open);
-        std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
-        release.send(());
-        cx.run_until_parked();
-        std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
-        let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
-            .into_iter()
-            .filter(|entry| entry.op == "merge-continue")
-            .collect();
-        assert_eq!(receipts.len(), 1);
-        assert!(matches!(receipts[0].outcome, OpOutcome::Failed { .. }));
-        assert_eq!(
-            kagi_ui_core::klog::tail()
+            let before_footer = kagi_ui_core::klog::tail()
                 .iter()
                 .filter(|line| line.starts_with("[kagi] footer: merge-continue: failed — "))
-                .count(),
-            before_footer + 1,
-            "missing unchanged failed footer contract for departed={departed}"
-        );
-        cx.read(|cx| {
-            let state = app.read(cx);
-            if departed {
-                assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"));
-                let notice = e2e::app_notice_message(state)
-                    .expect("departed merge failure must reach the host");
-                assert!(notice.contains(repo.to_str().unwrap()), "{notice}");
-                assert_eq!(state.bottom_panel_open, panel_before, "must not change B's panel");
-            } else {
-                assert!(matches!(state.status_footer, kagi::ui::FooterStatus::Failed(_)));
-                assert!(state.bottom_panel_open);
-                assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts()
-                    .iter().any(|toast| toast.kind == kagi::ui::ToastKind::Error
-                        && !toast.message.is_empty()
-                        && !toast.message.contains("merge-continue")));
-            }
-        });
-        assert_eq!(
-            kagi_ui_core::klog::tail()
+                .count();
+            let before_panel = kagi_ui_core::klog::tail()
                 .iter()
                 .filter(|line| line.as_str() == "[kagi] bottom-panel: open (Failed auto-open)")
-                .count(),
-            before_panel + usize::from(!departed)
-        );
-        unmount(cx, app, window);
+                .count();
+            let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+            kagi::ui::KagiApp::hold_next_continue_merge_for_e2e(hold);
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let owner = app
+                        .app_sessions
+                        .attachment(app.active_session().unwrap())
+                        .unwrap();
+                    app.conflict_continue(owner, window, cx);
+                });
+            })
+            .unwrap();
+            cx.run_until_parked();
+            if departed {
+                app.update(cx, |app, cx| {
+                    app.switch_repo(1, cx);
+                });
+            }
+            cx.run_until_parked();
+            let footer_before = cx.read(|cx| format!("{:?}", app.read(cx).status_footer));
+            let panel_before = cx.read(|cx| {
+                let state = app.read(cx);
+                (state.bottom_panel_open, state.bottom_tab)
+            });
+            let recording_lock = recording_failure.then(|| {
+                let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                    .join("operations.jsonl.lock");
+                let lock = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(path)
+                    .unwrap();
+                lock.lock().unwrap();
+                lock
+            });
+            std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
+            release.send(());
+            cx.run_until_parked();
+            std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
+            let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "merge-continue")
+                .collect();
+            assert_eq!(receipts.len(), usize::from(!recording_failure));
+            if !recording_failure {
+                assert!(matches!(receipts[0].outcome, OpOutcome::Failed { .. }));
+                assert_eq!(
+                    kagi_ui_core::klog::tail()
+                        .iter()
+                        .filter(|line| line.starts_with("[kagi] footer: merge-continue: failed — "))
+                        .count(),
+                    before_footer + 1,
+                    "missing unchanged failed footer contract for departed={departed}"
+                );
+            }
+            cx.read(|cx| {
+                let state = app.read(cx);
+                if departed {
+                    assert_eq!(format!("{:?}", state.status_footer), footer_before);
+                } else {
+                    assert!(!matches!(
+                        state.status_footer,
+                        kagi::ui::FooterStatus::Failed(_)
+                    ));
+                }
+                assert_eq!((state.bottom_panel_open, state.bottom_tab), panel_before);
+                let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                if recording_failure {
+                    let notice = state
+                        .app_notice()
+                        .expect("failed append must remain explicit");
+                    assert!(notice
+                        .message
+                        .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                    assert!(
+                        toasts.is_empty(),
+                        "no post-recorder raw toast may accompany required acknowledgment"
+                    );
+                    let panel = state.op_log.as_ref().unwrap().read(cx);
+                    let rows: Vec<_> = panel
+                        .entries()
+                        .iter()
+                        .filter(|entry| {
+                            entry.op == "merge-continue" && Path::new(&entry.repo) == repo.as_path()
+                        })
+                        .collect();
+                    assert_eq!(rows.len(), 1);
+                    let OpOutcome::Failed { error } = &rows[0].outcome else {
+                        panic!(
+                            "failed persistence must not reclassify an unchanged backend failure"
+                        );
+                    };
+                    assert!(
+                        error.contains(repo.to_str().unwrap()),
+                        "the real backend diagnostic survives failed persistence"
+                    );
+                    assert!(
+                        rows[0].ref_moves.is_none(),
+                        "an unrecorded row cannot advertise durable restoration evidence"
+                    );
+                } else {
+                    assert!(state.app_notice().is_none());
+                    assert_eq!(toasts.len(), 1);
+                    assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Error);
+                    assert!(!toasts[0].message.contains("merge-continue"));
+                    assert!(!toasts[0].message.contains(repo.to_str().unwrap()));
+                }
+            });
+            drop(recording_lock);
+            if recording_failure {
+                click_control(cx, window, "app-notice-confirm");
+                cx.run_until_parked();
+                assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+                assert!(
+                    read_oplog_tail_for_repo(&repo, 100)
+                        .into_iter()
+                        .all(|entry| entry.op != "merge-continue"),
+                    "acknowledgment must not retry append"
+                );
+            } else {
+                assert_eq!(
+                    kagi_ui_core::klog::tail()
+                        .iter()
+                        .filter(
+                            |line| line.as_str() == "[kagi] bottom-panel: open (Failed auto-open)"
+                        )
+                        .count(),
+                    before_panel + usize::from(!departed)
+                );
+                click_control(cx, window, "operation-result-details");
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(state.bottom_panel_open);
+                    assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                    let panel = state.op_log.as_ref().unwrap().read(cx);
+                    let row = &panel.entries()[panel.expanded().unwrap()];
+                    let receipt = &receipts[0];
+                    assert_eq!(
+                        (row.id, row.timestamp, &row.op, &row.repo),
+                        (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+                    );
+                });
+            }
+            unmount(cx, app, window);
+        }
     }
-    eprintln!("[gui-e2e] PASS conflict_merge_failure_contract: current + departed");
+    eprintln!("[gui-e2e] PASS conflict_merge_failure_contract: current/departed × healthy/failed audit append");
 }
 
 pub fn scenario_conflict_skip_panic(cx: &mut VisualTestAppContext) {
@@ -1303,4 +1382,323 @@ pub fn scenario_conflict_skip_panic(cx: &mut VisualTestAppContext) {
     assert_panicked_conflict(cx, &app, &repo, "cherry-pick-skip");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_skip_panic");
+}
+
+/// Real Save / directory-file resolution / Abort consumers share one result
+/// owner, including a successful backend operation whose audit append fails.
+pub fn scenario_conflict_family_result_owner(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{i18n, FooterStatus, ToastKind};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let language = i18n::lang();
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        for active in [true, false] {
+            for recording_failure in [false, true] {
+                for action in ["save", "directory", "abort"] {
+                    let fixture = if action == "directory" {
+                        dir_file_fixture()
+                    } else {
+                        content_fixture()
+                    };
+                    let repo = fixture.path().canonicalize().unwrap();
+                    let head = git_fixture::git_output(&repo, &["rev-parse", "HEAD"]);
+                    i18n::set_lang(lang);
+                    let (app, window) = mount(cx, &repo);
+                    app.update(cx, |app, cx| {
+                        app.set_window_active_for_e2e(active, cx);
+                        app.detect_conflict_mode(cx);
+                    });
+                    cx.run_until_parked();
+                    let panel_before = cx.read(|cx| {
+                        let state = app.read(cx);
+                        (state.bottom_panel_open, state.bottom_tab)
+                    });
+                    let expected_saved = if action == "save" {
+                        let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+                        Some(conflict.update(cx, |view, cx| {
+                            let mode = view.mode.as_mut().unwrap();
+                            mode.buffer
+                                .apply_choice(
+                                    Path::new("file.txt"),
+                                    kagi_git::ResolutionChoice::Current,
+                                )
+                                .unwrap();
+                            let expected =
+                                mode.buffer.resolved_text(Path::new("file.txt")).unwrap();
+                            view.conflict_open_editor(&PathBuf::from("file.txt"));
+                            cx.notify();
+                            expected
+                        }))
+                    } else {
+                        None
+                    };
+                    let recording_lock = recording_failure.then(|| {
+                        let path =
+                            std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                                .join("operations.jsonl.lock");
+                        let lock = std::fs::OpenOptions::new()
+                            .create(true)
+                            .truncate(false)
+                            .write(true)
+                            .open(path)
+                            .unwrap();
+                        lock.lock().unwrap();
+                        lock
+                    });
+                    let operation = match action {
+                        "save" => {
+                            click_control(cx, window, "conflict-save");
+                            "conflict-save:merge"
+                        }
+                        "directory" => {
+                            click_control(cx, window, "conflict-keep-directory");
+                            "conflict-dir-file:keep-directory"
+                        }
+                        "abort" => {
+                            click_control(cx, window, "conflict-abort");
+                            app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+                            "merge-abort"
+                        }
+                        _ => unreachable!(),
+                    };
+                    wait_idle(cx, &app);
+                    cx.update_window(window, |_, window, cx| {
+                        window.refresh();
+                        window.draw(cx).clear();
+                    })
+                    .unwrap();
+                    assert_eq!(git_fixture::git_output(&repo, &["rev-parse", "HEAD"]), head);
+                    if let Some(expected) = expected_saved {
+                        assert_eq!(
+                            std::fs::read_to_string(repo.join("file.txt")).unwrap(),
+                            expected
+                        );
+                    }
+                    if action == "directory" {
+                        let index = git2::Repository::open(&repo).unwrap().index().unwrap();
+                        assert!(index.get_path(Path::new("thing"), 0).is_none());
+                        assert!(index.get_path(Path::new("thing/child"), 0).is_some());
+                    }
+                    if action == "abort" {
+                        assert!(!repo.join(".git/MERGE_HEAD").exists());
+                        assert_eq!(
+                            git_fixture::git_output(&repo, &["status", "--porcelain=v1"]),
+                            ""
+                        );
+                    }
+                    let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                        .into_iter()
+                        .filter(|entry| entry.op == operation)
+                        .collect();
+                    assert_eq!(receipts.len(), usize::from(!recording_failure));
+                    cx.read(|cx| {
+                        let state = app.read(cx);
+                        assert!(!state.app_sessions.has_leases());
+                        assert_eq!((state.bottom_panel_open, state.bottom_tab), panel_before);
+                        let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                        if recording_failure {
+                            let notice = state
+                                .app_notice()
+                                .expect("failed audit append requires acknowledgment");
+                            assert!(notice
+                                .message
+                                .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                            assert!(toasts.is_empty());
+                            assert!(!matches!(
+                                state.status_footer,
+                                FooterStatus::Success(_) | FooterStatus::Failed(_)
+                            ));
+                            let panel = state.op_log.as_ref().unwrap().read(cx);
+                            let rows: Vec<_> = panel
+                                .entries()
+                                .iter()
+                                .filter(|entry| {
+                                    entry.op == operation
+                                        && Path::new(&entry.repo) == repo.as_path()
+                                })
+                                .collect();
+                            assert_eq!(rows.len(), 1);
+                            assert!(matches!(rows[0].outcome, OpOutcome::Partial { .. }));
+                        } else {
+                            assert!(state.app_notice().is_none());
+                            assert!(matches!(receipts[0].outcome, OpOutcome::Success { .. }));
+                            if active {
+                                assert!(toasts.is_empty(), "attended result stays in the footer");
+                                assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                            } else {
+                                assert_eq!(toasts.len(), 1);
+                                assert_eq!(toasts[0].kind, ToastKind::Success);
+                                assert!(
+                                    !matches!(state.status_footer, FooterStatus::Success(_)),
+                                    "one unattended result must not be duplicated in the footer"
+                                );
+                            }
+                        }
+                    });
+                    drop(recording_lock);
+                    if recording_failure {
+                        click_control(cx, window, "app-notice-confirm");
+                        assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+                    }
+                    assert_eq!(
+                        read_oplog_tail_for_repo(&repo, 100).len(),
+                        receipts.len(),
+                        "the presenter and acknowledgment never append again"
+                    );
+                    unmount(cx, app, window);
+                }
+            }
+        }
+    }
+    i18n::set_lang(language);
+}
+
+/// A real sequencer backend-open failure consumes only its matching, already
+/// admitted confirmation and leaves one result (or required audit acknowledgment).
+pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let language = kagi::ui::i18n::lang();
+    for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+        for recording_failure in [false, true] {
+            for departed in [false, true] {
+                let fixture = sequencer_fixture();
+                let repo = fixture.path().canonicalize().unwrap();
+                let other = build_fixture();
+                let other_repo = other.path().canonicalize().unwrap();
+                kagi::ui::i18n::set_lang(lang);
+                let (app, window) = mount(cx, &repo);
+                app.update(cx, |app, cx| {
+                    app.set_window_active_for_e2e(false, cx);
+                    app.detect_conflict_mode(cx);
+                });
+                cx.run_until_parked();
+                app.update(cx, |app, cx| {
+                    app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                        view.mode
+                            .as_mut()
+                            .unwrap()
+                            .buffer
+                            .apply_choice(
+                                Path::new("README.md"),
+                                kagi_git::ResolutionChoice::Incoming,
+                            )
+                            .unwrap();
+                    });
+                });
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        let owner = app
+                            .app_sessions
+                            .attachment(app.active_session().unwrap())
+                            .unwrap();
+                        app.conflict_continue(owner, window, cx);
+                    });
+                })
+                .unwrap();
+                assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
+                let repo_before = crate::macos::repo_fingerprint(&repo);
+                let other_before = crate::macos::repo_fingerprint(&other_repo);
+                let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+                kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
+                app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                if departed {
+                    app.update(cx, |app, cx| {
+                        app.cancel_conflict_continue();
+                        assert!(app.open_repository(other_repo.clone(), cx));
+                    });
+                    cx.run_until_parked();
+                }
+                let foreign_before = departed.then(|| {
+                    cx.read(|cx| {
+                        let state = app.read(cx);
+                        (
+                            state.active_session(),
+                            format!("{:?}", state.status_footer),
+                            (state.bottom_panel_open, state.bottom_tab),
+                        )
+                    })
+                });
+                let recording_lock = recording_failure.then(|| {
+                    let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                        .join("operations.jsonl.lock");
+                    let lock = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .write(true)
+                        .open(path)
+                        .unwrap();
+                    lock.lock().unwrap();
+                    lock
+                });
+                std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
+                release.send(());
+                cx.run_until_parked();
+                std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
+                let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                    .into_iter()
+                    .filter(|entry| entry.op == "cherry-pick-continue")
+                    .collect();
+                assert_eq!(receipts.len(), usize::from(!recording_failure));
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(!state.app_sessions.has_leases());
+                    let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                    assert!(state.conflict_continue_modal().is_none(),
+                        "terminal completion retained a consumed Confirm: error={:?}; ordinary results={:?}",
+                        state.conflict_continue_modal().and_then(|modal| modal.error.as_ref()),
+                        toasts.iter().map(|toast| format!("{:?}: {}", toast.kind, toast.message)).collect::<Vec<_>>());
+                    if let Some(before) = foreign_before.as_ref() {
+                        assert_eq!((state.active_session(), format!("{:?}", state.status_footer),
+                            (state.bottom_panel_open, state.bottom_tab)), *before);
+                    }
+                    if recording_failure {
+                        let notice = state.app_notice().expect("failed append must reach the released modal slot");
+                        assert!(notice.message.contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                        assert!(toasts.is_empty());
+                    } else {
+                        assert!(state.app_notice().is_none());
+                        assert_eq!(toasts.len(), 1);
+                        assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Error);
+                        assert!(!toasts[0].message.contains(repo.to_str().unwrap()));
+                        assert!(!toasts[0].message.contains("cherry-pick-continue"));
+                        let OpOutcome::Failed { error } = &receipts[0].outcome else {
+                            panic!("a backend-open failure is a known failure, not Unknown");
+                        };
+                        assert!(error.contains(repo.to_str().unwrap()));
+                    }
+                });
+                drop(recording_lock);
+                if recording_failure {
+                    click_control(cx, window, "app-notice-confirm");
+                    cx.run_until_parked();
+                    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+                    assert!(read_oplog_tail_for_repo(&repo, 100)
+                        .into_iter()
+                        .all(|entry| entry.op != "cherry-pick-continue"));
+                } else {
+                    click_control(cx, window, "operation-result-details");
+                    cx.read(|cx| {
+                        let state = app.read(cx);
+                        assert!(state.bottom_panel_open);
+                        assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                        assert_eq!(state.repo_path.as_deref(), Some(repo.as_path()));
+                        let panel = state.op_log.as_ref().unwrap().read(cx);
+                        let row = &panel.entries()[panel.expanded().unwrap()];
+                        let receipt = &receipts[0];
+                        assert_eq!(
+                            (row.id, row.timestamp, &row.op, &row.repo),
+                            (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+                        );
+                    });
+                }
+                assert_eq!(crate::macos::repo_fingerprint(&repo), repo_before);
+                assert_eq!(crate::macos::repo_fingerprint(&other_repo), other_before);
+                unmount(cx, app, window);
+            }
+        }
+    }
+    kagi::ui::i18n::set_lang(language);
 }

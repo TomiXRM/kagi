@@ -98,6 +98,8 @@ impl KagiApp {
                     announce,
                     None,
                     recording_failed,
+                    None,
+                    None,
                 );
             }
             Err(e) => {

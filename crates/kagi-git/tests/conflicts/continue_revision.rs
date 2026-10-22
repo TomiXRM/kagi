@@ -320,3 +320,41 @@ fn unknown_current_identity_cannot_authorize_save_or_continue() {
         Some("LIVE BUT UNVERIFIED\n")
     );
 }
+
+#[test]
+fn empty_session_requires_known_operation_before_any_continue_write() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = merge_conflict_repo();
+    let path = fixture.path();
+    let backend = open_backend(path);
+    let repo = Repository::open(path).unwrap();
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.set_manual_text(Path::new("file.txt"), "UNIQUE SAVED TREE 1721\n").unwrap();
+    backend.execute_conflict_save(&buffer, Path::new("file.txt")).unwrap();
+    assert_eq!(git_output(path, &["ls-files", "-u"]), "");
+    std::fs::write(path.join(".git/MERGE_HEAD"), "not a commit identity\n").unwrap();
+    let fresh = Repository::open(path).unwrap();
+    let session = detect_conflict_session(&fresh).unwrap();
+    assert!(session.files.is_empty());
+    let buffer = ResolutionBuffer::from_repo(&fresh).unwrap();
+    let before = physical_state(path);
+    let objects_before = git_output(path, &["count-objects", "-v"]);
+    let blockers = backend.continue_blockers(&session, &buffer);
+    let plan = backend.plan_conflict_continue_route(&session, &buffer, "main");
+    let staging = backend.stage_conflict_resolution(&session, &buffer);
+    let execution = backend.execute_conflict_continue(&session, &buffer);
+    let after = physical_state(path);
+    let objects_after = git_output(path, &["count-objects", "-v"]);
+    assert!(
+        blockers.is_err() && plan.is_err() && staging.is_err() && execution.is_err()
+            && before == after && objects_before == objects_after,
+        "an empty session still needs verified operation identity before writes; \
+         checklist_admitted={} plan_admitted={} stage_admitted={} execute_admitted={} \
+         execute_error={:?}\nobjects_before={objects_before}\nobjects_after={objects_after}\n\
+         before={before:#?}\nafter={after:#?}",
+        blockers.is_ok(), plan.is_ok(), staging.is_ok(), execution.is_ok(),
+        execution.as_ref().err().map(ToString::to_string),
+    );
+}

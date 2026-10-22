@@ -151,6 +151,9 @@ mod feedback_status;
 #[path = "recovery/clone_hidden_status.rs"]
 mod clone_hidden_status;
 #[cfg(target_os = "macos")]
+#[path = "recovery/completion_visit_owner.rs"]
+mod completion_visit_owner;
+#[cfg(target_os = "macos")]
 #[path = "recovery/clone_progress_status.rs"]
 mod clone_progress_status;
 
@@ -2464,6 +2467,14 @@ mod macos {
             (
                 "clone_hidden_status",
                 Box::new(crate::clone_hidden_status::scenario_clone_hidden_status),
+            ),
+            (
+                "clone_departed_result_owner",
+                Box::new(crate::completion_visit_owner::scenario_clone_departed_result_owner),
+            ),
+            (
+                "stash_revisit_result_owner",
+                Box::new(crate::completion_visit_owner::scenario_stash_revisit_result_owner),
             ),
             (
                 "smart_commit_generation_owner",

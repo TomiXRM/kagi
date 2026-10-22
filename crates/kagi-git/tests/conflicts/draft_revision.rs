@@ -14,7 +14,7 @@ fn write_document(path: &Path, document: &serde_json::Value) {
     std::fs::write(path, serde_json::to_vec(document).unwrap()).unwrap();
 }
 
-fn write_index_conflict(index: &mut git2::Index, conflict: &git2::IndexConflict) {
+pub(super) fn write_index_conflict(index: &mut git2::Index, conflict: &git2::IndexConflict) {
     // Index::add preserves each entry's stage bits and raw path bytes.
     for entry in [&conflict.ancestor, &conflict.our, &conflict.their].into_iter().flatten() {
         index.add(entry).unwrap();

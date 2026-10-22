@@ -2140,3 +2140,6 @@ fn raw_choice_removes_prior_text_residue_from_the_cached_verdict() {
 
 #[path = "conflicts/draft_revision.rs"]
 mod draft_revision;
+
+#[path = "conflicts/draft_recency.rs"]
+mod draft_recency;

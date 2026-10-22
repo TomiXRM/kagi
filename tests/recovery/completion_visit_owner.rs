@@ -5,7 +5,7 @@ use crate::macos::{build_fixture, git, mount, unmount};
 use crate::pr_fields_focus::OfflineGh;
 use gpui::VisualTestAppContext;
 use kagi::app::PlanState;
-use kagi::ui::{e2e, i18n::{self, Lang}, FooterStatus, ToastAction, ToastKind};
+use kagi::ui::{e2e, i18n::Lang, FooterStatus, ToastAction, ToastKind};
 use kagi_git::{github_repos::RepoListing, oplog::{self, OpOutcome}};
 
 pub fn scenario_clone_departed_result_owner(cx: &mut VisualTestAppContext) {
@@ -158,7 +158,7 @@ pub fn scenario_stash_revisit_result_owner(cx: &mut VisualTestAppContext) {
             assert!(app.open_repository(foreign.clone(), cx));
             app.switch_repo(0, cx);
             assert_eq!(app.active_session(), Some(owner.session));
-            assert_ne!(app.app_sessions.visit(owner.session), Some(owner.visit));
+            assert_ne!(app.app_sessions.attachment(owner.session).unwrap().visit, owner.visit);
             app.status_footer = FooterStatus::Idle("new visit's presentation owner".into());
         });
         wait(cx, &app, "the real departed Stash write completes", |app| app.write_busy_op.is_none());

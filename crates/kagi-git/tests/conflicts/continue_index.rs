@@ -81,6 +81,7 @@ fn public_continue_propagates_unreadable_index_without_writing() {
         assert!(backend.plan_conflict_continue(&session, &buffer).is_err());
         assert!(backend.plan_conflict_continue_route(&session, &buffer, "main").is_err());
         assert!(backend.execute_conflict_continue(&session, &buffer).is_err());
+        assert!(backend.stage_conflict_resolution(&session, &buffer).is_err());
         assert_eq!(std::fs::read(path.join("file.txt")).unwrap(), original_file);
         assert_eq!(git_output(path, &["rev-parse", "HEAD"]), original_head);
         assert!(!path.join(".git/index.lock").exists());
@@ -114,6 +115,7 @@ fn public_continue_still_refuses_untracked_unmerged_path() {
     )));
     assert!(backend.plan_conflict_continue_route(&session, &buffer, "main").is_err());
     assert!(backend.execute_conflict_continue(&session, &buffer).is_err());
+    assert!(backend.stage_conflict_resolution(&session, &buffer).is_err());
     assert_eq!(std::fs::read(path.join(".git/index")).unwrap(), original_index);
     assert_eq!(std::fs::read(path.join("file.txt")).unwrap(), original_file);
 }

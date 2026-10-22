@@ -996,8 +996,8 @@ pub fn plan_conflict_continue(
 /// continue-a-sequence API, and reimplementing rebase's step machine by hand
 /// would duplicate real git's own sequencer.
 ///
-/// **Preconditions** (caller must check the plan first): no blockers.  This
-/// function re-checks marker residue defensively but trusts resolution presence.
+/// The caller previews the plan first. The shared staging boundary revalidates
+/// the full canonical checklist and its live index before any materialization.
 pub(crate) fn execute_conflict_continue(
     repo: &Repository,
     repo_path: &Path,
@@ -1133,18 +1133,17 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
 /// [`execute_merge_commit`] refuses the still-conflicted index. Writes nothing
 /// to refs and creates no commit.
 ///
-/// Defensively refuses if conflict markers remain in the buffer.
+/// Revalidates the canonical Continue checklist before any WT/index write.
 pub(crate) fn stage_conflict_resolution(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<(), GitError> {
-    // Defensive re-check: never write markers into a commit.
-    let residue = buffer.files_with_marker_residue();
-    if !residue.is_empty() {
-        return Err(GitError::Other(
-            "Refusing to continue: conflict markers remain in the resolution buffer.".to_string(),
-        ));
+    // Both sequencer execution and the merge-panel route must fail closed if
+    // the live index cannot be read or another unmerged path is untracked.
+    let blockers = continue_blockers(repo, session, buffer)?;
+    if let Some(first) = blockers.first() {
+        return Err(GitError::Other(blocker_sentence(first)));
     }
 
     let workdir = repo

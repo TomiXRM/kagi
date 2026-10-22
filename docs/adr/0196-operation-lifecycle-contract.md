@@ -562,8 +562,14 @@ refusal or fabricates a write receipt.
   通常の現在の Graph 操作は footer のみ。window が非 active、別画面、別 tab、
   または開始から 2 秒以上の run / Pull / Fetch は toast のみで通知し、完了後に Busy footer を残さない。
   background owner の結果は現在の tab の footer / panes を変更しない。
+  明示的な SSH Pull / Stash は既存の長時間・network 操作の通知 lane で一枚の toast を使う。
+  通常の remote snapshot が所有する Busy / read-only footer と分離し、実 refresh 完了後にも
+  結果を残す。別 visit への帰還も離席として扱い、foreign footer の変更や refresh はしない。
   footer から toast へ移しても成功対象 / 有用な成功詳細を失わない。操作固有の Success 文は
   実際に append 済みの Success receipt にだけ利用し、Unknown / Partial / 記録失敗の提示を上書きしない。
+  Clone の Open Repository は、その呼出しが実際に作った / 置換した toast id にだけ結び付ける。
+  append failure や toast を作らなかった完了から、以前の別操作の Details を書き換えない。
+  local / remote Stash は既存 session に加えて要求 visit を照合する。
 - Pull の fetch と一時 stash push / pop は内部手順であり、独立の成功 toast を出さない。
   backend が記録した全 child receipt と順序 / id はそのまま既存 Operation Log に挿入し、
   workflow の要求名 **Pull** と最終結果だけを一度提示する。記録失敗した child を成功で隠さない。
@@ -572,9 +578,13 @@ refusal or fabricates a write receipt.
   hunk Stage / Unstage 成功も file staging と同じく静かにし、失敗時だけ原因を提示する。
 - 同じ repository + 要求操作 + outcome の toast は既存 card を置換する。
   件数、close focus、詳細 action を増やさず、repository は操作名の後に短い名前だけを示す。
-  no-op Pull / Push は write receipt を捏造しない。
+  local preflight が no-op と判定した Pull / Push は write receipt を捏造しない。
+  実際に実行した SSH request が no-change を返した場合は、backend の元 receipt を一件だけ保つ。
   receipt と表示 owner の repository locator に末尾 separator の差があっても同じ key とし、
   実行済み Pull から no-op Pull に続けて要求した場合も同じ成功 card を置換する。
+  成功 Pull の primary は要求名を含む短い翻訳済み headline とし、未知の stdout 最終行を再掲しない。
+  構造化された成功 target は保ち、内部 no-change と既知 Git CLI の no-change 表記は同じ意味で示す。
+  元 stdout は receipt に保持し、この成功用 formatter で Failed / Partial / Unknown を再分類しない。
 - Failed / Refused は EN/JA の短い原因と次の行動を表示する。Partial / Unknown は意味を保ち、
   Unknown は再試行禁止を明示する。raw stderr / exit code / 絶対 path は durable receipt の
   詳細に保持し、未知の診断は安全な翻訳済み要約にする。toast の操作ログ button と常設
@@ -615,6 +625,10 @@ refusal or fabricates a write receipt.
   `worktree_admin_result_owner` / `history_persists`、Continue refusal / stopped / backend-failure、
   `conflict_family_result_owner`、generic Merge failure と既存 Unknown panic / dismissed-confirm の
   consumer は、repo/request identity・実 backend state・canonical Details / 必須 ack を検証する。
+  Clone / Stash visit 帰還と remote Pull の current / inactive / away / revisit consumer は、
+  実 receipt と details identity、foreign footer 保護、必須 recording notice を検査する。
+  remote 結果の保持は refresh interception だけでなく、所有 SSH adapter 経由の実 Git と
+  通常の `remote_snapshot` 完走でも検証する。handler 境界と通常 OS 入力の証拠は区別する。
   Busy のこの実装は #1700 の統合依存であり、同 issue で第二の通知 owner は追加しない。
 ## Amendment — 2026-10-21: Pull terminal observation and retained refusal (#1720)
 

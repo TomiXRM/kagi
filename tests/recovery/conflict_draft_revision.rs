@@ -234,6 +234,7 @@ fn finish_second(
     // real stage-0 index, not the original UI backend's cached unmerged entry.
     click_control(cx, window, "conflict-save");
     wait_idle(cx, app);
+    crate::busy_dismiss::ready(cx, app);
     paint(cx, app, window);
     let saved = git2::Repository::open(repo).unwrap();
     let saved_index = saved.index().unwrap();

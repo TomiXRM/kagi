@@ -7,6 +7,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{FileMode, IndexEntry, MergeFileInput, MergeFileOptions, Repository};
@@ -51,9 +52,36 @@ pub struct SideBlobInfo {
     pub size: Option<u64>,
 }
 
+/// Recency belongs to an actual unsaved edit, not to a long-lived producer.
+/// The atomic preserves `Sync` for immutable backend execution snapshots while
+/// allowing `autosave(&self)` to acknowledge only a successful disk write.
+#[derive(Debug, Default)]
+struct PendingEdit(AtomicBool);
+
+impl Clone for PendingEdit {
+    fn clone(&self) -> Self {
+        // Copying a snapshot is not a new user edit.
+        Self::default()
+    }
+}
+
+impl PendingEdit {
+    fn mark(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn mark_saved(&self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+
+    fn is_pending(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 /// The Result draft for a single file: the materialized side texts plus the
 /// current resolution lines and an undo / redo history.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct FileResolution {
     /// Known operation + this file's exact unmerged stages, never path alone.
     identity: Option<ConflictRevision>,
@@ -61,6 +89,8 @@ struct FileResolution {
     /// A decoded origin belongs to a previous editor until the first live edit.
     editing_origin: Option<String>,
     live_editing_origin: bool,
+    /// Transient recency only; decoded and cloned history never renews intent.
+    pending_edit: PendingEdit,
     /// Explicit draft state, including undo-to-unresolved. A fresh index
     /// materialization must not supersede a saved draft merely by being null.
     draft_state: bool,
@@ -100,6 +130,7 @@ impl FileResolution {
             identity: None,
             editing_origin: None,
             live_editing_origin: false,
+            pending_edit: PendingEdit::default(),
             draft_state: false,
             current_text: None,
             incoming_text: None,
@@ -122,6 +153,7 @@ impl FileResolution {
             self.editing_origin = Some(crate::ops::backup::operation_id());
             self.live_editing_origin = true;
         }
+        self.pending_edit.mark();
     }
 
     /// Push the current `result` onto the undo stack and clear redo, before a
@@ -743,6 +775,9 @@ impl ResolutionBuffer {
                 e
             ))
         })?;
+        for file in self.files.values().chain(self.recoveries.iter().map(|entry| &entry.file)) {
+            file.pending_edit.mark_saved();
+        }
         Ok(path)
     }
 
@@ -1226,6 +1261,7 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         identity: drafts::parse_identity(fields.remove("identity")),
         editing_origin: json_string(fields.remove("editing_origin")).filter(|origin| !origin.is_empty()),
         live_editing_origin: false,
+        pending_edit: PendingEdit::default(),
         draft_state,
         binary: fields
             .get("binary")
@@ -1302,6 +1338,7 @@ mod tests {
             identity: None,
             editing_origin: None,
             live_editing_origin: false,
+            pending_edit: PendingEdit::default(),
             draft_state: false,
             current_text: Some(current.to_string()),
             incoming_text: Some(incoming.to_string()),
@@ -1404,6 +1441,7 @@ mod tests {
             identity: None,
             editing_origin: None,
             live_editing_origin: false,
+            pending_edit: PendingEdit::default(),
             draft_state: false,
             current_text: Some("only current\n".to_string()),
             incoming_text: None, // modify/delete: incoming deleted
@@ -1452,6 +1490,7 @@ mod tests {
             identity: None,
             editing_origin: None,
             live_editing_origin: false,
+            pending_edit: PendingEdit::default(),
             draft_state: false,
             current_text: Some("quote \"x\"\ttab\n".to_string()),
             incoming_text: None,

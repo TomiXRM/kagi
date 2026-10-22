@@ -154,6 +154,7 @@ impl ResolutionBuffer {
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;
+                    current.pending_edit = saved.pending_edit;
                     current.undo = std::mem::take(&mut saved.undo);
                     current.redo = std::mem::take(&mut saved.redo);
                 }
@@ -180,6 +181,7 @@ impl ResolutionBuffer {
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;
+                    current.pending_edit = saved.pending_edit;
                     current.undo = std::mem::take(&mut saved.undo);
                     current.redo = std::mem::take(&mut saved.redo);
                     matched.insert(entry.path);
@@ -204,6 +206,16 @@ impl ResolutionBuffer {
     pub(super) fn autosave_json(&self) -> Result<String, serde_json::Error> {
         let disk = Self::load(&self.repo_path);
         let mut recoveries: Vec<(&Path, &FileResolution)> = Vec::new();
+        let mut pending = Vec::new();
+        for entry in &self.recoveries {
+            let record = (entry.path.as_path(), &entry.file);
+            if entry.file.pending_edit.is_pending() {
+                pending.push(record);
+            } else {
+                // Missing historical bodies precede the later disk snapshot.
+                recoveries.push(record);
+            }
+        }
         if let Some(disk) = &disk {
             for (path, file, preserved) in disk.recoveries.iter()
                 .map(|entry| (entry.path.as_path(), &entry.file, true))
@@ -230,18 +242,14 @@ impl ResolutionBuffer {
                 }
             }
         }
-        for entry in &self.recoveries {
+        // Only edits not yet saved may supersede the durable history's order.
+        for (path, file) in pending {
             if let Some(index) = recoveries.iter()
-                .position(|(path, file)| *path == entry.path.as_path() && same_draft(file, &entry.file))
+                .position(|(old_path, old)| *old_path == path && same_draft(old, file))
             {
-                // A decoded historical duplicate is not a newer edit. Moving it
-                // after newer disk history could restore the older Result.
-                if !entry.file.live_editing_origin {
-                    continue;
-                }
                 recoveries.remove(index);
             }
-            recoveries.push((&entry.path, &entry.file));
+            recoveries.push((path, file));
         }
         #[derive(serde::Serialize)]
         struct Record<'a> {

@@ -51,6 +51,7 @@ impl ResolutionBuffer {
     ) -> Result<Self, GitError> {
         let mut buffer = Self::new(repo_path);
         let mut file = FileResolution::empty();
+        file.draft_state = true;
         match draft {
             kagi_domain::conflict_family::ConflictDraft::Text(bytes) => {
                 let text = std::str::from_utf8(bytes).map_err(|_| {

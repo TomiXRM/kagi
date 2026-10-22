@@ -2137,3 +2137,6 @@ fn raw_choice_removes_prior_text_residue_from_the_cached_verdict() {
     assert!(buffer.files_with_marker_residue().is_empty());
     assert!(continue_blockers(&repo, &session, &buffer).is_empty());
 }
+
+#[path = "conflicts/draft_revision.rs"]
+mod draft_revision;

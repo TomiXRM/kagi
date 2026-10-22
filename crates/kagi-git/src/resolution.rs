@@ -13,6 +13,7 @@ use git2::{FileMode, IndexEntry, MergeFileInput, MergeFileOptions, Repository};
 
 use super::GitError;
 use serde_json::Value;
+use kagi_domain::conflict_family::ConflictRevision;
 
 pub use kagi_domain::resolution::{
     lines_to_text, text_to_lines, ConflictHunk, HunkChoice, HunkModel, LineOrder, LineOrigin,
@@ -54,6 +55,11 @@ pub struct SideBlobInfo {
 /// current resolution lines and an undo / redo history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileResolution {
+    /// Known operation + this file's exact unmerged stages, never path alone.
+    identity: Option<ConflictRevision>,
+    /// Explicit draft state, including undo-to-unresolved. A fresh index
+    /// materialization must not supersede a saved draft merely by being null.
+    draft_state: bool,
     /// Current side text (stage 2), `None` when that side is absent
     /// (modify-delete) or binary.
     current_text: Option<String>,
@@ -87,6 +93,8 @@ struct FileResolution {
 impl FileResolution {
     fn empty() -> Self {
         FileResolution {
+            identity: None,
+            draft_state: false,
             current_text: None,
             incoming_text: None,
             binary: false,
@@ -104,6 +112,7 @@ impl FileResolution {
     /// Push the current `result` onto the undo stack and clear redo, before a
     /// mutation.
     fn checkpoint(&mut self) {
+        self.draft_state = true;
         self.undo.push(self.result.clone());
         self.redo.clear();
     }
@@ -137,9 +146,14 @@ pub struct ResolutionBuffer {
     /// artifact is the assembled `result` in [`FileResolution`].  A file appears
     /// here once [`ResolutionBuffer::ensure_hunks`] has decomposed it.
     hunks: BTreeMap<PathBuf, HunkModel>,
+    /// Older, unbound or incompatible drafts in the same autosave document.
+    recoveries: Vec<RecoveryEntry>,
 }
 
 mod conflict_boundary;
+mod drafts;
+pub use drafts::RecoveryDraft;
+use drafts::RecoveryEntry;
 
 // ────────────────────────────────────────────────────────────
 // Construction / materialization
@@ -153,6 +167,7 @@ impl ResolutionBuffer {
             files: BTreeMap::new(),
             marker_residue_count: 0,
             hunks: BTreeMap::new(),
+            recoveries: Vec::new(),
         }
     }
 
@@ -167,6 +182,8 @@ impl ResolutionBuffer {
             .workdir()
             .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
         let mut buffer = ResolutionBuffer::new(workdir);
+        let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo)
+            .and_then(|context| repo.path().canonicalize().ok().map(|git_dir| (context, git_dir)));
 
         let index = repo
             .index()
@@ -186,6 +203,9 @@ impl ResolutionBuffer {
             };
 
             let mut fr = FileResolution::empty();
+            fr.identity = context.as_ref().map(|(context, git_dir)| {
+                drafts::file_identity(git_dir, context, &path, &conflict)
+            });
             fr.current_text = blob_text(repo, conflict.our.as_ref());
             fr.incoming_text = blob_text(repo, conflict.their.as_ref());
             fr.binary = entry_is_binary(repo, conflict.our.as_ref())
@@ -213,33 +233,13 @@ impl ResolutionBuffer {
         Ok(buffer)
     }
 
-    /// Build from the live index (authoritative `raw`/`current_raw`/
-    /// `incoming_raw`/`binary` metadata) and overlay any autosaved *drafts*
-    /// (`result` for text conflicts, `raw_result` for binary/symlink/gitlink).
-    ///
-    /// This is the correct entry point for (re-)entering Conflict Mode. The old
-    /// `load().or_else(from_repo)` was a bug: an autosave (which does NOT persist
-    /// the index-derived `raw` fields — see [`parse_file_object`]) short-circuited
-    /// `from_repo`, leaving `raw = false` so a binary/symlink "take side" fell
-    /// into the text path and failed with "that side does not exist" (#297). Here
-    /// the index metadata always wins; only the user's chosen resolution is
-    /// carried over from autosave.
+    /// Build from the live index and restore only drafts bound to the exact
+    /// operation and per-file stage identity. Legacy and mismatched drafts
+    /// remain inspectable recovery entries, never current resolutions.
     pub fn from_repo_with_autosave(repo: &Repository) -> Result<Self, GitError> {
         let mut base = Self::from_repo(repo)?;
         if let Some(saved) = Self::load(&base.repo_path) {
-            for (path, fr) in base.files.iter_mut() {
-                if let Some(s) = saved.files.get(path) {
-                    if s.result.is_some() {
-                        fr.result = s.result.clone();
-                        // Carry the already-validated autosave snapshot, not a new edit.
-                        fr.marker_residue = s.marker_residue;
-                        base.marker_residue_count += usize::from(fr.marker_residue);
-                    }
-                    if s.raw_result.is_some() {
-                        fr.raw_result = s.raw_result;
-                    }
-                }
-            }
+            base.retain_drafts(saved);
         }
         Ok(base)
     }
@@ -694,7 +694,7 @@ impl ResolutionBuffer {
             })?;
         }
         let json = self
-            .to_json()
+            .autosave_json()
             .map_err(|e| GitError::Other(format!("serialize conflict buffer: {e}")))?;
         std::fs::write(&path, json.as_bytes()).map_err(|e| {
             GitError::Other(format!(
@@ -714,12 +714,31 @@ impl ResolutionBuffer {
         parse_buffer_json(repo_path, &content)
     }
 
-    /// Delete the autosaved buffer (e.g. after a successful continue).
+    /// Clear current drafts after continuation, retaining older recovery bodies.
     pub fn clear(repo_path: &Path) -> Result<(), GitError> {
         let path = match buffer_file_path(repo_path) {
             Some(p) => p,
             None => return Ok(()),
         };
+        if let Some(mut saved) = Self::load(repo_path) {
+            if !saved.recoveries.is_empty() {
+                // Clearing a completed/skipped draft must not make an older
+                // preserved body override a previously explicit undo-to-null.
+                for (file_path, file) in std::mem::take(&mut saved.files) {
+                    if file.draft_state && file.result.is_none() && file.raw_result.is_none() {
+                        saved.preserve_recovery(file_path, file);
+                    }
+                }
+                saved.hunks.clear();
+                saved.marker_residue_count = 0;
+                let json = saved.to_json().map_err(|e| {
+                    GitError::Other(format!("serialize conflict recovery: {e}"))
+                })?;
+                return std::fs::write(&path, json).map_err(|e| {
+                    GitError::Other(format!("conflicts: preserve recovery failed: {e}"))
+                });
+            }
+        }
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -743,6 +762,7 @@ impl ResolutionBuffer {
             repo: self.repo_path.to_string_lossy(),
             updated: now_unix(),
             files: &self.files,
+            recoveries: &self.recoveries,
         })
     }
 }
@@ -1029,17 +1049,29 @@ struct BufferRecord<'a> {
     updated: u64,
     #[serde(serialize_with = "serialize_files")]
     files: &'a BTreeMap<PathBuf, FileResolution>,
+    #[serde(serialize_with = "serialize_recoveries")]
+    recoveries: &'a [RecoveryEntry],
 }
 
 #[derive(serde::Serialize)]
 struct FileRecord<'a> {
     path: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_bytes: Option<&'a [u8]>,
+    identity: Option<IdentityRecord<'a>>,
+    draft_state: bool,
     binary: bool,
     current: Option<&'a str>,
     incoming: Option<&'a str>,
     #[serde(serialize_with = "serialize_result")]
     result: &'a Option<Vec<ResolvedLine>>,
     raw_result: Option<RawRecord<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct IdentityRecord<'a> {
+    version: u8,
+    fingerprint: &'a str,
 }
 
 #[derive(serde::Serialize)]
@@ -1059,8 +1091,25 @@ fn serialize_files<S: serde::Serializer>(
     files: &BTreeMap<PathBuf, FileResolution>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    serializer.collect_seq(files.iter().map(|(path, fr)| FileRecord {
+    serializer.collect_seq(files.iter().map(|(path, fr)| file_record(path, fr)))
+}
+
+fn serialize_recoveries<S: serde::Serializer>(
+    recoveries: &[RecoveryEntry],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(recoveries.iter().map(|entry| file_record(&entry.path, &entry.file)))
+}
+
+fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
+    FileRecord {
         path: path.to_string_lossy(),
+        path_bytes: path.to_str().is_none().then(|| path.as_os_str().as_encoded_bytes()),
+        identity: fr.identity.as_ref().map(|identity| IdentityRecord {
+            version: 1,
+            fingerprint: identity.as_str(),
+        }),
+        draft_state: fr.draft_state || fr.result.is_some() || fr.raw_result.is_some(),
         binary: fr.binary,
         current: fr.current_text.as_deref(),
         incoming: fr.incoming_text.as_deref(),
@@ -1069,7 +1118,7 @@ fn serialize_files<S: serde::Serializer>(
             oid: &raw.oid,
             mode: raw.mode,
         }),
-    }))
+    }
 }
 
 fn serialize_result<S: serde::Serializer>(
@@ -1093,6 +1142,8 @@ fn serialize_oid<S: serde::Serializer>(oid: &git2::Oid, serializer: S) -> Result
 #[derive(serde::Deserialize)]
 struct SavedBuffer {
     files: Vec<Value>,
+    #[serde(default)]
+    recoveries: Vec<Value>,
 }
 
 fn parse_buffer_json(repo_path: &Path, json: &str) -> Option<ResolutionBuffer> {
@@ -1105,9 +1156,16 @@ fn parse_buffer_json(repo_path: &Path, json: &str) -> Option<ResolutionBuffer> {
     for file in saved.files {
         if let Some((path, resolution)) = parse_file_object(file, &mut buffer.marker_residue_count)
         {
-            if let Some(previous) = buffer.files.insert(path, resolution) {
+            if let Some(previous) = buffer.files.insert(path.clone(), resolution) {
                 buffer.marker_residue_count -= usize::from(previous.marker_residue);
+                buffer.preserve_recovery(path, previous);
             }
+        }
+    }
+    for file in saved.recoveries {
+        let mut ignored_marker_count = 0;
+        if let Some((path, resolution)) = parse_file_object(file, &mut ignored_marker_count) {
+            buffer.preserve_recovery(path, resolution);
         }
     }
     Some(buffer)
@@ -1117,9 +1175,14 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
     let Value::Object(mut fields) = value else {
         return None;
     };
-    let path = PathBuf::from(json_string(fields.remove("path"))?);
+    let path = drafts::parse_path(fields.remove("path_bytes"), fields.remove("path"))?;
     let result = parse_result_array(fields.remove("result"));
+    let raw_result = parse_raw_result(fields.remove("raw_result"));
+    let draft_state = fields.get("draft_state").and_then(Value::as_bool).unwrap_or(false)
+        || result.is_some() || raw_result.is_some();
     let mut resolution = FileResolution {
+        identity: drafts::parse_identity(fields.remove("identity")),
+        draft_state,
         binary: fields
             .get("binary")
             .and_then(Value::as_bool)
@@ -1128,7 +1191,7 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         incoming_text: json_string(fields.remove("incoming")),
         result: None,
         marker_residue: false,
-        raw_result: parse_raw_result(fields.remove("raw_result")),
+        raw_result,
         raw: false,
         current_raw: None,
         incoming_raw: None,
@@ -1192,6 +1255,8 @@ mod tests {
         let mut b = ResolutionBuffer::new(Path::new("/tmp/repo"));
         let path = PathBuf::from("a.txt");
         let fr = FileResolution {
+            identity: None,
+            draft_state: false,
             current_text: Some(current.to_string()),
             incoming_text: Some(incoming.to_string()),
             binary: false,
@@ -1290,6 +1355,8 @@ mod tests {
         let mut b = ResolutionBuffer::new(Path::new("/tmp/repo"));
         let p = PathBuf::from("md.txt");
         let fr = FileResolution {
+            identity: None,
+            draft_state: false,
             current_text: Some("only current\n".to_string()),
             incoming_text: None, // modify/delete: incoming deleted
             binary: false,
@@ -1334,6 +1401,8 @@ mod tests {
         let mut b = ResolutionBuffer::new(Path::new("/tmp/re\"po"));
         let p = PathBuf::from("x.txt");
         let fr = FileResolution {
+            identity: None,
+            draft_state: false,
             current_text: Some("quote \"x\"\ttab\n".to_string()),
             incoming_text: None,
             binary: false,

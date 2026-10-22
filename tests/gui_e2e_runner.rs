@@ -504,6 +504,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_revision.rs"]
+mod conflict_draft_revision;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_stopped.rs"]
 mod conflict_stopped;
 
@@ -3132,6 +3136,30 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "conflict_draft_revision_audit",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_audit),
+            ),
+            (
+                "conflict_draft_revision_append_failure",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_append_failure),
+            ),
+            (
+                "conflict_draft_revision_same_revision",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_same_revision),
+            ),
+            (
+                "conflict_draft_revision_unrelated_index",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_unrelated_index),
+            ),
+            (
+                "conflict_draft_revision_saved_stale",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_stale),
+            ),
+            (
+                "conflict_draft_revision_saved_legacy",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
             ),
             (
                 "conflict_reset_disarm",

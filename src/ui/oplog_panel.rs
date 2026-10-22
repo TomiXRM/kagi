@@ -49,6 +49,8 @@ pub struct OpLogPanel {
     reflog: Option<(EntryKey, ReflogDetail)>,
     /// Bumped per request; a read that finishes under an older value is dropped.
     reflog_generation: u64,
+    /// Expansion-time inspection snapshot, not evidence recorded by the receipt.
+    preserved_conflict_drafts: Option<(EntryKey, gpui::SharedString)>,
     pub(super) keyboard: keyboard::OpLogKeyboard,
 }
 
@@ -199,6 +201,7 @@ impl OpLogPanel {
             scroll_handle,
             reflog: None,
             reflog_generation: 0,
+            preserved_conflict_drafts: None,
             keyboard: keyboard::OpLogKeyboard::default(),
         }
     }
@@ -260,45 +263,61 @@ impl OpLogPanel {
         self.expanded = None;
     }
 
-    /// Select (expand) or deselect row `i` — a click, or a failed op opening
-    /// the log on its row — and read the selected entry's reflog lines in the
-    /// background (#334). Reads only: no repository write, no oplog append.
+    /// Expand a receipt and inspect its worktree in the existing background
+    /// detail read. Preserved draft text is a current snapshot, not attributed
+    /// to this operation or used as input to any write.
     pub fn select_row(&mut self, i: usize, cx: &mut gpui::Context<Self>) {
         self.toggle_expanded(i);
         self.reflog_generation = self.reflog_generation.wrapping_add(1);
         self.reflog = None;
+        self.preserved_conflict_drafts = None;
         if self.expanded != Some(i) {
             return;
         }
-        let (Some(entry), Some(window)) = (self.entries.get(i), self.reflog_window(i)) else {
+        let Some(entry) = self.entries.get(i) else {
             return;
         };
-        // #334 slice 2a: a recorded entry carries its moves; the time-window
-        // estimate is only for entries without a record.
-        if entry.ref_moves.is_some() {
-            return;
-        }
+        let window = if entry.ref_moves.is_none() {
+            self.reflog_window(i)
+        } else {
+            None
+        };
         let key = EntryKey::of(entry);
         let path = PathBuf::from(entry_worktree(entry));
         let generation = self.reflog_generation;
-        self.reflog = Some((key.clone(), ReflogDetail::Loading));
+        if window.is_some() {
+            self.reflog = Some((key.clone(), ReflogDetail::Loading));
+        }
         let read = cx.background_spawn(async move {
-            kagi_git::Backend::open(&path)
-                .and_then(|backend| backend.reflog_lines_between(window.after, window.until))
-                .map(|lines| window.attribute(lines))
-                .map_err(|error| error.to_string())
+            let backend = kagi_git::Backend::open(&path);
+            let preserved = backend.as_ref().ok()
+                .and_then(|backend| backend.resolution_buffer_from_repo_with_autosave().ok())
+                .and_then(|buffer| preserved_conflict_draft_snapshot(&buffer))
+                .map(gpui::SharedString::from);
+            let reflog = window.map(|window| {
+                backend.and_then(|backend| backend.reflog_lines_between(window.after, window.until))
+                    .map(|lines| window.attribute(lines))
+                    .map_err(|error| error.to_string())
+            });
+            (reflog, preserved)
         });
         cx.spawn(async move |this, cx| {
-            let result = read.await;
+            let (result, preserved) = read.await;
             let _ = this.update(cx, |panel, cx| {
-                if panel.reflog_generation != generation {
+                if panel.reflog_generation != generation
+                    || !panel.expanded.and_then(|row| panel.entries.get(row))
+                        .is_some_and(|entry| key.matches(entry))
+                {
                     return;
                 }
-                let detail = match result {
-                    Ok(lines) => ReflogDetail::Loaded { window, lines },
-                    Err(error) => ReflogDetail::Unavailable(error),
-                };
-                panel.reflog = Some((key, detail));
+                if let (Some(result), Some(window)) = (result, window) {
+                    let detail = match result {
+                        Ok(lines) => ReflogDetail::Loaded { window, lines },
+                        Err(error) => ReflogDetail::Unavailable(error),
+                    };
+                    panel.reflog = Some((key.clone(), detail));
+                }
+                panel.preserved_conflict_drafts = preserved.map(|text| (key, text));
                 cx.notify();
             });
         })
@@ -336,6 +355,19 @@ impl OpLogPanel {
             .map(|(_, detail)| detail)
     }
 
+    /// Current-worktree preservation inspected when this row was expanded.
+    /// Rendering and clipboard access never read the autosave document.
+    pub fn preserved_conflict_draft_text(&self) -> Option<&str> {
+        self.preserved_conflict_draft_snapshot().map(|text| text.as_ref())
+    }
+
+    pub(super) fn preserved_conflict_draft_snapshot(&self) -> Option<&gpui::SharedString> {
+        let entry = self.entries.get(self.expanded?)?;
+        self.preserved_conflict_drafts.as_ref()
+            .filter(|(key, _)| key.matches(entry))
+            .map(|(_, text)| text)
+    }
+
     /// A clone of the scroll handle for `gpui::list` + the scrollbar overlay.
     pub fn scroll_handle(&self) -> gpui::ListState {
         self.scroll_handle.clone()
@@ -349,7 +381,14 @@ impl OpLogPanel {
         let Some(entry) = self.entries.get(i) else {
             return;
         };
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(entry_clipboard_text(entry)));
+        let mut text = entry_clipboard_text(entry);
+        if self.expanded == Some(i) {
+            if let Some(preserved) = self.preserved_conflict_draft_text() {
+                text.push_str("\n\n");
+                text.push_str(preserved);
+            }
+        }
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
     }
 
     /// Reveal an existing receipt by identity without toggling an open detail.
@@ -473,6 +512,32 @@ pub(crate) fn outcome_status(outcome: &OpOutcome) -> &'static str {
         OpOutcome::Refused { .. } => P::StatusRefused,
     })
     .t()
+}
+
+/// Materialize the borrowed recovery view only for an explicit inspection.
+/// This is presentation text; no draft is adopted and no receipt is modified.
+pub fn preserved_conflict_draft_snapshot(buffer: &kagi_git::ResolutionBuffer) -> Option<String> {
+    use std::fmt::Write as _;
+    let mut drafts = buffer.recovery_drafts().peekable();
+    drafts.peek()?;
+    let mut text = Msg::OplogPanel(P::PreservedDraftSnapshot).t().to_string();
+    for draft in drafts {
+        text.push_str("\n\n");
+        let _ = writeln!(text, "{}: {}", Msg::OplogPanel(P::DetailFile).t(), draft.path.display());
+        let identity = draft.identity.map(|identity| identity.as_str())
+            .unwrap_or_else(|| Msg::OplogPanel(P::PreservedDraftUnbound).t());
+        let _ = writeln!(text, "{}: {identity}", Msg::OplogPanel(P::PreservedDraftIdentity).t());
+        if let Some(lines) = draft.result {
+            for line in lines {
+                text.push_str(&line.text);
+                text.push('\n');
+            }
+        }
+        if let Some(raw) = draft.raw_result {
+            let _ = writeln!(text, "OID: {} / mode {:o}", raw.oid, raw.mode);
+        }
+    }
+    Some(text)
 }
 
 fn detail_line(label: P, value: &str) -> String {

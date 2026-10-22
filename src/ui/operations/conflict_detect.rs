@@ -87,13 +87,10 @@ impl KagiApp {
             return ConflictDetectOutcome::MergeResolvedReady(snapshot.observation);
         }
 
-        // Build / reload the resolution buffer.  A previously-autosaved buffer
-        // (e.g. from before a restart) is preferred so partial work survives;
-        // otherwise materialize a fresh buffer from the index conflicts.
-        // #297: index-authoritative buffer with autosaved drafts overlaid. The
-        // old `load().or_else(from_repo)` let an autosave (which does not persist
-        // the index-derived `raw` metadata) short-circuit `from_repo`, so a
-        // binary/symlink "take side" failed with "that side does not exist".
+        // Live index sides remain authoritative (#297). Restore only drafts
+        // bound to this operation and file's stages; old/legacy drafts stay
+        // recoverable without marking the current conflict resolved. Saved
+        // data never replaces the raw metadata rebuilt from the index.
         let mut buffer = repo
             .resolution_buffer_from_repo_with_autosave()
             .unwrap_or_else(|_| kagi_git::ResolutionBuffer::new(repo_path));
@@ -318,7 +315,6 @@ impl KagiApp {
                     editing_file,
                     skip_armed: false,
                 };
-                let files = mode.session.files.clone();
 
                 match self
                     .ui
@@ -343,25 +339,8 @@ impl KagiApp {
                         let _ = entity;
                     }
                     Some(entity) => {
-                        entity.update(cx, |v, _| {
-                            let prev_editing = v.editing.clone();
-                            // W32: close the editor if the edited file is no longer
-                            // conflicted (reads the entity's current `editing`).
-                            if let Some(editing) = v.editing.clone() {
-                                if !files.iter().any(|f| f.path == editing) {
-                                    v.editing = None;
-                                }
-                            }
-                            v.mode = Some(mode);
-                            if let Some(path) = editing_path {
-                                v.editing = Some(path);
-                            }
-                            // Issue #285: the editor file just changed, so the
-                            // stored hunk index belongs to the old file — reset it
-                            // (the new file may have fewer hunks).
-                            if v.editing != prev_editing {
-                                v.selected_hunk = 0;
-                            }
+                        entity.update(cx, |view, cx| {
+                            view.adopt_detected(mode, editing_path, cx);
                         });
                     }
                     // Fresh conflict: build the entity, capturing the repo path +
@@ -403,8 +382,8 @@ impl KagiApp {
     /// Runs at most once per owner per cycle. `reload()` and tab activation
     /// re-arm that owner's guard. Opens the repo read-only, calls
     /// `detect_conflict_session`, and on a hit builds a fresh
-    /// `ResolutionBuffer` from the index (preferring a previously autosaved
-    /// buffer so a partial resolution survives a restart), recomputes each
+    /// `ResolutionBuffer` from the index (restoring only identity-matched
+    /// autosaved drafts), recomputes each
     /// file's status from the buffer, and stores the `ConflictMode` (via
     /// `apply_conflict_detect`, which builds / updates the owner's
     /// `ConflictView` entity). On a miss it drops that owner's entity. The

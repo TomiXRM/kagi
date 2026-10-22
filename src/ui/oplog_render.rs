@@ -104,6 +104,7 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         let entries: Vec<OpLogEntry> = self.entries().iter().cloned().collect();
         let expanded = self.expanded();
         let reflog = self.reflog_detail().cloned();
+        let preserved_drafts = self.preserved_conflict_draft_snapshot().cloned();
         let entity = cx.entity();
         let restore_owner_available =
             expanded
@@ -130,7 +131,7 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         let oplog_list = gpui::list(scroll_handle, move |i, _window, _cx| match entries.get(i) {
             Some(entry) => {
                 let detail = (expanded == Some(i)).then_some(reflog.as_ref());
-                render_row(i, entry, detail, &entity, &rows, restore_owner_available)
+                render_row(i, entry, detail, preserved_drafts.as_deref(), &entity, &rows, restore_owner_available)
             }
             None => div().into_any_element(),
         })
@@ -167,6 +168,7 @@ fn render_row(
     i: usize,
     entry: &OpLogEntry,
     detail: Option<Option<&oplog_panel::ReflogDetail>>,
+    preserved_drafts: Option<&str>,
     entity: &Entity<oplog_panel::OpLogPanel>,
     rows: &std::rc::Rc<super::keyboard_nav::RowList>,
     restore_owner_available: bool,
@@ -200,6 +202,23 @@ fn render_row(
         ))
         .when_some(detail, |row, reflog| {
             let row = row.child(render_detail(i, entry));
+            let row = row.when_some(preserved_drafts, |row, text| {
+                row.child(
+                    div()
+                        .id(("oplog-preserved-conflict-drafts", i))
+                        .w_full()
+                        .min_w(px(0.))
+                        .px_3()
+                        .py_1()
+                        .bg(rgb(detail_background()))
+                        .text_xs()
+                        .text_color(rgb(theme().text_sub))
+                        .child(
+                            selectable_text(format!("oplog-preserved-drafts-{}-{i}", entry.id), text)
+                                .selectable(text.len() <= SELECTABLE_DETAIL_MAX),
+                        ),
+                )
+            });
             let row = row.when_some(oplog_panel::recovery_lines(entry), |row, lines| {
                 row.child(render_recovery(i, entry, lines))
             });

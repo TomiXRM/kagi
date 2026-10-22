@@ -35,7 +35,6 @@ use gpui::{
     WeakEntity, Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable as _, Sizable as _};
 
@@ -48,6 +47,8 @@ use super::menu_overlay;
 use super::theme::{self, theme};
 use super::ConflictEditorInputs;
 use super::KagiApp;
+
+mod draft_owner;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
@@ -434,18 +435,6 @@ pub struct ConflictMode {
 }
 
 impl ConflictMode {
-    fn refresh_file_status(&mut self, path: &std::path::Path) {
-        if let Some(file) = self.session.files.iter_mut().find(|file| file.path == path) {
-            file.status = if !self.buffer.has_resolution(path) {
-                ConflictStatus::Unresolved
-            } else if self.buffer.cached_marker_residue(path) {
-                ConflictStatus::NeedsReview
-            } else {
-                ConflictStatus::Resolved
-            };
-        }
-    }
-
     /// Number of files with a resolution draft in the buffer.
     pub fn resolved_count(&self) -> usize {
         self.session
@@ -1006,111 +995,6 @@ impl ConflictView {
         })
         .detach();
     }
-
-    /// T-CONFLICT-UI-001 (moved from `KagiApp::sync_conflict_editor_inputs`):
-    /// lazily create / refresh the Result CodeEditor `InputState` backing the
-    /// Conflict Editor (ADR-0071). Runs from the parent render-sync pass via
-    /// `entity.update` on a `Window` context (needed to create `InputState`); the
-    /// entity now owns `editor_inputs` / `editing` / `mode`. In Preview mode the
-    /// Result mirrors the assembled text (re-pushed only when the file/content/
-    /// mode signature changes, so an in-progress edit is never clobbered); in Edit
-    /// mode it instead *pulls* the editor's text into the buffer.
-    pub fn sync_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(inputs) = &self.editor_inputs {
-            inputs.result.update(cx, |state, cx| {
-                state.set_search_labels(kagi_ui_core::find::labels(), cx);
-            });
-        }
-        // Only relevant while editing a content file with a hunk model.
-        let Some(path) = self.editing.clone() else {
-            self.editor_inputs = None;
-            return;
-        };
-        let Some(c) = self.mode.as_ref() else {
-            self.editor_inputs = None;
-            return;
-        };
-        let Some(model) = c.buffer.hunk_model(&path) else {
-            self.editor_inputs = None;
-            return;
-        };
-
-        let edit_mode = self.result_editing;
-        // Compare edits with the current draft, not the unchanged hunk model:
-        // otherwise every repaint republishes the same manual edit.
-        let result_text = if edit_mode {
-            c.buffer
-                .resolved_text(&path)
-                .unwrap_or_else(|| model.assembled_text())
-        } else {
-            model.assembled_text()
-        };
-
-        // Edit mode: pull the user's edits into the buffer and return — unless a
-        // side selection zeroed `content_sig`: then the input is stale (#722).
-        if edit_mode {
-            if let Some(inputs) = self.editor_inputs.as_ref() {
-                if inputs.path == path && inputs.content_sig != 0 {
-                    let edited = inputs.result.read(cx).value().to_string();
-                    // Match text_to_lines' optional final newline without
-                    // allocating another line vector or inventing a new edit.
-                    if !edited
-                        .split_terminator('\n')
-                        .eq(result_text.split_terminator('\n'))
-                    {
-                        if let Some(c) = self.mode.as_mut() {
-                            let _ = c.buffer.set_manual_text(&path, &edited);
-                            let _ = c.buffer.autosave();
-                            // Refresh the file status from the buffer.
-                            c.refresh_file_status(&path);
-                        }
-                    }
-                    // A/B row lists never change while editing the Result; keep as-is.
-                    return;
-                }
-            }
-        }
-
-        let sig = super::conflict_content_sig(&path, &result_text, edit_mode);
-
-        // Reuse existing inputs if the path + content + mode are unchanged.
-        if let Some(inputs) = self.editor_inputs.as_ref() {
-            if inputs.path == path && inputs.content_sig == sig {
-                return;
-            }
-        }
-
-        // Build or refresh.  Create the entities once per path; otherwise reuse.
-        let need_create = self
-            .editor_inputs
-            .as_ref()
-            .map(|i| i.path != path)
-            .unwrap_or(true);
-
-        if need_create {
-            let lang = super::diff_view::lang_for_path(&path).unwrap_or("text");
-            let result = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .code_editor(lang)
-                    .search_labels(kagi_ui_core::find::labels())
-                    .line_number(true)
-            });
-            self.editor_inputs = Some(super::ConflictEditorInputs {
-                path: path.clone(),
-                result,
-                content_sig: 0,
-            });
-        }
-
-        if let Some(inputs) = self.editor_inputs.as_ref() {
-            inputs
-                .result
-                .update(cx, |s, cx| s.set_value(result_text.clone(), window, cx));
-        }
-        if let Some(inputs) = self.editor_inputs.as_mut() {
-            inputs.content_sig = sig;
-        }
-    }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1381,16 +1265,19 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         .flex_row()
         .flex_wrap()
         .gap_2()
-        .child(action_button(
-            Msg::ConflictContinue.t(),
-            ButtonRole::Success,
-            can_continue,
-            if can_continue {
-                Some(continue_handler)
-            } else {
-                None
-            },
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-continue",
+            action_button(
+                Msg::ConflictContinue.t(),
+                ButtonRole::Success,
+                can_continue,
+                if can_continue {
+                    Some(continue_handler)
+                } else {
+                    None
+                },
+                cx,
+            ),
         ))
         .child(super::e2e::measure_control(
             "conflict-abort",

@@ -39,10 +39,15 @@ impl ConflictSnapshot {
 pub(crate) fn digest(parts: impl IntoIterator<Item = Vec<u8>>) -> String {
     let mut hash = Sha256::new();
     for part in parts {
-        hash.update((part.len() as u64).to_be_bytes());
-        hash.update(part);
+        digest_part(&mut hash, &part);
     }
     hex::encode(hash.finalize())
+}
+
+/// Shared framing for owned observation parts and borrowed per-file stages.
+pub(crate) fn digest_part(hash: &mut Sha256, part: &[u8]) {
+    hash.update((part.len() as u64).to_be_bytes());
+    hash.update(part);
 }
 
 pub(crate) fn buffer_revision(path: &Path, draft: &ConflictDraft) -> BufferRevision {
@@ -78,18 +83,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     let Some(session) = conflicts::detect_conflict_session(repo) else {
         return Ok(None);
     };
-    let mut parts = Vec::new();
-    parts.push(format!("{:?}", repo.state()).into_bytes());
-    parts.push(format!("{:?}", session.op).into_bytes());
-    if let Ok(head) = repo.head() {
-        parts.push(head.name_bytes().to_vec());
-        parts.push(
-            head.target()
-                .map(|oid| oid.to_string())
-                .unwrap_or_default()
-                .into_bytes(),
-        );
-    }
+    let (mut parts, operation_tail) = operation_parts(repo, &session);
     let mut entries: Vec<Vec<u8>> = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?
@@ -104,6 +98,46 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
         .collect();
     entries.sort();
     parts.extend(entries);
+    parts.extend(operation_tail);
+    let revision = ConflictRevision::from_fingerprint(digest(parts));
+    let paths = session.files.iter().map(|file| file.path.clone()).collect();
+    Ok(Some(ConflictSnapshot {
+        observation: ConflictObservation {
+            revision,
+            kind: session.op.kind(),
+            paths,
+        },
+        session,
+    }))
+}
+
+/// The operation context shared by draft identities, without unrelated index
+/// entries. Keep the full observation's prefix/index/tail ordering unchanged.
+pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
+    let session = conflicts::detect_conflict_session(repo)?;
+    let (mut parts, tail) = operation_parts(repo, &session);
+    parts.extend(tail);
+    Some(ConflictRevision::from_fingerprint(digest(parts)))
+}
+
+fn operation_parts(
+    repo: &Repository,
+    session: &conflicts::ConflictSession,
+) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    let mut prefix = vec![
+        format!("{:?}", repo.state()).into_bytes(),
+        format!("{:?}", session.op).into_bytes(),
+    ];
+    if let Ok(head) = repo.head() {
+        prefix.push(head.name_bytes().to_vec());
+        prefix.push(
+            head.target()
+                .map(|oid| oid.to_string())
+                .unwrap_or_default()
+                .into_bytes(),
+        );
+    }
+    let mut parts = Vec::new();
     let git_dir = repo.path();
     for relative in [
         "MERGE_HEAD",
@@ -141,7 +175,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     // by the restore. Absent / symbolic / unreadable are their own markers: an
     // abort must not silently create or overwrite a ref that appeared since.
     parts.push(b"restore-ref".to_vec());
-    match crate::ops::conflict_abort::restore_ref(repo, &session) {
+    match crate::ops::conflict_abort::restore_ref(repo, session) {
         Some(restore) => {
             parts.push(restore.name.into_bytes());
             parts.push(
@@ -153,16 +187,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
         }
         None => parts.push(b"detached".to_vec()),
     }
-    let revision = ConflictRevision::from_fingerprint(digest(parts));
-    let paths = session.files.iter().map(|file| file.path.clone()).collect();
-    Ok(Some(ConflictSnapshot {
-        observation: ConflictObservation {
-            revision,
-            kind: session.op.kind(),
-            paths,
-        },
-        session,
-    }))
+    (prefix, parts)
 }
 pub(crate) fn text_mode(repo: &Repository, path: &Path) -> u32 {
     let executable = repo

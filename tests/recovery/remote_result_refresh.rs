@@ -44,6 +44,11 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
     let snapshot = kagi_git::Backend::open(&repo).unwrap().snapshot(10_000).unwrap();
     let shim = tempfile::tempdir().unwrap();
     let runtime = tempfile::tempdir().unwrap();
+    // Keep the real explicit-identity prerequisite; no user key is read.
+    let identity = shim.path().join("identity");
+    assert!(std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "owned-kagi-fixture", "-f"])
+        .arg(&identity).status().unwrap().success());
     let script = shim.path().join("ssh");
     // This replaces only SSH transport: execute the unchanged production
     // protocol shell locally against this disposable repository/runtime. Both
@@ -60,7 +65,7 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
     std::env::set_var("PATH", format!("{}:{}", shim.path().display(), old_path.clone().unwrap_or_default().to_string_lossy()));
     let host = kagi_domain::remote::RemoteHost {
         user: Some("kagi-e2e".into()), host: "e2e.invalid".into(),
-        port: None, identity_file: None,
+        port: None, identity_file: Some(identity.to_str().unwrap().into()),
     };
     let root = repo.to_str().unwrap().to_owned();
     let recorded_repo = format!("{}:{root}", host.label());

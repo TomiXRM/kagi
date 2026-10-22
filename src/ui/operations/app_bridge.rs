@@ -202,6 +202,7 @@ impl KagiApp {
                     &entry.op,
                     &report.recording.entry().outcome,
                     &error.to_string(),
+                    None,
                 )
                 .into(),
             );
@@ -556,6 +557,7 @@ impl KagiApp {
                             "remove-worktree",
                             &report.recording.entry().outcome,
                             &error.to_string(),
+                            None,
                         )
                         .into(),
                     );
@@ -665,6 +667,7 @@ impl KagiApp {
                     &entry.op,
                     &report.recording.entry().outcome,
                     &error.to_string(),
+                    None,
                 )
                 .into(),
             );
@@ -679,7 +682,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let path = std::path::PathBuf::from(format!("{}:{}", owner.host.label(), owner.root));
-        self.notice_recording_failure("pull", &report.recording, &path);
+        self.notice_recording_failure("pull", &report.recording, &path, None);
         if matches!(
             report.recording.entry().outcome,
             OpOutcome::Unknown { .. } | OpOutcome::Partial { .. }
@@ -784,6 +787,7 @@ impl KagiApp {
             &entry.op,
             &entry.outcome,
             &error.to_string(),
+            None,
         );
         self.app_notices.push_back(message.into());
         self.present_app_notice();

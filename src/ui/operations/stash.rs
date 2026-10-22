@@ -222,6 +222,7 @@ impl KagiApp {
                                     &attempted.op,
                                     &attempted.outcome,
                                     &error.to_string(),
+                                    None,
                                 );
                                 app.app_notices.push_back(message.into());
                             }

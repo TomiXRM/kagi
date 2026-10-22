@@ -136,7 +136,7 @@ impl KagiApp {
                     // switch below exactly as the recording-failure notice does
                     // (#702 re-review).
                     for step in &report.steps {
-                        app.notice_recording_failure("pull", &step.recording, &repo_path);
+                        app.notice_recording_failure("pull", &step.recording, &repo_path, None);
                     }
                     app.notice_reconcile_required(id, "pull", &repo_path);
                     let announce = app.operation_result_toast_needed(
@@ -263,7 +263,6 @@ impl KagiApp {
                 crate::app::PullPresentation::Partial { error } => {
                     i18n::op::user_text::operations::partial_preview("pull", error)
                 }
-                _ => crate::ui::operations::outcome_text("pull", &entry.outcome),
             },
         };
         let kind = if matches!(

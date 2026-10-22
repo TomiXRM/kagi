@@ -245,7 +245,7 @@ impl KagiApp {
             request.dest.display(),
             report.result.is_ok()
         );
-        self.notice_recording_failure("clone", &report.recording, &request.dest);
+        self.notice_recording_failure("clone", &report.recording, &request.dest, None);
         self.present_recorded(&report.recording, cx);
         if report.result.is_ok() {
             if current {

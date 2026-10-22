@@ -527,12 +527,21 @@ impl KagiApp {
                     let finished_note = finished_note
                         .take()
                         .expect("one completion per admitted write");
+                    // Reuse the observed stop's display context without changing
+                    // the backend Ok receipt or copying its repository state.
+                    let stopped_notice = if matches!(&report.recording, Recording::Failed { .. }) {
+                        stopped
+                            .as_ref()
+                            .map(|stopped| Msg::conflict_stopped(stopped.count))
+                    } else {
+                        None
+                    };
                     // Settle first, whatever the tab is doing now (#501). A
                     // parked reconcile requirement refuses every later write in
                     // this scope, so the way into it is settlement too — it must
                     // survive the tab guard below (#702 re-review). So must the
                     // `Partial` transport hold `settle_run_receipt` registers.
-                    app.settle_run_receipt(op_name, &report, &repo_path);
+                    app.settle_run_receipt(op_name, &report, &repo_path, stopped_notice.as_deref());
                     app.notice_reconcile_required(id, op_name, &repo_path);
                     // The chain judges the receipt, never the presentation.
                     app.queue_write_settled(stamp, id, &report, cx);
@@ -643,8 +652,8 @@ impl KagiApp {
                     if announce || matches!(report.recording, Recording::Failed { .. }) {
                         presentation.status = None;
                     }
-                    let stopped_notice =
-                        stopped.map(|stopped| Msg::conflict_stopped(stopped.count));
+                    let stopped_notice = stopped_notice
+                        .or_else(|| stopped.map(|stopped| Msg::conflict_stopped(stopped.count)));
                     let stopped_for_conflicts = stopped_notice.is_some();
                     let recorded_status = if let Some(finished) = finished {
                         klog!("async: {} {}", op_name, finished);
@@ -950,7 +959,7 @@ impl KagiApp {
         repo_path: &Path,
         cx: &mut Context<Self>,
     ) {
-        self.notice_recording_failure(op_name, &report.recording, repo_path);
+        self.notice_recording_failure(op_name, &report.recording, repo_path, None);
         self.present_recorded(&report.recording, cx);
     }
 
@@ -962,6 +971,7 @@ impl KagiApp {
         op: &str,
         recording: &Recording,
         repo: &Path,
+        stopped_notice: Option<&str>,
     ) {
         if let Recording::Failed { error, .. } = recording {
             self.app_notices.push_back(
@@ -970,6 +980,7 @@ impl KagiApp {
                     op,
                     &recording.entry().outcome,
                     &error.to_string(),
+                    stopped_notice,
                 )
                 .into(),
             );

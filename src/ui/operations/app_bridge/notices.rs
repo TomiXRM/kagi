@@ -160,6 +160,7 @@ impl KagiApp {
                     "reconcile-release-unobservable",
                     recording,
                     Path::new(&recording.entry().repo),
+                    None,
                 );
                 // Transform failed receipts without duplicating the recording-failure
                 // notice with present_recorded's footer and toast.

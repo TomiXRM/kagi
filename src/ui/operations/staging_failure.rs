@@ -171,7 +171,7 @@ impl KagiApp {
                 let (contract, _) =
                     Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
                 klog!("footer: {}", contract);
-                self.notice_recording_failure(action.name(), &failure.recording, repo);
+                self.notice_recording_failure(action.name(), &failure.recording, repo, None);
                 self.insert_recorded_row(&failure.recording, cx);
                 self.report_admission_refusal(app::AdmissionError::Busy, cx);
                 None

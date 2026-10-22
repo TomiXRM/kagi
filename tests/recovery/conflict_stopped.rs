@@ -215,6 +215,19 @@ fn stopped_matrix(cx: &mut VisualTestAppContext, rebase: bool, recording_failure
                 "the existing known-outcome settlement still releases its lease"
             );
             drop(recording_lock);
+            if recording_failure {
+                app.update(cx, |app, cx| app.confirm_app_notice(cx));
+                cx.run_until_parked();
+                assert_stopped(cx, &app, observed, true);
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(state.app_notice().is_none());
+                    assert!(!kagi::ui::e2e::queued_notice_contains(
+                        state,
+                        &repo.display().to_string()
+                    ));
+                });
+            }
             cx.run_until_parked();
             assert_eq!(
                 oplog::records(&repo, operation, 100, true).len(),

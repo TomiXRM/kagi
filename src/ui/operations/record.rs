@@ -29,18 +29,27 @@ fn recording_outcome(outcome: &OpOutcome) -> i18n::op::RecordingOutcome {
 /// The mandatory acknowledgement is the sole result when its receipt was
 /// not saved. Keep the original diagnostic here too: there is no durable
 /// receipt to fall back to, and a successful append must never be implied.
+/// A borrowed, observed conflict stop changes only the displayed Success
+/// classification; the receipt and all uncertain or failed outcomes stay intact.
 pub(crate) fn recording_failure_notice(
     repo: impl std::fmt::Display,
     op: &str,
     outcome: &OpOutcome,
     error: &str,
+    stopped_notice: Option<&str>,
 ) -> String {
-    let mut notice = i18n::op::user_text::operations::recording_failed(
-        repo,
-        op,
-        recording_outcome(outcome),
-        error,
-    );
+    let stopped_notice = stopped_notice.filter(|_| matches!(outcome, OpOutcome::Success { .. }));
+    let displayed_outcome = if stopped_notice.is_some() {
+        i18n::op::RecordingOutcome::Partial
+    } else {
+        recording_outcome(outcome)
+    };
+    let mut notice =
+        i18n::op::user_text::operations::recording_failed(repo, op, displayed_outcome, error);
+    if let Some(stopped) = stopped_notice {
+        notice.push_str("\n\n");
+        notice.push_str(stopped);
+    }
     let details: &[String] = match outcome {
         OpOutcome::Failed { error } | OpOutcome::Partial { error, .. } => {
             std::slice::from_ref(error)
@@ -156,6 +165,7 @@ impl KagiApp {
                     op,
                     &recording.entry().outcome,
                     &error.to_string(),
+                    None,
                 )
                 .into(),
             );
@@ -251,7 +261,7 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        self.notice_recording_failure(op, &report.recording, repo_path);
+        self.notice_recording_failure(op, &report.recording, repo_path, None);
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
         let announce = self.operation_result_toast_needed(false);
         self.record_op_result(

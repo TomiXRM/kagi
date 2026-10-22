@@ -64,7 +64,7 @@ impl KagiApp {
                     Err(e) => klog!("hunk staging error: {}", e),
                 }
                 let op = if staged { "unstage" } else { "stage" };
-                self.notice_recording_failure(op, &report.recording, &repo_path);
+                self.notice_recording_failure(op, &report.recording, &repo_path, None);
                 let display = match &report.result {
                     Err(kagi_git::GitError::Blocked(note)) => {
                         super::record::typed_refusal(op, std::slice::from_ref(note.as_ref()))

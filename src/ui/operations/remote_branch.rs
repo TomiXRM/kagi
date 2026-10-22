@@ -668,6 +668,7 @@ impl KagiApp {
                         op,
                         &recording.entry().outcome,
                         &error.to_string(),
+                        None,
                     )
                     .into(),
                 );

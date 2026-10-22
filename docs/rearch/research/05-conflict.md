@@ -104,6 +104,16 @@ In `conflicts.rs`, all flow ops are `plan_* → execute_*` on the existing
   The sequencer modal freezes that accepted revision at opening, not from the
   mode at Confirm. The buffer separately retains live operation/repository
   provenance, so edit preservation cannot reauthorize an older confirmation.
+  Full approval additionally hashes the framed, streamed active operation-state
+  trees, root merge-message/mode/autostash inputs, and the resolved operands
+  actually consumed by pending replay instructions and autostash. Unrelated refs
+  are not scanned. Metadata errors and unknown relevant operands fail closed;
+  a new explicit approval can retain the same authorized nonempty file input
+  while accepting changed message/authorship. Minimal draft ownership is unchanged.
+  This is operation-state approval, not a freeze of global replacement refs,
+  config, hooks or arbitrary exec dependencies, nor a promised final commit hash.
+  Merge still routes to Commit Panel; conservative root-autostash binding does
+  not implement Merge autostash restoration (ADR-0067).
 - `execute_conflict_save` — per-file Save→stage with a hard marker-residue block
   (ADR-0066/0068). `execute_merge_commit` — the commit-panel sink, refuses on
   remaining unmerged entries.

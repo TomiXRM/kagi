@@ -68,6 +68,29 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
 - 無関係な index 更新で同 file の入力を破棄する必要はない。一方、staged content が
   変わった古い確認を再利用してはならず、現在の観測から新しく明示計画・承認する。
   正当な Save 後の fresh-empty session はこの新しい承認で引き続き Continue できる。
+- full revision は active operation の保存済み入力も凍結する。`rebase-merge`、
+  `rebase-apply`、`sequencer` と operation-owned `refs/rewritten` の state tree、および
+  root の HEAD 記録・`MERGE_MSG` / `SQUASH_MSG` / `MERGE_MODE` / `MERGE_AUTOSTASH` を
+  名前・有無・file type ごとに framing して読む。message / author-script / option の
+  filename allowlist だけにせず、既存 state tree の追加・削除・本文変更を検出する。
+  message / patch 本文は 8 KiB buffer で一度だけ streaming hash し、directory ごとに
+  固定長 child digest を整列する。symlink / special file、読取不能、読取中の変更は拒否する。
+- TODO は Git の実行を再実装せず、実際の commit / reset / merge / update-ref operand の
+  名前と canonical resolver の解決先だけを追加で束縛する。rewritten label は Git と同じ
+  優先順位で解決し、先行 pending `label` が生成する名前は外部 ref の欠損と扱わない。
+  `squash-onto`、処理済み `update-refs` の最終 CAS 対象、rebase の `autostash` operand も
+  含める。operand は 64 KiB 上限で閉じ、message / subject 全体をその buffer に溜めない。
+  未知・解決不能・読取不能な operand で Ready を作らず、無関係な全 repository ref は走査しない。
+  root `MERGE_AUTOSTASH` は conservative に束縛し、Git と同じく symbolic ref を拒否する。
+  これは Kagi の Merge に autostash 復元を追加する決定ではない。
+- この承認は **operation-state approval** であり、任意 exec、global `refs/replace`、
+  config、hook、環境の全依存や最終 commit hash を凍結するものではない。
+  Git 2.50.1 の [sequencer](https://github.com/git/git/blob/v2.50.1/sequencer.c)、
+  [apply backend](https://github.com/git/git/blob/v2.50.1/builtin/am.c)、
+  [commit message inputs](https://github.com/git/git/blob/v2.50.1/builtin/commit.c) を根拠とする。
+  metadata が変われば、同 file の手編集を保持できても旧承認は拒否する。変更後の
+  message / authorship / replay option / autostash を使うには、新しい明示 plan と承認が必要である。
+
 
 ### Abort(常に可能 = 安全弁)
 - 確認ダイアログを出す。**保存済み resolution が失われる可能性**を明示

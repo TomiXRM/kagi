@@ -64,6 +64,10 @@
   現在値に一致した preflight 境界でのみ、その検証済み context を受け取る。
   この provenance と、確認済み Continue が凍結する全 staged content の revision は
   別の権限である。入力保持のために古い Continue の承認を新しい観測へ付け替えない。
+  全操作の承認だけに属する message / author-script / replay option / autostash の
+  変更は、既知で一致する同 file の入力を捨てる理由にしない。旧承認は失効し、
+  新しい明示 plan に同じ live buffer を使えることと分離する（ADR-0067）。
+  この修正で永続 file identity の minimal metadata の形式や順序を拡張しない。
 - `identity` / `path_bytes` / `editing_origin` / `draft_state` と、同じ document 内の
   `recoveries` を保存する。旧形式、不明 identity、不一致の本文は自動 overlay しないが
   黙って削除しない。明示した undo-to-unresolved の null は「未編集の初期状態」と区別し、

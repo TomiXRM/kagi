@@ -1429,6 +1429,23 @@ The current suite covers:
   Skip Advanced/Finished and merge completion must retain durable inspection-only
   bodies, never delete them before the foreground callback. These are native
   Tier A/backend checks, not plain-app Tier B evidence.
+  Add focused `conflicts_test continue_metadata::`, `continue_operands::` and
+  `continue_autostash::` consumers for changed rebase-merge / apply final-commit /
+  MERGE_MSG / SQUASH_MSG, real nonempty retained input with changed author/date,
+  zero-byte options consumed by a subsequent pending pick, and unreadable or
+  nonregular metadata. Retain old plan/route/stage/execute and compare physical
+  HEAD, index, WT, metadata and object counts before/after every stale request.
+  Exercise packed ordinary reset/merge/pick targets, rewritten symbolic labels,
+  pending operation-produced labels, processed update-ref CAS targets and
+  squash-onto; unrelated ref movement must leave approval unchanged.
+  Real merge/apply rebase autostashes must reject an old approval when the named
+  target changes under unchanged file text, then apply the exact selected stash
+  only under a new explicit approval. Root MERGE_AUTOSTASH coverage is conservative
+  binding / symbolic rejection / Commit Panel staging, not Merge restoration.
+  `cargo test -p kagi-git --test revision_test` retains canonical typed resolution.
+  Do not call operation-state approval a freeze of refs/replace/config/hooks/exec
+  dependencies or a guarantee of the eventual commit hash.
+
 - repository-health proposal (`KAGI_GUI_E2E_ONLY=repo_health_proposal`,
   `tests/recovery/repo_health.rs`): #358 / ADR-0205. Analyze's Health axis
   reads a fixture without a commit-graph and suggests writing one; asking
@@ -3532,6 +3549,15 @@ even with an all-type snapshot or conditional restore. Actual OS clipboard
 integration is permitted only in an isolated VM with no host clipboard bridge.
 Capture only each launched PID's listed window with `screencapture -l<id>` and
 close every owned application after the case.
+For the operation-metadata boundary, retain a stopped sequencer's original
+confirmation, change only its owned message or author-script in that private
+fixture, and obtain a new explicit plan before accepting the changed input.
+If the normal watcher retires the old modal before a click, record that limit;
+do not claim ordinary stale execution from a dismissed confirmation. Held native
+and public Backend consumers prove the prewrite refusal boundary. Verify the
+actual final tree/message/authorship and retained Result after fresh approval,
+not merely a successful button click or the absence of an error.
+
 
 
 Three launch pitfalls, all seen in practice. Launch Kagi from an unsandboxed shell:

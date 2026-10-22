@@ -369,7 +369,12 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         });
         confirm(cx, &app, window, false);
         wait(cx, &app, |app| {
-            app.app_sessions.has_leases() == expected_lease && app.write_busy_op.is_none()
+            app.app_sessions.has_leases() == expected_lease
+                && if expected_lease {
+                    !app.app_sessions.reconcile_ids().is_empty()
+                } else {
+                    app.write_busy_op.is_none()
+                }
         });
         cx.read(|cx| {
             let state = app.read(cx);
@@ -381,6 +386,11 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
                 Some(kagi::ui::ToastAction::OpenOperationLog(_))
             ));
             assert_eq!(state.app_sessions.may_close_host(), !expected_lease);
+            if expected_lease {
+                assert!(state
+                    .app_notice()
+                    .is_some_and(|notice| notice.inspect.is_some()));
+            }
         });
         if mode == RemoteStashE2eMode::Unknown {
             assert!(cx.read(|cx| matches!(

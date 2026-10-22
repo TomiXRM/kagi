@@ -66,7 +66,7 @@ fn clone_departed(cx: &mut VisualTestAppContext, lang: Lang, unknown: bool, reco
         app.replan_clone(parent.path(), cx);
         app.start_clone(cx);
         app.cancel_clone();
-        app.switch_repo(0, cx);
+        app.close_home_tab(cx);
         // This is an explicit app-level active Graph fixture, not OS activation.
         app.set_window_active_for_e2e(true, cx);
     });

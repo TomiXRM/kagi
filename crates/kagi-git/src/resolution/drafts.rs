@@ -56,7 +56,9 @@ pub(super) fn parse_identity(value: Option<Value>) -> Option<ConflictRevision> {
     if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
-    Some(ConflictRevision::from_fingerprint(fingerprint.to_ascii_lowercase()))
+    Some(ConflictRevision::from_fingerprint(
+        fingerprint.to_ascii_lowercase(),
+    ))
 }
 
 pub(super) fn parse_path(bytes: Option<Value>, path: Option<Value>) -> Option<PathBuf> {
@@ -118,19 +120,24 @@ impl ResolutionBuffer {
     }
 
     pub fn recovery_drafts(&self) -> impl Iterator<Item = RecoveryDraft<'_>> {
-        self.recoveries.iter().filter(|entry| has_draft(&entry.file)).map(|entry| RecoveryDraft {
-            path: &entry.path,
-            identity: entry.file.identity.as_ref(),
-            result: entry.file.result.as_deref(),
-            raw_result: entry.file.raw_result,
-        })
+        self.recoveries
+            .iter()
+            .filter(|entry| has_draft(&entry.file))
+            .map(|entry| RecoveryDraft {
+                path: &entry.path,
+                identity: entry.file.identity.as_ref(),
+                result: entry.file.result.as_deref(),
+                raw_result: entry.file.raw_result,
+            })
     }
 
     pub(super) fn preserve_recovery(&mut self, path: PathBuf, file: FileResolution) {
         if !has_draft_state(&file) {
             return;
         }
-        if let Some(index) = self.recoveries.iter()
+        if let Some(index) = self
+            .recoveries
+            .iter()
             .position(|entry| entry.path == path && same_draft(&entry.file, &file))
         {
             self.recoveries.remove(index);
@@ -144,10 +151,19 @@ impl ResolutionBuffer {
     /// live draft; even an undone-to-None state supersedes an older disk draft.
     /// All other bodies remain in the same document's recovery collection.
     pub fn retain_drafts(&mut self, previous: ResolutionBuffer) {
-        let ResolutionBuffer { files, mut hunks, mut recoveries, .. } = previous;
+        let ResolutionBuffer {
+            files,
+            mut hunks,
+            mut recoveries,
+            ..
+        } = previous;
         let mut matched = std::collections::BTreeSet::new();
         for (path, mut saved) in files {
-            if let Some(current) = self.files.get_mut(&path).filter(|current| compatible(current, &saved)) {
+            if let Some(current) = self
+                .files
+                .get_mut(&path)
+                .filter(|current| compatible(current, &saved))
+            {
                 if has_draft_state(&saved) {
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
@@ -172,9 +188,9 @@ impl ResolutionBuffer {
         for entry in recoveries.into_iter().rev() {
             // A current file record wins over an older recovery, including null.
             if !matched.contains(&entry.path) {
-                if let Some(current) = self.files.get_mut(&entry.path)
-                    .filter(|current| has_draft_state(&entry.file) && compatible(current, &entry.file))
-                {
+                if let Some(current) = self.files.get_mut(&entry.path).filter(|current| {
+                    has_draft_state(&entry.file) && compatible(current, &entry.file)
+                }) {
                     let mut saved = entry.file;
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
@@ -189,7 +205,11 @@ impl ResolutionBuffer {
                 }
             }
             // Do not retain a redundant historical copy of the adopted draft.
-            if !self.files.get(&entry.path).is_some_and(|current| same_draft(current, &entry.file)) {
+            if !self
+                .files
+                .get(&entry.path)
+                .is_some_and(|current| same_draft(current, &entry.file))
+            {
                 preserved.push(entry);
             }
         }
@@ -217,23 +237,31 @@ impl ResolutionBuffer {
             }
         }
         if let Some(disk) = &disk {
-            for (path, file, preserved) in disk.recoveries.iter()
+            for (path, file, preserved) in disk
+                .recoveries
+                .iter()
                 .map(|entry| (entry.path.as_path(), &entry.file, true))
-                .chain(disk.files.iter().map(|(path, file)| (path.as_path(), file, false)))
+                .chain(
+                    disk.files
+                        .iter()
+                        .map(|(path, file)| (path.as_path(), file, false)),
+                )
             {
                 if !has_draft_state(file) {
                     continue;
                 }
                 let superseded = self.files.get(path).is_some_and(|current| {
                     same_draft(current, file)
-                        || (!preserved && has_draft_state(current)
+                        || (!preserved
+                            && has_draft_state(current)
                             && (compatible(current, file)
                                 || (current.live_editing_origin
                                     && current.editing_origin.is_some()
                                     && current.editing_origin == file.editing_origin)))
                 });
                 if !superseded {
-                    if let Some(index) = recoveries.iter()
+                    if let Some(index) = recoveries
+                        .iter()
                         .position(|(old_path, old)| *old_path == path && same_draft(old, file))
                     {
                         recoveries.remove(index);
@@ -244,7 +272,8 @@ impl ResolutionBuffer {
         }
         // Only edits not yet saved may supersede the durable history's order.
         for (path, file) in pending {
-            if let Some(index) = recoveries.iter()
+            if let Some(index) = recoveries
+                .iter()
                 .position(|(old_path, old)| *old_path == path && same_draft(old, file))
             {
                 recoveries.remove(index);
@@ -263,7 +292,10 @@ impl ResolutionBuffer {
             repo: self.repo_path.to_string_lossy(),
             updated: now_unix(),
             files: &self.files,
-            recoveries: recoveries.into_iter().map(|(path, file)| file_record(path, file)).collect(),
+            recoveries: recoveries
+                .into_iter()
+                .map(|(path, file)| file_record(path, file))
+                .collect(),
         })
     }
 }

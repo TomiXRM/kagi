@@ -165,8 +165,12 @@ impl OplogPanelMsg {
             (Lang::Ja, DetailFile) => "ファイル",
             (Lang::En, DetailReference) => "Reference",
             (Lang::Ja, DetailReference) => "参照",
-            (Lang::En, PreservedDraftSnapshot) => "Preserved conflict drafts — read-only, not applied to the current conflict",
-            (Lang::Ja, PreservedDraftSnapshot) => "保全した競合下書き（閲覧専用・現在の競合には未適用）",
+            (Lang::En, PreservedDraftSnapshot) => {
+                "Preserved conflict drafts — read-only, not applied to the current conflict"
+            }
+            (Lang::Ja, PreservedDraftSnapshot) => {
+                "保全した競合下書き（閲覧専用・現在の競合には未適用）"
+            }
             (Lang::En, PreservedDraftIdentity) => "Draft context",
             (Lang::Ja, PreservedDraftIdentity) => "草稿の文脈",
             (Lang::En, PreservedDraftUnbound) => "Legacy or unknown — inspection only",
@@ -177,8 +181,12 @@ impl OplogPanelMsg {
             (Lang::Ja, PreservedDraftBack) => "操作履歴に戻る",
             (Lang::En, PreservedDraftCopy) => "Copy preserved drafts",
             (Lang::Ja, PreservedDraftCopy) => "保全した下書きをコピー",
-            (Lang::En, PreservedDraftOwnerUnavailable) => "Open a local repository to inspect preserved drafts",
-            (Lang::Ja, PreservedDraftOwnerUnavailable) => "保全した下書きを見るにはローカルリポジトリを開いてください",
+            (Lang::En, PreservedDraftOwnerUnavailable) => {
+                "Open a local repository to inspect preserved drafts"
+            }
+            (Lang::Ja, PreservedDraftOwnerUnavailable) => {
+                "保全した下書きを見るにはローカルリポジトリを開いてください"
+            }
             (Lang::En, PreservedDraftLoading) => "Reading preserved drafts…",
             (Lang::Ja, PreservedDraftLoading) => "保全した下書きを読み込み中…",
             (Lang::En, PreservedDraftEmpty) => "No separate preserved conflict drafts",

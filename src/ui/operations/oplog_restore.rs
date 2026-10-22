@@ -59,8 +59,10 @@ impl KagiApp {
         let Some(panel) = self.op_log.as_ref() else {
             return;
         };
-        let session = if !self.home_in_front() && self.remote_view.is_none()
-            && self.repo_path.is_some() && self.ui().repo_session.is_some()
+        let session = if !self.home_in_front()
+            && self.remote_view.is_none()
+            && self.repo_path.is_some()
+            && self.ui().repo_session.is_some()
         {
             self.active_session()
         } else {
@@ -69,7 +71,10 @@ impl KagiApp {
         let visit = session.and_then(|session| self.app_sessions.visit(session));
         let path = session.and(self.repo_path.as_deref());
         let worktree = session.and_then(|session| self.app_sessions.worktree_of(session));
-        if panel.read(cx).preserved_draft_owner_matches(session, visit, path, worktree) {
+        if panel
+            .read(cx)
+            .preserved_draft_owner_matches(session, visit, path, worktree)
+        {
             return;
         }
         let owner = session.and_then(|session| self.app_sessions.attachment(session));
@@ -78,7 +83,8 @@ impl KagiApp {
 
     fn preserved_draft_owner_current(&self, owner: &crate::app::Attachment) -> bool {
         if !self.oplog_restore_owner_matches(&owner.path)
-            || self.active_session() != Some(owner.session) || owner.worktree.is_none()
+            || self.active_session() != Some(owner.session)
+            || owner.worktree.is_none()
         {
             return false;
         }
@@ -86,7 +92,11 @@ impl KagiApp {
             && self.app_sessions.worktree_of(owner.session) == owner.worktree.as_ref()
     }
 
-    fn open_preserved_conflict_drafts(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+    fn open_preserved_conflict_drafts(
+        &mut self,
+        owner: crate::app::Attachment,
+        cx: &mut Context<Self>,
+    ) {
         if !self.preserved_draft_owner_current(&owner) {
             return;
         }
@@ -109,13 +119,18 @@ impl KagiApp {
                 if !app.preserved_draft_owner_current(&owner) {
                     return;
                 }
-                if let Some(panel) = app.op_log.as_ref().filter(|panel| panel.entity_id() == panel_id) {
+                if let Some(panel) = app
+                    .op_log
+                    .as_ref()
+                    .filter(|panel| panel.entity_id() == panel_id)
+                {
                     panel.update(cx, |panel, cx| {
                         panel.finish_preserved_conflict_drafts(&owner, generation, result, cx);
                     });
                 }
             });
-        }).detach();
+        })
+        .detach();
     }
 
     fn copy_preserved_conflict_drafts(
@@ -128,7 +143,9 @@ impl KagiApp {
             return;
         }
         let text = self.op_log.as_ref().and_then(|panel| {
-            panel.read(cx).preserved_conflict_draft_copy(owner, generation)
+            panel
+                .read(cx)
+                .preserved_conflict_draft_copy(owner, generation)
         });
         if let Some(text) = text {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));

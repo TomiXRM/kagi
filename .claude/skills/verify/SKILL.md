@@ -1384,6 +1384,26 @@ The current suite covers:
   scanned zero. The counter was removed after acceptance; the behavioral
   scenario remains. Pair with `KAGI_GUI_E2E_ONLY=conflict_` for existing safety
   and ownership coverage; Save/Continue still perform fresh validation.
+- conflict revision/draft authority (#1721):
+  `KAGI_GUI_E2E_ONLY='conflict_draft_revision_,conflict_draft_inspection_,terminal_focus_exit,terminal_hide_focus,slow_write_conflict_continue,conflict_merge_failure_contract'`
+  with KEEP_GOING covers fourteen native scenarios. Real two-conflict rebase
+  consumers distinguish recorded and append-failed Continue, unchanged revision,
+  unrelated index changes, saved stale/legacy drafts and repeated accepted reads.
+  They enter a genuinely new Result, click Save, inspect its actual stage-0 blob,
+  then Continue on the same long-lived Backend to verify the exact two replayed
+  commit bodies. Do not reopen the Backend to hide an index-cache defect.
+  Inspection cases reach the explicit preserved-draft action with zero receipts
+  and after a real unrecorded restart; frozen attachment/generation and a replaced
+  gitdir cannot deliver or copy another owner's body. Dedicated draft Copy and
+  ordinary receipt Copy remain separate across Back. The Terminal neighbors and
+  real merge-Continue consumers cover the shared bottom-panel/staging routes.
+  Pair with `cargo test -p kagi-git --test conflicts_test draft_` for exact known
+  identity, unknown/legacy preservation, raw paths/modes, failed autosave,
+  undo-to-null and two-live-buffer recency. `cargo test -p kagi-git --test
+  conflicts_test continue_index` checks separately saved resolutions on a cached
+  Backend, session-external unmerged paths, and malformed/directory index failures
+  through planning and both public execute/stage boundaries. These are native
+  Tier A/backend checks, not plain-app Tier B evidence.
 - repository-health proposal (`KAGI_GUI_E2E_ONLY=repo_health_proposal`,
   `tests/recovery/repo_health.rs`): #358 / ADR-0205. Analyze's Health axis
   reads a fixture without a commit-graph and suggests writing one; asking
@@ -3450,6 +3470,38 @@ PID=$!
 # helpers), which pidclick refuses or the coordinates fall outside of. Set its ID:
 WID=12345 # Replace with the selected window ID from the listing.
 ```
+
+For #1721, use independent EN/JA two-conflict repositories and a preserved
+default-feature binary; record its source SHA, SHA-256 and actual `features=[]`
+fingerprint separately from the GUI runner. Type the first Result and actually
+confirm Continue. At the second conflict, verify physical stage 1/2/3 and fresh
+markers, one unresolved file and unavailable Continue. Keep the bottom panel open,
+exercise Terminal input and close/reopen it, and inspect Activity without overlap.
+While the Result has focus and a selection, use real Cmd-R for repeated accepted
+reads, then replace the selection without refocusing and check Undo/Redo. Clicking
+the toolbar Refresh legitimately moves focus and is not a retained-input-focus
+oracle. Type a distinct second Result, actually Save, verify its exact stage-0
+blob, and Continue without restarting/reopening the Backend. Completion requires
+the exact first replay as parent, the two intended commit bodies, clean index/WT,
+the reattached branch and no active rebase directory; a leftover `REBASE_HEAD`
+pseudo-ref alone is not the completion oracle.
+
+Run the recording-failure case separately by holding only that private profile's
+append lock during the first confirmed Continue. Capture the required stopped /
+unrecorded acknowledgment, release the lock, dismiss it, quit and really restart.
+Before restart a transient in-memory Partial row may still exist: do not call it
+an empty history. After restart, show the genuine zero-row Operation Log and
+recover the preserved first body through its independent read-only action and
+dedicated Copy, without applying it to the second conflict. Verify Git is unchanged
+until explicit new input / Save / Continue, then finish the correct two commits.
+Also compare valid identity-unknown legacy documents: they remain inspectable and
+copyable in EN/JA but must not resolve the live conflict. Keep ordinary receipt
+Copy unchanged before and after Back. Clipboard probes keep all original types
+only in memory and restore them conditionally after recognizing their own copied
+fixture payload; never persist unrelated clipboard data or erase a concurrent copy.
+Capture only each launched PID's listed window with `screencapture -l<id>` and
+close every owned application after the case.
+
 
 Three launch pitfalls, all seen in practice. Launch Kagi from an unsandboxed shell:
 started from a sandboxed agent shell the process runs and logs normally, but

@@ -30,21 +30,27 @@ impl ConflictView {
             .as_ref()
             .is_none_or(|path| self.editing.as_ref() == Some(path));
         let next_editing = editing_path.or_else(|| {
-            self.editing.take().filter(|path| {
-                mode.session.files.iter().any(|file| file.path == *path)
-            })
+            self.editing
+                .take()
+                .filter(|path| mode.session.files.iter().any(|file| file.path == *path))
         });
         let same_context = same_path
             && next_editing.as_deref().is_some_and(|path| {
-                previous.as_ref().is_some_and(|old| same_file_context(old, &mode, path))
+                previous
+                    .as_ref()
+                    .is_some_and(|old| same_file_context(old, &mode, path))
             });
         let retain_input = same_context
             && self.editor_inputs.as_ref().is_some_and(|inputs| {
                 next_editing.as_ref() == Some(&inputs.path)
-                    && previous.as_ref().is_some_and(|old| old.revision == inputs.revision)
+                    && previous
+                        .as_ref()
+                        .is_some_and(|old| old.revision == inputs.revision)
             });
         self.editing_before_text.retain(|path, _| {
-            previous.as_ref().is_some_and(|old| same_file_context(old, &mode, path))
+            previous
+                .as_ref()
+                .is_some_and(|old| same_file_context(old, &mode, path))
         });
         if let Some(previous) = previous {
             mode.buffer.retain_drafts(previous.buffer);
@@ -102,7 +108,9 @@ impl ConflictView {
             return;
         };
         let result_text = if self.result_editing {
-            mode.buffer.resolved_text(path).unwrap_or_else(|| model.assembled_text())
+            mode.buffer
+                .resolved_text(path)
+                .unwrap_or_else(|| model.assembled_text())
         } else {
             model.assembled_text()
         };
@@ -112,13 +120,17 @@ impl ConflictView {
         }) {
             return;
         }
-        if self.editor_inputs.as_ref().is_none_or(|inputs| {
-            inputs.path != path || inputs.revision != mode.revision
-        }) {
+        if self
+            .editor_inputs
+            .as_ref()
+            .is_none_or(|inputs| inputs.path != path || inputs.revision != mode.revision)
+        {
             self.editor_inputs = Some(new_editor_inputs(path, &mode.revision, window, cx));
         }
         if let Some(inputs) = self.editor_inputs.as_mut() {
-            inputs.result.update(cx, |state, cx| state.set_value(result_text, window, cx));
+            inputs
+                .result
+                .update(cx, |state, cx| state.set_value(result_text, window, cx));
             inputs.content_sig = sig;
         }
     }
@@ -137,9 +149,14 @@ fn pull_owned_editor(
         inputs.path == path && inputs.revision == mode.revision && inputs.content_sig != 0
     })?;
     let model = mode.buffer.hunk_model(path)?;
-    let result_text = mode.buffer.resolved_text(path).unwrap_or_else(|| model.assembled_text());
+    let result_text = mode
+        .buffer
+        .resolved_text(path)
+        .unwrap_or_else(|| model.assembled_text());
     let edited = inputs.result.read(cx).value();
-    let changed = !edited.split_terminator('\n').eq(result_text.split_terminator('\n'));
+    let changed = !edited
+        .split_terminator('\n')
+        .eq(result_text.split_terminator('\n'));
     if !changed {
         return Some(false);
     }
@@ -179,9 +196,10 @@ fn new_editor_inputs(
 }
 
 fn same_file_context(previous: &ConflictMode, next: &ConflictMode, path: &Path) -> bool {
-    previous.buffer.file_identity(path).is_some_and(|identity| {
-        next.buffer.file_identity(path) == Some(identity)
-    })
+    previous
+        .buffer
+        .file_identity(path)
+        .is_some_and(|identity| next.buffer.file_identity(path) == Some(identity))
 }
 
 impl ConflictMode {

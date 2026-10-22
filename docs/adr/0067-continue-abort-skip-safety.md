@@ -8,18 +8,34 @@
 Conflict Mode 中の Continue / Abort / Skip / Mark resolved / Save は **直接実行せず Plan 経由**
 (GitOperationPlan または ConflictOperationPlan → confirm → preflight → execute → verify → oplog)。
 
-### Continue 前チェックリスト(全て満たすまで Continue disabled)
+### Continue 前チェックリスト
+
+UI は現在の buffer から unresolved / marker 等を投影して Continue を表示する。
+確認の計画と実行は repository-bound な正規 checklist を再評価し、表示 cache を認可にしない。
+
 - unresolved files count == 0
 - conflict marker 残存なし(ADR-0066)
-- index が resolved 状態(unmerged entry なし)
+- session が扱わない unmerged index entry なし。session 内の明示解決は Continue で stage できる
 - binary conflict 残なし
 - required file が削除されていない
 - commit message 非空(merge commit を作る場合)
 - checklist(ADR-0043)blocker なし
 
 ### Continue の実行
-- merge: 解決を index へ → marker 再検査 → merge commit 作成(message 経由)
-- rebase/cherry-pick/revert: sequencer continue(次の step へ)。W26 の `plan_conflict_continue` を拡張
+- merge: 解決を index へ準備し、既存 Commit Panel で message と merge commit を確認する
+- rebase/cherry-pick/revert: 解決を stage して sequencer continue(次の step へ)
+
+### canonical index と prewrite の境界（#1721）
+
+- `continue_blockers(repo, session, buffer) -> Result<Vec<ContinueBlocker>, GitError>` を
+  plan / route / execute で共有する。長寿命 Backend が別 handle の Save 前の index を
+  保持し得るため、canonical read は `index.read(true)` で必ず disk から更新する。
+- index の取得・再読込・conflict iterator の生成・各 entry の読取失敗を伝播する。
+  失敗を空 checklist、古い cache、marker-only 判定へ置き換えない。
+- 共有 `stage_conflict_resolution` が WT/index 準備の直前にも同じ checklist を再確認する。
+  sequencer の公開 execute と merge Commit Panel 向け準備のどちらもこの境界を通り、
+  読取不能または session 外の unmerged path があれば書込前に拒否する。
+  Save 済みだから通す例外や、通常の coverage 判定の緩和はしない。
 
 ### Abort(常に可能 = 安全弁)
 - 確認ダイアログを出す。**保存済み resolution が失われる可能性**を明示

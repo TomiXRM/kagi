@@ -27,7 +27,10 @@ impl IsolatedLog {
         let directory = tempfile::tempdir().unwrap();
         let previous = std::env::var_os("KAGI_LOG_DIR");
         std::env::set_var("KAGI_LOG_DIR", directory.path());
-        Self { previous, _directory: directory }
+        Self {
+            previous,
+            _directory: directory,
+        }
     }
 }
 
@@ -45,11 +48,15 @@ fn paint(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindow
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
-    }).unwrap();
+    })
+    .unwrap();
     cx.run_until_parked();
 }
 
-fn panel(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Entity<kagi::ui::oplog_panel::OpLogPanel> {
+fn panel(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+) -> Entity<kagi::ui::oplog_panel::OpLogPanel> {
     cx.read(|cx| app.read(cx).op_log.clone().unwrap())
 }
 
@@ -68,13 +75,22 @@ fn show_log(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     cx.simulate_keystrokes(window, "cmd-j");
     paint(cx, app, window);
     assert!(cx.read(|cx| app.read(cx).bottom_panel_open));
-    assert!(e2e::control_bounds(window.window_id(), "bottom-panel").is_some(),
-        "the window-wide panel is actually laid out while Conflict Mode is active");
+    assert!(
+        e2e::control_bounds(window.window_id(), "bottom-panel").is_some(),
+        "the window-wide panel is actually laid out while Conflict Mode is active"
+    );
 }
 
 fn draft_text(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<String> {
-    cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx)
-        .preserved_conflict_draft_text().map(str::to_owned))
+    cx.read(|cx| {
+        app.read(cx)
+            .op_log
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .preserved_conflict_draft_text()
+            .map(str::to_owned)
+    })
 }
 
 fn open_drafts(
@@ -90,12 +106,18 @@ fn open_drafts(
         if draft_text(cx, app).is_some() {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "explicit preserved-draft inspection completes");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "explicit preserved-draft inspection completes"
+        );
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     paint(cx, app, window);
     let text = draft_text(cx, app).expect("the explicit draft surface loaded");
-    assert!(text.contains(expected), "preserved body is inspectable: {text}");
+    assert!(
+        text.contains(expected),
+        "preserved body is inspectable: {text}"
+    );
     text
 }
 
@@ -109,8 +131,14 @@ fn copy_drafts(
     cx.write_to_clipboard(gpui::ClipboardItem::new_string("before-draft-copy".into()));
     click_control(cx, window, "oplog-preserved-drafts-copy");
     cx.run_until_parked();
-    let copied = cx.read_from_clipboard().and_then(|item| item.text()).unwrap();
-    assert_eq!(copied, text, "only explicit draft Copy copies the preservation snapshot");
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert_eq!(
+        copied, text,
+        "only explicit draft Copy copies the preservation snapshot"
+    );
     assert_eq!(draft_text(cx, app), before);
 }
 
@@ -127,16 +155,21 @@ fn copy_receipt(
     repo: &Path,
 ) -> Option<String> {
     let panel = panel(cx, app);
-    let row = cx.read(|cx| panel.read(cx).entries().iter().position(|entry| {
-        entry.op == "rebase-continue"
-            && kagi::ui::oplog_panel::entry_worktree(entry) == repo.to_string_lossy()
-    }));
-    let Some(row) = row else { return None; };
+    let row = cx.read(|cx| {
+        panel.read(cx).entries().iter().position(|entry| {
+            entry.op == "rebase-continue"
+                && kagi::ui::oplog_panel::entry_worktree(entry) == repo.to_string_lossy()
+        })
+    });
+    let Some(row) = row else {
+        return None;
+    };
     let expected = cx.read(|cx| entry_clipboard_text(&panel.read(cx).entries()[row]));
     cx.read(|cx| panel.read(cx).scroll_handle().scroll_to_reveal_item(row));
     paint(cx, app, window);
     if cx.read(|cx| panel.read(cx).expanded()) != Some(row) {
-        let summary = cx.read(|cx| panel.read(cx).scroll_handle().bounds_for_item(row))
+        let summary = cx
+            .read(|cx| panel.read(cx).scroll_handle().bounds_for_item(row))
             .expect("the real receipt summary is laid out");
         let position = summary.origin + gpui::point(gpui::px(40.), gpui::px(8.));
         cx.simulate_mouse_move(window, position, None, gpui::Modifiers::none());
@@ -147,13 +180,21 @@ fn copy_receipt(
     assert_eq!(cx.read(|cx| panel.read(cx).expanded()), Some(row));
     let copy = e2e::control_bounds(window.window_id(), &format!("oplog-copy-{row}"))
         .expect("the ordinary receipt Copy control is laid out");
-    cx.write_to_clipboard(gpui::ClipboardItem::new_string("before-receipt-copy".into()));
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "before-receipt-copy".into(),
+    ));
     cx.simulate_mouse_move(window, copy.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
     cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
     cx.run_until_parked();
-    let copied = cx.read_from_clipboard().and_then(|item| item.text()).unwrap();
-    assert_eq!(copied, expected, "ordinary receipt Copy keeps its exact existing contract");
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert_eq!(
+        copied, expected,
+        "ordinary receipt Copy keeps its exact existing contract"
+    );
     assert!(!copied.contains(FIRST));
     assert!(!copied.contains(OTHER));
     Some(copied)
@@ -169,24 +210,49 @@ pub(super) fn inspect_saved_recovery(
     let before = RepositoryState::read(repo);
     let presentation = cx.read(|cx| {
         let state = app.read(cx);
-        (state.bottom_panel_open, state.bottom_tab, state.bottom_panel_height)
+        (
+            state.bottom_panel_open,
+            state.bottom_tab,
+            state.bottom_panel_height,
+        )
     });
     show_log(cx, app, window);
     let receipt = copy_receipt(cx, app, window, repo);
     let selected = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded());
-    let scroll = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx)
-        .scroll_handle().logical_scroll_top());
+    let scroll = cx.read(|cx| {
+        app.read(cx)
+            .op_log
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .scroll_handle()
+            .logical_scroll_top()
+    });
     let text = open_drafts(cx, app, window, expected);
     copy_drafts(cx, app, window, &text);
     back(cx, app, window);
-    assert_eq!(cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded()), selected,
-        "Back preserves the ordinary receipt selection");
-    let after_scroll = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx)
-        .scroll_handle().logical_scroll_top());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded()),
+        selected,
+        "Back preserves the ordinary receipt selection"
+    );
+    let after_scroll = cx.read(|cx| {
+        app.read(cx)
+            .op_log
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .scroll_handle()
+            .logical_scroll_top()
+    });
     assert_eq!(after_scroll.item_ix, scroll.item_ix);
     assert_eq!(after_scroll.offset_in_item, scroll.offset_in_item);
     assert_eq!(copy_receipt(cx, app, window, repo), receipt);
-    assert_eq!(before, RepositoryState::read(repo), "inspection and both Copy actions are read-only");
+    assert_eq!(
+        before,
+        RepositoryState::read(repo),
+        "inspection and both Copy actions are read-only"
+    );
     app.update(cx, |app, cx| {
         app.bottom_panel_open = presentation.0;
         app.bottom_tab = presentation.1;
@@ -202,7 +268,8 @@ fn legacy_document(repo: &Path, text: &str) -> PathBuf {
     let mut buffer = ResolutionBuffer::from_repo(&repository).unwrap();
     buffer.set_manual_text(Path::new(FILE), text).unwrap();
     let path = buffer.autosave().unwrap();
-    let mut document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     for file in document["files"].as_array_mut().unwrap() {
         file.as_object_mut().unwrap().remove("identity");
     }
@@ -211,8 +278,14 @@ fn legacy_document(repo: &Path, text: &str) -> PathBuf {
 }
 
 fn assert_empty_log(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
-    assert_eq!(cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).len()), 0);
-    assert!(kagi_git::oplog::read_oplog_tail(100).is_empty(), "there is no fabricated durable receipt");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).len()),
+        0
+    );
+    assert!(
+        kagi_git::oplog::read_oplog_tail(100).is_empty(),
+        "there is no fabricated durable receipt"
+    );
 }
 
 pub fn scenario_conflict_draft_inspection_empty_legacy(cx: &mut VisualTestAppContext) {
@@ -234,8 +307,20 @@ pub fn scenario_conflict_draft_inspection_empty_legacy(cx: &mut VisualTestAppCon
 }
 
 fn save_live_buffer(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
-    cx.read(|cx| app.read(cx).ui().conflict.as_ref().unwrap().read(cx)
-        .mode.as_ref().unwrap().buffer.autosave().unwrap());
+    cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .conflict
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .autosave()
+            .unwrap()
+    });
 }
 
 pub fn scenario_conflict_draft_inspection_unrecorded_restart(cx: &mut VisualTestAppContext) {
@@ -260,7 +345,11 @@ pub fn scenario_conflict_draft_inspection_unrecorded_restart(cx: &mut VisualTest
     }
 }
 
-fn assert_scope_cleared(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+fn assert_scope_cleared(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     e2e::clear_control_bounds(window.window_id(), "oplog-preserved-drafts-copy");
     paint(cx, app, window);
     assert_eq!(draft_text(cx, app), None);
@@ -285,7 +374,9 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     let selected = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded());
     // Change Attachment without waiting for A's requested snapshot.
     click_control(cx, window, "oplog-preserved-drafts-open");
-    app.update(cx, |app, cx| assert!(app.open_repository(repo_b.clone(), cx)));
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx))
+    });
     crate::busy_dismiss::ready(cx, &app);
     assert_scope_cleared(cx, &app, window);
     let text_b = open_drafts(cx, &app, window, OTHER);
@@ -298,7 +389,10 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     assert!(!text_a.contains(OTHER));
     copy_drafts(cx, &app, window, &text_a);
     back(cx, &app, window);
-    assert_eq!(cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded()), selected);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).expanded()),
+        selected
+    );
     assert_eq!(copy_receipt(cx, &app, window, &repo_a), Some(receipt));
     assert_unresolved(cx, &app);
     assert_eq!(before_a, RepositoryState::read(&repo_a));
@@ -309,15 +403,20 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
 fn attachment(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> kagi::app::Attachment {
     cx.read(|cx| {
         let app = app.read(cx);
-        app.app_sessions.attachment(app.active_session().unwrap()).unwrap()
+        app.app_sessions
+            .attachment(app.active_session().unwrap())
+            .unwrap()
     })
 }
 
 fn git_files(directory: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
-    git_fixture::worktree_files(directory, git_fixture::WorktreeFilesOptions {
-        skip_nested_git: false,
-        follow_directory_symlinks: false,
-    })
+    git_fixture::worktree_files(
+        directory,
+        git_fixture::WorktreeFilesOptions {
+            skip_nested_git: false,
+            follow_directory_symlinks: false,
+        },
+    )
 }
 
 /// Only test-owned temporary repositories are redirected; restore A even on panic.
@@ -333,8 +432,16 @@ impl GitdirSwap {
         let locator = repo_a.join(".git");
         let saved = directory.path().join("original.git");
         std::fs::rename(&locator, &saved).unwrap();
-        let swap = Self { locator, saved, _directory: directory };
-        std::fs::write(&swap.locator, format!("gitdir: {}\n", repo_b.join(".git").display())).unwrap();
+        let swap = Self {
+            locator,
+            saved,
+            _directory: directory,
+        };
+        std::fs::write(
+            &swap.locator,
+            format!("gitdir: {}\n", repo_b.join(".git").display()),
+        )
+        .unwrap();
         swap
     }
 }
@@ -346,32 +453,41 @@ impl Drop for GitdirSwap {
     }
 }
 
-fn inspect_refused(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-) {
+fn inspect_refused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     click_control(cx, window, "oplog-preserved-drafts-open");
     let panel = panel(cx, app);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         cx.run_until_parked();
-        assert_eq!(draft_text(cx, app), None, "the substituted repository body is never admitted");
+        assert_eq!(
+            draft_text(cx, app),
+            None,
+            "the substituted repository body is never admitted"
+        );
         if cx.read(|cx| panel.read(cx).preserved_conflict_draft_unavailable()) {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "inspection settles as Unavailable, not Loading");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "inspection settles as Unavailable, not Loading"
+        );
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     e2e::clear_control_bounds(window.window_id(), "oplog-preserved-drafts-copy");
     paint(cx, app, window);
     assert!(e2e::control_bounds(window.window_id(), "oplog-preserved-drafts-copy").is_some());
-    cx.write_to_clipboard(gpui::ClipboardItem::new_string("identity-refusal-sentinel".into()));
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "identity-refusal-sentinel".into(),
+    ));
     // Exercise the rendered disabled Button, not the root's Copy method.
     click_control(cx, window, "oplog-preserved-drafts-copy");
     cx.run_until_parked();
-    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(),
-        Some("identity-refusal-sentinel"));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("identity-refusal-sentinel")
+    );
     assert_eq!(draft_text(cx, app), None);
     assert!(cx.read(|cx| panel.read(cx).preserved_conflict_draft_unavailable()));
 }
@@ -384,7 +500,10 @@ pub fn scenario_conflict_draft_inspection_gitdir_replaced(cx: &mut VisualTestApp
     let repo_b = second.path().canonicalize().unwrap();
     // B's actual gitdir owns B's worktree and therefore B's autosave key,
     // even when reached through the replacement gitfile at A's old locator.
-    git_fixture::git(&repo_b, &["config", "core.worktree", repo_b.to_str().unwrap()]);
+    git_fixture::git(
+        &repo_b,
+        &["config", "core.worktree", repo_b.to_str().unwrap()],
+    );
     let draft_a = legacy_document(&repo_a, FIRST);
     let draft_b = legacy_document(&repo_b, OTHER);
     let (app, window) = mount(cx, &repo_a);
@@ -392,7 +511,15 @@ pub fn scenario_conflict_draft_inspection_gitdir_replaced(cx: &mut VisualTestApp
     show_log(cx, &app, window);
     let owner = attachment(cx, &app);
     assert_eq!(owner.path, repo_a);
-    assert_eq!(owner.worktree, Some(kagi_git::Backend::open(&repo_a).unwrap().write_worktree_id().unwrap()));
+    assert_eq!(
+        owner.worktree,
+        Some(
+            kagi_git::Backend::open(&repo_a)
+                .unwrap()
+                .write_worktree_id()
+                .unwrap()
+        )
+    );
     let valid = open_drafts(cx, &app, window, FIRST);
     assert!(!valid.contains(OTHER));
     copy_drafts(cx, &app, window, &valid);
@@ -409,29 +536,54 @@ pub fn scenario_conflict_draft_inspection_gitdir_replaced(cx: &mut VisualTestApp
     let swap = GitdirSwap::new(&repo_a, &repo_b);
     let pointer = std::fs::read(&swap.locator).unwrap();
     let actual = kagi_git::Backend::open(&owner.path).unwrap();
-    let identity_b = kagi_git::Backend::open(&repo_b).unwrap().write_worktree_id().unwrap();
+    let identity_b = kagi_git::Backend::open(&repo_b)
+        .unwrap()
+        .write_worktree_id()
+        .unwrap();
     assert_eq!(actual.write_worktree_id().unwrap(), identity_b);
     assert_ne!(owner.worktree.as_ref(), Some(&identity_b));
     // Without the load-time identity gate this exact backend would expose B.
     let buffer = actual.resolution_buffer_from_repo_with_autosave().unwrap();
-    let bodies: Vec<_> = buffer.recovery_drafts()
-        .filter_map(|draft| draft.result.map(kagi_git::resolution::lines_to_text)).collect();
+    let bodies: Vec<_> = buffer
+        .recovery_drafts()
+        .filter_map(|draft| draft.result.map(kagi_git::resolution::lines_to_text))
+        .collect();
     assert_eq!(bodies, vec![OTHER.to_string()]);
     drop(buffer);
     drop(actual);
-    assert_eq!(attachment(cx, &app), owner, "the root's frozen owner is deliberately untouched");
+    assert_eq!(
+        attachment(cx, &app),
+        owner,
+        "the root's frozen owner is deliberately untouched"
+    );
 
     inspect_refused(cx, &app, window);
-    assert_eq!(attachment(cx, &app), owner, "refusal does not silently reattach A to B");
+    assert_eq!(
+        attachment(cx, &app),
+        owner,
+        "refusal does not silently reattach A to B"
+    );
     unmount(cx, app, window);
     assert_eq!(std::fs::read(&swap.locator).unwrap(), pointer);
-    assert_eq!(git_files(&swap.saved), git_a, "A's original admin bytes remain intact");
-    assert_eq!(git_files(&repo_b.join(".git")), git_b, "B's admin bytes remain intact");
+    assert_eq!(
+        git_files(&swap.saved),
+        git_a,
+        "A's original admin bytes remain intact"
+    );
+    assert_eq!(
+        git_files(&repo_b.join(".git")),
+        git_b,
+        "B's admin bytes remain intact"
+    );
     assert_eq!(RepositoryState::read(&repo_b), before_b);
     drop(swap);
     assert_eq!(git_files(&repo_a.join(".git")), git_a);
     assert_eq!(RepositoryState::read(&repo_a), before_a);
     for (path, bytes) in saved_drafts {
-        assert_eq!(std::fs::read(path).unwrap(), bytes, "preserved draft bytes remain unchanged");
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            bytes,
+            "preserved draft bytes remain unchanged"
+        );
     }
 }

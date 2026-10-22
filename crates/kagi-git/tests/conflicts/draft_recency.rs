@@ -1,11 +1,13 @@
 //! #1721: saved historical live drafts cannot outrank a later editor's Result.
-use super::*;
 use super::draft_revision::write_index_conflict;
+use super::*;
 use kagi_git::resolution::lines_to_text;
 
 #[test]
 fn saved_live_recovery_cannot_outrank_later_fork_body() {
-    if !test_support::run_isolated() { return; }
+    if !test_support::run_isolated() {
+        return;
+    }
     for save_detour_before_fork in [false, true] {
         let tmp = merge_conflict_repo();
         let repo = Repository::open(tmp.path()).unwrap();
@@ -35,8 +37,17 @@ fn saved_live_recovery_cannot_outrank_later_fork_body() {
             // This buffer did not edit Y again. Saving B must not renew Y's recency.
             other_context.autosave().unwrap();
             let restored = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
-            assert_eq!(restored.resolved_text(path).as_deref(), Some("Z later fork result\n"));
-            assert_eq!(restored.recovery_drafts().filter_map(|draft| draft.result.map(lines_to_text)).collect::<Vec<_>>(), ["Y previously saved\n"]);
+            assert_eq!(
+                restored.resolved_text(path).as_deref(),
+                Some("Z later fork result\n")
+            );
+            assert_eq!(
+                restored
+                    .recovery_drafts()
+                    .filter_map(|draft| draft.result.map(lines_to_text))
+                    .collect::<Vec<_>>(),
+                ["Y previously saved\n"]
+            );
         }
     }
 }

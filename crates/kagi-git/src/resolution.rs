@@ -13,8 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{FileMode, IndexEntry, MergeFileInput, MergeFileOptions, Repository};
 
 use super::GitError;
-use serde_json::Value;
 use kagi_domain::conflict_family::ConflictRevision;
+use serde_json::Value;
 
 pub use kagi_domain::resolution::{
     lines_to_text, text_to_lines, ConflictHunk, HunkChoice, HunkModel, LineOrder, LineOrigin,
@@ -252,8 +252,14 @@ impl ResolutionBuffer {
             .workdir()
             .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
         let mut buffer = ResolutionBuffer::new(workdir);
-        let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo)
-            .and_then(|context| repo.path().canonicalize().ok().map(|git_dir| (context, git_dir)));
+        let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo).and_then(
+            |context| {
+                repo.path()
+                    .canonicalize()
+                    .ok()
+                    .map(|git_dir| (context, git_dir))
+            },
+        );
 
         let index = repo
             .index()
@@ -775,7 +781,11 @@ impl ResolutionBuffer {
                 e
             ))
         })?;
-        for file in self.files.values().chain(self.recoveries.iter().map(|entry| &entry.file)) {
+        for file in self
+            .files
+            .values()
+            .chain(self.recoveries.iter().map(|entry| &entry.file))
+        {
             file.pending_edit.mark_saved();
         }
         Ok(path)
@@ -806,9 +816,9 @@ impl ResolutionBuffer {
                 }
                 saved.hunks.clear();
                 saved.marker_residue_count = 0;
-                let json = saved.to_json().map_err(|e| {
-                    GitError::Other(format!("serialize conflict recovery: {e}"))
-                })?;
+                let json = saved
+                    .to_json()
+                    .map_err(|e| GitError::Other(format!("serialize conflict recovery: {e}")))?;
                 return std::fs::write(&path, json).map_err(|e| {
                     GitError::Other(format!("conflicts: preserve recovery failed: {e}"))
                 });
@@ -1174,13 +1184,20 @@ fn serialize_recoveries<S: serde::Serializer>(
     recoveries: &[RecoveryEntry],
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    serializer.collect_seq(recoveries.iter().map(|entry| file_record(&entry.path, &entry.file)))
+    serializer.collect_seq(
+        recoveries
+            .iter()
+            .map(|entry| file_record(&entry.path, &entry.file)),
+    )
 }
 
 fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
     FileRecord {
         path: path.to_string_lossy(),
-        path_bytes: path.to_str().is_none().then(|| path.as_os_str().as_encoded_bytes()),
+        path_bytes: path
+            .to_str()
+            .is_none()
+            .then(|| path.as_os_str().as_encoded_bytes()),
         identity: fr.identity.as_ref().map(|identity| IdentityRecord {
             version: 1,
             fingerprint: identity.as_str(),
@@ -1255,11 +1272,16 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
     let path = drafts::parse_path(fields.remove("path_bytes"), fields.remove("path"))?;
     let result = parse_result_array(fields.remove("result"));
     let raw_result = parse_raw_result(fields.remove("raw_result"));
-    let draft_state = fields.get("draft_state").and_then(Value::as_bool).unwrap_or(false)
-        || result.is_some() || raw_result.is_some();
+    let draft_state = fields
+        .get("draft_state")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || result.is_some()
+        || raw_result.is_some();
     let mut resolution = FileResolution {
         identity: drafts::parse_identity(fields.remove("identity")),
-        editing_origin: json_string(fields.remove("editing_origin")).filter(|origin| !origin.is_empty()),
+        editing_origin: json_string(fields.remove("editing_origin"))
+            .filter(|origin| !origin.is_empty()),
         live_editing_origin: false,
         pending_edit: PendingEdit::default(),
         draft_state,

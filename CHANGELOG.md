@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Bind conflict Result inputs and saved drafts to their owning operation and file-stage identity. A later rebase conflict at the same path starts unresolved instead of inheriting the previous Result; unchanged reads preserve live editing, selection and undo. Keep older and identity-unknown drafts available through read-only Operation Log inspection, even without a recorded operation, without changing ordinary receipt Copy. (#1721)
+  - Preserve the newest actual edit, including undo to unresolved, without letting an older live buffer or a decoded/cloned draft outrank a later saved result. Keep recovery history in the existing draft document.
+  - Restore the shared Operation Log, Terminal and Activity panel slot during Conflict Mode. Reload the real index for Continue planning and both execution/staging routes; unreadable indexes fail before working-tree or index writes, while a separately saved resolution can continue on the same long-lived backend.
 - Present each requested Git result once: keep ordinary results in the footer, use bounded translated notifications only when away or after long operations, replace repeated results, and keep Pull's fetch/stash steps quiet. Keep hunk staging success quiet, preserve full failure details in the Operation Log without auto-opening it, and coalesce Busy/Quit feedback until writing completes. (#1698)
   - Preserve Pull's unknown/no-retry safety preview, and include the requesting visit's freshness-fetch time in the final no-op or write result without announcing a child Fetch.
   - Keep failure-detail actions reachable from Home, another tab, or a closed repository owner; dismiss the notification only after its receipt is revealed. Do not mistake permission/network errors mentioning `index.lock` for a competing Git operation, and clear the current owner's completed Stash Busy footer.

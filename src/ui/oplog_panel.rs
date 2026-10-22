@@ -29,10 +29,10 @@ use kagi_ui_core::i18n::{plan::plan_recovery_sentences, Msg};
 const OP_ENTRIES_MAX: usize = 200;
 
 // Keyboard ownership and renderer-fed accessibility observations.
-#[path = "oplog_keyboard.rs"]
-pub mod keyboard;
 #[path = "oplog_drafts.rs"]
 pub(super) mod drafts;
+#[path = "oplog_keyboard.rs"]
+pub mod keyboard;
 
 /// Self-contained operation log ring buffer + panel UI state.
 pub struct OpLogPanel {
@@ -308,7 +308,9 @@ impl OpLogPanel {
             let result = read.await;
             let _ = this.update(cx, |panel, cx| {
                 if panel.reflog_generation != generation
-                    || !panel.expanded.and_then(|row| panel.entries.get(row))
+                    || !panel
+                        .expanded
+                        .and_then(|row| panel.entries.get(row))
                         .is_some_and(|entry| key.matches(entry))
                 {
                     return;

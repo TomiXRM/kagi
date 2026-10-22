@@ -212,22 +212,32 @@ fn draft_metadata_known(
     parts: &[Vec<u8>],
 ) -> bool {
     let metadata = |name: &str| {
-        parts.chunks_exact(2).find(|pair| pair[0] == name.as_bytes())
+        parts
+            .chunks_exact(2)
+            .find(|pair| pair[0] == name.as_bytes())
             .map(|pair| pair[1].as_slice())
     };
-    let text = |name| metadata(name).and_then(|bytes| std::str::from_utf8(bytes).ok())
-        .map(str::trim).filter(|text| !text.is_empty());
-    let oid = |name| text(name).is_some_and(|text| {
-        text.lines().all(|line| git2::Oid::from_str(line.trim()).is_ok())
-    });
+    let text = |name| {
+        metadata(name)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let oid = |name| {
+        text(name).is_some_and(|text| {
+            text.lines()
+                .all(|line| git2::Oid::from_str(line.trim()).is_ok())
+        })
+    };
     for name in ["ORIG_HEAD", "sequencer/head", "sequencer/abort-safety"] {
         if metadata(name).is_some() && !oid(name) {
             return false;
         }
     }
-    if matches!(repo.state(),
-        git2::RepositoryState::CherryPickSequence | git2::RepositoryState::RevertSequence)
-        && (!oid("sequencer/head") || metadata("sequencer/todo").is_none())
+    if matches!(
+        repo.state(),
+        git2::RepositoryState::CherryPickSequence | git2::RepositoryState::RevertSequence
+    ) && (!oid("sequencer/head") || metadata("sequencer/todo").is_none())
     {
         return false;
     }
@@ -239,11 +249,16 @@ fn draft_metadata_known(
         conflicts::ConflictOp::Rebase { .. } => {
             // These also feed the detector's operation description. A read
             // error must not silently turn its source into a fallback label.
-            for name in ["rebase-merge/stopped-sha", "rebase-merge/orig-head",
-                "rebase-apply/original-commit", "rebase-apply/orig-head"] {
+            for name in [
+                "rebase-merge/stopped-sha",
+                "rebase-merge/orig-head",
+                "rebase-apply/original-commit",
+                "rebase-apply/orig-head",
+            ] {
                 match std::fs::read(repo.path().join(name)) {
                     Ok(bytes) => {
-                        if !std::str::from_utf8(&bytes).ok()
+                        if !std::str::from_utf8(&bytes)
+                            .ok()
                             .is_some_and(|text| git2::Oid::from_str(text.trim()).is_ok())
                         {
                             return false;
@@ -255,15 +270,28 @@ fn draft_metadata_known(
             }
             let (head, step, total, merge) = match repo.state() {
                 git2::RepositoryState::Rebase => (
-                    "rebase-apply/head-name", "rebase-apply/next", "rebase-apply/last", false),
-                _ => ("rebase-merge/head-name", "rebase-merge/msgnum", "rebase-merge/end", true),
+                    "rebase-apply/head-name",
+                    "rebase-apply/next",
+                    "rebase-apply/last",
+                    false,
+                ),
+                _ => (
+                    "rebase-merge/head-name",
+                    "rebase-merge/msgnum",
+                    "rebase-merge/end",
+                    true,
+                ),
             };
-            let progress = text(step).and_then(|value| value.parse::<usize>().ok())
+            let progress = text(step)
+                .and_then(|value| value.parse::<usize>().ok())
                 .zip(text(total).and_then(|value| value.parse::<usize>().ok()))
                 .is_some_and(|(step, total)| step > 0 && total >= step);
-            oid("REBASE_HEAD") && text(head).is_some() && progress
-                && (!merge || (metadata("rebase-merge/done").is_some()
-                    && metadata("rebase-merge/git-rebase-todo").is_some()))
+            oid("REBASE_HEAD")
+                && text(head).is_some()
+                && progress
+                && (!merge
+                    || (metadata("rebase-merge/done").is_some()
+                        && metadata("rebase-merge/git-rebase-todo").is_some()))
         }
     }
 }

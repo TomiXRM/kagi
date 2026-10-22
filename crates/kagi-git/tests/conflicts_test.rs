@@ -868,7 +868,9 @@ fn continue_gate_reports_specific_blocker_codes() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
         .unwrap();
     assert!(
-        continue_blockers(&repo, &session, &clean).unwrap().is_empty(),
+        continue_blockers(&repo, &session, &clean)
+            .unwrap()
+            .is_empty(),
         "clean resolution should clear every blocker"
     );
 }
@@ -885,7 +887,8 @@ fn continue_gate_flags_unresolved_binary_conflict() {
 
     // Binary file unresolved → both unresolved-files AND binary-unresolved.
     let empty = ResolutionBuffer::new(tmp.path());
-    let codes: Vec<&str> = continue_blockers(&repo, &session, &empty).unwrap()
+    let codes: Vec<&str> = continue_blockers(&repo, &session, &empty)
+        .unwrap()
         .iter()
         .map(|b| b.code())
         .collect();
@@ -2099,7 +2102,9 @@ fn marker_cache_tracks_undo_restore_and_multiple_saved_files() {
         .unwrap();
     assert!(!restored.has_cached_marker_residue());
     assert!(
-        continue_blockers(&repo, &detect_conflict_session(&repo).unwrap(), &restored).unwrap().is_empty()
+        continue_blockers(&repo, &detect_conflict_session(&repo).unwrap(), &restored)
+            .unwrap()
+            .is_empty()
     );
 
     // Legacy duplicate entries are last-wins, including the aggregate count.
@@ -2135,11 +2140,16 @@ fn raw_choice_removes_prior_text_residue_from_the_cached_verdict() {
     assert!(!buffer.has_cached_marker_residue());
     assert!(!buffer.cached_marker_residue(path));
     assert!(buffer.files_with_marker_residue().is_empty());
-    assert!(continue_blockers(&repo, &session, &buffer).unwrap().is_empty());
+    assert!(continue_blockers(&repo, &session, &buffer)
+        .unwrap()
+        .is_empty());
 }
 
 #[path = "conflicts/draft_revision.rs"]
 mod draft_revision;
+
+#[path = "conflicts/draft_unknown.rs"]
+mod draft_unknown;
 
 #[path = "conflicts/draft_recency.rs"]
 mod draft_recency;

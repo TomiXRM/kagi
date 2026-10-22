@@ -5,8 +5,8 @@ use crate::repository_state::RepositoryState;
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use gpui_component::input::InputState;
 use kagi::ui::{conflict_view::ConflictView, KagiApp};
-use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use kagi_domain::conflict_family::ConflictRevision;
+use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use std::path::{Path, PathBuf};
 
 #[path = "../support/git_fixture.rs"]
@@ -45,7 +45,12 @@ impl RebaseFixture {
         let main = head(repo);
         fixture_git::git(repo, &["checkout", "-q", "side"]);
         assert!(!fixture_git::git_succeeds(repo, &["rebase", "main"]));
-        Self { directory, first, second, main }
+        Self {
+            directory,
+            first,
+            second,
+            main,
+        }
     }
 
     pub(super) fn path(&self) -> PathBuf {
@@ -54,11 +59,20 @@ impl RebaseFixture {
 }
 
 fn head(repo: &Path) -> git2::Oid {
-    git2::Repository::open(repo).unwrap().head().unwrap().target().unwrap()
+    git2::Repository::open(repo)
+        .unwrap()
+        .head()
+        .unwrap()
+        .target()
+        .unwrap()
 }
 
 fn replay_head(repo: &Path) -> git2::Oid {
-    git2::Repository::open(repo).unwrap().revparse_single("REBASE_HEAD").unwrap().id()
+    git2::Repository::open(repo)
+        .unwrap()
+        .revparse_single("REBASE_HEAD")
+        .unwrap()
+        .id()
 }
 
 fn commit_body(repo: &Path, oid: git2::Oid) -> Vec<u8> {
@@ -74,12 +88,17 @@ fn assert_unmerged(repo: &Path) {
     let index = repository.index().unwrap();
     assert!(index.get_path(Path::new(FILE), 0).is_none());
     for stage in 1..=3 {
-        let entry = index.get_path(Path::new(FILE), stage).expect("real unmerged stage");
+        let entry = index
+            .get_path(Path::new(FILE), stage)
+            .expect("real unmerged stage");
         assert_eq!(entry.path, FILE.as_bytes());
         assert_eq!(entry.mode, 0o100644);
         assert!(repository.find_blob(entry.id).is_ok());
     }
-    assert_eq!(fixture_git::git_output(repo, &["status", "--porcelain"]), "UU file.txt");
+    assert_eq!(
+        fixture_git::git_output(repo, &["status", "--porcelain"]),
+        "UU file.txt"
+    );
 }
 
 fn paint(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -87,15 +106,21 @@ fn paint(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindow
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
-    }).unwrap();
+    })
+    .unwrap();
     cx.run_until_parked();
 }
 
 fn conflict(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Entity<ConflictView> {
-    cx.read(|cx| app.read(cx).ui().conflict.clone()).expect("live conflict editor")
+    cx.read(|cx| app.read(cx).ui().conflict.clone())
+        .expect("live conflict editor")
 }
 
-pub(super) fn detect(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn detect(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     // Accepted reloads re-arm detection and synchronously adopt its payload.
     // Calling detect_conflict_mode alone can return at its run-once guard.
     let (owner, builds) = app.update(cx, |app, cx| {
@@ -108,12 +133,21 @@ pub(super) fn detect(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, windo
     cx.read(|cx| {
         let state = app.read(cx);
         assert_eq!(state.active_session(), Some(owner));
-        assert!(state.reads.counters().builds > builds, "a fresh read was accepted");
+        assert!(
+            state.reads.counters().builds > builds,
+            "a fresh read was accepted"
+        );
         assert!(!state.reads.is_loading(owner));
-        assert!(state.ui().conflict_detected, "accepted reload re-detected conflicts");
+        assert!(
+            state.ui().conflict_detected,
+            "accepted reload re-detected conflicts"
+        );
         let accepted = state.view().operation.as_ref().unwrap().revision();
         let projected = &conflict_read(app, cx).mode.as_ref().unwrap().revision;
-        assert_eq!(projected, accepted, "detected payload belongs to the accepted read");
+        assert_eq!(
+            projected, accepted,
+            "detected payload belongs to the accepted read"
+        );
     });
     paint(cx, app, window);
 }
@@ -129,7 +163,14 @@ fn result_input(
         cx.notify();
     });
     paint(cx, app, window);
-    cx.read(|cx| conflict_read(app, cx).editor_inputs.as_ref().unwrap().result.clone())
+    cx.read(|cx| {
+        conflict_read(app, cx)
+            .editor_inputs
+            .as_ref()
+            .unwrap()
+            .result
+            .clone()
+    })
 }
 
 fn conflict_read<'a>(app: &'a Entity<KagiApp>, cx: &'a gpui::App) -> &'a ConflictView {
@@ -146,7 +187,8 @@ fn replace_result(
     cx.update_window(window, |_, window, cx| {
         window.focus(&input.read(cx).focus_handle(cx), cx);
         window.draw(cx).clear();
-    }).unwrap();
+    })
+    .unwrap();
     cx.simulate_keystrokes(window, "cmd-a");
     cx.simulate_input(window, text);
     cx.run_until_parked();
@@ -154,7 +196,10 @@ fn replace_result(
     assert_eq!(cx.read(|cx| input.read(cx).value().to_string()), text);
     cx.read(|cx| {
         let mode = conflict_read(app, cx).mode.as_ref().unwrap();
-        assert_eq!(mode.buffer.resolved_text(Path::new(FILE)).as_deref(), Some(text));
+        assert_eq!(
+            mode.buffer.resolved_text(Path::new(FILE)).as_deref(),
+            Some(text)
+        );
         assert!(mode.can_continue());
     });
 }
@@ -181,10 +226,16 @@ fn open_continue(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: A
     cx.run_until_parked();
     cx.read(|cx| {
         let state = app.read(cx);
-        let modal = state.conflict_continue_modal().expect("actual Continue opens confirmation");
+        let modal = state
+            .conflict_continue_modal()
+            .expect("actual Continue opens confirmation");
         assert!(modal.plan.blockers.is_empty());
     });
-    assert_eq!(before, RepositoryState::read(&repo), "Continue planning must not stage");
+    assert_eq!(
+        before,
+        RepositoryState::read(&repo),
+        "Continue planning must not stage"
+    );
 }
 
 fn confirm_continue(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -229,7 +280,11 @@ fn finish_second(
     let before = RepositoryState::read(repo);
     let input = result_input(cx, app, window);
     replace_result(cx, app, window, &input, SECOND);
-    assert_eq!(before, RepositoryState::read(repo), "typing cannot stage the new edit");
+    assert_eq!(
+        before,
+        RepositoryState::read(repo),
+        "typing cannot stage the new edit"
+    );
     // Save runs through another backend handle. Continue must then inspect the
     // real stage-0 index, not the original UI backend's cached unmerged entry.
     click_control(cx, window, "conflict-save");
@@ -240,9 +295,22 @@ fn finish_second(
     let saved_index = saved.index().unwrap();
     assert!(!saved_index.has_conflicts());
     let staged = saved_index.get_path(Path::new(FILE), 0).unwrap();
-    assert_eq!(saved.find_blob(staged.id).unwrap().content(), SECOND.as_bytes());
-    assert_eq!(head(repo), first_replay, "Save stages but does not continue");
-    assert!(cx.read(|cx| conflict_read(app, cx).mode.as_ref().unwrap().session.files.is_empty()));
+    assert_eq!(
+        saved.find_blob(staged.id).unwrap().content(),
+        SECOND.as_bytes()
+    );
+    assert_eq!(
+        head(repo),
+        first_replay,
+        "Save stages but does not continue"
+    );
+    assert!(cx.read(|cx| conflict_read(app, cx)
+        .mode
+        .as_ref()
+        .unwrap()
+        .session
+        .files
+        .is_empty()));
     open_continue(cx, app, window);
     confirm_continue(cx, app, window);
     let repository = git2::Repository::open(repo).unwrap();
@@ -253,7 +321,10 @@ fn finish_second(
     let index = repository.index().unwrap();
     assert!(!index.has_conflicts());
     let staged = index.get_path(Path::new(FILE), 0).unwrap();
-    assert_eq!(repository.find_blob(staged.id).unwrap().content(), SECOND.as_bytes());
+    assert_eq!(
+        repository.find_blob(staged.id).unwrap().content(),
+        SECOND.as_bytes()
+    );
     assert_eq!(std::fs::read(repo.join(FILE)).unwrap(), SECOND.as_bytes());
     assert_eq!(repository.state(), git2::RepositoryState::Clean);
     assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
@@ -271,8 +342,22 @@ pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppCont
     let file = Path::new(FILE);
     replace_result(cx, &app, window, &input, FIRST);
     input.update(cx, |input, cx| input.set_selected_range(2..8, cx));
-    let revision = cx.read(|cx| conflict_read(&app, cx).mode.as_ref().unwrap().revision.clone());
-    let mut history = cx.read(|cx| conflict_read(&app, cx).mode.as_ref().unwrap().buffer.clone());
+    let revision = cx.read(|cx| {
+        conflict_read(&app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .revision
+            .clone()
+    });
+    let mut history = cx.read(|cx| {
+        conflict_read(&app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .clone()
+    });
     let edited = history.resolved_text(file);
     assert!(history.undo(file));
     let previous = history.resolved_text(file);
@@ -284,10 +369,21 @@ pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppCont
         cx.read(|cx| {
             let view = conflict_read(&app, cx);
             assert_eq!(view.mode.as_ref().unwrap().revision, revision);
-            assert_eq!(view.editor_inputs.as_ref().unwrap().result.entity_id(), input.entity_id());
+            assert_eq!(
+                view.editor_inputs.as_ref().unwrap().result.entity_id(),
+                input.entity_id()
+            );
             assert_eq!(input.read(cx).value().as_str(), FIRST);
             assert_eq!(input.read(cx).selected_range(), 2..8);
-            assert_eq!(view.mode.as_ref().unwrap().buffer.resolved_text(Path::new(FILE)).as_deref(), Some(FIRST));
+            assert_eq!(
+                view.mode
+                    .as_ref()
+                    .unwrap()
+                    .buffer
+                    .resolved_text(Path::new(FILE))
+                    .as_deref(),
+                Some(FIRST)
+            );
         });
     }
     // Inspect the buffer history before InputState undo adds any new edit.
@@ -321,8 +417,11 @@ pub fn scenario_conflict_draft_revision_unrelated_index(cx: &mut VisualTestAppCo
     input.update(cx, |input, cx| input.set_selected_range(2..8, cx));
     let (revision, identity, mut history) = cx.read(|cx| {
         let mode = conflict_read(&app, cx).mode.as_ref().unwrap();
-        (mode.revision.clone(), mode.buffer.file_identity(file).unwrap().clone(),
-            mode.buffer.clone())
+        (
+            mode.revision.clone(),
+            mode.buffer.file_identity(file).unwrap().clone(),
+            mode.buffer.clone(),
+        )
     });
     let edited = history.resolved_text(file);
     assert!(history.undo(file));
@@ -331,10 +430,12 @@ pub fn scenario_conflict_draft_revision_unrelated_index(cx: &mut VisualTestAppCo
     let stages = || {
         let repository = git2::Repository::open(&repo).unwrap();
         let index = repository.index().unwrap();
-        (1..=3).map(|stage| {
-            let entry = index.get_path(file, stage).unwrap();
-            (entry.id, entry.mode, entry.path)
-        }).collect::<Vec<_>>()
+        (1..=3)
+            .map(|stage| {
+                let entry = index.get_path(file, stage).unwrap();
+                (entry.id, entry.mode, entry.path)
+            })
+            .collect::<Vec<_>>()
     };
     let original_stages = stages();
     // Only this unrelated stage-0 entry changes the global observation.
@@ -380,8 +481,8 @@ pub fn scenario_conflict_draft_revision_unrelated_index(cx: &mut VisualTestAppCo
 }
 
 fn append_lock() -> std::fs::File {
-    let path = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
-        .join("operations.jsonl.lock");
+    let path =
+        PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap()).join("operations.jsonl.lock");
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -393,10 +494,15 @@ fn append_lock() -> std::fs::File {
 }
 
 fn assert_recovery(buffer: &ResolutionBuffer, identity: Option<&ConflictRevision>) {
-    let drafts: Vec<_> = buffer.recovery_drafts()
+    let drafts: Vec<_> = buffer
+        .recovery_drafts()
         .filter(|draft| draft.path == Path::new(FILE))
         .collect();
-    assert_eq!(drafts.len(), 1, "one inspectable old draft, not a parallel live result");
+    assert_eq!(
+        drafts.len(),
+        1,
+        "one inspectable old draft, not a parallel live result"
+    );
     assert_eq!(drafts[0].identity, identity);
     assert_eq!(drafts[0].result.map(lines_to_text).as_deref(), Some(FIRST));
     assert!(drafts[0].raw_result.is_none());
@@ -409,11 +515,21 @@ fn assert_second_stage(fixture: &RebaseFixture, first_replay: git2::Oid) {
     assert_eq!(head(&repo), first_replay);
     assert_eq!(commit_body(&repo, first_replay), FIRST.as_bytes());
     let repository = git2::Repository::open(&repo).unwrap();
-    assert_eq!(repository.find_commit(first_replay).unwrap().parent_id(0).unwrap(), fixture.main);
+    assert_eq!(
+        repository
+            .find_commit(first_replay)
+            .unwrap()
+            .parent_id(0)
+            .unwrap(),
+        fixture.main
+    );
     let index = repository.index().unwrap();
     for (stage, expected) in [(1, "SIDE ONE\n"), (2, FIRST), (3, "SIDE TWO\n")] {
         let entry = index.get_path(Path::new(FILE), stage).unwrap();
-        assert_eq!(repository.find_blob(entry.id).unwrap().content(), expected.as_bytes());
+        assert_eq!(
+            repository.find_blob(entry.id).unwrap().content(),
+            expected.as_bytes()
+        );
     }
     assert_unmerged(&repo);
 }
@@ -433,9 +549,24 @@ pub(super) fn advance_first(
     let before = RepositoryState::read(&repo);
     replace_result(cx, app, window, &input, FIRST);
     assert_eq!(before, RepositoryState::read(&repo));
-    let revision = cx.read(|cx| conflict_read(app, cx).mode.as_ref().unwrap().revision.clone());
-    let identity = cx.read(|cx| conflict_read(app, cx).mode.as_ref().unwrap()
-        .buffer.file_identity(Path::new(FILE)).unwrap().clone());
+    let revision = cx.read(|cx| {
+        conflict_read(app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .revision
+            .clone()
+    });
+    let identity = cx.read(|cx| {
+        conflict_read(app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .file_identity(Path::new(FILE))
+            .unwrap()
+            .clone()
+    });
     open_continue(cx, app, window);
     // Fail only the actual run's append, never plan or test setup.
     let lock = recording_failure.then(append_lock);
@@ -452,8 +583,10 @@ pub(super) fn advance_first(
         let inputs = conflict_read(app, cx).editor_inputs.as_ref().unwrap();
         assert_eq!(inputs.revision, mode.revision);
     });
-    assert_eq!(oplog::records(&repo, "rebase-continue", 100, true).len(),
-        usize::from(!recording_failure));
+    assert_eq!(
+        oplog::records(&repo, "rebase-continue", 100, true).len(),
+        usize::from(!recording_failure)
+    );
     if recording_failure {
         let diagnostic = std::fs::TryLockError::WouldBlock.to_string();
         cx.read(|cx| {
@@ -480,8 +613,12 @@ fn same_path_rebase(cx: &mut VisualTestAppContext, recording_failure: bool) {
     detect(cx, &app, window);
     let (first_replay, identity) = advance_first(cx, &app, window, &fixture, recording_failure);
     stable_second_conflict(cx, &app, window, &repo);
-    cx.read(|cx| assert_recovery(
-        &conflict_read(&app, cx).mode.as_ref().unwrap().buffer, Some(&identity)));
+    cx.read(|cx| {
+        assert_recovery(
+            &conflict_read(&app, cx).mode.as_ref().unwrap().buffer,
+            Some(&identity),
+        )
+    });
     finish_second(cx, &app, window, &repo, first_replay);
     let records = oplog::records(&repo, "rebase-continue", 100, true);
     assert_eq!(records.len(), if recording_failure { 1 } else { 2 });
@@ -503,8 +640,15 @@ pub fn scenario_conflict_draft_revision_saved_stale(cx: &mut VisualTestAppContex
     detect(cx, &app, window);
     let input = result_input(cx, &app, window);
     replace_result(cx, &app, window, &input, FIRST);
-    let saved_path = cx.read(|cx| conflict_read(&app, cx).mode.as_ref().unwrap()
-        .buffer.autosave().unwrap());
+    let saved_path = cx.read(|cx| {
+        conflict_read(&app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .autosave()
+            .unwrap()
+    });
     let saved = std::fs::read(&saved_path).unwrap();
     drop(input);
     let (first_replay, identity) = advance_first(cx, &app, window, &fixture, false);
@@ -544,8 +688,15 @@ pub fn scenario_conflict_draft_revision_saved_legacy(cx: &mut VisualTestAppConte
     detect(cx, &app, window);
     let input = result_input(cx, &app, window);
     replace_result(cx, &app, window, &input, FIRST);
-    let saved_path = cx.read(|cx| conflict_read(&app, cx).mode.as_ref().unwrap()
-        .buffer.autosave().unwrap());
+    let saved_path = cx.read(|cx| {
+        conflict_read(&app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .autosave()
+            .unwrap()
+    });
     drop(input);
     unmount(cx, app, window);
     let mut saved: serde_json::Value =
@@ -574,4 +725,3 @@ pub fn scenario_conflict_draft_revision_saved_legacy(cx: &mut VisualTestAppConte
         unmount(cx, app, window);
     }
 }
-

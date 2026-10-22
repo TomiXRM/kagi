@@ -75,8 +75,15 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         } else {
             self.render_records(window, cx)
         };
-        div().flex().flex_col().flex_1().min_h(px(0.)).bg(rgb(theme().panel))
-            .child(header).child(body).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .bg(rgb(theme().panel))
+            .child(header)
+            .child(body)
+            .into_any_element()
     }
 }
 

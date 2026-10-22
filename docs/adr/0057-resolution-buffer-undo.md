@@ -6,9 +6,10 @@
 
 - choose(current/incoming/both-ordered)・手編集は **WT/index に触れない解決バッファ**上の操作。
   ファイルごとに Result 草稿 + 操作履歴(undo/redo)。draft(ADR-0042)と同じ
-  `~/.kagi/conflicts/<repo-hash>/` へ 250ms debounce 自動保存 → 中断・再開可能
-- continue 時にのみ WT へ書き出し+stage。**abort してもバッファは oplog 参照付きで退避**
-  (jj の「部分解決を失わせない」の git 互換実装)
+  `~/.kagi/conflicts/<repo-hash>/` へ自動保存 → 中断・再開可能。
+- 明示した Save または Continue 時に WT へ書き出し+stage。
+  **abort してもバッファは oplog 参照付きで退避**
+  (jj の「部分解決を失わせない」の git 互換実装)。
 - 行ごとの採用元(current/incoming/manual)を保持し UI で出所可視化(BC/KDiff3 流)
 
 ## JSON codec（#513 resolution slice）
@@ -23,9 +24,9 @@
   従来の既定値へ戻す。path のない file は読み飛ばし、不正な raw result で
   テキスト草稿を失わせない。JSON 自体が不正なら読み込みは `None` とする。
   surrogate pair は Unicode 文字として復元し、再保存しても脱落させない。
-- live index 由来の raw metadata は再検出し、保存済みの選択だけを重ねる。
-  undo/redo・hunk model は保存しない。保存先・debounce・書き込み方式、
-  Continue/Abort の動作、oplog はこの移行では変更しない。
+- live index 由来の raw metadata は再検出する。保存済みの選択を適用するには、
+  以下の既知かつ一致する file identity と text/raw の互換性を要求する。
+  undo/redo・hunk model は JSON に保存しない。保存先と oplog は維持する。
 
 ## 描画用 marker 派生状態（#497）
 
@@ -42,3 +43,31 @@
   undo stack へ積み直さない。空テキストと空行は区別し、Preview の組立表示は維持する。
 - cache は表示専用。`files_with_marker_residue` と Save/Continue の実データに対する
   fresh validation は維持し、cache を書き込みの安全ゲートにしない。
+
+## Result input と永続 draft の適用権限（#1721）
+
+- Result の `InputState` は path だけでなく、受理した `ConflictRevision` と
+  content signature に束縛する。再検出の受理時は旧入力を旧 buffer に同期してから
+  新しい観測を採用する。旧入力を新 revision の buffer へ pull してはならない。
+- 同じ既知の file identity なら、編集中の本文・undo/redo・選択と入力 entity を
+  保持する。無関係な index entry の更新だけで同じ file の入力を捨てない。
+  同 path でも次 commit / stage / operation context が違えば新しい未解決 Result を
+  表示し、旧本文は保全するだけで `has_resolution` の根拠にしない。
+- 永続 file identity は version 付き fingerprint とし、canonical gitdir、raw path bytes、
+  operation context、各 conflict stage の有無・OID・mode を含む。
+  HEAD または必要な operation metadata を確認できなければ identity は不明とする。
+  表示用 observation の best-effort 読み取りと、draft 適用の認可を分離する。
+- `identity` / `path_bytes` / `editing_origin` / `draft_state` と、同じ document 内の
+  `recoveries` を保存する。旧形式、不明 identity、不一致の本文は自動 overlay しないが
+  黙って削除しない。明示した undo-to-unresolved の null は「未編集の初期状態」と区別し、
+  過去の本文を復活させない。既存 clear/save/adoption 経路も保全を共有する。
+- `editing_origin` は編集 owner の来歴であり、再読込や clone に書込権限を与えない。
+  新しい実編集・undo/redo だけが未保存 intent を進め、保存成功時にその intent を消費する。
+  保存失敗時は保持する。古い live recovery の再保存は後の durable 本文より新しくならず、
+  本当に新しい未保存 undo-null は古い同一 null より優先される。
+- 保全本文の閲覧は既存 Operation Log の明示 action と専用 Copy で行う。
+  receipt が 0 件でも到達でき、操作ログ保存失敗後の再起動でも利用できる。
+  閲覧は現在の conflict に適用せず、普通の receipt 選択・Copy の意味を変えない。
+  attachment の session / visit / path / worktree と request generation を固定し、
+  実 gitdir の owner を再確認してから読み出す。古い完了を別 owner へ表示・コピーしない。
+

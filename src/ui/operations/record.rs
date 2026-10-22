@@ -140,6 +140,7 @@ impl KagiApp {
                 None,
                 false,
                 stopped.then(|| i18n::Msg::conflict_stopped(None).into()),
+                None,
             );
         }
         let (footer_msg, _) =
@@ -175,18 +176,23 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        // The footer contract is logged for the frozen owner, but the live
-        // footer, toast and bottom panel belong to the tab currently on screen.
+        // The footer contract is logged for the frozen owner. Important stops
+        // and failures use the global result owner, never the foreign footer.
         klog!("footer: {}", footer_msg);
-        if failed && !recording_failed {
+        if (stopped || failed) && !recording_failed {
             let entry = recording.entry();
-            self.push_operation_result(
-                entry,
-                op,
-                crate::ui::ToastKind::Error,
-                super::outcome_text(op, &entry.outcome).into(),
-                cx,
-            );
+            let (kind, message) = if stopped {
+                (
+                    crate::ui::ToastKind::Info,
+                    i18n::Msg::conflict_stopped(None),
+                )
+            } else {
+                (
+                    crate::ui::ToastKind::Error,
+                    super::outcome_text(op, &entry.outcome),
+                )
+            };
+            self.push_operation_result(entry, op, kind, message.into(), cx);
         }
         recording_failed
     }
@@ -277,6 +283,7 @@ impl KagiApp {
                 report.recording,
                 kagi_git::backend::recording::Recording::Failed { .. }
             ),
+            None,
             None,
         );
     }

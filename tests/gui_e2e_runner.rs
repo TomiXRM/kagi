@@ -3311,6 +3311,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
             ),
             (
+                "conflict_family_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_family_result_owner),
+            ),
+            (
                 "operation_strip_startup",
                 Box::new(crate::app_conflict::scenario_operation_strip_startup),
             ),

@@ -258,7 +258,7 @@ pub fn scenario_oplog_append_failure_conflict_stopped(cx: &mut VisualTestAppCont
 
 /// Actual two-commit rebase -> edited first resolution -> reviewed Continue ->
 /// a new physical conflict. This is the public handler boundary, not an OS
-/// editor-input claim or an assertion about retained editor ownership (#1702).
+/// editor-input claim or an assertion about retained editor ownership (#1721).
 pub fn scenario_conflict_continue_stopped_result_owner(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let _ports = crate::gui_isolation::PortStore::keep();
@@ -266,136 +266,232 @@ pub fn scenario_conflict_continue_stopped_result_owner(cx: &mut VisualTestAppCon
     let language = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
         for recording_failure in [false, true] {
-            let fixture = fixture(1);
-            let repo = fixture.path().canonicalize().unwrap();
-            git(&repo, &["config", "core.editor", "true"]);
-            git(&repo, &["checkout", "-q", "feature"]);
-            std::fs::write(repo.join("conflict-0.txt"), "incoming second\n").unwrap();
-            git(&repo, &["commit", "-qam", "second incoming"]);
-            let second = git_fixture::git_output(&repo, &["rev-parse", "HEAD"]);
-            assert!(!git_fixture::git_succeeds(&repo, &["rebase", "main"]));
-            let before = git_fixture::git_output(&repo, &["rev-parse", "HEAD"]);
-            i18n::set_lang(lang);
-            let (app, window) = mount(cx, &repo);
-            app.update(cx, |app, cx| {
-                // Pin the supported unattended model condition, not OS focus.
-                app.set_window_active_for_e2e(false, cx);
-                app.detect_conflict_mode(cx);
-            });
-            wait_for(cx, &app, |app| app.ui().conflict.is_some());
-            app.update(cx, |app, cx| {
-                app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
-                    view.mode
-                        .as_mut()
-                        .unwrap()
-                        .buffer
-                        .set_manual_text(
-                            std::path::Path::new("conflict-0.txt"),
-                            "resolved in Kagi\n",
-                        )
-                        .unwrap();
-                });
-            });
-            cx.update_window(window, |_, window, cx| {
+            for departed in [false, true] {
+                let fixture = fixture(1);
+                let repo = fixture.path().canonicalize().unwrap();
+                let other_fixture = departed.then(crate::macos::build_fixture);
+                let other_repo = other_fixture
+                    .as_ref()
+                    .map(|fixture| fixture.path().canonicalize().unwrap());
+                git(&repo, &["config", "core.editor", "true"]);
+                git(&repo, &["checkout", "-q", "feature"]);
+                std::fs::write(repo.join("conflict-0.txt"), "incoming second\n").unwrap();
+                git(&repo, &["commit", "-qam", "second incoming"]);
+                let second = git_fixture::git_output(&repo, &["rev-parse", "HEAD"]);
+                assert!(!git_fixture::git_succeeds(&repo, &["rebase", "main"]));
+                let before = git_fixture::git_output(&repo, &["rev-parse", "HEAD"]);
+                i18n::set_lang(lang);
+                let (app, window) = mount(cx, &repo);
                 app.update(cx, |app, cx| {
-                    let owner = app
-                        .app_sessions
-                        .attachment(app.active_session().unwrap())
-                        .unwrap();
-                    app.conflict_continue(owner, window, cx);
+                    // Supported activation inputs, not OS focus: same-screen
+                    // results are unattended; the foreign repository is active.
+                    app.set_window_active_for_e2e(departed, cx);
+                    app.detect_conflict_mode(cx);
                 });
-            })
-            .unwrap();
-            assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
-            let recording_lock = recording_failure.then(|| {
-                let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
-                    .join("operations.jsonl.lock");
-                let lock = std::fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .write(true)
-                    .open(path)
-                    .unwrap();
-                lock.lock().unwrap();
-                lock
-            });
-            app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
-            wait_for(cx, &app, |app| {
-                app.write_busy_op.is_none() && app.conflict_continue_modal().is_none()
-            });
-            cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+                wait_for(cx, &app, |app| app.ui().conflict.is_some());
+                app.update(cx, |app, cx| {
+                    app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                        view.mode
+                            .as_mut()
+                            .unwrap()
+                            .buffer
+                            .set_manual_text(
+                                std::path::Path::new("conflict-0.txt"),
+                                "resolved in Kagi\n",
+                            )
+                            .unwrap();
+                    });
+                });
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        let owner = app
+                            .app_sessions
+                            .attachment(app.active_session().unwrap())
+                            .unwrap();
+                        app.conflict_continue(owner, window, cx);
+                    });
+                })
                 .unwrap();
-            let physical = || {
-                (
-                    git_fixture::git_output(&repo, &["rev-parse", "HEAD"]),
-                    git_fixture::git_output(&repo, &["rev-parse", "REBASE_HEAD"]),
-                    git_fixture::git_output(&repo, &["ls-files", "--unmerged"]),
-                    git_fixture::git_output(&repo, &["show", "HEAD:conflict-0.txt"]),
-                )
-            };
-            let after = physical();
-            assert_ne!(after.0, before, "only the first replay was committed");
-            assert_eq!(after.1, second, "the second replay is the new stop");
-            assert_eq!(after.2.lines().count(), 3, "a real new unmerged file");
-            assert_eq!(
-                after.3, "resolved in Kagi",
-                "the first edited resolution was committed"
-            );
-            cx.read(|cx| {
-                let state = app.read(cx);
-                assert!(!state.app_sessions.has_leases());
-                assert!(!matches!(state.status_footer, FooterStatus::Success(_)));
-                let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
-                if recording_failure {
-                    assert!(
-                        toasts.is_empty(),
-                        "required acknowledgment is the sole result"
-                    );
+                assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
+                let recording_lock = recording_failure.then(|| {
+                    let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                        .join("operations.jsonl.lock");
+                    let lock = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .write(true)
+                        .open(path)
+                        .unwrap();
+                    lock.lock().unwrap();
+                    lock
+                });
+                let release = departed.then(|| {
+                    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+                    KagiApp::hold_next_continue_confirm_for_e2e(hold);
+                    release
+                });
+                app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                let foreign_before = if let Some(other_repo) = other_repo.as_ref() {
+                    app.update(cx, |app, cx| {
+                        // The existing Cancel dismisses the running confirmation,
+                        // not its admitted backend write.
+                        app.cancel_conflict_continue();
+                        assert!(app.open_repository(other_repo.clone(), cx));
+                    });
+                    let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+                    wait_for(cx, &app, |app| app.slow_reads_inflight_for_e2e(owner) == 0);
+                    // Obtain a meaningful footer from a real read consumer,
+                    // rather than assigning a synthetic foreign sentinel.
+                    app.update(cx, |app, cx| app.reload_external(cx));
+                    wait_for(cx, &app, |app| app.slow_reads_inflight_for_e2e(owner) == 0);
+                    Some((
+                        crate::macos::repo_fingerprint(other_repo),
+                        cx.read(|cx| {
+                            let state = app.read(cx);
+                            (
+                                format!("{:?}", state.status_footer),
+                                (state.bottom_panel_open, state.bottom_tab),
+                                state.active_session(),
+                            )
+                        }),
+                    ))
                 } else {
-                    assert!(state.app_notice().is_none());
-                    assert_eq!(toasts.len(), 1);
+                    None
+                };
+                if let Some(release) = release {
+                    release.send(());
+                }
+                wait_for(cx, &app, |app| {
+                    app.write_busy_op.is_none() && app.conflict_continue_modal().is_none()
+                });
+                cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+                let physical = || {
+                    (
+                        git_fixture::git_output(&repo, &["rev-parse", "HEAD"]),
+                        git_fixture::git_output(&repo, &["rev-parse", "REBASE_HEAD"]),
+                        git_fixture::git_output(&repo, &["ls-files", "--unmerged"]),
+                        git_fixture::git_output(&repo, &["show", "HEAD:conflict-0.txt"]),
+                    )
+                };
+                let after = physical();
+                assert_ne!(after.0, before, "only the first replay was committed");
+                assert_eq!(after.1, second, "the second replay is the new stop");
+                assert_eq!(after.2.lines().count(), 3, "a real new unmerged file");
+                assert_eq!(
+                    after.3, "resolved in Kagi",
+                    "the first edited resolution was committed"
+                );
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(!state.app_sessions.has_leases());
+                    if !departed {
+                        assert!(!matches!(state.status_footer, FooterStatus::Success(_)));
+                    }
+                    if let Some((_, before)) = foreign_before.as_ref() {
+                        assert_eq!(
+                            (
+                                format!("{:?}", state.status_footer),
+                                (state.bottom_panel_open, state.bottom_tab),
+                                state.active_session(),
+                            ),
+                            *before,
+                            "A's result must preserve B's actual read-produced footer and panel"
+                        );
+                    }
+                    let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                    if recording_failure {
+                        assert!(
+                            toasts.is_empty(),
+                            "required acknowledgment is the sole result"
+                        );
+                    } else {
+                        assert!(state.app_notice().is_none());
+                        assert_eq!(toasts.len(), 1);
+                        assert_eq!(
+                            toasts[0].kind,
+                            ToastKind::Info,
+                            "a stopped request is not green completion"
+                        );
+                    }
+                });
+                let operation = "rebase-continue";
+                if recording_failure {
+                    assert_recording_failure(cx, &app, &repo, operation);
+                }
+                let durable = oplog::records(&repo, operation, 100, true);
+                assert_eq!(durable.len(), usize::from(!recording_failure));
+                if !recording_failure {
+                    assert!(
+                        matches!(
+                            durable[0].outcome,
+                            kagi_git::oplog::OpOutcome::Success { .. }
+                        ),
+                        "known step success is retained in the original receipt"
+                    );
+                    kagi::ui::e2e::clear_control_bounds(
+                        window.window_id(),
+                        "operation-result-details",
+                    );
+                    cx.update_window(window, |_, window, cx| {
+                        window.refresh();
+                        window.draw(cx).clear();
+                    })
+                    .unwrap();
+                    let bounds = kagi::ui::e2e::control_bounds(
+                        window.window_id(),
+                        "operation-result-details",
+                    )
+                    .expect("the stopped Info result exposes actual receipt Details");
+                    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+                    cx.run_until_parked();
+                    cx.read(|cx| {
+                        let state = app.read(cx);
+                        assert!(state.bottom_panel_open);
+                        assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                        let panel = state.op_log.as_ref().unwrap().read(cx);
+                        let row = &panel.entries()[panel.expanded().unwrap()];
+                        let receipt = &durable[0];
+                        assert_eq!(
+                            (row.id, row.timestamp, &row.op, &row.repo),
+                            (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+                        );
+                        if departed {
+                            assert_eq!(
+                                state.repo_path.as_deref(),
+                                other_repo.as_deref(),
+                                "Details inspect A's canonical receipt without switching B"
+                            );
+                        }
+                    });
+                }
+                drop(recording_lock);
+                if recording_failure {
+                    let bounds =
+                        kagi::ui::e2e::control_bounds(window.window_id(), "app-notice-confirm")
+                            .expect("the required acknowledgment is an actual rendered control");
+                    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+                    cx.run_until_parked();
+                    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+                }
+                assert_eq!(
+                    physical(),
+                    after,
+                    "acknowledgment must not replay or skip another commit"
+                );
+                assert_eq!(
+                    oplog::records(&repo, operation, 100, true).len(),
+                    durable.len(),
+                    "acknowledgment must not retry the append"
+                );
+                if let Some((before, _)) = foreign_before {
                     assert_eq!(
-                        toasts[0].kind,
-                        ToastKind::Info,
-                        "a stopped request is not green completion"
+                        crate::macos::repo_fingerprint(other_repo.as_ref().unwrap()),
+                        before
                     );
                 }
-            });
-            let operation = "rebase-continue";
-            if recording_failure {
-                assert_recording_failure(cx, &app, &repo, operation);
+                unmount(cx, app, window);
             }
-            let durable = oplog::records(&repo, operation, 100, true);
-            assert_eq!(durable.len(), usize::from(!recording_failure));
-            if !recording_failure {
-                assert!(
-                    matches!(
-                        durable[0].outcome,
-                        kagi_git::oplog::OpOutcome::Success { .. }
-                    ),
-                    "known step success is retained in the original receipt"
-                );
-            }
-            drop(recording_lock);
-            if recording_failure {
-                let bounds =
-                    kagi::ui::e2e::control_bounds(window.window_id(), "app-notice-confirm")
-                        .expect("the required acknowledgment is an actual rendered control");
-                cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
-                cx.run_until_parked();
-                assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
-            }
-            assert_eq!(
-                physical(),
-                after,
-                "acknowledgment must not replay or skip another commit"
-            );
-            assert_eq!(
-                oplog::records(&repo, operation, 100, true).len(),
-                durable.len(),
-                "acknowledgment must not retry the append"
-            );
-            unmount(cx, app, window);
         }
     }
     i18n::set_lang(language);

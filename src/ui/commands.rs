@@ -2002,6 +2002,7 @@ impl FetchFailure {
             Some(requested_op),
             false,
             None,
+            None,
         );
     }
 

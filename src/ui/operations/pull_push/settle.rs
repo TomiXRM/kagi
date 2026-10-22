@@ -251,6 +251,7 @@ impl KagiApp {
                     Some("pull"),
                     true,
                     None,
+                    None,
                 );
             }
             return;
@@ -296,6 +297,7 @@ impl KagiApp {
                 announce,
                 Some("pull"),
                 false,
+                None,
                 None,
             );
         }

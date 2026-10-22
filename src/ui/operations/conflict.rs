@@ -288,7 +288,12 @@ impl KagiApp {
                 let notice = repo
                     .continue_blockers(&mode.session, &mode.buffer)
                     .first()
-                    .map(|first| (ToastKind::Error, conflict_view::blocker_msg(first).t()));
+                    .map(|first| {
+                        (
+                            ToastKind::Error,
+                            conflict_view::blocker_msg(first).t().into(),
+                        )
+                    });
                 // Refused at planning: nothing ran, so "recorded, nothing
                 // moved" — not a missing record that blocks a restore (#891).
                 let entry = kagi_git::oplog::OpLogEntry::new(

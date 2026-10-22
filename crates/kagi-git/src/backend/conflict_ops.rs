@@ -606,7 +606,7 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
-    ) -> Vec<conflicts::ContinueBlocker> {
+    ) -> Result<Vec<conflicts::ContinueBlocker>, GitError> {
         conflicts::continue_blockers(&self.repo, session, buffer)
     }
 

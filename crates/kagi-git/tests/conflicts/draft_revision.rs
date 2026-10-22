@@ -54,7 +54,7 @@ fn continue_same_path_requires_distinct_second_revision_input() {
     let worktree_before = std::fs::read(dir.join(path)).unwrap();
     for _ in 0..3 {
         assert!(!second.has_resolution(path));
-        assert!(continue_blockers(&repo, &second_session, &second).iter()
+        assert!(continue_blockers(&repo, &second_session, &second).unwrap().iter()
             .any(|blocker| blocker.code() == "unresolved-files"));
         second.autosave().unwrap();
         second = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
@@ -63,7 +63,7 @@ fn continue_same_path_requires_distinct_second_revision_input() {
     assert_eq!(index_before, std::fs::read(dir.join(".git/index")).unwrap());
     assert_eq!(worktree_before, std::fs::read(dir.join(path)).unwrap());
     second.set_manual_text(path, "RESOLVED TWO\n").unwrap();
-    assert!(continue_blockers(&repo, &second_session, &second).is_empty());
+    assert!(continue_blockers(&repo, &second_session, &second).unwrap().is_empty());
     execute_conflict_continue(&repo, dir, &second_session, &second).unwrap();
     assert!(detect_conflict_session(&Repository::open(dir).unwrap()).is_none());
     assert_eq!(git_output(dir, &["show", "HEAD:file.txt"]), "RESOLVED TWO");

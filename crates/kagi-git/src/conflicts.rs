@@ -690,12 +690,20 @@ impl ContinueBlocker {
 /// conflict, no undecided required-file deletion, and a non-empty merge message
 /// when a merge commit is needed.
 ///
-/// The repository is read but never mutated.
+/// The repository is read but never mutated. The index is forcibly reloaded
+/// from disk; an unreadable index is an error, never an empty checklist.
 pub fn continue_blockers(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
-) -> Vec<ContinueBlocker> {
+) -> Result<Vec<ContinueBlocker>, GitError> {
+    let mut index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    // The UI backend outlives Save's separate repository handle (#296b).
+    index
+        .read(true)
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
     let mut out: Vec<ContinueBlocker> = Vec::new();
 
     // 1. Every detected file must have a resolution draft.
@@ -752,22 +760,22 @@ pub fn continue_blockers(
     //    about.  execute_continue stages the session's own files (collapsing
     //    their stages), but an unmerged path outside the session means a
     //    re-scan is needed before continuing.
-    if let Ok(index) = repo.index() {
-        if let Ok(conflicts) = index.conflicts() {
-            let session_paths: std::collections::BTreeSet<PathBuf> =
-                session.files.iter().map(|f| f.path.clone()).collect();
-            let mut untracked_unmerged: Vec<String> = Vec::new();
-            for entry in conflicts.flatten() {
-                if let Some(path) = conflict_path(&entry) {
-                    if !session_paths.contains(&path) {
-                        untracked_unmerged.push(path.to_string_lossy().into_owned());
-                    }
-                }
-            }
-            if !untracked_unmerged.is_empty() {
-                out.push(ContinueBlocker::IndexUnmerged(untracked_unmerged));
+    let conflicts = index
+        .conflicts()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    let session_paths: std::collections::BTreeSet<PathBuf> =
+        session.files.iter().map(|f| f.path.clone()).collect();
+    let mut untracked_unmerged: Vec<String> = Vec::new();
+    for entry in conflicts {
+        let entry = entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
+        if let Some(path) = conflict_path(&entry) {
+            if !session_paths.contains(&path) {
+                untracked_unmerged.push(path.to_string_lossy().into_owned());
             }
         }
+    }
+    if !untracked_unmerged.is_empty() {
+        out.push(ContinueBlocker::IndexUnmerged(untracked_unmerged));
     }
 
     // 6. Merge commit needs a non-empty message (merge only — sequencer ops
@@ -778,7 +786,7 @@ pub fn continue_blockers(
         }
     }
 
-    out
+    Ok(out)
 }
 
 /// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.
@@ -933,7 +941,7 @@ pub fn plan_conflict_continue(
     // The full ADR-0067 checklist (T-043/044): unresolved + marker residue +
     // index unmerged + binary unresolved + undecided deletion + empty merge
     // message.  Each structured blocker is rendered to a typed plan note here.
-    let structured = continue_blockers(repo, session, buffer);
+    let structured = continue_blockers(repo, session, buffer)?;
     let blockers: Vec<PlanNote> = structured.iter().map(blocker_note).collect();
 
     if session.files.is_empty() && structured.is_empty() {
@@ -1537,7 +1545,7 @@ pub fn plan_conflict_continue_route(
     current_branch: &str,
 ) -> Result<ContinueRoute, GitError> {
     // Hard gate: refuse to route while any blocker stands (ADR-0067).
-    let blockers = continue_blockers(repo, session, buffer);
+    let blockers = continue_blockers(repo, session, buffer)?;
     if let Some(first) = blockers.first() {
         return Err(GitError::Other(blocker_sentence(first)));
     }

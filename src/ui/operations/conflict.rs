@@ -292,11 +292,12 @@ impl KagiApp {
                 // owner; an append failure takes priority over this preview.
                 let notice = repo
                     .continue_blockers(&mode.session, &mode.buffer)
-                    .first()
+                    .ok()
+                    .and_then(|blockers| blockers.into_iter().next())
                     .map(|first| {
                         (
                             ToastKind::Error,
-                            conflict_view::blocker_msg(first).t().into(),
+                            conflict_view::blocker_msg(&first).t().into(),
                         )
                     });
                 // Refused at planning: nothing ran, so "recorded, nothing

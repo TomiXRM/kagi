@@ -189,7 +189,7 @@ fn binary_conflict_take_current_and_incoming_are_byte_identical() {
         let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
         // Before choosing, Continue is blocked (binary unresolved).
         assert!(
-            !continue_blockers(&repo, &session, &buffer).is_empty(),
+            !continue_blockers(&repo, &session, &buffer).unwrap().is_empty(),
             "binary conflict must block Continue until a side is chosen"
         );
 
@@ -204,7 +204,7 @@ fn binary_conflict_take_current_and_incoming_are_byte_identical() {
 
         // Continue is now enabled.
         assert!(
-            continue_blockers(&repo, &session, &buffer).is_empty(),
+            continue_blockers(&repo, &session, &buffer).unwrap().is_empty(),
             "binary conflict Continue must enable once a side is chosen"
         );
 
@@ -286,11 +286,11 @@ fn submodule_conflict_resolves_via_raw_oid() {
     assert_eq!(sub.kind, ConflictKind::Submodule);
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-    assert!(!continue_blockers(&repo, &session, &buffer).is_empty());
+    assert!(!continue_blockers(&repo, &session, &buffer).unwrap().is_empty());
     buffer
         .apply_choice(Path::new("sub"), ResolutionChoice::Incoming)
         .expect("raw take-side must succeed for a gitlink conflict");
-    assert!(continue_blockers(&repo, &session, &buffer).is_empty());
+    assert!(continue_blockers(&repo, &session, &buffer).unwrap().is_empty());
 
     execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue gitlink merge");
     let (mode, oid) = head_tree_entry(&repo, "sub");
@@ -647,7 +647,7 @@ fn binary_choice_works_and_survives_reload_through_autosave() {
         .apply_choice(Path::new("blob.bin"), ResolutionChoice::Current)
         .expect("take-side must work even after an autosave exists (#297)");
     assert!(
-        continue_blockers(&repo, &session, &buffer).is_empty(),
+        continue_blockers(&repo, &session, &buffer).unwrap().is_empty(),
         "Continue must enable after choosing a binary side"
     );
 
@@ -660,7 +660,7 @@ fn binary_choice_works_and_survives_reload_through_autosave() {
         "the chosen binary side must survive re-detection (raw_result persisted)"
     );
     assert!(
-        continue_blockers(&repo, &session, &buffer2).is_empty(),
+        continue_blockers(&repo, &session, &buffer2).unwrap().is_empty(),
         "Continue must stay enabled across re-detection"
     );
 

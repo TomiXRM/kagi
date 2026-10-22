@@ -229,7 +229,19 @@ fn finish_second(
     let before = RepositoryState::read(repo);
     let input = result_input(cx, app, window);
     replace_result(cx, app, window, &input, SECOND);
-    assert_eq!(before, RepositoryState::read(repo), "only Continue may stage the new edit");
+    assert_eq!(before, RepositoryState::read(repo), "typing cannot stage the new edit");
+    // Save runs through another backend handle. Continue must then inspect the
+    // real stage-0 index, not the original UI backend's cached unmerged entry.
+    click_control(cx, window, "conflict-save");
+    wait_idle(cx, app);
+    paint(cx, app, window);
+    let saved = git2::Repository::open(repo).unwrap();
+    let saved_index = saved.index().unwrap();
+    assert!(!saved_index.has_conflicts());
+    let staged = saved_index.get_path(Path::new(FILE), 0).unwrap();
+    assert_eq!(saved.find_blob(staged.id).unwrap().content(), SECOND.as_bytes());
+    assert_eq!(head(repo), first_replay, "Save stages but does not continue");
+    assert!(cx.read(|cx| conflict_read(app, cx).mode.as_ref().unwrap().session.files.is_empty()));
     open_continue(cx, app, window);
     confirm_continue(cx, app, window);
     let repository = git2::Repository::open(repo).unwrap();

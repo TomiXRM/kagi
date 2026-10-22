@@ -4084,6 +4084,16 @@ localized causes and a log action without raw stderr/exit/absolute paths; comple
 details remain durable. Hunk success has no toast. Quit/native-close repeats
 coalesce in active/queued notices and disappear after real writer/clone settlement
 without automatically quitting. Recording-failure acknowledge notices remain.
+
+For ordinary no-op Push, use the existing enabled Repository Push command
+(`Cmd-Shift-K` on macOS) and correlate each distinct input with its existing
+`[kagi] plan: push blockers=... warnings=... preview_commits=...` line. Six
+clicks on a disabled toolbar are not six executed requests. Confirm the typed
+up-to-date result stays in one bounded current-context footer, with no modal,
+toast stack or automatic log switch. Compare HEAD, all refs, index and tracked
+file hashes before/after and verify no Push receipt was created. Keep this
+ordinary producer witness separate from native inactive-window policy seams.
+
 The toast budget scenario also starts real Fetch failures before entering Home or
 another tab, then invokes the actual detail Button to reveal the same recorded ID.
 Closed-owner and removed-worktree legs must paint the shared log, not only mutate
@@ -4199,6 +4209,49 @@ hidden failure and required audit acknowledgment must still arrive, and a new
 same-name request must show progress. An intentional fixture transport delay is
 not evidence for a real linked-worktree read's latency cause. Keep an independent
 empty toast entity mounted so terminal results remain deliverable.
+
+### Pull terminal settlement and strict-FF refusal (#1720)
+
+Select `pull_ff_only_diverged_refusal,pull_ff_only_current_tree_consistency,pull_quiet_late_dirty_refuses,pull_presents_backend_receipts,pull_failure_presents_only_the_decisive_receipt`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. The diverged strict-FF scenario enters through
+the actual branch-menu Advanced action. An unchanged watcher refresh must retain
+the non-executable reason and disabled approval; Cancel must perform no write.
+Dirty/HEAD/upstream/owner changes invalidate the explanation instead of making an
+old blocked plan executable. Existing ready-plan preflight and late-dirty refusal
+remain independent positive/safety controls.
+
+Tier B uses disposable real repositories for FF, clean divergent Merge,
+committed-history conflict and failed Fetch in EN/JA, desktop width ≥1000 and
+the 940 compact leg. Record `pull.ff`, `pull.rebase`, per-branch settings,
+configured upstream ref/URL and Kagi's actual chosen mode. Ordinary toolbar
+Merge policy and explicit branch-menu ff-only are different inputs; do not
+rewrite Git settings to make them agree or attribute all waiting to CLI policy.
+Observe the real Fetch → plan/admission → result/refusal → lease/progress
+retirement, including a subsequent actual Pull that is admitted normally.
+
+Read actual Git HEAD, parents, index stages, file hashes and durable receipts
+independently. A receipt's predicted `Success.after` is not a Git observation.
+FF must reach the fetched tip cleanly; a clean Merge must have the correct two
+parents. History Review is read-only until real Merge approval, after which
+physical unmerged stages/paths and a stopped result must agree. A failed Fetch
+must preserve checkout state and record its real Failed outcome.
+
+For strict-FF, capture the initial reason, an actually observed unchanged
+refresh and Cancel in each locale, with no write receipt. Separately induce a
+real dirty or HEAD/upstream drift and verify expiry, preserved external state and
+no automatic execution. Merely touching `FETCH_HEAD` is not proof that a watcher
+read occurred. Registered `Cmd-R` also performs a quiet Fetch and can restore a
+manually moved tracking ref; do not count that attempt as drift-expiry evidence.
+Use an observed real watcher refresh with independently recorded tips instead.
+
+For the terminal-read regression, compare the same kind of fixture with one
+unrelated linked worktree holding 120,000 untracked files. Correlate existing
+executed/verified log arrival and the real window, then verify actual Merge
+parents, retired progress and next-request admission. Record the log reader's
+resolution: same-interval arrival is not microsecond method timing or a portable
+speedup ratio. This is not a reproduction of the user's 53-worktree repository
+or a claim to have accelerated all linked-worktree reads. Do not extend product
+timeouts, cancel tasks or scan the user's checkout to hide the distinction.
 
 ### Hunk staging (#842, Refs #357)
 

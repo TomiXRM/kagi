@@ -161,12 +161,13 @@ impl KagiApp {
                         after: modal.plan.predicted.clone(),
                     },
                     &repo_path,
+                    Some(i18n::op::user_text::operations::worktree_lock(
+                        &modal.name,
+                        true,
+                    )),
                     cx,
                 );
                 self.clear_lock_worktree_modal();
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::worktree_lock(&modal.name, true).into(),
-                );
                 self.reload(cx);
             }
             Err(e) => {
@@ -178,6 +179,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    None,
                     cx,
                 );
                 if let Some(m) = self.lock_worktree_modal_mut() {
@@ -357,12 +359,13 @@ impl KagiApp {
                         after: modal.plan.predicted.clone(),
                     },
                     &repo_path,
+                    Some(i18n::op::user_text::operations::worktree_lock(
+                        &modal.name,
+                        false,
+                    )),
                     cx,
                 );
                 self.clear_unlock_worktree_modal();
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::worktree_lock(&modal.name, false).into(),
-                );
                 self.reload(cx);
             }
             Err(e) => {
@@ -374,6 +377,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    None,
                     cx,
                 );
                 if let Some(m) = self.unlock_worktree_modal_mut() {

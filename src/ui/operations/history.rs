@@ -306,20 +306,26 @@ impl KagiApp {
                     head: format!("branch '{}' @ {}", outcome.branch, outcome.to.short()),
                     dirty: "index reset to target (working tree preserved)".to_string(),
                 };
-                self.record_op(
+                let entry = kagi_git::oplog::OpLogEntry::new(
                     &op_name,
+                    repo_path.display().to_string(),
                     modal.plan.current.clone(),
                     OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
                 );
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::moved(
-                        &op_name,
-                        outcome.from.short(),
-                        outcome.to.short(),
-                    )
-                    .into(),
+                let text = i18n::op::user_text::operations::moved(
+                    &op_name,
+                    outcome.from.short(),
+                    outcome.to.short(),
+                );
+                // run_history_move already owns persistence. Its one result
+                // retains the actual move without a second footer assignment.
+                self.record_op_with_notice(
+                    entry,
+                    cx,
+                    false,
+                    None,
+                    Some((crate::ui::ToastKind::Success, text.into())),
+                    false,
                 );
                 self.reload(cx);
             }

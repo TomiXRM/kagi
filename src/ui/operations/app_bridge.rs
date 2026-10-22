@@ -780,6 +780,7 @@ impl KagiApp {
         &mut self,
         entry: &OpLogEntry,
         error: impl std::fmt::Display,
+        stopped_notice: Option<&str>,
         cx: &mut Context<Self>,
     ) {
         let message = super::record::recording_failure_notice(
@@ -787,7 +788,7 @@ impl KagiApp {
             &entry.op,
             &entry.outcome,
             &error.to_string(),
-            None,
+            stopped_notice,
         );
         self.app_notices.push_back(message.into());
         self.present_app_notice();

@@ -158,45 +158,91 @@ pub fn scenario_stash_drop_persists(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
-    let fixture = build_fixture();
-    let repo = fixture.path();
-    let before = output(repo, &["rev-parse", "HEAD~1"]);
-    let after = output(repo, &["rev-parse", "HEAD"]);
-    let text = std::fs::read(repo.join("README.md")).unwrap();
-    let (app, window) = mount(cx, repo);
-    app.update(cx, |app, cx| {
-        app.ui_mut().expect("active session").operation_history = Default::default();
-        app.record_history(
-            OperationKind::Commit,
-            "main",
-            CommitId(before.clone()),
-            CommitId(after.clone()),
-            "second commit",
-        );
-        app.open_history_undo_modal();
-        assert!(app.history_modal().unwrap().plan.blockers.is_empty());
-        app.confirm_history(cx);
-    });
-    assert_eq!(output(repo, &["rev-parse", "HEAD"]), before);
-    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), text);
-    let undo = records(repo, "undo-commit", 100, true);
-    assert_eq!(undo.len(), 1, "UI undo must persist exactly once");
-    recovery_oid(&undo[0], &before);
-    recovery_oid(&undo[0], &after);
-    app.update(cx, |app, cx| {
-        app.open_history_redo_modal();
-        assert!(app.history_modal().unwrap().plan.blockers.is_empty());
-        app.confirm_history(cx);
-    });
-    assert_eq!(output(repo, &["rev-parse", "HEAD"]), after);
-    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), text);
-    let redo = records(repo, "redo-commit", 100, true);
-    assert_eq!(redo.len(), 1);
-    recovery_oid(&redo[0], &before);
-    recovery_oid(&redo[0], &after);
-    cx.read(|cx| assert!(app.read(cx).history_modal().is_none()));
-    unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS history_persists undo/redo with both recovery OIDs");
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let language = kagi_ui_core::i18n::lang();
+    for lang in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        for active in [true, false] {
+            let fixture = build_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let before = output(&repo, &["rev-parse", "HEAD~1"]);
+            let after = output(&repo, &["rev-parse", "HEAD"]);
+            let text = std::fs::read(repo.join("README.md")).unwrap();
+            kagi_ui_core::i18n::set_lang(lang);
+            let (app, window) = mount(cx, &repo);
+            // Use the real reflog-seeded history, not a fabricated cursor.
+            let undo_head = cx.read(|cx| kagi::ui::e2e::undo_head(app.read(cx)));
+            assert!(
+                undo_head
+                    .as_ref()
+                    .is_some_and(|(branch, tip, _)| branch == "main" && tip == &after),
+                "{undo_head:?}"
+            );
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+            for (step, is_undo) in [true, false].into_iter().enumerate() {
+                app.update(cx, |app, cx| {
+                    if is_undo {
+                        app.open_history_undo_modal();
+                    } else {
+                        app.open_history_redo_modal();
+                    }
+                    assert!(app.history_modal().unwrap().plan.blockers.is_empty());
+                    app.confirm_history(cx);
+                });
+                cx.run_until_parked();
+                let target = if is_undo { &before } else { &after };
+                let operation = if is_undo {
+                    "undo-commit"
+                } else {
+                    "redo-commit"
+                };
+                assert_eq!(&output(&repo, &["rev-parse", "HEAD"]), target);
+                assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), text);
+                let receipts = records(&repo, operation, 100, true);
+                assert_eq!(
+                    receipts.len(),
+                    1,
+                    "the backend, not the presenter, persists the move"
+                );
+                recovery_oid(&receipts[0], &before);
+                recovery_oid(&receipts[0], &after);
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(state.history_modal().is_none());
+                    assert!(state.app_notice().is_none());
+                    let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                    let shown = if active {
+                        assert!(toasts.is_empty());
+                        let FooterStatus::Success(message) = &state.status_footer else {
+                            panic!("attended history move stays in its footer");
+                        };
+                        message
+                    } else {
+                        assert!(
+                            !matches!(state.status_footer, FooterStatus::Success(_)),
+                            "an unattended toast must not gain a second success footer"
+                        );
+                        assert_eq!(
+                            toasts.len(),
+                            step + 1,
+                            "one result for each distinct Undo/Redo request"
+                        );
+                        assert!(toasts.iter().all(|toast| toast.kind == ToastKind::Success));
+                        &toasts.last().unwrap().message
+                    };
+                    assert!(
+                        shown.contains(&before[..7]),
+                        "the actual source/target identities are retained"
+                    );
+                    assert!(shown.contains(&after[..7]));
+                });
+            }
+            unmount(cx, app, window);
+        }
+    }
+    kagi_ui_core::i18n::set_lang(language);
+    eprintln!("[gui-e2e] PASS history_persists real reflog Undo/Redo, exact durable moves, one active/inactive EN/JA result");
 }
 
 pub fn scenario_cleanup_stale_tab(cx: &mut VisualTestAppContext) {

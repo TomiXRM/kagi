@@ -660,7 +660,7 @@ impl KagiApp {
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
             if current {
-                self.present_oplog_write_failure(recording.entry(), error, cx);
+                self.present_oplog_write_failure(recording.entry(), error, None, cx);
             } else {
                 self.app_notices.push_back(
                     super::record::recording_failure_notice(

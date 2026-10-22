@@ -682,6 +682,7 @@ impl KagiApp {
                                 announce,
                                 None,
                                 matches!(report.recording, Recording::Failed { .. }),
+                                None,
                             );
                         }
                         Some(app.status_footer.clone())
@@ -706,6 +707,7 @@ impl KagiApp {
                             announce,
                             None,
                             matches!(report.recording, Recording::Failed { .. }),
+                            None,
                         );
                         None
                     };
@@ -1005,6 +1007,7 @@ impl KagiApp {
             announce,
             None,
             matches!(recording, Recording::Failed { .. }),
+            None,
         );
     }
 }

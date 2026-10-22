@@ -9,6 +9,10 @@ use std::time::Duration;
 #[path = "conflict_refusal.rs"]
 mod refusal;
 
+pub fn scenario_conflict_continue_refusal_result_owner(cx: &mut VisualTestAppContext) {
+    refusal::continue_result_owner(cx);
+}
+
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
 use git_fixture::git_succeeds;

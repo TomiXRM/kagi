@@ -131,6 +131,7 @@ impl KagiApp {
                 failure.recording,
                 kagi_git::backend::recording::Recording::Failed { .. }
             ),
+            None,
         );
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());

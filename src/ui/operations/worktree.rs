@@ -552,12 +552,10 @@ impl KagiApp {
                         after: modal.plan.predicted.clone(),
                     },
                     &repo_path,
+                    Some(i18n::op::user_text::operations::pruned_worktrees(pruned)),
                     cx,
                 );
                 self.clear_prune_worktrees_modal();
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::pruned_worktrees(pruned).into(),
-                );
                 self.reload(cx);
             }
             Err(e) => {
@@ -569,6 +567,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    None,
                     cx,
                 );
                 if let Some(m) = self.prune_worktrees_modal_mut() {
@@ -626,12 +625,12 @@ impl KagiApp {
                         after: modal.plan.predicted.clone(),
                     },
                     &repo_path,
+                    Some(i18n::op::user_text::operations::completed(
+                        "repair-worktrees",
+                    )),
                     cx,
                 );
                 self.clear_repair_worktrees_modal();
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::completed("repair-worktrees").into(),
-                );
                 self.reload(cx);
             }
             Err(e) => {
@@ -643,6 +642,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    None,
                     cx,
                 );
                 if let Some(m) = self.repair_worktrees_modal_mut() {

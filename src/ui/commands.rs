@@ -2001,6 +2001,7 @@ impl FetchFailure {
             announce,
             Some(requested_op),
             false,
+            None,
         );
     }
 
@@ -2764,6 +2765,7 @@ impl KagiApp {
                             },
                             ref_moves.take(),
                             &repo_path_guard,
+                            false,
                             false,
                             cx,
                         );

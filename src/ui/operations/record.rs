@@ -107,29 +107,12 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
-    /// [`Self::record_op_persist`] with the refs the operation moved, as
-    /// observed by `Backend::observe_ref_moves` (#884, #885) — the receipt
-    /// `restore` reads. Used by the UI-recorded writes that run local git:
-    /// conflict continue / skip, fetch, worktree lock / unlock. A refusal
-    /// before anything ran passes `Some(empty)`; an `Unknown` outcome is
-    /// stored as not recorded (`OpLogEntry::with_ref_moves`, #891 review).
-    pub(in crate::ui) fn record_op_persist_moves(
-        &mut self,
-        op: &str,
-        before: StateSummary,
-        outcome: OpOutcome,
-        ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
-        repo_path: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
-            .with_ref_moves(ref_moves);
-        self.record_op_impl(entry, cx, true, None)
-    }
     /// Persist an async operation for its frozen owner. Quiet completions keep
     /// the live footer/toast and bottom panel with their current presentation owner.
     /// Returns true only when appending this completion failed, so a caller
     /// adding its own result cannot overwrite the required acknowledgement.
+    /// `stopped` comes from the typed sequencer result for this request; it
+    /// changes only the success presentation, never the recorded outcome.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_operation_completion(
         &mut self,
@@ -139,13 +122,26 @@ impl KagiApp {
         ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
         repo_path: &std::path::Path,
         current: bool,
+        stopped: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        if current {
-            return self.record_op_persist_moves(op, before, outcome, ref_moves, repo_path, cx);
-        }
+        let stopped = stopped && matches!(&outcome, OpOutcome::Success { .. });
         let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
             .with_ref_moves(ref_moves);
+        if current {
+            let announce = self.operation_result_toast_needed(false);
+            return self.record_op_result(
+                entry,
+                cx,
+                true,
+                None,
+                None,
+                announce,
+                None,
+                false,
+                stopped.then(|| i18n::Msg::conflict_stopped(None).into()),
+            );
+        }
         let (footer_msg, _) =
             Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
         let failed = !matches!(
@@ -159,13 +155,14 @@ impl KagiApp {
         );
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
+            let stopped_notice = stopped.then(|| i18n::Msg::conflict_stopped(None));
             self.app_notices.push_back(
                 recording_failure_notice(
                     repo_path.display(),
                     op,
                     &recording.entry().outcome,
                     &error.to_string(),
-                    None,
+                    stopped_notice.as_deref(),
                 )
                 .into(),
             );
@@ -204,11 +201,15 @@ impl KagiApp {
         before: StateSummary,
         outcome: OpOutcome,
         repo_path: &std::path::Path,
+        success_display: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        let notice = success_display
+            .filter(|_| matches!(&outcome, OpOutcome::Success { .. }))
+            .map(|text| (crate::ui::ToastKind::Success, text.into()));
         let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
             .with_nothing_moved();
-        self.record_op_impl(entry, cx, true, None);
+        self.record_op_with_notice(entry, cx, true, None, notice, false);
     }
 
     /// Record a refusal whose blockers are typed plan notes: every blocker
@@ -276,6 +277,7 @@ impl KagiApp {
                 report.recording,
                 kagi_git::backend::recording::Recording::Failed { .. }
             ),
+            None,
         );
     }
 }

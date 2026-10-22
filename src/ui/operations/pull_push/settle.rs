@@ -241,7 +241,17 @@ impl KagiApp {
             if background {
                 self.insert_recorded_row(recording, cx);
             } else {
-                self.record_op_result(entry, cx, false, None, None, announce, Some("pull"), true);
+                self.record_op_result(
+                    entry,
+                    cx,
+                    false,
+                    None,
+                    None,
+                    announce,
+                    Some("pull"),
+                    true,
+                    None,
+                );
             }
             return;
         }
@@ -286,6 +296,7 @@ impl KagiApp {
                 announce,
                 Some("pull"),
                 false,
+                None,
             );
         }
     }

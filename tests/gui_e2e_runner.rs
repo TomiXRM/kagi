@@ -7459,8 +7459,7 @@ mod macos {
                 let state = kagi.read(app);
                 (
                     format!("{:?}", state.status_footer),
-                    state.status_footer_text.clone(),
-                    (state.bottom_panel_open, format!("{:?}", state.bottom_tab)),
+                    (state.bottom_panel_open, state.bottom_tab),
                 )
             });
             kagi.update(cx, |app, cx| {
@@ -7496,21 +7495,29 @@ mod macos {
                     !e2e::queued_notice_contains(state, wt_a.to_str().unwrap()),
                     "one failed recording must not queue another owner-named acknowledgment"
                 );
-                assert!(state.toast_stack.read(app).toasts().is_empty());
+                assert!(state
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(app)
+                    .toasts()
+                    .is_empty());
                 assert_eq!(
-                    (state.bottom_panel_open, format!("{:?}", state.bottom_tab)),
-                    presentation_before.2,
+                    (state.bottom_panel_open, state.bottom_tab),
+                    presentation_before.1,
                     "only explicit inspection may switch the existing panel"
                 );
                 if stale {
                     assert_eq!(format!("{:?}", state.status_footer), presentation_before.0);
-                    assert_eq!(state.status_footer_text, presentation_before.1);
                 } else {
-                    assert!(matches!(
-                        state.status_footer,
-                        kagi::ui::types::FooterStatus::Idle
-                    ));
-                    assert!(state.status_footer_text.is_empty());
+                    assert!(
+                        matches!(
+                            &state.status_footer,
+                            kagi::ui::types::FooterStatus::Idle(message) if message.is_empty()
+                        ),
+                        "required acknowledgment is the only result: {:?}",
+                        state.status_footer
+                    );
                 }
                 assert!(
                     state.discard_modal().is_none(),

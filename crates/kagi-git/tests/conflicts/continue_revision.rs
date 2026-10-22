@@ -369,3 +369,85 @@ fn empty_session_requires_known_operation_before_any_continue_write() {
         execution.as_ref().err().map(ToString::to_string),
     );
 }
+
+fn replace_saved_rebase_onto_another_base(path: &Path) {
+    git(path, &["rebase", "--abort"]);
+    git(path, &["checkout", "-q", "main"]);
+    write_file(path, "file.txt", "DIFFERENT REBASE BASE\n");
+    git(path, &["commit", "-qam", "replacement rebase base"]);
+    git(path, &["checkout", "-q", "side"]);
+    assert!(!git_allow_fail(path, &["rebase", "main"]));
+    assert!(!git_output(path, &["ls-files", "-u"]).is_empty());
+    write_file(path, "file.txt", "REPLACEMENT RESOLUTION\n");
+    git(path, &["add", "file.txt"]);
+    assert_eq!(git_output(path, &["ls-files", "-u"]), "");
+}
+
+#[test]
+fn empty_saved_session_refuses_replacement_rebase_with_same_commit_and_step() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = rebase_conflict_repo();
+    let path = fixture.path();
+    let backend = open_backend(path);
+    let mut resolving = backend.resolution_buffer_from_repo().unwrap();
+    resolving
+        .set_manual_text(Path::new("file.txt"), "ORIGINAL APPROVED RESOLUTION\n")
+        .unwrap();
+    backend
+        .execute_conflict_save(&resolving, Path::new("file.txt"))
+        .unwrap();
+    let original = open_backend(path).conflict_snapshot().unwrap().unwrap();
+    assert!(original.session.files.is_empty());
+    let approved_buffer = open_backend(path).resolution_buffer_from_repo().unwrap();
+    let approved_route = backend
+        .plan_conflict_continue_route(&original.session, &approved_buffer, "side")
+        .unwrap();
+    let original_state = physical_state(path);
+
+    // An independent Git CLI replaces the operation after approval. Neither
+    // the original session, buffer nor plan is refreshed from the new rebase.
+    replace_saved_rebase_onto_another_base(path);
+    let replacement = open_backend(path).conflict_snapshot().unwrap().unwrap();
+    assert!(replacement.session.files.is_empty());
+    assert_eq!(original.session.op, replacement.session.op);
+    assert_ne!(
+        original.observation.revision,
+        replacement.observation.revision
+    );
+    let before = physical_state(path);
+    assert_ne!(original_state.head, before.head);
+    assert_eq!(original_state.rebase_head, before.rebase_head);
+    let objects_before = git_output(path, &["count-objects", "-v"]);
+
+    let blockers = backend.continue_blockers(&original.session, &approved_buffer);
+    let plan = backend.plan_conflict_continue_route(&original.session, &approved_buffer, "side");
+    let staging = backend.stage_conflict_resolution(&original.session, &approved_buffer);
+    let execution = backend.execute_conflict_continue(&original.session, &approved_buffer);
+    let after = physical_state(path);
+    let objects_after = git_output(path, &["count-objects", "-v"]);
+    assert!(
+        blockers.is_err()
+            && plan.is_err()
+            && staging.is_err()
+            && execution.is_err()
+            && before == after
+            && objects_before == objects_after,
+        "old empty approval must not advance a replacement operation; \
+         original_op={:?} replacement_op={:?} approved_route={approved_route:?} \
+         original_revision={:?} replacement_revision={:?} \
+         checklist_admitted={} plan_admitted={} stage_admitted={} execute_admitted={} \
+         execute_error={:?}\nobjects_before={objects_before}\nobjects_after={objects_after}\n\
+         original={original_state:#?}\nbefore={before:#?}\nafter={after:#?}",
+        original.session.op,
+        replacement.session.op,
+        original.observation.revision,
+        replacement.observation.revision,
+        blockers.is_ok(),
+        plan.is_ok(),
+        staging.is_ok(),
+        execution.is_ok(),
+        execution.as_ref().err().map(ToString::to_string),
+    );
+}

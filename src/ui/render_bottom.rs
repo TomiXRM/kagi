@@ -1,6 +1,7 @@
 //! Bottom-panel renderer (Operation Log / Terminal / Activity tabs) split out
 //! of `render.rs` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3). `render_body` places
-//! the panel below the center pane, beside the full-height sidebar and inspector.
+//! the panel below the center pane, beside the full-height sidebar and inspector;
+//! Conflict Mode places the same slot below its replacement body.
 
 use super::workspace::WorkspaceItem as _;
 use super::*;

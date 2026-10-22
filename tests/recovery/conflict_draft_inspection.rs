@@ -54,13 +54,22 @@ fn panel(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Entity<kagi::u
 }
 
 fn show_log(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    if cx.read(|cx| app.read(cx).bottom_panel_open) {
+        cx.simulate_keystrokes(window, "cmd-j");
+        paint(cx, app, window);
+        assert!(!cx.read(|cx| app.read(cx).bottom_panel_open));
+    }
     app.update(cx, |app, cx| {
-        app.bottom_panel_open = true;
+        // Only arrange panel selection/size; opening uses the real root action.
         app.bottom_tab = BottomTab::OperationLog;
         app.bottom_panel_height = 520.;
         cx.notify();
     });
+    cx.simulate_keystrokes(window, "cmd-j");
     paint(cx, app, window);
+    assert!(cx.read(|cx| app.read(cx).bottom_panel_open));
+    assert!(e2e::control_bounds(window.window_id(), "bottom-panel").is_some(),
+        "the window-wide panel is actually laid out while Conflict Mode is active");
 }
 
 fn draft_text(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<String> {

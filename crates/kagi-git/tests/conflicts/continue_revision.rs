@@ -3,7 +3,7 @@ use super::*;
 use kagi_git::Backend;
 
 #[derive(Debug, PartialEq, Eq)]
-struct PhysicalState {
+pub(super) struct PhysicalState {
     head: String,
     rebase_head: Option<String>,
     index: Vec<u8>,
@@ -13,7 +13,7 @@ struct PhysicalState {
     operation: git2::RepositoryState,
 }
 
-fn physical_state(path: &Path) -> PhysicalState {
+pub(super) fn physical_state(path: &Path) -> PhysicalState {
     physical_file_state(path, "file.txt")
 }
 
@@ -167,7 +167,7 @@ fn same_operation_stage_change_refuses_text_and_raw_old_results() {
     }
 }
 
-fn open_backend(path: &Path) -> Backend {
+pub(super) fn open_backend(path: &Path) -> Backend {
     Backend::open_with_policy(path, kagi_git::backend::ExecutionPolicy::human(false)).unwrap()
 }
 

@@ -2233,5 +2233,8 @@ mod continue_index;
 #[path = "conflicts/continue_revision.rs"]
 mod continue_revision;
 
+#[path = "conflicts/continue_flags.rs"]
+mod continue_flags;
+
 #[path = "conflicts/draft_completion.rs"]
 mod draft_completion;

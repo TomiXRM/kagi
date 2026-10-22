@@ -65,7 +65,8 @@ fn commit_body(repo: &Path, oid: git2::Oid) -> Vec<u8> {
     let repository = git2::Repository::open(repo).unwrap();
     let tree = repository.find_commit(oid).unwrap().tree().unwrap();
     let entry = tree.get_path(Path::new(FILE)).unwrap();
-    repository.find_blob(entry.id()).unwrap().content().to_vec()
+    let blob = repository.find_blob(entry.id()).unwrap();
+    blob.content().to_vec()
 }
 
 fn assert_unmerged(repo: &Path) {

@@ -51,7 +51,7 @@ impl OpLogPanel {
     pub(crate) fn set_preserved_draft_owner(&mut self, owner: Option<Attachment>, cx: &mut Context<Self>) {
         self.close_preserved_conflict_drafts(cx);
         self.draft_owner = owner.map(|attachment| DraftOwner {
-            label: kagi_domain::text_safety::sanitize_control_bytes(&attachment.path.display().to_string()).into(),
+            label: kagi_domain::text_safety::sanitize_control_bytes(&attachment.path.to_string_lossy()).into(),
             attachment,
         });
         cx.notify();

@@ -10,6 +10,9 @@ use kagi::ui::{e2e, oplog_panel::entry_clipboard_text, BottomTab, KagiApp};
 use kagi_git::resolution::ResolutionBuffer;
 use std::path::{Path, PathBuf};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+
 const OTHER: &str = "OTHER REPOSITORY PRESERVED RESULT\n";
 
 // Like the existing theme_custom sandbox: restore the runner-owned environment
@@ -292,4 +295,134 @@ pub fn scenario_conflict_draft_inspection_scope_change(cx: &mut VisualTestAppCon
     assert_eq!(before_a, RepositoryState::read(&repo_a));
     assert_eq!(before_b, RepositoryState::read(&repo_b));
     unmount(cx, app, window);
+}
+
+fn attachment(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> kagi::app::Attachment {
+    cx.read(|cx| {
+        let app = app.read(cx);
+        app.app_sessions.attachment(app.active_session().unwrap()).unwrap()
+    })
+}
+
+fn git_files(directory: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    git_fixture::worktree_files(directory, git_fixture::WorktreeFilesOptions {
+        skip_nested_git: false,
+        follow_directory_symlinks: false,
+    })
+}
+
+/// Only test-owned temporary repositories are redirected; restore A even on panic.
+struct GitdirSwap {
+    locator: PathBuf,
+    saved: PathBuf,
+    _directory: tempfile::TempDir,
+}
+
+impl GitdirSwap {
+    fn new(repo_a: &Path, repo_b: &Path) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let locator = repo_a.join(".git");
+        let saved = directory.path().join("original.git");
+        std::fs::rename(&locator, &saved).unwrap();
+        let swap = Self { locator, saved, _directory: directory };
+        std::fs::write(&swap.locator, format!("gitdir: {}\n", repo_b.join(".git").display())).unwrap();
+        swap
+    }
+}
+
+impl Drop for GitdirSwap {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.locator).unwrap();
+        std::fs::rename(&self.saved, &self.locator).unwrap();
+    }
+}
+
+fn inspect_refused(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    click_control(cx, window, "oplog-preserved-drafts-open");
+    let panel = panel(cx, app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        assert_eq!(draft_text(cx, app), None, "the substituted repository body is never admitted");
+        if cx.read(|cx| panel.read(cx).preserved_conflict_draft_unavailable()) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "inspection settles as Unavailable, not Loading");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    e2e::clear_control_bounds(window.window_id(), "oplog-preserved-drafts-copy");
+    paint(cx, app, window);
+    assert!(e2e::control_bounds(window.window_id(), "oplog-preserved-drafts-copy").is_some());
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("identity-refusal-sentinel".into()));
+    // Exercise the rendered disabled Button, not the root's Copy method.
+    click_control(cx, window, "oplog-preserved-drafts-copy");
+    cx.run_until_parked();
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(),
+        Some("identity-refusal-sentinel"));
+    assert_eq!(draft_text(cx, app), None);
+    assert!(cx.read(|cx| panel.read(cx).preserved_conflict_draft_unavailable()));
+}
+
+pub fn scenario_conflict_draft_inspection_gitdir_replaced(cx: &mut VisualTestAppContext) {
+    let _isolated = IsolatedLog::new();
+    let first = content_fixture();
+    let second = content_fixture();
+    let repo_a = first.path().canonicalize().unwrap();
+    let repo_b = second.path().canonicalize().unwrap();
+    // B's actual gitdir owns B's worktree and therefore B's autosave key,
+    // even when reached through the replacement gitfile at A's old locator.
+    git_fixture::git(&repo_b, &["config", "core.worktree", repo_b.to_str().unwrap()]);
+    let draft_a = legacy_document(&repo_a, FIRST);
+    let draft_b = legacy_document(&repo_b, OTHER);
+    let (app, window) = mount(cx, &repo_a);
+    detect(cx, &app, window);
+    show_log(cx, &app, window);
+    let owner = attachment(cx, &app);
+    assert_eq!(owner.path, repo_a);
+    assert_eq!(owner.worktree, Some(kagi_git::Backend::open(&repo_a).unwrap().write_worktree_id().unwrap()));
+    let valid = open_drafts(cx, &app, window, FIRST);
+    assert!(!valid.contains(OTHER));
+    copy_drafts(cx, &app, window, &valid);
+    back(cx, &app, window);
+    let before_a = RepositoryState::read(&repo_a);
+    let before_b = RepositoryState::read(&repo_b);
+    let git_a = git_files(&repo_a.join(".git"));
+    let git_b = git_files(&repo_b.join(".git"));
+    let saved_drafts = [draft_a, draft_b].map(|path| {
+        let bytes = std::fs::read(&path).unwrap();
+        (path, bytes)
+    });
+
+    let swap = GitdirSwap::new(&repo_a, &repo_b);
+    let pointer = std::fs::read(&swap.locator).unwrap();
+    let actual = kagi_git::Backend::open(&owner.path).unwrap();
+    let identity_b = kagi_git::Backend::open(&repo_b).unwrap().write_worktree_id().unwrap();
+    assert_eq!(actual.write_worktree_id().unwrap(), identity_b);
+    assert_ne!(owner.worktree.as_ref(), Some(&identity_b));
+    // Without the load-time identity gate this exact backend would expose B.
+    let buffer = actual.resolution_buffer_from_repo_with_autosave().unwrap();
+    let bodies: Vec<_> = buffer.recovery_drafts()
+        .filter_map(|draft| draft.result.map(kagi_git::resolution::lines_to_text)).collect();
+    assert_eq!(bodies, vec![OTHER.to_string()]);
+    drop(buffer);
+    drop(actual);
+    assert_eq!(attachment(cx, &app), owner, "the root's frozen owner is deliberately untouched");
+
+    inspect_refused(cx, &app, window);
+    assert_eq!(attachment(cx, &app), owner, "refusal does not silently reattach A to B");
+    unmount(cx, app, window);
+    assert_eq!(std::fs::read(&swap.locator).unwrap(), pointer);
+    assert_eq!(git_files(&swap.saved), git_a, "A's original admin bytes remain intact");
+    assert_eq!(git_files(&repo_b.join(".git")), git_b, "B's admin bytes remain intact");
+    assert_eq!(RepositoryState::read(&repo_b), before_b);
+    drop(swap);
+    assert_eq!(git_files(&repo_a.join(".git")), git_a);
+    assert_eq!(RepositoryState::read(&repo_a), before_a);
+    for (path, bytes) in saved_drafts {
+        assert_eq!(std::fs::read(path).unwrap(), bytes, "preserved draft bytes remain unchanged");
+    }
 }

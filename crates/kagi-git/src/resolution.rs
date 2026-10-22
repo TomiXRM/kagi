@@ -57,6 +57,10 @@ pub struct SideBlobInfo {
 struct FileResolution {
     /// Known operation + this file's exact unmerged stages, never path alone.
     identity: Option<ConflictRevision>,
+    /// Autosave producer provenance, never conflict identity or restore authority.
+    /// A decoded origin belongs to a previous editor until the first live edit.
+    editing_origin: Option<String>,
+    live_editing_origin: bool,
     /// Explicit draft state, including undo-to-unresolved. A fresh index
     /// materialization must not supersede a saved draft merely by being null.
     draft_state: bool,
@@ -94,6 +98,8 @@ impl FileResolution {
     fn empty() -> Self {
         FileResolution {
             identity: None,
+            editing_origin: None,
+            live_editing_origin: false,
             draft_state: false,
             current_text: None,
             incoming_text: None,
@@ -109,9 +115,19 @@ impl FileResolution {
         }
     }
 
+    /// Start a new preservation boundary after loading, but reuse the same
+    /// producer token for every subsequent edit by this live owner.
+    fn begin_edit(&mut self) {
+        if !self.live_editing_origin {
+            self.editing_origin = Some(crate::ops::backup::operation_id());
+            self.live_editing_origin = true;
+        }
+    }
+
     /// Push the current `result` onto the undo stack and clear redo, before a
     /// mutation.
     fn checkpoint(&mut self) {
+        self.begin_edit();
         self.draft_state = true;
         self.undo.push(self.result.clone());
         self.redo.clear();
@@ -133,7 +149,7 @@ impl FileResolution {
 ///
 /// Keyed by repository-relative path; serialized per ADR-0057 to
 /// `~/.kagi/conflicts/<sha1(repo)>/buffer.json`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ResolutionBuffer {
     /// Absolute path to the repository working tree (the autosave key).
     repo_path: PathBuf,
@@ -148,6 +164,28 @@ pub struct ResolutionBuffer {
     hunks: BTreeMap<PathBuf, HunkModel>,
     /// Older, unbound or incompatible drafts in the same autosave document.
     recoveries: Vec<RecoveryEntry>,
+}
+
+impl Clone for ResolutionBuffer {
+    /// A snapshot can be edited independently, so it must not inherit the
+    /// source's right to coalesce that live owner's unknown autosaves.
+    fn clone(&self) -> Self {
+        let mut files = self.files.clone();
+        for file in files.values_mut() {
+            file.live_editing_origin = false;
+        }
+        let mut recoveries = self.recoveries.clone();
+        for entry in &mut recoveries {
+            entry.file.live_editing_origin = false;
+        }
+        Self {
+            repo_path: self.repo_path.clone(),
+            files,
+            marker_residue_count: self.marker_residue_count,
+            hunks: self.hunks.clone(),
+            recoveries,
+        }
+    }
 }
 
 mod conflict_boundary;
@@ -350,6 +388,7 @@ impl ResolutionBuffer {
         match self.files.get_mut(path) {
             Some(fr) => match fr.undo.pop() {
                 Some(prev) => {
+                    fr.begin_edit();
                     fr.redo.push(fr.result.clone());
                     fr.replace_result(prev, &mut self.marker_residue_count);
                     true
@@ -366,6 +405,7 @@ impl ResolutionBuffer {
         match self.files.get_mut(path) {
             Some(fr) => match fr.redo.pop() {
                 Some(next) => {
+                    fr.begin_edit();
                     fr.undo.push(fr.result.clone());
                     fr.replace_result(next, &mut self.marker_residue_count);
                     true
@@ -1059,6 +1099,7 @@ struct FileRecord<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     path_bytes: Option<&'a [u8]>,
     identity: Option<IdentityRecord<'a>>,
+    editing_origin: Option<&'a str>,
     draft_state: bool,
     binary: bool,
     current: Option<&'a str>,
@@ -1109,6 +1150,7 @@ fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
             version: 1,
             fingerprint: identity.as_str(),
         }),
+        editing_origin: fr.editing_origin.as_deref(),
         draft_state: fr.draft_state || fr.result.is_some() || fr.raw_result.is_some(),
         binary: fr.binary,
         current: fr.current_text.as_deref(),
@@ -1182,6 +1224,8 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         || result.is_some() || raw_result.is_some();
     let mut resolution = FileResolution {
         identity: drafts::parse_identity(fields.remove("identity")),
+        editing_origin: json_string(fields.remove("editing_origin")).filter(|origin| !origin.is_empty()),
+        live_editing_origin: false,
         draft_state,
         binary: fields
             .get("binary")
@@ -1256,6 +1300,8 @@ mod tests {
         let path = PathBuf::from("a.txt");
         let fr = FileResolution {
             identity: None,
+            editing_origin: None,
+            live_editing_origin: false,
             draft_state: false,
             current_text: Some(current.to_string()),
             incoming_text: Some(incoming.to_string()),
@@ -1356,6 +1402,8 @@ mod tests {
         let p = PathBuf::from("md.txt");
         let fr = FileResolution {
             identity: None,
+            editing_origin: None,
+            live_editing_origin: false,
             draft_state: false,
             current_text: Some("only current\n".to_string()),
             incoming_text: None, // modify/delete: incoming deleted
@@ -1402,6 +1450,8 @@ mod tests {
         let p = PathBuf::from("x.txt");
         let fr = FileResolution {
             identity: None,
+            editing_origin: None,
+            live_editing_origin: false,
             draft_state: false,
             current_text: Some("quote \"x\"\ttab\n".to_string()),
             incoming_text: None,

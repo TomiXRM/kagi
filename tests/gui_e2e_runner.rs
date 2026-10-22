@@ -3178,6 +3178,10 @@ mod macos {
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_scope_change),
             ),
             (
+                "conflict_draft_inspection_gitdir_replaced",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_gitdir_replaced),
+            ),
+            (
                 "conflict_reset_disarm",
                 Box::new(crate::conflict_controls::scenario_conflict_reset_disarm),
             ),

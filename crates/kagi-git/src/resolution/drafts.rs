@@ -152,6 +152,8 @@ impl ResolutionBuffer {
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.draft_state = true;
+                    current.editing_origin = saved.editing_origin.take();
+                    current.live_editing_origin = saved.live_editing_origin;
                     current.undo = std::mem::take(&mut saved.undo);
                     current.redo = std::mem::take(&mut saved.redo);
                 }
@@ -176,6 +178,8 @@ impl ResolutionBuffer {
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.draft_state = true;
+                    current.editing_origin = saved.editing_origin.take();
+                    current.live_editing_origin = saved.live_editing_origin;
                     current.undo = std::mem::take(&mut saved.undo);
                     current.redo = std::mem::take(&mut saved.redo);
                     matched.insert(entry.path);
@@ -194,9 +198,9 @@ impl ResolutionBuffer {
         }
     }
 
-    /// Merge disk recoveries by reference. A fresh from_repo autosave must not
-    /// erase a document it did not load; an edited live revision supersedes its
-    /// own previous saved body, without cloning any live Result text.
+    /// Merge disk recoveries by reference. Only the immediately previous file
+    /// save from this live editing owner may coalesce without known identity.
+    /// Prior editors and preserved recoveries remain inspection-only history.
     pub(super) fn autosave_json(&self) -> Result<String, serde_json::Error> {
         let disk = Self::load(&self.repo_path);
         let mut recoveries: Vec<(&Path, &FileResolution)> = Vec::new();
@@ -210,7 +214,11 @@ impl ResolutionBuffer {
                 }
                 let superseded = self.files.get(path).is_some_and(|current| {
                     same_draft(current, file)
-                        || (!preserved && compatible(current, file) && has_draft_state(current))
+                        || (!preserved && has_draft_state(current)
+                            && (compatible(current, file)
+                                || (current.live_editing_origin
+                                    && current.editing_origin.is_some()
+                                    && current.editing_origin == file.editing_origin)))
                 });
                 if !superseded {
                     if let Some(index) = recoveries.iter()

@@ -102,6 +102,11 @@ impl OpLogPanel {
         self.draft_inspection.is_some()
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn preserved_conflict_draft_unavailable(&self) -> bool {
+        matches!(self.draft_inspection.as_ref(), Some(DraftInspection::Unavailable(_)))
+    }
+
     pub fn preserved_conflict_draft_text(&self) -> Option<&str> {
         match self.draft_inspection.as_ref()? {
             DraftInspection::Loaded(Some(text)) => Some(text.as_ref()),
@@ -147,6 +152,11 @@ impl OpLogPanel {
 
 pub(in crate::ui) fn load(owner: &Attachment) -> Result<Option<SharedString>, String> {
     let backend = kagi_git::Backend::open(&owner.path).map_err(|error| error.to_string())?;
+    if owner.worktree.is_none()
+        || backend.write_worktree_id().ok().as_ref() != owner.worktree.as_ref()
+    {
+        return Err("worktree identity changed; reopen the repository".into());
+    }
     let buffer = backend.resolution_buffer_from_repo_with_autosave().map_err(|error| error.to_string())?;
     Ok(snapshot(&buffer).map(SharedString::from))
 }

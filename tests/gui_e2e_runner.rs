@@ -151,11 +151,11 @@ mod feedback_status;
 #[path = "recovery/clone_hidden_status.rs"]
 mod clone_hidden_status;
 #[cfg(target_os = "macos")]
-#[path = "recovery/completion_visit_owner.rs"]
-mod completion_visit_owner;
-#[cfg(target_os = "macos")]
 #[path = "recovery/clone_progress_status.rs"]
 mod clone_progress_status;
+#[cfg(target_os = "macos")]
+#[path = "recovery/completion_visit_owner.rs"]
+mod completion_visit_owner;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection_actions.rs"]
@@ -2475,6 +2475,10 @@ mod macos {
             (
                 "stash_revisit_result_owner",
                 Box::new(crate::completion_visit_owner::scenario_stash_revisit_result_owner),
+            ),
+            (
+                "remote_stash_revisit_result_owner",
+                Box::new(crate::completion_visit_owner::scenario_remote_stash_revisit_result_owner),
             ),
             (
                 "smart_commit_generation_owner",

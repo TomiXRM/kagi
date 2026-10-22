@@ -270,3 +270,100 @@ pub fn scenario_stash_revisit_result_owner(cx: &mut VisualTestAppContext) {
     }
     eprintln!("[gui-e2e] PASS stash_revisit_result_owner");
 }
+
+pub fn scenario_remote_stash_revisit_result_owner(cx: &mut VisualTestAppContext) {
+    use kagi::remote::stash::{
+        remote_stash_e2e_refreshes, set_remote_stash_e2e_mode, RemoteStashE2eMode,
+    };
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "recent_repos"]);
+    let host = kagi_domain::remote::RemoteHost {
+        user: Some("kagi-e2e".into()),
+        host: "e2e.invalid".into(),
+        port: Some(22),
+        identity_file: Some("/e2e/id".into()),
+    };
+    let recorded_repo = format!("{}:/srv/repo", host.label());
+    for lang in [Lang::En, Lang::Ja] {
+        for revisit in [false, true] {
+            // Existing typed remote transport replaces SSH only. Snapshot,
+            // tabs, attachment/visit, approval, settlement, receipt and result
+            // delivery are the production consumers; this is not an SSH proof.
+            set_remote_stash_e2e_mode(Some(RemoteStashE2eMode::Success));
+            let fixture = build_fixture();
+            for text in ["one\n", "two\n", "three\n"] {
+                std::fs::write(fixture.path().join("README.md"), text).unwrap();
+                git(fixture.path(), &["stash", "push", "-qm", text.trim()]);
+            }
+            let snapshot = kagi_git::Backend::open(fixture.path())
+                .unwrap()
+                .snapshot(10_000)
+                .unwrap();
+            let before_count = oplog::read_oplog_tail(usize::MAX)
+                .iter()
+                .filter(|entry| entry.op == "stash-drop" && entry.repo == recorded_repo)
+                .count();
+            let (app, window) = mount(cx, fixture.path());
+            app.update(cx, |app, cx| {
+                app.set_lang(lang, cx);
+                app.set_window_active_for_e2e(true, cx);
+                app.enter_remote_view(host.clone(), "/srv/repo".into(), snapshot, cx);
+                app.open_stash_drop_modal(1, cx);
+            });
+            wait(cx, &app, "typed remote Drop plan is ready", |app| {
+                matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+            });
+            let (owner, remote_index) = cx.read(|cx| {
+                let state = app.read(cx);
+                (
+                    state.app_sessions.attachment(state.active_session().unwrap()).unwrap(),
+                    state.active_tab,
+                )
+            });
+            app.update(cx, |app, cx| {
+                app.start_stash_drop(cx);
+                assert!(app.app_sessions.has_leases());
+                if revisit {
+                    app.switch_repo(0, cx);
+                    app.switch_repo(remote_index, cx);
+                    assert_eq!(app.active_session(), Some(owner.session));
+                    assert_eq!(app.remote_view.as_ref().unwrap().host, host);
+                    assert_eq!(app.remote_view.as_ref().unwrap().root, "/srv/repo");
+                    assert_ne!(
+                        app.app_sessions.attachment(owner.session).unwrap().visit,
+                        owner.visit
+                    );
+                    app.status_footer = FooterStatus::Idle("remote new visit owner".into());
+                }
+            });
+            wait(cx, &app, "remote Drop completion releases its real admission", |app| {
+                !app.app_sessions.has_leases() && app.write_busy_op.is_none()
+            });
+            paint(cx, &app, window);
+            let entries = oplog::read_oplog_tail(usize::MAX);
+            let drops: Vec<_> = entries.iter()
+                .filter(|entry| entry.op == "stash-drop" && entry.repo == recorded_repo)
+                .collect();
+            assert_eq!(drops.len(), before_count + 1);
+            assert!(matches!(drops[0].outcome, OpOutcome::Success { .. }));
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                eprintln!("[gui-e2e] remote_stash_revisit lang={lang:?} revisit={revisit} frozen={owner:?} live={:?} footer={:?} toasts={} refreshes={}", state.app_sessions.attachment(owner.session), state.status_footer, stack.toasts().len(), remote_stash_e2e_refreshes());
+                if revisit {
+                    assert!(matches!(&state.status_footer, FooterStatus::Idle(message) if message.as_ref() == "remote new visit owner"));
+                    assert_eq!(stack.toasts().len(), 1);
+                    assert_eq!(stack.toasts()[0].kind, ToastKind::Success);
+                    assert_eq!(remote_stash_e2e_refreshes(), 0, "old visit cannot refresh the new remote view");
+                } else {
+                    assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                    assert!(stack.toasts().is_empty());
+                    assert_eq!(remote_stash_e2e_refreshes(), 1);
+                }
+            });
+            unmount(cx, app, window);
+            set_remote_stash_e2e_mode(None);
+        }
+    }
+    eprintln!("[gui-e2e] PASS remote_stash_revisit_result_owner");
+}

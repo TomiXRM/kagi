@@ -159,6 +159,9 @@ mod completion_visit_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/remote_pull_result_owner.rs"]
 mod remote_pull_result_owner;
+#[cfg(target_os = "macos")]
+#[path = "recovery/remote_result_refresh.rs"]
+mod remote_result_refresh;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection_actions.rs"]
@@ -2498,6 +2501,14 @@ mod macos {
             (
                 "remote_pull_revisit_result_owner",
                 Box::new(crate::remote_pull_result_owner::scenario_remote_pull_revisit_result_owner),
+            ),
+            (
+                "remote_stash_result_survives_refresh",
+                Box::new(crate::remote_result_refresh::scenario_remote_stash_result_survives_refresh),
+            ),
+            (
+                "remote_pull_result_survives_refresh",
+                Box::new(crate::remote_result_refresh::scenario_remote_pull_result_survives_refresh),
             ),
             (
                 "smart_commit_generation_owner",

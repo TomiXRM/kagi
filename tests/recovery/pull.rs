@@ -242,7 +242,7 @@ fn wait_for(
 }
 
 /// Stand-in for the host's ordinary SSH options, scope probe and pull.
-fn blocking_fake_ssh(
+pub(super) fn blocking_fake_ssh(
     bin: &Path,
     head_oid: &str,
     release: &Path,

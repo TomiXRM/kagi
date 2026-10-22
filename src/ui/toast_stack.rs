@@ -215,7 +215,7 @@ impl ToastStack {
         kind: ToastKind,
         message: impl Into<SharedString>,
         result_key: Option<String>,
-    ) {
+    ) -> u64 {
         // A toast is only the transient summary. The complete operation result
         // lives in Operation Log, so never let raw multi-line stderr turn the
         // overlay into a screen-sized card.
@@ -241,8 +241,9 @@ impl ToastStack {
             toast.born = Instant::now();
             toast.paused_at = None;
             self.arrival = Some((toast.id, message));
+            let id = toast.id;
             self.toasts.push(toast);
-            return;
+            return id;
         }
         let id = self.next_id;
         self.next_id += 1;
@@ -268,6 +269,7 @@ impl ToastStack {
             let removed = self.toasts.remove(oldest);
             self.removed_focus = take_toast_focus(&removed);
         }
+        id
     }
 
     /// Begin sliding a toast out (× button or auto-expiry). The caller schedules
@@ -394,7 +396,7 @@ impl ToastStack {
         message: impl Into<SharedString>,
         key: Option<String>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> u64 {
         let evicts = self.toasts.len() == TOASTS_MAX;
         if !self.expanded {
             let mut hidden_focus = Vec::new();
@@ -409,21 +411,23 @@ impl ToastStack {
             }
             cx.emit(ToastRemoved(hidden_focus));
         }
-        self.push_keyed(kind, message, key);
+        let id = self.push_keyed(kind, message, key);
         if evicts {
             cx.emit(ToastRemoved(std::mem::take(&mut self.removed_focus)));
         }
         self.ensure_ticker(cx);
         cx.notify();
+        id
     }
 
-    /// Add an action to the receipt's existing toast, without a second arrival.
-    pub(super) fn set_latest_action(
+    /// Bind an action only to the result produced by the same completion.
+    pub(super) fn set_action(
         &mut self,
+        id: u64,
         action: super::types::ToastAction,
         cx: &mut Context<Self>,
     ) {
-        if let Some(toast) = self.toasts.last_mut() {
+        if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
             toast.action = Some(action);
             toast.action_focus.get_or_insert_with(Default::default);
             cx.notify();

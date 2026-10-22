@@ -4118,8 +4118,36 @@ lease; a new toolbar click while that lease is held must remain unavailable.
 Long branch results must retain the selected target in their final notification.
 Run the EN/JA lock-classification boundary unit regression: an `index.lock` path
 alone, a permission denial or a remote URL is not evidence of an existing lock.
-Stash local/remote success coverage checks attended footer versus inactive toast,
-with no stale Busy footer and no unrelated-session footer changes.
+Local Stash success coverage checks attended footer versus inactive/departed toast,
+using session and visit identity with no stale Busy or unrelated-owner footer.
+Explicit SSH Stash/Pull uses one bounded result toast independently of the normal
+remote snapshot's Busy/read-only footer. Test same-visit, inactive, away and
+same-session/new-visit delivery, one original backend row, canonical details and
+recording-failure/Unknown priority. A skipped foreign refresh is intentional.
+`clone_departed_result_owner` and `stash_revisit_result_owner` cover Clone's
+actual result ID and local Stash visits; `remote_stash_revisit_result_owner` and
+`remote_pull_current_result_owner,remote_pull_inactive_result_owner,remote_pull_away_result_owner,remote_pull_revisit_result_owner`
+cover the corresponding remote boundary. Never infer an own-result action from
+the latest unrelated toast or a positive-only receipt-ID assumption.
+`remote_stash_result_survives_refresh,remote_pull_result_survives_refresh` executes
+real disposable Git through the unchanged SSH protocol with owned identity and
+known-host files, then completes the ordinary remote snapshot without intercepting
+refresh. Check the visible result remains, the observed Git state reaches Graph,
+and each actual request has only its original receipt. The Pull leg also executes
+a second real no-change request through the production request handler and actual
+confirmation; this proves that boundary, not disabled-toolbar/shortcut admission.
+Known internal/CLI no-change summaries must agree in EN/JA and differ from unknown
+successful stdout; retain the latter in the receipt, not the primary UI headline.
+For ordinary remote smoke, the owned SSH adapter must start in its intended HOME,
+not accidentally browse the invoking checkout. Wait for actual host-field focus,
+inspect the exact owned host/root before Open, and complete normal refresh.
+A genuinely enabled cached-behind Pull can encounter an already-current origin;
+prepare any stale tracking state before the new plan, preserve all frozen
+preflight guards, and observe actual canonical no-change output plus unchanged
+HEAD/index/tracked files. A real freshness fetch may update remote-tracking refs.
+Do not force a disabled control, alter state after approval, or equate a shortcut
+attempt with backend execution. Local preflight no-ops create no write receipt;
+an executed SSH no-change keeps its one existing backend receipt.
 The worktree-admin matrix executes real Lock/Unlock/Prune/Repair with healthy and
 failed audit append; history uses the actual reflog/quiet-reload producer, not an
 assigned cursor. Conflict-family consumers cover ordinary known refusal as well

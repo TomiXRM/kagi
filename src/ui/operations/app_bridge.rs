@@ -163,10 +163,11 @@ impl KagiApp {
             report.recording,
             kagi_git::backend::recording::Recording::Failed { .. }
         );
-        let current = self.active_session() == Some(owner.session);
+        let current = self.active_session() == Some(owner.session)
+            && self.app_sessions.visit(owner.session) == Some(owner.visit);
         let announce = !current || self.operation_result_toast_needed(false);
         if announce && !recording_failed {
-            self.push_operation_result(
+            let _ = self.push_operation_result(
                 entry,
                 name,
                 if success {
@@ -570,7 +571,7 @@ impl KagiApp {
                 report,
             } => match report.evidence {
                 app::FamilyEvidence::RemoteStash(report) => {
-                    self.deliver_remote_stash_result(id, attachment, report, cx);
+                    self.deliver_remote_stash_result(id, attachment, stamp, report, cx);
                 }
                 app::FamilyEvidence::RemotePull(report) => {
                     self.deliver_remote_pull_result(id, attachment, stamp, report, cx);
@@ -583,6 +584,7 @@ impl KagiApp {
         &mut self,
         id: app::OperationId,
         owner: crate::remote::stash::RemoteAttachment,
+        stamp: app::OwnerStamp,
         report: crate::remote::stash::RemoteStashReport,
         cx: &mut Context<Self>,
     ) {
@@ -606,20 +608,22 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        // #353: a refused remote drop names its diagnostic, not a count.
-        let shown = super::outcome_text("stash-drop", &entry.outcome);
         let active = self.remote_view.as_ref().is_some_and(|view| {
             view.host == owner.host
                 && view.root == owner.root
                 && self.active_session() == Some(owner.session)
+                && self.app_sessions.visit(owner.session) == Some(stamp.visit)
         });
         let recording_failed = matches!(
             report.recording,
             kagi_git::backend::recording::Recording::Failed { .. }
         );
-        let announce = !active || self.operation_result_toast_needed(false);
-        if announce && !recording_failed {
-            self.push_operation_result(
+        // Explicit SSH operations use the existing long-running result lane:
+        // their following snapshot owns Busy / Remote footer presentation.
+        if !recording_failed {
+            // #353: a refused remote drop names its diagnostic, not a count.
+            let shown = super::outcome_text("stash-drop", &entry.outcome);
+            let _ = self.push_operation_result(
                 entry,
                 "stash-drop",
                 if success {
@@ -627,20 +631,12 @@ impl KagiApp {
                 } else {
                     ToastKind::Error
                 },
-                shown.clone().into(),
+                shown.into(),
                 cx,
             );
         }
         if active {
-            if announce || recording_failed {
-                self.status_footer = FooterStatus::Idle("".into());
-            } else {
-                self.status_footer = if success {
-                    FooterStatus::Success(shown.into())
-                } else {
-                    FooterStatus::Failed(shown.into())
-                };
-            }
+            self.status_footer = FooterStatus::Idle("".into());
             if success {
                 #[cfg(feature = "gui-e2e")]
                 let intercepted = crate::remote::stash::note_remote_stash_e2e_refresh();
@@ -697,35 +693,59 @@ impl KagiApp {
         });
         if !active {
             klog!("op result dropped: tab switched during op");
-            return;
         }
-        let recorded_clean = matches!(
+        let recording_failed = matches!(
             report.recording,
-            kagi_git::backend::recording::Recording::Appended { .. }
+            kagi_git::backend::recording::Recording::Failed { .. }
         );
-        match &report.result {
+        let (notice, failure_message) = match &report.result {
             Ok(summary) => {
-                klog!("async: remote pull finished — {summary}");
-                self.present_recorded(&report.recording, cx);
-                if recorded_clean {
-                    self.status_footer = FooterStatus::Success(
-                        i18n::op::user_text::operations::pull_summary(summary).into(),
-                    );
+                if active {
+                    klog!("async: remote pull finished — {summary}");
                 }
-                self.refresh_remote_view(cx);
+                let notice = (!recording_failed
+                    && matches!(report.recording.entry().outcome, OpOutcome::Success { .. }))
+                .then(|| {
+                    (
+                        ToastKind::Success,
+                        i18n::op::user_text::operations::pull_summary(summary).into(),
+                    )
+                });
+                (notice, None)
             }
             Err(error) => {
                 let err_msg = error.to_string();
-                klog!("async: remote pull failed — {err_msg}");
-                self.present_recorded(&report.recording, cx);
-                self.refresh_remote_view(cx);
-                self.enqueue_run_outcome_notice(
-                    app::OperationId(report.recording.entry().id),
-                    &report.recording,
-                    Some(&err_msg),
-                    None,
-                );
+                if active {
+                    klog!("async: remote pull failed — {err_msg}");
+                }
+                (None, Some(err_msg))
             }
+        };
+        let entry = oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
+        // Keep the final SSH result independent of its ordinary refresh footer.
+        let _ = self.record_op_result(
+            entry,
+            cx,
+            false,
+            None,
+            notice,
+            true,
+            active,
+            None,
+            recording_failed,
+            None,
+            None,
+        );
+        if active {
+            self.refresh_remote_view(cx);
+        }
+        if let Some(err_msg) = failure_message {
+            self.enqueue_run_outcome_notice(
+                app::OperationId(report.recording.entry().id),
+                &report.recording,
+                Some(&err_msg),
+                None,
+            );
         }
     }
     /// Whether this window may close (or the app quit) now: no write holds a

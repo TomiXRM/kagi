@@ -332,16 +332,12 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         cx.read(|cx| {
             let state = app.read(cx);
             let stack = state.toast_stack.as_ref().unwrap().read(cx);
-            if button {
-                assert!(
-                    matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
-                    "an inactive remote owner must settle its Busy footer"
-                );
-                assert_eq!(stack.toasts().len(), 1);
-            } else {
-                assert!(matches!(state.status_footer, FooterStatus::Success(_)));
-                assert!(stack.toasts().is_empty());
-            }
+            assert!(
+                matches!(state.status_footer, FooterStatus::Idle(_)),
+                "the remote result is a toast; its intercepted refresh owns no Busy footer"
+            );
+            assert_eq!(stack.toasts().len(), 1);
+            assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Success);
         });
         unmount(cx, app, window);
         set_remote_stash_e2e_mode(None);
@@ -374,7 +370,27 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         confirm(cx, &app, window, false);
         wait(cx, &app, |app| {
             app.app_sessions.has_leases() == expected_lease
-                && matches!(&app.status_footer, FooterStatus::Failed(_))
+                && if expected_lease {
+                    !app.app_sessions.reconcile_ids().is_empty()
+                } else {
+                    app.write_busy_op.is_none()
+                }
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let stack = state.toast_stack.as_ref().unwrap().read(cx);
+            assert_eq!(stack.toasts().len(), 1);
+            assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Error);
+            assert!(matches!(
+                stack.toasts()[0].action,
+                Some(kagi::ui::ToastAction::OpenOperationLog(_))
+            ));
+            assert_eq!(state.app_sessions.may_close_host(), !expected_lease);
+            if expected_lease {
+                assert!(state
+                    .app_notice()
+                    .is_some_and(|notice| notice.inspect.is_some()));
+            }
         });
         if mode == RemoteStashE2eMode::Unknown {
             assert!(cx.read(|cx| matches!(

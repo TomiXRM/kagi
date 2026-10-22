@@ -248,6 +248,7 @@ impl KagiApp {
                     None,
                     None,
                     announce,
+                    true,
                     Some("pull"),
                     true,
                     None,
@@ -262,11 +263,7 @@ impl KagiApp {
             }
             _ => match &report.terminal.presentation {
                 crate::app::PullPresentation::Success { summary } => {
-                    format!(
-                        "{}: {}",
-                        i18n::op::user_text::operation_label("pull"),
-                        i18n::op::user_text::operations::pull_summary(summary)
-                    )
+                    i18n::op::user_text::operations::pull_summary(summary)
                 }
                 crate::app::PullPresentation::Failed { error } => {
                     i18n::op::user_text::operations::failure_preview("pull", error)
@@ -285,7 +282,7 @@ impl KagiApp {
             ToastKind::Error
         };
         if background {
-            self.push_operation_result(&entry, "pull", kind, text.into(), cx);
+            let _ = self.push_operation_result(&entry, "pull", kind, text.into(), cx);
             self.insert_recorded_row(recording, cx);
         } else {
             self.record_op_result(
@@ -295,6 +292,7 @@ impl KagiApp {
                 None,
                 Some((kind, text.into())),
                 announce,
+                true,
                 Some("pull"),
                 false,
                 None,
@@ -345,7 +343,7 @@ impl KagiApp {
         let shown = success_text.filter(|_| success).unwrap_or_else(|| {
             crate::ui::operations::outcome_text(&entry.op, &entry.outcome).into()
         });
-        self.push_operation_result(
+        let _ = self.push_operation_result(
             &entry,
             &entry.op,
             if success {

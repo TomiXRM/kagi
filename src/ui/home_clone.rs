@@ -246,17 +246,23 @@ impl KagiApp {
             report.result.is_ok()
         );
         self.notice_recording_failure("clone", &report.recording, &request.dest, None);
-        self.present_recorded(&report.recording, cx);
+        let toast_id = self.present_recorded(&report.recording, current, cx);
         if report.result.is_ok() {
             if current {
                 self.open_repository(request.dest, cx);
-            } else if let Some(stack) = self.toast_stack.as_ref() {
-                stack.update(cx, |stack, cx| {
-                    stack.set_latest_action(
-                        super::types::ToastAction::OpenRepository(request.dest),
-                        cx,
-                    );
-                });
+            } else if matches!(
+                report.recording.entry().outcome,
+                kagi_git::oplog::OpOutcome::Success { .. }
+            ) {
+                if let (Some(id), Some(stack)) = (toast_id, self.toast_stack.as_ref()) {
+                    stack.update(cx, |stack, cx| {
+                        stack.set_action(
+                            id,
+                            super::types::ToastAction::OpenRepository(request.dest),
+                            cx,
+                        );
+                    });
+                }
             }
         }
         cx.notify();

@@ -456,7 +456,7 @@ fn failed_autosave_latest_live_null_moves_duplicate_intent_after_newer_disk_body
     let body = saved_document(&saved_path)["files"][0].clone();
     assert!(live.undo(path));
     live.autosave().unwrap();
-    let null = saved_document(&saved_path)["files"][0].clone();
+    let null_draft = saved_document(&saved_path)["files"][0].take();
     assert!(live.redo(path));
     assert!(live.undo(path));
     // A real write failure leaves the latest undo only in the live buffer.
@@ -464,7 +464,10 @@ fn failed_autosave_latest_live_null_moves_duplicate_intent_after_newer_disk_body
     std::fs::create_dir(&saved_path).unwrap();
     assert!(live.autosave().is_err());
     std::fs::remove_dir(&saved_path).unwrap();
-    let disk = serde_json::json!({"files":[],"recoveries":[null,body]});
+    let disk = serde_json::json!({"files":[],"recoveries":[null_draft,body]});
+    assert!(disk["recoveries"][0].is_object(), "the prior null is a draft record, not JSON null");
+    assert!(disk["recoveries"][0]["result"].is_null());
+    assert_eq!(disk["recoveries"][0]["draft_state"].as_bool(), Some(true));
     write_document(&saved_path, &disk);
     let mut index = repo.index().unwrap();
     let mut conflict = index.conflicts().unwrap().next().unwrap().unwrap();

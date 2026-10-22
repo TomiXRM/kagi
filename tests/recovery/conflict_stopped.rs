@@ -158,7 +158,7 @@ fn assert_recording_failure(
         let entries: Vec<_> = panel
             .entries()
             .iter()
-            .filter(|entry| entry.op == operation)
+            .filter(|entry| entry.op == operation && std::path::Path::new(&entry.repo) == repo)
             .collect();
         assert_eq!(entries.len(), 1, "no duplicate in-memory receipts");
         assert!(matches!(&entries[0].outcome,

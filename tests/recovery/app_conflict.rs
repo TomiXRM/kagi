@@ -1303,12 +1303,18 @@ pub fn scenario_conflict_merge_failure_contract(cx: &mut VisualTestAppContext) {
                         })
                         .collect();
                     assert_eq!(rows.len(), 1);
-                    let OpOutcome::Partial { error, .. } = &rows[0].outcome else {
-                        panic!("the unrecorded failed outcome remains inspectable");
+                    let OpOutcome::Failed { error } = &rows[0].outcome else {
+                        panic!(
+                            "failed persistence must not reclassify an unchanged backend failure"
+                        );
                     };
                     assert!(
                         error.contains(repo.to_str().unwrap()),
                         "the real backend diagnostic survives failed persistence"
+                    );
+                    assert!(
+                        rows[0].ref_moves.is_none(),
+                        "an unrecorded row cannot advertise durable restoration evidence"
                     );
                 } else {
                     assert!(state.app_notice().is_none());

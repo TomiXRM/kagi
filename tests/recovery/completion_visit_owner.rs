@@ -316,7 +316,10 @@ pub fn scenario_remote_stash_revisit_result_owner(cx: &mut VisualTestAppContext)
             let (owner, remote_index) = cx.read(|cx| {
                 let state = app.read(cx);
                 (
-                    state.app_sessions.attachment(state.active_session().unwrap()).unwrap(),
+                    state
+                        .app_sessions
+                        .attachment(state.active_session().unwrap())
+                        .unwrap(),
                     state.active_tab,
                 )
             });
@@ -336,12 +339,16 @@ pub fn scenario_remote_stash_revisit_result_owner(cx: &mut VisualTestAppContext)
                     app.status_footer = FooterStatus::Idle("remote new visit owner".into());
                 }
             });
-            wait(cx, &app, "remote Drop completion releases its real admission", |app| {
-                !app.app_sessions.has_leases() && app.write_busy_op.is_none()
-            });
+            wait(
+                cx,
+                &app,
+                "remote Drop completion releases its real admission",
+                |app| !app.app_sessions.has_leases() && app.write_busy_op.is_none(),
+            );
             paint(cx, &app, window);
             let entries = oplog::read_oplog_tail(usize::MAX);
-            let drops: Vec<_> = entries.iter()
+            let drops: Vec<_> = entries
+                .iter()
                 .filter(|entry| entry.op == "stash-drop" && entry.repo == recorded_repo)
                 .collect();
             assert_eq!(drops.len(), before_count + 1);

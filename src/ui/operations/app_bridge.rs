@@ -571,7 +571,7 @@ impl KagiApp {
                 report,
             } => match report.evidence {
                 app::FamilyEvidence::RemoteStash(report) => {
-                    self.deliver_remote_stash_result(id, attachment, report, cx);
+                    self.deliver_remote_stash_result(id, attachment, stamp, report, cx);
                 }
                 app::FamilyEvidence::RemotePull(report) => {
                     self.deliver_remote_pull_result(id, attachment, stamp, report, cx);
@@ -584,6 +584,7 @@ impl KagiApp {
         &mut self,
         id: app::OperationId,
         owner: crate::remote::stash::RemoteAttachment,
+        stamp: app::OwnerStamp,
         report: crate::remote::stash::RemoteStashReport,
         cx: &mut Context<Self>,
     ) {
@@ -613,6 +614,7 @@ impl KagiApp {
             view.host == owner.host
                 && view.root == owner.root
                 && self.active_session() == Some(owner.session)
+                && self.app_sessions.visit(owner.session) == Some(stamp.visit)
         });
         let recording_failed = matches!(
             report.recording,
@@ -698,35 +700,59 @@ impl KagiApp {
         });
         if !active {
             klog!("op result dropped: tab switched during op");
-            return;
         }
-        let recorded_clean = matches!(
+        let recording_failed = matches!(
             report.recording,
-            kagi_git::backend::recording::Recording::Appended { .. }
+            kagi_git::backend::recording::Recording::Failed { .. }
         );
-        match &report.result {
+        let (notice, failure_message) = match &report.result {
             Ok(summary) => {
-                klog!("async: remote pull finished — {summary}");
-                let _ = self.present_recorded(&report.recording, true, cx);
-                if recorded_clean {
-                    self.status_footer = FooterStatus::Success(
-                        i18n::op::user_text::operations::pull_summary(summary).into(),
-                    );
+                if active {
+                    klog!("async: remote pull finished — {summary}");
                 }
-                self.refresh_remote_view(cx);
+                let notice = (!recording_failed
+                    && matches!(report.recording.entry().outcome, OpOutcome::Success { .. }))
+                .then(|| {
+                    (
+                        ToastKind::Success,
+                        i18n::op::user_text::operations::pull_summary(summary).into(),
+                    )
+                });
+                (notice, None)
             }
             Err(error) => {
                 let err_msg = error.to_string();
-                klog!("async: remote pull failed — {err_msg}");
-                let _ = self.present_recorded(&report.recording, true, cx);
-                self.refresh_remote_view(cx);
-                self.enqueue_run_outcome_notice(
-                    app::OperationId(report.recording.entry().id),
-                    &report.recording,
-                    Some(&err_msg),
-                    None,
-                );
+                if active {
+                    klog!("async: remote pull failed — {err_msg}");
+                }
+                (None, Some(err_msg))
             }
+        };
+        let entry = oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
+        let announce = !active || self.operation_result_toast_needed(false);
+        let _ = self.record_op_result(
+            entry,
+            cx,
+            false,
+            None,
+            notice,
+            announce,
+            active,
+            None,
+            recording_failed,
+            None,
+            None,
+        );
+        if active {
+            self.refresh_remote_view(cx);
+        }
+        if let Some(err_msg) = failure_message {
+            self.enqueue_run_outcome_notice(
+                app::OperationId(report.recording.entry().id),
+                &report.recording,
+                Some(&err_msg),
+                None,
+            );
         }
     }
     /// Whether this window may close (or the app quit) now: no write holds a

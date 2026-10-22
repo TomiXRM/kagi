@@ -59,7 +59,10 @@ fn result_owner(
     crate::fetch_owner::local_remote_with_change(&repo, remote.path());
     git(&repo, &["fetch", "-q", "origin"]);
     let head = git_fixture::git_output(&repo, &["rev-parse", "HEAD"]);
-    let snapshot = kagi_git::Backend::open(&repo).unwrap().snapshot(10_000).unwrap();
+    let snapshot = kagi_git::Backend::open(&repo)
+        .unwrap()
+        .snapshot(10_000)
+        .unwrap();
     let shim = tempfile::tempdir().unwrap();
     let marker = |name: &str| shim.path().join(name);
     let release = marker("release");
@@ -69,23 +72,45 @@ fn result_owner(
     // Reuse the existing SSH options / frozen identity / checked-execution
     // protocol fixture. Only transport is substituted, not a completed report.
     crate::recovery_pull::blocking_fake_ssh(
-        shim.path(), &head, &release, &calls, &fail, &probe_release,
-        &marker("identity-change"), &marker("route-change"),
-        &marker("toplevel-change"), &marker("branch-change"),
-        &marker("oid-change"), &marker("upstream-change"),
-        &marker("head-read-failure"), &marker("remote-url-change"),
+        shim.path(),
+        &head,
+        &release,
+        &calls,
+        &fail,
+        &probe_release,
+        &marker("identity-change"),
+        &marker("route-change"),
+        &marker("toplevel-change"),
+        &marker("branch-change"),
+        &marker("oid-change"),
+        &marker("upstream-change"),
+        &marker("head-read-failure"),
+        &marker("remote-url-change"),
         &marker("dirty-change"),
     );
     std::fs::write(&probe_release, "go").unwrap();
     let old_path = std::env::var_os("PATH");
-    std::env::set_var("PATH", format!("{}:{}", shim.path().display(), old_path.clone().unwrap_or_default().to_string_lossy()));
+    std::env::set_var(
+        "PATH",
+        format!(
+            "{}:{}",
+            shim.path().display(),
+            old_path.clone().unwrap_or_default().to_string_lossy()
+        ),
+    );
     let host = kagi_domain::remote::RemoteHost {
-        user: Some("kagi-e2e".into()), host: "e2e.invalid".into(),
-        port: None, identity_file: None,
+        user: Some("kagi-e2e".into()),
+        host: "e2e.invalid".into(),
+        port: None,
+        identity_file: None,
     };
     let recorded_repo = format!("{}:/srv/repo", host.label());
-    let count = || oplog::read_oplog_tail(usize::MAX).iter()
-        .filter(|entry| entry.op == "pull" && entry.repo == recorded_repo).count();
+    let count = || {
+        oplog::read_oplog_tail(usize::MAX)
+            .iter()
+            .filter(|entry| entry.op == "pull" && entry.repo == recorded_repo)
+            .count()
+    };
     let before_count = count();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| {
@@ -94,16 +119,39 @@ fn result_owner(
         app.enter_remote_view(host, "/srv/repo".into(), snapshot, cx);
         app.open_pull_modal(cx);
     });
-    wait(cx, &app, "remote Pull's real identity plan is ready", |app| {
-        app.pull_modal().is_some()
-            && matches!(app.app_sessions.plan_state(), kagi::app::PlanState::Ready { .. })
-    });
+    wait(
+        cx,
+        &app,
+        "remote Pull's real identity plan is ready",
+        |app| {
+            app.pull_modal().is_some()
+                && matches!(
+                    app.app_sessions.plan_state(),
+                    kagi::app::PlanState::Ready { .. }
+                )
+        },
+    );
     let (owner, remote_index) = cx.read(|cx| {
         let state = app.read(cx);
-        (state.app_sessions.attachment(state.active_session().unwrap()).unwrap(), state.active_tab)
+        (
+            state
+                .app_sessions
+                .attachment(state.active_session().unwrap())
+                .unwrap(),
+            state.active_tab,
+        )
     });
-    let before_rows = cx.read(|cx| app.read(cx).op_log.as_ref().unwrap().read(cx).entries().iter()
-        .filter(|entry| entry.op == "pull" && entry.repo == recorded_repo).count());
+    let before_rows = cx.read(|cx| {
+        app.read(cx)
+            .op_log
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .entries()
+            .iter()
+            .filter(|entry| entry.op == "pull" && entry.repo == recorded_repo)
+            .count()
+    });
     let (hold, run_release) = deferred(cx);
     kagi::ui::KagiApp::hold_next_run_for_e2e(hold);
     crate::recovery_operations::press_enter(cx, &app, window);
@@ -116,7 +164,10 @@ fn result_owner(
             if surface == Surface::Revisit {
                 app.switch_repo(remote_index, cx);
                 assert_eq!(app.active_session(), Some(owner.session));
-                assert_ne!(app.app_sessions.attachment(owner.session).unwrap().visit, owner.visit);
+                assert_ne!(
+                    app.app_sessions.attachment(owner.session).unwrap().visit,
+                    owner.visit
+                );
             }
         }
     });
@@ -125,11 +176,22 @@ fn result_owner(
         if matches!(surface, Surface::Away | Surface::Revisit) {
             app.status_footer = FooterStatus::Idle("new visit result owner".into());
         }
-        (app.active_session(), format!("{:?}", app.status_footer), app.bottom_panel_open, app.bottom_tab)
+        (
+            app.active_session(),
+            format!("{:?}", app.status_footer),
+            app.bottom_panel_open,
+            app.bottom_tab,
+        )
     });
-    let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap()).join("operations.jsonl.lock");
+    let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+        .join("operations.jsonl.lock");
     let recording_lock = recording_failure.then(|| {
-        let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lock_path).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
         file.lock().unwrap();
         file
     });
@@ -140,16 +202,32 @@ fn result_owner(
     } else {
         None
     };
-    if unknown { std::fs::write(&fail, "unrecognized remote reply").unwrap(); }
+    if unknown {
+        std::fs::write(&fail, "unrecognized remote reply").unwrap();
+    }
     std::fs::write(&release, "go").unwrap();
     run_release.send(());
-    wait(cx, &app, "checked remote Pull settles its real lease", |app| {
-        if unknown { !app.app_sessions.reconcile_ids().is_empty() }
-        else { !app.app_sessions.has_leases() }
-    });
+    wait(
+        cx,
+        &app,
+        "checked remote Pull settles its real lease",
+        |app| {
+            if unknown {
+                !app.app_sessions.reconcile_ids().is_empty()
+            } else {
+                !app.app_sessions.has_leases()
+            }
+        },
+    );
     paint(cx, &app, window);
-    assert_eq!(std::fs::read_to_string(&calls).unwrap().lines()
-        .filter(|line| *line == "KAGI-EXEC-GIT-PULL").count(), 1);
+    assert_eq!(
+        std::fs::read_to_string(&calls)
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "KAGI-EXEC-GIT-PULL")
+            .count(),
+        1
+    );
     assert_eq!(count(), before_count + usize::from(!recording_failure));
     let selected = cx.read(|cx| {
         let state = app.read(cx);
@@ -198,7 +276,12 @@ fn result_owner(
         // Use the existing three explicit Inspect / arm / acknowledge controls
         // before testing the result's actual Details navigation.
         for _ in 0..3 {
-            wait(cx, &app, "required remote inspection is actionable", |app| app.app_notice().is_some());
+            wait(
+                cx,
+                &app,
+                "required remote inspection is actionable",
+                |app| app.app_notice().is_some(),
+            );
             e2e::clear_control_bounds(window.window_id(), "app-notice-confirm");
             paint(cx, &app, window);
             let inspect = e2e::control_bounds(window.window_id(), "app-notice-confirm").unwrap();
@@ -218,14 +301,29 @@ fn result_owner(
             assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
             let panel = state.op_log.as_ref().unwrap().read(cx);
             let entry = &panel.entries()[panel.expanded().expect("the actual receipt is expanded")];
-            assert_eq!((entry.id, entry.timestamp, entry.op.clone(), entry.repo.clone()), selected);
+            assert_eq!(
+                (
+                    entry.id,
+                    entry.timestamp,
+                    entry.op.clone(),
+                    entry.repo.clone()
+                ),
+                selected
+            );
         });
     }
     if let Some(finish_refresh) = finish_refresh {
-        finish_refresh(Ok(kagi_git::Backend::open(&repo).unwrap().snapshot(10_000).unwrap()));
+        finish_refresh(Ok(kagi_git::Backend::open(&repo)
+            .unwrap()
+            .snapshot(10_000)
+            .unwrap()));
         cx.run_until_parked();
     }
-    assert_eq!(count(), before_count + usize::from(!recording_failure), "presentation never retries the append");
+    assert_eq!(
+        count(),
+        before_count + usize::from(!recording_failure),
+        "presentation never retries the append"
+    );
     unmount(cx, app, window);
     match old_path {
         Some(path) => std::env::set_var("PATH", path),

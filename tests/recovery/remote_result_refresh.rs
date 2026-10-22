@@ -195,6 +195,86 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
             && entry.repo == receipts[0].repo && entry.op == receipts[0].op).count(), 1);
         assert!(state.app_notice().is_none());
     });
+    if pull {
+        let first_headline = cx.read(|cx| {
+            app.read(cx).toast_stack.as_ref().unwrap().read(cx).toasts()[0]
+                .message
+                .clone()
+        });
+        let before_noop_refs = git_output(&repo, &["show-ref"]);
+        let before_noop_index = git_output(&repo, &["ls-files", "--stage"]);
+        let noop_owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+        // This is the existing request-handler boundary, not a claim that a
+        // disabled remote toolbar/shortcut admits a new request. Confirmation,
+        // SSH execution, recording and the ordinary refresh remain real.
+        app.update(cx, |app, cx| app.open_pull_modal(cx));
+        wait(cx, &app, "no-change remote plan settles", |app| {
+            !matches!(
+                app.app_sessions.plan_state(),
+                kagi::app::PlanState::Planning { .. }
+            )
+        });
+        cx.read(|cx| {
+            assert!(matches!(
+                app.read(cx).app_sessions.plan_state(),
+                kagi::app::PlanState::Ready { .. }
+            ))
+        });
+        paint(cx, &app, window);
+        let confirm = e2e::confirm_bounds(window.window_id()).expect("real no-change confirmation");
+        cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
+        wait(cx, &app, "real no-change SSH and snapshot finish", |app| {
+            !app.app_sessions.has_leases()
+                && app
+                    .active_session()
+                    .is_some_and(|session| session != noop_owner)
+        });
+        paint(cx, &app, window);
+        assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), upstream);
+        assert_eq!(git_output(&repo, &["show-ref"]), before_noop_refs);
+        assert_eq!(
+            git_output(&repo, &["ls-files", "--stage"]),
+            before_noop_index
+        );
+        assert!(git_output(&repo, &["status", "--porcelain"]).is_empty());
+        let after_noop = oplog::read_oplog_tail(usize::MAX);
+        let requests: Vec<_> = after_noop
+            .iter()
+            .filter(|entry| entry.op == op && entry.repo == recorded_repo)
+            .collect();
+        assert_eq!(
+            requests.len(),
+            2,
+            "one original receipt per real SSH request"
+        );
+        let noop = requests
+            .iter()
+            .find(|entry| entry.id != receipts[0].id)
+            .unwrap();
+        let OpOutcome::Success { after } = &noop.outcome else {
+            panic!(
+                "actual no-change Git command must succeed: {:?}",
+                noop.outcome
+            );
+        };
+        assert!(matches!(
+            after.dirty.as_str(),
+            "Already up to date." | "Already up-to-date."
+        ));
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let stack = state.toast_stack.as_ref().unwrap().read(cx);
+            assert_eq!(stack.toasts().len(), 1);
+            assert_eq!(stack.toasts()[0].kind, ToastKind::Success);
+            eprintln!("[gui-e2e] remote no-change lang={lang:?} active={active} stdout={:?} previous={first_headline:?} current={:?}", after.dirty, stack.toasts()[0].message);
+            assert_ne!(stack.toasts()[0].message, first_headline,
+                "a known no-change result must be distinguishable from generic completion");
+            let panel = state.op_log.as_ref().unwrap().read(cx);
+            assert_eq!(panel.entries().iter().filter(|entry|
+                entry.repo == recorded_repo && entry.op == op).count(), 2);
+            assert!(state.app_notice().is_none());
+        });
+    }
     unmount(cx, app, window);
     match old_path {
         Some(path) => std::env::set_var("PATH", path),

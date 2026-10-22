@@ -151,7 +151,7 @@ fn result_owner(
     assert_eq!(std::fs::read_to_string(&calls).unwrap().lines()
         .filter(|line| *line == "KAGI-EXEC-GIT-PULL").count(), 1);
     assert_eq!(count(), before_count + usize::from(!recording_failure));
-    cx.read(|cx| {
+    let selected = cx.read(|cx| {
         let state = app.read(cx);
         let panel = state.op_log.as_ref().unwrap().read(cx);
         let rows: Vec<_> = panel.entries().iter()
@@ -164,7 +164,8 @@ fn result_owner(
             assert!(matches!(&entry.outcome, OpOutcome::Partial { error, .. }
                 if !unknown && error.contains(&std::fs::TryLockError::WouldBlock.to_string()))
                 || matches!(&entry.outcome, OpOutcome::Unknown { evidence, .. }
-                if unknown && evidence.contains("unexpected remote reply")));
+                if unknown && evidence.contains("unexpected remote reply")
+                    && evidence.contains(&std::fs::TryLockError::WouldBlock.to_string())));
             assert!(state.app_notice().is_some_and(|notice| notice.message.contains(&std::fs::TryLockError::WouldBlock.to_string())));
         } else {
             assert_eq!(matches!(entry.outcome, OpOutcome::Unknown { .. }), unknown);
@@ -176,8 +177,7 @@ fn result_owner(
             let toast = &stack.toasts()[0];
             assert_eq!(toast.kind, if unknown { ToastKind::Error } else { ToastKind::Success });
             if unknown {
-                assert!(matches!(&toast.action, Some(ToastAction::OpenOperationLog(key))
-                    if *key == kagi::ui::oplog_panel::EntryKey::of(entry)));
+                assert!(matches!(toast.action, Some(ToastAction::OpenOperationLog(_))));
             }
         }
         if matches!(surface, Surface::Away | Surface::Revisit) {
@@ -190,8 +190,37 @@ fn result_owner(
             assert!(!state.app_sessions.may_close_host());
             assert!(state.app_notice().is_some());
         }
+        (entry.id, entry.timestamp, entry.op.clone(), entry.repo.clone())
     });
     drop(recording_lock);
+    if unknown && !recording_failure && surface != Surface::Current {
+        // The required inspection is not bypassed to click a covered toast.
+        // Use the existing three explicit Inspect / arm / acknowledge controls
+        // before testing the result's actual Details navigation.
+        for _ in 0..3 {
+            wait(cx, &app, "required remote inspection is actionable", |app| app.app_notice().is_some());
+            e2e::clear_control_bounds(window.window_id(), "app-notice-confirm");
+            paint(cx, &app, window);
+            let inspect = e2e::control_bounds(window.window_id(), "app-notice-confirm").unwrap();
+            cx.simulate_click(window, inspect.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+        }
+        assert!(cx.read(|cx| app.read(cx).app_sessions.may_close_host()));
+        e2e::clear_control_bounds(window.window_id(), "operation-result-details");
+        paint(cx, &app, window);
+        let details = e2e::control_bounds(window.window_id(), "operation-result-details")
+            .expect("the remote Unknown still offers its saved receipt");
+        cx.simulate_click(window, details.center(), gpui::Modifiers::none());
+        paint(cx, &app, window);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(state.bottom_panel_open);
+            assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+            let panel = state.op_log.as_ref().unwrap().read(cx);
+            let entry = &panel.entries()[panel.expanded().expect("the actual receipt is expanded")];
+            assert_eq!((entry.id, entry.timestamp, entry.op.clone(), entry.repo.clone()), selected);
+        });
+    }
     if let Some(finish_refresh) = finish_refresh {
         finish_refresh(Ok(kagi_git::Backend::open(&repo).unwrap().snapshot(10_000).unwrap()));
         cx.run_until_parked();

@@ -563,8 +563,8 @@ refusal or fabricates a write receipt.
   または開始から 2 秒以上の run / Pull / Fetch は toast のみで通知し、完了後に Busy footer を残さない。
   background owner の結果は現在の tab の footer / panes を変更しない。
   明示的な SSH Pull / Stash は既存の長時間・network 操作の通知 lane で一枚の toast を使う。
-  通常の remote snapshot が所有する Busy / read-only footer と分離し、実 refresh 完了後にも
-  結果を残す。別 visit への帰還も離席として扱い、foreign footer の変更や refresh はしない。
+  通常の remote snapshot が所有する Busy / read-only footer と分離し、結果 toast の通常の
+  表示寿命を refresh で短縮しない。別 visit への帰還も離席として扱い、foreign footer の変更や refresh はしない。
   footer から toast へ移しても成功対象 / 有用な成功詳細を失わない。操作固有の Success 文は
   実際に append 済みの Success receipt にだけ利用し、Unknown / Partial / 記録失敗の提示を上書きしない。
   Clone の Open Repository は、その呼出しが実際に作った / 置換した toast id にだけ結び付ける。

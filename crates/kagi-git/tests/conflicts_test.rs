@@ -2236,5 +2236,8 @@ mod continue_revision;
 #[path = "conflicts/continue_flags.rs"]
 mod continue_flags;
 
+#[path = "conflicts/continue_metadata.rs"]
+mod continue_metadata;
+
 #[path = "conflicts/draft_completion.rs"]
 mod draft_completion;

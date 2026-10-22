@@ -797,7 +797,10 @@ impl ResolutionBuffer {
         parse_buffer_json(repo_path, &content)
     }
 
-    /// Clear current drafts after continuation, retaining older recovery bodies.
+    /// Explicitly discard current drafts, retaining older recovery bodies.
+    ///
+    /// Do not call this from operation completion: expired identities already
+    /// prevent automatic reuse, and their durable bodies must remain inspectable.
     pub fn clear(repo_path: &Path) -> Result<(), GitError> {
         let path = match buffer_file_path(repo_path) {
             Some(p) => p,
@@ -805,8 +808,8 @@ impl ResolutionBuffer {
         };
         if let Some(mut saved) = Self::load(repo_path) {
             if !saved.recoveries.is_empty() {
-                // Clearing a completed/skipped draft must not make an older
-                // preserved body override a previously explicit undo-to-null.
+                // Discarding current drafts must not let an older preserved body
+                // override a previously explicit undo-to-null.
                 for (file_path, file) in std::mem::take(&mut saved.files) {
                     if file.draft_state && file.result.is_none() && file.raw_result.is_none() {
                         saved.preserve_recovery(file_path, file);

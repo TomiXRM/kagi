@@ -65,6 +65,8 @@
   adoption より前に終了しても、既に保存した本文を同じ document から復元できる。
   完了または次 step への遷移で失効した identity は inspection-only に落ちるため、
   自動適用を防ぐ目的の completion-time clear は不要である。
+  `ResolutionBuffer::clear` は現在の draft を明示破棄する API として残し、
+  古い recovery と明示 null の保全を維持する。operation completion からは呼ばない。
 - `editing_origin` は編集 owner の来歴であり、再読込や clone に書込権限を与えない。
   新しい実編集・undo/redo だけが未保存 intent を進め、保存成功時にその intent を消費する。
   保存失敗時は保持する。古い live recovery の再保存は後の durable 本文より新しくならず、

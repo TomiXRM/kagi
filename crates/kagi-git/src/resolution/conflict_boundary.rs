@@ -10,14 +10,9 @@ fn observation_changed() -> GitError {
     )))
 }
 
-fn identity_context(repo: &Repository) -> Result<(ConflictRevision, PathBuf), GitError> {
-    let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo)
-        .ok_or_else(observation_changed)?;
-    let git_dir = repo
-        .path()
-        .canonicalize()
-        .map_err(|error| GitError::Other(error.to_string()))?;
-    Ok((context, git_dir))
+fn identity_context(repo: &Repository) -> Result<ConflictRevision, GitError> {
+    crate::backend::conflict_ops::conflict_observe::draft_context(repo)
+        .ok_or_else(observation_changed)
 }
 
 fn current_file_identity(
@@ -46,11 +41,17 @@ impl ResolutionBuffer {
         index: &git2::Index,
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> Result<(), GitError> {
+        // Even a fully staged session needs a known operation before Continue
+        // can write the index/tree or advance the sequencer.
+        let context = identity_context(repo)?;
         let mut paths = paths.into_iter().peekable();
         if paths.peek().is_none() {
             return Ok(());
         }
-        let (context, git_dir) = identity_context(repo)?;
+        let git_dir = repo
+            .path()
+            .canonicalize()
+            .map_err(|error| GitError::Other(error.to_string()))?;
         for path in paths {
             let current = current_file_identity(index, &context, &git_dir, path)?;
             if self.file_identity(path) != Some(&current) {
@@ -75,7 +76,11 @@ impl ResolutionBuffer {
         index
             .read(true)
             .map_err(|error| GitError::Other(error.to_string()))?;
-        let (context, git_dir) = identity_context(repo)?;
+        let context = identity_context(repo)?;
+        let git_dir = repo
+            .path()
+            .canonicalize()
+            .map_err(|error| GitError::Other(error.to_string()))?;
         let identity = current_file_identity(&index, &context, &git_dir, path)?;
         if crate::backend::conflict_ops::conflict_observe::buffer_revision(path, draft, &identity)
             != *expected

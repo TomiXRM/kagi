@@ -222,8 +222,8 @@ impl Clone for ResolutionBuffer {
 
 mod conflict_boundary;
 mod drafts;
-pub use drafts::RecoveryDraft;
 use drafts::RecoveryEntry;
+pub use drafts::{OwnedRecoveryDraft, RecoveryDraft};
 
 // ────────────────────────────────────────────────────────────
 // Construction / materialization

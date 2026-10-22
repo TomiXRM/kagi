@@ -41,6 +41,8 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
   一致しない場合は、既存 `ObservationChanged` として書込前に拒否する。同じ path が
   次 conflict に存在するだけでは旧 Result の権限にならない。旧 session の path が
   既に stage 0 なら再 materialize せず再読込を要求し、fresh な空 session の Continue は許す。
+  空 session でも必要な operation metadata の既知性を先に検証し、不明なら
+  index/tree 作成前に拒否する。path が空の場合に gitdir の canonicalize は行わない。
 - text / raw の直接 Save も fresh index と同じ file identity を書込前に照合する。
   recorded Save の既存 `BufferRevision` は payload と producer の file identity を
   一緒に凍結し、plan / run の global observation 検証に加えて照合する。現在の

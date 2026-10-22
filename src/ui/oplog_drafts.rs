@@ -12,6 +12,7 @@ use gpui::{
 };
 use gpui_component::button::Button;
 use gpui_component::{Disableable as _, Sizable as _};
+use kagi_git::resolution::OwnedRecoveryDraft;
 use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
 use std::cell::RefCell;
 use std::path::Path;
@@ -44,7 +45,7 @@ pub(super) enum DraftInspection {
 /// Frozen inspection data, with presentation cached only for the current language.
 /// Changing language neither reloads the repository nor grants draft authority.
 pub(super) struct DraftSnapshot {
-    buffer: kagi_git::ResolutionBuffer,
+    drafts: Vec<OwnedRecoveryDraft>,
     localized: RefCell<Option<(Lang, SharedString)>>,
 }
 
@@ -57,7 +58,7 @@ impl DraftSnapshot {
                 return text.clone();
             }
         }
-        let text = SharedString::from(snapshot(&self.buffer));
+        let text = SharedString::from(snapshot(&self.drafts));
         *localized = Some((language, text.clone()));
         text
     }
@@ -145,7 +146,7 @@ impl OpLogPanel {
         &mut self,
         owner: &Attachment,
         generation: u64,
-        result: Result<Option<kagi_git::ResolutionBuffer>, String>,
+        result: Result<Option<Vec<OwnedRecoveryDraft>>, String>,
         cx: &mut Context<Self>,
     ) {
         if self.draft_generation != generation
@@ -158,8 +159,8 @@ impl OpLogPanel {
             return;
         }
         self.draft_inspection = Some(match result {
-            Ok(buffer) => DraftInspection::Loaded(buffer.map(|buffer| DraftSnapshot {
-                buffer,
+            Ok(drafts) => DraftInspection::Loaded(drafts.map(|drafts| DraftSnapshot {
+                drafts,
                 localized: RefCell::new(None),
             })),
             Err(error) => DraftInspection::Unavailable(error.into()),
@@ -231,9 +232,7 @@ impl OpLogPanel {
     }
 }
 
-pub(in crate::ui) fn load(
-    owner: &Attachment,
-) -> Result<Option<kagi_git::ResolutionBuffer>, String> {
+pub(in crate::ui) fn load(owner: &Attachment) -> Result<Option<Vec<OwnedRecoveryDraft>>, String> {
     let backend = kagi_git::Backend::open(&owner.path).map_err(|error| error.to_string())?;
     if owner.worktree.is_none()
         || backend.write_worktree_id().ok().as_ref() != owner.worktree.as_ref()
@@ -243,13 +242,12 @@ pub(in crate::ui) fn load(
     let buffer = backend
         .resolution_buffer_from_repo_with_autosave()
         .map_err(|error| error.to_string())?;
-    let has_drafts = buffer.recovery_drafts().next().is_some();
-    Ok(has_drafts.then_some(buffer))
+    let drafts: Vec<_> = buffer.into_recovery_drafts().collect();
+    Ok((!drafts.is_empty()).then_some(drafts))
 }
 
-fn snapshot(buffer: &kagi_git::ResolutionBuffer) -> String {
+fn snapshot(drafts: &[OwnedRecoveryDraft]) -> String {
     use std::fmt::Write as _;
-    let drafts = buffer.recovery_drafts();
     let mut text = Msg::OplogPanel(P::PreservedDraftSnapshot).t().to_string();
     for draft in drafts {
         text.push_str("\n\n");
@@ -261,6 +259,7 @@ fn snapshot(buffer: &kagi_git::ResolutionBuffer) -> String {
         );
         let identity = draft
             .identity
+            .as_ref()
             .map(|identity| identity.as_str())
             .unwrap_or_else(|| Msg::OplogPanel(P::PreservedDraftUnbound).t());
         let _ = writeln!(
@@ -268,7 +267,7 @@ fn snapshot(buffer: &kagi_git::ResolutionBuffer) -> String {
             "{}: {identity}",
             Msg::OplogPanel(P::PreservedDraftIdentity).t()
         );
-        if let Some(lines) = draft.result {
+        if let Some(lines) = &draft.result {
             for line in lines {
                 text.push_str(&line.text);
                 text.push('\n');

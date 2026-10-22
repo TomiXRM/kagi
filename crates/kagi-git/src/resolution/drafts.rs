@@ -18,6 +18,16 @@ pub struct RecoveryDraft<'a> {
     pub raw_result: Option<RawResolution>,
 }
 
+/// Owned inspection data without live conflict sides, hunks or editing history.
+/// Like the borrowed view, these preserved bodies grant no resolution authority.
+#[derive(Debug)]
+pub struct OwnedRecoveryDraft {
+    pub path: PathBuf,
+    pub identity: Option<ConflictRevision>,
+    pub result: Option<Vec<ResolvedLine>>,
+    pub raw_result: Option<RawResolution>,
+}
+
 pub(super) fn file_identity(
     git_dir: &Path,
     context: &ConflictRevision,
@@ -127,6 +137,21 @@ impl ResolutionBuffer {
                 path: &entry.path,
                 identity: entry.file.identity.as_ref(),
                 result: entry.file.result.as_deref(),
+                raw_result: entry.file.raw_result,
+            })
+    }
+
+    /// Consume the buffer, moving only preserved inspection data to the caller.
+    /// Current conflict state is dropped here; recovery editing state is dropped
+    /// as each entry is consumed, without copying draft bodies or metadata.
+    pub fn into_recovery_drafts(self) -> impl Iterator<Item = OwnedRecoveryDraft> {
+        self.recoveries
+            .into_iter()
+            .filter(|entry| has_draft(&entry.file))
+            .map(|entry| OwnedRecoveryDraft {
+                path: entry.path,
+                identity: entry.file.identity,
+                result: entry.file.result,
                 raw_result: entry.file.raw_result,
             })
     }

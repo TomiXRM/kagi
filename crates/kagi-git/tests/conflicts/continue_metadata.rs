@@ -303,22 +303,46 @@ fn squash_prefix_is_a_separate_cherry_pick_message_input() {
     assert_eq!(commit_author(path, "HEAD"), author);
 }
 
+fn pending_signoff_fixture() -> TempDir {
+    let fixture = rebase_conflict_repo();
+    let path = fixture.path();
+    git(path, &["rebase", "--abort"]);
+    write_file(path, "aux.txt", "PENDING SIGNOFF INPUT\n");
+    git(path, &["add", "aux.txt"]);
+    git(path, &["commit", "-qm", "pending signoff proof"]);
+    assert!(!git_allow_fail(path, &["rebase", "main"]));
+    fixture
+}
+
 #[test]
 fn zero_byte_signoff_option_presence_requires_new_approval() {
     if !test_support::run_isolated() {
         return;
     }
-    let (fixture, backend) = saved_fixture(rebase_conflict_repo());
+    let (fixture, backend) = saved_fixture(pending_signoff_fixture());
     let path = fixture.path();
     let approved = backend.conflict_snapshot().unwrap().unwrap();
     let buffer = backend.resolution_buffer_from_repo().unwrap();
-    let tree = git_output(path, &["write-tree"]);
+    let saved = git_output(path, &["write-tree"]);
+    let repo = Repository::open(path).unwrap();
+    let saved = repo
+        .find_tree(git2::Oid::from_str(&saved).unwrap())
+        .unwrap();
+    let mut tree = repo.treebuilder(Some(&saved)).unwrap();
+    tree.insert(
+        "aux.txt",
+        repo.blob(b"PENDING SIGNOFF INPUT\n").unwrap(),
+        0o100644,
+    )
+    .unwrap();
+    let tree = tree.write().unwrap().to_string();
+    let author = commit_author(path, "side");
     std::fs::write(path.join(".git/rebase-merge/signoff"), b"").unwrap();
     let current = backend.conflict_snapshot().unwrap().unwrap();
     assert_stale_approval(path, &backend, &approved, &buffer);
     execute_fresh(&backend, &current, &buffer);
     let expected = format!(
-        "side change\n\nSigned-off-by: {} <{}>",
+        "pending signoff proof\n\nSigned-off-by: {} <{}>",
         git_output(path, &["config", "user.name"]),
         git_output(path, &["config", "user.email"])
     );
@@ -326,6 +350,17 @@ fn zero_byte_signoff_option_presence_requires_new_approval() {
     assert_eq!(
         git_output(path, &["show", "-s", "--format=%B", "HEAD"]),
         expected
+    );
+    // The stopped step consumes its already-generated message. The flag is
+    // consumed while constructing the subsequent pending pick's message.
+    assert_eq!(
+        git_output(path, &["show", "-s", "--format=%B", "HEAD^"]),
+        "side change"
+    );
+    assert_eq!(commit_author(path, "HEAD"), author);
+    assert_eq!(
+        Repository::open(path).unwrap().state(),
+        git2::RepositoryState::Clean
     );
 }
 

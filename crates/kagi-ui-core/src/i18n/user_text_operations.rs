@@ -383,7 +383,10 @@ pub fn pull_summary(summary: &str) -> String {
         .split_once("; ")
         .map_or((summary, None), |(a, b)| (a, Some(b)));
     let label = operation_label("pull");
-    let mut shown = if result == "already up to date" {
+    let mut shown = if matches!(
+        result,
+        "already up to date" | "Already up to date." | "Already up-to-date."
+    ) {
         match lang() {
             Lang::En => format!("{label}: Already up to date."),
             Lang::Ja => format!("{label}: すでに最新です。"),
@@ -849,6 +852,14 @@ mod tests {
             let second = pull_summary("unrecognized backend stdout /tmp/private-second.txt");
             assert_eq!(first, second, "unrecognized stdout is not primary UI copy");
             assert!(first.starts_with(&format!("{}: ", operation_label("pull"))));
+            let unchanged = pull_summary("already up to date");
+            for cli_summary in ["Already up to date.", "Already up-to-date."] {
+                assert_eq!(pull_summary(cli_summary), unchanged);
+            }
+            assert_ne!(
+                unchanged, first,
+                "known no-change is not generic completion"
+            );
         }
         set_lang_no_persist(previous);
     }

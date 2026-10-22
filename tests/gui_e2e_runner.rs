@@ -3315,6 +3315,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_family_result_owner),
             ),
             (
+                "conflict_continue_failure_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_continue_failure_result_owner),
+            ),
+            (
                 "operation_strip_startup",
                 Box::new(crate::app_conflict::scenario_operation_strip_startup),
             ),

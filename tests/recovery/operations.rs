@@ -172,6 +172,22 @@ pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
             kagi_ui_core::i18n::set_lang(lang);
             let (app, window) = mount(cx, &repo);
             // Use the real reflog-seeded history, not a fabricated cursor.
+            // Native mount constructs the root; exercise the real quiet read
+            // consumer that hydrates its empty history from the branch reflog.
+            app.update(cx, |app, cx| app.reload(cx));
+            let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                cx.run_until_parked();
+                if cx.read(|cx| app.read(cx).slow_reads_inflight_for_e2e(owner) == 0) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "real history read did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
             let undo_head = cx.read(|cx| kagi::ui::e2e::undo_head(app.read(cx)));
             assert!(
                 undo_head

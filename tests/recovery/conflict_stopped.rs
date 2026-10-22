@@ -459,8 +459,8 @@ pub fn scenario_conflict_continue_stopped_result_owner(cx: &mut VisualTestAppCon
                         if departed {
                             assert_eq!(
                                 state.repo_path.as_deref(),
-                                other_repo.as_deref(),
-                                "Details inspect A's canonical receipt without switching B"
+                                Some(repo.as_path()),
+                                "the explicit Details action follows A's existing owner tab"
                             );
                         }
                     });

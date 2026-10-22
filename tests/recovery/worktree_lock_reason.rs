@@ -1152,7 +1152,10 @@ pub fn scenario_worktree_admin_result_owner(cx: &mut VisualTestAppContext) {
                         let rows: Vec<_> = panel
                             .entries()
                             .iter()
-                            .filter(|entry| entry.op == operation)
+                            .filter(|entry| {
+                                entry.op == operation
+                                    && std::path::Path::new(&entry.repo) == repo.as_path()
+                            })
                             .collect();
                         assert_eq!(rows.len(), 1);
                         assert!(matches!(rows[0].outcome, OpOutcome::Partial { .. }));

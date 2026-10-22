@@ -411,17 +411,7 @@ impl KagiApp {
                             cx.notify();
                             return;
                         }
-                        if let Err(e) = result {
-                            if !matches!(e, kagi_git::GitError::TerminationUnknown(_)) {
-                                app.push_toast(
-                                    ToastKind::Error,
-                                    SharedString::from(format!(
-                                        "Could not stage resolution: {}",
-                                        e
-                                    )),
-                                    cx,
-                                );
-                            }
+                        if result.is_err() {
                             cx.notify();
                             return;
                         }

@@ -674,6 +674,7 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.
@@ -757,26 +758,28 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()),
         "the confirmation closes with the operation it confirmed"
     );
-    // #704 review P2: an abort saves nothing, so it must not be announced with
-    // the Save family's wording.
-    let toast = cx
-        .read(|cx| {
-            app.read(cx).toast_stack.as_ref().map(|stack| {
-                stack
-                    .read(cx)
-                    .toasts()
-                    .last()
-                    .map(|toast| toast.message.to_string())
-                    .unwrap_or_default()
-            })
-        })
-        .unwrap_or_default();
-    assert_eq!(
-        toast,
-        kagi::ui::i18n::Msg::ConflictAborted.t(),
-        "the success toast names the abort, not a saved resolution"
-    );
-    assert_ne!(toast, kagi::ui::i18n::Msg::EditorSavedResolved.t());
+    // The actual abort action, not a copied localized sentence, owns this result.
+    let receipts = read_oplog_tail_for_repo(&repo, 100);
+    let aborts: Vec<_> = receipts
+        .iter()
+        .filter(|entry| entry.op == "merge-abort")
+        .collect();
+    assert_eq!(aborts.len(), 1);
+    assert!(matches!(aborts[0].outcome, OpOutcome::Success { .. }));
+    assert!(!receipts
+        .iter()
+        .any(|entry| entry.op.starts_with("conflict-save:")));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.app_notice().is_none());
+        let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Success);
+        assert!(!matches!(
+            state.status_footer,
+            kagi::ui::FooterStatus::Success(_)
+        ));
+    });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
 }
@@ -1460,7 +1463,10 @@ pub fn scenario_conflict_family_result_owner(cx: &mut VisualTestAppContext) {
                             let rows: Vec<_> = panel
                                 .entries()
                                 .iter()
-                                .filter(|entry| entry.op == operation)
+                                .filter(|entry| {
+                                    entry.op == operation
+                                        && Path::new(&entry.repo) == repo.as_path()
+                                })
                                 .collect();
                             assert_eq!(rows.len(), 1);
                             assert!(matches!(rows[0].outcome, OpOutcome::Partial { .. }));
@@ -1496,4 +1502,153 @@ pub fn scenario_conflict_family_result_owner(cx: &mut VisualTestAppContext) {
         }
     }
     i18n::set_lang(language);
+}
+
+/// A real sequencer backend-open failure consumes only its matching, already
+/// admitted confirmation and leaves one result (or required audit acknowledgment).
+pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let language = kagi::ui::i18n::lang();
+    for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+        for recording_failure in [false, true] {
+            for departed in [false, true] {
+                let fixture = sequencer_fixture();
+                let repo = fixture.path().canonicalize().unwrap();
+                let other = build_fixture();
+                let other_repo = other.path().canonicalize().unwrap();
+                kagi::ui::i18n::set_lang(lang);
+                let (app, window) = mount(cx, &repo);
+                app.update(cx, |app, cx| {
+                    app.set_window_active_for_e2e(false, cx);
+                    app.detect_conflict_mode(cx);
+                });
+                cx.run_until_parked();
+                app.update(cx, |app, cx| {
+                    app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                        view.mode
+                            .as_mut()
+                            .unwrap()
+                            .buffer
+                            .apply_choice(
+                                Path::new("README.md"),
+                                kagi_git::ResolutionChoice::Incoming,
+                            )
+                            .unwrap();
+                    });
+                });
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        let owner = app
+                            .app_sessions
+                            .attachment(app.active_session().unwrap())
+                            .unwrap();
+                        app.conflict_continue(owner, window, cx);
+                    });
+                })
+                .unwrap();
+                assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
+                let repo_before = crate::macos::repo_fingerprint(&repo);
+                let other_before = crate::macos::repo_fingerprint(&other_repo);
+                let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+                kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
+                app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                if departed {
+                    app.update(cx, |app, cx| {
+                        app.cancel_conflict_continue();
+                        assert!(app.open_repository(other_repo.clone(), cx));
+                    });
+                    cx.run_until_parked();
+                }
+                let foreign_before = departed.then(|| {
+                    cx.read(|cx| {
+                        let state = app.read(cx);
+                        (
+                            state.active_session(),
+                            format!("{:?}", state.status_footer),
+                            (state.bottom_panel_open, state.bottom_tab),
+                        )
+                    })
+                });
+                let recording_lock = recording_failure.then(|| {
+                    let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                        .join("operations.jsonl.lock");
+                    let lock = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .write(true)
+                        .open(path)
+                        .unwrap();
+                    lock.lock().unwrap();
+                    lock
+                });
+                std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
+                release.send(());
+                cx.run_until_parked();
+                std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
+                let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                    .into_iter()
+                    .filter(|entry| entry.op == "cherry-pick-continue")
+                    .collect();
+                assert_eq!(receipts.len(), usize::from(!recording_failure));
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(!state.app_sessions.has_leases());
+                    let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                    assert!(state.conflict_continue_modal().is_none(),
+                        "terminal completion retained a consumed Confirm: error={:?}; ordinary results={:?}",
+                        state.conflict_continue_modal().and_then(|modal| modal.error.as_ref()),
+                        toasts.iter().map(|toast| format!("{:?}: {}", toast.kind, toast.message)).collect::<Vec<_>>());
+                    if let Some(before) = foreign_before.as_ref() {
+                        assert_eq!((state.active_session(), format!("{:?}", state.status_footer),
+                            (state.bottom_panel_open, state.bottom_tab)), *before);
+                    }
+                    if recording_failure {
+                        let notice = state.app_notice().expect("failed append must reach the released modal slot");
+                        assert!(notice.message.contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                        assert!(toasts.is_empty());
+                    } else {
+                        assert!(state.app_notice().is_none());
+                        assert_eq!(toasts.len(), 1);
+                        assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Error);
+                        assert!(!toasts[0].message.contains(repo.to_str().unwrap()));
+                        assert!(!toasts[0].message.contains("cherry-pick-continue"));
+                        let OpOutcome::Failed { error } = &receipts[0].outcome else {
+                            panic!("a backend-open failure is a known failure, not Unknown");
+                        };
+                        assert!(error.contains(repo.to_str().unwrap()));
+                    }
+                });
+                drop(recording_lock);
+                if recording_failure {
+                    click_control(cx, window, "app-notice-confirm");
+                    cx.run_until_parked();
+                    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+                    assert!(read_oplog_tail_for_repo(&repo, 100)
+                        .into_iter()
+                        .all(|entry| entry.op != "cherry-pick-continue"));
+                } else {
+                    click_control(cx, window, "operation-result-details");
+                    cx.read(|cx| {
+                        let state = app.read(cx);
+                        assert!(state.bottom_panel_open);
+                        assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                        assert_eq!(state.repo_path.as_deref(), Some(repo.as_path()));
+                        let panel = state.op_log.as_ref().unwrap().read(cx);
+                        let row = &panel.entries()[panel.expanded().unwrap()];
+                        let receipt = &receipts[0];
+                        assert_eq!(
+                            (row.id, row.timestamp, &row.op, &row.repo),
+                            (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+                        );
+                    });
+                }
+                assert_eq!(crate::macos::repo_fingerprint(&repo), repo_before);
+                assert_eq!(crate::macos::repo_fingerprint(&other_repo), other_before);
+                unmount(cx, app, window);
+            }
+        }
+    }
+    kagi::ui::i18n::set_lang(language);
 }

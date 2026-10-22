@@ -254,10 +254,8 @@ impl ResolutionBuffer {
         let mut buffer = ResolutionBuffer::new(workdir);
         let context = crate::backend::conflict_ops::conflict_observe::draft_context(repo).and_then(
             |context| {
-                repo.path()
-                    .canonicalize()
-                    .ok()
-                    .map(|git_dir| (context, git_dir))
+                let git_dir = repo.path().canonicalize().ok()?;
+                Some((context, git_dir))
             },
         );
 
@@ -1197,7 +1195,7 @@ fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
         path_bytes: path
             .to_str()
             .is_none()
-            .then(|| path.as_os_str().as_encoded_bytes()),
+            .then_some(path.as_os_str().as_encoded_bytes()),
         identity: fr.identity.as_ref().map(|identity| IdentityRecord {
             version: 1,
             fingerprint: identity.as_str(),

@@ -257,9 +257,9 @@ fn draft_metadata_known(
             ] {
                 match std::fs::read(repo.path().join(name)) {
                     Ok(bytes) => {
-                        if !std::str::from_utf8(&bytes)
+                        if std::str::from_utf8(&bytes)
                             .ok()
-                            .is_some_and(|text| git2::Oid::from_str(text.trim()).is_ok())
+                            .is_none_or(|text| git2::Oid::from_str(text.trim()).is_err())
                         {
                             return false;
                         }

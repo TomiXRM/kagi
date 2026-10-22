@@ -3491,14 +3491,16 @@ append lock during the first confirmed Continue. Capture the required stopped /
 unrecorded acknowledgment, release the lock, dismiss it, quit and really restart.
 Before restart a transient in-memory Partial row may still exist: do not call it
 an empty history. After restart, show the genuine zero-row Operation Log and
-recover the preserved first body through its independent read-only action and
-dedicated Copy, without applying it to the second conflict. Verify Git is unchanged
-until explicit new input / Save / Continue, then finish the correct two commits.
-Also compare valid identity-unknown legacy documents: they remain inspectable and
-copyable in EN/JA but must not resolve the live conflict. Keep ordinary receipt
-Copy unchanged before and after Back. Clipboard probes keep all original types
-only in memory and restore them conditionally after recognizing their own copied
-fixture payload; never persist unrelated clipboard data or erase a concurrent copy.
+inspect the preserved first body through its independent read-only action, without
+applying it to the second conflict. Verify Git is unchanged until explicit new
+input / Save / Continue, then finish the correct two commits. Also compare valid
+identity-unknown legacy documents: inspect their preserved EN/JA bodies without
+resolving the live conflict, then use Back to return to ordinary history.
+Dedicated/ordinary Copy consumer contracts belong to the existing Tier A private
+`VisualTestPlatform` / `TestAppContext` clipboard coverage described above.
+Never use the user's host clipboard for Copy/Paste, reads, snapshots or restoration,
+even with an all-type snapshot or conditional restore. Actual OS clipboard
+integration is permitted only in an isolated VM with no host clipboard bridge.
 Capture only each launched PID's listed window with `screencapture -l<id>` and
 close every owned application after the case.
 

@@ -541,11 +541,14 @@ cannot be undone or restored from its Operation Log record immediately, not only
 that the history will be absent after restart. The in-memory entry has no trusted
 ref-move evidence for those recovery actions. Failure/refusal notices do not claim
 that an unchanged operation needs undo.
-When conflict-stopped execution and recording failure coincide, keep the stopped
-Info notice and neutral footer, and independently emit the recording Error toast
-and immediate AppNotice. Use the unrecorded Partial entry for that notice so it
-does not claim the whole merge/rebase completed. The in-memory row remains
-non-durable; presentation never retries append or manufactures a persisted receipt.
+When conflict-stopped execution and recording failure coincide, the required
+recording acknowledgment is the only primary result surface. Include the observed
+stopped context in that acknowledgment instead of adding a stopped Info notice,
+ordinary result toast or result footer. Merge/rebase starts and a typed
+`ContinueOutcome::Staged` must not claim whole-operation completion. Borrow that
+presentation context only for the original successful outcome; never downgrade
+Unknown or replace the original receipt. The in-memory row remains non-durable;
+presentation never retries append or manufactures a persisted receipt.
 
 Current strict-FF Pull uses the existing typed `NoOp(PullUpToDate)` presentation
 after its successful freshness fetch. Equal or locally ahead tips show the same
@@ -588,14 +591,30 @@ refusal or fabricates a write receipt.
   `index.lock` という path だけを lock 競合の証拠にせず、既存 lock の診断が無ければ安全な要約を使う。
   既存 `[kagi] bottom-panel: open (Failed auto-open)` は harness 互換の契約行として残るが、
   表示状態を変更する指示ではない。
+- Conflict Save / directory-file resolution / Abort、worktree maintenance、History も同じ既存
+  result owner を使う。通常の既知 Refused は短い原因と詳細導線で提示し、dismiss-only
+  AppNotice を追加しない。既存 receipt、typed blocker、History の非永続化条件は変更しない。
+  background の typed Continue 停止は保存済み receipt への Details 付き Info とし、別 owner の
+  footer / panel を触らない。明示的な Details click 後は既存の owner-follow navigation に従う。
+  Skip の commit 単位の成功と、Merge / Rebase 開始・Rebase Continue の要求全体の未完了を混同しない。
+- 実行済み sequencer Continue の terminal completion は、現在の session / visit と frozen plan の
+  `Arc` identity が一致する消費済み confirm だけを閉じる。KnownFailed / append failure /
+  Unknown でも古い confirm から再実行を誘わず、既存の reconcile Inspect / admission guard と
+  notice の自然配送を保つ。他 owner / 後発の modal や編集 draft は閉じない。
 - 通常の Busy admission 拒否は既存 snackbar と近傍の Idle 理由だけとし、Error toast /
   Failed footer / dismiss-only AppNotice は作らない。reconcile が実際に必要なら Inspect を保つ。
   Quit / host-close guard は同一理由を active / queued 合わせて一枚に集約し、write / clone 完了後
   `may_close_host` が true になれば自然に取り除く。Quit / close 自体を自動再開しない。
 - oplog append failure は別の「記録を保存できなかった」事実であり、既存の明示 acknowledge /
-  inspect notice を保持する。無言化、再 append、成功への置き換えはしない。
+  inspect notice を唯一の primary とする。共通 recorder の前後に通常 result toast / footer /
+  dismiss-only notice を追加しない。元の失敗診断・Unknown evidence・記録失敗の診断を失わず、
+  既存 Failed / Refused / Unknown を append failure だけで別の outcome に変更しない。
+  無言化、再 append、成功への置き換えはしない。既存の必須 reconcile inspection は維持する。
 - Tier A の所有: `toast_stack_budget`（実 no-op Push 連打 / keyed 置換）、`stage_failure_notice` /
   `hunk_staging`、`pull_presents_backend_receipts` / departed-owner Pull、host dirty guard / clone close。
+  `worktree_admin_result_owner` / `history_persists`、Continue refusal / stopped / backend-failure、
+  `conflict_family_result_owner`、generic Merge failure と既存 Unknown panic / dismissed-confirm の
+  consumer は、repo/request identity・実 backend state・canonical Details / 必須 ack を検証する。
   Busy のこの実装は #1700 の統合依存であり、同 issue で第二の通知 owner は追加しない。
 ## Amendment — 2026-10-21: Pull terminal observation and retained refusal (#1720)
 

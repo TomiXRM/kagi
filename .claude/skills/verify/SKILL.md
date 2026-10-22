@@ -4054,7 +4054,7 @@ linked destination without touching either worktree.
 G: `cargo test -p kagi --lib staging_failure` uses real index.lock and oplog
 sidecar lock fixtures in isolated children; it compares single/batch failure
 details in EN/JA, checks that trust refusal records without requesting a modal,
-and that only a failed oplog append asks for the dismiss-only notice.
+and that only a failed oplog append requires explicit acknowledgment.
 Use a fresh KAGI_LOG_DIR as with all cargo tests.
 
 Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
@@ -4067,11 +4067,13 @@ byte-identical indexes. An admission denial records a Refused receipt without a
 notice. The #1698 policy replaces the earlier duplicated footer/toast expectation.
 M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
-attempted failure stays visible with the recording error; it is not a success.
+required acknowledgment is the sole primary, retaining the attempted failure and
+append diagnostic without an extra ordinary result footer/toast. Failed/Unknown
+must not become Success or be reclassified merely because append failed.
 
 ### One requested operation, one result (#1698)
 
-Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_failure_presents_only_the_decisive_receipt,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,push_unknown_,pull_auto_stash_success,pull_auto_stash_failure_restores,pull_refuses_when_the_dirty_set_moved,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_,oplog_revert_eligibility,worktree_panel_discard_recording_failure'`
+Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_failure_presents_only_the_decisive_receipt,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,push_unknown_,pull_auto_stash_success,pull_auto_stash_failure_restores,pull_refuses_when_the_dirty_set_moved,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_,oplog_revert_eligibility,worktree_panel_discard_recording_failure,worktree_admin_result_owner,history_persists,conflict_continue_refusal_result_owner,conflict_continue_stopped_result_owner,conflict_continue_failure_result_owner,conflict_family_result_owner,conflict_merge_failure_contract,oplog_append_failure_conflict_stopped,conflict_confirm_continue_panic,conflict_confirm_dismissed_still_reloads,conflict_merge_continue_panic,conflict_skip_panic'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Real repeated no-op Push is footer-only when
 attended; the existing `set_window_active_for_e2e` input selects inactive
 presentation without activating an OS window, where the same result replaces one
@@ -4108,9 +4110,42 @@ Run the EN/JA lock-classification boundary unit regression: an `index.lock` path
 alone, a permission denial or a remote URL is not evidence of an existing lock.
 Stash local/remote success coverage checks attended footer versus inactive toast,
 with no stale Busy footer and no unrelated-session footer changes.
+The worktree-admin matrix executes real Lock/Unlock/Prune/Repair with healthy and
+failed audit append; history uses the actual reflog/quiet-reload producer, not an
+assigned cursor. Conflict-family consumers cover ordinary known refusal as well
+as success and failed recording for Save, directory/file resolution and Abort in
+EN/JA, attended and inactive presentation. Do not preserve the old triple
+AppNotice/toast/footer expectation.
+Continue uses real multi-step rebase conflicts: typed Staged is stopped, not
+whole-operation completion. Background delivery preserves the foreign repo's
+footer/panel until an actual Details click; that explicit action intentionally
+follows the canonical receipt owner. Scope window-global log assertions by the
+actual recorded repository/request, not operation name alone.
+`hold_next_continue_confirm_for_e2e` is a `gui-e2e`-only deferred slot after real
+lease admission and before `execute_conflict_continue`. The failure consumer moves
+only its owned Git directory to exercise a real backend-open KnownFailed outcome;
+it checks healthy/failed append, current/departed ownership, actual Details/ack,
+unchanged physical state and no duplicate receipt. Existing panic consumers
+exercise injected Unknown delivery, not a real external-process Unknown. A matching
+consumed frozen confirm must retire naturally on terminal completion; never force
+the notice queue to drain only in a test or clear another/newer modal.
+An unrecorded unchanged Failed row retains Failed and its original backend
+diagnostic; only the existing successful-but-unrecorded display mapping uses
+Partial. Verify absent trusted restore metadata and unchanged durable journal,
+not an invented positive receipt ID or a copied translated message.
 Tier B uses the same isolated EN/JA fixture and owned PID/window for before/after
-no-op repetition, failure details, Pull and Quit; keep non-key/no-activate and
-report occluded byte-identical frames as stale, not evidence of the new screen.
+no-op repetition, failure details, Pull and Quit. Launch with isolated USER/log,
+no-restore/no-activate; foreground use requires permission and only the owned
+PID/window. Report occluded byte-identical frames as stale, not new-screen evidence.
+For recording priority, hold only the isolated audit sidecar during an actual
+successful or stopped write; inspect original physical outcome, journal identity
+and the sole required acknowledgment, then release, actually acknowledge and
+perform a later operation. Initial merge/rebase and continued rebase stops retain
+their observed stopped context; do not infer completion from backend Ok. Preserve
+separate draft-lifecycle findings rather than clicking a misleading later Continue.
+For normal conflict Save/Abort, inspect actual staged/recovered state and canonical
+receipt. A subsequent Refreshed footer is not evidence that a green success footer
+remained visible. A normal result must not add an acknowledgment notice.
 
 
 ### Presentation-only Busy progress close (#1719)
@@ -4153,11 +4188,17 @@ It also cancels a separate normal Merge and checks a new normal request is visib
 
 Tier B uses an ordinary isolated binary, actual linked-worktree status work and
 Terminal, EN/JA × Apple Light/Dark, desktop width ≥1000 plus the 940 compact leg.
-After pointer/keyboard close, click and type into Terminal at the former card's
-coordinates (including its lower edge), verify the resulting file, then observe
-natural completion and final failure detail. Absence of painted controls alone is
-not proof that no invisible hit target remains. Keep an independent empty toast
-entity mounted so later terminal results remain deliverable.
+After pointer/keyboard close, move focus to a different actual control (for
+example click and type in Filter), then click the former card's Terminal-overlap
+region and verify actual shell output in a file. Preexisting Terminal focus plus
+typing alone cannot rule out an invisible hit target. Include the lower edge.
+Record a still-live owned Git PID after close/input, or a held-read lifetime, to
+distinguish dismissal from natural completion; a late screenshot alone cannot
+establish that ordering. Then observe natural completion and the final result:
+hidden failure and required audit acknowledgment must still arrive, and a new
+same-name request must show progress. An intentional fixture transport delay is
+not evidence for a real linked-worktree read's latency cause. Keep an independent
+empty toast entity mounted so terminal results remain deliverable.
 
 ### Hunk staging (#842, Refs #357)
 

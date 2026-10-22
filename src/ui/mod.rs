@@ -1308,6 +1308,10 @@ pub struct KagiApp {
     /// The lease's presentation mirror — the in-flight write's name, for the
     /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
     pub write_busy_op: Option<&'static str>,
+    busy_write_origin: Option<(crate::app::OperationId, busy::BusyIdentity)>,
+    busy_plan_origin: Option<busy::BusyIdentity>,
+    hidden_busy_job: Option<busy::BusyIdentity>,
+    busy_close_focus: types::ToastCloseFocus,
     /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
     /// lease, but it owns the modal slot. Ask [`KagiApp::op_latched`], never
     /// this field alone (ADR-0196).
@@ -1592,6 +1596,10 @@ impl KagiApp {
             github_host_logins: Default::default(),
             github_host_login_requests: Default::default(),
             write_busy_op: None,
+            busy_write_origin: None,
+            busy_plan_origin: None,
+            hidden_busy_job: None,
+            busy_close_focus: Default::default(),
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
@@ -1741,6 +1749,63 @@ impl KagiApp {
         }
     }
 
+    pub(crate) fn operation_result_toast_needed(&self, long_running: bool) -> bool {
+        let active = self.window_active;
+        #[cfg(feature = "gui-e2e")]
+        let active = self.window_active_override.unwrap_or(active);
+        long_running
+            || !active
+            || self.home_in_front()
+            || self.workspace_mode() != workspace_mode::WorkspaceMode::Graph
+    }
+
+    fn operation_result_key(repo: &Path, op: &str, result: &str) -> String {
+        // Receipt locators may retain a trailing separator while the active
+        // repository path does not. Both must replace the same transient result.
+        format!("{}\0{op}\0{result}", repo.components().as_path().display())
+    }
+
+    /// One transient result per repository / requested operation / outcome.
+    pub(crate) fn push_operation_result(
+        &mut self,
+        entry: &OpLogEntry,
+        op: &str,
+        kind: ToastKind,
+        message: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        let result = match entry.outcome {
+            OpOutcome::Success { .. } => "success",
+            OpOutcome::Failed { .. } => "failed",
+            OpOutcome::Refused { .. } => "refused",
+            OpOutcome::Partial { .. } => "partial",
+            OpOutcome::Unknown { .. } => "unknown",
+        };
+        let repository = std::path::Path::new(&entry.repo)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let message = if repository.is_empty() {
+            message
+        } else {
+            SharedString::from(format!("{message} — {repository}"))
+        };
+        self.toast_stack.clone().map(|stack| {
+            let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
+            stack.update(cx, |stack, cx| {
+                let id = stack.push_keyed_notify(kind, message, Some(key), cx);
+                if matches!(kind, ToastKind::Error | ToastKind::Info) {
+                    stack.set_action(
+                        id,
+                        types::ToastAction::OpenOperationLog(oplog_panel::EntryKey::of(entry)),
+                        cx,
+                    );
+                }
+                id
+            })
+        })
+    }
+
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
     /// silence before doing git work, so typing stays fluid.
     fn schedule_modal_replan(&mut self, cx: &mut Context<Self>) {
@@ -1860,14 +1925,16 @@ impl KagiApp {
     /// Present (and, when `persist`, append) one outcome: footer, toast and
     /// panel. A caller with typed refusal text or a bounded failed-plan reason
     /// may override only the human-facing preview; the receipt keeps detail.
+    /// Returns true when appending failed. Callers adding no result of their
+    /// own may ignore it; an extra announcement must respect that failure.
     pub(in crate::ui) fn record_op_impl(
         &mut self,
         entry: OpLogEntry,
         cx: &mut Context<Self>,
         persist: bool,
         display_override: Option<String>,
-    ) {
-        self.record_op_with_notice(entry, cx, persist, display_override, None);
+    ) -> bool {
+        self.record_op_with_notice(entry, cx, persist, display_override, None, false)
     }
 
     pub(in crate::ui) fn record_op_with_notice(
@@ -1877,35 +1944,74 @@ impl KagiApp {
         persist: bool,
         display_override: Option<String>,
         notice: Option<(ToastKind, SharedString)>,
-    ) {
+        recording_failed: bool,
+    ) -> bool {
+        let announce = self.operation_result_toast_needed(false);
+        self.record_op_result(
+            entry,
+            cx,
+            persist,
+            display_override,
+            notice,
+            announce,
+            true,
+            None,
+            recording_failed,
+            None,
+            None,
+        )
+        .recording_failed
+    }
+
+    /// Return this call's recording status and actual result toast identity.
+    /// An already attempted receipt supplies recording failure explicitly; its
+    /// required notice, not an ordinary result, owns every unrecorded outcome.
+    /// `current` permits footer publication only for the frozen live context.
+    /// A footer-only contract adds no panel log for an unrecorded stand-in.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::ui) fn record_op_result(
+        &mut self,
+        entry: OpLogEntry,
+        cx: &mut Context<Self>,
+        persist: bool,
+        display_override: Option<String>,
+        notice: Option<(ToastKind, SharedString)>,
+        announce: bool,
+        current: bool,
+        requested_op: Option<&str>,
+        mut recording_failed: bool,
+        stopped_notice: Option<SharedString>,
+        footer_only_contract: Option<(SharedString, bool)>,
+    ) -> operations::RecordedPresentation {
         let op = entry.op.as_str();
         let before = &entry.before;
         let outcome = &entry.outcome;
-        let (footer_msg, footer_ok) = Self::operation_footer_contract(op, before, outcome);
+        // A typed sequencer stop describes request progress, not a different
+        // receipt outcome. Never let it downgrade uncertainty or failure.
+        let stopped_notice =
+            stopped_notice.filter(|_| matches!(outcome, OpOutcome::Success { .. }));
+        let stopped_for_conflicts = stopped_notice.is_some();
+        let footer_only = footer_only_contract.is_some();
+        let (footer_msg, footer_ok) = footer_only_contract
+            .unwrap_or_else(|| Self::operation_footer_contract(op, before, outcome));
 
-        let display_footer_msg = notice
-            .as_ref()
-            .map(|(_, text)| text.clone())
-            .unwrap_or_else(|| {
-                Self::display_footer_message(op, outcome, &footer_msg, display_override)
-            });
-
-        // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
-        // outcome (Success / Failed / Refused) becomes a toast.
-        let toast_kind = notice.as_ref().map_or_else(
-            || {
-                if matches!(outcome, OpOutcome::Success { .. }) {
-                    ToastKind::Success
-                } else {
-                    ToastKind::Error
-                }
-            },
-            |(kind, _)| *kind,
-        );
-        self.push_toast(toast_kind, display_footer_msg.clone(), cx);
-
-        // T-BP-004: auto-open bottom panel on Failed.
-        let is_failed = matches!(outcome, OpOutcome::Failed { .. });
+        // Ordinary results stay in context; only unattended / long operations
+        // use the existing toast owner.
+        let toast_kind = if stopped_for_conflicts {
+            ToastKind::Info
+        } else {
+            notice.as_ref().map_or_else(
+                || {
+                    if matches!(outcome, OpOutcome::Success { .. }) {
+                        ToastKind::Success
+                    } else {
+                        ToastKind::Error
+                    }
+                },
+                |(kind, _)| *kind,
+            )
+        };
+        let log_failed_panel = !footer_only && matches!(outcome, OpOutcome::Failed { .. });
 
         // Callers choose persistence. Already-recorded/attempted receipts are
         // presentation-only, including Refused outcomes: never append twice.
@@ -1918,15 +2024,44 @@ impl KagiApp {
         if persist {
             let recording = kagi_git::backend::recording::finalize(entry.clone());
             if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
+                recording_failed = true;
                 klog!("oplog: write failed (non-fatal): {}", error);
                 // Recording failure does not change the operation's outcome.
                 // Keep failure, success and uncertainty distinct in the notice.
-                self.present_oplog_write_failure(&entry, error, cx);
+                self.present_oplog_write_failure(&entry, error, stopped_notice.as_deref(), cx);
             }
             shown = Some(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                 &recording,
             ));
         }
+        let display_footer_msg = if recording_failed {
+            SharedString::default()
+        } else if let Some(stopped_notice) = stopped_notice {
+            stopped_notice
+        } else {
+            notice
+                .as_ref()
+                .map(|(_, text)| text.clone())
+                .unwrap_or_else(|| {
+                    Self::display_footer_message(op, outcome, &footer_msg, display_override)
+                })
+        };
+        let toast_id = if announce && !recording_failed {
+            let receipt = shown.as_ref().unwrap_or(&entry);
+            self.push_operation_result(
+                receipt,
+                requested_op.unwrap_or(&receipt.op),
+                toast_kind,
+                display_footer_msg.clone(),
+                cx,
+            )
+        } else {
+            None
+        };
+        let presented = operations::RecordedPresentation {
+            recording_failed,
+            toast_id,
+        };
 
         // T-BP-004: push to in-memory ring-buffer (newest at front) and collapse
         // any expanded row. Scoped to the op-log entity (ADR-0110 Phase 5).
@@ -1939,23 +2074,43 @@ impl KagiApp {
             });
         }
 
-        // T-BP-004: auto-open panel on failure.
-        if is_failed {
-            self.bottom_panel_open = true;
-            self.bottom_tab = BottomTab::OperationLog;
+        // Preserve the historical contract line, not the disruptive auto-open.
+        if log_failed_panel {
             klog!("bottom-panel: open (Failed auto-open)");
         }
+        if current && (announce || recording_failed) {
+            self.status_footer = FooterStatus::Idle("".into());
+        }
 
-        if footer_ok && notice.is_none() {
+        if footer_ok
+            && !stopped_for_conflicts
+            && notice
+                .as_ref()
+                .is_none_or(|(kind, _)| *kind == ToastKind::Success)
+        {
             klog!("footer: {}", footer_msg);
+            if !current || announce || recording_failed {
+                return presented;
+            }
             self.status_footer = FooterStatus::Success(display_footer_msg);
-        } else if notice.is_some() {
+        } else if stopped_for_conflicts
+            || notice
+                .as_ref()
+                .is_some_and(|(kind, _)| matches!(kind, ToastKind::Info | ToastKind::Sync))
+        {
             klog!("footer: {}", footer_msg);
+            if !current || announce || recording_failed {
+                return presented;
+            }
             self.status_footer = FooterStatus::Idle(display_footer_msg);
         } else {
             klog!("footer: {}", footer_msg);
+            if !current || announce || recording_failed {
+                return presented;
+            }
             self.status_footer = FooterStatus::Failed(display_footer_msg);
         }
+        presented
     }
 
     // ── T-BP-007: Terminal session ────────────────────────────

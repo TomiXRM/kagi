@@ -25,19 +25,17 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let error = i18n::op::terminal_lock_changed_contract(i18n::lang());
-        self.record_op_persist(
+        let entry = kagi_git::oplog::OpLogEntry::new(
             op,
+            offer.path.display().to_string(),
             plan.current.clone(),
             OpOutcome::Failed {
                 error: error.into(),
             },
-            &offer.path,
-            cx,
         );
-        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
-            SharedString::from(error),
-        ));
-        self.push_toast(ToastKind::Error, error, cx);
+        // The recorder owns the result, including required acknowledgement
+        // when append fails; do not overwrite it with a second announcement.
+        self.record_op_impl(entry, cx, true, Some(error.into()));
     }
 
     pub fn open_lock_worktree_modal(&mut self, name: String) {
@@ -163,12 +161,13 @@ impl KagiApp {
                         after: modal.plan.predicted.clone(),
                     },
                     &repo_path,
+                    Some(i18n::op::user_text::operations::worktree_lock(
+                        &modal.name,
+                        true,
+                    )),
                     cx,
                 );
                 self.clear_lock_worktree_modal();
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::worktree_lock(&modal.name, true).into(),
-                );
                 self.reload(cx);
             }
             Err(e) => {
@@ -180,6 +179,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    None,
                     cx,
                 );
                 if let Some(m) = self.lock_worktree_modal_mut() {
@@ -359,12 +359,13 @@ impl KagiApp {
                         after: modal.plan.predicted.clone(),
                     },
                     &repo_path,
+                    Some(i18n::op::user_text::operations::worktree_lock(
+                        &modal.name,
+                        false,
+                    )),
                     cx,
                 );
                 self.clear_unlock_worktree_modal();
-                self.status_footer = FooterStatus::Success(
-                    i18n::op::user_text::operations::worktree_lock(&modal.name, false).into(),
-                );
                 self.reload(cx);
             }
             Err(e) => {
@@ -376,6 +377,7 @@ impl KagiApp {
                         error: err_msg.clone(),
                     },
                     &repo_path,
+                    None,
                     cx,
                 );
                 if let Some(m) = self.unlock_worktree_modal_mut() {

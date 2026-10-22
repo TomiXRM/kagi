@@ -29,6 +29,10 @@ pub const TOAST_ROUTINE_LIFETIME: Duration = Duration::from_secs(4);
 /// A card was removed, including cap eviction; the parent repairs lost focus.
 pub(super) struct ToastRemoved(Vec<(gpui::WindowId, gpui::FocusHandle)>);
 impl ToastRemoved {
+    pub(super) fn from_control(focus: &super::types::ToastCloseFocus) -> Self {
+        Self(std::mem::take(&mut *focus.borrow_mut()))
+    }
+
     pub fn was_focused(&self, window: &gpui::Window) -> bool {
         let id = window.window_handle().window_id();
         self.0
@@ -37,7 +41,11 @@ impl ToastRemoved {
     }
 }
 impl gpui::EventEmitter<ToastRemoved> for ToastStack {}
-impl gpui::EventEmitter<super::types::ToastAction> for ToastStack {}
+pub(super) struct ToastActionRequested {
+    pub id: u64,
+    pub action: super::types::ToastAction,
+}
+impl gpui::EventEmitter<ToastActionRequested> for ToastStack {}
 
 fn error_preview(message: &str) -> String {
     let mut preview = String::new();
@@ -198,6 +206,16 @@ impl ToastStack {
 
     /// Push a new toast; cap eviction considers existing cards, not the new one.
     pub fn push(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
+        self.push_keyed(kind, message, None);
+    }
+
+    /// Replace repeated results without increasing the notification count.
+    pub fn push_keyed(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        result_key: Option<String>,
+    ) -> u64 {
         // A toast is only the transient summary. The complete operation result
         // lives in Operation Log, so never let raw multi-line stderr turn the
         // overlay into a screen-sized card.
@@ -207,6 +225,26 @@ impl ToastStack {
         } else {
             SharedString::from(footer_line(message.as_ref()))
         };
+        if let Some(at) = result_key.as_ref().and_then(|key| {
+            self.toasts
+                .iter()
+                .position(|toast| toast.result_key.as_ref() == Some(key))
+        }) {
+            let mut toast = self.toasts.remove(at);
+            if toast.dismissing.take().is_some() {
+                // A pending exit timer still owns the old id.
+                toast.id = self.next_id;
+                self.next_id += 1;
+            }
+            toast.kind = kind;
+            toast.message = message.clone();
+            toast.born = Instant::now();
+            toast.paused_at = None;
+            self.arrival = Some((toast.id, message));
+            let id = toast.id;
+            self.toasts.push(toast);
+            return id;
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.arrival = Some((id, message.clone()));
@@ -214,6 +252,7 @@ impl ToastStack {
             id,
             kind,
             message,
+            result_key,
             action: None,
             born: Instant::now(),
             paused_at: None,
@@ -230,6 +269,7 @@ impl ToastStack {
             let removed = self.toasts.remove(oldest);
             self.removed_focus = take_toast_focus(&removed);
         }
+        id
     }
 
     /// Begin sliding a toast out (× button or auto-expiry). The caller schedules
@@ -347,10 +387,23 @@ impl ToastStack {
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
+        self.push_keyed_notify(kind, message, None, cx);
+    }
+
+    pub fn push_keyed_notify(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        key: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> u64 {
         let evicts = self.toasts.len() == TOASTS_MAX;
         if !self.expanded {
             let mut hidden_focus = Vec::new();
             for toast in &mut self.toasts {
+                if key.is_some() && toast.result_key == key && toast.dismissing.is_none() {
+                    continue;
+                }
                 if let Some(start) = toast.paused_at.take() {
                     toast.born += start.elapsed();
                 }
@@ -358,23 +411,25 @@ impl ToastStack {
             }
             cx.emit(ToastRemoved(hidden_focus));
         }
-        self.push(kind, message);
+        let id = self.push_keyed(kind, message, key);
         if evicts {
             cx.emit(ToastRemoved(std::mem::take(&mut self.removed_focus)));
         }
         self.ensure_ticker(cx);
         cx.notify();
+        id
     }
 
-    /// Add an action to the receipt's existing toast, without a second arrival.
-    pub(super) fn set_latest_action(
+    /// Bind an action only to the result produced by the same completion.
+    pub(super) fn set_action(
         &mut self,
+        id: u64,
         action: super::types::ToastAction,
         cx: &mut Context<Self>,
     ) {
-        if let Some(toast) = self.toasts.last_mut() {
+        if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
             toast.action = Some(action);
-            toast.action_focus = Some(Default::default());
+            toast.action_focus.get_or_insert_with(Default::default);
             cx.notify();
         }
     }
@@ -382,12 +437,12 @@ impl ToastStack {
     pub(super) fn activate_action(&mut self, id: u64, cx: &mut Context<Self>) {
         let action = self
             .toasts
-            .iter_mut()
+            .iter()
             .find(|toast| toast.id == id && toast.dismissing.is_none())
-            .and_then(|toast| toast.action.take());
+            .and_then(|toast| toast.action.clone());
         if let Some(action) = action {
-            cx.emit(action);
-            self.begin_exit(id, cx);
+            // The app acknowledges only after the destination is reachable.
+            cx.emit(ToastActionRequested { id, action });
         }
     }
 
@@ -449,6 +504,50 @@ impl Default for ToastStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_operation_result_replaces_without_growing_the_stack() {
+        let mut stack = ToastStack::new();
+        let key = "repo\0push\0failed".to_string();
+        stack.push_keyed(ToastKind::Error, "first cause", Some(key.clone()));
+        let id = stack.toasts()[0].id;
+        let focus = stack.toasts()[0].close_focus.clone();
+        stack.push_keyed(ToastKind::Error, "new cause", Some(key.clone()));
+        assert_eq!(stack.toasts().len(), 1);
+        assert_eq!(stack.toasts()[0].id, id);
+        assert!(std::rc::Rc::ptr_eq(&stack.toasts()[0].close_focus, &focus));
+        assert!(stack.toasts()[0].message.contains("new cause"));
+        stack.start_exit(id);
+        stack.push_keyed(ToastKind::Error, "retry result", Some(key));
+        assert_eq!(
+            stack.toasts().len(),
+            1,
+            "an exiting duplicate is replaced too"
+        );
+        let replacement = stack.toasts()[0].id;
+        assert_ne!(replacement, id);
+        stack.remove(id);
+        assert_eq!(
+            stack.toasts()[0].id,
+            replacement,
+            "old exit timer cannot remove the replacement"
+        );
+        stack.push_keyed(
+            ToastKind::Success,
+            "done",
+            Some("repo\0push\0success".into()),
+        );
+        stack.push_keyed(
+            ToastKind::Error,
+            "other repo",
+            Some("other\0push\0failed".into()),
+        );
+        assert_eq!(
+            stack.toasts().len(),
+            3,
+            "outcome and repository are part of the key"
+        );
+    }
 
     #[cfg(feature = "gui-e2e")]
     #[gpui::test]

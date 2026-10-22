@@ -54,85 +54,129 @@ pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS fetch_busy_label: EN/JA fetch snackbar and busy release");
 }
 
-/// #646: a failed fetch reaches the oplog, not just the footer.
-///
-/// `AGENTS.md` requires a user-facing error to surface via the oplog **and** a
-/// modal. Fetch had only the footer and a toast, so a failure left nothing to
-/// recover or audit from — and a silent auto-fetch left no trace at all.
+/// #646 / #1698: a failed fetch remains durable, with one context-appropriate preview.
 pub fn scenario_fetch_failure_reaches_the_oplog(cx: &mut VisualTestAppContext) {
-    let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
-    // A remote that cannot be reached: a local path with no repository in it.
-    let missing = repo.join("no-such-remote");
-    git(
-        &repo,
-        &["remote", "add", "origin", missing.to_str().unwrap()],
-    );
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_git::oplog::OpOutcome;
 
-    let before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == "fetch")
-        .count();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        for active in [true, false] {
+            let fixture = build_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let missing = repo.join("no-such-remote");
+            git(
+                &repo,
+                &["remote", "add", "origin", missing.to_str().unwrap()],
+            );
+            let before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "fetch")
+                .count();
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(active, cx);
+                app.bottom_panel_open = false;
+                app.fetch_async(false, cx);
+            });
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
+                cx.run_until_parked();
+                assert!(std::time::Instant::now() < deadline, "fetch did not settle");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
 
-    let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.fetch_async(false, cx));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
-        cx.run_until_parked();
-        assert!(std::time::Instant::now() < deadline, "fetch did not settle");
-        std::thread::sleep(std::time::Duration::from_millis(2));
+            let entries: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "fetch")
+                .collect();
+            assert_eq!(
+                entries.len(),
+                before + 1,
+                "exactly one failed-fetch receipt"
+            );
+            let receipt = entries.last().unwrap();
+            let OpOutcome::Failed { error } = &receipt.outcome else {
+                panic!(
+                    "an unreachable local remote must fail: {:?}",
+                    receipt.outcome
+                );
+            };
+            assert!(error.contains(missing.to_str().unwrap()), "{error}");
+            assert_eq!(receipt.ref_moves, Some(Vec::new()), "no local ref moved");
+            assert!(
+                kagi::ui::oplog_panel::entry_clipboard_text(receipt)
+                    .contains(missing.to_str().unwrap()),
+                "the durable detail keeps the actual failed remote"
+            );
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(!state.app_sessions.has_leases());
+                assert!(state.app_notice().is_none());
+                assert!(!state.bottom_panel_open, "failure never auto-opens details");
+                let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                let preview = if active {
+                    assert!(stack.toasts().is_empty(), "attended failure is footer-only");
+                    let FooterStatus::Failed(preview) = &state.status_footer else {
+                        panic!("attended failure needs a footer: {:?}", state.status_footer);
+                    };
+                    preview
+                } else {
+                    assert!(matches!(state.status_footer, FooterStatus::Idle(_)));
+                    assert_eq!(stack.toasts().len(), 1, "one away error notification");
+                    let toast = &stack.toasts()[0];
+                    assert_eq!(toast.kind, ToastKind::Error);
+                    assert!(
+                        toast.result_key.is_some(),
+                        "away failure has a replacement key"
+                    );
+                    assert!(toast.action.is_some(), "away failure links to its receipt");
+                    &toast.message
+                };
+                assert!(!preview.is_empty() && preview.chars().count() <= 240);
+                for private in [
+                    repo.to_str().unwrap(),
+                    "no-such-remote",
+                    "fatal:",
+                    "exit status",
+                ] {
+                    assert!(!preview.contains(private), "{preview}");
+                }
+            });
+            if !active {
+                crate::recovery_oplog_panel::paint(cx, window);
+                let action = e2e::control_bounds(window.window_id(), "operation-result-details")
+                    .expect("the error notification draws its detail action");
+                cx.simulate_click(window, action.center(), gpui::Modifiers::none());
+                crate::recovery_oplog_panel::paint(cx, window);
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(state.bottom_panel_open);
+                    assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                    let panel = state.op_log.as_ref().unwrap().read(cx);
+                    let row = panel.expanded().expect("the failed Fetch is expanded");
+                    assert_eq!(panel.entries()[row].id, receipt.id);
+                    assert!(panel.scroll_handle().bounds_for_item(row).is_some());
+                });
+            }
+            unmount(cx, app, window);
+        }
     }
-
-    let entries: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == "fetch")
-        .collect();
-    assert_eq!(
-        entries.len(),
-        before + 1,
-        "a failed fetch must leave exactly one oplog record (#646)"
-    );
-    let outcome = &entries.last().expect("the record just written").outcome;
-    assert!(
-        matches!(
-            outcome,
-            kagi_git::oplog::OpOutcome::Failed { .. } | kagi_git::oplog::OpOutcome::Unknown { .. }
-        ),
-        "an unreachable remote is a failure, not a success: {outcome:?}"
-    );
-    // #885: the fetch is observed and moved no local ref, so its receipt
-    // says "nothing moved" (a restore across it is not blocked as "not
-    // recorded"); an Unknown termination is never that.
-    let last = entries.last().unwrap();
-    let expected = match last.outcome {
-        kagi_git::oplog::OpOutcome::Unknown { .. } => None,
-        _ => Some(Vec::new()),
-    };
-    assert_eq!(last.ref_moves, expected, "fetch receipt");
-
-    // The visible surface must still be there — the oplog record replaces
-    // nothing.
-    cx.read(|cx| {
-        assert!(
-            matches!(
-                app.read(cx).status_footer,
-                kagi::ui::FooterStatus::Failed(_)
-            ),
-            "the footer must still report the failure"
-        );
-    });
-    unmount(cx, app, window);
+    i18n::set_lang(original_language);
 }
 
 /// #1699: recording failure must not change the operation's actual result.
 /// Exercise the real failed-fetch path and persisted success/unknown receipts
 /// in both languages while the oplog writer is unable to take its lock.
 pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
-    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi::ui::FooterStatus;
     use kagi_git::oplog::OpOutcome;
 
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_language = i18n::lang();
+    let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
         for result in ["failed", "success", "unknown"] {
@@ -188,48 +232,21 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 let notice = state.app_notice().expect("recording failure notice");
                 let message = notice.message.as_str();
                 assert!(message.contains(&repo.display().to_string()), "{message}");
-                let (record_label, failed, completed, unconfirmed) = match language {
-                    Lang::En => (
-                        "Operation Log",
-                        "operation failed",
-                        "operation completed",
-                        "could not be confirmed",
-                    ),
-                    Lang::Ja => (
-                        "操作ログ",
-                        "操作は失敗",
-                        "操作は完了",
-                        "結果を確認できません",
-                    ),
-                };
-                assert!(message.contains(record_label), "{message}");
-                match result {
-                    "failed" => {
-                        assert!(message.contains(failed), "{message}");
-                        assert!(!message.contains(completed), "{message}");
-                    }
-                    "success" => assert!(message.contains(completed), "{message}"),
-                    _ => {
-                        assert!(message.contains(unconfirmed), "{message}");
-                        assert!(!message.contains(completed), "{message}");
-                    }
-                }
-                let (undo, restore) = match language {
-                    Lang::En => ("cannot undo", "restore from"),
-                    Lang::Ja => ("取り消せません", "復元もできません"),
-                };
-                assert_eq!(message.contains(undo), result == "success", "{message}");
-                assert_eq!(message.contains(restore), result == "success", "{message}");
-                assert!(state
-                    .toast_stack
-                    .as_ref()
-                    .unwrap()
-                    .read(cx)
-                    .toasts()
-                    .iter()
-                    .any(
-                        |toast| toast.kind == ToastKind::Error && !toast.message.trim().is_empty()
-                    ));
+                assert!(message.contains(&append_diagnostic));
+                assert!(
+                    state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .is_empty(),
+                    "the mandatory acknowledgment, not another result toast, owns this failure"
+                );
+                assert!(
+                    matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+                    "a result footer must not override required acknowledgment"
+                );
                 let panel = state.op_log.as_ref().unwrap().read(cx);
                 let op = if result == "failed" {
                     "fetch"
@@ -239,17 +256,23 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
                 let entry = panel.entries().iter().find(|entry| entry.op == op).unwrap();
                 match (&entry.outcome, result) {
                     (OpOutcome::Failed { error }, "failed") => {
-                        assert!(!error.is_empty());
-                        assert!(matches!(&state.status_footer, FooterStatus::Failed(text)
-                            if !text.is_empty() && !text.contains(record_label)));
+                        assert!(error.contains("no-such-remote"));
+                        assert!(
+                            message.contains(error.as_str()),
+                            "the missing durable receipt cannot discard the backend diagnostic"
+                        );
                     }
-                    (OpOutcome::Partial { error, .. }, "success") => {
-                        assert!(error.contains("not recorded"));
-                        assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                    (OpOutcome::Partial { after, error }, "success") => {
+                        assert!(error.contains(&append_diagnostic));
+                        assert_eq!(after.head, "branch: main");
+                        assert_eq!(after.dirty, "clean");
                     }
                     (OpOutcome::Unknown { evidence, .. }, "unknown") => {
                         assert!(evidence.contains("fixture result unconfirmed"));
-                        assert!(!matches!(state.status_footer, FooterStatus::Success(_)));
+                        assert!(
+                            message.contains("fixture result unconfirmed"),
+                            "uncertainty evidence must remain inspectable without a saved receipt"
+                        );
                     }
                     (outcome, _) => panic!("recording failure changed {result}: {outcome:?}"),
                 }
@@ -416,13 +439,9 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     pr_merge_local::settle_plan(cx, &app);
     app.update(cx, |app, cx| {
         app.start_pr_merge(cx);
-        let refusal = match &app.status_footer {
-            kagi::ui::FooterStatus::Failed(text) => text.to_string(),
-            other => panic!("a refused admission must reach the footer: {other:?}"),
-        };
         assert!(
-            refusal.contains("NeedsReconcile"),
-            "the parked entry is what refuses the next write on this scope: {refusal}"
+            matches!(app.status_footer, kagi::ui::FooterStatus::Failed(_)),
+            "a refused admission must reach the footer"
         );
         assert_eq!(
             app.app_sessions.reconcile_ids(),
@@ -433,6 +452,14 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             app.pr_merge_modal().is_some(),
             "a refused admission keeps the confirmation"
         );
+        // The retained confirmation owns the slot until the user cancels it.
+        app.cancel_pr_merge_modal();
+        e2e::present_app_notice(app);
+        let notice = app
+            .app_notice()
+            .expect("the refusal must remain actionable");
+        assert_eq!(notice.inspect, Some(parked[0]));
+        assert!(notice.acknowledge.is_none(), "inspection precedes release");
         // And an unconfirmable promise must not be closed on the user's behalf.
         assert!(
             kagi::app::acknowledge(&mut app.app_sessions, read).is_err(),

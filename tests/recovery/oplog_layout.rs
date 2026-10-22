@@ -144,12 +144,13 @@ pub fn scenario_oplog_revert_eligibility(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let _globals = crate::recovery_layout::GlobalSettings::capture();
     let fixture = build_fixture();
-    let mut backend = Backend::open(fixture.path()).unwrap();
+    let repo = fixture.path().canonicalize().unwrap();
+    let mut backend = Backend::open(&repo).unwrap();
     let at = kagi_git::CommitId(
         String::from_utf8(
             std::process::Command::new("git")
                 .arg("-C")
-                .arg(fixture.path())
+                .arg(&repo)
                 .args(["rev-parse", "HEAD"])
                 .output()
                 .unwrap()
@@ -168,8 +169,18 @@ pub fn scenario_oplog_revert_eligibility(cx: &mut VisualTestAppContext) {
         },
     );
     let recorded = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
+    assert!(matches!(recorded.outcome, OpOutcome::Success { .. }));
+    assert!(recorded
+        .ref_moves
+        .as_ref()
+        .is_some_and(|moves| !moves.is_empty()));
+    assert_eq!(
+        std::path::Path::new(kagi::ui::oplog_panel::entry_worktree(&recorded)),
+        repo,
+        "mount the actual repository owner recorded by the backend"
+    );
     for language in [Lang::En, Lang::Ja] {
-        let (app, window) = mount(cx, fixture.path());
+        let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
             app.set_lang(language, cx);
             app.bottom_panel_open = true;
@@ -178,6 +189,17 @@ pub fn scenario_oplog_revert_eligibility(cx: &mut VisualTestAppContext) {
             cx.notify();
         });
         let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
+        let restore_events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let captured_events = restore_events.clone();
+        app.update(cx, |_, cx| {
+            cx.subscribe(
+                &panel,
+                move |_, _, event: &kagi::ui::oplog_panel::OpLogPanelEvent, _| {
+                    captured_events.borrow_mut().push(event.clone());
+                },
+            )
+            .detach();
+        });
         for op in ["fetch", "lock"] {
             let mut empty = recorded.clone();
             empty.op = op.into();
@@ -193,18 +215,16 @@ pub fn scenario_oplog_revert_eligibility(cx: &mut VisualTestAppContext) {
             crate::native_ax::activate(cx);
             paint(cx, window);
             let reason = crate::native_ax::node(cx, window, ("oplog-revert-reason", 0usize).into());
-            let expected = if language == Lang::En {
-                "This operation did not change any ref."
-            } else {
-                "この操作は ref を変更していません。"
-            };
-            assert_eq!(
-                reason["aria"]["label"], expected,
-                "native unavailable reason"
+            let reason_text = reason["aria"]["label"]
+                .as_str()
+                .expect("native unavailable reason");
+            assert!(
+                reason_text.contains("ref"),
+                "the matching-owner empty record explains its missing ref moves"
             );
             let revert_ax = crate::native_ax::node(cx, window, "oplog-revert-0".into());
             assert_eq!(revert_ax["aria"]["role"], "Button");
-            assert_eq!(revert_ax["aria"]["description"], expected);
+            assert_eq!(revert_ax["aria"]["description"], reason["aria"]["label"]);
             bounds(window, "oplog-restore-0-enabled");
             cx.simulate_click(window, disabled.center(), Modifiers::none());
             paint(cx, window);
@@ -230,11 +250,154 @@ pub fn scenario_oplog_revert_eligibility(cx: &mut VisualTestAppContext) {
         let revert = bounds(window, "oplog-revert-0-enabled");
         cx.simulate_click(window, revert.center(), Modifiers::none());
         paint(cx, window);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let modal = state
+                .oplog_restore_modal()
+                .expect("matching-owner nonempty record opens its real revert plan");
+            assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+        });
+        crate::recovery_operations::press_key(cx, &app, window, "escape");
+        let restore_events = restore_events.borrow().clone();
         assert!(
-            cx.read(|cx| app.read(cx).oplog_restore_modal().is_some()),
-            "nonempty record still replans"
+            restore_events.iter().any(|event| matches!(
+                event,
+                kagi::ui::oplog_panel::OpLogPanelEvent::Restore {
+                    op: Operation::OpRevert { .. },
+                    ..
+                }
+            )) && restore_events.iter().any(|event| matches!(
+                event,
+                kagi::ui::oplog_panel::OpLogPanelEvent::Restore {
+                    op: Operation::RestoreToPoint { .. },
+                    ..
+                }
+            )),
+            "both matching-owner actions reach the actual planning event"
         );
+        let other = build_fixture();
+        let unchanged_owner = std::fs::read(repo.join(".git/index")).unwrap();
+        let unchanged_other = std::fs::read(other.path().join(".git/index")).unwrap();
+        for context in ["other-repository", "home", "remote", "closed-owner"] {
+            app.update(cx, |app, cx| {
+                assert!(app.open_repository(repo.clone(), cx));
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| match context {
+                    "other-repository" => {
+                        assert!(app.open_repository(other.path().to_path_buf(), cx));
+                    }
+                    "home" => app.open_home_tab(window, cx),
+                    "remote" => app.enter_remote_view(
+                        kagi_domain::remote::RemoteHost {
+                            user: None,
+                            host: "log-inspection.invalid".into(),
+                            port: None,
+                            identity_file: None,
+                        },
+                        "/srv/log-inspection".into(),
+                        Backend::open(&repo).unwrap().snapshot(10_000).unwrap(),
+                        cx,
+                    ),
+                    "closed-owner" => {
+                        for index in (0..app.tabs.len()).rev() {
+                            app.close_tab(index, cx);
+                        }
+                    }
+                    _ => unreachable!(),
+                });
+            })
+            .unwrap();
+            assert_inspection_only(cx, &app, window, &recorded, &restore_events);
+            assert_eq!(
+                std::fs::read(repo.join(".git/index")).unwrap(),
+                unchanged_owner
+            );
+            assert_eq!(
+                std::fs::read(other.path().join(".git/index")).unwrap(),
+                unchanged_other
+            );
+        }
         drop(panel);
         unmount(cx, app, window);
     }
+}
+
+fn assert_inspection_only(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: AnyWindowHandle,
+    recorded: &kagi_git::oplog::OpLogEntry,
+    restore_events: &[kagi::ui::oplog_panel::OpLogPanelEvent],
+) {
+    let before_receipts = kagi_git::oplog::read_oplog_tail(200).len();
+    paint(cx, window);
+    bounds(window, "oplog-revert-reason-0");
+    for action in ["revert", "restore"] {
+        let disabled = bounds(window, &format!("oplog-{action}-0-disabled"));
+        cx.simulate_click(window, disabled.center(), Modifiers::none());
+        paint(cx, window);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                state.oplog_restore_modal().is_none(),
+                "unavailable restoration cannot open a plan"
+            );
+            assert!(
+                !state.app_sessions.has_leases(),
+                "inspection cannot admit a writer"
+            );
+            let panel = state.op_log.as_ref().unwrap().read(cx);
+            assert_eq!(panel.expanded(), Some(0), "the receipt remains inspectable");
+            assert_eq!(panel.entries()[0].id, recorded.id);
+        });
+    }
+    // Replay genuine enabled-row events after the screen/owner changed.
+    // A disabled renderer alone must not be the write-admission guard.
+    let panel = app.read_with(cx, |app, _| app.op_log.clone().unwrap());
+    for event in restore_events {
+        panel.update(cx, |_, cx| cx.emit(event.clone()));
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                state.oplog_restore_modal().is_none(),
+                "stale restore event is refused"
+            );
+            assert!(!state.app_sessions.has_leases());
+        });
+    }
+    let copy = bounds(window, "oplog-copy-0");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("before-copy".into()));
+    cx.simulate_mouse_move(window, copy.center(), None, Modifiers::none());
+    paint(cx, window);
+    cx.simulate_click(window, copy.center(), Modifiers::none());
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("copied receipt");
+    assert_ne!(
+        copied, "before-copy",
+        "the actual Copy button writes the clipboard"
+    );
+    let moves = recorded.ref_moves.as_ref().expect("recorded ref moves");
+    assert!(!moves.is_empty());
+    for movement in moves {
+        assert!(
+            copied.contains(&movement.refname),
+            "inspection Copy retains the complete ref name: {copied}"
+        );
+        for oid in movement.old.iter().chain(movement.new.iter()) {
+            assert!(
+                copied.contains(oid),
+                "inspection Copy retains full ref-move OIDs: {copied}"
+            );
+        }
+    }
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail(200).len(),
+        before_receipts,
+        "unavailable restoration must not manufacture a write receipt"
+    );
 }

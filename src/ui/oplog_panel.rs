@@ -55,7 +55,7 @@ pub struct OpLogPanel {
 /// Which entry a reflog detail belongs to. `id` alone is `0` for an attempted
 /// entry whose append failed, so time and op name complete it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct EntryKey {
+pub struct EntryKey {
     id: u64,
     timestamp: i64,
     op: String,
@@ -72,6 +72,10 @@ impl EntryKey {
             repo: entry.repo.clone(),
             worktree: entry.worktree.clone(),
         }
+    }
+
+    pub(super) fn owner_path(&self) -> &std::path::Path {
+        std::path::Path::new(self.worktree.as_deref().unwrap_or(&self.repo))
     }
 
     fn matches(&self, entry: &OpLogEntry) -> bool {
@@ -99,7 +103,10 @@ pub enum ReflogDetail {
 /// active repository and shows the card.
 #[derive(Debug, Clone)]
 pub enum OpLogPanelEvent {
-    Restore(kagi_git::Operation),
+    Restore {
+        op: kagi_git::Operation,
+        entry: EntryKey,
+    },
 }
 
 impl gpui::EventEmitter<OpLogPanelEvent> for OpLogPanel {}
@@ -343,6 +350,22 @@ impl OpLogPanel {
             return;
         };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(entry_clipboard_text(entry)));
+    }
+
+    /// Reveal an existing receipt by identity without toggling an open detail.
+    pub(super) fn reveal_entry(&mut self, key: &EntryKey, cx: &mut gpui::Context<Self>) -> bool {
+        let Some(i) = self.entries.iter().position(|entry| key.matches(entry)) else {
+            return false;
+        };
+        if self.expanded != Some(i) {
+            self.select_row(i, cx);
+        }
+        self.scroll_handle.scroll_to(gpui::ListOffset {
+            item_ix: i,
+            offset_in_item: gpui::px(0.),
+        });
+        cx.notify();
+        true
     }
 
     /// Resolve a drawn disclosure by identity after a receipt shifts indices.

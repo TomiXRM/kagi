@@ -24,6 +24,16 @@ impl KagiApp {
         expected_branch: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.open_merge_modal_with_progress(target, expected_branch, None, cx);
+    }
+
+    pub(super) fn open_merge_modal_with_progress(
+        &mut self,
+        target: String,
+        expected_branch: Option<String>,
+        progress: Option<(crate::ui::busy::BusyIdentity, bool)>,
+        cx: &mut Context<Self>,
+    ) {
         if self.op_latched() || self.active_tab_has_queue() {
             self.enqueue_merge(target, expected_branch, cx);
             return;
@@ -36,14 +46,22 @@ impl KagiApp {
         else {
             return;
         };
-        self.planning = Some("merge-plan");
+        let request = self.mark_planning_busy("merge-plan");
+        self.continue_busy_planning(request, progress);
+        let progress_identity = self.busy_plan_origin;
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from("Planning merge…"),
         ));
         klog!("async: merge plan started for {}", target);
         let bg_owner = owner.clone();
         let bg_target = target.clone();
+        #[cfg(feature = "gui-e2e")]
+        let hold = Self::take_merge_plan_hold_for_e2e();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let repo = open_merge_backend(&bg_owner)?;
             let (plan, kind) = repo
                 .plan_merge_branch(&bg_target)
@@ -86,6 +104,7 @@ impl KagiApp {
                         off_branch: false,
                         error: None,
                         queued: None,
+                        progress_identity,
                     }),
                 )))
             }
@@ -166,7 +185,8 @@ impl KagiApp {
         else {
             return;
         };
-        self.planning = Some("merge-plan");
+        self.mark_planning_busy("merge-plan");
+        let progress_identity = self.busy_plan_origin;
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from("Planning merge…"),
         ));
@@ -177,7 +197,13 @@ impl KagiApp {
         );
         let bg_owner = owner.clone();
         let (bg_source, bg_target) = (source.clone(), target.clone());
+        #[cfg(feature = "gui-e2e")]
+        let hold = Self::take_merge_plan_hold_for_e2e();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let repo = open_merge_backend(&bg_owner)?;
             repo.plan_merge_into_branch(&bg_source, &bg_target)
                 .map_err(|e| e.to_string())
@@ -202,6 +228,7 @@ impl KagiApp {
                         off_branch: true,
                         error: None,
                         queued: None,
+                        progress_identity,
                     }),
                 )))
             }
@@ -363,6 +390,8 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let repo_path = modal.owner.path.clone();
+        let progress_identity = modal.progress_identity;
+        let progress_hidden = self.busy_request_hidden(progress_identity);
         self.clear_merge_modal();
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from(Msg::BusyMerge.t()),
@@ -380,7 +409,7 @@ impl KagiApp {
         let bg_into = modal.into_branch.clone();
         let (note_source, note_into) = (modal.target.clone(), modal.into_branch.clone());
         let verified = self.prepare_queue_run(intent);
-        self.finish_run(
+        let admitted = self.finish_run(
             cx,
             "merge",
             i18n::Op::Merge,
@@ -415,6 +444,9 @@ impl KagiApp {
                 Err(_) => RunPresentation::none(),
             },
         );
+        if admitted {
+            self.continue_busy_request(progress_identity, progress_hidden);
+        }
     }
 }
 

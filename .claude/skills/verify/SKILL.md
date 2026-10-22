@@ -188,7 +188,7 @@ Changes/Inspector file cards are not the shared MenuGroup renderer: Changes
 places its red Discard last without a separator; Inspector has no danger action.
 Branch Delete stays in the top-level management group by ADR-0049 / #1253.
 
-For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure,run_success_unrecorded_keeps_partial_footer,fetch_failure_reaches_the_oplog,pull_current_'`
+For #1699 use `KAGI_GUI_E2E_ONLY='branch_menu,branch_cleanup,conflict_,oplog_append_failure,run_success_unrecorded_requires_acknowledgment,fetch_failure_reaches_the_oplog,pull_current_'`
 with KEEP_GOING. `branch_menu_merge_labels` compares real merged, squash-proven
 and unmerged tips in EN/JA after the owner-bound classification; it temporarily
 moves the unmerged tip's tree object aside to prove read failure keeps the final
@@ -4054,21 +4054,232 @@ linked destination without touching either worktree.
 G: `cargo test -p kagi --lib staging_failure` uses real index.lock and oplog
 sidecar lock fixtures in isolated children; it compares single/batch failure
 details in EN/JA, checks that trust refusal records without requesting a modal,
-and that only a failed oplog append asks for the dismiss-only notice.
+and that only a failed oplog append requires explicit acknowledgment.
 Use a fresh KAGI_LOG_DIR as with all cargo tests.
 
 Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
 paths, panel file indices and batch buttons under index.lock, including a linked
 worktree panel while the main tab remains active. Per attempt it asserts the
-Failed footer (cause, path and the actual owning repo), the newest toast is an
-Error `<op>: failed …`, **no** `AppNotice` (ADR-0196 §3 as amended by #747 — a
-recorded failure is never a dismiss-only modal), one more Failed oplog receipt
-for the owning repo, and byte-identical indexes. An admission denial records a
-Refused receipt, again without a notice. Until #846 the scenario still asserted
-the pre-#747 notice and panicked on it. Compile only when PM owns E execution.
+Failed footer with a short translated cause and Operation Log direction, **no**
+toast / automatic panel opening / `AppNotice` for an attended attempt, one more
+Failed oplog receipt for the owning repo with complete path/cause detail, and
+byte-identical indexes. An admission denial records a Refused receipt without a
+notice. The #1698 policy replaces the earlier duplicated footer/toast expectation.
 M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
-attempted failure stays visible with the recording error; it is not a success.
+required acknowledgment is the sole primary, retaining the attempted failure and
+append diagnostic without an extra ordinary result footer/toast. Failed/Unknown
+must not become Success or be reclassified merely because append failed.
+
+### One requested operation, one result (#1698)
+
+Use `KAGI_GUI_E2E_ONLY='toast_stack_budget,stage_failure_notice,hunk_staging,pull_presents_backend_receipts,pull_failure_presents_only_the_decisive_receipt,pull_completion_drops,pull_freshness_,pull_current_,pull_unknown_,push_unknown_,pull_auto_stash_success,pull_auto_stash_failure_restores,pull_refuses_when_the_dirty_set_moved,host_dirty_guard_close_then_quit,clone_hidden_status,close_window_initial_home,editor_save_admission,stash_remote_drop,stash_public_boundary,slow_write_explained,fetch_,oplog_revert_eligibility,worktree_panel_discard_recording_failure,worktree_admin_result_owner,history_persists,conflict_continue_refusal_result_owner,conflict_continue_stopped_result_owner,conflict_continue_failure_result_owner,conflict_family_result_owner,conflict_merge_failure_contract,oplog_append_failure_conflict_stopped,conflict_confirm_continue_panic,conflict_confirm_dismissed_still_reloads,conflict_merge_continue_panic,conflict_skip_panic'`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. Real repeated no-op Push is footer-only when
+attended; the existing `set_window_active_for_e2e` input selects inactive
+presentation without activating an OS window, where the same result replaces one
+keyed toast. Different result/repository keys retain separate cards. All Pull
+child receipts keep their backend IDs, while fetch/stash steps produce no
+independent completion and the workflow is named Pull. Failure previews have
+localized causes and a log action without raw stderr/exit/absolute paths; complete
+details remain durable. Hunk success has no toast. Quit/native-close repeats
+coalesce in active/queued notices and disappear after real writer/clone settlement
+without automatically quitting. Recording-failure acknowledge notices remain.
+
+For ordinary no-op Push, use the existing enabled Repository Push command
+(`Cmd-Shift-K` on macOS) and correlate each distinct input with its existing
+`[kagi] plan: push blockers=... warnings=... preview_commits=...` line. Six
+clicks on a disabled toolbar are not six executed requests. Confirm the typed
+up-to-date result stays in one bounded current-context footer, with no modal,
+toast stack or automatic log switch. Compare HEAD, all refs, index and tracked
+file hashes before/after and verify no Push receipt was created. Keep this
+ordinary producer witness separate from native inactive-window policy seams.
+
+The toast budget scenario also starts real Fetch failures before entering Home or
+another tab, then invokes the actual detail Button to reveal the same recorded ID.
+Closed-owner and removed-worktree legs must paint the shared log, not only mutate
+hidden panel state. The action is dismissed only after navigation succeeds.
+The JA leg activates the native accessibility adapter before drawing and scopes
+AppKit Press to the toast's named Status ancestor; the ordinary Operation Log tab
+has the same caption and must not consume the detail-action regression.
+`oplog_revert_eligibility` also clicks unavailable restore/revert actions in EN/JA
+from Home, another repository, a remote view and after all owner tabs close:
+the reason remains visible, no plan/write/receipt appears, and the same receipt
+still copies its complete details. The ordinary matching-owner plan and existing
+backend preflight remain the positive control.
+Local owner fixtures use canonical paths as production startup does. Readonly
+Copy must preserve complete ref names and old/new OIDs; do not require a repository
+locator header absent from the existing clipboard format.
+Long freshness-fetch no-op/write legs retain each request's own elapsed time,
+including shared fetches; Unknown receipts override a Partial workflow preview.
+The executed-Pull → no-op sequence checks actual replacement rather than a full
+key-format string. Joined-flight legs first accept a rendered enabled branch-menu
+intent, then deliver its production callback after the held Fetch acquires its
+lease; a new toolbar click while that lease is held must remain unavailable.
+Long branch results must retain the selected target in their final notification.
+Run the EN/JA lock-classification boundary unit regression: an `index.lock` path
+alone, a permission denial or a remote URL is not evidence of an existing lock.
+Local Stash success coverage checks attended footer versus inactive/departed toast,
+using session and visit identity with no stale Busy or unrelated-owner footer.
+Explicit SSH Stash/Pull uses one bounded result toast independently of the normal
+remote snapshot's Busy/read-only footer. Test same-visit, inactive, away and
+same-session/new-visit delivery, one original backend row, canonical details and
+recording-failure/Unknown priority. A skipped foreign refresh is intentional.
+`clone_departed_result_owner` and `stash_revisit_result_owner` cover Clone's
+actual result ID and local Stash visits; `remote_stash_revisit_result_owner` and
+`remote_pull_current_result_owner,remote_pull_inactive_result_owner,remote_pull_away_result_owner,remote_pull_revisit_result_owner`
+cover the corresponding remote boundary. Never infer an own-result action from
+the latest unrelated toast or a positive-only receipt-ID assumption.
+`remote_stash_result_survives_refresh,remote_pull_result_survives_refresh` executes
+real disposable Git through the unchanged SSH protocol with owned identity and
+known-host files, then completes the ordinary remote snapshot without intercepting
+refresh. Check the visible result remains, the observed Git state reaches Graph,
+and each actual request has only its original receipt. The Pull leg also executes
+a second real no-change request through the production request handler and actual
+confirmation; this proves that boundary, not disabled-toolbar/shortcut admission.
+Known internal/CLI no-change summaries must agree in EN/JA and differ from unknown
+successful stdout; retain the latter in the receipt, not the primary UI headline.
+For ordinary remote smoke, the owned SSH adapter must start in its intended HOME,
+not accidentally browse the invoking checkout. Wait for actual host-field focus,
+inspect the exact owned host/root before Open, and complete normal refresh.
+A genuinely enabled cached-behind Pull can encounter an already-current origin;
+prepare any stale tracking state before the new plan, preserve all frozen
+preflight guards, and observe actual canonical no-change output plus unchanged
+HEAD/index/tracked files. A real freshness fetch may update remote-tracking refs.
+Do not force a disabled control, alter state after approval, or equate a shortcut
+attempt with backend execution. Local preflight no-ops create no write receipt;
+an executed SSH no-change keeps its one existing backend receipt.
+The worktree-admin matrix executes real Lock/Unlock/Prune/Repair with healthy and
+failed audit append; history uses the actual reflog/quiet-reload producer, not an
+assigned cursor. Conflict-family consumers cover ordinary known refusal as well
+as success and failed recording for Save, directory/file resolution and Abort in
+EN/JA, attended and inactive presentation. Do not preserve the old triple
+AppNotice/toast/footer expectation.
+Continue uses real multi-step rebase conflicts: typed Staged is stopped, not
+whole-operation completion. Background delivery preserves the foreign repo's
+footer/panel until an actual Details click; that explicit action intentionally
+follows the canonical receipt owner. Scope window-global log assertions by the
+actual recorded repository/request, not operation name alone.
+`hold_next_continue_confirm_for_e2e` is a `gui-e2e`-only deferred slot after real
+lease admission and before `execute_conflict_continue`. The failure consumer moves
+only its owned Git directory to exercise a real backend-open KnownFailed outcome;
+it checks healthy/failed append, current/departed ownership, actual Details/ack,
+unchanged physical state and no duplicate receipt. Existing panic consumers
+exercise injected Unknown delivery, not a real external-process Unknown. A matching
+consumed frozen confirm must retire naturally on terminal completion; never force
+the notice queue to drain only in a test or clear another/newer modal.
+An unrecorded unchanged Failed row retains Failed and its original backend
+diagnostic; only the existing successful-but-unrecorded display mapping uses
+Partial. Verify absent trusted restore metadata and unchanged durable journal,
+not an invented positive receipt ID or a copied translated message.
+Tier B uses the same isolated EN/JA fixture and owned PID/window for before/after
+no-op repetition, failure details, Pull and Quit. Launch with isolated USER/log,
+no-restore/no-activate; foreground use requires permission and only the owned
+PID/window. Report occluded byte-identical frames as stale, not new-screen evidence.
+For recording priority, hold only the isolated audit sidecar during an actual
+successful or stopped write; inspect original physical outcome, journal identity
+and the sole required acknowledgment, then release, actually acknowledge and
+perform a later operation. Initial merge/rebase and continued rebase stops retain
+their observed stopped context; do not infer completion from backend Ok. Preserve
+separate draft-lifecycle findings rather than clicking a misleading later Continue.
+For normal conflict Save/Abort, inspect actual staged/recovered state and canonical
+receipt. A subsequent Refreshed footer is not evidence that a green success footer
+remained visible. A normal result must not add an acknowledgment notice.
+
+
+### Presentation-only Busy progress close (#1719)
+
+Select `busy_read_dismiss,busy_pull_progress_dismiss,busy_pull_revisit_request,busy_pull_merge_progress_dismiss,busy_hidden_failure_reaches_details,slow_read_explained,clone_hidden_status,queue_merge_plan_after_departure`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. These consumers use actual repository reads,
+Fetch admission, queued planning and clone dispatch held by existing deferred
+backend seams. The readonly `slow_reads_inflight_for_e2e` observer reports real
+unfinished handle lifetimes, including superseded reads; it never creates work.
+`busy_dismiss_focus` observes the rendered control's handle; keyboard coverage
+must reach it through real Tab navigation rather than assigning test focus.
+Exercise Enter/Space and actual AX Press. Natural read completion while close is
+focused must remove the control and return focus through the existing root event.
+
+Cover all reads already in flight, a newly admitted read, another owner and tab
+round trips, read-phase retention, read/write overlap, the freshness Fetch → Pull
+execution lease handoff, same-live-waiter join, in-flight departure/revisit with a
+new-visit waiter, and a same-clock next request. Hidden failure must still
+reach its exact durable receipt through the actual details Button. Existing Skip,
+writer/quit guards, clone completion and stale queued-plan disposal stay active.
+
+Initial requests use the actual enabled toolbar/branch-menu controls. Coalesced
+join legs use the existing `handle_menu_command("repo.pull", ...)` boundary for
+an already-enabled, delivered intent, while asserting the live toolbar remains
+disabled. They do not demonstrate a fresh native click/shortcut during Busy or
+a native input race; do not weaken admission to make these fixtures clickable.
+`busy_failure.rs` covers EN/JA with the panel open and closed using real Cmd-J.
+Record `(bottom_panel_open, bottom_tab)` before hiding, after hiding and after
+failure delivery: only the actual Details click may switch to the exact receipt.
+The historical `[kagi] bottom-panel: open (Failed auto-open)` line is preserved
+for compatibility and is not evidence of a panel transition.
+
+The revisit leg dismisses the new waiter again before departing; the flight must
+not switch back to an older undismissed key. A new read on the other repository
+must still appear. The conflict leg uses real competing commits, explicit Pull
+Review and Merge approval, and verifies real unmerged index/Conflict Mode without
+premature writes. `hold_next_merge_plan_for_e2e` reuses the former queued merge
+hold slot for direct/queued planning; no production plan or request is fabricated.
+It also cancels a separate normal Merge and checks a new normal request is visible.
+
+Tier B uses an ordinary isolated binary, actual linked-worktree status work and
+Terminal, EN/JA × Apple Light/Dark, desktop width ≥1000 plus the 940 compact leg.
+After pointer/keyboard close, move focus to a different actual control (for
+example click and type in Filter), then click the former card's Terminal-overlap
+region and verify actual shell output in a file. Preexisting Terminal focus plus
+typing alone cannot rule out an invisible hit target. Include the lower edge.
+Record a still-live owned Git PID after close/input, or a held-read lifetime, to
+distinguish dismissal from natural completion; a late screenshot alone cannot
+establish that ordering. Then observe natural completion and the final result:
+hidden failure and required audit acknowledgment must still arrive, and a new
+same-name request must show progress. An intentional fixture transport delay is
+not evidence for a real linked-worktree read's latency cause. Keep an independent
+empty toast entity mounted so terminal results remain deliverable.
+
+### Pull terminal settlement and strict-FF refusal (#1720)
+
+Select `pull_ff_only_diverged_refusal,pull_ff_only_current_tree_consistency,pull_quiet_late_dirty_refuses,pull_presents_backend_receipts,pull_failure_presents_only_the_decisive_receipt`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. The diverged strict-FF scenario enters through
+the actual branch-menu Advanced action. An unchanged watcher refresh must retain
+the non-executable reason and disabled approval; Cancel must perform no write.
+Dirty/HEAD/upstream/owner changes invalidate the explanation instead of making an
+old blocked plan executable. Existing ready-plan preflight and late-dirty refusal
+remain independent positive/safety controls.
+
+Tier B uses disposable real repositories for FF, clean divergent Merge,
+committed-history conflict and failed Fetch in EN/JA, desktop width ≥1000 and
+the 940 compact leg. Record `pull.ff`, `pull.rebase`, per-branch settings,
+configured upstream ref/URL and Kagi's actual chosen mode. Ordinary toolbar
+Merge policy and explicit branch-menu ff-only are different inputs; do not
+rewrite Git settings to make them agree or attribute all waiting to CLI policy.
+Observe the real Fetch → plan/admission → result/refusal → lease/progress
+retirement, including a subsequent actual Pull that is admitted normally.
+
+Read actual Git HEAD, parents, index stages, file hashes and durable receipts
+independently. A receipt's predicted `Success.after` is not a Git observation.
+FF must reach the fetched tip cleanly; a clean Merge must have the correct two
+parents. History Review is read-only until real Merge approval, after which
+physical unmerged stages/paths and a stopped result must agree. A failed Fetch
+must preserve checkout state and record its real Failed outcome.
+
+For strict-FF, capture the initial reason, an actually observed unchanged
+refresh and Cancel in each locale, with no write receipt. Separately induce a
+real dirty or HEAD/upstream drift and verify expiry, preserved external state and
+no automatic execution. Merely touching `FETCH_HEAD` is not proof that a watcher
+read occurred. Registered `Cmd-R` also performs a quiet Fetch and can restore a
+manually moved tracking ref; do not count that attempt as drift-expiry evidence.
+Use an observed real watcher refresh with independently recorded tips instead.
+
+For the terminal-read regression, compare the same kind of fixture with one
+unrelated linked worktree holding 120,000 untracked files. Correlate existing
+executed/verified log arrival and the real window, then verify actual Merge
+parents, retired progress and next-request admission. Record the log reader's
+resolution: same-interval arrival is not microsecond method timing or a portable
+speedup ratio. This is not a reproduction of the user's 53-worktree repository
+or a claim to have accelerated all linked-worktree reads. Do not extend product
+timeouts, cancel tasks or scan the user's checkout to hide the distinction.
 
 ### Hunk staging (#842, Refs #357)
 

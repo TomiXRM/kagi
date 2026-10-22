@@ -67,6 +67,8 @@ struct Tracked {
     slow: bool,
     /// The user skipped this part; it is no longer explained.
     skipped: bool,
+    /// Presentation only, retained for this read across explained phases.
+    hidden: bool,
 }
 
 /// One session's tracked reads (lives in `TabUiState`).
@@ -88,6 +90,7 @@ impl SlowReads {
             since: now,
             slow: false,
             skipped: false,
+            hidden: false,
         });
         ReadHandle(state)
     }
@@ -117,18 +120,26 @@ impl SlowReads {
         (self.explained() != before, newly_slow)
     }
 
-    /// The part to explain: the oldest slow, unskipped read.
+    /// The part to explain: the oldest slow, unskipped, visible read.
     pub(super) fn explained(&self) -> Option<SlowRead> {
         self.reads
             .iter()
-            .find(|read| read.slow && !read.skipped)
+            .find(|read| read.slow && !read.skipped && !read.hidden)
             .and_then(|read| read.kind)
     }
 
-    /// Skip every slow read of `kind`: a snapshot stops counting ahead/behind.
+    /// One card represents all reads already in flight for this owner. Hiding
+    /// only the oldest would immediately promote another identical explanation.
+    pub(super) fn hide_inflight(&mut self) {
+        for read in &mut self.reads {
+            read.hidden = true;
+        }
+    }
+
+    /// Skip every visible slow read of `kind`; hidden work keeps counting.
     fn skip(&mut self, kind: SlowRead) {
         for read in &mut self.reads {
-            if read.slow && read.kind == Some(kind) {
+            if read.slow && !read.hidden && read.kind == Some(kind) {
                 read.skipped = true;
                 if kind == SlowRead::AheadBehind {
                     read.state.probe.skip_ahead_behind();
@@ -177,6 +188,7 @@ impl KagiApp {
             klog!("busy: slow {} after 2s", kind.tag());
         }
         if changed && self.active_session() == Some(owner) {
+            self.retire_busy_control_focus(cx);
             cx.notify();
         }
     }
@@ -223,6 +235,17 @@ impl KagiApp {
     /// Tag of the slow read the busy snackbar explains on screen.
     pub fn slow_read_shown_for_e2e(&self) -> Option<&'static str> {
         self.slow_read_shown().map(SlowRead::tag)
+    }
+
+    /// Observe the actual handle lifetime, including superseded reads.
+    pub fn slow_reads_inflight_for_e2e(&self, owner: crate::app::SessionId) -> usize {
+        self.ui.get(&owner).map_or(0, |ui| {
+            ui.slow_reads
+                .reads
+                .iter()
+                .filter(|read| !read.state.finished.load(Ordering::Relaxed))
+                .count()
+        })
     }
 }
 
@@ -279,5 +302,52 @@ mod tests {
         reads.skip(SlowRead::AheadBehind);
         assert!(handle.probe().ahead_behind_skipped());
         assert_eq!(reads.explained(), None);
+    }
+
+    #[test]
+    fn hiding_preserves_the_read_and_survives_phase_changes() {
+        let start = Instant::now();
+        let mut reads = SlowReads::default();
+        let handle = reads.begin(None, start);
+        handle.probe().set_phase(SnapshotPhase::Worktrees);
+        reads.tick(start);
+        reads.tick(start + Duration::from_secs(2));
+        assert_eq!(reads.explained(), Some(SlowRead::Worktrees));
+        reads.hide_inflight();
+        assert_eq!(reads.explained(), None);
+        assert!(!handle.probe().ahead_behind_skipped());
+        assert!(!handle.0.finished.load(Ordering::Relaxed));
+        handle.probe().set_phase(SnapshotPhase::AheadBehind);
+        reads.tick(start + Duration::from_secs(3));
+        reads.tick(start + Duration::from_secs(8));
+        assert_eq!(reads.explained(), None);
+        assert!(!handle.probe().ahead_behind_skipped());
+        drop(handle);
+        reads.tick(start + Duration::from_secs(9));
+        assert!(reads.reads.is_empty());
+    }
+
+    #[test]
+    fn hiding_covers_current_reads_not_new_reads_or_another_owner() {
+        let start = Instant::now();
+        let mut reads = SlowReads::default();
+        let mut other_owner = SlowReads::default();
+        let first = reads.begin(Some(SlowRead::AheadBehind), start);
+        let second = reads.begin(Some(SlowRead::AheadBehind), start);
+        let _other = other_owner.begin(Some(SlowRead::Worktrees), start);
+        reads.tick(start + Duration::from_secs(2));
+        other_owner.tick(start + Duration::from_secs(2));
+        reads.hide_inflight();
+        reads.tick(start + Duration::from_secs(3));
+        assert_eq!(reads.explained(), None);
+        assert_eq!(other_owner.explained(), Some(SlowRead::Worktrees));
+        let next = reads.begin(Some(SlowRead::AheadBehind), start + Duration::from_secs(3));
+        reads.tick(start + Duration::from_secs(5));
+        assert_eq!(reads.explained(), Some(SlowRead::AheadBehind));
+        reads.skip(SlowRead::AheadBehind);
+        assert!(!first.probe().ahead_behind_skipped());
+        assert!(!second.probe().ahead_behind_skipped());
+        assert!(next.probe().ahead_behind_skipped());
+        assert_eq!(other_owner.explained(), Some(SlowRead::Worktrees));
     }
 }

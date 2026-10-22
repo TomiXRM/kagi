@@ -18,6 +18,54 @@ use git_fixture::git_output as output;
 mod oplog;
 use oplog::records;
 
+fn assert_unknown_pull_result(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    repo: &Path,
+) {
+    let durable = records(repo, "pull", 100, true);
+    let entry = durable
+        .iter()
+        .find(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. }))
+        .expect("the real indeterminate Pull has a typed durable receipt");
+    let OpOutcome::Unknown { evidence, .. } = &entry.outcome else {
+        unreachable!("the selected receipt is Unknown");
+    };
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let stack = app.toast_stack.as_ref().expect("toast stack").read(cx);
+        assert_eq!(
+            stack.toasts().len(),
+            1,
+            "only the requested Pull is announced"
+        );
+        assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Error);
+        assert!(
+            stack.toasts()[0].action.is_some(),
+            "the owner's final notification keeps an explicit detail action"
+        );
+        assert!(
+            !app.app_sessions.may_close_host(),
+            "the indeterminate write must retain its safety guard"
+        );
+        assert!(
+            app.app_notice()
+                .is_some_and(|notice| notice.inspect.is_some()),
+            "the unresolved result must keep a reachable reconcile action"
+        );
+        let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
+        let shown = panel
+            .entries()
+            .iter()
+            .find(|shown| shown.id == entry.id)
+            .expect("the same decisive receipt is presented");
+        assert!(
+            matches!(&shown.outcome, OpOutcome::Unknown { evidence: shown, .. }
+            if shown == evidence)
+        );
+    });
+}
+
 struct DirtyPullFixture<'a> {
     repo: &'a Path,
     remote_root: tempfile::TempDir,
@@ -194,7 +242,7 @@ fn wait_for(
 }
 
 /// Stand-in for the host's ordinary SSH options, scope probe and pull.
-fn blocking_fake_ssh(
+pub(super) fn blocking_fake_ssh(
     bin: &Path,
     head_oid: &str,
     release: &Path,
@@ -848,6 +896,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     protection_collision(repo, dirty.remote_root.path());
 
     let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     app.update(cx, |app, cx| app.open_pull_modal(cx));
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
@@ -891,6 +940,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
             .any(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. })),
         "the indeterminate Pull outcome must be durable"
     );
+    assert_unknown_pull_result(cx, &app, repo);
     // The descendant of the fetch is still holding the pipes, so nothing about
     // this write is proven stopped: the scope stays reserved (ADR-0175).
     cx.read(|cx| {
@@ -1138,6 +1188,7 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
             notice.message
         );
     });
+    assert_unknown_pull_result(cx, &app, repo);
 
     // The helper's `sleep 4 &` outlives the fetch; let it exit before the
     // next scenario runs, as the sibling scenarios do (#516).
@@ -1153,8 +1204,8 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
 /// `steps` is `stash-push Success → pull Failed → stash-pop Success`, and
 /// the old presentation path announced each receipt: the last announcement won,
 /// so the window ended with a Pull failure modal over a `stash-pop: … → …`
-/// success footer and three toasts. The receipts are panel rows now and the
-/// decisive failure gets one toast, without a dismiss-only modal.
+/// success footer and three toasts. The receipts remain panel rows, while an
+/// attended quick failure gets one Pull footer and no toast or dismiss-only modal.
 pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1171,6 +1222,7 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
     protection_collision(repo, remote_root.path());
 
     let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     app.update(cx, |app, cx| app.open_pull_modal(cx));
     cx.run_until_parked();
     cx.read(|cx| {
@@ -1240,8 +1292,14 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
             })
             .unwrap_or_default();
         assert!(
-            !toasts.iter().any(|message| message.contains("stash-pop")),
-            "a sibling receipt must not announce itself: {toasts:?}"
+            toasts.is_empty(),
+            "child receipts and the attended Pull must stay out of toasts: {toasts:?}"
+        );
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Failed(text)
+                if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
+                    && !text.contains("stash-pop") && !text.contains("stash-push")),
+            "the workflow footer names Pull, not its restore"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         for op in ["stash-push", "pull", "stash-pop"] {
@@ -1286,6 +1344,10 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
     cx.run_until_parked();
     // What tab B's footer reads before tab A does anything.
     let footer_on_b = cx.read(|cx| format!("{:?}", app.read(cx).status_footer));
+    let panel_on_b = cx.read(|cx| {
+        let app = app.read(cx);
+        (app.bottom_panel_open, app.bottom_tab)
+    });
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
 
@@ -1331,6 +1393,11 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
             footer_on_b,
             "tab B's footer is not tab A's"
         );
+        assert_eq!(
+            (app.bottom_panel_open, app.bottom_tab),
+            panel_on_b,
+            "a background result must not open the Operation Log"
+        );
         // #747: the receipt is in the window-wide log, and the toast says
         // which repository it came from.
         let panel = app.op_log.as_ref().unwrap().read(cx);
@@ -1349,9 +1416,26 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
             .toasts()
             .last()
             .expect("tab A's failure reaches a toast");
+        assert_eq!(
+            app.toast_stack.as_ref().unwrap().read(cx).toasts().len(),
+            1,
+            "one background Pull result, not its internal fetch"
+        );
         assert!(
             matches!(toast.kind, kagi::ui::ToastKind::Error)
-                && toast.message.starts_with(&durable[0].repo),
+                && toast.message.contains(
+                    std::path::Path::new(&durable[0].repo)
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                )
+                && !toast.message.contains(&durable[0].repo)
+                && toast
+                    .message
+                    .contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
+                && !toast.message.contains("stash-pop")
+                && !toast.message.contains("stash-push"),
             "the toast is labelled with tab A's repository: {}",
             toast.message
         );
@@ -1448,6 +1532,10 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
     protection_collision(repo, dirty.remote_root.path());
 
     let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.set_window_active_for_e2e(true, cx);
+        app.bottom_panel_open = false;
+    });
     app.update(cx, |app, cx| app.open_pull_modal(cx));
     cx.run_until_parked();
     cx.read(|cx| {
@@ -1483,8 +1571,30 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
         1,
         "the one pull entry is the backend's; the UI must not synthesize a copy"
     );
+    let pulled_head = output(repo, &["rev-parse", "HEAD"]);
     cx.read(|cx| {
         let app = app.read(cx);
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Success(text)
+                if text.contains(kagi::ui::i18n::op::user_text::operation_label("pull").as_ref())
+                    && text.contains(&pulled_head[..8])
+                    && !text.contains("stash-push") && !text.contains("stash-pop")),
+            "one workflow footer names Pull, never its children: {:?}",
+            app.status_footer
+        );
+        assert!(
+            app.toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .is_empty(),
+            "internal fetch/stash receipts and attended quick Pull do not toast"
+        );
+        assert!(
+            !app.bottom_panel_open,
+            "Pull must not auto-open Operation Log"
+        );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         // The panel is seeded from the whole log, so scope it to this fixture.
         let mine: Vec<_> = panel
@@ -1492,6 +1602,13 @@ pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
             .iter()
             .filter(|entry| entry.repo == pulls[0].repo)
             .collect();
+        assert_eq!(
+            mine.iter()
+                .filter(|entry| matches!(entry.op.as_str(), "stash-push" | "pull" | "stash-pop"))
+                .count(),
+            3,
+            "presentation retains exactly the three backend workflow rows"
+        );
         let shown: Vec<_> = mine.iter().filter(|entry| entry.op == "pull").collect();
         assert_eq!(
             shown.len(),
@@ -2116,9 +2233,8 @@ pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTes
 /// changes. Stashing first would hide it from every downstream guard — the
 /// preflight and the execute-time dirty-path check both see a clean tree — and
 /// only the restore would conflict, unannounced. The run must refuse instead.
-/// The refusal is presented as #718 (34d7d1e5) / #747 (e3a6d239) present a
-/// recorded failure: the confirmation closes, and the footer, an error toast
-/// and the Operation Log carry the reason.
+/// The confirmation closes; an attended quick refusal uses a safe Pull footer,
+/// while the Operation Log retains the complete durable reason without a toast.
 pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -2132,6 +2248,7 @@ pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppCont
     git(&other, &["push", "-q", "origin", "main"]);
 
     let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     app.update(cx, |app, cx| app.open_pull_modal(cx));
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
@@ -2189,18 +2306,14 @@ pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppCont
             panic!("the footer must carry the refusal: {:?}", app.status_footer)
         };
         assert!(!footer.is_empty());
-        let toast = app
-            .toast_stack
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .toasts()
-            .last()
-            .expect("the refusal reaches a toast");
         assert!(
-            matches!(toast.kind, kagi::ui::ToastKind::Error) && !toast.message.is_empty(),
-            "the toast says why: {}",
-            toast.message
+            app.toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .is_empty(),
+            "an attended quick refusal must not duplicate its footer in a toast"
         );
     });
 

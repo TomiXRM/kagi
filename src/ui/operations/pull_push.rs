@@ -80,7 +80,7 @@ impl KagiApp {
                     cached_remote_dirty,
                 },
             );
-            self.planning = Some("pull");
+            let progress_request = self.mark_planning_busy("pull");
             let task = cx.background_spawn(async move { job.run() });
             cx.spawn(async move |this, cx| {
                 let completion = task.fallible().await;
@@ -120,6 +120,7 @@ impl KagiApp {
                                         error: None,
                                         dirty_digest: None,
                                         fetch_owner: None,
+                                        progress_request: Some(progress_request),
                                     };
                                     // SSH planning freezes the live identity,
                                     // but does not predict fetched merge or
@@ -200,22 +201,32 @@ impl KagiApp {
     /// a waiter must neither create a second receipt nor revive an old visit.
     pub(crate) fn deliver_pull_confirm(
         &mut self,
-        session: crate::app::SessionId,
+        request: (crate::app::SessionId, u64, std::time::Instant),
         displaced: bool,
         target: crate::ui::commands::PullTarget,
         fetched_remote: &str,
+        progress_hidden: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() == Some(session) {
+        let (session, visit, request_started) = request;
+        if self.active_session() == Some(session) && self.app_sessions.visit(session) == Some(visit)
+        {
             if displaced || self.has_active_modal() || self.op_latched() {
                 self.discard_contended_plan_from_async(i18n::Op::Pull, AsyncPlanToken::None);
             } else {
+                if progress_hidden {
+                    self.hidden_busy_job = Some(super::super::busy::BusyIdentity::pull(request));
+                }
                 match target {
                     crate::ui::commands::PullTarget::Current => {
-                        self.plan_and_offer_pull_modal_from_async(fetched_remote, cx);
+                        self.plan_and_offer_pull_modal_from_async(
+                            fetched_remote,
+                            request_started,
+                            cx,
+                        );
                     }
                     crate::ui::commands::PullTarget::BranchFfOnly(branch) => {
-                        self.offer_fetched_branch_pull(branch, fetched_remote, cx);
+                        self.offer_fetched_branch_pull(branch, fetched_remote, request_started, cx);
                     }
                 }
             }
@@ -225,6 +236,7 @@ impl KagiApp {
     fn plan_and_offer_pull_modal_from_async(
         &mut self,
         fetched_remote: &str,
+        request_started: std::time::Instant,
         cx: &mut Context<Self>,
     ) -> bool {
         match self.build_pull_modal(Some(fetched_remote)) {
@@ -237,7 +249,7 @@ impl KagiApp {
                 modal.fetch_owner = self.active_session().and_then(|session| {
                     self.app_sessions
                         .visit(session)
-                        .map(|visit| (session, visit))
+                        .map(|visit| (session, visit, request_started))
                 });
                 let needs_choice = modal.plan.sync_needs_choice();
                 let offered = self.offer_plan_from_async(AsyncPlanOffer::new(
@@ -252,7 +264,7 @@ impl KagiApp {
                 offered
             }
             Ok(None) => {
-                self.present_pull_up_to_date(cx);
+                self.present_pull_up_to_date(request_started, cx);
                 false
             }
             Err(error) => {
@@ -262,13 +274,42 @@ impl KagiApp {
         }
     }
 
-    pub(crate) fn present_pull_up_to_date(&mut self, cx: &mut Context<Self>) {
-        self.push_toast(
-            ToastKind::Sync,
-            SharedString::from(Msg::AlreadyUpToDatePull.t()),
-            cx,
-        );
-        self.status_footer = FooterStatus::Idle(SharedString::from(""));
+    pub(crate) fn present_pull_up_to_date(
+        &mut self,
+        request_started: std::time::Instant,
+        cx: &mut Context<Self>,
+    ) {
+        let long_running = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(request_started)
+            >= std::time::Duration::from_secs(2);
+        self.present_sync_noop("pull", Msg::AlreadyUpToDatePull, long_running, cx);
+    }
+
+    fn present_sync_noop(
+        &mut self,
+        op: &str,
+        message: Msg,
+        long_running: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let text = SharedString::from(message.t());
+        if self.operation_result_toast_needed(long_running) {
+            if let Some(stack) = self.toast_stack.clone() {
+                let key = Self::operation_result_key(
+                    self.repo_path.as_deref().unwrap_or_else(|| Path::new("")),
+                    op,
+                    "success",
+                );
+                stack.update(cx, |stack, cx| {
+                    stack.push_keyed_notify(ToastKind::Sync, text, Some(key), cx);
+                });
+            }
+            self.status_footer = FooterStatus::Idle("".into());
+        } else {
+            self.status_footer = FooterStatus::Idle(text);
+        }
     }
 
     /// Refresh a retained local Pull confirmation against reloaded repository
@@ -302,6 +343,9 @@ impl KagiApp {
                     modal.plan.warnings.len()
                 );
                 modal.fetch_owner = self.pull_modal().and_then(|current| current.fetch_owner);
+                modal.progress_request = self
+                    .pull_modal()
+                    .and_then(|current| current.progress_request);
                 self.update_pull_plan_from_async(modal);
             }
             Ok(None) => {
@@ -416,6 +460,7 @@ impl KagiApp {
             error: None,
             dirty_digest,
             fetch_owner: None,
+            progress_request: None,
         }))
     }
 
@@ -445,6 +490,12 @@ impl KagiApp {
             None => return,
         };
 
+        let progress_identity = modal
+            .progress_request
+            .map(crate::ui::busy::BusyIdentity::Planning)
+            .or_else(|| modal.fetch_owner.map(crate::ui::busy::BusyIdentity::pull));
+        let progress_hidden = self.busy_request_hidden(progress_identity);
+
         if let Some(rv) = self.remote_view.as_ref() {
             let PlanState::Ready {
                 token,
@@ -468,7 +519,10 @@ impl KagiApp {
                 token,
                 app::Policy::Stash(kagi_git::backend::ExecutionPolicy::default()),
             ) {
-                Ok(approved) => self.dispatch_job(approved, cx),
+                Ok(approved) => {
+                    self.dispatch_job(approved, cx);
+                    self.continue_busy_request(progress_identity, progress_hidden);
+                }
                 Err(error) => self.report_admission_refusal(error, cx),
             }
             return;
@@ -484,7 +538,12 @@ impl KagiApp {
                 let target = identity.upstream_ref.clone();
                 let branch = identity.branch.clone();
                 self.clear_pull_modal();
-                self.open_merge_modal(target, Some(branch), cx);
+                self.open_merge_modal_with_progress(
+                    target,
+                    Some(branch),
+                    progress_identity.map(|identity| (identity, progress_hidden)),
+                    cx,
+                );
                 cx.notify();
             }
             return;
@@ -546,12 +605,7 @@ impl KagiApp {
                     plan.disposition,
                     kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PushUpToDate)
                 ) {
-                    self.push_toast(
-                        ToastKind::Sync,
-                        SharedString::from(Msg::AlreadyUpToDatePush.t()),
-                        cx,
-                    );
-                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                    self.present_sync_noop("push", Msg::AlreadyUpToDatePush, false, cx);
                     return;
                 }
                 let needs_choice = plan.sync_needs_choice();

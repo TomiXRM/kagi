@@ -249,6 +249,7 @@ impl KagiApp {
         &mut self,
         branch: String,
         remote: &str,
+        request_started: std::time::Instant,
         cx: &mut Context<Self>,
     ) {
         let Some(mut modal) = self.build_branch_plan_modal(branch, BranchPlanKind::PullFfOnly)
@@ -279,7 +280,7 @@ impl KagiApp {
             )
         {
             self.clear_branch_plan_modal();
-            self.present_pull_up_to_date(cx);
+            self.present_pull_up_to_date(request_started, cx);
             return;
         }
         let Some(repo) = self.ui().repo_session.as_ref() else {
@@ -295,7 +296,7 @@ impl KagiApp {
         modal.fetch_owner = self.active_session().and_then(|session| {
             self.app_sessions
                 .visit(session)
-                .map(|visit| (session, visit))
+                .map(|visit| (session, visit, request_started))
         });
         modal.fetched_refs = Some(refs);
         self.admit_branch_plan(modal, cx);
@@ -433,6 +434,8 @@ impl KagiApp {
             return;
         }
 
+        let progress_identity = modal.fetch_owner.map(crate::ui::busy::BusyIdentity::pull);
+        let progress_hidden = self.busy_request_hidden(progress_identity);
         self.clear_branch_plan_modal();
         self.status_footer = FooterStatus::Busy(
             i18n::op::user_text::operations::branch_progress(op_name, &modal.branch_name).into(),
@@ -447,7 +450,8 @@ impl KagiApp {
             BranchPlanKind::PullFfOnly => i18n::Op::Pull,
             BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => i18n::Op::Push,
         };
-        self.finish_run(
+        let request_started = modal.fetch_owner.map(|(_, _, started)| started);
+        let admitted = self.finish_run(
             cx,
             op_name,
             op,
@@ -455,28 +459,37 @@ impl KagiApp {
             repo_path,
             move || branch_plan_blocking(&bg_path, &bg_modal),
             |_| None,
-            move |done| match done {
-                Ok(outcome) => {
-                    let text =
-                        i18n::op::user_text::operations::branch_result(&modal.branch_name, outcome)
-                            .into();
-                    let confirmed = matches!(
-                        outcome,
-                        kagi_git::OperationOutcome::Pull(
-                            kagi_git::PullOutcome::UpToDate
-                                | kagi_git::PullOutcome::FastForward { .. }
-                        ) | kagi_git::OperationOutcome::Push(_)
-                            | kagi_git::OperationOutcome::SyncToRemote { .. }
-                    );
-                    RunPresentation::status(if confirmed {
-                        FooterStatus::Success(text)
-                    } else {
-                        FooterStatus::Failed(text)
-                    })
-                }
-                Err(_) => RunPresentation::none(),
+            move |done| {
+                let mut presentation = match done {
+                    Ok(outcome) => {
+                        let text = i18n::op::user_text::operations::branch_result(
+                            &modal.branch_name,
+                            outcome,
+                        )
+                        .into();
+                        let confirmed = matches!(
+                            outcome,
+                            kagi_git::OperationOutcome::Pull(
+                                kagi_git::PullOutcome::UpToDate
+                                    | kagi_git::PullOutcome::FastForward { .. }
+                            ) | kagi_git::OperationOutcome::Push(_)
+                                | kagi_git::OperationOutcome::SyncToRemote { .. }
+                        );
+                        RunPresentation::status(if confirmed {
+                            FooterStatus::Success(text)
+                        } else {
+                            FooterStatus::Failed(text)
+                        })
+                    }
+                    Err(_) => RunPresentation::none(),
+                };
+                presentation.request_started = request_started;
+                presentation
             },
         );
+        if admitted {
+            self.continue_busy_request(progress_identity, progress_hidden);
+        }
     }
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
@@ -951,7 +964,7 @@ impl KagiApp {
             return;
         };
         let repo_path = owner.path.clone();
-        self.planning = Some("delete-branch-plan");
+        self.mark_planning_busy("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from(Msg::BusyDeleteBranchPlan.t()),
         ));

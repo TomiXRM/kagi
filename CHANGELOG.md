@@ -7,11 +7,22 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Present each requested Git result once: keep ordinary results in the footer, use bounded translated notifications only when away or after long operations, replace repeated results, and keep Pull's fetch/stash steps quiet. Keep hunk staging success quiet, preserve full failure details in the Operation Log without auto-opening it, and coalesce Busy/Quit feedback until writing completes. (#1698)
+  - Preserve Pull's unknown/no-retry safety preview, and include the requesting visit's freshness-fetch time in the final no-op or write result without announcing a child Fetch.
+  - Keep failure-detail actions reachable from Home, another tab, or a closed repository owner; dismiss the notification only after its receipt is revealed. Do not mistake permission/network errors mentioning `index.lock` for a competing Git operation, and clear the current owner's completed Stash Busy footer.
+  - Keep receipt inspection and copying available without a repository tab, but disable history restoration with an explanation until that receipt's local repository is displayed; recheck its owner before planning.
+  - Preserve the selected Pull target and useful successful result when moving it from the footer to a notification, reuse the same result card across executed and no-op requests, and deliver failed manual Fetch details even when its owner has moved to Home or another tab.
+  - Give conflict Save/resolve/Abort, worktree maintenance and history the same result owner. Keep required recording-failure acknowledgment ahead of ordinary success/failure notifications without replacing the original outcome or retrying its append.
+  - Retire only the matching consumed Continue confirmation on terminal failure, including unknown outcomes, so existing inspection can arrive naturally instead of leaving a stale retry surface.
+  - Bind Clone's Open Repository action only to its own successful recorded result, preserve older failure-detail actions, and treat local/remote Stash completions from a previous tab visit as background results.
+  - Keep normal remote refresh from shortening the usual lifetime of explicit SSH Pull/Stash result notifications, without overwriting a foreign footer or dropping its receipt. Bound successful Pull headlines instead of replaying raw Git stdout, while preserving structured targets and the distinct meaning of known up-to-date results.
+- Finish Pull without waiting for recursive status reads in unrelated linked worktrees. Keep strict fast-forward refusal cards readable across unchanged refreshes, and discard them when the checked-out state, exact upstream mapping or tab visit changes; never promote a refused request into automatic execution. (#1720)
+- Hide a running progress card with its accessible close button without stopping reads, Pull, planning or clone work. Keep it hidden across redraws, tab visits and Pull's fetch/write handoff; show genuinely new requests and still deliver final failures and Operation Log details. Keep Skip and writer/Quit safety independent. (#1719)
 - Keep branch deletion labels neutral until the existing merged/squash judgment is known, and identify branch-cleanup targets in English and Japanese. Report merge/rebase conflicts as stopped rather than completed, distinguish failed/successful/unknown operations when their log cannot be saved, and explain up-to-date current-branch fast-forward Pulls. (#1699)
   - Preserve the immediate Operation Log undo/restore warning for successful or partially applied operations whose recording failed, without showing it for unchanged failures or refusals.
   - Propagate unreadable ancestry and squash evidence, so missing Git objects leave deletion menus neutral instead of falsely warning that a branch is unmerged.
   - Keep unrelated orphan branches deletable through the normal unmerged two-confirmation path, while preserving actual missing-object failures.
-  - Surface failed Operation Log persistence immediately alongside a conflict-stopped notice, without a completion toast or fabricated durable receipt.
+  - Surface failed Operation Log persistence in one required acknowledgment that retains stopped context and the original diagnostic. Do not call an initial merge/rebase or a rebase Continue paused at the next conflict fully completed; keep commit-level Skip success unchanged.
 ### Changed
 
 - Reuse existing Git helpers for plan status summaries, cherry-pick/revert conflict paths, and push remote selection without changing displayed text or operation safety ordering. (#1705)

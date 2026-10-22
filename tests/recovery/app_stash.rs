@@ -210,6 +210,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
                 std::fs::write(repo.join("new"), "four\n").unwrap();
             }
             let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(!button, cx));
             app.update(cx, |app, cx| match action {
                 StashAction::Push { .. } => app.open_stash_push_modal(cx),
                 StashAction::Apply { index } => app.open_stash_apply_modal(index, cx),
@@ -227,6 +228,20 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
                 .collect();
             assert_eq!(entries.len(), 1, "one actual receipt for {action:?}");
             assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let stack = state.toast_stack.as_ref().unwrap().read(cx);
+                if button {
+                    assert!(
+                        matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+                        "an inactive owner's completed Stash must not retain Busy"
+                    );
+                    assert_eq!(stack.toasts().len(), 1);
+                } else {
+                    assert!(matches!(state.status_footer, FooterStatus::Success(_)));
+                    assert!(stack.toasts().is_empty(), "attended Stash stays in context");
+                }
+            });
             match action {
                 StashAction::Push { .. } => {
                     assert_eq!(ids(&repo).len(), 4);
@@ -280,6 +295,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         let before = read_oplog_tail(usize::MAX).len();
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
+            app.set_window_active_for_e2e(!button, cx);
             app.enter_remote_view(host.clone(), "/srv/repo".into(), snap, cx);
             // #733: this tab's worktree is fabricated with the *remote host's*
             // path while every worktree-menu action runs locally, so the menu
@@ -306,13 +322,23 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         });
         confirm(cx, &app, window, button);
         wait(cx, &app, |app| {
-            !app.app_sessions.has_leases() && matches!(&app.status_footer, FooterStatus::Success(_))
+            !app.app_sessions.has_leases() && remote_stash_e2e_refreshes() == 1
         });
         let entries = read_oplog_tail(usize::MAX);
         assert_eq!(entries.len(), before + 1);
         assert_eq!(entries[0].op, "stash-drop");
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
         assert_eq!(remote_stash_e2e_refreshes(), 1);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let stack = state.toast_stack.as_ref().unwrap().read(cx);
+            assert!(
+                matches!(state.status_footer, FooterStatus::Idle(_)),
+                "the remote result is a toast; its intercepted refresh owns no Busy footer"
+            );
+            assert_eq!(stack.toasts().len(), 1);
+            assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Success);
+        });
         unmount(cx, app, window);
         set_remote_stash_e2e_mode(None);
         eprintln!(
@@ -334,6 +360,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         let snap = snapshot(&repo);
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
+            app.set_window_active_for_e2e(true, cx);
             app.enter_remote_view(host.clone(), "/srv/repo".into(), snap, cx);
             app.open_stash_drop_modal(1, cx);
         });
@@ -343,7 +370,27 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         confirm(cx, &app, window, false);
         wait(cx, &app, |app| {
             app.app_sessions.has_leases() == expected_lease
-                && matches!(&app.status_footer, FooterStatus::Failed(_))
+                && if expected_lease {
+                    !app.app_sessions.reconcile_ids().is_empty()
+                } else {
+                    app.write_busy_op.is_none()
+                }
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let stack = state.toast_stack.as_ref().unwrap().read(cx);
+            assert_eq!(stack.toasts().len(), 1);
+            assert_eq!(stack.toasts()[0].kind, kagi::ui::ToastKind::Error);
+            assert!(matches!(
+                stack.toasts()[0].action,
+                Some(kagi::ui::ToastAction::OpenOperationLog(_))
+            ));
+            assert_eq!(state.app_sessions.may_close_host(), !expected_lease);
+            if expected_lease {
+                assert!(state
+                    .app_notice()
+                    .is_some_and(|notice| notice.inspect.is_some()));
+            }
         });
         if mode == RemoteStashE2eMode::Unknown {
             assert!(cx.read(|cx| matches!(
@@ -382,9 +429,10 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
     wait(cx, &app, |app| {
         matches!(
             &app.status_footer,
-            FooterStatus::Failed(message) if message.as_ref() == i18n::Msg::OpInProgress.t()
+            FooterStatus::Idle(message) if message.as_ref() == i18n::Msg::OpInProgress.t()
         )
     });
+    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
     assert_eq!(read_oplog_tail(usize::MAX).len(), before);
     guard.complete();
     unmount(cx, app, window);

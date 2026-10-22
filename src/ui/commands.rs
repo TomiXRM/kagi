@@ -1938,7 +1938,8 @@ pub struct FetchFlight {
     /// Frozen before dispatch: an earlier visit's failure is recorded even
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
-    pub waiters: Vec<(crate::app::SessionId, u64, PullTarget)>,
+    /// Each waiter keeps its own request time, including when joining an older fetch.
+    pub waiters: Vec<(crate::app::SessionId, u64, PullTarget, Instant)>,
     /// Live branch captured before dispatch; same-scope requests may join.
     /// `None` retains the detached/no-upstream ordinary fetch fallback.
     pub upstream_branch: Option<String>,
@@ -1986,9 +1987,24 @@ impl FetchFailure {
         before: kagi_git::StateSummary,
         repo_path: &std::path::Path,
         cx: &mut Context<KagiApp>,
+        announce: bool,
+        requested_op: &str,
     ) {
         let entry = self.entry(before, repo_path);
-        app.record_op_impl(entry, cx, true, self.auth_summary());
+        let preview = crate::ui::operations::outcome_text(requested_op, &entry.outcome);
+        app.record_op_result(
+            entry,
+            cx,
+            true,
+            None,
+            Some((ToastKind::Error, preview.into())),
+            announce,
+            true,
+            Some(requested_op),
+            false,
+            None,
+            None,
+        );
     }
 
     fn entry(
@@ -2527,6 +2543,7 @@ impl KagiApp {
         pull_confirm: Option<PullTarget>,
         cx: &mut Context<Self>,
     ) -> bool {
+        let request_started = cx.background_executor().now();
         self.refresh_write_busy();
         let requested_session = self.active_session();
         let live_current_branch = || {
@@ -2553,13 +2570,18 @@ impl KagiApp {
                     if session == flight.owner {
                         if let Some(visit) = self.app_sessions.visit(session) {
                             if let Some(waiter) =
-                                flight.waiters.iter_mut().find(|(owner, incarnation, _)| {
-                                    *owner == session && *incarnation == visit
-                                })
+                                flight
+                                    .waiters
+                                    .iter_mut()
+                                    .find(|(owner, incarnation, _, _)| {
+                                        *owner == session && *incarnation == visit
+                                    })
                             {
                                 waiter.2 = target;
                             } else {
-                                flight.waiters.push((session, visit, target));
+                                flight
+                                    .waiters
+                                    .push((session, visit, target, request_started));
                             }
                             flight.pull_confirm_displaced = false;
                             klog!("pull-confirm: waiting on the fetch already in flight");
@@ -2604,13 +2626,23 @@ impl KagiApp {
             head: format!("branch: {}", self.view().status_summary.branch),
             dirty: "unchanged".to_string(),
         };
+        if pull_confirm.is_some() {
+            // A newly admitted request may share the runner's frozen clock
+            // with a completed one; joining the same live waiter above does
+            // not reset dismissal. Unrelated fetches never erase its owner.
+            self.start_busy_request(super::busy::BusyIdentity::pull((
+                owner,
+                visit,
+                request_started,
+            )));
+        }
         self.fetch_in_flight = Some(FetchFlight {
             owner,
             visit,
             before,
             upstream_branch,
             waiters: pull_confirm
-                .map(|target| (owner, visit, target))
+                .map(|target| (owner, visit, target, request_started))
                 .into_iter()
                 .collect(),
             pull_confirm_displaced: false,
@@ -2629,6 +2661,7 @@ impl KagiApp {
             .fetch_in_flight
             .as_ref()
             .and_then(|flight| flight.upstream_branch.clone());
+        let result_started = cx.background_executor().now();
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
             #[cfg(feature = "gui-e2e")]
@@ -2701,17 +2734,32 @@ impl KagiApp {
                 })
             });
             let _ = this.update(acx, |app, cx| {
+                // Retirement may run after taking the flight but before a
+                // confirmation exists. Carry this waiter's presentation only
+                // across that synchronous ownership gap.
+                let hidden_progress = app.hidden_busy_job;
                 let Some(flight) = app.fetch_in_flight.take() else {
                     return;
                 };
+                let long_running = cx
+                    .background_executor()
+                    .now()
+                    .saturating_duration_since(result_started)
+                    >= std::time::Duration::from_secs(2);
+                let requested_op = if flight.waiters.is_empty() {
+                    "fetch"
+                } else {
+                    "pull"
+                };
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
+                let mut recording_failed = false;
                 if let Ok((outcome, ref_moves)) = &mut result {
                     if outcome.changed {
                         // Fetch changes tracking refs even when its owner departs.
                         // Persist once, without adding a second success toast or
                         // presenting a quiet auto-fetch on the active tab.
-                        app.record_operation_completion(
+                        recording_failed = app.record_operation_completion(
                             "fetch",
                             flight.before.clone(),
                             kagi_git::oplog::OpOutcome::Success {
@@ -2720,6 +2768,7 @@ impl KagiApp {
                             ref_moves.take(),
                             &repo_path_guard,
                             false,
+                            false,
                             cx,
                         );
                     }
@@ -2727,10 +2776,25 @@ impl KagiApp {
                 // A visit is a stay in the same tab, not merely its session.
                 // The flight owns one receipt; only waiters on the current
                 // visit may receive a result from an earlier visit's flight.
-                let current_waiter = flight.waiters.iter().any(|(session, visit, _)| {
-                    app.active_session() == Some(*session)
-                        && app.app_sessions.visit(*session) == Some(*visit)
-                });
+                let current_request_started =
+                    flight
+                        .waiters
+                        .iter()
+                        .find_map(|(session, visit, _, started)| {
+                            (app.active_session() == Some(*session)
+                                && app.app_sessions.visit(*session) == Some(*visit))
+                            .then_some(*started)
+                        });
+                let current_waiter = current_request_started.is_some();
+                let announce = app.operation_result_toast_needed(current_request_started.map_or(
+                    long_running,
+                    |started| {
+                        cx.background_executor()
+                            .now()
+                            .saturating_duration_since(started)
+                            >= std::time::Duration::from_secs(2)
+                    },
+                ));
                 if app.active_session() != Some(flight.owner)
                     || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
                         != Some(flight.visit)
@@ -2746,9 +2810,16 @@ impl KagiApp {
                     match &mut result {
                         Err(failure) => {
                             if current_waiter {
-                                failure.record(app, flight.before, &repo_path_guard, cx);
+                                failure.record(
+                                    app,
+                                    flight.before,
+                                    &repo_path_guard,
+                                    cx,
+                                    announce,
+                                    requested_op,
+                                );
                             } else {
-                                app.record_ref_fetch_failure(
+                                let recording = app.record_ref_fetch_failure(
                                     "fetch",
                                     Some(flight.owner),
                                     Some(flight.visit),
@@ -2762,18 +2833,47 @@ impl KagiApp {
                                     &repo_path_guard,
                                     cx,
                                 );
+                                // The frozen owner is away, so leave the live
+                                // footer/panes alone and offer its durable result.
+                                // A Pull waiter owns the requested name; a quiet
+                                // auto-fetch with no waiter has no notification.
+                                if (!silent || !flight.waiters.is_empty())
+                                    && !matches!(
+                                        recording,
+                                        kagi_git::backend::recording::Recording::Failed { .. }
+                                    )
+                                {
+                                    let entry = recording.entry();
+                                    let _ = app.push_operation_result(
+                                        entry,
+                                        requested_op,
+                                        ToastKind::Error,
+                                        crate::ui::operations::outcome_text(
+                                            requested_op,
+                                            &entry.outcome,
+                                        )
+                                        .into(),
+                                        cx,
+                                    );
+                                }
                             }
                         }
                         Ok((outcome, _)) if current_waiter => {
-                            for (session, visit, target) in flight.waiters {
+                            for (session, visit, target, request_started) in flight.waiters {
                                 if app.active_session() == Some(session)
                                     && app.app_sessions.visit(session) == Some(visit)
                                 {
                                     app.deliver_pull_confirm(
-                                        session,
+                                        (session, visit, request_started),
                                         flight.pull_confirm_displaced,
                                         target,
                                         &outcome.remote,
+                                        hidden_progress
+                                            == Some(super::busy::BusyIdentity::pull((
+                                                session,
+                                                visit,
+                                                request_started,
+                                            ))),
                                         cx,
                                     );
                                 }
@@ -2789,6 +2889,9 @@ impl KagiApp {
                 let mut fetched_remote = None;
                 if flight.superseded_read && !result.as_ref().is_ok_and(|(o, _)| o.changed) {
                     app.reload(cx);
+                }
+                if recording_failed && !silent {
+                    app.status_footer = FooterStatus::Idle("".into());
                 }
                 match result {
                     Ok((outcome, _)) => {
@@ -2806,16 +2909,27 @@ impl KagiApp {
                         }
                         if silent {
                             klog!("auto-fetch: ok remote={}", outcome.remote);
-                        } else {
-                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                                "Fetched {}",
-                                outcome.remote
-                            )));
-                            app.push_toast(
-                                ToastKind::Success,
-                                format!("Fetched {}", outcome.remote),
-                                cx,
+                        } else if flight.waiters.is_empty() && !recording_failed {
+                            let text = SharedString::from(
+                                i18n::op::user_text::operations::completed("fetch"),
                             );
+                            if app.operation_result_toast_needed(long_running) {
+                                if let Some(stack) = app.toast_stack.clone() {
+                                    let key =
+                                        format!("{}\0fetch\0success", repo_path_guard.display());
+                                    stack.update(cx, |stack, cx| {
+                                        stack.push_keyed_notify(
+                                            ToastKind::Success,
+                                            text,
+                                            Some(key),
+                                            cx,
+                                        );
+                                    });
+                                }
+                                app.status_footer = FooterStatus::Idle("".into());
+                            } else {
+                                app.status_footer = FooterStatus::Success(text);
+                            }
                         }
                         fetched_remote = Some(outcome.remote);
                     }
@@ -2825,7 +2939,14 @@ impl KagiApp {
                         if !silent || current_waiter {
                             // The receipt presenter owns the single failure
                             // toast and footer, including joined Pull waiters.
-                            e.record(app, flight.before, &repo_path_guard, cx);
+                            e.record(
+                                app,
+                                flight.before,
+                                &repo_path_guard,
+                                cx,
+                                announce,
+                                requested_op,
+                            );
                         } else {
                             // No presentation owner: preserve the receipt and
                             // recording-failure notice without changing the UI.
@@ -2849,15 +2970,21 @@ impl KagiApp {
                 // Failed fetches already own one durable receipt. A waiter
                 // only offers a confirmation after a successful fetch.
                 if let Some(fetched_remote) = fetched_remote {
-                    for (session, visit, target) in flight.waiters {
+                    for (session, visit, target, request_started) in flight.waiters {
                         if app.active_session() == Some(session)
                             && app.app_sessions.visit(session) == Some(visit)
                         {
                             app.deliver_pull_confirm(
-                                session,
+                                (session, visit, request_started),
                                 flight.pull_confirm_displaced,
                                 target,
                                 &fetched_remote,
+                                hidden_progress
+                                    == Some(super::busy::BusyIdentity::pull((
+                                        session,
+                                        visit,
+                                        request_started,
+                                    ))),
                                 cx,
                             );
                         }

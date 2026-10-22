@@ -11,7 +11,7 @@ fn dirty(repo: &Path) {
     std::fs::write(repo.join("dirty.txt"), "dirty\n").unwrap();
 }
 
-fn local_remote_with_change(repo: &Path, root: &Path) {
+pub(super) fn local_remote_with_change(repo: &Path, root: &Path) {
     let bare = root.join("origin.git");
     let other = root.join("other");
     git(repo, &["init", "--bare", "-q", bare.to_str().unwrap()]);
@@ -435,8 +435,8 @@ pub fn scenario_fetch_old_visit_drops_pull_waiter(cx: &mut VisualTestAppContext)
         records.last().unwrap().outcome,
         kagi_git::oplog::OpOutcome::Failed { .. }
     ));
-    // A successful fetch is the modal-producing mutation oracle: dropping the
-    // waiter visit check would open the old Pull confirmation on this new visit.
+    // A successful old-visit fetch must not revive the quiet Pull either:
+    // guarding only modal creation would miss an unintended automatic write.
     git(&repo_a, &["remote", "remove", "origin"]);
     let remote = tempfile::tempdir().unwrap();
     local_remote_with_change(&repo_a, remote.path());
@@ -461,6 +461,13 @@ pub fn scenario_fetch_old_visit_drops_pull_waiter(cx: &mut VisualTestAppContext)
             "a successful old-visit fetch must not open Pull on return"
         );
     });
+    assert!(
+        !repo_a.join("upstream.txt").exists(),
+        "the stale waiter must not execute Pull"
+    );
+    assert!(!kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100)
+        .iter()
+        .any(|entry| entry.op == "pull"));
     unmount(cx, app, window);
 }
 
@@ -479,6 +486,7 @@ pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTe
     dirty(&repo_a);
 
     let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b.clone(), cx))
     });
@@ -510,21 +518,36 @@ pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTe
             "a failed fetch must not open Pull"
         );
         assert!(
-            matches!(&app.status_footer, FooterStatus::Failed(_)),
-            "the new visit's Pull did not receive the failure: {:?}",
-            app.status_footer
+            matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()),
+            "the away-window result must not duplicate the toast in the footer"
         );
-        let toast_stack = app.toast_stack.as_ref().expect("mounted toast stack");
+        let stack = app
+            .toast_stack
+            .as_ref()
+            .expect("mounted toast stack")
+            .read(cx);
         assert_eq!(
-            toast_stack
-                .read(cx)
-                .toasts()
-                .iter()
-                .filter(|toast| toast.kind == ToastKind::Error)
-                .count(),
+            stack.toasts().len(),
             1,
-            "only the current waiter receives one failure preview"
+            "only the current waiter receives one preview"
         );
+        let toast = &stack.toasts()[0];
+        assert_eq!(toast.kind, ToastKind::Error);
+        assert_eq!(
+            toast
+                .result_key
+                .as_deref()
+                .and_then(|key| key.split('\0').nth(1)),
+            Some("pull"),
+            "the new visit receives its requested Pull outcome, not the old Fetch UI"
+        );
+        assert!(!toast.message.contains(repo_a.to_str().unwrap()));
+        assert!(!toast.message.contains("exit 128"));
+        assert!(!toast.message.contains('\n'));
+        assert!(matches!(
+            &toast.action,
+            Some(kagi::ui::types::ToastAction::OpenOperationLog(_))
+        ));
     });
     let receipts: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100)
         .into_iter()
@@ -535,16 +558,50 @@ pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTe
         before + 1,
         "one flight owns one durable failure"
     );
-    assert!(matches!(
-        receipts.last().unwrap().outcome,
-        kagi_git::oplog::OpOutcome::Failed { .. }
-    ));
+    assert!(
+        matches!(
+            &receipts.last().unwrap().outcome,
+            kagi_git::oplog::OpOutcome::Failed { error }
+                if error.contains(missing.to_str().unwrap())
+        ),
+        "complete backend diagnostics stay in the durable receipt"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!app.app_sessions.has_leases());
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        assert!(panel
+            .entries()
+            .iter()
+            .any(|entry| entry.id == receipts.last().unwrap().id
+                && entry.repo == receipts.last().unwrap().repo));
+    });
+    assert!(!kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100)
+        .iter()
+        .any(|entry| entry.op == "pull"));
+    assert!(kagi_git::oplog::read_oplog_tail_for_repo(&repo_b, 100).is_empty());
+    crate::recovery_oplog_panel::paint(cx, window);
+    let action = kagi::ui::e2e::control_bounds(window.window_id(), "operation-result-details")
+        .expect("the new visit can inspect its failed Pull");
+    cx.simulate_click(window, action.center(), gpui::Modifiers::none());
+    crate::recovery_oplog_panel::paint(cx, window);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.bottom_panel_open);
+        assert_eq!(app.bottom_tab, kagi::ui::BottomTab::OperationLog);
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let row = panel
+            .expanded()
+            .expect("the flight's durable failure is expanded");
+        assert_eq!(panel.entries()[row].id, receipts.last().unwrap().id);
+        assert_eq!(panel.entries()[row].repo, receipts.last().unwrap().repo);
+    });
     unmount(cx, app, window);
 }
 
-/// #992 review: a new-visit Pull joined to an old-visit flight that SUCCEEDS
-/// opens its confirmation, and the app is notified after that delivery so the
-/// modal is drawn now rather than on the next unrelated frame.
+/// #992 review: a new-visit Pull joined to an old flight receives its safe
+/// automatic update. The completion itself must notify the newly admitted run,
+/// without reviving the old waiter or introducing a redundant confirmation.
 pub fn scenario_fetch_new_visit_waiter_success_notifies(cx: &mut VisualTestAppContext) {
     let fixture_a = build_fixture();
     let fixture_b = build_fixture();
@@ -558,6 +615,9 @@ pub fn scenario_fetch_new_visit_waiter_success_notifies(cx: &mut VisualTestAppCo
         assert!(app.open_repository(repo_b.clone(), cx))
     });
     cx.run_until_parked();
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    let (run_hold, run_release) = crate::evidence_support::deferred::<()>(cx);
+    kagi::ui::KagiApp::hold_next_run_for_e2e(run_hold);
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
         let owner = app.active_session().unwrap();
@@ -572,16 +632,20 @@ pub fn scenario_fetch_new_visit_waiter_success_notifies(cx: &mut VisualTestAppCo
         assert!(app.pull_modal().is_none());
     });
     // Count notifications from here on: the setup's own are already flushed.
-    // The first notification that sees the modal must be flushed by the
-    // completion's own update (before it returns), not by a later task.
+    // The notification must see the fetch settled and the new Pull admitted
+    // before that fetch completion returns, not after an unrelated later frame.
     let completions = kagi::ui::e2e::fetch_completions_returned();
-    let first_modal_notify = std::rc::Rc::new(std::cell::Cell::new(None::<u64>));
+    let first_run_notify = std::rc::Rc::new(std::cell::Cell::new(None::<u64>));
     {
-        let first_modal_notify = first_modal_notify.clone();
+        let first_run_notify = first_run_notify.clone();
         cx.update(|cx| {
             cx.observe(&app, move |app, cx| {
-                if first_modal_notify.get().is_none() && app.read(cx).pull_modal().is_some() {
-                    first_modal_notify.set(Some(kagi::ui::e2e::fetch_completions_returned()));
+                let app = app.read(cx);
+                if first_run_notify.get().is_none()
+                    && app.fetch_in_flight.is_none()
+                    && app.app_sessions.has_leases()
+                {
+                    first_run_notify.set(Some(kagi::ui::e2e::fetch_completions_returned()));
                 }
             })
             .detach()
@@ -592,15 +656,73 @@ pub fn scenario_fetch_new_visit_waiter_success_notifies(cx: &mut VisualTestAppCo
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none());
         assert!(
-            app.pull_modal().is_some(),
-            "the new visit's Pull confirmation must open after the old flight succeeds"
+            app.pull_modal().is_none(),
+            "safe new-visit Pull needs no confirmation"
+        );
+        assert!(
+            app.app_sessions.has_leases(),
+            "the new visit owns the held Pull run"
         );
     });
     assert_eq!(
-        first_modal_notify.get(),
+        first_run_notify.get(),
         Some(completions),
-        "fetch-new-visit-success-notifies: the delivered Pull confirmation was not notified by the completion itself"
+        "the newly admitted Pull was not notified by the fetch completion itself"
     );
+    run_release.send(());
+    crate::recovery_operations::wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(repo_a.join("upstream.txt")).unwrap(),
+        "upstream\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo_a.join("dirty.txt")).unwrap(),
+        "dirty\n"
+    );
+    let backend = kagi_git::Backend::open(&repo_a).unwrap();
+    assert!(matches!(
+        backend.plan_pull().unwrap().disposition,
+        kagi_git::ops::PlanDisposition::NoOp(_)
+    ));
+    let receipts = kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100);
+    for op in ["fetch", "pull"] {
+        let own: Vec<_> = receipts.iter().filter(|entry| entry.op == op).collect();
+        assert_eq!(
+            own.len(),
+            1,
+            "one joined flight and one current Pull, without retry"
+        );
+        assert!(matches!(
+            own[0].outcome,
+            kagi_git::oplog::OpOutcome::Success { .. }
+        ));
+    }
+    assert!(!receipts
+        .iter()
+        .any(|entry| matches!(entry.op.as_str(), "stash-push" | "stash-pop")));
+    assert!(kagi_git::oplog::read_oplog_tail_for_repo(&repo_b, 100).is_empty());
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!app.app_sessions.has_leases());
+        assert!(app.pull_modal().is_none());
+        assert!(app
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .is_empty());
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let receipt = receipts.iter().find(|entry| entry.op == "pull").unwrap();
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|entry| entry.op == "pull" && entry.repo == receipt.repo)
+            .collect();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].id, receipt.id);
+    });
     unmount(cx, app, window);
 }
 

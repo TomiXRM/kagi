@@ -39,82 +39,74 @@ impl KagiApp {
         blocker: Option<&kagi_domain::plan_note::PlanNote>,
         cx: &mut Context<Self>,
     ) {
-        let entry = recording.entry().clone();
+        let entry = recording.entry();
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
-        let summary = match &entry.outcome {
-            OpOutcome::Refused { .. } => blocker
-                .map(kagi_ui_core::i18n::plan_note_text)
-                .unwrap_or_else(|| super::outcome_text(&entry.op, &entry.outcome)),
-            _ => super::outcome_text(&entry.op, &entry.outcome),
-        };
-        if let Some(panel) = &self.op_log {
-            panel.update(cx, |panel, cx| {
-                panel.push(entry.clone());
-                cx.notify();
-            });
-        }
-        if matches!(entry.outcome, OpOutcome::Refused { .. }) {
-            self.app_notices
-                .push_back(format!("{}: {}", entry.repo, summary).into());
-        }
-        self.push_toast(
-            if success {
-                ToastKind::Success
-            } else {
-                ToastKind::Error
-            },
-            match (success, action) {
-                (true, kagi_domain::conflict_family::ConflictAction::Abort) => {
-                    Msg::ConflictAborted.t().to_string()
-                }
-                (true, _) => i18n::op::user_text::operations::conflict_saved().to_string(),
-                (false, _) => summary.clone(),
-            },
-            cx,
+        let recording_failed = matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
         );
-        if self.active_session() == Some(owner) {
-            let footer = match &entry.outcome {
-                OpOutcome::Success { after } => {
-                    format!("{}: {} → {}", entry.op, entry.before.head, after.head)
-                }
-                OpOutcome::Partial { error, .. }
-                | OpOutcome::Unknown {
-                    evidence: error, ..
-                } => {
-                    format!("{}: partially applied — {}", entry.op, error)
-                }
-                OpOutcome::Failed { error } => format!("{}: failed — {}", entry.op, error),
-                OpOutcome::Refused { blockers } => format!(
-                    "{}: refused ({} blocker{})",
-                    entry.op,
-                    blockers.len(),
-                    if blockers.len() == 1 { "" } else { "s" }
-                ),
-            };
-            klog!("footer: {}", footer);
-            let display = if success {
-                match action {
+        let notice = (!recording_failed).then(|| {
+            let message: SharedString = match &entry.outcome {
+                OpOutcome::Success { .. } => match action {
                     kagi_domain::conflict_family::ConflictAction::Abort => {
-                        Msg::ConflictAborted.t().to_string()
+                        Msg::ConflictAborted.t().into()
                     }
-                    _ => i18n::op::user_text::operations::conflict_saved().to_string(),
-                }
-            } else {
-                summary.clone()
+                    _ => i18n::op::user_text::operations::conflict_saved().into(),
+                },
+                OpOutcome::Refused { .. } => blocker
+                    .map(kagi_ui_core::i18n::plan_note_text)
+                    .unwrap_or_else(|| super::outcome_text(&entry.op, &entry.outcome))
+                    .into(),
+                _ => super::outcome_text(&entry.op, &entry.outcome).into(),
             };
-            self.status_footer = if success {
-                FooterStatus::Success(display.into())
-            } else {
-                FooterStatus::Failed(display.into())
-            };
+            (
+                if success {
+                    ToastKind::Success
+                } else {
+                    ToastKind::Error
+                },
+                message,
+            )
+        });
+        let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+        if self.active_session() == Some(owner) {
+            let contract =
+                Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
+            let announce = self.operation_result_toast_needed(false);
+            self.record_op_result(
+                shown,
+                cx,
+                false,
+                None,
+                notice,
+                announce,
+                true,
+                None,
+                recording_failed,
+                None,
+                Some(contract),
+            );
+        } else {
+            // The receipt remains inspectable without collapsing another
+            // repository's current inspection or replacing its footer.
+            if let Some(panel) = &self.op_log {
+                panel.update(cx, |panel, cx| {
+                    panel.push(shown);
+                    cx.notify();
+                });
+            }
+            if let Some((kind, message)) = notice {
+                let _ = self.push_operation_result(entry, &entry.op, kind, message, cx);
+            }
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             self.app_notices.push_back(
-                i18n::op::user_text::operations::recording_failed(
+                super::record::recording_failure_notice(
                     &entry.repo,
                     &entry.op,
-                    super::record::recording_outcome(&recording.entry().outcome),
+                    &recording.entry().outcome,
                     &error.to_string(),
+                    None,
                 )
                 .into(),
             );

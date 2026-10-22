@@ -44,6 +44,8 @@ pub enum OplogPanelMsg {
     /// Why both buttons are disabled for an entry without recorded ref moves.
     RestoreUnavailable,
     RevertNoMoves,
+    /// The receipt's local repository is not the displayed execution context.
+    RestoreOwnerUnavailable,
     StatusSuccess,
     StatusFailed,
     StatusUnknown,
@@ -115,6 +117,12 @@ impl OplogPanelMsg {
             }
             (Lang::En, RevertNoMoves) => "This operation did not change any ref.",
             (Lang::Ja, RevertNoMoves) => "この操作は ref を変更していません。",
+            (Lang::En, RestoreOwnerUnavailable) => {
+                "Show this operation's local repository before restoring history."
+            }
+            (Lang::Ja, RestoreOwnerUnavailable) => {
+                "履歴を復元するには、この操作のローカルリポジトリを表示してください。"
+            }
             (Lang::En, StatusSuccess) => "Success",
             (Lang::Ja, StatusSuccess) => "成功",
             (Lang::En, StatusFailed) => "Failed",

@@ -130,10 +130,11 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 - Git layer returns `Result<T, GitError>` (`crates/kagi-git/src/lib.rs`). Avoid `.unwrap()`
   outside tests.
-- User-facing operation errors must surface via the oplog and a bounded toast.
-  The oplog owns the complete durable detail; the toast is only a short preview.
-  Reserve error modals for cases that require an explicit inspect/acknowledge
-  action, or when oplog persistence itself failed.
+- User-facing operation errors must surface via the oplog and one bounded result
+  preview: current-context footer by default, toast only when away or long-running
+  (ADR-0196 / #1698). The oplog owns complete durable detail; previews never expose
+  raw stderr, exit codes or absolute paths. Reserve error modals for explicit
+  inspect/acknowledge actions or failed oplog persistence.
 
 ## Logging rules (important — read before touching any log line)
 

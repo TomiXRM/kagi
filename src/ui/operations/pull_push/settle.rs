@@ -25,12 +25,21 @@ impl KagiApp {
         repo_path: PathBuf,
     ) -> bool {
         use crate::app::{self, Delivery, FamilyEvidence, PullPresentation};
+        let progress_identity = modal
+            .progress_request
+            .map(crate::ui::busy::BusyIdentity::Planning)
+            .or_else(|| modal.fetch_owner.map(crate::ui::busy::BusyIdentity::pull));
+        let progress_hidden = self.busy_request_hidden(progress_identity);
         self.refresh_write_busy();
         // The lease answers for every other writer; the UI latch is what a
         // planning task in flight is refused by (ADR-0196 Wave 3).
         let latched = self.op_latched();
         let plan = modal.plan.clone();
         let (auto_stash, promised_dirty) = (modal.auto_stash, modal.dirty_digest);
+        let result_started = modal
+            .fetch_owner
+            .map(|(_, _, started)| started)
+            .unwrap_or_else(|| cx.background_executor().now());
         let (bg_path, bg_plan) = (repo_path.clone(), plan.clone());
         let admitted = self
             .active_session()
@@ -71,6 +80,7 @@ impl KagiApp {
             }
         };
         self.mark_write_busy("pull", cx);
+        self.continue_busy_request(progress_identity, progress_hidden);
         // Admission consumes the decision. Keep the card on refusal, but never
         // leave a runnable confirmation above an admitted background writer.
         self.clear_pull_modal();
@@ -126,16 +136,22 @@ impl KagiApp {
                     // switch below exactly as the recording-failure notice does
                     // (#702 re-review).
                     for step in &report.steps {
-                        app.notice_recording_failure("pull", &step.recording, &repo_path);
+                        app.notice_recording_failure("pull", &step.recording, &repo_path, None);
                     }
                     app.notice_reconcile_required(id, "pull", &repo_path);
+                    let announce = app.operation_result_toast_needed(
+                        cx.background_executor()
+                            .now()
+                            .saturating_duration_since(result_started)
+                            >= std::time::Duration::from_secs(2),
+                    );
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {
                         let announce_at = report.announce();
                         for (at, step) in report.steps.iter().enumerate() {
                             if at == announce_at {
-                                app.present_recorded_background(&step.recording, cx);
+                                app.present_pull_recorded(&report, true, true, cx);
                             } else {
                                 app.insert_recorded_row(&step.recording, cx);
                             }
@@ -176,29 +192,16 @@ impl KagiApp {
                     let announce_at = report.announce();
                     for (at, step) in report.steps.iter().enumerate() {
                         if at == announce_at {
-                            app.present_recorded(&step.recording, cx);
+                            app.present_pull_recorded(&report, announce, false, cx);
                         } else {
                             app.insert_recorded_row(&step.recording, cx);
                         }
                     }
-                    let recording_failed = report.recording_failed();
-                    match &report.terminal.presentation {
-                        PullPresentation::Success { summary } => {
-                            // A mutation that happened but was not recorded is
-                            // presented as "changed but not recorded" (#501),
-                            // and that holds for a *child*'s receipt too: the
-                            // success footer must not paper over any of them.
-                            if !recording_failed {
-                                app.status_footer = FooterStatus::Success(
-                                    i18n::op::user_text::operations::pull_summary(summary).into(),
-                                );
-                            }
-                        }
-                        PullPresentation::Failed { error }
-                        | PullPresentation::Partial { error } => {
-                            let decisive = &report.steps[announce_at].recording;
-                            app.enqueue_run_outcome_notice(id, decisive, Some(error), None);
-                        }
+                    if let PullPresentation::Failed { error }
+                    | PullPresentation::Partial { error } = &report.terminal.presentation
+                    {
+                        let decisive = &report.steps[announce_at].recording;
+                        app.enqueue_run_outcome_notice(id, decisive, Some(error), None);
                     }
                     // One completion per admitted write.
                     break;
@@ -224,13 +227,86 @@ impl KagiApp {
         true
     }
 
+    /// Pull remains the requested operation even when stash pop settles last.
+    fn present_pull_recorded(
+        &mut self,
+        report: &crate::app::PullReport,
+        announce: bool,
+        background: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let recording = &report.steps[report.announce()].recording;
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        if report.recording_failed() {
+            if background {
+                self.insert_recorded_row(recording, cx);
+            } else {
+                self.record_op_result(
+                    entry,
+                    cx,
+                    false,
+                    None,
+                    None,
+                    announce,
+                    true,
+                    Some("pull"),
+                    true,
+                    None,
+                    None,
+                );
+            }
+            return;
+        }
+        let text = match &report.decisive().recording.entry().outcome {
+            kagi_git::oplog::OpOutcome::Unknown { evidence, .. } => {
+                i18n::op::user_text::operations::unknown_preview("pull", evidence)
+            }
+            _ => match &report.terminal.presentation {
+                crate::app::PullPresentation::Success { summary } => {
+                    i18n::op::user_text::operations::pull_summary(summary)
+                }
+                crate::app::PullPresentation::Failed { error } => {
+                    i18n::op::user_text::operations::failure_preview("pull", error)
+                }
+                crate::app::PullPresentation::Partial { error } => {
+                    i18n::op::user_text::operations::partial_preview("pull", error)
+                }
+            },
+        };
+        let kind = if matches!(
+            report.terminal.presentation,
+            crate::app::PullPresentation::Success { .. }
+        ) {
+            ToastKind::Success
+        } else {
+            ToastKind::Error
+        };
+        if background {
+            let _ = self.push_operation_result(&entry, "pull", kind, text.into(), cx);
+            self.insert_recorded_row(recording, cx);
+        } else {
+            self.record_op_result(
+                entry,
+                cx,
+                false,
+                None,
+                Some((kind, text.into())),
+                announce,
+                true,
+                Some("pull"),
+                false,
+                None,
+                None,
+            );
+        }
+    }
+
     /// Put a receipt in the operation-log panel and nowhere else.
     ///
-    /// [`KagiApp::present_recorded`] is *presentation*: it also toasts, moves
-    /// the status footer, emits the `footer:` contract line and auto-opens the
-    /// panel on a failure. A workflow with several children must do that once,
-    /// from the receipt that decided it — the siblings are still durable
-    /// receipts the panel should hold, but they are not the answer to what the
+    /// [`KagiApp::present_recorded`] presents the result in a footer or toast
+    /// and emits the `footer:` contract line. A workflow with several children
+    /// must do that once, from the receipt that decided it. The siblings are
+    /// durable receipts the panel should hold, but they are not the answer to what the
     /// user asked for (#702 review P1).
     pub(in crate::ui::operations) fn insert_recorded_row(
         &mut self,
@@ -248,19 +324,36 @@ impl KagiApp {
     }
 
     /// Put a background owner's receipt in the window-global Operation Log and
-    /// announce a non-success without changing the active tab's footer/panes.
+    /// announce its result without changing the active tab's footer/panes.
     pub(in crate::ui::operations) fn present_recorded_background(
         &mut self,
         recording: &kagi_git::backend::recording::Recording,
+        success_text: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) {
-            // #353: a refusal names its first blocker, not a count.
-            let shown = crate::ui::operations::record::refused_display(&entry.op, &entry.outcome)
-                .unwrap_or_else(|| crate::ui::operations::outcome_text(&entry.op, &entry.outcome));
-            self.push_toast(ToastKind::Error, format!("{} — {}", entry.repo, shown), cx);
+        if matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        ) {
+            self.insert_recorded_row(recording, cx);
+            return;
         }
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        let success = matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. });
+        let shown = success_text.filter(|_| success).unwrap_or_else(|| {
+            crate::ui::operations::outcome_text(&entry.op, &entry.outcome).into()
+        });
+        let _ = self.push_operation_result(
+            &entry,
+            &entry.op,
+            if success {
+                ToastKind::Success
+            } else {
+                ToastKind::Error
+            },
+            shown,
+            cx,
+        );
         self.insert_recorded_row(recording, cx);
     }
 }

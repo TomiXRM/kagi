@@ -153,6 +153,15 @@ mod clone_hidden_status;
 #[cfg(target_os = "macos")]
 #[path = "recovery/clone_progress_status.rs"]
 mod clone_progress_status;
+#[cfg(target_os = "macos")]
+#[path = "recovery/completion_visit_owner.rs"]
+mod completion_visit_owner;
+#[cfg(target_os = "macos")]
+#[path = "recovery/remote_pull_result_owner.rs"]
+mod remote_pull_result_owner;
+#[cfg(target_os = "macos")]
+#[path = "recovery/remote_result_refresh.rs"]
+mod remote_result_refresh;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection_actions.rs"]
@@ -402,9 +411,19 @@ mod stash_apply_manifest;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/fetch_recording_failure.rs"]
+mod fetch_recording_failure;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/user_text.rs"]
 mod user_text;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/busy_dismiss.rs"]
+mod busy_dismiss;
+#[cfg(target_os = "macos")]
+#[path = "recovery/busy_failure.rs"]
+mod busy_failure;
 #[cfg(target_os = "macos")]
 #[path = "recovery/op_queue.rs"]
 mod op_queue;
@@ -1730,6 +1749,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_prune_repair_receipt),
             ),
             (
+                "worktree_admin_result_owner",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_admin_result_owner),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),
@@ -2452,6 +2475,42 @@ mod macos {
                 Box::new(crate::clone_hidden_status::scenario_clone_hidden_status),
             ),
             (
+                "clone_departed_result_owner",
+                Box::new(crate::completion_visit_owner::scenario_clone_departed_result_owner),
+            ),
+            (
+                "stash_revisit_result_owner",
+                Box::new(crate::completion_visit_owner::scenario_stash_revisit_result_owner),
+            ),
+            (
+                "remote_stash_revisit_result_owner",
+                Box::new(crate::completion_visit_owner::scenario_remote_stash_revisit_result_owner),
+            ),
+            (
+                "remote_pull_current_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_current_result_owner),
+            ),
+            (
+                "remote_pull_inactive_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_inactive_result_owner),
+            ),
+            (
+                "remote_pull_away_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_away_result_owner),
+            ),
+            (
+                "remote_pull_revisit_result_owner",
+                Box::new(crate::remote_pull_result_owner::scenario_remote_pull_revisit_result_owner),
+            ),
+            (
+                "remote_stash_result_survives_refresh",
+                Box::new(crate::remote_result_refresh::scenario_remote_stash_result_survives_refresh),
+            ),
+            (
+                "remote_pull_result_survives_refresh",
+                Box::new(crate::remote_result_refresh::scenario_remote_pull_result_survives_refresh),
+            ),
+            (
                 "smart_commit_generation_owner",
                 Box::new(crate::recovery_operations::scenario_smart_commit_generation_owner),
             ),
@@ -2516,9 +2575,9 @@ mod macos {
                 ),
             ),
             (
-                "run_success_unrecorded_keeps_partial_footer",
+                "run_success_unrecorded_requires_acknowledgment",
                 Box::new(
-                    crate::recovery_operations::scenario_run_success_unrecorded_keeps_partial_footer,
+                    crate::recovery_operations::scenario_run_success_unrecorded_requires_acknowledgment,
                 ),
             ),
             (
@@ -2602,6 +2661,10 @@ mod macos {
             (
                 "pull_ff_only_current_tree_consistency",
                 Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
+            ),
+            (
+                "pull_ff_only_diverged_refusal",
+                Box::new(crate::pull_freshness::scenario_pull_ff_only_diverged_refusal),
             ),
             (
                 "pull_branch_slash_remote_current",
@@ -2830,6 +2893,26 @@ mod macos {
                 Box::new(crate::slow_read::scenario_slow_write_explained),
             ),
             (
+                "busy_read_dismiss",
+                Box::new(crate::busy_dismiss::scenario_busy_read_dismiss),
+            ),
+            (
+                "busy_pull_progress_dismiss",
+                Box::new(crate::busy_dismiss::scenario_busy_pull_progress_dismiss),
+            ),
+            (
+                "busy_pull_revisit_request",
+                Box::new(crate::busy_dismiss::scenario_busy_pull_revisit_request),
+            ),
+            (
+                "busy_pull_merge_progress_dismiss",
+                Box::new(crate::busy_dismiss::scenario_busy_pull_merge_progress_dismiss),
+            ),
+            (
+                "busy_hidden_failure_reaches_details",
+                Box::new(crate::busy_failure::scenario_busy_hidden_failure_reaches_details),
+            ),
+            (
                 "slow_write_cleared_after_panic",
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
             ),
@@ -3034,8 +3117,18 @@ mod macos {
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
             ),
             (
+                "fetch_changed_ref_recording_failure",
+                Box::new(
+                    crate::fetch_recording_failure::scenario_fetch_changed_ref_recording_failure,
+                ),
+            ),
+            (
                 "oplog_append_failure_conflict_stopped",
                 Box::new(crate::conflict_stopped::scenario_oplog_append_failure_conflict_stopped),
+            ),
+            (
+                "conflict_continue_stopped_result_owner",
+                Box::new(crate::conflict_stopped::scenario_conflict_continue_stopped_result_owner),
             ),
             (
                 "pr_merge_delete_branch_return_cancel",
@@ -3255,8 +3348,20 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),
             (
+                "conflict_continue_refusal_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_continue_refusal_result_owner),
+            ),
+            (
                 "conflict_dir_file_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
+            ),
+            (
+                "conflict_family_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_family_result_owner),
+            ),
+            (
+                "conflict_continue_failure_result_owner",
+                Box::new(crate::app_conflict::scenario_conflict_continue_failure_result_owner),
             ),
             (
                 "operation_strip_startup",
@@ -7384,8 +7489,9 @@ mod macos {
     /// even if the owner generation changes before the background result arrives.
     fn scenario_worktree_panel_discard_recording_failure(cx: &mut VisualTestAppContext) {
         for stale in [false, true] {
-            let (_fixture, repo_path, wt_a, _wt_b) = build_two_worktree_fixture();
+            let (_fixture, repo_path, wt_a, wt_b) = build_two_worktree_fixture();
             let original = std::fs::read(wt_a.join("dirty.txt")).unwrap();
+            let foreign_before = repo_fingerprint(&wt_b);
             let (kagi, win) = mount(cx, &repo_path);
             let index = cx.read(|app| {
                 kagi.read(app)
@@ -7396,6 +7502,7 @@ mod macos {
                     .unwrap()
             });
             kagi.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(true, cx);
                 e2e::open_worktree_panel_no_inputs(app, wt_a.clone(), "wt-a", index, cx)
             });
             cx.run_until_parked();
@@ -7413,21 +7520,48 @@ mod macos {
                 .truncate(false)
                 .open(log_dir.join("operations.jsonl.lock"))
                 .unwrap();
+            let presentation = |cx: &mut VisualTestAppContext| {
+                cx.read(|app| {
+                    let state = kagi.read(app);
+                    (
+                        format!("{:?}", state.status_footer),
+                        (state.bottom_panel_open, state.bottom_tab),
+                    )
+                })
+            };
+            let mut presentation_before = presentation(cx);
+            let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+            kagi::ui::KagiApp::hold_next_run_for_e2e(hold);
+            kagi.update(cx, |app, cx| app.start_discard(cx));
+            cx.run_until_parked();
+            cx.read(|app| assert!(kagi.read(app).app_sessions.has_leases()));
+            assert_eq!(std::fs::read(wt_a.join("dirty.txt")).unwrap(), original);
+            if stale {
+                // Change the actual consumer context while the admitted run
+                // remains held, instead of retiring an otherwise-active visit.
+                let foreign = wt_b.canonicalize().unwrap();
+                kagi.update(cx, |app, cx| {
+                    assert!(app.open_repository(foreign.clone(), cx))
+                });
+                cx.run_until_parked();
+                cx.read(|app| {
+                    assert_eq!(kagi.read(app).repo_path.as_ref(), Some(&foreign));
+                });
+                presentation_before = presentation(cx);
+            }
             lock.lock().unwrap();
-            kagi.update(cx, |app, cx| {
-                app.start_discard(cx);
-                if stale {
-                    // ADR-0196: leaving the tab ends the owner's visit.
-                    let session = app.active_session().expect("attached");
-                    app.app_sessions.depart(session);
-                }
-            });
+            release.send(());
             cx.run_until_parked();
             drop(lock);
             assert_eq!(
                 repo_fingerprint(&wt_a).1,
                 "",
                 "mutation must already have completed"
+            );
+            assert_eq!(
+                repo_fingerprint(&wt_b),
+                foreign_before,
+                "the foreign worktree is not a target of the frozen discard"
             );
             assert_eq!(
                 std::fs::read(&log_path).unwrap_or_default(),
@@ -7438,33 +7572,50 @@ mod macos {
                 let state = kagi.read(app);
                 let notice =
                     e2e::app_notice_message(state).expect("owner-named recording failure notice");
+                let append_diagnostic = std::fs::TryLockError::WouldBlock.to_string();
                 assert!(
-                    notice.contains(wt_a.to_str().unwrap())
-                        && notice.contains(
-                            kagi::ui::i18n::op::user_text::operation_label("discard").as_ref()
-                        ),
+                    notice.contains(wt_a.to_str().unwrap()) && notice.contains(&append_diagnostic),
                     "{notice}"
                 );
-                assert!(!matches!(
-                    state.status_footer,
-                    kagi::ui::types::FooterStatus::Success(_)
-                ));
+                assert!(
+                    !e2e::queued_notice_contains(state, wt_a.to_str().unwrap()),
+                    "one failed recording must not queue another owner-named acknowledgment"
+                );
+                assert!(state
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(app)
+                    .toasts()
+                    .is_empty());
+                assert_eq!(
+                    (state.bottom_panel_open, state.bottom_tab),
+                    presentation_before.1,
+                    "only explicit inspection may switch the existing panel"
+                );
+                if stale {
+                    assert_eq!(format!("{:?}", state.status_footer), presentation_before.0);
+                } else {
+                    assert!(
+                        matches!(
+                            &state.status_footer,
+                            kagi::ui::types::FooterStatus::Idle(message) if message.is_empty()
+                        ),
+                        "required acknowledgment is the only result: {:?}",
+                        state.status_footer
+                    );
+                }
                 assert!(
                     state.discard_modal().is_none(),
                     "must not offer to repeat a completed mutation"
                 );
                 if !stale {
-                    let kagi::ui::types::FooterStatus::Failed(message) = &state.status_footer
-                    else {
-                        panic!("expected failure footer")
-                    };
-                    assert!(!message.is_empty());
                     let panel = state.op_log.as_ref().unwrap().read(app);
                     let entry = panel.entries().front().unwrap();
-                    assert!(matches!(
-                        entry.outcome,
-                        kagi_git::oplog::OpOutcome::Partial { .. }
-                    ));
+                    let kagi_git::oplog::OpOutcome::Partial { error, .. } = &entry.outcome else {
+                        panic!("unrecorded discard must remain an attempted partial row")
+                    };
+                    assert!(error.contains(&append_diagnostic), "{entry:?}");
                     assert_eq!(entry.backup_refs.len(), 1);
                     let output = Command::new("git")
                         .current_dir(&wt_a)
@@ -7490,6 +7641,18 @@ mod macos {
                     );
                 }
             });
+            kagi.update(cx, |app, cx| app.confirm_app_notice(cx));
+            cx.run_until_parked();
+            cx.read(|app| {
+                let state = kagi.read(app);
+                assert!(e2e::app_notice_message(state).is_none());
+                assert!(!e2e::queued_notice_contains(state, wt_a.to_str().unwrap()));
+            });
+            assert_eq!(
+                std::fs::read(&log_path).unwrap_or_default(),
+                before_log,
+                "acknowledging lost recording must not replay or invent a receipt"
+            );
             unmount(cx, kagi, win);
         }
         eprintln!("[gui-e2e] PASS worktree_panel_discard_recording_failure current + stale owner");

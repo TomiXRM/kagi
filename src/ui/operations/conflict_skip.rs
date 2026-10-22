@@ -150,12 +150,11 @@ impl KagiApp {
                     OpOutcome::Unknown { evidence, .. } if evidence.contains("process termination is unconfirmed") => Some(evidence.clone()),
                     _ => None,
                 };
-                let termination_unknown = termination_unknown_evidence.is_some();
                 match &failure {
                     None => klog!("executed: {}", op_name),
                     Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
                 }
-                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, cx);
+                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, false, cx);
                 if current {
                     if let Some(evidence) = termination_unknown_evidence {
                         app.report_unknown_notice(&repo_path, evidence);
@@ -166,9 +165,6 @@ impl KagiApp {
                             ui.conflict_detected = false;
                         }
                         app.detect_conflict_mode(cx);
-                    }
-                    if let Some(err_msg) = failure.filter(|_| !termination_unknown) {
-                        app.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
                     }
                 }
                 for (id, op, path) in app.app_sessions.drain_unaccounted() {

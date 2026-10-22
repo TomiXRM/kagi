@@ -6,16 +6,35 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Disableable as _, Sizable as _};
 use kagi_ui_core::i18n::{self, Msg};
 use kagi_ui_core::slow_read::{is_slow, SlowRead};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::{self, theme};
 use super::{render_overlay, KagiApp};
 
 const TICK: Duration = Duration::from_millis(250);
 
+/// Identity of the existing owner, not an operation label. A Pull keeps the
+/// original waiter stamp when freshness Fetch hands off to a different lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BusyIdentity {
+    Write(crate::app::OperationId),
+    Pull(crate::app::SessionId, u64, Instant),
+    Planning(crate::app::RequestId),
+    Clone(Instant),
+}
+
+impl BusyIdentity {
+    pub(super) fn pull((owner, visit, started): (crate::app::SessionId, u64, Instant)) -> Self {
+        Self::Pull(owner, visit, started)
+    }
+}
+
 impl KagiApp {
     pub(crate) fn mark_write_busy(&mut self, name: &'static str, cx: &mut Context<Self>) {
         self.write_busy_op = Some(name);
+        self.busy_write_origin = None;
         if let Some((id, _)) = self.app_sessions.running_lease() {
+            self.busy_write_origin = Some((id, BusyIdentity::Write(id)));
             // The runner's synthetic clock is written onto the same lease
             // record; production retains the exact admission Instant.
             #[cfg(feature = "gui-e2e")]
@@ -80,12 +99,164 @@ impl KagiApp {
     }
 
     pub(crate) fn busy_snackbar_label(&self) -> Option<&'static str> {
+        if self.busy_progress_hidden() {
+            return None;
+        }
         self.write_busy_op
             .or(self.planning)
             .map(kagi_ui_core::i18n::busy_label)
     }
 
+    pub(crate) fn mark_planning_busy(&mut self, name: &'static str) -> crate::app::RequestId {
+        let request = crate::app::RequestId(crate::app::next_id());
+        self.planning = Some(name);
+        self.busy_plan_origin = Some(BusyIdentity::Planning(request));
+        request
+    }
+
+    pub(super) fn continue_busy_planning(
+        &mut self,
+        request: crate::app::RequestId,
+        progress: Option<(BusyIdentity, bool)>,
+    ) {
+        if self.planning.is_none() || self.busy_plan_origin != Some(BusyIdentity::Planning(request))
+        {
+            return;
+        }
+        if let Some((identity, hidden)) = progress {
+            self.busy_plan_origin = Some(identity);
+            if hidden {
+                self.hidden_busy_job = Some(identity);
+            }
+        }
+    }
+
+    pub(super) fn busy_request_hidden(&self, identity: Option<BusyIdentity>) -> bool {
+        identity.is_some() && identity == self.hidden_busy_job
+    }
+    pub(super) fn start_busy_request(&mut self, identity: BusyIdentity) {
+        if self.hidden_busy_job == Some(identity) {
+            self.hidden_busy_job = None;
+        }
+    }
+
+    pub(super) fn continue_busy_request(&mut self, identity: Option<BusyIdentity>, hidden: bool) {
+        let running = self.app_sessions.running_lease().map(|(id, _)| id);
+        if let (Some((id, origin)), Some(identity)) = (&mut self.busy_write_origin, identity) {
+            if running != Some(*id) {
+                return;
+            }
+            *origin = identity;
+            if hidden {
+                self.hidden_busy_job = Some(identity);
+            }
+        }
+    }
+
+    fn busy_identity(&self) -> Option<BusyIdentity> {
+        if let Some(started) = self
+            .home_github
+            .cloning
+            .as_ref()
+            .and_then(|card| card.started)
+        {
+            return Some(BusyIdentity::Clone(started));
+        }
+        if self.write_busy_op.is_some() {
+            if let Some((owner, visit, _, started)) =
+                self.fetch_in_flight.as_ref().and_then(|flight| {
+                    flight
+                        .waiters
+                        .iter()
+                        .find(|(owner, visit, _, _)| {
+                            self.active_session() == Some(*owner)
+                                && self.app_sessions.visit(*owner) == Some(*visit)
+                        })
+                        // Switching tabs is not a new request. Keep this
+                        // flight's dismissed owner rather than falling back
+                        // to an older, undismissed waiter from another visit.
+                        .or_else(|| {
+                            flight.waiters.iter().find(|(owner, visit, _, started)| {
+                                self.hidden_busy_job
+                                    == Some(BusyIdentity::Pull(*owner, *visit, *started))
+                            })
+                        })
+                        .or_else(|| flight.waiters.first())
+                })
+            {
+                return Some(BusyIdentity::Pull(*owner, *visit, *started));
+            }
+            return self.busy_write_origin.map(|(_, identity)| identity);
+        }
+        self.planning.and(self.busy_plan_origin)
+    }
+
+    fn busy_progress_hidden(&self) -> bool {
+        self.busy_request_hidden(self.busy_identity())
+    }
+
+    /// Keep a hidden Pull through its fetch/confirmation/write handoff, but
+    /// retire suppression with its actual owner. New admissions also reset it,
+    /// so a new same-clock request never inherits an old timestamp's state.
+    pub(super) fn retire_hidden_busy_progress(&mut self) {
+        if self.write_busy_op.is_none() {
+            self.busy_write_origin = None;
+        }
+        if self.planning.is_none() {
+            self.busy_plan_origin = None;
+        }
+        let Some(hidden) = self.hidden_busy_job else {
+            return;
+        };
+        let owns_pull = |stamp: Option<(crate::app::SessionId, u64, Instant)>| {
+            Some(hidden) == stamp.map(BusyIdentity::pull)
+        };
+        let live = self.busy_identity() == Some(hidden)
+            || self.fetch_in_flight.as_ref().is_some_and(|flight| {
+                flight
+                    .waiters
+                    .iter()
+                    .any(|(owner, visit, _, started)| owns_pull(Some((*owner, *visit, *started))))
+            })
+            || self.pull_modal().is_some_and(|modal| {
+                owns_pull(modal.fetch_owner)
+                    || modal.progress_request.map(BusyIdentity::Planning) == Some(hidden)
+            })
+            || self
+                .branch_plan_modal()
+                .is_some_and(|modal| owns_pull(modal.fetch_owner))
+            || self
+                .merge_modal()
+                .is_some_and(|modal| modal.progress_identity == Some(hidden));
+        if !live {
+            self.hidden_busy_job = None;
+        }
+    }
+
+    fn hide_busy_progress(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        identity: Option<BusyIdentity>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != owner || self.busy_identity() != identity {
+            return;
+        }
+        self.hidden_busy_job = identity;
+        if let Some(ui) = owner.and_then(|owner| self.ui.get_mut(&owner)) {
+            ui.slow_reads.hide_inflight();
+        }
+        if let Some(stack) = self.toast_stack.clone() {
+            let removed = super::toast_stack::ToastRemoved::from_control(&self.busy_close_focus);
+            stack.update(cx, |_, cx| cx.emit(removed));
+        }
+        cx.notify();
+    }
+
     fn slow_write_shown(&self, now: Instant) -> Option<(&'static str, u64)> {
+        if self.busy_progress_hidden() {
+            return None;
+        }
         let name = self.write_busy_op?;
         let (_, started) = self.app_sessions.running_lease()?;
         let elapsed = now.saturating_duration_since(started);
@@ -138,6 +309,7 @@ impl KagiApp {
             .home_github
             .cloning
             .as_ref()
+            .filter(|_| !self.busy_progress_hidden())
             .and_then(|card| card.target.as_ref())
             .map(|target| {
                 super::render_helpers::safe_text(
@@ -240,14 +412,15 @@ impl KagiApp {
             .child(div().flex_shrink_0().child(icon))
             .child(text)
             .children(skip)
-            .when(show_clone_action, |el| {
+            .when(show_clone_action && !self.busy_progress_hidden(), |el| {
                 el.children(self.render_clone_progress_action(cx))
             })
+            .child(self.render_busy_dismiss(cx))
             .into_any()
     }
 
     fn busy_caption(&self, label: SharedString) -> gpui::AnyElement {
-        if self.home_github.cloning.is_none() {
+        if self.home_github.cloning.is_none() || self.busy_progress_hidden() {
             return div().child(label).into_any();
         }
         let role = gpui::Role::Status;
@@ -263,6 +436,46 @@ impl KagiApp {
                 .child(label),
         )
         .into_any()
+    }
+
+    pub(crate) fn retire_busy_control_focus(&self, cx: &mut Context<Self>) {
+        let visible = self.slow_read_shown().is_some()
+            || self.busy_snackbar_label().is_some()
+            || (self.home_github.cloning.is_some()
+                && !self.busy_request_hidden(self.busy_identity()));
+        if visible || self.busy_close_focus.borrow().is_empty() {
+            return;
+        }
+        if let Some(stack) = &self.toast_stack {
+            let removed = super::toast_stack::ToastRemoved::from_control(&self.busy_close_focus);
+            stack.update(cx, |_, cx| cx.emit(removed));
+        }
+    }
+
+    fn render_busy_dismiss(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let owner = self.active_session();
+        let identity = self.busy_identity();
+        let app = cx.entity().downgrade();
+        let control = super::toast_stack::ToastButton(
+            Button::new(("busy-snackbar-dismiss", 0_u64))
+                .ghost()
+                .small()
+                .flex_shrink_0()
+                .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.hide_busy_progress(owner, identity, cx);
+                })),
+            0,
+            self.busy_close_focus.clone(),
+            "busy-snackbar-dismiss",
+        )
+        .aria_label(SharedString::from(Msg::BusyHideProgress.t()))
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+            let _ = app.update(cx, |this, cx| this.hide_busy_progress(owner, identity, cx));
+        })
+        .on_key_down(super::keyboard_nav::stop_activation_keys)
+        .hover_tooltip("busy-snackbar-dismiss-help", Msg::BusyHideProgress.t());
+        super::e2e::measure_control("busy-snackbar-dismiss", control)
     }
 
     fn render_clone_progress_action(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {

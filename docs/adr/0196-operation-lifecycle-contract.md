@@ -402,8 +402,8 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 2. async plan は `offer_plan_from_async` で空 slot にだけ confirmation を出す。
    競合時は生 plan を queue せず、`PlanToken` / one-shot approval を失効し、
    planning latch を解放して fresh plan の再実行案内を queue する。
-3. 実行済み write の terminal outcome は oplog receipt を真実とし、短い toast で
-   到着を知らせる。記録済み結果を閉じるだけの `AppNotice` は作らない。
+3. 実行済み write の terminal outcome は oplog receipt を真実とし、現在の文脈内
+   footer を基本に一か所で提示する（#1698、下記）。記録済み結果を閉じるだけの `AppNotice` は作らない。
    `Unknown` / `Partial` の acknowledge / inspect capability がある場合だけ、その操作を
    `AppNotice` queue 末尾へ送り、foreground modal は置換しない。
 4. async in-place update は expected variant と modal generation / request identity が
@@ -541,15 +541,152 @@ cannot be undone or restored from its Operation Log record immediately, not only
 that the history will be absent after restart. The in-memory entry has no trusted
 ref-move evidence for those recovery actions. Failure/refusal notices do not claim
 that an unchanged operation needs undo.
-When conflict-stopped execution and recording failure coincide, keep the stopped
-Info notice and neutral footer, and independently emit the recording Error toast
-and immediate AppNotice. Use the unrecorded Partial entry for that notice so it
-does not claim the whole merge/rebase completed. The in-memory row remains
-non-durable; presentation never retries append or manufactures a persisted receipt.
+When conflict-stopped execution and recording failure coincide, the required
+recording acknowledgment is the only primary result surface. Include the observed
+stopped context in that acknowledgment instead of adding a stopped Info notice,
+ordinary result toast or result footer. Merge/rebase starts and a typed
+`ContinueOutcome::Staged` must not claim whole-operation completion. Borrow that
+presentation context only for the original successful outcome; never downgrade
+Unknown or replace the original receipt. The in-memory row remains non-durable;
+presentation never retries append or manufactures a persisted receipt.
 
 Current strict-FF Pull uses the existing typed `NoOp(PullUpToDate)` presentation
 after its successful freshness fetch. Equal or locally ahead tips show the same
 up-to-date notice as ordinary Pull. Exact upstream identity is retained and
 structural blockers take precedence, so a no-op never masks conflict/worktree
 refusal or fabricates a write receipt.
+
+## Amendment — 2026-10-21: one request, one result (#1698)
+
+- 既存の receipt presenter / session owner / `ToastStack` が表示を所有する。
+  通常の現在の Graph 操作は footer のみ。window が非 active、別画面、別 tab、
+  または開始から 2 秒以上の run / Pull / Fetch は toast のみで通知し、完了後に Busy footer を残さない。
+  background owner の結果は現在の tab の footer / panes を変更しない。
+  明示的な SSH Pull / Stash は既存の長時間・network 操作の通知 lane で一枚の toast を使う。
+  通常の remote snapshot が所有する Busy / read-only footer と分離し、結果 toast の通常の
+  表示寿命を refresh で短縮しない。別 visit への帰還も離席として扱い、foreign footer の変更や refresh はしない。
+  footer から toast へ移しても成功対象 / 有用な成功詳細を失わない。操作固有の Success 文は
+  実際に append 済みの Success receipt にだけ利用し、Unknown / Partial / 記録失敗の提示を上書きしない。
+  Clone の Open Repository は、その呼出しが実際に作った / 置換した toast id にだけ結び付ける。
+  append failure や toast を作らなかった完了から、以前の別操作の Details を書き換えない。
+  local / remote Stash は既存 session に加えて要求 visit を照合する。
+- Pull の fetch と一時 stash push / pop は内部手順であり、独立の成功 toast を出さない。
+  backend が記録した全 child receipt と順序 / id はそのまま既存 Operation Log に挿入し、
+  workflow の要求名 **Pull** と最終結果だけを一度提示する。記録失敗した child を成功で隠さない。
+  freshness fetch を共有した場合も各要求の開始時刻を引き継ぎ、最終 no-op / write の提示で
+  経過時間を判断する。decisive receipt が Unknown なら workflow の Partial より優先する。
+  hunk Stage / Unstage 成功も file staging と同じく静かにし、失敗時だけ原因を提示する。
+- 同じ repository + 要求操作 + outcome の toast は既存 card を置換する。
+  件数、close focus、詳細 action を増やさず、repository は操作名の後に短い名前だけを示す。
+  local preflight が no-op と判定した Pull / Push は write receipt を捏造しない。
+  実際に実行した SSH request が no-change を返した場合は、backend の元 receipt を一件だけ保つ。
+  receipt と表示 owner の repository locator に末尾 separator の差があっても同じ key とし、
+  実行済み Pull から no-op Pull に続けて要求した場合も同じ成功 card を置換する。
+  成功 Pull の primary は要求名を含む短い翻訳済み headline とし、未知の stdout 最終行を再掲しない。
+  構造化された成功 target は保ち、内部 no-change と既知 Git CLI の no-change 表記は同じ意味で示す。
+  元 stdout は receipt に保持し、この成功用 formatter で Failed / Partial / Unknown を再分類しない。
+- Failed / Refused は EN/JA の短い原因と次の行動を表示する。Partial / Unknown は意味を保ち、
+  Unknown は再試行禁止を明示する。raw stderr / exit code / 絶対 path は durable receipt の
+  詳細に保持し、未知の診断は安全な翻訳済み要約にする。toast の操作ログ button と常設
+  footer の操作ログ button から詳細へ進める。失敗だけでは panel を自動展開しない。
+  詳細 action は receipt の確定 id に紐づき、Home / 別 tab から操作 owner を表示して展開する。
+  owner tab が閉じられた場合も worktree の再 open / remote 再接続を要求せず、同じ既存 log panel を
+  Home で表示できる。到達できると確認する前に toast / action を消さない。
+  manual Fetch の途中で Home / 別 tab へ移動した場合も、一度記録した同じ failure receipt の
+  結果 / 詳細 action を離席通知として届ける。quiet auto-fetch は単独通知を作らず、Pull の待機が
+  あれば最終要求名 Pull として一度だけ提示する。
+  Home / 別 repository / remote 表示では当該 local owner が実行画面にいないため、復元 / revert は
+  翻訳済みの理由付きで無効化する。inspection / copy は維持し、操作 event の受信時にも owner を
+  再確認してから既存の backend plan / preflight へ渡す。並列の所有 state は持たない。
+  `index.lock` という path だけを lock 競合の証拠にせず、既存 lock の診断が無ければ安全な要約を使う。
+  既存 `[kagi] bottom-panel: open (Failed auto-open)` は harness 互換の契約行として残るが、
+  表示状態を変更する指示ではない。
+- Conflict Save / directory-file resolution / Abort、worktree maintenance、History も同じ既存
+  result owner を使う。通常の既知 Refused は短い原因と詳細導線で提示し、dismiss-only
+  AppNotice を追加しない。既存 receipt、typed blocker、History の非永続化条件は変更しない。
+  background の typed Continue 停止は保存済み receipt への Details 付き Info とし、別 owner の
+  footer / panel を触らない。明示的な Details click 後は既存の owner-follow navigation に従う。
+  Skip の commit 単位の成功と、Merge / Rebase 開始・Rebase Continue の要求全体の未完了を混同しない。
+- 実行済み sequencer Continue の terminal completion は、現在の session / visit と frozen plan の
+  `Arc` identity が一致する消費済み confirm だけを閉じる。KnownFailed / append failure /
+  Unknown でも古い confirm から再実行を誘わず、既存の reconcile Inspect / admission guard と
+  notice の自然配送を保つ。他 owner / 後発の modal や編集 draft は閉じない。
+- 通常の Busy admission 拒否は既存 snackbar と近傍の Idle 理由だけとし、Error toast /
+  Failed footer / dismiss-only AppNotice は作らない。reconcile が実際に必要なら Inspect を保つ。
+  Quit / host-close guard は同一理由を active / queued 合わせて一枚に集約し、write / clone 完了後
+  `may_close_host` が true になれば自然に取り除く。Quit / close 自体を自動再開しない。
+- oplog append failure は別の「記録を保存できなかった」事実であり、既存の明示 acknowledge /
+  inspect notice を唯一の primary とする。共通 recorder の前後に通常 result toast / footer /
+  dismiss-only notice を追加しない。元の失敗診断・Unknown evidence・記録失敗の診断を失わず、
+  既存 Failed / Refused / Unknown を append failure だけで別の outcome に変更しない。
+  無言化、再 append、成功への置き換えはしない。既存の必須 reconcile inspection は維持する。
+- Tier A の所有: `toast_stack_budget`（実 no-op Push 連打 / keyed 置換）、`stage_failure_notice` /
+  `hunk_staging`、`pull_presents_backend_receipts` / departed-owner Pull、host dirty guard / clone close。
+  `worktree_admin_result_owner` / `history_persists`、Continue refusal / stopped / backend-failure、
+  `conflict_family_result_owner`、generic Merge failure と既存 Unknown panic / dismissed-confirm の
+  consumer は、repo/request identity・実 backend state・canonical Details / 必須 ack を検証する。
+  Clone / Stash visit 帰還と remote Pull の current / inactive / away / revisit consumer は、
+  実 receipt と details identity、foreign footer 保護、必須 recording notice を検査する。
+  remote 結果の保持は refresh interception だけでなく、所有 SSH adapter 経由の実 Git と
+  通常の `remote_snapshot` 完走でも検証する。handler 境界と通常 OS 入力の証拠は区別する。
+  Busy のこの実装は #1700 の統合依存であり、同 issue で第二の通知 owner は追加しない。
+## Amendment — 2026-10-21: Pull terminal observation and retained refusal (#1720)
+
+Pull's three successful-execution terminal paths read only the existing
+`Backend::head_state().display()` for the `verified: pull after = ...` diagnostic.
+They do not collect a repository snapshot, which recursively reads unrelated
+linked worktrees and unnecessarily retains the finished write's lease. The FF
+and merge execution paths already return their typed result only after safe
+checkout and the branch-ref transaction commit. A receipt's predicted
+`Success.after` is not an observed HEAD and is not substituted for this read.
+
+This final read is display-only. Failure logs that the actual HEAD was
+unavailable, without a fabricated `verified` prediction; it does not alter the
+already determined result, receipts or settlement classification. Other callers
+of the shared after-snapshot helper retain their existing contract.
+
+A fetched strict-FF refusal is a blocked explanation, not an execution-ready
+approval: its intentionally absent executable Pull identity cannot pass
+preflight. Retention freezes the exact configured remote, full upstream ref,
+local/upstream tips, current HEAD, dirty digest and owning tab visit. A matching
+snapshot also requires current backend identity/state to match. A refusal is
+replanned only to refresh a still-blocked explanation; an executable/no-op
+replacement invalidates the old request rather than starting it. Ready choices
+retain their original executable identity and preflight requirements. Slash
+remote names, local upstreams and display shorthand never replace canonical
+identity. Ordinary merge-capable Pull and explicit strict-FF remain different
+policies; this change does not rewrite Git configuration or their admission.
+
+
+## Amendment — 2026-10-21: dismiss progress, not the request (#1719)
+
+- The existing Busy snackbar owns its own accessible EN/JA close Button. Closing
+  it changes presentation only: no cancellation, Skip probe, lease, approval,
+  durable receipt, final result, recording-failure notice or Quit guard changes.
+  Reuse the existing toast-control focus adapter and removal event, including
+  Settings; repair focus when the control disappears or work finishes.
+- Hidden read state belongs to the existing per-tab tracked read. Hide every
+  read already represented by the card, including simultaneous unfinished reads,
+  not just the oldest slow one. Phase changes do not reset dismissal. A read
+  admitted afterward and another tab's own read remain independently visible.
+- Global work uses its existing admitted operation identity. A local Pull's
+  `(session, visit, request_started)` follows the freshness waiter and confirmation
+  into its distinct execution lease, including non-current branch fast-forward.
+  Explicit conflict Review retains that same origin through the existing merge
+  planner, merge confirmation and admitted merge execution. A new independent
+  Merge still starts with its own planning request; cancellation retires it.
+  Remote planning retains its admitted request identity into approved execution;
+  clone retains its current card's start identity. No operation-name matching,
+  notification controller or parallel delivery store is introduced.
+- Retire suppression with the actual owner. A new admission cannot inherit a
+  completed same-clock request's hidden state; joining the same live waiter does
+  not resurrect it. An unrelated Fetch must not erase a still-owned Pull's
+  dismissal. With no current-visit waiter, global progress keeps a dismissed
+  identity from that same flight rather than reverting to an older undismissed
+  waiter. A new current-visit request takes precedence; another owner's new read
+  stays visible. The existing independent toast entity stays mounted for later
+  results, without retaining the closed Busy card's paint or pointer target.
+- Closing progress never dismisses terminal feedback. Failed/Unknown/Partial
+  and oplog append failure keep the one-request/result and inspect/ack contracts
+  above. Natural completion retires the work; hiding is not completion evidence.
 

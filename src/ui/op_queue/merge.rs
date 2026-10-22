@@ -66,7 +66,8 @@ impl KagiApp {
             .attachment(intent.owner)
             .expect("checked owner");
         let (source, into) = (source.clone(), into.clone());
-        self.planning = Some("merge-plan");
+        self.mark_planning_busy("merge-plan");
+        let progress_identity = self.busy_plan_origin;
         // This is the queue's own plan job, not an external PlanSlotTaken.
         self.op_queue.planning = true;
         klog!("async: merge plan started for {}", source);
@@ -91,10 +92,11 @@ impl KagiApp {
                 off_branch,
                 error: None,
                 queued: Some(id),
+                progress_identity,
             })
         });
         #[cfg(feature = "gui-e2e")]
-        let hold = PLAN_HOLD.with(|slot| slot.borrow_mut().take());
+        let hold = Self::take_merge_plan_hold_for_e2e();
         cx.spawn(async move |this, acx| {
             let result = task.fallible().await;
             #[cfg(feature = "gui-e2e")]
@@ -165,8 +167,12 @@ thread_local! {
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
-    /// Hold the next queued merge plan's result until `hold` completes.
-    pub fn hold_next_queued_merge_plan_for_e2e(hold: gpui::Task<()>) {
+    /// Hold the next merge plan until `hold` completes (direct or queued).
+    pub fn hold_next_merge_plan_for_e2e(hold: gpui::Task<()>) {
         PLAN_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
+    pub(crate) fn take_merge_plan_hold_for_e2e() -> Option<gpui::Task<()>> {
+        PLAN_HOLD.with(|slot| slot.borrow_mut().take())
     }
 }

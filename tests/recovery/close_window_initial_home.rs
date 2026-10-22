@@ -123,9 +123,14 @@ fn check_busy_home(cx: &mut VisualTestAppContext) {
     );
     app.update(cx, |a, cx| {
         a.home_github.cloning = None;
-        a.clear_app_notice();
         cx.notify();
     });
+    draw(cx, window);
+    assert!(app.read_with(cx, |a, _| a.app_notice().is_none()));
+    assert!(
+        open(cx, window),
+        "finishing the clone must not resume a refused close"
+    );
     crate::macos::unmount(cx, app, window);
 }
 
@@ -137,16 +142,28 @@ fn dirty_editor(
     use gpui::Focusable;
     app.update(cx, |a, cx| a.open_editor_workspace(cx));
     let editor = app.read_with(cx, |a, _| a.ui().editor_workspace.clone().unwrap());
-    editor.update(cx, |e, cx| e.open_tab("README.md".into(), cx));
+    editor.update(cx, |e, cx| {
+        e.open_tab("README.md".into(), cx);
+        e.set_markdown_preview(false, cx);
+    });
     cx.run_until_parked();
+    draw(cx, window);
+    let input = editor.read_with(cx, |e, _| e.editor.clone().unwrap());
+    let before = input.read_with(cx, |input, _| input.value().to_string());
     cx.update_window(window, |_, w, cx| {
-        let input = editor.read(cx).editor.as_ref().unwrap();
         w.focus(&input.read(cx).focus_handle(cx), cx);
         w.draw(cx).clear();
+        assert!(
+            input.read(cx).focus_handle(cx).is_focused(w),
+            "the editable document owns text input"
+        );
     })
     .unwrap();
-    cx.simulate_keystrokes(window, "x");
+    cx.simulate_input(window, "unsaved close guard draft\n");
     cx.run_until_parked();
+    assert!(input.read_with(cx, |input, _| {
+        input.value().as_str() != before && input.value().contains("unsaved close guard draft")
+    }));
     assert!(editor.read_with(cx, |e, _| e.any_dirty()));
     editor
 }

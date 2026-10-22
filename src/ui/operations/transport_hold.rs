@@ -60,8 +60,9 @@ impl KagiApp {
         op: &str,
         report: &kagi_git::backend::recording::RunReport,
         repo: &Path,
+        stopped_notice: Option<&str>,
     ) {
-        self.notice_recording_failure(op, &report.recording, repo);
+        self.notice_recording_failure(op, &report.recording, repo, stopped_notice);
         let Ok(kagi_git::OperationOutcome::PrMerge {
             number,
             detail,

@@ -64,7 +64,7 @@ impl KagiApp {
                     Err(e) => klog!("hunk staging error: {}", e),
                 }
                 let op = if staged { "unstage" } else { "stage" };
-                self.notice_recording_failure(op, &report.recording, &repo_path);
+                self.notice_recording_failure(op, &report.recording, &repo_path, None);
                 let display = match &report.result {
                     Err(kagi_git::GitError::Blocked(note)) => {
                         super::record::typed_refusal(op, std::slice::from_ref(note.as_ref()))
@@ -84,7 +84,24 @@ impl KagiApp {
                 };
                 let entry =
                     crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
-                self.record_op_impl(entry, cx, false, display);
+                let recording_failed = matches!(
+                    report.recording,
+                    kagi_git::backend::recording::Recording::Failed { .. }
+                );
+                let announce = report.result.is_err() && self.operation_result_toast_needed(false);
+                self.record_op_result(
+                    entry,
+                    cx,
+                    false,
+                    display,
+                    None,
+                    announce,
+                    true,
+                    None,
+                    recording_failed,
+                    None,
+                    None,
+                );
             }
             Err(e) => {
                 klog!("hunk staging error: {}", e);

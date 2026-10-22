@@ -183,6 +183,7 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
 
     i18n::set_lang(lang);
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(!refuse, cx));
     cx.read(|cx| {
         let summary = &app.read(cx).view().status_summary;
         assert_eq!(summary.behind, Some(0));
@@ -296,13 +297,26 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
     if refuse {
         press_enter(cx, &app, window);
         wait_idle(cx, &app);
-        let expected = i18n::op_refused("pull", reason, 0);
         cx.read(|cx| {
             let app = app.read(cx);
-            assert!(matches!(&app.status_footer, FooterStatus::Failed(text) if text.as_ref() == expected));
-            let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+            assert!(matches!(&app.status_footer, FooterStatus::Idle(text) if text.is_empty()));
+            let stack = app.toast_stack.as_ref().unwrap().read(cx);
+            assert_eq!(stack.toasts().len(), 1, "one away-window refusal preview");
+            let toast = &stack.toasts()[0];
             assert_eq!(toast.kind, ToastKind::Error);
-            assert!(toast.message.ends_with(&expected));
+            assert!(toast
+                .message
+                .contains(i18n::op::user_text::operation_label("pull").as_ref()));
+            assert!(!toast.message.contains(repo.to_str().unwrap()));
+            assert!(!toast.message.contains('\n'));
+            assert!(!toast.message.contains("exit 128"));
+            assert!(
+                matches!(
+                    &toast.action,
+                    Some(kagi::ui::types::ToastAction::OpenOperationLog(_))
+                ),
+                "the refusal exposes its durable details"
+            );
         });
         let pulls = oplog::records(&repo, "pull", 100, true);
         assert_eq!(pulls.len(), 1);
@@ -329,6 +343,20 @@ fn blocked_after_fetch(cx: &mut VisualTestAppContext, lang: Lang, refuse: bool) 
             assert!(
                 matches!(&shown[0].outcome, OpOutcome::Refused { blockers } if *blockers == vec![blocker.message_en()])
             );
+        });
+        draw(cx, window);
+        let action = e2e::control_bounds(window.window_id(), "operation-result-details")
+            .expect("the refusal offers its Operation Log details");
+        cx.simulate_click(window, action.center(), gpui::Modifiers::none());
+        draw(cx, window);
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(app.bottom_panel_open);
+            assert_eq!(app.bottom_tab, kagi::ui::BottomTab::OperationLog);
+            let panel = app.op_log.as_ref().unwrap().read(cx);
+            let row = panel.expanded().expect("the refused Pull is expanded");
+            assert_eq!(panel.entries()[row].id, pulls[0].id);
+            assert_eq!(panel.entries()[row].repo, pulls[0].repo);
         });
     } else {
         press_key(cx, &app, window, "escape");

@@ -34,16 +34,22 @@ impl KagiApp {
             inspect: Some(id),
             acknowledge: None,
             release_armed: false,
+            host_close_guard: false,
         });
     }
 
-    /// An admission the application layer refused: footer, toast and the
-    /// shared app-notice modal, never stderr alone.
+    /// A live writer refuses contextually; reconciliation still offers Inspect.
     pub(crate) fn report_admission_refusal(
         &mut self,
         error: app::AdmissionError,
         cx: &mut Context<Self>,
     ) {
+        let blocking = self.app_sessions.blocking_reconcile();
+        if error == app::AdmissionError::Busy && blocking.is_none() {
+            self.status_footer = FooterStatus::Idle(Msg::OpInProgress.t().into());
+            cx.notify();
+            return;
+        }
         let message = if error == app::AdmissionError::Busy {
             Msg::OpInProgress.t().to_string()
         } else {
@@ -58,7 +64,7 @@ impl KagiApp {
         // `Busy` whose lease is held *by* an unproven termination is the same
         // wall, and `blocking_reconcile` is `None` when there is no such entry.
         let mut notice = modals::AppNotice::from(message);
-        notice.inspect = self.app_sessions.blocking_reconcile();
+        notice.inspect = blocking;
         self.app_notices.push_back(notice);
         self.present_app_notice();
         cx.notify();
@@ -154,6 +160,7 @@ impl KagiApp {
                     "reconcile-release-unobservable",
                     recording,
                     Path::new(&recording.entry().repo),
+                    None,
                 );
                 // Transform failed receipts without duplicating the recording-failure
                 // notice with present_recorded's footer and toast.

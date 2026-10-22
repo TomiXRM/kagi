@@ -60,21 +60,27 @@ pub(crate) fn outcome_text(op: &str, outcome: &kagi_git::oplog::OpOutcome) -> St
     use kagi_ui_core::i18n::op::user_text::{diagnostic, operations};
     match outcome {
         OpOutcome::Success { .. } => operations::completed(op),
-        OpOutcome::Partial { error, .. } => operations::partial(op, error),
-        OpOutcome::Unknown { evidence, .. } => operations::unknown(op, evidence),
-        OpOutcome::Failed { error } => operations::failed(op, error),
+        OpOutcome::Partial { error, .. } => operations::partial_preview(op, error),
+        OpOutcome::Unknown { evidence, .. } => operations::unknown_preview(op, evidence),
+        OpOutcome::Failed { error } => operations::failure_preview(op, error),
         OpOutcome::Refused { blockers } => {
             let reason = blockers
                 .first()
                 .map(|reason| diagnostic(reason))
                 .unwrap_or_else(|| diagnostic("plan has blockers"));
-            kagi_ui_core::i18n::op_refused(op, reason, blockers.len().saturating_sub(1))
+            operations::failure_preview(op, &reason)
         }
     }
 }
 
 struct StoppedConflicts {
     count: Option<usize>,
+}
+
+/// Delivery facts from this presentation, never a second notification owner.
+pub(in crate::ui) struct RecordedPresentation {
+    pub recording_failed: bool,
+    pub toast_id: Option<u64>,
 }
 
 /// Use execution evidence, not receipt summaries or the plan's prediction.
@@ -157,6 +163,8 @@ pub(crate) struct GithubMergePresentation {
 #[derive(Default)]
 pub(crate) struct RunPresentation {
     status: Option<FooterStatus>,
+    /// Pull's freshness fetch belongs to the same user request as its write.
+    request_started: Option<std::time::Instant>,
     history: Option<RunHistory>,
     consume_commit_message: Option<(PathBuf, Option<(String, String)>)>,
     refresh_worktree_wip: Option<PathBuf>,
@@ -459,6 +467,7 @@ impl KagiApp {
         };
         self.mark_write_busy(op_name, cx);
         let stamp = job.stamp();
+        let result_started = cx.background_executor().now();
         self.queue_write_admitted(stamp, cx);
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write
@@ -524,12 +533,21 @@ impl KagiApp {
                     let finished_note = finished_note
                         .take()
                         .expect("one completion per admitted write");
+                    // Reuse the observed stop's display context without changing
+                    // the backend Ok receipt or copying its repository state.
+                    let stopped_notice = if matches!(&report.recording, Recording::Failed { .. }) {
+                        stopped
+                            .as_ref()
+                            .map(|stopped| Msg::conflict_stopped(stopped.count))
+                    } else {
+                        None
+                    };
                     // Settle first, whatever the tab is doing now (#501). A
                     // parked reconcile requirement refuses every later write in
                     // this scope, so the way into it is settlement too — it must
                     // survive the tab guard below (#702 re-review). So must the
                     // `Partial` transport hold `settle_run_receipt` registers.
-                    app.settle_run_receipt(op_name, &report, &repo_path);
+                    app.settle_run_receipt(op_name, &report, &repo_path, stopped_notice.as_deref());
                     app.notice_reconcile_required(id, op_name, &repo_path);
                     // The chain judges the receipt, never the presentation.
                     app.queue_write_settled(stamp, id, &report, cx);
@@ -602,17 +620,46 @@ impl KagiApp {
                             cx,
                         );
                     }
+                    let announce = !current
+                        || app.operation_result_toast_needed(
+                            cx.background_executor().now().saturating_duration_since(
+                                presentation.request_started.unwrap_or(result_started),
+                            ) >= std::time::Duration::from_secs(2),
+                        );
+                    // Moving a successful result away from its footer must
+                    // retain its useful target/detail. Only a durable Success
+                    // may reuse the operation's success-specific presentation.
+                    let success_text = if announce {
+                        match (&report.recording, &presentation.status) {
+                            (
+                                Recording::Appended { entry, .. },
+                                Some(FooterStatus::Success(text)),
+                            ) if matches!(
+                                entry.outcome,
+                                kagi_git::oplog::OpOutcome::Success { .. }
+                            ) =>
+                            {
+                                Some(text.clone())
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                     if !current {
                         // Foreground presentation belongs to the frozen owner,
                         // while Operation Log is window-global and must still
                         // receive the durable result after a tab switch.
-                        app.present_recorded_background(&report.recording, cx);
+                        app.present_recorded_background(&report.recording, success_text, cx);
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }
                     failed = report.result.is_err();
-                    let stopped_notice =
-                        stopped.map(|stopped| Msg::conflict_stopped(stopped.count));
+                    if announce || matches!(report.recording, Recording::Failed { .. }) {
+                        presentation.status = None;
+                    }
+                    let stopped_notice = stopped_notice
+                        .or_else(|| stopped.map(|stopped| Msg::conflict_stopped(stopped.count)));
                     let stopped_for_conflicts = stopped_notice.is_some();
                     let recorded_status = if let Some(finished) = finished {
                         klog!("async: {} {}", op_name, finished);
@@ -620,21 +667,31 @@ impl KagiApp {
                             let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
                                 &report.recording,
                             );
-                            if let Recording::Failed { error, .. } = &report.recording {
-                                // The stopped notice describes Git's state; it
-                                // must not hide the independent loss of its
-                                // durable recovery record.
-                                app.present_oplog_write_failure(&entry, error, cx);
-                            }
                             app.record_op_with_notice(
                                 entry,
                                 cx,
                                 false,
                                 None,
                                 Some((ToastKind::Info, notice.into())),
+                                matches!(report.recording, Recording::Failed { .. }),
                             );
                         } else {
-                            app.present_recorded(&report.recording, cx);
+                            let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                                &report.recording,
+                            );
+                            app.record_op_result(
+                                entry,
+                                cx,
+                                false,
+                                None,
+                                success_text.map(|text| (ToastKind::Success, text)),
+                                announce,
+                                true,
+                                None,
+                                matches!(report.recording, Recording::Failed { .. }),
+                                None,
+                                None,
+                            );
                         }
                         Some(app.status_footer.clone())
                     } else {
@@ -649,11 +706,27 @@ impl KagiApp {
                         // Logs and receipts keep the original reason; the typed
                         // preview remains localized independently.
                         let preview = failure_display.clone();
-                        app.record_op_impl(entry, cx, false, preview);
+                        app.record_op_result(
+                            entry,
+                            cx,
+                            false,
+                            preview,
+                            None,
+                            announce,
+                            true,
+                            None,
+                            matches!(report.recording, Recording::Failed { .. }),
+                            None,
+                            None,
+                        );
                         None
                     };
                     let notice_override = presentation.outcome_notice.clone();
-                    app.apply_run_presentation(presentation, cx);
+                    app.apply_run_presentation(
+                        presentation,
+                        matches!(report.recording, Recording::Failed { .. }),
+                        cx,
+                    );
                     app.enqueue_run_outcome_notice(
                         id,
                         &report.recording,
@@ -738,7 +811,12 @@ impl KagiApp {
         }
     }
 
-    fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
+    fn apply_run_presentation(
+        &mut self,
+        presentation: RunPresentation,
+        recording_failed: bool,
+        cx: &mut Context<Self>,
+    ) {
         if let Some((repo, message)) = presentation.consume_commit_message {
             match message {
                 Some((branch, frozen)) => {
@@ -834,15 +912,17 @@ impl KagiApp {
             }
         }
         if let Some(merged) = presentation.github_merge {
-            self.push_toast(
-                ToastKind::Info,
-                SharedString::from(if merged.detail.is_empty() {
-                    format!("{} #{}", Msg::PrModeMergeDone.t(), merged.pr.number)
-                } else {
-                    merged.detail
-                }),
-                cx,
-            );
+            if !recording_failed {
+                self.push_toast(
+                    ToastKind::Info,
+                    SharedString::from(if merged.detail.is_empty() {
+                        format!("{} #{}", Msg::PrModeMergeDone.t(), merged.pr.number)
+                    } else {
+                        merged.detail
+                    }),
+                    cx,
+                );
+            }
             self.pr_mode_close_tab_for(&merged.pr, cx);
             self.refresh_github_prs(cx);
             self.fetch_async(true, cx);
@@ -891,8 +971,8 @@ impl KagiApp {
         repo_path: &Path,
         cx: &mut Context<Self>,
     ) {
-        self.notice_recording_failure(op_name, &report.recording, repo_path);
-        self.present_recorded(&report.recording, cx);
+        self.notice_recording_failure(op_name, &report.recording, repo_path, None);
+        let _ = self.present_recorded(&report.recording, true, cx);
     }
 
     /// Owner-named notice for a record the execution boundary could not append
@@ -903,29 +983,50 @@ impl KagiApp {
         op: &str,
         recording: &Recording,
         repo: &Path,
+        stopped_notice: Option<&str>,
     ) {
         if let Recording::Failed { error, .. } = recording {
             self.app_notices.push_back(
-                crate::ui::i18n::op::user_text::operations::recording_failed(
+                record::recording_failure_notice(
                     repo.display(),
                     op,
-                    record::recording_outcome(&recording.entry().outcome),
+                    &recording.entry().outcome,
                     &error.to_string(),
+                    stopped_notice,
                 )
                 .into(),
             );
         }
     }
 
-    /// Present an outcome the execution boundary already recorded. When the
-    /// append failed there is no durable trace at all, so a mutation that DID
-    /// happen is presented as "changed but not recorded" — never a clean
-    /// success toast (#501). A failure that changed nothing stands as it is.
-    pub(crate) fn present_recorded(&mut self, recording: &Recording, cx: &mut Context<Self>) {
+    /// Present an attempted receipt for its frozen context. A departed context
+    /// always uses the existing toast owner and never changes the live footer.
+    /// Returns only this call's actual result toast, never a preexisting notice;
+    /// failed recording leaves ordinary presentation to its required notice.
+    pub(crate) fn present_recorded(
+        &mut self,
+        recording: &Recording,
+        current: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
         // Presentation consumes the attempted receipt, never reconstructs its
         // structured recovery/owner metadata and never retries persistence.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        self.record_op_impl(entry, cx, false, None);
+        let announce = !current || self.operation_result_toast_needed(false);
+        self.record_op_result(
+            entry,
+            cx,
+            false,
+            None,
+            None,
+            announce,
+            current,
+            None,
+            matches!(recording, Recording::Failed { .. }),
+            None,
+            None,
+        )
+        .toast_id
     }
 }
 

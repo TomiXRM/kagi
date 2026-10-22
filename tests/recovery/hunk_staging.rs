@@ -108,6 +108,7 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
 
     let (app, window) = mount(cx, &repo);
     let panel_repo = repo.clone();
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     app.update(cx, |app, cx| {
         e2e::open_local_panel_no_inputs(app, panel_repo, cx)
     });
@@ -120,6 +121,18 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
     assert_eq!(shown.len(), 2, "two edits, two hunks");
     click(cx, window, shown[0]);
     wait_idle(cx, &app);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(!matches!(state.status_footer, FooterStatus::Failed(_)));
+        assert!(state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .is_empty());
+        assert!(e2e::app_notice_message(state).is_none());
+    });
     assert_eq!(
         index_text(&repo),
         first_only,
@@ -140,11 +153,24 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
     // Unstage it from the staged diff, in split view: the pane closes, the
     // staged side being empty again.
     theme::set_diff_split(true);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     open(cx, &app, CommitPanelFileRef::Staged { index: 0 });
     let staged = headers(cx, &app);
     assert_eq!(staged.len(), 1);
     click(cx, window, staged[0]);
     wait_idle(cx, &app);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(!matches!(state.status_footer, FooterStatus::Failed(_)));
+        assert!(state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .is_empty());
+        assert!(e2e::app_notice_message(state).is_none());
+    });
     assert_eq!(index_text(&repo), text(|_| None), "the index is HEAD again");
     assert_eq!(panel_counts(cx, &app), (1, 0));
     assert!(
@@ -153,11 +179,13 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
     );
     theme::set_diff_split(false);
 
-    // #490: preserve localized failure delivery, including JA, under a held
-    // index.lock. The same English durable detail appears in both wrappers.
+    // #1698: localized, privacy-safe failure previews retain the complete
+    // backend detail only in the durable receipt.
     for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
         kagi::ui::i18n::set_lang(lang);
+        app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
         open(cx, &app, CommitPanelFileRef::Unstaged { index: 0 });
+        app.update(cx, |app, _| app.bottom_panel_open = false);
         let shown = headers(cx, &app);
         let lock = repo.join(".git/index.lock");
         std::fs::write(&lock, "fixture lock").unwrap();
@@ -168,29 +196,38 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
         let kagi_git::OpOutcome::Failed { error } = &entries[0].outcome else {
             panic!("index.lock failure receipt");
         };
-        let expected = kagi::ui::i18n::op_failed(kagi::ui::i18n::Op::Stage, error);
+        assert!(error.contains("lock") && error.contains("f.txt"), "{error}");
         cx.read(|cx| {
             let state = app.read(cx);
             let FooterStatus::Failed(footer) = &state.status_footer else {
                 panic!("missing staging failure footer")
             };
-            assert!(footer.contains("lock"), "{footer}");
-            assert!(footer.contains("f.txt"), "{footer}");
-            assert_eq!(
-                footer.as_ref(),
-                expected,
-                "{lang:?} failure must be localized"
+            assert!(
+                !footer.is_empty(),
+                "failure keeps a safe user-facing explanation"
             );
-            let toast = state
+            assert!(footer.chars().count() <= 240, "{footer}");
+            for private in [
+                repo.to_str().unwrap(),
+                "f.txt",
+                "index.write",
+                "stderr",
+                "exit status",
+            ] {
+                assert!(!footer.contains(private), "{footer}");
+            }
+            assert!(state
                 .toast_stack
                 .as_ref()
                 .unwrap()
                 .read(cx)
                 .toasts()
-                .last()
-                .unwrap();
-            assert!(matches!(toast.kind, kagi::ui::ToastKind::Error));
-            assert!(toast.message.ends_with(&expected));
+                .is_empty());
+            assert!(e2e::app_notice_message(state).is_none());
+            assert!(
+                !state.bottom_panel_open,
+                "failure must not reveal Operation Log"
+            );
         });
         assert_eq!(
             index_text(&repo),
@@ -232,6 +269,7 @@ pub fn scenario_hunk_staging_content_identity(cx: &mut VisualTestAppContext) {
             }
             let (app, window) = mount(cx, &repo);
             app.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(true, cx);
                 e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
             });
             cx.run_until_parked();
@@ -269,14 +307,28 @@ pub fn scenario_hunk_staging_content_identity(cx: &mut VisualTestAppContext) {
             let note = PlanNote::Common(CommonNote::HunkChanged {
                 path: "f.txt".into(),
             });
-            let expected = i18n::op_refused(op, i18n::plan_note_text(&note), 0);
             cx.read(|cx| {
                 let state = app.read(cx);
-                assert!(matches!(&state.status_footer, FooterStatus::Failed(m) if m.as_ref() == expected),
-                    "{lang:?} {op}: {:?}", state.status_footer);
-                let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
-                assert!(matches!(toast.kind, kagi::ui::ToastKind::Error));
-                assert!(toast.message.ends_with(&expected), "{:?}", toast.message);
+                let FooterStatus::Failed(preview) = &state.status_footer else {
+                    panic!(
+                        "{lang:?} {op}: missing refusal footer: {:?}",
+                        state.status_footer
+                    );
+                };
+                assert!(!preview.is_empty() && preview.chars().count() <= 240);
+                for private in [repo.to_str().unwrap(), "f.txt", "stderr", "exit status"] {
+                    assert!(!preview.contains(private), "{preview}");
+                }
+                assert!(
+                    state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .is_empty(),
+                    "an attended hunk refusal stays in the footer"
+                );
                 assert!(e2e::app_notice_message(state).is_none());
             });
             assert_eq!(git_value(&repo, &["rev-parse", "HEAD"]), head);

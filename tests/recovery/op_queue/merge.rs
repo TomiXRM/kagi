@@ -372,7 +372,7 @@ pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) 
         app.open_merge_modal("feature".into(), Some("main".into()), cx)
     });
     let (plan_hold, plan_release) = deferred::<()>(cx);
-    KagiApp::hold_next_queued_merge_plan_for_e2e(plan_hold);
+    KagiApp::hold_next_merge_plan_for_e2e(plan_hold);
     release.send(());
     tick_until(cx, &app, "the merge replan", |app| {
         rows(&app.queue_strip_for_e2e(std::time::Instant::now()))
@@ -380,6 +380,12 @@ pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) 
                 "merge feature → main".to_string(),
                 queue_text(QueueText::Planning).to_string(),
             )]
+    });
+    crate::busy_dismiss::close_by_pointer(cx, &app, window);
+    cx.read(|cx| {
+        assert!(app.read(cx).planning.is_some());
+        assert!(e2e::op_latched(app.read(cx)));
+        assert!(app.read(cx).merge_modal().is_none());
     });
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     plan_release.send(());

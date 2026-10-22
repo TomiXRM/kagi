@@ -32,7 +32,14 @@ pub(crate) fn op_log_panel(
     cx.subscribe(
         &panel,
         |app, _panel, event: &OpLogPanelEvent, cx| match event {
-            OpLogPanelEvent::Restore(op) => app.open_oplog_restore_modal(op.clone(), cx),
+            OpLogPanelEvent::Restore { op, entry } => {
+                // Rendering is only an affordance. Recheck the receipt's owner
+                // after queued input / tab changes before planning any write.
+                if app.oplog_restore_owner_matches(entry.owner_path()) {
+                    app.open_oplog_restore_modal(op.clone(), cx);
+                }
+                cx.notify();
+            }
         },
     )
     .detach();
@@ -40,6 +47,41 @@ pub(crate) fn op_log_panel(
 }
 
 impl KagiApp {
+    pub(in crate::ui) fn oplog_restore_owner_matches(&self, path: &std::path::Path) -> bool {
+        !self.home_in_front()
+            && self.remote_view.is_none()
+            && self.active_session().is_some()
+            && self.ui().repo_session.is_some()
+            && self.repo_path.as_deref() == Some(path)
+    }
+
+    /// A result's detail action follows its owner, never the currently visible
+    /// repository. The shared log can still show a receipt after its tab closes.
+    pub(crate) fn open_operation_result(
+        &mut self,
+        entry: &crate::ui::oplog_panel::EntryKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self.op_log.clone() else {
+            return false;
+        };
+        if !panel.update(cx, |panel, cx| panel.reveal_entry(entry, cx)) {
+            return false;
+        }
+        let path = entry.owner_path();
+        if let Some(index) = self.tabs.iter().position(|tab| tab.path == path) {
+            let left = self.home_yields_to_repository();
+            self.return_to_tab(index, left, cx);
+        }
+        // A removed repository (or a closed remote tab) does not make its
+        // durable receipt depend on reopening Git or reconnecting over SSH.
+        // Home renders the same existing log panel when no owner is available.
+        self.bottom_panel_open = true;
+        self.bottom_tab = BottomTab::OperationLog;
+        cx.notify();
+        true
+    }
+
     /// Plan `op` (`OpRevert` / `RestoreToPoint`) for the active repository and
     /// show the card. Nothing is written here.
     pub fn open_oplog_restore_modal(&mut self, op: Operation, cx: &mut Context<Self>) {

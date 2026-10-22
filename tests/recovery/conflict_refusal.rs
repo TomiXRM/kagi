@@ -38,7 +38,10 @@ fn save(cx: &mut VisualTestAppContext) {
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    app.update(cx, |app, cx| {
+        app.set_window_active_for_e2e(false, cx);
+        app.detect_conflict_mode(cx);
+    });
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
     conflict.update(cx, |view, cx| {
@@ -70,7 +73,13 @@ fn save(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
     assert_eq!(std::fs::read(repo.join("file.txt")).unwrap(), before);
-    assert_refusal(cx, &app, "conflict-save:merge: refused (1 blocker)");
+    assert_refusal(
+        cx,
+        &app,
+        window,
+        &entries[0],
+        "conflict-save:merge: refused (1 blocker)",
+    );
     drop(conflict);
     unmount(cx, app, window);
 }
@@ -83,7 +92,10 @@ fn abort(cx: &mut VisualTestAppContext, banner: bool) {
     };
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    app.update(cx, |app, cx| {
+        app.set_window_active_for_e2e(false, cx);
+        app.detect_conflict_mode(cx);
+    });
     cx.run_until_parked();
     let control = if banner {
         "operation-strip-abort"
@@ -103,7 +115,6 @@ fn abort(cx: &mut VisualTestAppContext, banner: bool) {
     wait_idle(cx, &app);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    assert_refusal(cx, &app, "merge-abort: refused (1 blocker)");
     assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
     assert_eq!(
         std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
@@ -122,11 +133,16 @@ fn abort(cx: &mut VisualTestAppContext, banner: bool) {
         matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
         if blockers.iter().any(|reason| reason.contains("conflict changed since it was observed")))
     );
+    assert_refusal(
+        cx,
+        &app,
+        window,
+        &entries[0],
+        "merge-abort: refused (1 blocker)",
+    );
 
     // #755: a reload that lands while such a confirmation is open closes it
     // rather than refreshing it in place, and executes nothing on the way.
-    click_control(cx, window, "app-notice-confirm");
-    cx.run_until_parked();
     click_control(cx, window, control);
     cx.run_until_parked();
     assert!(
@@ -155,38 +171,188 @@ fn abort(cx: &mut VisualTestAppContext, banner: bool) {
     unmount(cx, app, window);
 }
 
-fn assert_refusal(cx: &VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>, footer: &str) {
+fn assert_refusal(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: gpui::AnyWindowHandle,
+    receipt: &kagi_git::oplog::OpLogEntry,
+    footer: &str,
+) {
     cx.read(|cx| {
         let state = app.read(cx);
-        let notice = e2e::app_notice_message(state).expect("refusal notice");
-        assert!(!notice.is_empty());
-        let toast = state
-            .toast_stack
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .toasts()
-            .last()
-            .unwrap();
-        assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
-        let kagi::ui::FooterStatus::Failed(message) = &state.status_footer else {
-            panic!("refusal must have a failed footer");
-        };
-        for shown in [notice, toast.message.as_ref(), message.as_ref()] {
-            assert!(!shown.is_empty());
-            for internal in [
-                "conflict-save:",
-                "merge-abort:",
-                "resolution buffer",
-                "since it was observed",
-                "(1 blocker)",
-            ] {
-                assert!(!shown.contains(internal), "{shown}");
-            }
+        assert!(
+            state.app_notice().is_none(),
+            "a known refusal needs no dismissal"
+        );
+        assert!(!e2e::queued_notice_contains(state, &receipt.repo));
+        let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert_eq!(
+            toasts.len(),
+            1,
+            "one unattended refusal, not three primary surfaces"
+        );
+        assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Error);
+        assert!(!matches!(
+            state.status_footer,
+            kagi::ui::FooterStatus::Failed(_) | kagi::ui::FooterStatus::Success(_)
+        ));
+        for internal in [
+            "conflict-save:",
+            "merge-abort:",
+            "resolution buffer",
+            "since it was observed",
+            "(1 blocker)",
+            receipt.repo.as_str(),
+        ] {
+            assert!(
+                !toasts[0].message.contains(internal),
+                "{}",
+                toasts[0].message
+            );
         }
+        // English klog is an explicit external contract, not a user-copy pin.
         assert!(kagi_ui_core::klog::tail()
             .iter()
             .any(|line| line == &format!("[kagi] footer: {footer}")));
         assert!(!state.app_sessions.has_leases());
     });
+    click_control(cx, window, "operation-result-details");
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.bottom_panel_open);
+        assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        let row = &panel.entries()[panel.expanded().unwrap()];
+        assert_eq!(
+            (row.id, row.timestamp, &row.op, &row.repo),
+            (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+        );
+    });
+}
+
+/// An already delivered Continue intent is refused by the real unresolved
+/// buffer. This does not claim the disabled Continue button accepts new input.
+pub(super) fn continue_result_owner(cx: &mut VisualTestAppContext) {
+    let _restore_language = RestoreLanguage {
+        language: i18n::lang(),
+        _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
+    };
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    for language in [Lang::En, Lang::Ja] {
+        for recording_failure in [false, true] {
+            i18n::set_lang(language);
+            let fixture = content_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                app.set_window_active_for_e2e(false, cx);
+                app.detect_conflict_mode(cx);
+            });
+            cx.run_until_parked();
+            let index = std::fs::read(repo.join(".git/index")).unwrap();
+            let merge_head = std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap();
+            let worktree = std::fs::read(repo.join("file.txt")).unwrap();
+            let panel_before = cx.read(|cx| {
+                let state = app.read(cx);
+                (state.bottom_panel_open, state.bottom_tab)
+            });
+            let recording_lock = recording_failure.then(|| {
+                let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                    .join("operations.jsonl.lock");
+                let lock = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(path)
+                    .unwrap();
+                lock.lock().unwrap();
+                lock
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let owner = app
+                        .app_sessions
+                        .attachment(app.active_session().unwrap())
+                        .unwrap();
+                    app.conflict_continue(owner, window, cx);
+                });
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(!state.app_sessions.has_leases());
+                assert_eq!((state.bottom_panel_open, state.bottom_tab), panel_before);
+                assert!(!matches!(
+                    state.status_footer,
+                    kagi::ui::FooterStatus::Failed(_)
+                ));
+                let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+                if recording_failure {
+                    let notice = state
+                        .app_notice()
+                        .expect("failed append requires acknowledgment");
+                    assert!(notice
+                        .message
+                        .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                    assert!(
+                        toasts.is_empty(),
+                        "no pre-announced refusal may survive beside acknowledgment"
+                    );
+                } else {
+                    assert!(state.app_notice().is_none());
+                    assert_eq!(
+                        toasts.len(),
+                        1,
+                        "the typed refusal has one presentation owner"
+                    );
+                    assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Error);
+                    assert!(!toasts[0].message.contains(repo.to_str().unwrap()));
+                }
+            });
+            let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "merge-continue")
+                .collect();
+            assert_eq!(entries.len(), usize::from(!recording_failure));
+            if !recording_failure {
+                assert!(
+                    matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
+                    if blockers.len() == 1)
+                );
+                assert_eq!(entries[0].ref_moves, Some(Vec::new()));
+                click_control(cx, window, "operation-result-details");
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(state.bottom_panel_open);
+                    assert_eq!(state.bottom_tab, kagi::ui::BottomTab::OperationLog);
+                    let panel = state.op_log.as_ref().unwrap().read(cx);
+                    let row = &panel.entries()[panel.expanded().unwrap()];
+                    let receipt = &entries[0];
+                    assert_eq!(
+                        (row.id, row.timestamp, &row.op, &row.repo),
+                        (receipt.id, receipt.timestamp, &receipt.op, &receipt.repo)
+                    );
+                });
+            }
+            drop(recording_lock);
+            if recording_failure {
+                click_control(cx, window, "app-notice-confirm");
+                assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+            }
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+            assert_eq!(
+                std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
+                merge_head
+            );
+            assert_eq!(std::fs::read(repo.join("file.txt")).unwrap(), worktree);
+            assert_eq!(
+                read_oplog_tail_for_repo(&repo, 100).len(),
+                entries.len(),
+                "inspection and acknowledgment do not execute or append again"
+            );
+            unmount(cx, app, window);
+        }
+    }
 }

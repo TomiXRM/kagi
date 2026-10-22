@@ -208,6 +208,7 @@ impl KagiApp {
                     }
                     _ => None,
                 };
+                let mut recording_failed = false;
                 if let Err(error) = &result {
                     let outcome = if let kagi_git::GitError::TerminationUnknown(reason) = error {
                         kagi_git::oplog::OpOutcome::Unknown {
@@ -227,7 +228,7 @@ impl KagiApp {
                         };
                         kagi_git::oplog::OpOutcome::Failed { error: detail }
                     };
-                    app.record_ref_fetch_failure(
+                    let recording = app.record_ref_fetch_failure(
                         "fetch-remote-branch",
                         owner,
                         visit,
@@ -240,6 +241,10 @@ impl KagiApp {
                         auth_summary.as_ref().map(|_| error.to_string()),
                         &repo_path,
                         cx,
+                    );
+                    recording_failed = matches!(
+                        recording,
+                        kagi_git::backend::recording::Recording::Failed { .. }
                     );
                 }
                 for (id, op, path) in app.app_sessions.drain_unaccounted() {
@@ -258,6 +263,11 @@ impl KagiApp {
                     Err(e) => klog!("fetch-remote-branch: failed {} — {}", remote_branch, e),
                 }
                 if !current {
+                    cx.notify();
+                    return;
+                }
+                if recording_failed {
+                    app.status_footer = FooterStatus::Idle("".into());
                     cx.notify();
                     return;
                 }
@@ -621,7 +631,8 @@ impl KagiApp {
 
     /// Persist the fetch failure for its frozen repository and push its
     /// receipt into the shared Operation Log panel even after a tab switch.
-    /// Only the still-current owner may open the panel or show an error.
+    /// Only the still-current owner may open the panel. Return the recording
+    /// so a departed manual Fetch can link its result to the appended receipt.
     // The frozen receipt and owner stamp arrive separately from two fetch jobs.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_ref_fetch_failure(
@@ -635,7 +646,7 @@ impl KagiApp {
         technical_detail: Option<String>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
-    ) {
+    ) -> kagi_git::backend::recording::Recording {
         let mut entry =
             kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
                 .with_ref_moves(ref_moves);
@@ -649,14 +660,15 @@ impl KagiApp {
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
             if current {
-                self.present_oplog_write_failure(recording.entry(), error, cx);
+                self.present_oplog_write_failure(recording.entry(), error, None, cx);
             } else {
                 self.app_notices.push_back(
-                    i18n::op::user_text::operations::recording_failed(
+                    super::record::recording_failure_notice(
                         repo_path.display(),
                         op,
-                        super::record::recording_outcome(&recording.entry().outcome),
+                        &recording.entry().outcome,
                         &error.to_string(),
+                        None,
                     )
                     .into(),
                 );
@@ -670,10 +682,16 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        if current {
+        if current
+            && !matches!(
+                recording,
+                kagi_git::backend::recording::Recording::Failed { .. }
+            )
+        {
             self.bottom_panel_open = true;
             self.bottom_tab = BottomTab::OperationLog;
         }
+        recording
     }
 }
 

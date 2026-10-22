@@ -84,9 +84,11 @@ pub struct PullPlanModal {
     /// stashing first hides any later change from every downstream guard.
     /// `None` for a remote pull, which stashes nothing.
     pub dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
-    /// Successful-fetch origin, frozen to the requesting tab's visit. Only
-    /// these confirmations may survive their own unchanged repository reload.
-    pub fetch_owner: Option<(crate::app::SessionId, u64)>,
+    /// Successful-fetch origin: requesting tab, visit, and original request time.
+    /// Only these confirmations may survive their own unchanged repository reload.
+    pub fetch_owner: Option<(crate::app::SessionId, u64, std::time::Instant)>,
+    /// Presentation origin of an SSH planning request, independent of approval.
+    pub progress_request: Option<crate::app::RequestId>,
 }
 
 /// State for an in-progress operation-history Undo/Redo confirmation
@@ -299,6 +301,8 @@ pub struct MergePlanModal {
     pub error: Option<SharedString>,
     /// Queue-owned confirmation; absent for a direct merge.
     pub queued: Option<crate::app::IntentId>,
+    /// Presentation owner only; Pull's existing request can span merge planning.
+    pub(super) progress_identity: Option<super::busy::BusyIdentity>,
 }
 
 /// State for creating a local tracking branch from a remote branch and checking
@@ -711,6 +715,8 @@ pub struct AppNotice {
     pub acknowledge: Option<crate::app::ReconcileRead>,
     /// Only the explicit unobservable-release action uses two-step approval.
     pub release_armed: bool,
+    /// A transient host-close refusal, retired when the writer/clone finishes.
+    pub host_close_guard: bool,
 }
 impl From<String> for AppNotice {
     fn from(message: String) -> Self {
@@ -719,6 +725,7 @@ impl From<String> for AppNotice {
             inspect: None,
             acknowledge: None,
             release_armed: false,
+            host_close_guard: false,
         }
     }
 }

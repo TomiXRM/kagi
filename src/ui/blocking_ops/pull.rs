@@ -3,9 +3,19 @@ use kagi_git::backend::stash::StashEvidence;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::{GitError, OperationOutcome, OperationPlan, PullOutcome, StashPopOutcome};
 
-use super::{open_backend, verify_after_snapshot};
+use super::open_backend;
 use crate::app::{PullPresentation, PullReport, AUTO_STASH_MESSAGE};
 use crate::ui::i18n;
+
+// Completion only logs the current HEAD. A repository-wide snapshot would wait
+// for unrelated linked-worktree status while retaining the finished Pull lease.
+// This display-only read must not change the write's already determined result.
+fn log_pull_after_head(repo: &kagi_git::Backend) {
+    match repo.head_state() {
+        Ok(head) => klog!("verified: pull after = {}", head.display()),
+        Err(error) => klog!("verify: pull after HEAD unavailable — {}", error),
+    }
+}
 
 /// Local-protection and restore predictions that the user explicitly approved.
 ///
@@ -341,8 +351,7 @@ pub(crate) fn pull_blocking(
         match restored {
             Ok(StashPopOutcome::Applied) => {}
             Ok(StashPopOutcome::ConflictedStashKept { files }) => {
-                let after = verify_after_snapshot(repo_path, plan);
-                klog!("verified: pull after = {}", after.head);
+                log_pull_after_head(&repo);
                 return Ok(PullReport::settled(
                     steps,
                     PullPresentation::Partial {
@@ -352,8 +361,7 @@ pub(crate) fn pull_blocking(
                 ));
             }
             Err(error) => {
-                let after = verify_after_snapshot(repo_path, plan);
-                klog!("verified: pull after = {}", after.head);
+                log_pull_after_head(&repo);
                 return Ok(PullReport::settled(
                     steps,
                     PullPresentation::Partial {
@@ -365,8 +373,7 @@ pub(crate) fn pull_blocking(
         }
     }
 
-    let after = verify_after_snapshot(repo_path, plan);
-    klog!("verified: pull after = {}", after.head);
+    log_pull_after_head(&repo);
     Ok(PullReport::settled(
         steps,
         PullPresentation::Success {

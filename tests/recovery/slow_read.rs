@@ -182,6 +182,7 @@ pub fn scenario_slow_write_explained(cx: &mut VisualTestAppContext) {
         "the initial snapshot",
     );
     let original_language = i18n::lang();
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
         let (hold, release) = deferred::<()>(cx);
@@ -258,6 +259,21 @@ pub fn scenario_slow_write_explained(cx: &mut VisualTestAppContext) {
         }
         assert_eq!(drawn_write_advice(cx, window), None, "end clears advice");
         cx.read(|cx| assert!(!app.read(cx).app_sessions.has_leases()));
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+            assert_eq!(
+                toasts.len(),
+                1,
+                "a long attended request has one replaceable result"
+            );
+            assert_eq!(toasts[0].kind, kagi::ui::ToastKind::Success);
+            assert!(!matches!(
+                state.status_footer,
+                kagi::ui::FooterStatus::Busy(_)
+            ));
+            assert!(state.app_notice().is_none());
+        });
     }
     i18n::set_lang(original_language);
     unmount(cx, app, window);

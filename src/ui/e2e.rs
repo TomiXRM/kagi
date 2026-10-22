@@ -504,6 +504,18 @@ pub fn queued_notice_contains(app: &KagiApp, needle: &str) -> bool {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn host_close_guard_count(app: &KagiApp) -> usize {
+    usize::from(
+        app.app_notice()
+            .is_some_and(|notice| notice.host_close_guard),
+    ) + app
+        .app_notices
+        .iter()
+        .filter(|notice| notice.host_close_guard)
+        .count()
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn set_remote_browse_host_input(
     app: &mut KagiApp,
     value: &str,
@@ -548,6 +560,7 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
         inspect: None,
         acknowledge: Some(read),
         release_armed: false,
+        host_close_guard: false,
     });
     app.present_app_notice();
     true
@@ -749,9 +762,17 @@ pub fn build_kagi_entity(
         if let Some(stack) = app_state.toast_stack.as_ref() {
             cx.subscribe(
                 stack,
-                |app, _, action: &super::types::ToastAction, cx| match action {
-                    super::types::ToastAction::OpenRepository(path) => {
-                        app.open_repository(path.clone(), cx);
+                |app, stack, request: &toast_stack::ToastActionRequested, cx| {
+                    let opened = match &request.action {
+                        super::types::ToastAction::OpenRepository(path) => {
+                            app.open_repository(path.clone(), cx)
+                        }
+                        super::types::ToastAction::OpenOperationLog(entry) => {
+                            app.open_operation_result(entry, cx)
+                        }
+                    };
+                    if opened {
+                        stack.update(cx, |stack, cx| stack.begin_exit(request.id, cx));
                     }
                 },
             )
@@ -935,6 +956,16 @@ pub fn mount_root(
 #[cfg(feature = "gui-e2e")]
 pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
+}
+
+/// Retained focus of the actual rendered progress close Button.
+#[cfg(feature = "gui-e2e")]
+pub fn busy_dismiss_focus(app: &KagiApp, window: gpui::WindowId) -> Option<gpui::FocusHandle> {
+    app.busy_close_focus
+        .borrow()
+        .iter()
+        .find(|(host, _)| *host == window)
+        .map(|(_, focus)| focus.clone())
 }
 
 /// The one gate every state-changing entry point consults (ADR-0196 Wave 3),

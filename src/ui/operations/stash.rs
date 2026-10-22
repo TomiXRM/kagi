@@ -217,16 +217,17 @@ impl KagiApp {
                                 error,
                             } = &completion.recording
                             {
-                                let message = i18n::op::user_text::operations::recording_failed(
+                                let message = super::record::recording_failure_notice(
                                     &attempted.repo,
                                     &attempted.op,
-                                    super::record::recording_outcome(&attempted.outcome),
+                                    &attempted.outcome,
                                     &error.to_string(),
+                                    None,
                                 );
-                                app.push_toast(ToastKind::Error, message.clone(), cx);
                                 app.app_notices.push_back(message.into());
                             }
                             app.app_sessions.apply_plan_error(completion);
+                            app.present_app_notice();
                             cx.notify();
                         });
                     })

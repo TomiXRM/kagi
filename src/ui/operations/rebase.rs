@@ -40,7 +40,7 @@ impl KagiApp {
             return;
         };
         self.clear_rebase_current_onto_modal();
-        self.planning = Some("rebase-plan");
+        self.mark_planning_busy("rebase-plan");
         self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
             SharedString::from(i18n::busy_label("rebase-plan")),
         ));

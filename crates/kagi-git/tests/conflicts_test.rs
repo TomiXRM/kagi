@@ -2156,3 +2156,6 @@ mod draft_recency;
 
 #[path = "conflicts/continue_index.rs"]
 mod continue_index;
+
+#[path = "conflicts/continue_revision.rs"]
+mod continue_revision;

@@ -49,13 +49,16 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
     assert!(std::process::Command::new("ssh-keygen")
         .args(["-q", "-t", "ed25519", "-N", "", "-C", "owned-kagi-fixture", "-f"])
         .arg(&identity).status().unwrap().success());
+    let known_hosts = shim.path().join("known_hosts");
+    let public_key = std::fs::read_to_string(identity.with_extension("pub")).unwrap();
+    std::fs::write(&known_hosts, format!("e2e.invalid {public_key}")).unwrap();
     let script = shim.path().join("ssh");
     // This replaces only SSH transport: execute the unchanged production
     // protocol shell locally against this disposable repository/runtime. Both
     // the write and the following remote_snapshot run their real Git commands.
     std::fs::write(&script, format!(
-        "#!/bin/sh\nif [ \"$1\" = -G ]; then\n printf 'hostname e2e.invalid\\nuser kagi-e2e\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\nproxyjump none\\n'\n exit 0\nfi\nfor argument do command=$argument; done\nexport HOME='{}'\nexport XDG_RUNTIME_DIR='{}'\nexec /bin/sh -c \"$command\"\n",
-        repo.display(), runtime.path().display()
+        "#!/bin/sh\nif [ \"$1\" = -G ]; then\n printf 'hostname e2e.invalid\\nuser kagi-e2e\\nport 22\\nidentityfile %s\\nuserknownhostsfile %s\\nglobalknownhostsfile %s\\nproxyjump none\\n' '{}' '{}' '{}'\n exit 0\nfi\nfor argument do command=$argument; done\nexport HOME='{}'\nexport XDG_RUNTIME_DIR='{}'\nexec /bin/sh -c \"$command\"\n",
+        identity.display(), known_hosts.display(), known_hosts.display(), repo.display(), runtime.path().display()
     )).unwrap();
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
@@ -78,8 +81,13 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
         if pull { app.open_pull_modal(cx); }
         else { app.open_stash_drop_modal(1, cx); }
     });
-    wait(cx, &app, "the real SSH identity plan is confirmable", |app| {
-        matches!(app.app_sessions.plan_state(), kagi::app::PlanState::Ready { .. })
+    wait(cx, &app, "the real SSH identity plan settles", |app| {
+        !matches!(app.app_sessions.plan_state(), kagi::app::PlanState::Planning { .. })
+    });
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(state.app_sessions.plan_state(), kagi::app::PlanState::Ready { .. }),
+            "real SSH prerequisites must be confirmable: {:?}", state.status_footer);
     });
     let (owner, tab) = cx.read(|cx| {
         let state = app.read(cx);

@@ -263,11 +263,7 @@ impl KagiApp {
             }
             _ => match &report.terminal.presentation {
                 crate::app::PullPresentation::Success { summary } => {
-                    format!(
-                        "{}: {}",
-                        i18n::op::user_text::operation_label("pull"),
-                        i18n::op::user_text::operations::pull_summary(summary)
-                    )
+                    i18n::op::user_text::operations::pull_summary(summary)
                 }
                 crate::app::PullPresentation::Failed { error } => {
                     i18n::op::user_text::operations::failure_preview("pull", error)

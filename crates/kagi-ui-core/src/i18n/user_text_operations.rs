@@ -377,32 +377,35 @@ pub fn branch_result(branch: &str, outcome: &OperationOutcome) -> String {
     }
 }
 
+/// Returns a complete success headline, not an unrecognized backend output line.
 pub fn pull_summary(summary: &str) -> String {
     let (result, restored) = summary
         .split_once("; ")
         .map_or((summary, None), |(a, b)| (a, Some(b)));
-    let shown = if result == "already up to date" {
+    let label = operation_label("pull");
+    let mut shown = if result == "already up to date" {
         match lang() {
-            Lang::En => "Already up to date.".to_string(),
-            Lang::Ja => "すでに最新です。".to_string(),
+            Lang::En => format!("{label}: Already up to date."),
+            Lang::Ja => format!("{label}: すでに最新です。"),
         }
     } else if let Some(target) = result.strip_prefix("fast-forward to ") {
         match lang() {
-            Lang::En => format!("Fast-forwarded to {target}."),
-            Lang::Ja => format!("{target} に fast-forward しました。"),
+            Lang::En => format!("{label}: Fast-forwarded to {target}."),
+            Lang::Ja => format!("{label}: {target} に fast-forward しました。"),
         }
     } else if let Some(commit) = result.strip_prefix("merge commit ") {
         match lang() {
-            Lang::En => format!("Created merge commit {commit}."),
-            Lang::Ja => format!("merge commit {commit} を作成しました。"),
+            Lang::En => format!("{label}: Created merge commit {commit}."),
+            Lang::Ja => format!("{label}: merge commit {commit} を作成しました。"),
         }
     } else {
-        return format!("{}: {}", operation_label("pull"), diagnostic(summary));
+        return completed("pull");
     };
-    match restored {
-        Some(restored) => format!("{shown} {}", diagnostic(restored)),
-        None => shown,
+    if let Some(restored) = restored {
+        shown.push(' ');
+        shown.push_str(&diagnostic(restored));
     }
+    shown
 }
 
 pub fn worktree_lock(name: &str, locked: bool) -> String {
@@ -822,6 +825,7 @@ mod tests {
             for shown in [
                 branch_progress("branch-pull-ff", branch),
                 branch_result(branch, &OperationOutcome::Pull(PullOutcome::UpToDate)),
+                pull_summary(&format!("fast-forward to {branch}")),
             ] {
                 assert!(shown.contains(branch), "{shown}");
                 assert_eq!(
@@ -835,10 +839,18 @@ mod tests {
     }
 
     #[test]
-    fn unknown_git_output_is_not_rewritten() {
-        let _guard = crate::i18n::tests::LOCK.lock();
-        let reason = "remote: user-defined_hook rejected feature/my_branch-123";
-        assert!(pull_summary(reason).ends_with(reason));
+    fn successful_pull_primary_does_not_replay_unrecognized_backend_output() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            set_lang_no_persist(language);
+            let first = pull_summary("create mode 100644 /tmp/private-first.txt");
+            let second = pull_summary("unrecognized backend stdout /tmp/private-second.txt");
+            assert_eq!(first, second, "unrecognized stdout is not primary UI copy");
+            assert!(first.starts_with(&format!("{}: ", operation_label("pull"))));
+        }
+        set_lang_no_persist(previous);
     }
 
     #[test]

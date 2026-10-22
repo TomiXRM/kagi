@@ -249,7 +249,7 @@ fn result_owner(
             assert_eq!(matches!(entry.outcome, OpOutcome::Unknown { .. }), unknown);
             assert_eq!(matches!(entry.outcome, OpOutcome::Success { .. }), !unknown);
         }
-        let announce = surface != Surface::Current && !recording_failure;
+        let announce = !recording_failure;
         assert_eq!(stack.toasts().len(), usize::from(announce));
         if announce {
             let toast = &stack.toasts()[0];
@@ -271,7 +271,7 @@ fn result_owner(
         (entry.id, entry.timestamp, entry.op.clone(), entry.repo.clone())
     });
     drop(recording_lock);
-    if unknown && !recording_failure && surface != Surface::Current {
+    if unknown && !recording_failure {
         // The required inspection is not bypassed to click a covered toast.
         // Use the existing three explicit Inspect / arm / acknowledge controls
         // before testing the result's actual Details navigation.

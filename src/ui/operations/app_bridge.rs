@@ -608,8 +608,6 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        // #353: a refused remote drop names its diagnostic, not a count.
-        let shown = super::outcome_text("stash-drop", &entry.outcome);
         let active = self.remote_view.as_ref().is_some_and(|view| {
             view.host == owner.host
                 && view.root == owner.root
@@ -620,8 +618,11 @@ impl KagiApp {
             report.recording,
             kagi_git::backend::recording::Recording::Failed { .. }
         );
-        let announce = !active || self.operation_result_toast_needed(false);
-        if announce && !recording_failed {
+        // Explicit SSH operations use the existing long-running result lane:
+        // their following snapshot owns Busy / Remote footer presentation.
+        if !recording_failed {
+            // #353: a refused remote drop names its diagnostic, not a count.
+            let shown = super::outcome_text("stash-drop", &entry.outcome);
             let _ = self.push_operation_result(
                 entry,
                 "stash-drop",
@@ -630,20 +631,12 @@ impl KagiApp {
                 } else {
                     ToastKind::Error
                 },
-                shown.clone().into(),
+                shown.into(),
                 cx,
             );
         }
         if active {
-            if announce || recording_failed {
-                self.status_footer = FooterStatus::Idle("".into());
-            } else {
-                self.status_footer = if success {
-                    FooterStatus::Success(shown.into())
-                } else {
-                    FooterStatus::Failed(shown.into())
-                };
-            }
+            self.status_footer = FooterStatus::Idle("".into());
             if success {
                 #[cfg(feature = "gui-e2e")]
                 let intercepted = crate::remote::stash::note_remote_stash_e2e_refresh();
@@ -729,14 +722,14 @@ impl KagiApp {
             }
         };
         let entry = oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
-        let announce = !active || self.operation_result_toast_needed(false);
+        // Keep the final SSH result independent of its ordinary refresh footer.
         let _ = self.record_op_result(
             entry,
             cx,
             false,
             None,
             notice,
-            announce,
+            true,
             active,
             None,
             recording_failed,

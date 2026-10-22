@@ -357,14 +357,13 @@ pub fn scenario_remote_stash_revisit_result_owner(cx: &mut VisualTestAppContext)
                 let state = app.read(cx);
                 let stack = state.toast_stack.as_ref().unwrap().read(cx);
                 eprintln!("[gui-e2e] remote_stash_revisit lang={lang:?} revisit={revisit} frozen={owner:?} live={:?} footer={:?} toasts={} refreshes={}", state.app_sessions.attachment(owner.session), state.status_footer, stack.toasts().len(), remote_stash_e2e_refreshes());
+                assert_eq!(stack.toasts().len(), 1);
+                assert_eq!(stack.toasts()[0].kind, ToastKind::Success);
                 if revisit {
                     assert!(matches!(&state.status_footer, FooterStatus::Idle(message) if message.as_ref() == "remote new visit owner"));
-                    assert_eq!(stack.toasts().len(), 1);
-                    assert_eq!(stack.toasts()[0].kind, ToastKind::Success);
                     assert_eq!(remote_stash_e2e_refreshes(), 0, "old visit cannot refresh the new remote view");
                 } else {
-                    assert!(matches!(state.status_footer, FooterStatus::Success(_)));
-                    assert!(stack.toasts().is_empty());
+                    assert!(!matches!(state.status_footer, FooterStatus::Busy(_) | FooterStatus::Success(_) | FooterStatus::Failed(_)));
                     assert_eq!(remote_stash_e2e_refreshes(), 1);
                 }
             });

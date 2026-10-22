@@ -41,14 +41,29 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
     let before_head = git_output(&repo, &["rev-parse", "HEAD"]);
     let upstream = git_output(&repo, &["rev-parse", "origin/main"]);
     let before_stashes = git_output(&repo, &["stash", "list", "--format=%H"]);
-    let snapshot = kagi_git::Backend::open(&repo).unwrap().snapshot(10_000).unwrap();
+    let snapshot = kagi_git::Backend::open(&repo)
+        .unwrap()
+        .snapshot(10_000)
+        .unwrap();
     let shim = tempfile::tempdir().unwrap();
     let runtime = tempfile::tempdir().unwrap();
     // Keep the real explicit-identity prerequisite; no user key is read.
     let identity = shim.path().join("identity");
     assert!(std::process::Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-C", "owned-kagi-fixture", "-f"])
-        .arg(&identity).status().unwrap().success());
+        .args([
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            "owned-kagi-fixture",
+            "-f"
+        ])
+        .arg(&identity)
+        .status()
+        .unwrap()
+        .success());
     let known_hosts = shim.path().join("known_hosts");
     let public_key = std::fs::read_to_string(identity.with_extension("pub")).unwrap();
     std::fs::write(&known_hosts, format!("e2e.invalid {public_key}")).unwrap();
@@ -60,15 +75,25 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
         "#!/bin/sh\nif [ \"$1\" = -G ]; then\n printf 'hostname e2e.invalid\\nuser kagi-e2e\\nport 22\\nidentityfile %s\\nuserknownhostsfile %s\\nglobalknownhostsfile %s\\nproxyjump none\\n' '{}' '{}' '{}'\n exit 0\nfi\nfor argument do command=$argument; done\nexport HOME='{}'\nexport XDG_RUNTIME_DIR='{}'\nexec /bin/sh -c \"$command\"\n",
         identity.display(), known_hosts.display(), known_hosts.display(), repo.display(), runtime.path().display()
     )).unwrap();
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let old_path = std::env::var_os("PATH");
-    std::env::set_var("PATH", format!("{}:{}", shim.path().display(), old_path.clone().unwrap_or_default().to_string_lossy()));
+    std::env::set_var(
+        "PATH",
+        format!(
+            "{}:{}",
+            shim.path().display(),
+            old_path.clone().unwrap_or_default().to_string_lossy()
+        ),
+    );
     let host = kagi_domain::remote::RemoteHost {
-        user: Some("kagi-e2e".into()), host: "e2e.invalid".into(),
-        port: None, identity_file: Some(identity.to_str().unwrap().into()),
+        user: Some("kagi-e2e".into()),
+        host: "e2e.invalid".into(),
+        port: None,
+        identity_file: Some(identity.to_str().unwrap().into()),
     };
     let root = repo.to_str().unwrap().to_owned();
     let recorded_repo = format!("{}:{root}", host.label());
@@ -78,44 +103,83 @@ fn completed_refresh(cx: &mut VisualTestAppContext, pull: bool, lang: Lang, acti
         app.set_lang(lang, cx);
         app.set_window_active_for_e2e(active, cx);
         app.enter_remote_view(host.clone(), root.clone(), snapshot, cx);
-        if pull { app.open_pull_modal(cx); }
-        else { app.open_stash_drop_modal(1, cx); }
+        if pull {
+            app.open_pull_modal(cx);
+        } else {
+            app.open_stash_drop_modal(1, cx);
+        }
     });
     wait(cx, &app, "the real SSH identity plan settles", |app| {
-        !matches!(app.app_sessions.plan_state(), kagi::app::PlanState::Planning { .. })
+        !matches!(
+            app.app_sessions.plan_state(),
+            kagi::app::PlanState::Planning { .. }
+        )
     });
     cx.read(|cx| {
         let state = app.read(cx);
-        assert!(matches!(state.app_sessions.plan_state(), kagi::app::PlanState::Ready { .. }),
-            "real SSH prerequisites must be confirmable: {:?}", state.status_footer);
+        assert!(
+            matches!(
+                state.app_sessions.plan_state(),
+                kagi::app::PlanState::Ready { .. }
+            ),
+            "real SSH prerequisites must be confirmable: {:?}",
+            state.status_footer
+        );
     });
     let (owner, tab) = cx.read(|cx| {
         let state = app.read(cx);
+        assert_eq!(
+            state.workspace_mode(),
+            kagi::ui::workspace_mode::WorkspaceMode::Graph
+        );
+        assert!(!state.home_in_front());
         (state.active_session().unwrap(), state.active_tab)
     });
     paint(cx, &app, window);
     let confirm = e2e::confirm_bounds(window.window_id()).expect("real remote confirmation");
     cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
-    wait(cx, &app, "write and actual SSH snapshot both finish", |app| {
-        !app.app_sessions.has_leases()
-            && app.active_session().is_some_and(|session| session != owner)
-            && app.remote_view.as_ref().is_some_and(|view| view.host == host && view.root == root)
-    });
+    wait(
+        cx,
+        &app,
+        "write and actual SSH snapshot both finish",
+        |app| {
+            !app.app_sessions.has_leases()
+                && app.active_session().is_some_and(|session| session != owner)
+                && app
+                    .remote_view
+                    .as_ref()
+                    .is_some_and(|view| view.host == host && view.root == root)
+        },
+    );
     paint(cx, &app, window);
     let entries = oplog::read_oplog_tail(usize::MAX);
-    let receipts: Vec<_> = entries.iter()
-        .filter(|entry| entry.op == op && entry.repo == recorded_repo).collect();
+    let receipts: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.op == op && entry.repo == recorded_repo)
+        .collect();
     assert_eq!(receipts.len(), 1);
     assert!(matches!(receipts[0].outcome, OpOutcome::Success { .. }));
     if pull {
         assert_ne!(before_head, upstream);
         assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), upstream);
-        assert_eq!(git_output(&repo, &["stash", "list", "--format=%H"]), before_stashes);
+        assert_eq!(
+            git_output(&repo, &["stash", "list", "--format=%H"]),
+            before_stashes
+        );
     } else {
         assert_eq!(git_output(&repo, &["rev-parse", "HEAD"]), before_head);
-        let retained: Vec<_> = before_stashes.lines().enumerate()
-            .filter(|(index, _)| *index != 1).map(|(_, oid)| oid).collect();
-        assert_eq!(git_output(&repo, &["stash", "list", "--format=%H"]).lines().collect::<Vec<_>>(), retained);
+        let retained: Vec<_> = before_stashes
+            .lines()
+            .enumerate()
+            .filter(|(index, _)| *index != 1)
+            .map(|(_, oid)| oid)
+            .collect();
+        assert_eq!(
+            git_output(&repo, &["stash", "list", "--format=%H"])
+                .lines()
+                .collect::<Vec<_>>(),
+            retained
+        );
     }
     assert!(git_output(&repo, &["status", "--porcelain"]).is_empty());
     cx.read(|cx| {

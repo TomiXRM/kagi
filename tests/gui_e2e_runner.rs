@@ -513,6 +513,18 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_revision.rs"]
+mod conflict_draft_revision;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_continue_approval.rs"]
+mod conflict_continue_approval;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_inspection.rs"]
+mod conflict_draft_inspection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_stopped.rs"]
 mod conflict_stopped;
 
@@ -3185,6 +3197,62 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "conflict_continue_approval_replacement_queued",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_replacement_queued),
+            ),
+            (
+                "conflict_continue_approval_stage0_queued",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_stage0_queued),
+            ),
+            (
+                "conflict_continue_approval_modal_revision_replaced",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_modal_revision_replaced),
+            ),
+            (
+                "conflict_continue_approval_unrelated_replan",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_unrelated_replan),
+            ),
+            (
+                "conflict_draft_revision_audit",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_audit),
+            ),
+            (
+                "conflict_draft_revision_append_failure",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_append_failure),
+            ),
+            (
+                "conflict_draft_revision_same_revision",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_same_revision),
+            ),
+            (
+                "conflict_draft_revision_unrelated_index",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_unrelated_index),
+            ),
+            (
+                "conflict_draft_revision_saved_stale",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_stale),
+            ),
+            (
+                "conflict_draft_revision_saved_legacy",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
+            ),
+            (
+                "conflict_draft_inspection_empty_legacy",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
+            ),
+            (
+                "conflict_draft_inspection_unrecorded_restart",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_unrecorded_restart),
+            ),
+            (
+                "conflict_draft_inspection_scope_change",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_scope_change),
+            ),
+            (
+                "conflict_draft_inspection_gitdir_replaced",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_gitdir_replaced),
             ),
             (
                 "conflict_reset_disarm",

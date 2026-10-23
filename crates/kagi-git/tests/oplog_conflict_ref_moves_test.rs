@@ -160,11 +160,13 @@ fn a_cherry_pick_continue_records_the_commit_on_head_and_its_branch() {
     let b = backend(&repo);
     let session = kagi_git::detect_conflict_session(&git2::Repository::open(&repo).unwrap())
         .expect("cherry-pick in conflict");
+    let expected = b.conflict_snapshot().unwrap().unwrap().observation.revision;
     let mut buffer = b.resolution_buffer_from_repo().unwrap();
     buffer
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
-    let (result, moves) = b.observe_ref_moves(|b| b.execute_conflict_continue(&session, &buffer));
+    let (result, moves) =
+        b.observe_ref_moves(|b| b.execute_conflict_continue(&session, &buffer, &expected));
     result.expect("continue");
     let after = tip(&repo, "main");
     assert_ne!(after, before);

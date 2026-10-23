@@ -14,6 +14,9 @@ use kagi_domain::conflict_family::{
 };
 use sha2::{Digest, Sha256};
 
+#[path = "conflict_observe/approval_metadata.rs"]
+mod approval_metadata;
+
 #[derive(Clone, Debug)]
 pub struct ConflictSnapshot {
     pub session: conflicts::ConflictSession,
@@ -39,26 +42,37 @@ impl ConflictSnapshot {
 pub(crate) fn digest(parts: impl IntoIterator<Item = Vec<u8>>) -> String {
     let mut hash = Sha256::new();
     for part in parts {
-        hash.update((part.len() as u64).to_be_bytes());
-        hash.update(part);
+        digest_part(&mut hash, &part);
     }
     hex::encode(hash.finalize())
 }
 
-pub(crate) fn buffer_revision(path: &Path, draft: &ConflictDraft) -> BufferRevision {
-    let mut parts = vec![path.as_os_str().as_encoded_bytes().to_vec()];
+/// Shared framing for owned observation parts and borrowed per-file stages.
+pub(crate) fn digest_part(hash: &mut Sha256, part: &[u8]) {
+    hash.update((part.len() as u64).to_be_bytes());
+    hash.update(part);
+}
+
+pub(crate) fn buffer_revision(
+    path: &Path,
+    draft: &ConflictDraft,
+    identity: &ConflictRevision,
+) -> BufferRevision {
+    let mut hash = Sha256::new();
+    digest_part(&mut hash, path.as_os_str().as_encoded_bytes());
+    digest_part(&mut hash, identity.as_str().as_bytes());
     match draft {
         ConflictDraft::Text(bytes) => {
-            parts.push(b"text".to_vec());
-            parts.push(bytes.clone());
+            digest_part(&mut hash, b"text");
+            digest_part(&mut hash, bytes);
         }
         ConflictDraft::Raw { oid, mode } => {
-            parts.push(b"raw".to_vec());
-            parts.push(oid.as_bytes().to_vec());
-            parts.push(mode.to_be_bytes().to_vec());
+            digest_part(&mut hash, b"raw");
+            digest_part(&mut hash, oid.as_bytes());
+            digest_part(&mut hash, &mode.to_be_bytes());
         }
     }
-    BufferRevision::from_fingerprint(digest(parts))
+    BufferRevision::from_fingerprint(hex::encode(hash.finalize()))
 }
 
 pub(crate) fn revision_label(revision: &ConflictRevision) -> String {
@@ -75,46 +89,121 @@ pub(crate) fn short_text_hash(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>, GitError> {
-    let Some(session) = conflicts::detect_conflict_session(repo) else {
+    let mut index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    index
+        .read(true)
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    let Some(session) = conflicts::detect_conflict_session_from_index(repo, &index)? else {
         return Ok(None);
     };
-    let mut parts = Vec::new();
-    parts.push(format!("{:?}", repo.state()).into_bytes());
-    parts.push(format!("{:?}", session.op).into_bytes());
-    if let Ok(head) = repo.head() {
-        parts.push(head.name_bytes().to_vec());
-        parts.push(
-            head.target()
-                .map(|oid| oid.to_string())
-                .unwrap_or_default()
-                .into_bytes(),
-        );
-    }
-    let mut entries: Vec<Vec<u8>> = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?
+    let (mut parts, operation_tail, _) = operation_parts(repo, &session, false)?;
+    let mut entries: Vec<Vec<u8>> = index
         .iter()
         .map(|entry| {
             let mut value = entry.path;
             value.extend_from_slice(&entry.mode.to_be_bytes());
             value.extend_from_slice(&entry.flags.to_be_bytes());
+            value.extend_from_slice(&entry.flags_extended.to_be_bytes());
             value.extend_from_slice(entry.id.as_bytes());
             value
         })
         .collect();
     entries.sort();
     parts.extend(entries);
-    let git_dir = repo.path();
+    parts.extend(operation_tail);
+    let revision = ConflictRevision::from_fingerprint(digest(parts));
+    let paths = session.files.iter().map(|file| file.path.clone()).collect();
+    Ok(Some(ConflictSnapshot {
+        observation: ConflictObservation {
+            revision,
+            kind: session.op.kind(),
+            paths,
+        },
+        session,
+    }))
+}
+
+/// Stable operation ownership for per-file drafts, not a full write approval.
+/// Message, authorship and replay options belong only to the full observation.
+pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
+    // Only operation metadata participates; do not classify/read every file's
+    // blob content again at the live write-identity boundary.
+    let session = conflicts::ConflictSession {
+        op: conflicts::classify_op(repo, repo.state())?,
+        files: Vec::new(),
+    };
+    let (mut parts, tail, known) = operation_parts(repo, &session, true).ok()?;
+    if !known {
+        return None;
+    }
+    parts.extend(tail);
+    Some(ConflictRevision::from_fingerprint(digest(parts)))
+}
+
+type OperationParts = (Vec<Vec<u8>>, Vec<Vec<u8>>, bool);
+
+fn operation_parts(
+    repo: &Repository,
+    session: &conflicts::ConflictSession,
+    strict_draft: bool,
+) -> Result<OperationParts, GitError> {
+    let mut known = false;
+    let mut prefix = vec![
+        format!("{:?}", repo.state()).into_bytes(),
+        format!("{:?}", session.op).into_bytes(),
+    ];
+    if let Ok(head) = repo.head() {
+        known = head.target().is_some();
+        prefix.push(head.name_bytes().to_vec());
+        prefix.push(
+            head.target()
+                .map(|oid| oid.to_string())
+                .unwrap_or_default()
+                .into_bytes(),
+        );
+    }
+    let mut parts = Vec::new();
+    if strict_draft {
+        known &= read_draft_metadata(repo.path(), &mut parts);
+        known = known && draft_metadata_known(repo, session, &parts);
+    } else {
+        // Full approval owns the persisted inputs Git will consume, not just
+        // the minimal revision used to retain edits to the same conflict file.
+        parts.push(b"operation-state-v1".to_vec());
+        parts.push(approval_metadata::digest(repo)?);
+    }
+    // #707 review: the ref an abort would *overwrite*, and where it points now.
+    // `head-name` names it, but during a rebase HEAD is detached, so nothing
+    // above says where `refs/heads/<pre-rebase-branch>` currently is — an
+    // external `git update-ref` on it passed preflight and was then clobbered
+    // by the restore. Absent / symbolic / unreadable are their own markers: an
+    // abort must not silently create or overwrite a ref that appeared since.
+    parts.push(b"restore-ref".to_vec());
+    match crate::ops::conflict_abort::restore_ref(repo, session) {
+        Some(restore) => {
+            known &= restore.target.is_some();
+            parts.push(restore.name.into_bytes());
+            parts.push(
+                restore
+                    .target
+                    .unwrap_or_else(|| "unresolved".into())
+                    .into_bytes(),
+            );
+        }
+        None => parts.push(b"detached".to_vec()),
+    }
+    Ok((prefix, parts, known))
+}
+
+fn read_draft_metadata(git_dir: &Path, parts: &mut Vec<Vec<u8>>) -> bool {
+    let mut known = true;
     for relative in [
         "MERGE_HEAD",
         "REBASE_HEAD",
         "CHERRY_PICK_HEAD",
         "REVERT_HEAD",
-        // #707 review: where an abort would restore *to*. Without these the
-        // fingerprint is blind to an external `ORIG_HEAD` move (or a rebase's
-        // pre-op branch changing) while the confirmation is open, so the
-        // frozen request and the live preflight both pass and the abort then
-        // restores somewhere the user was never shown.
         "ORIG_HEAD",
         "sequencer/head",
         "sequencer/todo",
@@ -128,41 +217,108 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
         "rebase-apply/next",
         "rebase-apply/last",
     ] {
-        let path = git_dir.join(relative);
-        if let Ok(bytes) = std::fs::read(path) {
-            parts.push(relative.as_bytes().to_vec());
-            parts.push(bytes);
+        match std::fs::read(git_dir.join(relative)) {
+            Ok(bytes) => {
+                parts.push(relative.as_bytes().to_vec());
+                parts.push(bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => known = false,
         }
     }
-    // #707 review: the ref an abort would *overwrite*, and where it points now.
-    // `head-name` names it, but during a rebase HEAD is detached, so nothing
-    // above says where `refs/heads/<pre-rebase-branch>` currently is — an
-    // external `git update-ref` on it passed preflight and was then clobbered
-    // by the restore. Absent / symbolic / unreadable are their own markers: an
-    // abort must not silently create or overwrite a ref that appeared since.
-    parts.push(b"restore-ref".to_vec());
-    match crate::ops::conflict_abort::restore_ref(repo, &session) {
-        Some(restore) => {
-            parts.push(restore.name.into_bytes());
-            parts.push(
-                restore
-                    .target
-                    .unwrap_or_else(|| "unresolved".into())
-                    .into_bytes(),
-            );
+    known
+}
+
+/// Optional absent files are not failures. Required operation metadata must be
+/// present and parseable before a best-effort observation can authorize drafts.
+fn draft_metadata_known(
+    repo: &Repository,
+    session: &conflicts::ConflictSession,
+    parts: &[Vec<u8>],
+) -> bool {
+    let metadata = |name: &str| {
+        parts
+            .chunks_exact(2)
+            .find(|pair| pair[0] == name.as_bytes())
+            .map(|pair| pair[1].as_slice())
+    };
+    let text = |name| {
+        metadata(name)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let oid = |name| {
+        text(name).is_some_and(|text| {
+            text.lines()
+                .all(|line| git2::Oid::from_str(line.trim()).is_ok())
+        })
+    };
+    for name in ["ORIG_HEAD", "sequencer/head", "sequencer/abort-safety"] {
+        if metadata(name).is_some() && !oid(name) {
+            return false;
         }
-        None => parts.push(b"detached".to_vec()),
     }
-    let revision = ConflictRevision::from_fingerprint(digest(parts));
-    let paths = session.files.iter().map(|file| file.path.clone()).collect();
-    Ok(Some(ConflictSnapshot {
-        observation: ConflictObservation {
-            revision,
-            kind: session.op.kind(),
-            paths,
-        },
-        session,
-    }))
+    if matches!(
+        repo.state(),
+        git2::RepositoryState::CherryPickSequence | git2::RepositoryState::RevertSequence
+    ) && (!oid("sequencer/head") || metadata("sequencer/todo").is_none())
+    {
+        return false;
+    }
+    match &session.op {
+        conflicts::ConflictOp::Merge { .. } => oid("MERGE_HEAD"),
+        conflicts::ConflictOp::CherryPick { .. } => oid("CHERRY_PICK_HEAD"),
+        conflicts::ConflictOp::Revert { .. } => oid("REVERT_HEAD"),
+        conflicts::ConflictOp::StashConflict => true,
+        conflicts::ConflictOp::Rebase { .. } => {
+            // These also feed the detector's operation description. A read
+            // error must not silently turn its source into a fallback label.
+            for name in [
+                "rebase-merge/stopped-sha",
+                "rebase-merge/orig-head",
+                "rebase-apply/original-commit",
+                "rebase-apply/orig-head",
+            ] {
+                match std::fs::read(repo.path().join(name)) {
+                    Ok(bytes) => {
+                        if std::str::from_utf8(&bytes)
+                            .ok()
+                            .is_none_or(|text| git2::Oid::from_str(text.trim()).is_err())
+                        {
+                            return false;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return false,
+                }
+            }
+            let (head, step, total, merge) = match repo.state() {
+                git2::RepositoryState::Rebase => (
+                    "rebase-apply/head-name",
+                    "rebase-apply/next",
+                    "rebase-apply/last",
+                    false,
+                ),
+                _ => (
+                    "rebase-merge/head-name",
+                    "rebase-merge/msgnum",
+                    "rebase-merge/end",
+                    true,
+                ),
+            };
+            let progress = text(step)
+                .and_then(|value| value.parse::<usize>().ok())
+                .zip(text(total).and_then(|value| value.parse::<usize>().ok()))
+                .is_some_and(|(step, total)| step > 0 && total >= step);
+            oid("REBASE_HEAD")
+                && text(head).is_some()
+                && progress
+                && (!merge
+                    || (metadata("rebase-merge/done").is_some()
+                        && metadata("rebase-merge/git-rebase-todo").is_some()))
+        }
+    }
 }
 pub(crate) fn text_mode(repo: &Repository, path: &Path) -> u32 {
     let executable = repo

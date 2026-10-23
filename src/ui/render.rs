@@ -199,6 +199,7 @@ impl Render for KagiApp {
         // A published read owes the retained panes a pass (#722; no-op unless
         // queued), and a replaced view re-arms the scans that decorate it.
         self.revalidate_retained_panes(cx);
+        self.sync_oplog_draft_owner(cx);
         if self.scans_stale {
             self.scans_stale = false;
             self.start_branch_cleanup_scan(cx);
@@ -969,7 +970,20 @@ impl Render for KagiApp {
             //    `ConflictView` entity renders its own body.
             .when(conflict_body_visible, |el| {
                 if let Some(entity) = conflict_entity.clone() {
-                    el.child(entity)
+                    let visible = self
+                        .panel_motion
+                        .bottom
+                        .visible(kagi_ui_core::motion::now());
+                    let height = self.bottom_panel_body_height(window, false);
+                    // Conflict Mode replaces render_body, not the window-wide
+                    // panel: preserved drafts must remain inspectable here.
+                    el.child(entity).children(self.render_bottom_panel_slot(
+                        visible,
+                        height,
+                        self.bottom_tab,
+                        window,
+                        cx,
+                    ))
                 } else {
                     el
                 }

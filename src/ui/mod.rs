@@ -1409,14 +1409,16 @@ pub struct KagiApp {
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
-/// Editor, plus the cache key (edited path + assembled Result hash) used to
-/// detect when the Result text needs to be re-pushed into the editor.
+/// Editor, bound to its accepted conflict revision before its text can be
+/// pulled into the resolution buffer. The signature avoids redundant pushes.
 ///
 /// A and B are row lists with checkboxes; `result` remains a CodeEditor
 /// InputState for Preview/Edit mode (ADR-0071 / UX-015).
 pub struct ConflictEditorInputs {
     /// The conflicting file these inputs are bound to.
     pub path: PathBuf,
+    /// Exact conflict observation whose Result this editor may update.
+    pub revision: kagi_domain::conflict_family::ConflictRevision,
     /// Result code editor (read-only in Preview, editable in Edit mode).
     pub result: Entity<InputState>,
     /// Hash of the Result text last pushed, so we only `set_value` on change

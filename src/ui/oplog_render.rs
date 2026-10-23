@@ -63,19 +63,34 @@ const SUMMARY_ROW_H: f32 = 44.;
 /// ponytail: a size switch, not a fix in the dependency. The real repair is
 /// bounding `Inline::paint` to the visible glyphs upstream (#548 improvement 1);
 /// raise or drop this threshold once that lands.
-const SELECTABLE_DETAIL_MAX: usize = 4096;
+pub(super) const SELECTABLE_DETAIL_MAX: usize = 4096;
 
 impl gpui::Render for oplog_panel::OpLogPanel {
-    /// Render the Operation Log tab body (T-BP-004).
-    ///
-    /// Each row shows `HH:MM:SS  op  outcome-summary` (outcome coloured
-    /// green/red/yellow). Clicking a row toggles single-row expansion
-    /// (before/after + error/blockers); the copy button copies the entry.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entry_count = self.len();
         #[cfg(feature = "gui-e2e")]
         oplog_panel::keyboard::clear();
+        let header = oplog_panel::drafts::render_header(self, cx);
+        let body = if self.preserved_conflict_draft_open() {
+            oplog_panel::drafts::render_inspection(self, cx)
+        } else {
+            self.render_records(window, cx)
+        };
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .bg(rgb(theme().panel))
+            .child(header)
+            .child(body)
+            .into_any_element()
+    }
+}
 
+impl oplog_panel::OpLogPanel {
+    /// Ordinary receipt selection, scrolling and Copy retain their own scope.
+    fn render_records(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let entry_count = self.len();
         if entry_count == 0 {
             return div()
                 .flex_1()
@@ -457,7 +472,7 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
 /// `TextView` drops a `<br>` inside one, #908 / #946); the gap is 0 so the
 /// lines sit together. The pinned `TextView` copies paragraphs with a blank
 /// line between them; the row's copy button gives the exact entry.
-fn selectable_text(id: String, text: &str) -> gpui_component::text::TextView {
+pub(super) fn selectable_text(id: String, text: &str) -> gpui_component::text::TextView {
     gpui_component::text::TextView::html(
         SharedString::from(id),
         SharedString::from(kagi_domain::message::message_to_html(text)),

@@ -51,6 +51,16 @@ impl std::fmt::Display for RevisionError {
 }
 
 pub(crate) fn resolve_commit(repo: &Repository, revision: &str) -> Result<Commit, GitError> {
+    let commit = resolve_commit_object(repo, revision)?;
+    Ok(crate::log::commit_from_raw(&commit))
+}
+
+/// The same canonical resolution without copying presentation/message fields
+/// when an approval only needs to bind the resolved commit's object identity.
+pub(crate) fn resolve_commit_object<'repo>(
+    repo: &'repo Repository,
+    revision: &str,
+) -> Result<git2::Commit<'repo>, GitError> {
     let object = match repo.revparse_single(revision) {
         Ok(object) => object,
         Err(error) => return Err(resolution_error(repo, revision, error)?),
@@ -65,7 +75,7 @@ pub(crate) fn resolve_commit(repo: &Repository, revision: &str) -> Result<Commit
             GitError::Other(error.message().to_string())
         }
     })?;
-    Ok(crate::log::commit_from_raw(&commit))
+    Ok(commit)
 }
 
 fn resolution_error(

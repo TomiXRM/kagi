@@ -145,6 +145,24 @@ rehydrate 案（plain data から entity を作り直す）を採らない理由
 undo / 選択、list handle、未保存 buffer、pane の request token まで lossless に表す必要があり、
 entity と seed の二重 owner を作る。A4 の決定文とも衝突する。
 
+### Conflict Result と保全本文の owner（#1721）
+
+- retained Result input は受理した conflict revision と path に束縛する。
+  同じ既知 file identity の再検出では entity / undo / 選択を保持するが、
+  次 commit の同 path へ旧本文を入力として再注入しない。
+  永続 draft の照合・保全・最新編集の順序は ADR-0057 に従う。
+- Operation Log 内の保全 draft inspection は receipt 非依存の read-only 表示である。
+  起動時の attachment と request generation を受理・Copy まで照合し、
+  Backend で実 worktree owner を再確認する。普通の receipt 選択・clipboard 経路は共有しない。
+  Conflict route も通常画面と同じ bottom-panel slot を一回だけ描画し、
+  Operation Log / Terminal / Activity を editor と同じ layout 内に置く。
+  inspection は保全対象の path / identity / Result / raw 選択だけを所有する snapshot を保持し、
+  読込に使った live buffer・side/hunk 本文は background 完了時に解放する。
+  language は表示 cache の key とする。
+  EN / JA 切替時は同じ保全本文の表示・専用 Copy だけを翻訳し直し、attachment /
+  generation / repository owner と普通の receipt 選択・Copy は変更しない。
+
+
 ### Main Diff の image read と retained refresh（#1075）
 
 - `MainDiffRead` は既存の background read 内で text と画像の file / blob bytes、

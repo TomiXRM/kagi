@@ -700,12 +700,14 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
         let b = Backend::open(&f.repo).unwrap();
         s.observe_stash_conflict(owner, &b.stash_conflict_identity().unwrap());
         let session = b.detect_conflict_session().unwrap();
+        let expected = b.conflict_snapshot().unwrap().unwrap().observation.revision;
         let mut buffer = b.resolution_buffer_from_repo_with_autosave().unwrap();
         buffer
             .apply_choice(Path::new("file"), kagi_git::ResolutionChoice::Incoming)
             .unwrap();
         let head = git(&f.repo, &["rev-parse", "HEAD"]);
-        b.execute_conflict_continue(&session, &buffer).unwrap();
+        b.execute_conflict_continue(&session, &buffer, &expected)
+            .unwrap();
         assert_eq!(git(&f.repo, &["rev-parse", "HEAD"]), head);
         assert_eq!(
             std::fs::read_to_string(f.repo.join("file")).unwrap(),
@@ -1201,11 +1203,13 @@ fn a_conflict_resolved_while_away_proposes_nothing_on_return() {
 
     let b = Backend::open(&f.repo).unwrap();
     let session = b.detect_conflict_session().unwrap();
+    let expected = b.conflict_snapshot().unwrap().unwrap().observation.revision;
     let mut buffer = b.resolution_buffer_from_repo_with_autosave().unwrap();
     buffer
         .apply_choice(Path::new("file"), kagi_git::ResolutionChoice::Incoming)
         .unwrap();
-    b.execute_conflict_continue(&session, &buffer).unwrap();
+    b.execute_conflict_continue(&session, &buffer, &expected)
+        .unwrap();
 
     // The return re-observes a clean index: nothing to propose, and the old
     // payload is not promoted to a drop follow-up.

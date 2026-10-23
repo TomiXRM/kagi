@@ -1384,6 +1384,68 @@ The current suite covers:
   scanned zero. The counter was removed after acceptance; the behavioral
   scenario remains. Pair with `KAGI_GUI_E2E_ONLY=conflict_` for existing safety
   and ownership coverage; Save/Continue still perform fresh validation.
+- conflict revision/draft authority (#1721):
+  `KAGI_GUI_E2E_ONLY='conflict_draft_revision_,conflict_draft_inspection_,terminal_focus_exit,terminal_hide_focus,slow_write_conflict_continue,conflict_merge_failure_contract'`
+  with KEEP_GOING covers fourteen native scenarios. Real two-conflict rebase
+  consumers distinguish recorded and append-failed Continue, unchanged revision,
+  unrelated index changes, saved stale/legacy drafts and repeated accepted reads.
+  They enter a genuinely new Result, click Save, inspect its actual stage-0 blob,
+  then Continue on the same long-lived Backend to verify the exact two replayed
+  commit bodies. Do not reopen the Backend to hide an index-cache defect.
+  The first real UI Continue pauses only after background completion and before
+  foreground receipt/reload/adoption: its original durable bytes must still
+  exist, and reopening Backend must expose the first body only as recovery for
+  the actual second conflict. Release the one-shot hold through a scoped cleanup
+  and continue normally; a backend-only consumer does not prove this UI boundary.
+  Inspection cases reach the explicit preserved-draft action with zero receipts
+  and after a real unrecorded restart; frozen attachment/generation and a replaced
+  gitdir cannot deliver or copy another owner's body. Dedicated draft Copy and
+  ordinary receipt Copy remain separate across Back and an open EN→JA→EN language
+  switch; only the existing private test clipboard is used. The Terminal neighbors and
+  real merge-Continue consumers cover the shared bottom-panel/staging routes.
+  Add the narrow `KAGI_GUI_E2E_ONLY='conflict_continue_approval_'` selection for
+  original Continue approval across a replaced same-step rebase, changed stage-0
+  content, accepted mode replacement while the original modal remains open, and
+  a new explicit plan after an unrelated index refresh. Save all conflicts first,
+  retain the original confirmation, and use the existing `CONTINUE_CONFIRM_HOLD`
+  to change real Git state after admission but before backend dispatch. Require
+  the actual worker/completion boundary and a durable no-write refusal, not just
+  a watcher dismissing the modal. Check HEAD, index, WT, sequencer and objects;
+  only a fresh explicit plan/approval may advance the replacement state.
+  Scoped cleanup must release any consumed hold and clear the existing confirm
+  and completion slots even after failed assertions. No new production hold,
+  controller or clipboard store is required; host clipboard operations remain
+  forbidden.
+  Pair with `cargo test -p kagi-git --test conflicts_test draft_` for exact known
+  identity, unknown/legacy preservation, raw paths/modes, failed autosave,
+  undo-to-null and two-live-buffer recency. `cargo test -p kagi-git --test
+  conflicts_test continue_index` checks separately saved resolutions on a cached
+  Backend, session-external unmerged paths, and malformed/directory index failures
+  through planning and both public execute/stage boundaries. Add `conflicts_test
+  continue_revision` for real external two-conflict advancement, same-operation
+  text/raw stage changes, old payload plus new observation, unknown identity,
+  unrelated index entries and fresh empty-session Continue. `conflicts_test
+  draft_completion` reopens real Backend state before any UI adoption: Continue,
+  Skip Advanced/Finished and merge completion must retain durable inspection-only
+  bodies, never delete them before the foreground callback. These are native
+  Tier A/backend checks, not plain-app Tier B evidence.
+  Add focused `conflicts_test continue_metadata::`, `continue_operands::` and
+  `continue_autostash::` consumers for changed rebase-merge / apply final-commit /
+  MERGE_MSG / SQUASH_MSG, real nonempty retained input with changed author/date,
+  zero-byte options consumed by a subsequent pending pick, and unreadable or
+  nonregular metadata. Retain old plan/route/stage/execute and compare physical
+  HEAD, index, WT, metadata and object counts before/after every stale request.
+  Exercise packed ordinary reset/merge/pick targets, rewritten symbolic labels,
+  pending operation-produced labels, processed update-ref CAS targets and
+  squash-onto; unrelated ref movement must leave approval unchanged.
+  Real merge/apply rebase autostashes must reject an old approval when the named
+  target changes under unchanged file text, then apply the exact selected stash
+  only under a new explicit approval. Root MERGE_AUTOSTASH coverage is conservative
+  binding / symbolic rejection / Commit Panel staging, not Merge restoration.
+  `cargo test -p kagi-git --test revision_test` retains canonical typed resolution.
+  Do not call operation-state approval a freeze of refs/replace/config/hooks/exec
+  dependencies or a guarantee of the eventual commit hash.
+
 - repository-health proposal (`KAGI_GUI_E2E_ONLY=repo_health_proposal`,
   `tests/recovery/repo_health.rs`): #358 / ADR-0205. Analyze's Health axis
   reads a fixture without a commit-graph and suggests writing one; asking
@@ -3450,6 +3512,53 @@ PID=$!
 # helpers), which pidclick refuses or the coordinates fall outside of. Set its ID:
 WID=12345 # Replace with the selected window ID from the listing.
 ```
+
+For #1721, use independent EN/JA two-conflict repositories and a preserved
+default-feature binary; record its source SHA, SHA-256 and actual `features=[]`
+fingerprint separately from the GUI runner. Type the first Result and actually
+confirm Continue. At the second conflict, verify physical stage 1/2/3 and fresh
+markers, one unresolved file and unavailable Continue. Keep the bottom panel open,
+exercise Terminal input and close/reopen it, and inspect Activity without overlap.
+While the Result has focus and a selection, use real Cmd-R for repeated accepted
+reads, then replace the selection without refocusing and check Undo/Redo. Clicking
+the toolbar Refresh legitimately moves focus and is not a retained-input-focus
+oracle. Type a distinct second Result, actually Save, verify its exact stage-0
+blob, and Continue without restarting/reopening the Backend. Completion requires
+the exact first replay as parent, the two intended commit bodies, clean index/WT,
+the reattached branch and no active rebase directory; a leftover `REBASE_HEAD`
+pseudo-ref alone is not the completion oracle.
+
+Run the recording-failure case separately by holding only that private profile's
+append lock during the first confirmed Continue. Capture the required stopped /
+unrecorded acknowledgment, release the lock, dismiss it, quit and really restart.
+Before restart a transient in-memory Partial row may still exist: do not call it
+an empty history. After restart, show the genuine zero-row Operation Log and
+inspect the preserved first body through its independent read-only action, without
+applying it to the second conflict. Verify Git is unchanged until explicit new
+input / Save / Continue, then finish the correct two commits. Also compare valid
+identity-unknown legacy documents: inspect their preserved EN/JA bodies without
+resolving the live conflict, then use Back to return to ordinary history.
+Keep inspection open and use the real View→Language command for EN→JA→EN: header,
+file/identity labels and readonly body must stay coherent without reopening the
+repository or applying the preserved Result. Do not press either Copy on the host;
+the matching dedicated/receipt payload checks run only on the private Tier A clipboard.
+Dedicated/ordinary Copy consumer contracts belong to the existing Tier A private
+`VisualTestPlatform` / `TestAppContext` clipboard coverage described above.
+Never use the user's host clipboard for Copy/Paste, reads, snapshots or restoration,
+even with an all-type snapshot or conditional restore. Actual OS clipboard
+integration is permitted only in an isolated VM with no host clipboard bridge.
+Capture only each launched PID's listed window with `screencapture -l<id>` and
+close every owned application after the case.
+For the operation-metadata boundary, retain a stopped sequencer's original
+confirmation, change only its owned message or author-script in that private
+fixture, and obtain a new explicit plan before accepting the changed input.
+If the normal watcher retires the old modal before a click, record that limit;
+do not claim ordinary stale execution from a dismissed confirmation. Held native
+and public Backend consumers prove the prewrite refusal boundary. Verify the
+actual final tree/message/authorship and retained Result after fresh approval,
+not merely a successful button click or the absence of an error.
+
+
 
 Three launch pitfalls, all seen in practice. Launch Kagi from an unsandboxed shell:
 started from a sandboxed agent shell the process runs and logs normally, but

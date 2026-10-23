@@ -29,6 +29,8 @@ use kagi_ui_core::i18n::{plan::plan_recovery_sentences, Msg};
 const OP_ENTRIES_MAX: usize = 200;
 
 // Keyboard ownership and renderer-fed accessibility observations.
+#[path = "oplog_drafts.rs"]
+pub(super) mod drafts;
 #[path = "oplog_keyboard.rs"]
 pub mod keyboard;
 
@@ -49,6 +51,11 @@ pub struct OpLogPanel {
     reflog: Option<(EntryKey, ReflogDetail)>,
     /// Bumped per request; a read that finishes under an older value is dropped.
     reflog_generation: u64,
+    /// Explicit preservation inspection, independent of historical receipts.
+    draft_owner: Option<drafts::DraftOwner>,
+    draft_generation: u64,
+    draft_inspection: Option<drafts::DraftInspection>,
+    draft_scroll: gpui::ScrollHandle,
     pub(super) keyboard: keyboard::OpLogKeyboard,
 }
 
@@ -106,6 +113,13 @@ pub enum OpLogPanelEvent {
     Restore {
         op: kagi_git::Operation,
         entry: EntryKey,
+    },
+    InspectPreservedDrafts {
+        owner: crate::app::Attachment,
+    },
+    CopyPreservedDrafts {
+        owner: crate::app::Attachment,
+        generation: u64,
     },
 }
 
@@ -199,6 +213,10 @@ impl OpLogPanel {
             scroll_handle,
             reflog: None,
             reflog_generation: 0,
+            draft_owner: None,
+            draft_generation: 0,
+            draft_inspection: None,
+            draft_scroll: Default::default(),
             keyboard: keyboard::OpLogKeyboard::default(),
         }
     }
@@ -260,24 +278,22 @@ impl OpLogPanel {
         self.expanded = None;
     }
 
-    /// Select (expand) or deselect row `i` — a click, or a failed op opening
-    /// the log on its row — and read the selected entry's reflog lines in the
-    /// background (#334). Reads only: no repository write, no oplog append.
+    /// Expand a receipt's recorded details and its existing reflog attribution.
+    /// Current draft contents are inspected only through their explicit action.
     pub fn select_row(&mut self, i: usize, cx: &mut gpui::Context<Self>) {
+        self.close_preserved_conflict_drafts(cx);
         self.toggle_expanded(i);
         self.reflog_generation = self.reflog_generation.wrapping_add(1);
         self.reflog = None;
         if self.expanded != Some(i) {
             return;
         }
-        let (Some(entry), Some(window)) = (self.entries.get(i), self.reflog_window(i)) else {
+        let Some(entry) = self.entries.get(i) else {
             return;
         };
-        // #334 slice 2a: a recorded entry carries its moves; the time-window
-        // estimate is only for entries without a record.
-        if entry.ref_moves.is_some() {
+        let Some(window) = self.reflog_window(i).filter(|_| entry.ref_moves.is_none()) else {
             return;
-        }
+        };
         let key = EntryKey::of(entry);
         let path = PathBuf::from(entry_worktree(entry));
         let generation = self.reflog_generation;
@@ -291,7 +307,12 @@ impl OpLogPanel {
         cx.spawn(async move |this, cx| {
             let result = read.await;
             let _ = this.update(cx, |panel, cx| {
-                if panel.reflog_generation != generation {
+                if panel.reflog_generation != generation
+                    || !panel
+                        .expanded
+                        .and_then(|row| panel.entries.get(row))
+                        .is_some_and(|entry| key.matches(entry))
+                {
                     return;
                 }
                 let detail = match result {
@@ -357,6 +378,7 @@ impl OpLogPanel {
         let Some(i) = self.entries.iter().position(|entry| key.matches(entry)) else {
             return false;
         };
+        self.close_preserved_conflict_drafts(cx);
         if self.expanded != Some(i) {
             self.select_row(i, cx);
         }

@@ -293,18 +293,36 @@ pub fn resolve_selected_file(files: &[ConflictFile], prev_path: Option<&Path>) -
 /// distinguish via [`ConflictSession::total_count`].
 ///
 /// Detection never mutates the repository.
+/// This best-effort read retains the operation with no files if the index
+/// cannot be collected. Canonical observations use the fallible detector below.
 pub fn detect_conflict_session(repo: &Repository) -> Option<ConflictSession> {
     let state = repo.state();
     let op = classify_op(repo, state)?;
 
-    let files = collect_conflict_files(repo).unwrap_or_default();
+    let files = repo
+        .index()
+        .ok()
+        .and_then(|index| collect_conflict_files(repo, &index).ok())
+        .unwrap_or_default();
 
     Some(ConflictSession { op, files })
 }
 
+/// Detect against the caller's refreshed index without hiding collection errors.
+pub(crate) fn detect_conflict_session_from_index(
+    repo: &Repository,
+    index: &git2::Index,
+) -> Result<Option<ConflictSession>, GitError> {
+    let Some(op) = classify_op(repo, repo.state()) else {
+        return Ok(None);
+    };
+    let files = collect_conflict_files(repo, index)?;
+    Ok(Some(ConflictSession { op, files }))
+}
+
 /// Map a [`RepositoryState`] to a [`ConflictOp`], reading the `.git/` state
 /// files for the extra context.  Returns `None` for non-conflict states.
-fn classify_op(repo: &Repository, state: RepositoryState) -> Option<ConflictOp> {
+pub(crate) fn classify_op(repo: &Repository, state: RepositoryState) -> Option<ConflictOp> {
     let git_dir = repo.path();
     match state {
         RepositoryState::Merge => {
@@ -430,11 +448,10 @@ pub(crate) fn short_sha(sha: &str) -> String {
 }
 
 /// Walk the index conflict iterator and classify every conflicting path.
-fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-
+fn collect_conflict_files(
+    repo: &Repository,
+    index: &git2::Index,
+) -> Result<Vec<ConflictFile>, GitError> {
     let conflicts = index
         .conflicts()
         .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
@@ -449,10 +466,7 @@ fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitErr
 
     let mut files: Vec<ConflictFile> = Vec::new();
     for entry in conflicts {
-        let conflict = match entry {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+        let conflict = entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
         let path = match conflict_path(&conflict) {
             Some(p) => p,
             None => continue,
@@ -690,12 +704,34 @@ impl ContinueBlocker {
 /// conflict, no undecided required-file deletion, and a non-empty merge message
 /// when a merge commit is needed.
 ///
-/// The repository is read but never mutated.
+/// The repository is read but never mutated. The index is forcibly reloaded
+/// from disk; an unreadable index is an error, never an empty checklist.
 pub fn continue_blockers(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
-) -> Vec<ContinueBlocker> {
+) -> Result<Vec<ContinueBlocker>, GitError> {
+    let mut index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    // The UI backend outlives Save's separate repository handle (#296b).
+    index
+        .read(true)
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    if classify_op(repo, repo.state()).as_ref() != Some(&session.op) {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::ObservationChanged,
+        ))));
+    }
+    buffer.validate_current_paths(
+        repo,
+        &index,
+        session
+            .files
+            .iter()
+            .filter(|file| buffer.has_resolution(&file.path))
+            .map(|file| file.path.as_path()),
+    )?;
     let mut out: Vec<ContinueBlocker> = Vec::new();
 
     // 1. Every detected file must have a resolution draft.
@@ -752,22 +788,22 @@ pub fn continue_blockers(
     //    about.  execute_continue stages the session's own files (collapsing
     //    their stages), but an unmerged path outside the session means a
     //    re-scan is needed before continuing.
-    if let Ok(index) = repo.index() {
-        if let Ok(conflicts) = index.conflicts() {
-            let session_paths: std::collections::BTreeSet<PathBuf> =
-                session.files.iter().map(|f| f.path.clone()).collect();
-            let mut untracked_unmerged: Vec<String> = Vec::new();
-            for entry in conflicts.flatten() {
-                if let Some(path) = conflict_path(&entry) {
-                    if !session_paths.contains(&path) {
-                        untracked_unmerged.push(path.to_string_lossy().into_owned());
-                    }
-                }
-            }
-            if !untracked_unmerged.is_empty() {
-                out.push(ContinueBlocker::IndexUnmerged(untracked_unmerged));
+    let conflicts = index
+        .conflicts()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    let session_paths: std::collections::BTreeSet<PathBuf> =
+        session.files.iter().map(|f| f.path.clone()).collect();
+    let mut untracked_unmerged: Vec<String> = Vec::new();
+    for entry in conflicts {
+        let entry = entry.map_err(|error| GitError::Other(error.message().to_owned()))?;
+        if let Some(path) = conflict_path(&entry) {
+            if !session_paths.contains(&path) {
+                untracked_unmerged.push(path.to_string_lossy().into_owned());
             }
         }
+    }
+    if !untracked_unmerged.is_empty() {
+        out.push(ContinueBlocker::IndexUnmerged(untracked_unmerged));
     }
 
     // 6. Merge commit needs a non-empty message (merge only — sequencer ops
@@ -778,7 +814,7 @@ pub fn continue_blockers(
         }
     }
 
-    out
+    Ok(out)
 }
 
 /// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.
@@ -920,20 +956,32 @@ pub struct SaveOutcome {
 ///   detection (ADR-0043 rule 4).
 ///
 /// The repository is not modified by this function.
+/// `expected` is the full observation approved by the caller, including all
+/// staged entries. Planning cannot renew an older approval from current state.
 pub fn plan_conflict_continue(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<OperationPlan, GitError> {
+    preflight_continue_revision(repo, expected)?;
+    // The full ADR-0067 checklist includes unresolved text, markers, unmerged
+    // index paths, binary/deletion choices and the merge message.
+    let structured = continue_blockers(repo, session, buffer)?;
+    continue_plan_after_preflight(repo, session, &structured)
+}
+
+/// Build the descriptive plan from the checklist verified by either entry point.
+fn continue_plan_after_preflight(
+    repo: &Repository,
+    session: &ConflictSession,
+    structured: &[ContinueBlocker],
 ) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
     let mut warnings: Vec<PlanNote> = Vec::new();
 
-    // The full ADR-0067 checklist (T-043/044): unresolved + marker residue +
-    // index unmerged + binary unresolved + undecided deletion + empty merge
-    // message.  Each structured blocker is rendered to a typed plan note here.
-    let structured = continue_blockers(repo, session, buffer);
     let blockers: Vec<PlanNote> = structured.iter().map(blocker_note).collect();
 
     if session.files.is_empty() && structured.is_empty() {
@@ -988,18 +1036,19 @@ pub fn plan_conflict_continue(
 /// continue-a-sequence API, and reimplementing rebase's step machine by hand
 /// would duplicate real git's own sequencer.
 ///
-/// **Preconditions** (caller must check the plan first): no blockers.  This
-/// function re-checks marker residue defensively but trusts resolution presence.
+/// The caller previews the plan first. The shared staging boundary compares
+/// that full frozen approval, then revalidates the canonical live checklist.
 pub(crate) fn execute_conflict_continue(
     repo: &Repository,
     repo_path: &Path,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueResult, GitError> {
     // 1. Materialize each resolved buffer file to the working tree and stage it
     //    (collapses stage 1/2/3 → stage 0), so the index carries no unmerged
     //    entries.
-    stage_conflict_resolution(repo, session, buffer)?;
+    stage_conflict_resolution(repo, session, buffer, expected)?;
 
     // These reads happen only after the continuation has changed repository
     // state. Failure means the effect is unknown, not that execution failed.
@@ -1037,10 +1086,10 @@ pub(crate) fn execute_conflict_continue(
     }
 
     // 3. Sequencer operations (rebase / cherry-pick / revert): advance via the
-    // real git CLI. `--continue` commits the resolved step with the original
-    // message (no editor is opened) and, for rebase, keeps auto-continuing
-    // through any further non-conflicting commits until it either finishes or
-    // stops at the next conflict.
+    // real git CLI. `--continue` consumes the approved sequencer metadata
+    // (without opening an editor), including any explicitly reapproved message
+    // or authorship, and for rebase auto-continues through non-conflicting
+    // commits until it finishes or stops at the next conflict.
     // A bounded loop nudges once per resolved step.
     // #296(a): `--continue` exit status is authoritative. EVERY other run_git
     // caller checks `out.status`; this site used to ignore it, so a hard
@@ -1115,6 +1164,20 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
     }
 }
 
+/// Compare the original full approval, never an execution-time replacement.
+fn preflight_continue_revision(
+    repo: &Repository,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<(), GitError> {
+    let live = crate::backend::conflict_ops::conflict_observe::observation(repo)?;
+    if live.as_ref().map(|snapshot| &snapshot.observation.revision) != Some(expected) {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::ObservationChanged,
+        ))));
+    }
+    Ok(())
+}
+
 /// Materialize every resolved buffer file to the working tree and stage it,
 /// collapsing index stages 1/2/3 → stage 0 (resolution).
 ///
@@ -1125,18 +1188,19 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
 /// [`execute_merge_commit`] refuses the still-conflicted index. Writes nothing
 /// to refs and creates no commit.
 ///
-/// Defensively refuses if conflict markers remain in the buffer.
+/// Revalidates the frozen full approval and canonical checklist before any write.
 pub(crate) fn stage_conflict_resolution(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<(), GitError> {
-    // Defensive re-check: never write markers into a commit.
-    let residue = buffer.files_with_marker_residue();
-    if !residue.is_empty() {
-        return Err(GitError::Other(
-            "Refusing to continue: conflict markers remain in the resolution buffer.".to_string(),
-        ));
+    preflight_continue_revision(repo, expected)?;
+    // Both sequencer execution and the merge-panel route must fail closed if
+    // the live index cannot be read or another unmerged path is untracked.
+    let blockers = continue_blockers(repo, session, buffer)?;
+    if let Some(first) = blockers.first() {
+        return Err(GitError::Other(blocker_sentence(first)));
     }
 
     let workdir = repo
@@ -1425,13 +1489,17 @@ pub(crate) fn execute_conflict_save_with_progress(
     path: &Path,
     mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
 ) -> Result<SaveOutcome, GitError> {
+    let mut index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    index
+        .read(true)
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    buffer.validate_current_paths(repo, &index, std::iter::once(path))?;
     // #297/#298: a raw (binary / symlink / gitlink) resolution stages the chosen
     // side's OID directly — no working-tree write, so a conflicted symlink is
     // never dereferenced and a binary is saved byte-for-byte, mode intact.
     if let Some(raw) = buffer.raw_resolution(path) {
-        let mut index = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
         stage_raw_entry(&mut index, path, raw)?;
         index
             .write()
@@ -1486,9 +1554,6 @@ pub(crate) fn execute_conflict_save_with_progress(
     progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten);
 
     // 2. Stage the path: index.add_path collapses stage 1/2/3 → stage 0.
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
     index.add_path(path).map_err(|e| {
         GitError::Other(format!("stage {} failed: {}", path.display(), e.message()))
     })?;
@@ -1535,9 +1600,11 @@ pub fn plan_conflict_continue_route(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
     current_branch: &str,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueRoute, GitError> {
+    preflight_continue_revision(repo, expected)?;
     // Hard gate: refuse to route while any blocker stands (ADR-0067).
-    let blockers = continue_blockers(repo, session, buffer);
+    let blockers = continue_blockers(repo, session, buffer)?;
     if let Some(first) = blockers.first() {
         return Err(GitError::Other(blocker_sentence(first)));
     }
@@ -1550,7 +1617,7 @@ pub fn plan_conflict_continue_route(
         // #309: staging is the whole continue for a stash conflict.
         ConflictOp::StashConflict => Ok(ContinueRoute::StashComplete),
         _ => {
-            let plan = plan_conflict_continue(repo, session, buffer)?;
+            let plan = continue_plan_after_preflight(repo, session, &blockers)?;
             Ok(ContinueRoute::SequencerPlan(Box::new(plan)))
         }
     }
@@ -1717,7 +1784,7 @@ pub(crate) fn execute_conflict_skip(
     }
 
     // 1. Preserve the buffer first (never lose partial work).
-    let mut buffer_preserved_at = buffer.autosave().ok();
+    let buffer_preserved_at = buffer.autosave().ok();
 
     // 2. Run the skip, then judge it by the state git left behind (#540).
     //    The exit code alone cannot: `rebase --skip` that drops the step and
@@ -1785,12 +1852,6 @@ pub(crate) fn execute_conflict_skip(
             )
         }
     };
-
-    if matches!(progress, SkipProgress::Advanced | SkipProgress::Finished)
-        && ResolutionBuffer::clear(&workdir).is_ok()
-    {
-        buffer_preserved_at = None;
-    }
 
     Ok(SkipOutcome {
         head: head_sha,

@@ -118,6 +118,13 @@ fn continue_stages_resolution_without_committing() {
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
 
     let head_before = git_output(dir, &["rev-parse", "HEAD"]);
 
@@ -127,8 +134,8 @@ fn continue_stages_resolution_without_committing() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
 
-    let result =
-        execute_conflict_continue(&repo, dir, &session, &buffer).expect("stash-conflict continue");
+    let result = execute_conflict_continue(&repo, dir, &session, &buffer, &expected)
+        .expect("stash-conflict continue");
 
     // No commit was created — this is a stash apply, not a merge.
     assert!(

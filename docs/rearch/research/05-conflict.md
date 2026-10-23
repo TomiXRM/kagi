@@ -86,15 +86,34 @@ pure half of **`src/git/conflicts.rs`** (1644 LOC):
 In `conflicts.rs`, all flow ops are `plan_* → execute_*` on the existing
 `OperationPlan` pipeline, repo read-only until execute:
 
-- `continue_blockers(repo, session, buffer) -> Vec<ContinueBlocker>` — single
-  source of truth for the ADR-0067 checklist (`UnresolvedFiles`, `MarkerResidue`,
-  `IndexUnmerged`, `BinaryUnresolved`, `DeletionUndecided`, `EmptyMergeMessage`,
-  `ChecklistBlocker`). Shared by the plan modal and the UI gate.
+- `continue_blockers(repo, session, buffer) -> Result<Vec<ContinueBlocker>, GitError>` —
+  single source of truth for the ADR-0067 checklist (`UnresolvedFiles`,
+  `MarkerResidue`, `IndexUnmerged`, `BinaryUnresolved`, `DeletionUndecided`,
+  `EmptyMergeMessage`, `ChecklistBlocker`). Planning and the shared prewrite
+  staging boundary force a fresh index read; unreadable indexes and iterator
+  entries propagate errors, never an empty checklist. The UI's buffer projection
+  is not write authority.
 - `plan_conflict_continue` / `execute_conflict_continue` (materialize buffer → WT
   → `index.add_path` (stage 0); merge creates the 2-parent commit + `cleanup_state`,
   sequencers return `Staged`). `plan_conflict_continue_route` → `ContinueRoute::
   {MergeCommitPanel{message}, SequencerPlan(OperationPlan)}` (ADR-0068 — merge
   does NOT commit on Continue; it routes to the commit panel).
+  Backend Continue plan/route/stage/execute additionally require the original
+  expected `ConflictRevision`; planning and prewrite compare it against a fresh
+  full observation, including stage-0 content even when no conflict paths remain.
+  The sequencer modal freezes that accepted revision at opening, not from the
+  mode at Confirm. The buffer separately retains live operation/repository
+  provenance, so edit preservation cannot reauthorize an older confirmation.
+  Full approval additionally hashes the framed, streamed active operation-state
+  trees, root merge-message/mode/autostash inputs, and the resolved operands
+  actually consumed by pending replay instructions and autostash. Unrelated refs
+  are not scanned. Metadata errors and unknown relevant operands fail closed;
+  a new explicit approval can retain the same authorized nonempty file input
+  while accepting changed message/authorship. Minimal draft ownership is unchanged.
+  This is operation-state approval, not a freeze of global replacement refs,
+  config, hooks or arbitrary exec dependencies, nor a promised final commit hash.
+  Merge still routes to Commit Panel; conservative root-autostash binding does
+  not implement Merge autostash restoration (ADR-0067).
 - `execute_conflict_save` — per-file Save→stage with a hard marker-residue block
   (ADR-0066/0068). `execute_merge_commit` — the commit-panel sink, refuses on
   remaining unmerged entries.
@@ -313,12 +332,12 @@ ConflictSessionState (domain, pure)
 
 ## 5. リスク (data-loss surfaces)
 
-1. **Autosave debounce regression (active discrepancy).** Implementation autosaves
-   eagerly/inline (5 sites; Result-edit can write per frame), but ADR-0057
-   mandates 250ms debounce. Eager is *safer for data* but a perf/IO smell;
-   debouncing re-introduces a window where a crash mid-burst loses the last <250ms
-   of edits. Decide explicitly and document; flush on focus-loss / mode-exit /
-   abort.
+1. **Autosave scheduling (independent of #1721).** Existing autosaves run
+   eagerly/inline. The original ADR-0057 proposed 250ms debounce; its current
+   wording does not claim that the implementation was changed to debounce.
+   #1721 changes draft authority/preservation, not scheduling. A future batching
+   decision must account for crash-time edit loss and flush on focus-loss /
+   mode-exit / abort rather than silently weakening preservation.
 2. **Abort restore correctness.** `execute_conflict_abort` is the highest-stakes
    path: it rewrites WT files per-path from the ORIG_HEAD tree and moves the
    branch ref. Risks — a session file modified *outside* the operation, files
@@ -336,14 +355,17 @@ ConflictSessionState (domain, pure)
 5. **merge-into-conflict re-entry.** After `execute_merge_into_conflict`, the mode
    must re-detect deterministically; a missed re-detect leaves the user in a
    half-committed state with a stale `ConflictMode`.
-6. **Per-frame Result-edit sync clobbering in-progress edits.** The `content_sig`
-   gate prevents rebuilding the InputState over live typing — the re-arch must
-   preserve that guard when the editor becomes a component.
+6. **Per-frame Result-edit sync clobbering in-progress edits.** Inputs carry the
+   accepted `ConflictRevision`, path and content signature. An unchanged known
+   file identity retains its live input, selection and undo; a later same-path
+   conflict archives the old body instead of pulling it into the new Result.
 7. **Buffer/index divergence.** The buffer is in-memory; Save stages to index.
-   External CLI edits between detect and continue can desync — `continue_blockers`
-   re-reads the live index, but the buffer's materialized sides are snapshot at
-   detect; a re-scan must rebuild from the live index, preferring the autosaved
-   Result drafts (current `load().or_else(from_repo)` order is correct).
+   External CLI edits between detect and continue can desync. The canonical
+   checklist forcibly reloads the index and fails closed on read errors, including
+   at the shared execution/staging boundary. Re-detection builds from the live
+   index, then adopts only drafts with a known, matching operation/file-stage
+   identity. Legacy, unknown and displaced drafts remain explicitly inspectable
+   in the existing document; `load().or_else(from_repo)` is not safe authority.
 
 ---
 

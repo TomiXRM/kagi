@@ -252,3 +252,47 @@ suggestion to every board. Decision, following Xcode's conflict resolution:
   (`両方を使う（左→右）`, `両方を使う（右→左）`); EN `Use Left` / `Use Right` /
   `Use Both ▾`. The pane headers carry the identity (`● 現在の側 — <branch>`,
   `○ 取り込む側 — <sha> <subject>`); AX names append it. No glyph-only labels.
+
+## Visual design pass (2026-10-23, after the user rejected the wireframes)
+
+The earlier boards were wireframes (boxes and a detached button row) presented
+as a design. The visual design now follows Apple's own Xcode merge sheet
+(`docs/ui/conflict-sidebar/build-hifi.js`, reference image kept beside the
+exports) and the Finder/Mail source list, with Kagi's `theme_apple_light` /
+`theme_apple_dark` tokens and Kagi's shipped fonts (Inter + JetBrains Mono,
+Noto Sans JP for CJK runs):
+
+- **Document, not controls.** Two borderless whole-file panes with a jump bar
+  (side identity) and a commit footer each; a 44 px gutter carries one `? ⌄`
+  pull-down pill at each conflict; the conflict band (`diff_removed_bg`,
+  3 px blocker stripe) runs continuously across both panes and the gutter.
+  The pill's menu is `左を使う / 右を使う / 左、次に右を使う / 右、次に左を使う`
+  (Xcode: Choose Left / Right / Left Then Right / Right Then Left). A decided
+  pill shows the choice (`右 ⌄`) and stays re-openable. `‹ 1/3 ›` sits at the
+  trailing end of the left footer. No adoption button row, no context toggle.
+- **Result** is a directly editable pane below the files with origin stripes
+  per line (`color_branch` left, `color_remote` right, warning for manual);
+  no Edit button. Whole rows only; an overlay scroller when clipped.
+- **Sidebar** is a source list: 232 px, sections top-down (`作業中` / `保存済み`
+  with the count at the trailing edge), 24 px rows, SF-style folder/doc icons,
+  Xcode letter badges (`C` conflicted on `color_blocker`, `M` unsaved draft on
+  `change_modified`, `!` review needed), selection fill only (`selected` when
+  the list owns focus, `inactive_selected` otherwise), no focus ring. An empty
+  section is just its header.
+- **Chrome.** Kagi's unified toolbar keeps its right icon group; the operation
+  strip (`● merge · 中止 · 確認へ進む`) sits left of it in the same 20 px row.
+  The conflict header is a `panel` bar: sidebar toggle (grey wash when shown,
+  inline count when hidden — no badge), jump bar `src › pricing › checkout.ts`,
+  status text, and the single file action (`保存` primary only when the draft
+  is ready; `次の作業中ファイル` after a save) right-aligned to the toolbar
+  buttons at a 16 px margin. Push buttons are 20 px, radius 5, 12 px labels.
+- **Saved inspection** uses a lock icon in the jump bar and the same code
+  layout, read-only.
+
+Fable's visual review (FableVisualReviewHifi) drove the second revision: vector
+icons instead of glyph placeholders, the Help-button-shaped pill replaced by the
+wide pull-down, focus ring removed, sections no longer pinned, the iOS-style
+badge removed, AppKit menu metrics and elevated dark menu border/shadow,
+terminal tokens, consistent 12/16 px insets. These screens are the visual
+contract for the GPUI implementation; the functional contract (two groups,
+evidence rule, Save/Continue safety) is unchanged.

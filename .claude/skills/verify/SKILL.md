@@ -3653,6 +3653,8 @@ and `rclick` include a hover primer. `type` derives virtual key codes from the
 active keyboard layout, so it is unsuitable for IME, dead keys, unsupported
 characters, newline, or Tab input. Screenshots are physical pixels; do not mix
 them with pidclick's logical coordinates.
+Mouse events use explicit empty flags: stuck HID Control otherwise makes GPUI treat Left as Right.
+Check suspected inheritance with `CGEventSource.flagsState(.hidSystemState)` (`maskControl` is 262144).
 
 ```bash
 /tmp/pidclick --pid "$PID" --window-id "$WID" move 120 80

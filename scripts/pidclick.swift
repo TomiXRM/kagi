@@ -285,6 +285,8 @@ func mouse(_ type: CGEventType, at point: CGPoint, button: CGMouseButton) -> CGE
         mouseCursorPosition: point,
         mouseButton: button
     ) else { fail("could not create mouse event") }
+    // Stuck HID Control makes GPUI map Ctrl+Left to Right; mouse actions have no modifiers.
+    event.flags = []
     event.setIntegerValueField(.mouseEventClickState, value: 1)
     return event
 }
@@ -389,6 +391,7 @@ case "scroll":
         wheel2: 0,
         wheel3: 0
     ) else { fail("could not create a scroll event") }
+    wheel.flags = []
     wheel.location = location
     post(wheel)
 case "key":

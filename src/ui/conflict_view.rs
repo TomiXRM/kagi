@@ -1069,42 +1069,37 @@ fn render_dashboard(
         .id("conflict-dashboard")
         .flex()
         .flex_col()
+        .items_center()
         .w_full()
         .h_full()
         .min_h(px(0.))
+        .min_w(px(0.))
         .bg(rgb(theme().sidebar))
         .child(dash_state(mode, cx))
         .child(dash_primary(mode, chrome, cx))
         .child(
             div()
                 .id("conflict-file-overview-scroll")
+                .w_full()
+                .max_w(theme::scaled_px(760.))
                 .flex_1()
                 .min_h(px(0.))
+                .min_w(px(0.))
+                .pb(theme::scaled_px(12.))
                 .overflow_y_scroll()
                 .child(dash_sections(mode, window_active, cx)),
         )
         .into_any_element()
 }
 
-/// Overview orientation, with draft readiness distinct from staging.
+/// Only the detected remaining paths are counted; saved files are not a UI ledger.
 fn dash_state(mode: &ConflictMode, _cx: &mut Context<ConflictView>) -> gpui::AnyElement {
-    let ready = mode
-        .session
-        .files
-        .iter()
-        .filter(|file| flow::draft_ready(mode, &file.path))
-        .count();
-    let status = if mode.session.files.is_empty() {
-        Msg::ConflictStaged.t().to_string()
-    } else {
-        format!(
-            "{} · {ready}/{}",
-            Msg::ConflictDraftReady.t(),
-            mode.session.files.len()
-        )
-    };
     div()
         .flex()
+        .w_full()
+        .max_w(theme::scaled_px(760.))
+        .min_w(px(0.))
+        .flex_shrink_0()
         .flex_wrap()
         .items_center()
         .gap_3()
@@ -1112,19 +1107,25 @@ fn dash_state(mode: &ConflictMode, _cx: &mut Context<ConflictView>) -> gpui::Any
         .child(
             div()
                 .text_size(theme::scaled_px(15.))
-                .child(Msg::ConflictFiles.t()),
+                .child(SharedString::from(format!(
+                    "{} ({})",
+                    Msg::ConflictRemainingFiles.t(),
+                    mode.session.files.len()
+                ))),
         )
         .child(
             div()
                 .text_size(theme::scaled_px(12.))
                 .child(SharedString::from(mode.session.op.slug())),
         )
-        .child(dash_note(&status, theme().text_sub))
+        .when(mode.session.files.is_empty(), |el| {
+            el.child(dash_note(Msg::ConflictStaged.t(), theme().color_success))
+        })
         .into_any_element()
 }
 
-/// Continue is primary; Abort is secondary and guarded by its existing modal.
-/// More discloses sequencer Skip and specific operation blockers.
+/// Open unfinished work; ready drafts retain the existing guarded Continue route.
+/// Abort retains its guarded modal; More discloses sequencer Skip and blockers.
 fn dash_primary(
     mode: &ConflictMode,
     chrome: &EditorChrome,
@@ -1133,6 +1134,7 @@ fn dash_primary(
     let blocker = mode.continue_blocker();
     let can_continue = blocker.is_none();
     let is_sequencer = mode.session.op.is_sequencer();
+    let has_remaining = !mode.session.files.is_empty();
 
     // Continue reloads (merge → commit panel / sequencer → confirm modal), so
     // it defers to the parent to avoid re-leasing this leased entity.
@@ -1164,18 +1166,53 @@ fn dash_primary(
         },
     );
 
-    // Continue (filled, gated) + Abort (danger) on one row; buttons wrap rather
-    // than overflow the fixed-width dashboard (T-CONFLICT-DASH-023).
-    let primary_row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap_2()
-        .child(super::e2e::measure_control(
+    let primary_row = div().flex().flex_row().flex_wrap().items_center().gap_2();
+    let primary_row = if has_remaining && !can_continue {
+        let open = cx.listener(
+            |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
+                let selected = view.mode.as_ref().and_then(|mode| {
+                    mode.selected_file
+                        .filter(|&idx| idx < mode.session.files.len())
+                        .or_else(|| (!mode.session.files.is_empty()).then_some(0))
+                });
+                if let Some(idx) = selected {
+                    view.conflict_open_file(idx, cx);
+                    window.blur();
+                    cx.notify();
+                }
+            },
+        );
+        // Preserve the measured control and keyboard-focus probe; this no longer
+        // advances selection before opening the current file.
+        let open_button = KagiButton::styled(
+            "conflict-next",
+            Msg::ConflictOpenFile.t(),
+            ButtonRole::Primary,
+            cx,
+        )
+        .small()
+        .min_h(theme::scaled_px(30.))
+        .on_click(open);
+        #[cfg(feature = "gui-e2e")]
+        let open_button = open_button.on_key_down(|event, _, _| {
+            if event.keystroke.key == "f19" {
+                NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
+            }
+        });
+        primary_row.child(super::e2e::measure_control("conflict-next", open_button))
+    } else {
+        primary_row.child(super::e2e::measure_control(
             "conflict-continue",
             action_button(
-                Msg::ConflictContinue.t(),
-                ButtonRole::Success,
+                if matches!(
+                    mode.session.op,
+                    kagi_git::conflicts::ConflictOp::Merge { .. }
+                ) {
+                    Msg::ConflictToCommit.t()
+                } else {
+                    Msg::ConflictContinue.t()
+                },
+                ButtonRole::Primary,
                 can_continue && !chrome.writer_busy,
                 if can_continue {
                     Some(continue_handler)
@@ -1183,8 +1220,11 @@ fn dash_primary(
                     None
                 },
                 cx,
-            ),
+            )
+            .min_h(theme::scaled_px(30.)),
         ))
+    };
+    let primary_row = primary_row
         .child(super::e2e::measure_control(
             "conflict-abort",
             action_button(
@@ -1213,6 +1253,10 @@ fn dash_primary(
     let mut col = div()
         .flex()
         .flex_col()
+        .w_full()
+        .max_w(theme::scaled_px(760.))
+        .min_w(px(0.))
+        .flex_shrink_0()
         .gap_2()
         .px(theme::scaled_px(12.))
         .py(theme::scaled_px(8.))
@@ -1235,32 +1279,8 @@ fn dash_primary(
         ));
     }
 
-    // Secondary row: Next-conflict (while blocked) and Skip (sequencer ops).
     let mut row = div().flex().flex_row().flex_wrap().gap_2();
     let mut has_secondary = false;
-    if !can_continue {
-        let next = cx.listener(
-            |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-                view.conflict_nav_unresolved(1);
-                window.blur();
-                cx.notify();
-            },
-        );
-        let next_button = secondary_button(
-            "conflict-next".to_string(),
-            Msg::ConflictNextFile.t(),
-            true,
-            Some(next),
-        );
-        #[cfg(feature = "gui-e2e")]
-        let next_button = next_button.on_key_down(|event, _, _| {
-            if event.keystroke.key == "f19" {
-                NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
-            }
-        });
-        row = row.child(super::e2e::measure_control("conflict-next", next_button));
-        has_secondary = true;
-    }
     if is_sequencer && chrome.show_tools {
         // Skip reloads → defer to the parent.
         let skip = cx.listener(
@@ -1482,96 +1502,25 @@ where
     btn
 }
 
-/// Incomplete and ready drafts remain distinct; neither section means staged.
+/// Every detected path remains work; readiness is a row state, not staging.
 fn dash_sections(
     mode: &ConflictMode,
     window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let conflicted: Vec<usize> = mode
-        .session
-        .files
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| !flow::draft_ready(mode, &f.path))
-        .map(|(i, _)| i)
-        .collect();
-    let resolved: Vec<usize> = mode
-        .session
-        .files
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| flow::draft_ready(mode, &f.path))
-        .map(|(i, _)| i)
-        .collect();
+    let list_id = "conflict-files";
+    let mut col =
+        super::list_a11y::list_box(list_id, div().id(list_id), Msg::ConflictRemainingFiles.t())
+            .flex()
+            .flex_col()
+            .min_w(px(0.))
+            .gap_1()
+            .pt(theme::scaled_px(8.));
 
-    div()
-        .flex()
-        .flex_col()
-        .child(section(
-            mode,
-            Msg::ConflictDraft.t(),
-            &conflicted,
-            Msg::ConflictNoConflictedFiles.t(),
-            true,
-            window_active,
-            cx,
-        ))
-        .child(section(
-            mode,
-            Msg::ConflictDraftReady.t(),
-            &resolved,
-            Msg::ConflictNoResolvedFiles.t(),
-            false,
-            window_active,
-            cx,
-        ))
-        .into_any_element()
-}
-
-/// A labelled selectable file list. Both sections preview the selected file.
-fn section(
-    mode: &ConflictMode,
-    title: &'static str,
-    indices: &[usize],
-    empty_msg: &str,
-    is_conflicted: bool,
-    window_active: bool,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    let list_id = if is_conflicted {
-        "conflict-files"
-    } else {
-        "conflict-resolved-files"
-    };
-    let mut col = super::list_a11y::list_box(list_id, div().id(list_id), title)
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(6.))
-                .text_size(theme::scaled_px(10.))
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(format!("{} ({})", title, indices.len()))),
-        );
-
-    if indices.is_empty() {
-        col = col.child(
-            div()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(4.))
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(empty_msg.to_string())),
-        );
-        return col.into_any_element();
-    }
-
-    for (position, &idx) in indices.iter().enumerate() {
-        let file = &mode.session.files[idx];
+    for (idx, file) in mode.session.files.iter().enumerate() {
         let selected = mode.selected_file == Some(idx);
         let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
+        let path_id = SharedString::from(format!("conflict-path-{idx}"));
         let path_str = SharedString::from(file.path.to_string_lossy().into_owned());
         let kind = file.kind;
         let status_color = if flow::draft_ready(mode, &file.path) {
@@ -1581,9 +1530,7 @@ fn section(
         };
         let status_text = flow::draft_label(mode, &file.path);
 
-        // Row click → select; for content conflicts conflict_select_file also
-        // opens the hunk-level Conflict Editor (W32). Resolved rows just preview.
-        // Entity-internal (buffer + repo-relative marker build); mutates self.
+        // Both incomplete and ready drafts reopen through the same capture path.
         let row_click = cx.listener(
             move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
                 view.conflict_open_file(idx, cx);
@@ -1592,11 +1539,7 @@ fn section(
             },
         );
 
-        // Per-card actions (T-CONFLICT-DASH-022). Each acts on THIS row's file
-        // (not the selected one) and stops propagation so the row-select / editor
-        // open doesn't also fire. "…" opens the overflow menu at the cursor
-        // (entity-internal state); the ext/copy shortcuts read the conflict
-        // snapshot on the parent → defer (would re-lease this leased entity).
+        // Keep More independent from the row's Open action.
         let more = cx.listener(
             move |view: &mut ConflictView, e: &gpui::MouseDownEvent, _w, cx| {
                 cx.stop_propagation();
@@ -1608,6 +1551,8 @@ fn section(
             .id(SharedString::from(format!("conflict-row-{}", idx)))
             .flex()
             .flex_row()
+            .flex_shrink_0()
+            .min_w(px(0.))
             .items_center()
             .gap_2()
             .mx(theme::scaled_px(6.))
@@ -1623,13 +1568,18 @@ fn section(
             })
             .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
             .on_click(row_click)
-            // Left: file name + status/kind (flex-shrinks; name truncates).
+            // The filename stays visible even when a long directory path truncates.
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_w(px(0.))
+                    .id(path_id.clone())
+                    .hover_tooltip_builder((path_id, 0usize), {
+                        let path = path_str.clone();
+                        move |window, cx| Tooltip::new(path.clone()).build(window, cx)
+                    })
                     .gap_1()
                     .child(
                         div()
@@ -1640,12 +1590,31 @@ fn section(
                                 rgb(theme().text_main).into()
                             })
                             .truncate()
+                            .child(SharedString::from(
+                                file.path
+                                    .file_name()
+                                    .unwrap_or(file.path.as_os_str())
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .min_w(px(0.))
+                            .text_size(theme::scaled_px(10.))
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(window_active)
+                            } else {
+                                rgb(theme().text_sub).into()
+                            })
+                            .truncate()
                             .child(path_str.clone()),
                     )
                     .child(
                         div()
                             .flex()
                             .flex_row()
+                            .flex_wrap()
                             .items_center()
                             .gap_2()
                             .child(
@@ -1661,7 +1630,7 @@ fn section(
                             .child(kind_badge(kind, selected.then_some(window_active))),
                     ),
             )
-            // Right: Keynote-style icon group — "…" / open externally / copy path.
+            // A disclosure affordance makes the row's navigation visible.
             .child(
                 div()
                     .flex()
@@ -1669,6 +1638,17 @@ fn section(
                     .items_center()
                     .gap(theme::scaled_px(1.))
                     .flex_shrink_0()
+                    .child(
+                        div()
+                            .px(theme::scaled_px(6.))
+                            .text_size(theme::scaled_px(16.))
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(window_active)
+                            } else {
+                                rgb(theme().text_sub).into()
+                            })
+                            .child("›"),
+                    )
                     // ADR-0135: "…" only — open-externally / copy-path lived
                     // here AND in this menu AND (open) in the editor toolbar.
                     .child(card_icon(
@@ -1682,8 +1662,8 @@ fn section(
         let row_el = super::list_a11y::list_option(
             list_id,
             row_el,
-            position,
-            indices.len(),
+            idx,
+            mode.session.files.len(),
             path_str,
             selected,
         );

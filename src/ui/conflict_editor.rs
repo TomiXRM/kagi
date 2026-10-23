@@ -49,8 +49,8 @@ pub fn render_editor(
     div()
         .flex()
         .flex_col()
-        .flex_grow(1.)
-        .h_full()
+        .flex_1()
+        .min_h(px(0.))
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
         .child(render_toolbar(mode, chrome, path, cx))
@@ -325,7 +325,7 @@ fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide)
     rows
 }
 
-/// Row window shared with keyboard navigation: one hunk, optional nearby context.
+/// One decision with three nearby context lines, or twelve when disclosed.
 pub(crate) fn visible_hunk_rows(
     model: &kagi_git::resolution::HunkModel,
     selected: usize,
@@ -347,8 +347,9 @@ pub(crate) fn visible_hunk_rows(
                         Some(Region::Passthrough(lines)) => lines.len(),
                         _ => 0,
                     };
-                    return row.saturating_sub(if context { leading.min(3) } else { 0 })
-                        ..row + size + if context { trailing.min(3) } else { 0 };
+                    let context_lines = if context { 12 } else { 3 };
+                    return row.saturating_sub(leading.min(context_lines))
+                        ..row + size + trailing.min(context_lines);
                 }
                 row += size;
                 leading = 0;
@@ -1376,64 +1377,22 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
         )
 }
 
-/// Horizontal divider between the A·B row and the Result pane (drives the
-/// A·B / Result height ratio).
-fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
-    div()
-        .id("conflict-divider-result")
-        .group("conflict-divider-result")
-        .w_full()
-        .h(theme::scaled_px(4.))
-        .bg(rgb(theme().bg_base))
-        .flex()
-        .flex_col()
-        .justify_center()
-        .child(
-            div()
-                .w_full()
-                .h(px(1.))
-                .flex_shrink_0()
-                .bg(rgb(theme().surface))
-                .group_hover("conflict-divider-result", |s| {
-                    s.bg(rgb(theme().ui_accent()))
-                })
-                .group_drag_over::<DividerDrag>("conflict-divider-result", |s| {
-                    s.bg(rgb(theme().ui_accent()))
-                }),
-        )
-        .cursor_row_resize()
-        .hover(|s| s.bg(rgb(theme().ui_accent())))
-        .drag_over::<DividerDrag>(|style, drag, _, _| {
-            if drag.kind == DividerKind::ConflictResult {
-                style.bg(rgb(theme().ui_accent()))
-            } else {
-                style
-            }
-        })
-        .on_drag(
-            DividerDrag {
-                kind: DividerKind::ConflictResult,
-            },
-            |_, _, _, cx| cx.new(|_| DividerGhost),
-        )
-}
-
 #[cfg(test)]
 mod side_row_tests {
     use super::*;
     use kagi_git::resolution::HunkModel;
 
     #[test]
-    fn decision_window_contains_only_selected_hunk_and_optional_nearby_context() {
+    fn decision_window_contains_only_selected_hunk_and_nearby_context() {
         let model = HunkModel::from_marker_text(
             "head\n<<<<<<< Current\nc1\nc2\n=======\ni1\n>>>>>>> Incoming\n\
              ctx1\nctx2\nctx3\nctx4\n<<<<<<< Current\nx\n=======\ny\n>>>>>>> Incoming\n\
              tail1\ntail2\n",
         );
-        assert_eq!(visible_hunk_rows(&model, 0, false), 1..4);
-        assert_eq!(visible_hunk_rows(&model, 0, true), 0..7);
-        assert_eq!(visible_hunk_rows(&model, 1, false), 8..10);
-        assert_eq!(visible_hunk_rows(&model, 1, true), 5..12);
+        assert_eq!(visible_hunk_rows(&model, 0, false), 0..7);
+        assert_eq!(visible_hunk_rows(&model, 0, true), 0..8);
+        assert_eq!(visible_hunk_rows(&model, 1, false), 5..12);
+        assert_eq!(visible_hunk_rows(&model, 1, true), 4..12);
         for side in [SelectionSide::Current, SelectionSide::Incoming] {
             let rows = build_side_rows(&model, side);
             for selected in 0..2 {

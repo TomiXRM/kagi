@@ -19,13 +19,18 @@ pub(super) fn render_toolbar(
         this.conflict_editor_select_hunk(this.selected_hunk.saturating_sub(1));
         cx.notify();
     });
-    let next = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+    let next = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         let total = this
             .editing
             .as_deref()
             .and_then(|path| this.mode.as_ref().map(|mode| mode.buffer.hunk_count(path)))
             .unwrap_or(0);
-        this.conflict_editor_select_hunk((this.selected_hunk + 1).min(total.saturating_sub(1)));
+        if this.selected_hunk + 1 < total {
+            this.conflict_editor_select_hunk(this.selected_hunk + 1);
+        } else {
+            this.conflict_show_page(ConflictPage::Review, cx);
+        }
+        window.blur();
         cx.notify();
     });
     let p_reset = path.to_path_buf();
@@ -43,6 +48,7 @@ pub(super) fn render_toolbar(
 
     div()
         .flex()
+        .flex_shrink_0()
         .flex_row()
         .items_center()
         .flex_wrap()
@@ -104,53 +110,40 @@ pub(super) fn render_toolbar(
                 .disabled(chrome.selected_hunk == 0),
             ))
             .child(super::e2e::measure_control(
-                "conflict-editor-next",
+                if chrome.selected_hunk + 1 < total {
+                    "conflict-editor-next"
+                } else {
+                    "conflict-review"
+                },
                 tool_button(
                     "editor-next",
-                    Msg::EditorNextHunk.t(),
-                    ButtonRole::NeutralTinted,
+                    if chrome.selected_hunk + 1 < total {
+                        Msg::EditorNextHunk.t()
+                    } else {
+                        Msg::ConflictReview.t()
+                    },
+                    ButtonRole::Primary,
                     next,
                     cx,
-                )
-                .disabled(chrome.selected_hunk + 1 >= total),
+                ),
             ))
-            .child(super::e2e::measure_control(
-                "conflict-context",
+        })
+        .when(chrome.page == ConflictPage::Review, |el| {
+            el.child(super::e2e::measure_control(
+                "conflict-review",
                 tool_button(
-                    "editor-context",
-                    Msg::ConflictContext.t(),
+                    "editor-review",
+                    Msg::ConflictBackToHunk.t(),
                     ButtonRole::NeutralTinted,
-                    cx.listener(|view, _: &gpui::ClickEvent, _, cx| {
-                        view.show_context = !view.show_context;
+                    cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
+                        view.conflict_show_page(ConflictPage::Hunk, cx);
+                        window.blur();
                         cx.notify();
                     }),
                     cx,
                 ),
             ))
         })
-        .child(super::e2e::measure_control(
-            "conflict-review",
-            tool_button(
-                "editor-review",
-                if chrome.page == ConflictPage::Review {
-                    Msg::ConflictBackToHunk.t()
-                } else {
-                    Msg::ConflictReview.t()
-                },
-                ButtonRole::NeutralTinted,
-                cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-                    let page = if view.page == ConflictPage::Review {
-                        ConflictPage::Hunk
-                    } else {
-                        ConflictPage::Review
-                    };
-                    view.conflict_show_page(page, cx);
-                    window.blur();
-                    cx.notify();
-                }),
-                cx,
-            ),
-        ))
         // Reset all — destructive: trash icon, armed → blocker colour + confirm label.
         .child(super::e2e::measure_control(
             "conflict-editor-reset",
@@ -206,7 +199,6 @@ where
         role,
         cx,
     )
-    .small()
     .on_click(handler)
 }
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).
@@ -312,14 +304,19 @@ pub(super) fn render_panes(
         ),
     );
 
+    // A definite content-sized height keeps virtual rows visible without a
+    // half-screen blank reservation for small decisions. Large hunks scroll.
+    let visible_rows = visible_hunk_rows(model, chrome.selected_hunk, chrome.show_context).len();
+    let source_height = (visible_rows as f32 * 17. + 36.).clamp(75., 240.);
+    let p_both = path.to_path_buf();
+    let selected_hunk = chrome.selected_hunk;
     let ab_row = div()
         .relative()
         .flex()
         .flex_row()
         .w_full()
-        .flex_basis(relative(chrome.result_split))
+        .h(theme::scaled_px(source_height))
         .flex_shrink_0()
-        .min_h(theme::scaled_px(100.))
         // Measure the FULL A·B row width (not just the A pane) so the divider
         // drag maps the cursor against the whole span — measuring inside A would
         // shrink the span and feed back on itself, making resize unusable.
@@ -334,31 +331,44 @@ pub(super) fn render_panes(
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
 
-    // ── Result pane (resizable A·B / Result) ──
-    // flex_basis(relative) split like the inspector (NOT h(relative)) so the
-    // child uniform_lists get a definite height and actually render their rows.
-    let result_frac = (1.0 - chrome.result_split).max(0.05);
-    let result_pane = div()
+    let source_actions = div()
         .flex()
-        .flex_col()
-        .min_h(theme::scaled_px(70.))
-        .flex_basis(relative(result_frac))
+        .flex_wrap()
         .flex_shrink_0()
-        .child(render_hunk_result(mode, chrome, path, cx));
-
-    // The split region is measured for the horizontal divider drag.
-    let geom = chrome.geom.clone();
-    let measure = canvas(
-        move |bounds: Bounds<Pixels>, _w, _cx| {
-            geom.set((
-                f32::from(bounds.origin.y),
-                f32::from(bounds.origin.y + bounds.size.height),
-            ));
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .size_full();
+        .items_center()
+        .gap_2()
+        .p(theme::scaled_px(6.))
+        .child(super::e2e::measure_control(
+            "conflict-both",
+            tool_button(
+                "editor-both",
+                Msg::ConflictChooseBoth.t(),
+                ButtonRole::Secondary,
+                cx.listener(move |view, _: &gpui::ClickEvent, _, cx| {
+                    view.conflict_choose_both(&p_both, selected_hunk, cx);
+                    cx.notify();
+                }),
+                cx,
+            )
+            .disabled(!chrome.source_choices_enabled),
+        ))
+        .child(super::e2e::measure_control(
+            "conflict-context",
+            tool_button(
+                "editor-context",
+                Msg::ConflictContext.t(),
+                if chrome.show_context {
+                    ButtonRole::Secondary
+                } else {
+                    ButtonRole::NeutralTinted
+                },
+                cx.listener(|view, _: &gpui::ClickEvent, _, cx| {
+                    view.show_context = !view.show_context;
+                    cx.notify();
+                }),
+                cx,
+            ),
+        ));
 
     div()
         .id("conflict-decision-scroll")
@@ -368,10 +378,9 @@ pub(super) fn render_panes(
         .flex_1()
         .min_h(px(0.))
         .overflow_y_scroll()
-        .child(measure)
+        .child(source_actions)
         .child(ab_row)
-        .child(horizontal_divider())
-        .child(result_pane)
+        .child(render_hunk_result(mode, chrome, path, cx))
         .into_any_element()
 }
 fn render_hunk_result(
@@ -393,19 +402,21 @@ fn render_hunk_result(
         })
         .nth(chrome.selected_hunk);
     let lines = hunk
-        .filter(|hunk| hunk.is_resolved())
+        .filter(|hunk| !manual && hunk.is_resolved())
         .map(|hunk| hunk.resolved_lines());
+    let result_rows = lines.as_ref().map_or(1, Vec::len).clamp(1, 8);
     let mut result = div()
         .id("conflict-hunk-result")
         .flex()
         .flex_col()
-        .flex_1()
-        .min_h(px(0.))
+        .h(theme::scaled_px(result_rows as f32 * 17. + 60.))
+        .flex_shrink_0()
         .child(
             div()
                 .flex()
                 .flex_wrap()
                 .items_center()
+                .flex_shrink_0()
                 .gap_2()
                 .p(theme::scaled_px(6.))
                 .child(Msg::ConflictHunkResult.t())
@@ -414,20 +425,28 @@ fn render_hunk_result(
                         .text_size(theme::scaled_px(11.))
                         .text_color(rgb(theme().text_sub))
                         .child(SharedString::from(flow::draft_label(mode, path))),
-                ),
+                )
+                .child(super::e2e::measure_control(
+                    "conflict-edit-result",
+                    tool_button(
+                        "hunk-edit-result",
+                        Msg::ConflictEditResult.t(),
+                        ButtonRole::Secondary,
+                        cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
+                            view.conflict_edit_result(window, cx);
+                        }),
+                        cx,
+                    )
+                    .disabled(chrome.writer_busy),
+                )),
         );
     if manual {
-        result = result.child(tool_button(
-            "hunk-manual-review",
-            Msg::ConflictManualResult.t(),
-            ButtonRole::NeutralTinted,
-            cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-                view.conflict_show_page(ConflictPage::Review, cx);
-                window.blur();
-                cx.notify();
-            }),
-            cx,
-        ));
+        result = result.child(
+            div()
+                .px(theme::scaled_px(8.))
+                .text_color(rgb(theme().text_sub))
+                .child(Msg::ConflictManualResult.t()),
+        );
     } else if let Some(lines) = lines {
         if lines.is_empty() {
             result = result.child(Msg::ConflictEmptyResult.t());

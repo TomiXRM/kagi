@@ -26,27 +26,47 @@ impl ConflictView {
         cx: &mut Context<Self>,
     ) {
         let mut previous = self.mode.take();
-        // A keystroke may precede the paint that normally pulls it. Capture it
-        // only against its original owner, before retaining that old draft.
         if self.result_editing {
             if let (Some(previous), Some(path)) = (previous.as_mut(), self.editing.as_deref()) {
                 let _ = pull_owned_editor(self.editor_inputs.as_ref(), previous, path, cx);
             }
         }
-        let same_path = editing_path
+        let selected = self
+            .selected_saved
+            .clone()
+            .or_else(|| {
+                previous.as_ref().and_then(|old| {
+                    old.selected_file
+                        .and_then(|i| old.session.files.get(i).map(|f| f.path.clone()))
+                })
+            })
+            .or_else(|| self.editing.clone())
+            .or(editing_path);
+        let saved = selected
             .as_ref()
-            .is_none_or(|path| self.editing.as_ref() == Some(path));
-        let next_editing = editing_path.or_else(|| {
-            self.editing
-                .take()
-                .filter(|path| mode.session.files.iter().any(|file| file.path == *path))
+            .and_then(|path| mode.session.resolved.iter().position(|f| &f.path == path));
+        let pending = selected
+            .as_ref()
+            .and_then(|path| mode.session.files.iter().position(|f| &f.path == path))
+            .or_else(|| (saved.is_none() && !mode.session.files.is_empty()).then_some(0));
+        let saved =
+            saved.or_else(|| (pending.is_none() && !mode.session.resolved.is_empty()).then_some(0));
+        mode.selected_file = pending;
+        mode.editing_file = pending.filter(|&i| {
+            matches!(
+                mode.session.files[i].kind,
+                kagi_git::ConflictKind::Content | kagi_git::ConflictKind::AddAdd
+            )
         });
-        let same_context = same_path
-            && next_editing.as_deref().is_some_and(|path| {
-                previous
+        let next_editing = mode
+            .editing_file
+            .map(|i| mode.session.files[i].path.clone());
+        let same_context = next_editing.as_deref().is_some_and(|path| {
+            self.editing.as_deref() == Some(path)
+                && previous
                     .as_ref()
                     .is_some_and(|old| same_file_context(old, &mode, path))
-            });
+        });
         let retain_input = same_context
             && self.editor_inputs.as_ref().is_some_and(|inputs| {
                 next_editing.as_ref() == Some(&inputs.path)
@@ -59,6 +79,7 @@ impl ConflictView {
                 .as_ref()
                 .is_some_and(|old| same_file_context(old, &mode, path))
         });
+        let first_detection = previous.is_none();
         if let Some(previous) = previous {
             mode.buffer.retain_drafts(previous.buffer);
             mode.refresh_file_statuses();
@@ -74,7 +95,7 @@ impl ConflictView {
             self.editor_inputs = None;
         }
         if !same_context {
-            self.page = super::ConflictPage::Overview;
+            self.page = super::ConflictPage::Hunk;
             self.selected_hunk = 0;
             self.reset_all_target = None;
             self.file_menu = None;
@@ -83,7 +104,21 @@ impl ConflictView {
             self.hl_cache.borrow_mut().take();
         }
         self.editing = next_editing;
+        self.selected_saved = saved.map(|i| mode.session.resolved[i].path.clone());
+        self.saved_review_needed = false;
+        self.clear_saved_reads();
         self.mode = Some(mode);
+        self.rebuild_tree();
+        if first_detection {
+            self.initialize_tree_expansion();
+        }
+        if let Some(saved) = saved {
+            self.conflict_open_saved(saved, cx);
+        } else if !same_context {
+            if let Some(pending) = pending {
+                self.conflict_select_file(pending);
+            }
+        }
         cx.notify();
     }
 

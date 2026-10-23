@@ -1,5 +1,7 @@
 //! Hunk decision and review chrome; code rows and result rendering stay shared.
 use super::*;
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use kagi_git::resolution::HunkChoice;
 pub(super) fn render_toolbar(
     mode: &ConflictMode,
     chrome: &EditorChrome,
@@ -59,20 +61,6 @@ pub(super) fn render_toolbar(
         .bg(rgb(theme().surface))
         .border_b_1()
         .border_color(rgb(theme().color_warning))
-        .child(super::e2e::measure_control(
-            "conflict-overview",
-            tool_button(
-                "editor-files",
-                Msg::ConflictFiles.t(),
-                ButtonRole::NeutralTinted,
-                cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-                    view.conflict_show_page(ConflictPage::Overview, cx);
-                    view.focus_navigation(window, cx);
-                    cx.notify();
-                }),
-                cx,
-            ),
-        ))
         .child(
             // file name + conflict n/m laid out horizontally (was stacked).
             div()
@@ -305,18 +293,19 @@ pub(super) fn render_panes(
         ),
     );
 
-    // A definite content-sized height keeps virtual rows visible without a
-    // half-screen blank reservation for small decisions. Large hunks scroll.
-    let visible_rows = visible_hunk_rows(model, chrome.selected_hunk, chrome.show_context).len();
-    let source_height = (visible_rows as f32 * 17. + 36.).clamp(75., 240.);
-    let p_both = path.to_path_buf();
-    let selected_hunk = chrome.selected_hunk;
+    // Fixed code viewport, independent of file/hunk length. Pane borders are
+    // physical pixels; the header and code rows follow the UI zoom.
+    let code_rows = if theme::viewport_w().is_some_and(|width| width < 1000.) {
+        8.
+    } else {
+        12.
+    };
     let ab_row = div()
         .relative()
         .flex()
         .flex_row()
         .w_full()
-        .h(theme::scaled_px(source_height))
+        .h(theme::scaled_px(code_rows * 17. + 24.) + px(2.))
         .flex_shrink_0()
         // Measure the FULL A·B row width (not just the A pane) so the divider
         // drag maps the cursor against the whole span — measuring inside A would
@@ -332,44 +321,94 @@ pub(super) fn render_panes(
         .child(vertical_divider())
         .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
 
-    let source_actions = div()
+    let selected_hunk = chrome.selected_hunk;
+    let mut source_actions = div()
         .flex()
         .flex_wrap()
         .flex_shrink_0()
         .items_center()
         .gap_2()
-        .p(theme::scaled_px(6.))
-        .child(super::e2e::measure_control(
-            "conflict-both",
-            tool_button(
-                "editor-both",
-                Msg::ConflictChooseBoth.t(),
-                ButtonRole::Secondary,
-                cx.listener(move |view, _: &gpui::ClickEvent, _, cx| {
-                    view.conflict_choose_both(&p_both, selected_hunk, cx);
-                    cx.notify();
-                }),
-                cx,
-            )
-            .disabled(!chrome.source_choices_enabled),
-        ))
-        .child(super::e2e::measure_control(
-            "conflict-context",
-            tool_button(
-                "editor-context",
-                Msg::ConflictContext.t(),
-                if chrome.show_context {
-                    ButtonRole::Secondary
-                } else {
-                    ButtonRole::NeutralTinted
-                },
-                cx.listener(|view, _: &gpui::ClickEvent, _, cx| {
-                    view.show_context = !view.show_context;
-                    cx.notify();
-                }),
-                cx,
+        .p(theme::scaled_px(6.));
+    for (id, message, identity, choice) in [
+        (
+            "conflict-use-left",
+            Msg::ConflictUseLeft,
+            &labels.current.name,
+            HunkChoice::AcceptCurrent,
+        ),
+        (
+            "conflict-use-right",
+            Msg::ConflictUseRight,
+            &labels.incoming.name,
+            HunkChoice::AcceptIncoming,
+        ),
+    ] {
+        let path = path.to_path_buf();
+        // Kit Button::render replaces an explicit AX name with `label`.
+        // Child text keeps the short visible label and the side-aware AX name.
+        let button = super::super::button_style::apply_role(
+            gpui_component::button::Button::new(id).child(message.t()),
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .on_click(cx.listener(move |view, _: &gpui::ClickEvent, _, cx| {
+            view.conflict_choose_hunk(&path, selected_hunk, choice.clone(), cx);
+            cx.notify();
+        }))
+        .h(theme::scaled_px(24.))
+        .disabled(!chrome.source_choices_enabled);
+        source_actions = source_actions.child(super::e2e::measure_control(
+            id,
+            super::super::button_style::named_button(
+                button,
+                SharedString::from(format!("{} — {identity}", message.t())),
+                None,
             ),
         ));
+    }
+    let owner = cx.entity().downgrade();
+    let both_path = path.to_path_buf();
+    let both = super::super::button_style::named_button(
+        super::super::button_style::apply_role(
+            gpui_component::button::Button::new("conflict-use-both")
+                .child(Msg::ConflictUseBoth.t()),
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .h(theme::scaled_px(24.))
+        .disabled(!chrome.source_choices_enabled),
+        SharedString::from(format!(
+            "{} — {} / {}",
+            Msg::ConflictUseBoth.t(),
+            labels.current.name,
+            labels.incoming.name
+        )),
+        None,
+    )
+    .dropdown_menu(move |mut menu, _, _| {
+        for (message, choice) in [
+            (Msg::ConflictUseBothLeftFirst, HunkChoice::BothCurrentFirst),
+            (
+                Msg::ConflictUseBothRightFirst,
+                HunkChoice::BothIncomingFirst,
+            ),
+        ] {
+            let owner = owner.clone();
+            let path = both_path.clone();
+            menu = menu.item(PopupMenuItem::new(message.t()).on_click(move |_, _, cx| {
+                if let Some(owner) = owner.upgrade() {
+                    owner.update(cx, |view, cx| {
+                        view.conflict_choose_hunk(&path, selected_hunk, choice.clone(), cx);
+                        cx.notify();
+                    });
+                }
+            }));
+        }
+        menu
+    });
+    source_actions = source_actions.child(super::e2e::measure_control("conflict-use-both", both));
 
     div()
         .id("conflict-decision-scroll")

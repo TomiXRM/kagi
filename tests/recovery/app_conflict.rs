@@ -680,9 +680,12 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
             .ui()
             .conflict
             .as_ref()
-            .expect("staged overview");
+            .expect("staged workspace");
         let view = entity.read(cx);
-        assert_eq!(view.page, kagi::ui::conflict_view::ConflictPage::Overview);
+        assert!(
+            view.editing.is_none(),
+            "staged workspace has no editable draft"
+        );
         let mode = view.mode.as_ref().unwrap();
         assert!(mode.session.files.is_empty());
         assert!(

@@ -5,6 +5,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+pub(super) mod count_badge;
 pub(super) mod overflow_trigger;
 #[cfg_attr(not(feature = "gui-e2e"), allow(dead_code))]
 pub(super) mod toolbar_a11y;
@@ -546,7 +547,6 @@ impl KagiApp {
             } else {
                 theme().text_muted
             });
-            let chip_bg = theme().ui_accent();
 
             // The count is an overlay on the icon cell. Native probes stay
             // inside that cell so they do not change the toolbar's layout.
@@ -567,41 +567,7 @@ impl KagiApp {
                     el.child(super::e2e::measure_inside(format!("{id}-icon")))
                 });
             if count > 0 {
-                let chip_text = if count > 99 {
-                    "99+".to_string()
-                } else {
-                    count.to_string()
-                };
-                let chip_label = SharedString::from(chip_text).into_any_element();
-                #[cfg(feature = "gui-e2e")]
-                let chip_label =
-                    super::e2e::measure_control(format!("{id}-count-text"), chip_label);
-                icon_cell = icon_cell.child(
-                    div()
-                        .absolute()
-                        // Grow towards the outside, never left across the arrow.
-                        .top(theme::scaled_px(
-                            -2.0 - (theme::TOOLBAR_COUNT_HEIGHT - 14.0) / 2.0,
-                        ))
-                        .left(theme::scaled_px(22.0 - theme::TOOLBAR_COUNT_ICON_OVERLAP))
-                        .min_w(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
-                        .h(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
-                        .px(theme::scaled_px(3.0))
-                        .rounded_full()
-                        .bg(rgb(chip_bg))
-                        .when(!enabled, |el| el.opacity(0.5))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(rgb(*chip_fg))
-                        .text_size(theme::scaled_px(theme::TOOLBAR_COUNT_TEXT))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(theme::scaled_px(theme::TOOLBAR_COUNT_LINE_HEIGHT))
-                        .child(chip_label)
-                        .when(cfg!(feature = "gui-e2e"), |el| {
-                            el.child(super::e2e::measure_inside(format!("{id}-count")))
-                        }),
-                );
+                icon_cell = icon_cell.child(count_badge::render(id, count, enabled, *chip_fg));
             }
 
             let btn = div()

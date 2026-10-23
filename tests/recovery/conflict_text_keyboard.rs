@@ -56,6 +56,29 @@ fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     })
     .unwrap();
 }
+
+fn assert_source_hunk_visible(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hunk: usize) {
+    for side in ["current", "incoming"] {
+        e2e::clear_control_bounds(
+            window.window_id(),
+            &format!("resolver-hunk-{hunk}-{side}-line-0"),
+        );
+    }
+    paint(cx, window);
+    for side in ["current", "incoming"] {
+        let line = e2e::control_bounds(
+            window.window_id(),
+            &format!("resolver-hunk-{hunk}-{side}-line-0"),
+        )
+        .expect("selected hunk's first source line is rendered");
+        let viewport =
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-viewport")).unwrap();
+        assert!(
+            line.top() >= viewport.top() && line.bottom() <= viewport.bottom(),
+            "{side}: navigation brings hunk {hunk} inside the whole-file viewport"
+        );
+    }
+}
 fn probe(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> Option<String> {
     ax::take_focus_probe();
     cx.simulate_keystrokes(window, "f19");
@@ -171,11 +194,17 @@ fn hunk_adoption(
     keys(cx, window, "down");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("resolver-hunk-0-current"),
-        "roving focus cannot target an invisible hunk"
+        Some("resolver-hunk-1-current"),
+        "whole-file roving focus reaches the next hunk"
+    );
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).selected_hunk),
+        0,
+        "keyboard focus does not change the selected decision hunk"
     );
     click_control(cx, window, "conflict-editor-next");
     paint(cx, window);
+    assert_source_hunk_visible(cx, window, 1);
     cx.read(|cx| {
         let view = conflict.read(cx);
         assert_eq!(view.selected_hunk, 1);
@@ -206,9 +235,11 @@ fn hunk_adoption(
         cx.notify();
     });
     paint(cx, window);
-    click_control(cx, window, id);
+    click_control(cx, window, "conflict-use-right");
     paint(cx, window);
     assert_eq!(text, assembled(cx, conflict));
+    tab_to(cx, window, "resolver-hunk-1-current");
+    keys(cx, window, "right");
     horizontal_controls(cx, window, conflict, lang);
 }
 
@@ -231,11 +262,23 @@ fn matrix_leg(
     crate::pr_detail_adaptive::resize(cx, window, dimensions);
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    conflict.update(cx, |view, cx| {
-        view.conflict_open_editor(Path::new("notes.txt"));
-        cx.notify();
-    });
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).page),
+        kagi::ui::conflict_view::ConflictPage::Hunk,
+        "first file opens directly at every language, zoom and window size"
+    );
     paint(cx, window);
+    assert_source_hunk_visible(cx, window, 0);
+    let rows = if dimensions.0 < 1000. { 8. } else { 12. };
+    for side in ["current", "incoming"] {
+        let viewport =
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-viewport")).unwrap();
+        let expected = f32::from(theme::scaled_px(17.)) * rows;
+        assert!(
+            (f32::from(viewport.size.height) - expected).abs() <= 1.,
+            "{side}: source viewport is fixed at {rows} code rows"
+        );
+    }
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
@@ -247,6 +290,7 @@ fn matrix_leg(
     .unwrap();
     click_control(cx, window, "conflict-editor-prev");
     paint(cx, window);
+    assert_source_hunk_visible(cx, window, 0);
     tab_to(cx, window, "resolver-hunk-0-current");
     keys(cx, window, "space");
     assert_eq!(ax::control("resolver-hunk-0-current").unwrap().2, "all");
@@ -315,10 +359,7 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    conflict.update(cx, |view, cx| {
-        view.conflict_open_editor(Path::new("notes.txt"));
-        cx.notify();
-    });
+    click_control(cx, window, "conflict-row-0");
     paint(cx, window);
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
@@ -373,10 +414,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
             });
             cx.run_until_parked();
             let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-            conflict.update(cx, |view, cx| {
-                view.conflict_open_editor(Path::new("notes.txt"));
-                cx.notify();
-            });
+            click_control(cx, window, "conflict-row-0");
             paint(cx, window);
             let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
             assert_eq!(
@@ -390,6 +428,27 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                 } else {
                     "Merging in"
                 }
+            );
+            crate::native_ax::activate(cx);
+            paint(cx, window);
+            let tree = crate::native_ax::tree(cx, window);
+            let both_identity = format!("{} / {}", labels.current.name, labels.incoming.name);
+            for (message, identity) in [
+                (i18n::Msg::ConflictUseLeft, &labels.current.name),
+                (i18n::Msg::ConflictUseRight, &labels.incoming.name),
+                (i18n::Msg::ConflictUseBoth, &both_identity),
+            ] {
+                let expected = format!("{} — {identity}", message.t());
+                assert!(
+                    tree["nodes"].as_object().unwrap().values().any(|node| {
+                        node["aria"]["role"] == "Button" && node["aria"]["label"] == expected
+                    }),
+                    "selected-hunk adoption names include the side identity: {expected}"
+                );
+            }
+            assert!(
+                e2e::control_bounds(window.window_id(), "conflict-use-both").is_some(),
+                "the selected hunk exposes the shared Use Both menu"
             );
             for (side, label) in [("current", &labels.current), ("incoming", &labels.incoming)] {
                 let identity = format!("{} ({})", label.role, label.name);

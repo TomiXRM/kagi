@@ -228,10 +228,6 @@ pub(super) fn open_continue(
 ) {
     let repo = cx.read(|cx| app.read(cx).repo_path.clone()).unwrap();
     let before = RepositoryState::read(&repo);
-    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    if cx.read(|cx| conflict.read(cx).page != kagi::ui::conflict_view::ConflictPage::Overview) {
-        click_control(cx, window, "conflict-overview");
-    }
     click_control(cx, window, "conflict-continue");
     cx.run_until_parked();
     cx.read(|cx| {
@@ -269,10 +265,15 @@ fn stable_second_conflict(
         assert_unresolved(cx, app);
         detect(cx, app, window);
         assert_unresolved(cx, app);
-        // Unfinished files expose Open, not an actionable Continue.
+        // Continue remains visible but secondary and guarded while files remain.
         e2e::clear_control_bounds(window.window_id(), "conflict-continue");
         paint(cx, app, window);
-        assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_none());
+        assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_some());
+        assert_eq!(
+            kagi::ui::conflict_view::continue_primary_for_e2e(),
+            Some(false)
+        );
+        click_control(cx, window, "conflict-continue");
         assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_none()));
         assert_eq!(before, RepositoryState::read(repo));
         assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);

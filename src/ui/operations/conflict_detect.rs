@@ -204,6 +204,20 @@ impl KagiApp {
             }
         };
         if stale {
+            if let Some(entity) = self
+                .ui
+                .get(&owner.session)
+                .and_then(|ui| ui.conflict.clone())
+            {
+                entity.update(cx, |view, cx| {
+                    view.saved_review_needed = accepted.is_some_and(|op| {
+                        view.mode
+                            .as_ref()
+                            .is_some_and(|mode| mode.revision != op.observation.revision)
+                    });
+                    cx.notify();
+                });
+            }
             // The read that superseded it re-detects on its own; this re-arm
             // covers the commit points that do not.
             if let Some(state) = self.ui.get_mut(&owner.session) {
@@ -303,7 +317,7 @@ impl KagiApp {
                     .and_then(|ui| ui.conflict.clone())
                 {
                     // Re-detect against a retained pane. An **unchanged**
-                    // observation must change nothing at all (#722 P2): the
+                    // observation must retain draft owners untouched (#722 P2):
                     // resolution buffer carries the undo/redo stack, and the
                     // entity carries the selected file/hunk and scroll, so
                     // swapping in a freshly read `mode` would silently discard
@@ -317,7 +331,7 @@ impl KagiApp {
                             .as_ref()
                             .is_some_and(|current| current.revision == mode.revision) =>
                     {
-                        let _ = entity;
+                        entity.update(cx, |view, cx| view.refresh_saved_reads(cx));
                     }
                     Some(entity) => {
                         entity.update(cx, |view, cx| {
@@ -329,14 +343,13 @@ impl KagiApp {
                     None => {
                         let weak_app = cx.weak_entity();
                         let repo_path = owner.path.clone();
-                        let entity = cx.new(|_| {
+                        let entity = cx.new(|cx| {
                             let mut view = conflict_view::ConflictView::new(
                                 weak_app,
                                 repo_path,
                                 owner.clone(),
                             );
-                            view.mode = Some(mode);
-                            view.editing = editing_path;
+                            view.adopt_detected(mode, editing_path, cx);
                             view
                         });
                         if let Some(ui) = self.ui.get_mut(&owner.session) {

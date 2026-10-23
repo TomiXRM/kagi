@@ -51,7 +51,7 @@ fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, row: usize) -> 
         let scale = window.scale_factor();
         image
             .get_pixel(
-                ((f32::from(bounds.left()) + 10.) * scale) as u32,
+                ((f32::from(bounds.right()) - 5.) * scale) as u32,
                 ((f32::from(bounds.top()) + 5.) * scale) as u32,
             )
             .0
@@ -85,21 +85,23 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     });
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Overview);
+    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Hunk);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     let active_fill = paint(cx, window, 0);
+    assert_eq!(
+        kagi::ui::conflict_view::continue_primary_for_e2e(),
+        Some(false)
+    );
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
-    click_control(cx, window, "conflict-next");
     cx.read(|cx| {
         let view = conflict.read(cx);
         assert_eq!(view.mode.as_ref().unwrap().selected_file, Some(0));
         assert!(
             view.editing.is_none(),
-            "Open must not skip the first raw file"
+            "initial selection must not skip a raw file"
         );
     });
-    click_control(cx, window, "conflict-overview");
     click_control(cx, window, "conflict-row-1");
     cx.read(|cx| {
         let view = conflict.read(cx);
@@ -108,80 +110,162 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     });
     click_control(cx, window, "conflict-review");
     assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Review);
-    click_control(cx, window, "conflict-overview");
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "notes.txt");
+    selected_row("conflict-tree", "notes.txt");
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     assert_eq!(paint(cx, window, 1), active_fill);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
-    click_control(cx, window, "conflict-next");
+    click_control(cx, window, "conflict-sidebar-toggle");
     cx.read(|cx| {
         let view = conflict.read(cx);
+        assert!(view.sidebar_hidden);
         assert_eq!(view.editing.as_deref(), Some(Path::new("notes.txt")));
-        assert_eq!(
-            view.selected_hunk, 0,
-            "file navigation is not hunk navigation"
-        );
+        assert_eq!(view.page, ConflictPage::Review);
     });
-    click_control(cx, window, "conflict-overview");
+    click_control(cx, window, "conflict-sidebar-toggle");
+    assert!(!cx.read(|cx| conflict.read(cx).sidebar_hidden));
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "notes.txt");
+    selected_row("conflict-tree", "notes.txt");
     click_control(cx, window, "conflict-row-0");
-    click_control(cx, window, "conflict-overview");
-    cx.update_window(window, |_, window, cx| {
-        window.draw(cx).clear();
-    })
-    .unwrap();
-    let mut reached_next = false;
-    for _ in 0..80 {
-        kagi::ui::conflict_view::take_next_conflict_focus_probe();
-        cx.simulate_keystrokes(window, "shift-tab");
-        cx.run_until_parked();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
-        cx.simulate_keystrokes(window, "f19");
-        cx.run_until_parked();
-        if kagi::ui::conflict_view::take_next_conflict_focus_probe() {
-            reached_next = true;
-            break;
-        }
-    }
-    assert!(
-        reached_next,
-        "Open must be keyboard reachable in the overview"
+    tab_to_tree(cx, window);
+    crate::keyboard_nav::keys(cx, window, "tab");
+    assert!(!tree_focused(cx, window), "the tree has only one Tab stop");
+    crate::keyboard_nav::keys(cx, window, "shift-tab");
+    assert!(tree_focused(cx, window));
+    crate::keyboard_nav::keys(cx, window, "down");
+    paint(cx, window, 0);
+    selected_row("conflict-tree", "blob.bin");
+    assert!(cx.read(|cx| conflict.read(cx).editing.is_none()));
+    crate::keyboard_nav::keys(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).editing.clone()).as_deref(),
+        Some(Path::new("notes.txt"))
     );
-    crate::keyboard_nav::keys(cx, window, "space");
-    cx.read(|cx| {
-        assert!(
-            conflict.read(cx).editing.is_none(),
-            "raw file has no stale text editor"
-        )
-    });
-    click_control(cx, window, "conflict-overview");
-    assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "blob.bin");
-    click_control(cx, window, "conflict-row-1");
-    conflict.update(cx, |view, cx| {
-        view.conflict_editor_set_file_side(
-            Path::new("notes.txt"),
-            kagi_git::resolution::SelectionSide::Current,
-            true,
-        );
-        cx.notify();
-    });
-    click_control(cx, window, "conflict-overview");
+    assert_eq!(cx.read(|cx| conflict.read(cx).selected_hunk), 0);
+    click_control(cx, window, "conflict-use-left");
+    click_control(cx, window, "conflict-review");
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "notes.txt");
-    click_control(cx, window, "conflict-next");
-    click_control(cx, window, "conflict-overview");
-    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "notes.txt");
+    selected_row("conflict-tree", "notes.txt");
     assert_eq!(
         repo_fingerprint(fixture.path()),
         before,
-        "page changes and draft choices never stage"
+        "navigation and choices never stage"
+    );
+    click_control(cx, window, "conflict-save");
+    crate::app_conflict::wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(view.selected_saved.as_deref(), Some(Path::new("notes.txt")));
+        assert!(view.editing.is_none());
+        assert!(view.editor_inputs.is_none());
+        assert_eq!(view.mode.as_ref().unwrap().session.files.len(), 2);
+    });
+    let repository = git2::Repository::open(fixture.path()).unwrap();
+    let entry = repository
+        .index()
+        .unwrap()
+        .get_path(Path::new("notes.txt"), 0)
+        .unwrap();
+    assert_eq!(
+        repository.find_blob(entry.id).unwrap().content(),
+        b"current\n"
+    );
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let preview = view
+            .saved_preview
+            .as_ref()
+            .expect("accepted saved byte preview");
+        assert_eq!(preview.path, Path::new("notes.txt"));
+        assert_eq!(preview.oid, entry.id.to_string());
+        assert_eq!(
+            preview.bytes.as_ref(),
+            repository.find_blob(entry.id).unwrap().content()
+        );
+        assert!(!view.result_editing);
+    });
+    assert_eq!(
+        kagi::ui::conflict_view::continue_primary_for_e2e(),
+        Some(false)
+    );
+    let saved_before = repo_fingerprint(fixture.path());
+    let receipts_before: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 20)
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect();
+    click_control(cx, window, "conflict-sidebar-toggle");
+    click_control(cx, window, "conflict-sidebar-toggle");
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).selected_saved.clone())
+            .as_deref(),
+        Some(Path::new("notes.txt"))
+    );
+    click_control(cx, window, "conflict-next-file");
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().selected_file),
+        Some(0)
+    );
+    assert!(cx.read(|cx| conflict.read(cx).selected_saved.is_none()));
+    tab_to_tree(cx, window);
+    crate::keyboard_nav::keys(cx, window, "down down");
+    paint(cx, window, 0);
+    selected_row("conflict-tree", "blob.bin");
+    assert!(
+        cx.read(|cx| conflict.read(cx).selected_saved.is_none()),
+        "arrow focus is not selection"
+    );
+    crate::keyboard_nav::keys(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).selected_saved.clone())
+            .as_deref(),
+        Some(Path::new("notes.txt")),
+        "arrows cross from pending to saved rows"
+    );
+    crate::keyboard_nav::keys(cx, window, "up");
+    assert!(cx.read(|cx| conflict.read(cx).selected_saved.is_some()));
+    crate::keyboard_nav::keys(cx, window, "space");
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).editing.clone()).as_deref(),
+        Some(Path::new("zeta.txt")),
+        "Space opens a pending row across the saved boundary"
+    );
+    click_control(cx, window, "conflict-saved-row-0");
+    paint(cx, window, 0);
+    selected_row("conflict-tree", "notes.txt");
+    assert!(cx.read(|cx| conflict.read(cx).editor_inputs.is_none()));
+    assert_eq!(
+        repo_fingerprint(fixture.path()),
+        saved_before,
+        "saved inspection never writes Git"
+    );
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 20)
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        receipts_before,
+        "navigation emits no operation receipt"
     );
     app.update(cx, |app, cx| app.set_theme(&old_theme, cx));
     drop(conflict);
     unmount(cx, app, window);
+}
+
+fn tree_focused(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> bool {
+    kagi::ui::conflict_view::take_next_conflict_focus_probe();
+    cx.simulate_keystrokes(window, "f19");
+    cx.run_until_parked();
+    kagi::ui::conflict_view::take_next_conflict_focus_probe()
+}
+
+fn tab_to_tree(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    for _ in 0..80 {
+        if tree_focused(cx, window) {
+            return;
+        }
+        crate::keyboard_nav::keys(cx, window, "shift-tab");
+    }
+    panic!("the persistent file tree must be keyboard reachable");
 }

@@ -1,6 +1,6 @@
 //! Shared conflict code rows, syntax, selection bands and Result editor.
 //! Presentation pages live in `pages`; all choices still use ResolutionBuffer.
-//! Source rows are cropped to the selected hunk without changing row identity.
+//! Source panes show the whole file with a distinct selected-hunk highlight.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -325,41 +325,6 @@ fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide)
     rows
 }
 
-/// One decision with three nearby context lines, or twelve when disclosed.
-pub(crate) fn visible_hunk_rows(
-    model: &kagi_git::resolution::HunkModel,
-    selected: usize,
-    context: bool,
-) -> Range<usize> {
-    let mut row = 0;
-    let mut hunk_index = 0;
-    let mut leading = 0;
-    for (index, region) in model.regions.iter().enumerate() {
-        match region {
-            Region::Passthrough(lines) => {
-                leading = lines.len();
-                row += lines.len();
-            }
-            Region::Hunk(hunk) => {
-                let size = 1 + hunk.current.len().max(hunk.incoming.len());
-                if hunk_index == selected {
-                    let trailing = match model.regions.get(index + 1) {
-                        Some(Region::Passthrough(lines)) => lines.len(),
-                        _ => 0,
-                    };
-                    let context_lines = if context { 12 } else { 3 };
-                    return row.saturating_sub(leading.min(context_lines))
-                        ..row + size + trailing.min(context_lines);
-                }
-                row += size;
-                leading = 0;
-                hunk_index += 1;
-            }
-        }
-    }
-    0..0
-}
-
 fn side_row_list(
     path: &std::path::Path,
     model: &kagi_git::resolution::HunkModel,
@@ -371,8 +336,7 @@ fn side_row_list(
 ) -> gpui::Stateful<gpui::Div> {
     let rows = Arc::new(build_side_rows(model, side));
     let highlights = side_highlights(chrome, path, model, side);
-    let visible = visible_hunk_rows(model, selected_hunk, chrome.show_context);
-    let row_count = visible.len();
+    let row_count = rows.len();
     let enabled = chrome.source_choices_enabled;
     let rows_for_list = rows.clone();
     let p = Arc::new(path.to_path_buf());
@@ -405,7 +369,7 @@ fn side_row_list(
                         p.clone(),
                         side,
                         selected_hunk,
-                        range.start + visible.start..range.end + visible.start,
+                        range,
                         enabled,
                         cx,
                         &_this.resolver_keyboard,
@@ -584,8 +548,8 @@ fn render_hunk_header_row(
         cx.notify();
     });
     let order_label = match target_order {
-        LineOrder::CurrentFirst => "● → ○",
-        LineOrder::IncomingFirst => "○ → ●",
+        LineOrder::CurrentFirst => Msg::ConflictUseBothLeftFirst.t(),
+        LineOrder::IncomingFirst => Msg::ConflictUseBothRightFirst.t(),
     };
     let accent = side_accent(side);
     // Band opacity mirrors the tri-state: solid / half / off.
@@ -602,7 +566,7 @@ fn render_hunk_header_row(
         .items_center()
         .gap_2()
         .w_full()
-        .h(theme::scaled_px(22.))
+        .h(theme::scaled_px(17.))
         .pr(theme::scaled_px(4.))
         .border_l(theme::scaled_px(3.))
         .border_color(band)
@@ -922,7 +886,8 @@ fn pane(
         .gap_2()
         .w_full()
         .px(theme::scaled_px(8.))
-        .py(theme::scaled_px(4.))
+        .h(theme::scaled_px(24.))
+        .flex_shrink_0()
         .bg(rgb(theme().surface))
         .border_b_1()
         .border_color(rgb(theme().surface))
@@ -1052,7 +1017,25 @@ fn render_result_preview(
     path: &std::path::Path,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let lines = Arc::new(lines);
+    result_preview_rows(Arc::new(lines), chrome, path, theme().bg_base, cx)
+}
+
+pub(super) fn render_saved_preview(
+    lines: Arc<Vec<kagi_git::resolution::ResolvedLine>>,
+    chrome: &EditorChrome,
+    path: &std::path::Path,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
+    result_preview_rows(lines, chrome, path, theme().sidebar, cx)
+}
+
+pub(super) fn result_preview_rows(
+    lines: Arc<Vec<kagi_git::resolution::ResolvedLine>>,
+    chrome: &EditorChrome,
+    path: &std::path::Path,
+    background: u32,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
     let highlights = result_highlights(chrome, path, &lines);
     let scroll = chrome.result_scroll.clone();
     let row_count = lines.len();
@@ -1081,7 +1064,7 @@ fn render_result_preview(
                                 .h(theme::scaled_px(17.))
                                 .pr(theme::scaled_px(4.))
                                 .gap_1()
-                                .bg(rgb(theme().bg_base))
+                                .bg(rgb(background))
                                 .child(origin_badge(line.origin))
                                 .child(
                                     div()
@@ -1117,6 +1100,7 @@ fn render_result_preview(
 pub(super) fn save_button(
     path: &std::path::Path,
     writer_busy: bool,
+    refused: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let p_save = path.to_path_buf();
@@ -1133,11 +1117,23 @@ pub(super) fn save_button(
         },
     );
     super::e2e::measure_control(
-        "conflict-save",
+        if refused {
+            "conflict-save-again"
+        } else {
+            "conflict-save"
+        },
         tool_button(
-            "editor-save",
-            Msg::EditorSave.t(),
-            ButtonRole::Success,
+            if refused {
+                "conflict-save-again"
+            } else {
+                "editor-save"
+            },
+            if refused {
+                Msg::ConflictSaveAgain.t()
+            } else {
+                Msg::EditorSave.t()
+            },
+            ButtonRole::Primary,
             save,
             cx,
         )
@@ -1158,8 +1154,14 @@ fn render_result_pane(
     let editing = chrome.result_editing;
     let all_resolved = flow::draft_ready(mode, path);
     let model = mode.buffer.hunk_model(path);
-    let status_text = flow::draft_label(mode, path);
-    let status_color = if all_resolved {
+    let status_text = if chrome.save_refused {
+        Msg::ConflictSaveRefused.t().to_owned()
+    } else {
+        flow::draft_label(mode, path)
+    };
+    let status_color = if chrome.save_refused {
+        theme().color_blocker
+    } else if all_resolved {
         theme().color_success
     } else {
         theme().color_warning
@@ -1201,7 +1203,36 @@ fn render_result_pane(
                     .child(SharedString::from(Msg::EditorEditingIndicator.t())),
             )
         })
-        .child(save_button(path, chrome.writer_busy, cx));
+        .child(save_button(
+            path,
+            chrome.writer_busy,
+            chrome.save_refused,
+            cx,
+        ))
+        .when(chrome.save_refused, |header| {
+            header.child(super::e2e::measure_control(
+                "conflict-oplog",
+                tool_button(
+                    "conflict-oplog",
+                    Msg::BottomTabOperationLog.t(),
+                    ButtonRole::Secondary,
+                    cx.listener(|view, _, window, cx| {
+                        let app = view.app.clone();
+                        cx.defer_in(window, move |_, window, cx| {
+                            let _ = app.update(cx, |app, cx| {
+                                app.bottom_panel_open = true;
+                                app.bottom_tab = super::BottomTab::OperationLog;
+                                if let Some(root) = &app.root_focus {
+                                    root.focus(window, cx);
+                                }
+                                cx.notify();
+                            });
+                        });
+                    }),
+                    cx,
+                ),
+            ))
+        });
 
     // Body: ONE CodeEditor for both modes — Preview is the same component
     // with `disabled(true)` (user request: the two modes previously used
@@ -1383,33 +1414,26 @@ mod side_row_tests {
     use kagi_git::resolution::HunkModel;
 
     #[test]
-    fn decision_window_contains_only_selected_hunk_and_nearby_context() {
+    fn source_panes_contain_every_hunk_and_all_surrounding_lines() {
         let model = HunkModel::from_marker_text(
             "head\n<<<<<<< Current\nc1\nc2\n=======\ni1\n>>>>>>> Incoming\n\
              ctx1\nctx2\nctx3\nctx4\n<<<<<<< Current\nx\n=======\ny\n>>>>>>> Incoming\n\
              tail1\ntail2\n",
         );
-        assert_eq!(visible_hunk_rows(&model, 0, false), 0..7);
-        assert_eq!(visible_hunk_rows(&model, 0, true), 0..8);
-        assert_eq!(visible_hunk_rows(&model, 1, false), 5..12);
-        assert_eq!(visible_hunk_rows(&model, 1, true), 4..12);
         for side in [SelectionSide::Current, SelectionSide::Incoming] {
             let rows = build_side_rows(&model, side);
-            for selected in 0..2 {
-                let visible = visible_hunk_rows(&model, selected, true);
-                let headers: Vec<_> = rows[visible]
-                    .iter()
-                    .filter_map(|row| match row {
-                        SideRow::HunkHeader { hunk_index, .. } => Some(*hunk_index),
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(
-                    headers,
-                    vec![selected],
-                    "context never reveals another decision"
-                );
-            }
+            assert_eq!(rows.len(), 12);
+            let headers: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter_map(|(row, entry)| match entry {
+                    SideRow::HunkHeader { hunk_index, .. } => Some((row, *hunk_index)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(headers, vec![(1, 0), (8, 1)]);
+            assert!(matches!(rows.first(), Some(SideRow::Context { text, .. }) if text == "head"));
+            assert!(matches!(rows.last(), Some(SideRow::Context { text, .. }) if text == "tail2"));
         }
     }
 
@@ -1471,7 +1495,7 @@ mod side_row_tests {
     /// the shorter side), passthrough context must be shown on both sides, and the
     /// shorter side of a length-mismatched hunk must be blank-padded.
     #[test]
-    fn side_panes_are_equal_length_and_show_context() {
+    fn side_panes_are_equal_length_and_include_all_context() {
         // 1 leading context line; a hunk with 3 Current vs 1 Incoming lines;
         // 2 trailing context lines.
         let markers = "ctxA\n\

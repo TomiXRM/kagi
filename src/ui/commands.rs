@@ -1537,9 +1537,18 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     // Input's own MoveUp/MoveDown — the editor cursor stopped moving
     // vertically while left/right (unbound here) still worked
     // (user-reported).
+    // Popup menus also own vertical arrows (including ordered conflict adoption).
     cx.bind_keys([
-        KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
-        KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
+        KeyBinding::new(
+            "up",
+            DiffPrevFile,
+            Some("!Terminal && !Input && !PopupMenu"),
+        ),
+        KeyBinding::new(
+            "down",
+            DiffNextFile,
+            Some("!Terminal && !Input && !PopupMenu"),
+        ),
         KeyBinding::new("home", CommitFirst, Some("!Terminal && !Input")),
         KeyBinding::new("end", CommitLast, Some("!Terminal && !Input")),
         KeyBinding::new("pageup", CommitPageUp, Some("!Terminal && !Input")),
@@ -2243,7 +2252,13 @@ impl KagiApp {
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
-                if self.pr_mode_visible() && self.pr_mode().is_some_and(|m| m.active.is_some()) {
+                if self.conflict_body_visible() {
+                    if let Some(entity) = self.ui().conflict.as_ref() {
+                        entity.update(cx, |view, cx| view.toggle_sidebar(window, cx));
+                    }
+                } else if self.pr_mode_visible()
+                    && self.pr_mode().is_some_and(|m| m.active.is_some())
+                {
                     self.toggle_pr_companion(super::pr_layout::Companion::Navigator, window);
                 } else {
                     self.sidebar.visible = !self.sidebar.visible;

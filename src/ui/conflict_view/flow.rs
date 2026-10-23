@@ -4,7 +4,6 @@ use super::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ConflictPage {
     #[default]
-    Overview,
     Hunk,
     Review,
 }
@@ -32,11 +31,12 @@ impl ConflictView {
         self.show_tools = false;
     }
 
-    /// Adopt both sides in one draft checkpoint, preserving the chosen order.
-    pub fn conflict_choose_both(
+    /// Adopt a source choice in one authoritative draft checkpoint.
+    pub fn conflict_choose_hunk(
         &mut self,
         path: &std::path::Path,
         hunk_index: usize,
+        choice: kagi_git::resolution::HunkChoice,
         cx: &Context<Self>,
     ) {
         if self.writer_busy {
@@ -49,51 +49,43 @@ impl ConflictView {
         if manual_override(mode, path) {
             return;
         }
+        use kagi_git::resolution::{HunkChoice, LineOrder, Region};
         let Some(hunk) = mode.buffer.hunk_model(path).and_then(|model| {
             model
                 .regions
                 .iter()
                 .filter_map(|region| match region {
-                    kagi_git::resolution::Region::Hunk(hunk) => Some(hunk),
+                    Region::Hunk(hunk) => Some(hunk),
                     _ => None,
                 })
                 .nth(hunk_index)
         }) else {
             return;
         };
-        use kagi_git::resolution::{HunkChoice, LineOrder};
-        let already_both = hunk.line_select.as_ref().map_or_else(
-            || {
-                matches!(
-                    hunk.choice,
-                    HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst
-                )
-            },
+        let already_selected = hunk.line_select.as_ref().map_or_else(
+            || hunk.choice == choice,
             |selection| {
+                let (current, incoming, order) = match choice {
+                    HunkChoice::AcceptCurrent => (true, false, None),
+                    HunkChoice::AcceptIncoming => (false, true, None),
+                    HunkChoice::BothCurrentFirst => (true, true, Some(LineOrder::CurrentFirst)),
+                    HunkChoice::BothIncomingFirst => (true, true, Some(LineOrder::IncomingFirst)),
+                    _ => return false,
+                };
                 selection
                     .current_taken
                     .iter()
-                    .chain(&selection.incoming_taken)
-                    .all(|taken| *taken)
+                    .all(|taken| *taken == current)
+                    && selection
+                        .incoming_taken
+                        .iter()
+                        .all(|taken| *taken == incoming)
+                    && order.is_none_or(|order| selection.order == order)
             },
         );
-        if already_both {
+        if already_selected {
             return;
         }
-        let order = hunk.line_select.as_ref().map_or_else(
-            || {
-                if matches!(hunk.choice, HunkChoice::BothIncomingFirst) {
-                    LineOrder::IncomingFirst
-                } else {
-                    LineOrder::CurrentFirst
-                }
-            },
-            |selection| selection.order,
-        );
-        let choice = match order {
-            LineOrder::CurrentFirst => HunkChoice::BothCurrentFirst,
-            LineOrder::IncomingFirst => HunkChoice::BothIncomingFirst,
-        };
         if mode.buffer.apply_hunk_choice(path, hunk_index, choice) {
             self.after_selection_change(path, Some(hunk_index));
         }
@@ -147,11 +139,9 @@ pub(crate) fn draft_label(mode: &ConflictMode, path: &std::path::Path) -> String
 pub(super) fn render(
     mode: &ConflictMode,
     chrome: &EditorChrome,
-    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let file = mode.selected_file.and_then(|i| mode.session.files.get(i));
-    let overview = chrome.page == ConflictPage::Overview || file.is_none();
     let mut body = div()
         .flex()
         .flex_col()
@@ -162,9 +152,7 @@ pub(super) fn render(
             el.track_focus(focus)
         })
         .bg(rgb(theme().bg_base));
-    if overview {
-        body = body.child(render_dashboard(mode, chrome, window_active, cx));
-    } else if let Some(file) = file {
+    if let Some(file) = file {
         if mode.buffer.hunk_model(&file.path).is_some() {
             body = body.child(super::super::conflict_editor::render_editor(
                 mode, chrome, &file.path, cx,
@@ -172,7 +160,7 @@ pub(super) fn render(
         } else {
             body = body
                 .child(file_navigation(mode, chrome, cx))
-                .child(render_center(
+                .child(special::render_center(
                     mode,
                     chrome.writer_busy,
                     &chrome.raw_preview_scroll,
@@ -189,11 +177,6 @@ pub(super) fn file_navigation(
     chrome: &EditorChrome,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let files = cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-        view.conflict_show_page(ConflictPage::Overview, cx);
-        view.focus_navigation(window, cx);
-        cx.notify();
-    });
     let review = cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
         view.conflict_show_page(ConflictPage::Review, cx);
         view.focus_navigation(window, cx);
@@ -206,17 +189,6 @@ pub(super) fn file_navigation(
         .items_center()
         .gap_2()
         .p(theme::scaled_px(8.))
-        .child(super::super::e2e::measure_control(
-            "conflict-overview",
-            KagiButton::styled(
-                "conflict-overview",
-                Msg::ConflictFiles.t(),
-                ButtonRole::NeutralTinted,
-                cx,
-            )
-            .small()
-            .on_click(files),
-        ))
         .when_some(file, |el, file| {
             el.child(
                 div()
@@ -225,7 +197,21 @@ pub(super) fn file_navigation(
                     .overflow_hidden()
                     .child(SharedString::from(file.path.to_string_lossy().into_owned())),
             )
-            .child(dash_note(&draft_label(mode, &file.path), theme().text_sub))
+            .child({
+                let status = if chrome.save_refused {
+                    Msg::ConflictSaveRefused.t().to_owned()
+                } else {
+                    draft_label(mode, &file.path)
+                };
+                sidebar::chip(
+                    &status,
+                    if chrome.save_refused {
+                        theme().color_blocker
+                    } else {
+                        theme().text_sub
+                    },
+                )
+            })
         })
         .when(chrome.page != ConflictPage::Review, |el| {
             el.child(super::super::e2e::measure_control(
@@ -247,6 +233,7 @@ pub(super) fn file_navigation(
                     el.child(super::super::conflict_editor::save_button(
                         &file.path,
                         chrome.writer_busy,
+                        chrome.save_refused,
                         cx,
                     ))
                 },

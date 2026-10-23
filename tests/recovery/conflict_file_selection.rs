@@ -73,6 +73,7 @@ fn selected_row(list: &str, path: &str) {
 }
 
 pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
+    use kagi::ui::conflict_view::ConflictPage;
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     let old_theme = theme::theme().slug.to_string();
     let fixture = fixture();
@@ -84,45 +85,37 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     });
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Overview);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     let active_fill = paint(cx, window, 0);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
     click_control(cx, window, "conflict-row-1");
-    // Keep the pointer on notes.txt: hover must not replace the selected fill.
-    assert_eq!(
-        &paint(cx, window, 1)[..3],
-        &[211, 211, 211],
-        "clicked notes.txt stays visibly selected under the pointer"
-    );
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(view.page, ConflictPage::Hunk);
+        assert_eq!(view.editing.as_deref(), Some(Path::new("notes.txt")));
+    });
+    click_control(cx, window, "conflict-review");
+    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Review);
+    click_control(cx, window, "conflict-overview");
+    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
     selected_row("conflict-files", "notes.txt");
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
-    assert_eq!(
-        paint(cx, window, 1),
-        active_fill,
-        "active selection also wins over hover"
-    );
+    assert_eq!(paint(cx, window, 1), active_fill);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     click_control(cx, window, "conflict-next");
-    assert_eq!(&paint(cx, window, 2)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "zeta.txt");
     cx.read(|cx| {
         let view = conflict.read(cx);
         assert_eq!(view.editing.as_deref(), Some(Path::new("zeta.txt")));
         assert_eq!(
-            view.editor_inputs.as_ref().unwrap().path,
-            Path::new("zeta.txt")
+            view.selected_hunk, 0,
+            "file navigation is not hunk navigation"
         );
     });
-    click_control(cx, window, "conflict-editor-prev");
-    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "notes.txt");
-    click_control(cx, window, "conflict-editor-next");
+    click_control(cx, window, "conflict-overview");
     assert_eq!(&paint(cx, window, 2)[..3], &[211, 211, 211]);
     selected_row("conflict-files", "zeta.txt");
-    // Enter/Space on the same navigation control must use the same selection.
-    // gpui-kit intentionally does not focus buttons on pointer down. Find the
-    // actual Next control: status-bar and toast buttons follow the dashboard.
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
         window.draw(cx).clear();
@@ -142,19 +135,20 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
             break;
         }
     }
-    assert!(reached_next, "Next conflict must be keyboard reachable");
+    assert!(
+        reached_next,
+        "Next file must be keyboard reachable in the overview"
+    );
     crate::keyboard_nav::keys(cx, window, "space");
-    assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "blob.bin");
     cx.read(|cx| {
         assert!(
             conflict.read(cx).editing.is_none(),
-            "binary preview leaves no stale content editor"
-        );
+            "raw file has no stale text editor"
+        )
     });
-    crate::keyboard_nav::keys(cx, window, "enter");
-    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "notes.txt");
+    click_control(cx, window, "conflict-overview");
+    assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
+    selected_row("conflict-files", "blob.bin");
     click_control(cx, window, "conflict-row-1");
     conflict.update(cx, |view, cx| {
         view.conflict_editor_set_file_side(
@@ -164,16 +158,17 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
         );
         cx.notify();
     });
-    app.update(cx, |_, cx| cx.notify());
+    click_control(cx, window, "conflict-overview");
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
     selected_row("conflict-resolved-files", "notes.txt");
     click_control(cx, window, "conflict-next");
+    click_control(cx, window, "conflict-overview");
     assert_eq!(&paint(cx, window, 2)[..3], &[211, 211, 211]);
     selected_row("conflict-files", "zeta.txt");
     assert_eq!(
         repo_fingerprint(fixture.path()),
         before,
-        "selection/draft resolution must not write Git state"
+        "page changes and draft choices never stage"
     );
     app.update(cx, |app, cx| app.set_theme(&old_theme, cx));
     drop(conflict);

@@ -6,6 +6,7 @@ use super::{
 use gpui::{
     actions, prelude::*, App, Context, FocusHandle, KeyBinding, Role, SharedString, Window,
 };
+use gpui_component::Disableable as _;
 use gpui_component::{
     button::{Button, ButtonVariants},
     Sizable,
@@ -41,6 +42,8 @@ impl RegionShape {
 pub struct ResolverKeyboard {
     path: PathBuf,
     structure: Vec<RegionShape>,
+    visible_hunk: usize,
+    context: bool,
     pub side_names: [String; 2],
     rows: RowKeys,
     focus: RowFocus,
@@ -52,6 +55,8 @@ impl ResolverKeyboard {
     pub(crate) fn prepare(
         &mut self,
         path: Option<(&Path, &HunkModel)>,
+        selected_hunk: usize,
+        context: bool,
         scroll: &gpui::UniformListScrollHandle,
         window: &mut Window,
         cx: &mut App,
@@ -61,6 +66,8 @@ impl ResolverKeyboard {
             return;
         };
         if self.path != path
+            || self.visible_hunk != selected_hunk
+            || self.context != context
             || !self
                 .structure
                 .iter()
@@ -69,32 +76,41 @@ impl ResolverKeyboard {
         {
             self.release(window, cx);
             self.path = path.into();
+            self.visible_hunk = selected_hunk;
+            self.context = context;
             self.structure
                 .extend(model.regions.iter().map(RegionShape::of));
             scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
             let mut rows = Vec::new();
             let mut row = 0;
+            let visible = super::conflict_editor::visible_hunk_rows(model, selected_hunk, context);
+            let mut hunk_index = 0;
             for region in &model.regions {
                 match region {
                     Region::Passthrough(lines) => row += lines.len(),
                     Region::Hunk(hunk) => {
-                        let n = rows.len();
-                        rows.push((format!("resolver-hunk-{n}-current"), row));
+                        let n = hunk_index;
+                        if n == selected_hunk {
+                            rows.push((
+                                format!("resolver-hunk-{n}-current"),
+                                row.saturating_sub(visible.start),
+                            ));
+                        }
                         let mut controls = vec![
                             (
                                 format!("resolver-hunk-{n}-incoming"),
                                 cx.focus_handle(),
-                                row,
+                                row.saturating_sub(visible.start),
                             ),
                             (
                                 format!("resolver-hunk-{n}-current-first"),
                                 cx.focus_handle(),
-                                row,
+                                row.saturating_sub(visible.start),
                             ),
                             (
                                 format!("resolver-hunk-{n}-incoming-first"),
                                 cx.focus_handle(),
-                                row,
+                                row.saturating_sub(visible.start),
                             ),
                         ];
                         for (side, lines) in
@@ -104,12 +120,13 @@ impl ResolverKeyboard {
                                 controls.push((
                                     format!("resolver-hunk-{n}-{side}-line-{line}"),
                                     cx.focus_handle(),
-                                    row + 1 + line,
+                                    (row + 1 + line).saturating_sub(visible.start),
                                 ));
                             }
                         }
                         self.controls.push(controls);
                         row += 1 + hunk.current.len().max(hunk.incoming.len());
+                        hunk_index += 1;
                     }
                 }
             }
@@ -162,7 +179,7 @@ impl ResolverKeyboard {
             .map_or(0, |at| at + 1);
         let to = (at as isize + direction).clamp(0, controls.len() as isize) as usize;
         if to == 0 {
-            self.list.as_ref().unwrap().focus_row(hunk, window, cx);
+            self.list.as_ref().unwrap().focus_row(0, window, cx);
         } else {
             let (_, handle, row) = &controls[to - 1];
             if let Some(list) = &self.list {
@@ -208,6 +225,7 @@ pub(crate) fn adoption(
     state: ControlState,
     content: impl IntoElement,
     hunk: Option<usize>,
+    enabled: bool,
     owner: &Rc<RefCell<ResolverKeyboard>>,
     activate: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     _cx: &mut Context<ConflictView>,
@@ -223,12 +241,15 @@ pub(crate) fn adoption(
             .xsmall()
             .compact()
             .tab_stop(false)
+            .disabled(!enabled)
             .p(gpui::px(0.))
             .size_full()
             .child(content)
             .on_click(move |event, window, cx| {
                 cx.stop_propagation();
-                pointer(event, window, cx);
+                if enabled {
+                    pointer(event, window, cx);
+                }
             }),
         SharedString::from(name.clone()),
         Some(toggled),
@@ -245,9 +266,15 @@ pub(crate) fn adoption(
         })
         .key_context("KagiConflictResolver")
         .on_key_down(keyboard_nav::stop_activation_keys)
-        .on_click(move |event, window, cx| activate(event, window, cx))
+        .on_click(move |event, window, cx| {
+            if enabled {
+                activate(event, window, cx);
+            }
+        })
         .child(button);
-    el = attach_navigation(el, hunk, &id, owner);
+    if enabled {
+        el = attach_navigation(el, hunk, &id, owner);
+    }
     #[cfg(feature = "gui-e2e")]
     {
         let probe_id = id.clone();
@@ -277,11 +304,11 @@ fn attach_navigation(
         .find(|(key, _, _)| key == id)
     {
         el = list.navigation(
-            hunk,
+            0,
             keyboard_nav::with_ring(el.track_focus(&handle.clone().tab_stop(false))),
         );
     } else {
-        el = list.row(hunk, el);
+        el = list.row(0, el);
     }
     el = list
         .list(el)

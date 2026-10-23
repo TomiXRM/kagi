@@ -47,6 +47,7 @@ fn save(cx: &mut VisualTestAppContext) {
     conflict.update(cx, |view, cx| {
         view.conflict_open_editor(Path::new("file.txt"));
         view.conflict_editor_reset_all(Path::new("file.txt"));
+        view.conflict_show_page(kagi::ui::conflict_view::ConflictPage::Review, cx);
         cx.notify();
     });
     assert!(cx.read(|cx| {
@@ -97,6 +98,11 @@ fn abort(cx: &mut VisualTestAppContext, banner: bool) {
         app.detect_conflict_mode(cx);
     });
     cx.run_until_parked();
+    if banner {
+        click_control(cx, window, "conflict-continue");
+        wait_idle(cx, &app);
+        crate::busy_dismiss::ready(cx, &app);
+    }
     let control = if banner {
         "operation-strip-abort"
     } else {

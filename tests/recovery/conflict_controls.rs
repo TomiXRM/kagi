@@ -1,5 +1,5 @@
 //! #1511 / #1512: destructive confirmation ownership and explicit Result selection.
-use crate::app_conflict::click_control;
+use crate::app_conflict::{click_control, wait_idle};
 use crate::macos::{git, mount, repo_fingerprint, unmount};
 use gpui::VisualTestAppContext;
 use kagi::ui::e2e;
@@ -67,7 +67,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     for navigation in [
         "conflict-editor-next",
         "conflict-editor-prev",
-        "conflict-row-1",
+        "conflict-overview",
     ] {
         let fixture = fixture();
         let fingerprint = repo_fingerprint(fixture.path());
@@ -96,6 +96,9 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 view.conflict_editor_set_hunk_side(Path::new(path), 0, side, true);
             }
             view.conflict_select_file(0);
+            if navigation == "conflict-editor-prev" {
+                view.conflict_editor_select_hunk(1);
+            }
             cx.notify();
         });
         let before = cx.read(|cx| {
@@ -125,6 +128,10 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
         });
         click_control(cx, window, navigation);
         cx.read(|cx| assert!(conflict.read(cx).reset_all_target.is_none()));
+        if navigation != "conflict-overview" {
+            click_control(cx, window, "conflict-overview");
+        }
+        click_control(cx, window, "conflict-row-1");
         click_control(cx, window, "conflict-editor-reset");
         cx.read(|cx| {
             let view = conflict.read(cx);
@@ -274,6 +281,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
 
 fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     let fixture = fixture();
+    let repository_before = repo_fingerprint(fixture.path());
     let (app, window) = mount(cx, fixture.path());
     theme::set_zoom(zoom);
     app.update(cx, |app, cx| {
@@ -284,6 +292,7 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
     conflict.update(cx, |view, cx| {
         view.conflict_select_file(0);
+        view.conflict_show_page(kagi::ui::conflict_view::ConflictPage::Review, cx);
         cx.notify();
     });
     let selected_fill = fill(cx, window, "conflict-result-preview");
@@ -418,6 +427,57 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             manual
         );
     });
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let mode = view.mode.as_ref().unwrap();
+        assert_eq!(
+            mode.buffer
+                .hunk_model(Path::new("a.txt"))
+                .unwrap()
+                .resolved_hunk_count(),
+            0
+        );
+        assert_eq!(
+            mode.session.files[0].status,
+            kagi_git::ConflictStatus::Resolved,
+            "clean manual Result is ready without falsifying source-hunk choices"
+        );
+    });
+    click_control(cx, window, "conflict-review");
+    click_control(cx, window, "conflict-editor-next");
+    click_control(cx, window, "conflict-overview");
+    click_control(cx, window, "conflict-row-1");
+    click_control(cx, window, "conflict-overview");
+    click_control(cx, window, "conflict-row-0");
+    click_control(cx, window, "conflict-review");
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(
+            view.mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .resolved_text(Path::new("a.txt")),
+            manual
+        );
+        assert_eq!(
+            view.editor_inputs
+                .as_ref()
+                .unwrap()
+                .result
+                .read(cx)
+                .value()
+                .as_str(),
+            "manual result\n"
+        );
+    });
+    assert_eq!(
+        repo_fingerprint(fixture.path()),
+        repository_before,
+        "navigation never saves or stages"
+    );
+    // Restore Edit for the existing writer-busy refusal assertions.
+    click_control(cx, window, "conflict-result-edit");
     conflict.update(cx, |view, cx| {
         view.writer_busy = true;
         cx.notify();
@@ -456,4 +516,183 @@ pub fn scenario_conflict_reset_disarm(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_conflict_result_segment(cx: &mut VisualTestAppContext) {
     matrix(cx, result_leg);
+}
+
+fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
+    use kagi::ui::conflict_view::ConflictPage;
+    let fixture = tempfile::tempdir().unwrap();
+    let repo = fixture.path();
+    git(repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("base.txt"), "base\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "base"]);
+    git(repo, &["checkout", "-qb", "feature"]);
+    std::fs::write(repo.join("added.txt"), "incoming one\nincoming two\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "incoming"]);
+    git(repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("added.txt"), "current one\ncurrent two\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "current"]);
+    assert!(!std::process::Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(repo)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let before = repo_fingerprint(repo);
+    let head = git2::Repository::open(repo)
+        .unwrap()
+        .head()
+        .unwrap()
+        .target()
+        .unwrap();
+    let (app, window) = mount(cx, repo);
+    theme::set_zoom(zoom);
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        app.detect_conflict_mode(cx);
+    });
+    cx.run_until_parked();
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Overview);
+    let window_id = window.window_id();
+    e2e::clear_control_bounds(window_id, "resolver-current-viewport");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        e2e::control_bounds(window_id, "resolver-current-viewport").is_none(),
+        "the overview does not also mount source panes"
+    );
+    click_control(cx, window, "conflict-row-0");
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let mode = view.mode.as_ref().unwrap();
+        assert_eq!(view.page, ConflictPage::Hunk);
+        assert_eq!(mode.session.files[0].kind, kagi_git::ConflictKind::AddAdd);
+        assert_eq!(mode.buffer.hunk_count(Path::new("added.txt")), 1);
+    });
+    e2e::clear_control_bounds(window_id, "conflict-row-0");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        e2e::control_bounds(window_id, "conflict-row-0").is_none(),
+        "the decision page does not retain the full file dashboard"
+    );
+    assert!(e2e::control_bounds(window_id, "resolver-current-viewport").is_some());
+    click_control(cx, window, "resolver-hunk-0-incoming-line-0");
+    cx.read(|cx| {
+        let mode = conflict.read(cx).mode.as_ref().unwrap();
+        assert_eq!(
+            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
+            Some("incoming one\n")
+        );
+        assert_eq!(
+            mode.buffer
+                .hunk_model(Path::new("added.txt"))
+                .unwrap()
+                .file_side_state(SelectionSide::Incoming),
+            kagi_git::resolution::TriState::Partial
+        );
+    });
+    click_control(cx, window, "conflict-review");
+    e2e::clear_control_bounds(window_id, "resolver-current-viewport");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        e2e::control_bounds(window_id, "resolver-current-viewport").is_none(),
+        "full Result review is separate from source decisions"
+    );
+    click_control(cx, window, "conflict-result-edit");
+    let input = cx.read(|cx| {
+        conflict
+            .read(cx)
+            .editor_inputs
+            .as_ref()
+            .unwrap()
+            .result
+            .clone()
+    });
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.run_until_parked();
+    click_control(cx, window, "conflict-review");
+    click_control(cx, window, "resolver-hunk-0-current");
+    cx.read(|cx| {
+        let mode = conflict.read(cx).mode.as_ref().unwrap();
+        assert_eq!(
+            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
+            Some(""),
+            "an empty manual Result is not an unresolved hunk or an invitation to replace it"
+        );
+        assert!(!mode.buffer.cached_marker_residue(Path::new("added.txt")));
+    });
+    click_control(cx, window, "conflict-overview");
+    click_control(cx, window, "conflict-row-0");
+    click_control(cx, window, "conflict-review");
+    assert_eq!(
+        repo_fingerprint(repo),
+        before,
+        "all page changes and draft choices leave Git unchanged"
+    );
+    click_control(cx, window, "conflict-save");
+    wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
+    cx.run_until_parked();
+    let repository = git2::Repository::open(repo).unwrap();
+    assert!(!repository.index().unwrap().has_conflicts());
+    let entry = repository
+        .index()
+        .unwrap()
+        .get_path(Path::new("added.txt"), 0)
+        .unwrap();
+    assert!(repository.find_blob(entry.id).unwrap().content().is_empty());
+    assert_eq!(std::fs::read(repo.join("added.txt")).unwrap(), b"");
+    assert_eq!(
+        repository.head().unwrap().target(),
+        Some(head),
+        "Save never commits"
+    );
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(view.page, ConflictPage::Overview);
+        assert!(
+            view.mode.as_ref().unwrap().session.files.is_empty(),
+            "fresh index observation is staged, not a draft flag"
+        );
+    });
+    click_control(cx, window, "conflict-continue");
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    assert!(cx.read(|cx| app.read(cx).ui().conflict_merge_pending));
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.ui().commit_panel_open);
+        assert!(state.ui().conflict_merge_pending);
+        assert!(
+            state.ui().conflict.is_none(),
+            "an accepted reload must not repaint the staged overview over CommitPanel"
+        );
+    });
+    assert_eq!(
+        repository.head().unwrap().target(),
+        Some(head),
+        "Continue opens merge commit review, not a commit"
+    );
+    assert!(repo.join(".git/MERGE_HEAD").exists());
+    drop(input);
+    drop(conflict);
+    unmount(cx, app, window);
+}
+
+pub fn scenario_conflict_progressive_add_add(cx: &mut VisualTestAppContext) {
+    matrix(cx, progressive_add_add_leg);
 }

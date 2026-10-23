@@ -328,7 +328,7 @@ impl ResolutionBuffer {
     /// not in the buffer or has no usable text merge.
     pub fn materialized_markers(&self, repo: &Repository, path: &Path) -> Option<String> {
         let fr = self.files.get(path)?;
-        if fr.binary {
+        if fr.raw {
             return None;
         }
         materialize_zdiff3(repo, path)
@@ -468,9 +468,9 @@ impl ResolutionBuffer {
     ///
     /// Idempotent: if a model already exists (e.g. the user has been editing
     /// hunks), it is preserved so per-hunk choices are not lost.  Returns `false`
-    /// if `path` is not a tracked conflict.
+    /// if `path` is not a tracked text conflict.
     pub fn ensure_hunks(&mut self, path: &Path, marker_text: &str) -> bool {
-        if !self.files.contains_key(path) {
+        if !self.files.get(path).is_some_and(|file| !file.raw) {
             return false;
         }
         self.hunks
@@ -575,7 +575,7 @@ impl ResolutionBuffer {
         self.commit_hunk_model(path)
     }
 
-    /// Set the line output order for one hunk, then re-assemble the Result.
+    /// Reorder adopted lines and re-assemble only when the order actually changes.
     pub fn set_hunk_line_order(
         &mut self,
         path: &Path,
@@ -1354,6 +1354,10 @@ fn parse_result_array(value: Option<Value>) -> Option<Vec<ResolvedLine>> {
 // ────────────────────────────────────────────────────────────
 // Unit tests (pure logic; repo-backed behaviour in tests/conflicts_test.rs)
 // ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "resolution/order_tests.rs"]
+mod order_tests;
 
 #[cfg(test)]
 mod tests {

@@ -299,6 +299,22 @@ fn add_add_text_conflict_materializes_as_text() {
         buffer.hunk_model(path).is_some(),
         "a hunk model must exist for an add/add text conflict"
     );
+    assert!(!buffer.has_resolution(path));
+    for hunk in 0..buffer.hunk_count(path) {
+        assert!(buffer.apply_hunk_choice(path, hunk, kagi_git::HunkChoice::AcceptCurrent));
+    }
+    assert!(buffer.hunks_all_resolved(path));
+    assert_eq!(
+        buffer.resolved_text(path).unwrap().as_bytes(),
+        b"#ifndef H\n#define H\nint main_fn(void);\n#endif\n"
+    );
+    buffer.set_manual_text(path, "manually merged\n").unwrap();
+    assert_eq!(buffer.resolved_text(path).unwrap().as_bytes(), b"manually merged\n");
+    assert!(buffer.undo(path));
+    assert_eq!(
+        buffer.resolved_text(path).unwrap().as_bytes(),
+        b"#ifndef H\n#define H\nint main_fn(void);\n#endif\n"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -2247,3 +2263,6 @@ mod continue_autostash;
 
 #[path = "conflicts/draft_completion.rs"]
 mod draft_completion;
+
+#[path = "conflicts/materialization.rs"]
+mod materialization;

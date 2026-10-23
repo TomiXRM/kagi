@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Keep untouched conflict hunks unresolved when changing line order. Reorder only already adopted content, preserve partial/manual/empty choices, and avoid adding no-op undo entries. Keep binary, symlink and submodule conflicts out of text hunk materialization. (#1728)
 - Bind conflict Result inputs and saved drafts to their owning operation and file-stage identity. A later rebase conflict at the same path starts unresolved instead of inheriting the previous Result; unchanged reads preserve live editing, selection and undo. Keep older and identity-unknown drafts available through read-only Operation Log inspection, even without a recorded operation, without changing ordinary receipt Copy. (#1721)
   - Preserve the newest actual edit, including undo to unresolved, without letting an older live buffer or a decoded/cloned draft outrank a later saved result. Keep recovery history in the existing draft document.
   - Restore the shared Operation Log, Terminal and Activity panel slot during Conflict Mode. Reload the real index for Continue planning and both execution/staging routes; unreadable indexes fail before working-tree or index writes, while a separately saved resolution can continue on the same long-lived backend.

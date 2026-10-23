@@ -313,15 +313,12 @@ replay) and rejected the hunk control as shipped:
 
 Replacement contract (supersedes the `? ⌄` pill and its four-item menu):
 
-- **Gutter per hunk: three buttons `←` `…` `→`.** `←` takes every line of the
-  left (current) side only; `→` takes every line of the right (incoming) side
-  only — the arrow points at the pane whose lines are used. One click, no menu.
-  `…` opens the menu: `両方を使う(← → の順)` / `両方を使う(→ ← の順)` /
-  `この hunk をリセット` / `すべてリセット` (EN: `Use both, left first` /
-  `Use both, right first` / `Reset this hunk` / `Reset all`). No "then"
-  wording anywhere. The state shows on the buttons: `←` selected when the whole
-  left side is taken, `→` for the right, both when both sides are taken, a
-  mixed state when the selection is partial (per-line). `?` disappears.
+- **Gutter per hunk: three buttons `←` `…` `→`.** *Superseded the same day by
+  "A+C" below (the three buttons cost gutter width the code needs).* `←` took
+  every line of the left (current) side only; `→` the right (incoming) side;
+  `…` opened `両方を使う(← → の順)` / `両方を使う(→ ← の順)` /
+  `この hunk をリセット` / `すべてリセット`. No "then" wording anywhere — that
+  rule stays.
 - **Per-line checkboxes** at the leading edge of every conflict line in both
   source panes (GitKraken). A checked line is in the Result; the hunk buttons
   are just "check all of this side / uncheck the other". Per-line state is the
@@ -338,3 +335,56 @@ Replacement contract (supersedes the `? ⌄` pill and its four-item menu):
 
 Functional contract (two groups, evidence rule, Save/Continue safety, no write
 from navigation) is unchanged.
+
+## A+C: per-pane action rows (2026-10-24, owner mock `ConflictAC.dc.html`)
+
+The owner supplied a mock ("A+C 統合 — 2ハンク、1つ解決済み、1つフォーカス中",
+1200×600, light) after seeing `← … →` in the live build: three buttons between
+the panes eat horizontal space the code needs. Controls move *into* each pane,
+directly above the hunk they act on; the gutter becomes a band only.
+
+- **Gutter: 12 px, no controls.** It carries the hunk band colour (resolved →
+  `diff_added_bg` tint, unresolved → `diff_removed_bg`) and a 2 px `ui_accent`
+  left edge on the focused hunk.
+- **Action row above every hunk, in both panes.** Height 26 px, text 11.5 px,
+  leading edge aligned with the code column (44 px at 100 %), background = the
+  hunk band of that side, 1 px top rule.
+  - Unresolved: `Conflict N` (`text_sub`) · **採用** (filled `ui_accent`,
+    `on_accent` ink, 20 px tall, radius 5) · **両方（現在 → 取り込み）** on the
+    left pane / **両方（取り込み → 現在）** on the right pane (outline button).
+    EN: `Use this side` / `Both (current → incoming)` / `Both (incoming →
+    current)`. 採用 on a pane = take every line of that side only
+    (`AcceptCurrent` / `AcceptIncoming`); 両方 = `BothCurrentFirst` /
+    `BothIncomingFirst` (block order, see `LineOrder::*BlockFirst`).
+  - Resolved: `Conflict N` · state word — **採用** (`color_success`, bold) on
+    the side whose lines are in the Result, **不採用** (`color_blocker`, bold)
+    on the other; a partial/manual hunk shows **一部採用** on a side with some
+    lines taken · **変更** (outline). EN: `Used` / `Not used` / `Partly used` /
+    `Change`. 変更 on either side returns the hunk to unresolved
+    (`reset_hunk`), so the 採用/両方 buttons reappear; it is the same action on
+    both sides.
+- **Per-line checkboxes stay as built** (square `gpui_component` Checkbox,
+  white tick on the accent; `Role::CheckBox` with checked state; drag-paint,
+  Space, Shift+↑/↓ unchanged). The owner withdrew the mock's round 12 px
+  indicators ("チェックボックスは前のやつ採用でいい").
+- **Hunk bands.** Unresolved: `diff_removed_bg` on both sides. Resolved: the
+  side with lines in the Result keeps `diff_added_bg`; a side with no line
+  taken is `surface` with its code at `text_sub` opacity. Focused hunk rows
+  carry the existing 3 px `ui_accent` left stripe.
+- **Result header acts on the focused hunk** ("結果ヘッダーはフォーカス中の
+  ハンクに効く"): trailing end of the Result header gets `リセット` (reset the
+  focused hunk, enabled only when it is resolved) and `すべてリセット` (existing
+  reset-all with its confirmation). The `…` menu is gone.
+- **File header** reads `checkout.ts  conflict 2 件 · 1 解決済み`
+  (EN `2 conflicts · 1 resolved`), replacing `conflict 1/2`; the `‹ 1/3 ›`
+  footer navigation stays.
+- Colours: the mock's hex values map to tokens — `#2f6fed` → `ui_accent`,
+  `#eaf6ec` → `diff_added_bg`, `#fdecec` → `diff_removed_bg`, `#f3f3f3` →
+  `surface`, `#2a7d3f` → `color_success`, `#98312C` → `color_blocker`,
+  `#6e6e73`/`#9a9aa0` → `text_sub`. No new constants; Apple Dark follows the
+  tokens and is captured in Tier B even though the mock is light-only.
+- AX: 採用 "この側を使う" / "Use this side", 両方 as labelled, 変更 "選び直す"
+  / "Change", リセット "この conflict をリセット" / "Reset this conflict"; the
+  action row is a toolbar-like group per hunk with the `Conflict N` name.
+
+Functional contract unchanged.

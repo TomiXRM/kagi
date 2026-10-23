@@ -80,7 +80,6 @@ impl ResolverKeyboard {
             self.context = context;
             self.structure
                 .extend(model.regions.iter().map(RegionShape::of));
-            scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
             let mut rows = Vec::new();
             let mut row = 0;
             let visible = super::conflict_editor::visible_hunk_rows(model, selected_hunk, context);
@@ -91,6 +90,12 @@ impl ResolverKeyboard {
                     Region::Hunk(hunk) => {
                         let n = hunk_index;
                         if n == selected_hunk {
+                            // Expanded context must not push the decision below
+                            // the bounded viewport; keep three lead-in rows.
+                            scroll.scroll_to_item(
+                                row.saturating_sub(visible.start).saturating_sub(3),
+                                gpui::ScrollStrategy::Top,
+                            );
                             rows.push((
                                 format!("resolver-hunk-{n}-current"),
                                 row.saturating_sub(visible.start),

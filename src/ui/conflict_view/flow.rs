@@ -24,6 +24,89 @@ impl ConflictView {
         self.conflict_select_file(idx);
         self.show_tools = false;
     }
+
+    /// Adopt both sides in one draft checkpoint, preserving the chosen order.
+    pub fn conflict_choose_both(
+        &mut self,
+        path: &std::path::Path,
+        hunk_index: usize,
+        cx: &Context<Self>,
+    ) {
+        if self.writer_busy {
+            return;
+        }
+        self.capture_result_for_navigation(cx);
+        let Some(mode) = self.mode.as_mut() else {
+            return;
+        };
+        if manual_override(mode, path) {
+            return;
+        }
+        let Some(hunk) = mode.buffer.hunk_model(path).and_then(|model| {
+            model
+                .regions
+                .iter()
+                .filter_map(|region| match region {
+                    kagi_git::resolution::Region::Hunk(hunk) => Some(hunk),
+                    _ => None,
+                })
+                .nth(hunk_index)
+        }) else {
+            return;
+        };
+        use kagi_git::resolution::{HunkChoice, LineOrder};
+        let already_both = hunk.line_select.as_ref().map_or_else(
+            || {
+                matches!(
+                    hunk.choice,
+                    HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst
+                )
+            },
+            |selection| {
+                selection
+                    .current_taken
+                    .iter()
+                    .chain(&selection.incoming_taken)
+                    .all(|taken| *taken)
+            },
+        );
+        if already_both {
+            return;
+        }
+        let order = hunk.line_select.as_ref().map_or_else(
+            || {
+                if matches!(hunk.choice, HunkChoice::BothIncomingFirst) {
+                    LineOrder::IncomingFirst
+                } else {
+                    LineOrder::CurrentFirst
+                }
+            },
+            |selection| selection.order,
+        );
+        let choice = match order {
+            LineOrder::CurrentFirst => HunkChoice::BothCurrentFirst,
+            LineOrder::IncomingFirst => HunkChoice::BothIncomingFirst,
+        };
+        if mode.buffer.apply_hunk_choice(path, hunk_index, choice) {
+            self.after_selection_change(path, Some(hunk_index));
+        }
+    }
+
+    /// Open the existing authoritative Result editor, never save on navigation.
+    pub fn conflict_edit_result(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.writer_busy {
+            return;
+        }
+        self.conflict_show_page(ConflictPage::Review, cx);
+        self.conflict_editor_set_result_mode(true);
+        self.sync_editor_inputs(window, cx);
+        if let Some(inputs) = &self.editor_inputs {
+            inputs
+                .result
+                .update(cx, |state, cx| state.focus(window, cx));
+        }
+        cx.notify();
+    }
 }
 
 /// Source-choice completion is not the Result verdict: hand editing may finish

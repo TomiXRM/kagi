@@ -148,7 +148,7 @@ fn horizontal_controls(
     keys(cx, window, "up");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("resolver-hunk-0-current")
+        Some("resolver-hunk-1-current")
     );
 }
 fn tab_to(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
@@ -171,8 +171,12 @@ fn hunk_adoption(
     keys(cx, window, "down");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("resolver-hunk-1-current")
+        Some("resolver-hunk-0-current"),
+        "roving focus cannot target an invisible hunk"
     );
+    click_control(cx, window, "conflict-editor-next");
+    paint(cx, window);
+    tab_to(cx, window, "resolver-hunk-1-current");
     keys(cx, window, "right");
     let id = "resolver-hunk-1-incoming";
     assert_eq!(probe(cx, window).as_deref(), Some(id));
@@ -237,9 +241,11 @@ fn matrix_leg(
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-file-current");
+    click_control(cx, window, "conflict-editor-prev");
+    paint(cx, window);
+    tab_to(cx, window, "resolver-hunk-0-current");
     keys(cx, window, "space");
-    assert_eq!(ax::control("resolver-file-current").unwrap().2, "all");
+    assert_eq!(ax::control("resolver-hunk-0-current").unwrap().2, "all");
     assert!(
         kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 20).is_empty(),
         "adoption emits no Git receipt"
@@ -321,8 +327,11 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-hunk-0-current");
-    keys(cx, window, "end right");
+    click_control(cx, window, "conflict-editor-next");
+    click_control(cx, window, "conflict-editor-next");
+    paint(cx, window);
+    tab_to(cx, window, "resolver-hunk-2-current");
+    keys(cx, window, "right");
     assert_eq!(
         probe(cx, window).as_deref(),
         Some("resolver-hunk-2-incoming")
@@ -335,8 +344,8 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-hunk-0-current");
-    keys(cx, window, "end right right right right right right right");
+    tab_to(cx, window, "resolver-hunk-2-current");
+    keys(cx, window, "right right right right right right right");
     assert_eq!(
         probe(cx, window).as_deref(),
         Some("resolver-hunk-2-current-line-3")

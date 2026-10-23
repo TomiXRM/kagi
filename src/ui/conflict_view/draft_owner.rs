@@ -10,6 +10,13 @@ use kagi_git::resolution::ResolutionBuffer;
 use std::path::{Path, PathBuf};
 
 impl ConflictView {
+    pub(super) fn capture_result_for_navigation(&mut self, cx: &Context<Self>) {
+        if self.result_editing {
+            if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
+                let _ = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx);
+            }
+        }
+    }
     /// Adopt a changed observation without granting its predecessor's text
     /// resolution authority. Unchanged observations never enter this path.
     pub(crate) fn adopt_detected(
@@ -67,6 +74,7 @@ impl ConflictView {
             self.editor_inputs = None;
         }
         if !same_context {
+            self.page = super::ConflictPage::Overview;
             self.selected_hunk = 0;
             self.reset_all_target = None;
             self.file_menu = None;
@@ -107,13 +115,10 @@ impl ConflictView {
             self.editor_inputs = None;
             return;
         };
-        let result_text = if self.result_editing {
-            mode.buffer
-                .resolved_text(path)
-                .unwrap_or_else(|| model.assembled_text())
-        } else {
-            model.assembled_text()
-        };
+        let result_text = mode
+            .buffer
+            .resolved_text(path)
+            .unwrap_or_else(|| model.assembled_text());
         let sig = crate::ui::conflict_content_sig(path, &result_text, self.result_editing);
         if self.editor_inputs.as_ref().is_some_and(|inputs| {
             inputs.path == path && inputs.revision == mode.revision && inputs.content_sig == sig

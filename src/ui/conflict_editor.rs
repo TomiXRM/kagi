@@ -1,39 +1,6 @@
-//! T-CONFLICT-UI/UX: the dedicated 3-pane Conflict Editor (ADR-0064 / 0069 / 0070).
-//!
-//! This is the **UI half** of the hunk-level conflict feature.  It renders from
-//! an immutable [`ConflictMode`] snapshot (held by [`KagiApp`]) plus the
-//! [`EditorChrome`] the app passes in (the three CodeEditor `InputState`s, the
-//! split ratios, the Result Preview/Edit mode flag, and the measured-bounds
-//! geometry cells for the resize handles).  No `git2` calls happen here.
-//!
-//! # Layout (ADR-0064 / 0069)
-//!
-//! ```text
-//! Top Toolbar: [path] [conflict n/m] [‹ prev] [next ›]   ……   [↗ external] [🗑 reset]
-//! ┌──────────────────────────────┬──────────────────────────────┐
-//! │ A · Current  ☑accept          │ B · Incoming  ☐accept         │   (resizable A|B)
-//! │ <branch/commit label>         │ <branch/commit label>         │
-//! │ [CodeEditor InputState · RO]  │ [CodeEditor InputState · RO]  │
-//! └──────────────────────────────┴──────────────────────────────┘
-//!   [Both: current → incoming] [Both: incoming → current]   (between A·B and Result)
-//! ──────────────────────────── resize ────────────────────────────
-//! │ Result   [Preview | Edit]   <editing indicator>               │   (resizable A·B/Result)
-//! │ [CodeEditor InputState · RO in Preview / editable in Edit]    │
-//! └───────────────────────────────────────────────────────────────┘
-//! ```
-//!
-//! ADR-0135: the accept controls are Xcode-style **coloured accent bands**, not
-//! checkboxes. Clicking a hunk's band header takes/releases that whole side;
-//! clicking an individual line toggles just that line (untaken lines render
-//! dimmed); a small "Use all" pill in each pane header takes the whole file's
-//! side. All of it drives the same tri-state selection model (ADR-0071) — only
-//! the control surface changed. A/B rows are syntax-highlighted through the
-//! same tree-sitter + per-theme pipeline as the diff (ADR-0133), cached per
-//! (path, theme) so selection clicks never re-parse.
-//!
-//! All side names use the operation-dependent role/name labels (ADR-0058).
-//! All prose is via [`Msg`] (en + ja). Sizes
-//! go through [`theme::scaled_px`] so the editor respects zoom.
+//! Shared conflict code rows, syntax, selection bands and Result editor.
+//! Presentation pages live in `pages`; all choices still use ResolutionBuffer.
+//! Source rows are cropped to the selected hunk without changing row identity.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -53,9 +20,13 @@ use super::button_style::{ButtonRole, KagiButton};
 use super::conflict_view::ConflictMode;
 use super::conflict_view::ConflictView;
 use super::conflict_view::EditorChrome;
+use super::conflict_view::{flow, ConflictPage};
 use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::{terminal, DividerDrag, DividerGhost, DividerKind};
+mod pages;
+use super::e2e;
+use pages::{render_panes, render_toolbar, tool_button};
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
@@ -67,15 +38,14 @@ pub fn take_reset_focus_probe() -> bool {
     RESET_BUTTON_FOCUSED.with(|focused| focused.replace(false))
 }
 
-/// Render the full Conflict Editor, replacing the normal body while editing.
+/// Render the selected hunk or full Result review, without the file overview.
 pub fn render_editor(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    // Embedded as the CENTER main area; the right Conflict Dashboard is always
-    // rendered alongside, so flex within the row instead of taking the window.
+    // Pages share the existing row and Result renderers, never a second engine.
     div()
         .flex()
         .flex_col()
@@ -84,344 +54,11 @@ pub fn render_editor(
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
         .child(render_toolbar(mode, chrome, path, cx))
-        .child(render_panes(mode, chrome, path, cx))
-        .into_any_element()
-}
-
-// ────────────────────────────────────────────────────────────
-// Top toolbar — file-level path + nav; external-tool + reset icons (POLISH-040/041)
-// ────────────────────────────────────────────────────────────
-
-fn render_toolbar(
-    mode: &ConflictMode,
-    chrome: &EditorChrome,
-    path: &std::path::Path,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    let path_str = path.to_string_lossy().into_owned();
-    let total = mode.buffer.hunk_count(path);
-    let resolved = mode
-        .buffer
-        .hunk_model(path)
-        .map(|m| m.resolved_hunk_count())
-        .unwrap_or(0);
-    let n_of_m = format!("{} {}/{}", Msg::EditorConflictNofM.t(), resolved, total);
-
-    let prev = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_nav_unresolved(-1);
-        cx.notify();
-    });
-    let next = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_nav_unresolved(1);
-        cx.notify();
-    });
-    let p_ext = path.to_path_buf();
-    let open_ext = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_open_external(&p_ext, cx);
-        cx.notify();
-    });
-    let p_reset = path.to_path_buf();
-    let reset_focus = chrome.reset_focus.clone();
-    let reset = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-        if let Some(focus) = &reset_focus {
-            if !focus.contains_focused(window, cx) {
-                focus.focus(window, cx);
-            }
-        }
-        this.conflict_editor_reset_all_request(&p_reset);
-        cx.notify();
-    });
-    let reset_armed = chrome.reset_all_armed;
-
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px(theme::scaled_px(10.))
-        .py(theme::scaled_px(6.))
-        .bg(rgb(theme().surface))
-        .border_b_1()
-        .border_color(rgb(theme().color_warning))
-        .child(
-            // file name + conflict n/m laid out horizontally (was stacked).
-            div()
-                .flex_grow(1.)
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .min_w(px(0.))
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(12.))
-                        .text_color(rgb(theme().text_main))
-                        .overflow_hidden()
-                        .child(SharedString::from(path_str)),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(theme::scaled_px(10.))
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(n_of_m)),
-                ),
-        )
-        .child(super::e2e::measure_control(
-            "conflict-editor-prev",
-            tool_button(
-                "editor-prev",
-                Msg::EditorPrevHunk.t(),
-                ButtonRole::NeutralTinted,
-                prev,
-                cx,
-            ),
-        ))
-        .child(super::e2e::measure_control(
-            "conflict-editor-next",
-            tool_button(
-                "editor-next",
-                Msg::EditorNextHunk.t(),
-                ButtonRole::NeutralTinted,
-                next,
-                cx,
-            ),
-        ))
-        .child(icon_button(
-            "editor-open-external",
-            "icons/external-link.svg",
-            Msg::EditorOpenExternal.t(),
-            ButtonRole::NeutralTinted,
-            open_ext,
-            cx,
-        ))
-        // Reset all — destructive: trash icon, armed → blocker colour + confirm label.
-        .child(super::e2e::measure_control(
-            "conflict-editor-reset",
-            div()
-                .when_some(chrome.reset_focus.as_ref(), |el, focus| {
-                    el.track_focus(focus)
-                })
-                .child(
-                    icon_button(
-                        "editor-reset",
-                        "icons/trash-2.svg",
-                        if reset_armed {
-                            Msg::EditorResetAllConfirm.t()
-                        } else {
-                            Msg::EditorReset.t()
-                        },
-                        if reset_armed {
-                            ButtonRole::Danger
-                        } else {
-                            ButtonRole::Warning
-                        },
-                        reset,
-                        cx,
-                    )
-                    .when(cfg!(feature = "gui-e2e"), |button| {
-                        button.on_key_down(|event, _, _| {
-                            #[cfg(feature = "gui-e2e")]
-                            if event.keystroke.key == "f19" {
-                                RESET_BUTTON_FOCUSED.with(|focused| focused.set(true));
-                            }
-                            #[cfg(not(feature = "gui-e2e"))]
-                            let _ = event;
-                        })
-                    }),
-                ),
-        ))
-        .into_any_element()
-}
-
-fn tool_button<H>(id: &str, label: &str, role: ButtonRole, handler: H, cx: &gpui::App) -> Button
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    KagiButton::styled(
-        SharedString::from(id.to_string()),
-        SharedString::from(label.to_string()),
-        role,
-        cx,
-    )
-    .small()
-    .on_click(handler)
-}
-
-/// An icon button with a compact text label beside the glyph (POLISH-040/041).
-fn icon_button<H>(
-    id: &str,
-    icon_path: &'static str,
-    label: &str,
-    role: ButtonRole,
-    handler: H,
-    cx: &gpui::App,
-) -> Button
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    KagiButton::icon(
-        SharedString::from(id.to_string()),
-        icon_path,
-        SharedString::from(label.to_string()),
-        role,
-        cx,
-    )
-    .small()
-    .on_click(handler)
-}
-
-// ────────────────────────────────────────────────────────────
-// 3-pane body: synchronized A/B row lists + Result pane
-// ────────────────────────────────────────────────────────────
-
-fn render_panes(
-    mode: &ConflictMode,
-    chrome: &EditorChrome,
-    path: &std::path::Path,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    // No hunk model (binary / single-sided) → guidance message.
-    let Some(_inputs) = chrome.inputs.as_ref().filter(|i| i.path == path) else {
-        return guidance_pane(Msg::EditorNoTextMerge.t());
-    };
-    let Some(model) = mode.buffer.hunk_model(path) else {
-        return guidance_pane(Msg::EditorNoTextMerge.t());
-    };
-
-    let labels = mode.labels();
-    chrome.resolver_keyboard.borrow_mut().side_names = [
-        Msg::conflict_side(&labels.current.role, &labels.current.name),
-        Msg::conflict_side(&labels.incoming.role, &labels.incoming.name),
-    ];
-    let current_label = format!("{} — {}", Msg::EditorCurrentSide.t(), labels.current.name);
-    let incoming_label = format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
-
-    // ── A | B row (resizable A|B), measured for the vertical divider drag ──
-    let ab_geom = chrome.ab_geom.clone();
-    let ab_measure = canvas(
-        move |bounds: Bounds<Pixels>, _w, _cx| {
-            if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
-                eprintln!(
-                    "[kagi] ab_geom left={:.1} right={:.1} width={:.1}",
-                    f32::from(bounds.origin.x),
-                    f32::from(bounds.origin.x + bounds.size.width),
-                    f32::from(bounds.size.width)
-                );
-            }
-            ab_geom.set((
-                f32::from(bounds.origin.x),
-                f32::from(bounds.origin.x + bounds.size.width),
-            ));
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .size_full();
-
-    let scroll = chrome.ab_scroll.clone();
-    let a_pane = pane(
-        "conflict-pane-a",
-        current_label,
-        theme().color_branch,
-        Some(side_use_all_pill(
-            path,
-            model.file_side_state(SelectionSide::Current),
-            SelectionSide::Current,
-            chrome,
-            cx,
-        )),
-        side_row_list(
-            path,
-            model,
-            SelectionSide::Current,
-            scroll.clone(),
-            chrome.selected_hunk,
-            chrome,
-            cx,
-        ),
-    );
-
-    let b_pane = pane(
-        "conflict-pane-b",
-        incoming_label,
-        theme().color_remote,
-        Some(side_use_all_pill(
-            path,
-            model.file_side_state(SelectionSide::Incoming),
-            SelectionSide::Incoming,
-            chrome,
-            cx,
-        )),
-        side_row_list(
-            path,
-            model,
-            SelectionSide::Incoming,
-            scroll,
-            chrome.selected_hunk,
-            chrome,
-            cx,
-        ),
-    );
-
-    let ab_row = div()
-        .relative()
-        .flex()
-        .flex_row()
-        .w_full()
-        .flex_basis(relative(chrome.result_split))
-        .flex_shrink(1.)
-        .min_h(theme::scaled_px(80.))
-        // Measure the FULL A·B row width (not just the A pane) so the divider
-        // drag maps the cursor against the whole span — measuring inside A would
-        // shrink the span and feed back on itself, making resize unusable.
-        .child(ab_measure)
-        .child(
-            div()
-                .h_full()
-                .min_w(px(0.))
-                .w(relative(chrome.ab_split))
-                .child(a_pane),
-        )
-        .child(vertical_divider())
-        .child(div().h_full().min_w(px(0.)).flex_1().child(b_pane));
-
-    // ── Result pane (resizable A·B / Result) ──
-    // flex_basis(relative) split like the inspector (NOT h(relative)) so the
-    // child uniform_lists get a definite height and actually render their rows.
-    let result_frac = (1.0 - chrome.result_split).max(0.05);
-    let result_pane = div()
-        .flex()
-        .flex_col()
-        .min_h(px(0.))
-        .flex_basis(relative(result_frac))
-        .flex_shrink(1.)
-        .child(render_result_pane(mode, chrome, path, cx));
-
-    // The split region is measured for the horizontal divider drag.
-    let geom = chrome.geom.clone();
-    let measure = canvas(
-        move |bounds: Bounds<Pixels>, _w, _cx| {
-            geom.set((
-                f32::from(bounds.origin.y),
-                f32::from(bounds.origin.y + bounds.size.height),
-            ));
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .size_full();
-
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .size_full()
-        .child(measure)
-        .child(ab_row)
-        .child(horizontal_divider())
-        .child(result_pane)
+        .child(if chrome.page == ConflictPage::Review {
+            render_result_pane(mode, chrome, path, cx)
+        } else {
+            render_panes(mode, chrome, path, cx)
+        })
         .into_any_element()
 }
 
@@ -578,40 +215,6 @@ enum SideRow {
     Blank { hunk_index: usize },
 }
 
-/// Pane-header pill that takes/releases the whole file for one side —
-/// replaces the old file-level tri-checkbox (ADR-0135).
-fn side_use_all_pill(
-    path: &std::path::Path,
-    state: TriState,
-    side: SelectionSide,
-    chrome: &EditorChrome,
-    cx: &mut Context<ConflictView>,
-) -> gpui::Stateful<gpui::Div> {
-    let p = path.to_path_buf();
-    let next = state != TriState::All;
-    let handler = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_set_file_side(&p, side, next);
-        cx.notify();
-    });
-    let accent = side_accent(side);
-    let on = state == TriState::All;
-    super::conflict_editor_keys::adoption(
-        format!("resolver-file-{}", side_key(side)),
-        Msg::conflict_file(chrome.resolver_keyboard.borrow().side_name(side)),
-        selection_state(state),
-        div()
-            .px(theme::scaled_px(6.))
-            .text_size(theme::scaled_px(10.))
-            .text_color(rgb(if on { accent } else { theme().text_main }))
-            .child(SharedString::from(Msg::EditorUseAll.t())),
-        None,
-        &chrome.resolver_keyboard,
-        handler,
-        cx,
-    )
-    .h(theme::scaled_px(22.))
-}
-
 /// Byte ranges in `text` that differ from `other`, the same-index line on the
 /// opposite side of the hunk. Index pairing IS the alignment model here: a line
 /// with no counterpart pairs with `""` and so highlights whole. Identical lines
@@ -722,6 +325,40 @@ fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide)
     rows
 }
 
+/// Row window shared with keyboard navigation: one hunk, optional nearby context.
+pub(crate) fn visible_hunk_rows(
+    model: &kagi_git::resolution::HunkModel,
+    selected: usize,
+    context: bool,
+) -> Range<usize> {
+    let mut row = 0;
+    let mut hunk_index = 0;
+    let mut leading = 0;
+    for (index, region) in model.regions.iter().enumerate() {
+        match region {
+            Region::Passthrough(lines) => {
+                leading = lines.len();
+                row += lines.len();
+            }
+            Region::Hunk(hunk) => {
+                let size = 1 + hunk.current.len().max(hunk.incoming.len());
+                if hunk_index == selected {
+                    let trailing = match model.regions.get(index + 1) {
+                        Some(Region::Passthrough(lines)) => lines.len(),
+                        _ => 0,
+                    };
+                    return row.saturating_sub(if context { leading.min(3) } else { 0 })
+                        ..row + size + if context { trailing.min(3) } else { 0 };
+                }
+                row += size;
+                leading = 0;
+                hunk_index += 1;
+            }
+        }
+    }
+    0..0
+}
+
 fn side_row_list(
     path: &std::path::Path,
     model: &kagi_git::resolution::HunkModel,
@@ -733,7 +370,9 @@ fn side_row_list(
 ) -> gpui::Stateful<gpui::Div> {
     let rows = Arc::new(build_side_rows(model, side));
     let highlights = side_highlights(chrome, path, model, side);
-    let row_count = rows.len();
+    let visible = visible_hunk_rows(model, selected_hunk, chrome.show_context);
+    let row_count = visible.len();
+    let enabled = chrome.source_choices_enabled;
     let rows_for_list = rows.clone();
     let p = Arc::new(path.to_path_buf());
     let (list_id, outer_id) = match side {
@@ -765,7 +404,8 @@ fn side_row_list(
                         p.clone(),
                         side,
                         selected_hunk,
-                        range,
+                        range.start + visible.start..range.end + visible.start,
+                        enabled,
                         cx,
                         &_this.resolver_keyboard,
                     )
@@ -787,6 +427,7 @@ fn render_side_rows(
     side: SelectionSide,
     selected_hunk: usize,
     range: std::ops::Range<usize>,
+    enabled: bool,
     cx: &mut Context<ConflictView>,
     keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
 ) -> Vec<AnyElement> {
@@ -807,6 +448,7 @@ fn render_side_rows(
                 resolved,
                 side,
                 selected_hunk,
+                enabled,
                 keyboard,
                 cx,
             ),
@@ -833,6 +475,7 @@ fn render_side_rows(
                 dim,
                 side,
                 selected_hunk,
+                enabled,
                 keyboard,
                 cx,
             ),
@@ -917,6 +560,7 @@ fn render_hunk_header_row(
     resolved: bool,
     side: SelectionSide,
     selected_hunk: usize,
+    enabled: bool,
     keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
@@ -939,8 +583,8 @@ fn render_hunk_header_row(
         cx.notify();
     });
     let order_label = match target_order {
-        LineOrder::CurrentFirst => Msg::EditorCurrentFirst.t(),
-        LineOrder::IncomingFirst => Msg::EditorIncomingFirst.t(),
+        LineOrder::CurrentFirst => "● → ○",
+        LineOrder::IncomingFirst => "○ → ●",
     };
     let accent = side_accent(side);
     // Band opacity mirrors the tri-state: solid / half / off.
@@ -986,10 +630,15 @@ fn render_hunk_header_row(
                     }))
                     .child(SharedString::from(format!(
                         "{} {}",
-                        Msg::EditorHunkLabel.t(),
-                        hunk_index + 1
+                        if state == TriState::All { "✓" } else { "＋" },
+                        if side == SelectionSide::Current {
+                            Msg::EditorCurrentSide.t()
+                        } else {
+                            Msg::EditorIncomingSide.t()
+                        }
                     ))),
                 Some(hunk_index),
+                enabled,
                 keyboard,
                 take,
                 cx,
@@ -1024,6 +673,7 @@ fn render_hunk_header_row(
                     .text_color(rgb(theme().text_main))
                     .child(SharedString::from(order_label)),
                 Some(hunk_index),
+                enabled,
                 keyboard,
                 order_click,
                 cx,
@@ -1114,6 +764,7 @@ fn render_code_line_row(
     dim: bool,
     side: SelectionSide,
     selected_hunk: usize,
+    enabled: bool,
     keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
@@ -1188,6 +839,7 @@ fn render_code_line_row(
         selection_state(if taken { TriState::All } else { TriState::None }),
         content,
         Some(hunk_index),
+        enabled,
         keyboard,
         toggle,
         cx,
@@ -1278,6 +930,8 @@ fn pane(
                 .flex_grow(1.)
                 .text_size(theme::scaled_px(11.))
                 .text_color(rgb(accent))
+                .min_w(px(0.))
+                .truncate()
                 .child(SharedString::from(label)),
         );
     if let Some(toggle) = accept {
@@ -1392,12 +1046,12 @@ fn origin_badge(origin: LineOrigin) -> gpui::Div {
 /// Incoming was adopted, at the head of the line"). Edit mode still uses the
 /// CodeEditor; this list is what Preview shows instead.
 fn render_result_preview(
-    model: &kagi_git::resolution::HunkModel,
+    lines: Vec<kagi_git::resolution::ResolvedLine>,
     chrome: &EditorChrome,
     path: &std::path::Path,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let lines = Arc::new(model.assemble());
+    let lines = Arc::new(lines);
     let highlights = result_highlights(chrome, path, &lines);
     let scroll = chrome.result_scroll.clone();
     let row_count = lines.len();
@@ -1458,6 +1112,39 @@ fn render_result_preview(
         .into_any_element()
 }
 
+/// Save alone freezes the existing revision-bound request and defers to its owner.
+pub(super) fn save_button(
+    path: &std::path::Path,
+    writer_busy: bool,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
+    let p_save = path.to_path_buf();
+    let save = cx.listener(
+        move |view: &mut ConflictView, _: &gpui::ClickEvent, window, cx| {
+            view.conflict_show_page(ConflictPage::Review, cx);
+            let weak_app = view.app.clone();
+            let intent = view.freeze_save_intent(&p_save);
+            cx.spawn_in(window, async move |_, acx| {
+                let _ =
+                    weak_app.update_in(acx, |app, _, cx| app.accept_conflict_intent(intent, cx));
+            })
+            .detach();
+        },
+    );
+    super::e2e::measure_control(
+        "conflict-save",
+        tool_button(
+            "editor-save",
+            Msg::EditorSave.t(),
+            ButtonRole::Success,
+            save,
+            cx,
+        )
+        .disabled(writer_busy),
+    )
+    .into_any_element()
+}
+
 fn render_result_pane(
     mode: &ConflictMode,
     chrome: &EditorChrome,
@@ -1468,45 +1155,21 @@ fn render_result_pane(
         return div().flex_1().into_any_element();
     };
     let editing = chrome.result_editing;
-    let all_resolved = mode.buffer.hunks_all_resolved(path);
+    let all_resolved = flow::draft_ready(mode, path);
     let model = mode.buffer.hunk_model(path);
-    let unresolved = model
-        .map(|m| m.hunk_count() - m.resolved_hunk_count())
-        .unwrap_or(0);
-    let status_text = if all_resolved {
-        Msg::EditorAllResolved.t().to_string()
-    } else {
-        format!("{} {}", unresolved, Msg::EditorUnresolvedHunks.t())
-    };
+    let status_text = flow::draft_label(mode, path);
     let status_color = if all_resolved {
         theme().color_success
     } else {
         theme().color_warning
     };
 
-    // File-level "Save resolution" lives near the Result (deliverable #4).
-    // Save writes the working tree + stages + re-detects (reload) → it touches
-    // `app.conflict`, so it MUST defer to the parent (calling it synchronously
-    // here would re-lease this leased entity and panic).
-    let p_save = path.to_path_buf();
-    let save = cx.listener(
-        move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-            let weak_app = view.app.clone();
-            let intent = view.freeze_save_intent(&p_save);
-            cx.spawn_in(window, async move |_view, acx| {
-                let _ = weak_app.update_in(acx, |app, _window, cx| {
-                    app.accept_conflict_intent(intent, cx)
-                });
-            })
-            .detach();
-        },
-    );
-
     // Header: "Result", a Preview|Edit segmented toggle, status, editing badge,
     // and the file-level Save resolution button.
     let header = div()
         .flex()
         .flex_row()
+        .flex_wrap()
         .items_center()
         .gap_3()
         .w_full()
@@ -1537,17 +1200,7 @@ fn render_result_pane(
                     .child(SharedString::from(Msg::EditorEditingIndicator.t())),
             )
         })
-        .child(super::e2e::measure_control(
-            "conflict-save",
-            tool_button(
-                "editor-save",
-                Msg::EditorSave.t(),
-                ButtonRole::Success,
-                save,
-                cx,
-            )
-            .disabled(chrome.writer_busy),
-        ));
+        .child(save_button(path, chrome.writer_busy, cx));
 
     // Body: ONE CodeEditor for both modes — Preview is the same component
     // with `disabled(true)` (user request: the two modes previously used
@@ -1577,7 +1230,15 @@ fn render_result_pane(
             )
             .into_any_element()
     } else if let Some(model) = model {
-        render_result_preview(model, chrome, path, cx)
+        let lines = if chrome.manual_override {
+            mode.buffer
+                .resolved_text(path)
+                .map(|text| kagi_git::resolution::text_to_lines(&text, LineOrigin::Manual))
+                .unwrap_or_default()
+        } else {
+            model.assemble()
+        };
+        render_result_preview(lines, chrome, path, cx)
     } else {
         div().flex_grow(1.).into_any_element()
     };
@@ -1617,6 +1278,7 @@ fn mode_toggle(chrome: &EditorChrome, cx: &mut Context<ConflictView>) -> gpui::S
         None,
         move |slot, _, _, cx| {
             let _ = weak.update(cx, |view, cx| {
+                view.conflict_show_page(ConflictPage::Review, cx);
                 view.conflict_editor_set_result_mode(slot == 1);
                 cx.notify();
             });
@@ -1760,6 +1422,37 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
 mod side_row_tests {
     use super::*;
     use kagi_git::resolution::HunkModel;
+
+    #[test]
+    fn decision_window_contains_only_selected_hunk_and_optional_nearby_context() {
+        let model = HunkModel::from_marker_text(
+            "head\n<<<<<<< Current\nc1\nc2\n=======\ni1\n>>>>>>> Incoming\n\
+             ctx1\nctx2\nctx3\nctx4\n<<<<<<< Current\nx\n=======\ny\n>>>>>>> Incoming\n\
+             tail1\ntail2\n",
+        );
+        assert_eq!(visible_hunk_rows(&model, 0, false), 1..4);
+        assert_eq!(visible_hunk_rows(&model, 0, true), 0..7);
+        assert_eq!(visible_hunk_rows(&model, 1, false), 8..10);
+        assert_eq!(visible_hunk_rows(&model, 1, true), 5..12);
+        for side in [SelectionSide::Current, SelectionSide::Incoming] {
+            let rows = build_side_rows(&model, side);
+            for selected in 0..2 {
+                let visible = visible_hunk_rows(&model, selected, true);
+                let headers: Vec<_> = rows[visible]
+                    .iter()
+                    .filter_map(|row| match row {
+                        SideRow::HunkHeader { hunk_index, .. } => Some(*hunk_index),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    headers,
+                    vec![selected],
+                    "context never reveals another decision"
+                );
+            }
+        }
+    }
 
     fn counts(rows: &[SideRow]) -> (usize, usize, usize, usize) {
         let mut ctx = 0;

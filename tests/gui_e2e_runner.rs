@@ -3263,6 +3263,10 @@ mod macos {
                 Box::new(crate::conflict_controls::scenario_conflict_result_segment),
             ),
             (
+                "conflict_progressive_add_add",
+                Box::new(crate::conflict_controls::scenario_conflict_progressive_add_add),
+            ),
+            (
                 "conflict_file_selection",
                 Box::new(crate::conflict_file_selection::scenario_conflict_file_selection),
             ),

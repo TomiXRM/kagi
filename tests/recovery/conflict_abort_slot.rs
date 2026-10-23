@@ -206,6 +206,7 @@ pub fn scenario_conflict_abort_escape_focus(cx: &mut VisualTestAppContext) {
     });
     draw(cx, window);
     let text_before = cx.read(|cx| result_input.read(cx).value().to_string());
+    click_control(cx, window, "conflict-overview");
 
     click_control(cx, window, "conflict-abort");
     cx.run_until_parked();

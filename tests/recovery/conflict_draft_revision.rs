@@ -228,6 +228,10 @@ pub(super) fn open_continue(
 ) {
     let repo = cx.read(|cx| app.read(cx).repo_path.clone()).unwrap();
     let before = RepositoryState::read(&repo);
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    if cx.read(|cx| conflict.read(cx).page != kagi::ui::conflict_view::ConflictPage::Overview) {
+        click_control(cx, window, "conflict-overview");
+    }
     click_control(cx, window, "conflict-continue");
     cx.run_until_parked();
     cx.read(|cx| {

@@ -55,9 +55,8 @@ impl KagiApp {
     ///
     /// Derived from the session's operation observation, never stored. As a
     /// `merge_commit_ready` flag it was set by conflict detection and cleared
-    /// by the next one, so anything that dropped the conflict view — the
-    /// `MergeResolvedReady` branch itself — decided the answer. #704: the
-    /// repository is what knows, and it says so from the first accepted read.
+    /// by the next one. The accepted repository observation, not the presence
+    /// of a conflict presentation entity, owns readiness from the first read.
     pub fn merge_commit_ready(&self) -> bool {
         self.view().operation.as_ref().is_some_and(|op| {
             op.kind()

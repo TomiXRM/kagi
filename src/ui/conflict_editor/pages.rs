@@ -194,20 +194,18 @@ fn decision_gutter(
         match region {
             Region::Passthrough(lines) => rows.extend((0..lines.len()).map(|_| None)),
             Region::Hunk(conflict) => {
-                let label = if !conflict.is_resolved() {
-                    "?"
-                } else if conflict.line_select.is_some() {
+                let label = if conflict.line_select.is_some() {
                     // Line adoption overrides choice, which can still be Unresolved.
                     Msg::ConflictChoiceManual.t()
                 } else {
                     match conflict.choice {
+                        HunkChoice::Unresolved => "?",
                         HunkChoice::AcceptCurrent => Msg::ConflictChoiceLeft.t(),
                         HunkChoice::AcceptIncoming => Msg::ConflictChoiceRight.t(),
                         HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst => {
                             Msg::ConflictChoiceBoth.t()
                         }
                         HunkChoice::Manual(_) => Msg::ConflictChoiceManual.t(),
-                        HunkChoice::Unresolved => unreachable!("resolved hunk has a choice"),
                     }
                 };
                 rows.push(Some((hunk, label.to_owned())));

@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Experimental — conflict-hunk branch
+
+- Separate conflict files, one-hunk decisions and full Result review instead of showing every pane at once. Preserve choices and manual text across page navigation; protect divergent manual Results from source adoption until explicit Reset. Route ordinary text add/add through the same editor and keep a freshly observed fully staged merge reachable through the existing CommitPanel handoff. This experiment is not yet approved for main. (#1729)
+
 ### Fixed
 
 - Keep untouched conflict hunks unresolved when changing line order. Reorder only already adopted content, preserve partial/manual/empty choices, and avoid adding no-op undo entries. Keep binary, symlink and submodule conflicts out of text hunk materialization. (#1728)

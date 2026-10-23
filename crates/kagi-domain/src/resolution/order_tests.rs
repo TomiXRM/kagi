@@ -1,6 +1,7 @@
 use super::*;
 
-const MARKERS: &str = "top\n<<<<<<< Current\nc1\nc2\nc3\n=======\ni1\ni2\ni3\n>>>>>>> Incoming\nbottom\n";
+const MARKERS: &str =
+    "top\n<<<<<<< Current\nc1\nc2\nc3\n=======\ni1\ni2\ni3\n>>>>>>> Incoming\nbottom\n";
 
 #[test]
 fn hunk_order_untouched_preserves_markers_and_unresolved_status() {
@@ -23,7 +24,10 @@ fn hunk_order_preserves_one_side_manual_and_intentional_empty_choices() {
     for (choice, expected) in [
         (HunkChoice::AcceptCurrent, "top\nc1\nc2\nc3\nbottom\n"),
         (HunkChoice::AcceptIncoming, "top\ni1\ni2\ni3\nbottom\n"),
-        (HunkChoice::Manual("edited\n".into()), "top\nedited\nbottom\n"),
+        (
+            HunkChoice::Manual("edited\n".into()),
+            "top\nedited\nbottom\n",
+        ),
         (HunkChoice::Manual(String::new()), "top\nbottom\n"),
     ] {
         let mut model = HunkModel::from_marker_text(MARKERS);
@@ -55,11 +59,17 @@ fn hunk_order_both_choices_remain_whole_side_groups() {
     assert!(model.set_hunk_line_order(0, LineOrder::IncomingFirst));
     assert_eq!(model.hunks()[0].choice, HunkChoice::BothIncomingFirst);
     assert!(model.hunks()[0].line_select.is_none());
-    assert_eq!(model.assembled_text().as_bytes(), b"top\ni1\ni2\ni3\nc1\nc2\nc3\nbottom\n");
+    assert_eq!(
+        model.assembled_text().as_bytes(),
+        b"top\ni1\ni2\ni3\nc1\nc2\nc3\nbottom\n"
+    );
     assert!(model.all_resolved());
     assert!(!model.set_hunk_line_order(0, LineOrder::IncomingFirst));
     assert!(model.set_hunk_line_order(0, LineOrder::CurrentFirst));
-    assert_eq!(model.assembled_text().as_bytes(), b"top\nc1\nc2\nc3\ni1\ni2\ni3\nbottom\n");
+    assert_eq!(
+        model.assembled_text().as_bytes(),
+        b"top\nc1\nc2\nc3\ni1\ni2\ni3\nbottom\n"
+    );
 }
 
 #[test]
@@ -79,9 +89,15 @@ fn hunk_order_partial_selection_only_reorders_selected_position_ties() {
     let reordered = model.hunks()[0].line_select.as_ref().unwrap();
     assert_eq!(reordered.current_taken, selection.current_taken);
     assert_eq!(reordered.incoming_taken, selection.incoming_taken);
-    assert_eq!(model.assembled_text().as_bytes(), b"top\ni1\nc1\nc2\ni3\nbottom\n");
+    assert_eq!(
+        model.assembled_text().as_bytes(),
+        b"top\ni1\nc1\nc2\ni3\nbottom\n"
+    );
     assert!(model.all_resolved());
     assert!(!model.set_hunk_line_order(0, LineOrder::IncomingFirst));
     assert!(model.set_hunk_line_order(0, LineOrder::CurrentFirst));
-    assert_eq!(model.assembled_text().as_bytes(), b"top\nc1\ni1\nc2\ni3\nbottom\n");
+    assert_eq!(
+        model.assembled_text().as_bytes(),
+        b"top\nc1\ni1\nc2\ni3\nbottom\n"
+    );
 }

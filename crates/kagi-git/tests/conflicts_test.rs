@@ -309,7 +309,10 @@ fn add_add_text_conflict_materializes_as_text() {
         b"#ifndef H\n#define H\nint main_fn(void);\n#endif\n"
     );
     buffer.set_manual_text(path, "manually merged\n").unwrap();
-    assert_eq!(buffer.resolved_text(path).unwrap().as_bytes(), b"manually merged\n");
+    assert_eq!(
+        buffer.resolved_text(path).unwrap().as_bytes(),
+        b"manually merged\n"
+    );
     assert!(buffer.undo(path));
     assert_eq!(
         buffer.resolved_text(path).unwrap().as_bytes(),

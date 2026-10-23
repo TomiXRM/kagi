@@ -1,6 +1,7 @@
 use super::*;
 
-const MARKERS: &str = "top\n<<<<<<< Current\nc1\nc2\nc3\n=======\ni1\ni2\ni3\n>>>>>>> Incoming\nbottom\n";
+const MARKERS: &str =
+    "top\n<<<<<<< Current\nc1\nc2\nc3\n=======\ni1\ni2\ni3\n>>>>>>> Incoming\nbottom\n";
 
 fn buffer() -> (ResolutionBuffer, PathBuf) {
     let mut buffer = ResolutionBuffer::new(Path::new("/tmp/repo"));
@@ -38,9 +39,15 @@ fn buffer_hunk_order_both_has_one_history_entry_per_changed_order() {
     assert!(buffer.apply_hunk_choice(&path, 0, HunkChoice::BothCurrentFirst));
     let current_first = b"top\nc1\nc2\nc3\ni1\ni2\ni3\nbottom\n";
     let incoming_first = b"top\ni1\ni2\ni3\nc1\nc2\nc3\nbottom\n";
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), current_first);
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        current_first
+    );
     assert!(buffer.set_hunk_line_order(&path, 0, LineOrder::IncomingFirst));
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), incoming_first);
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        incoming_first
+    );
     assert!(buffer.has_resolution(&path));
     assert!(buffer.hunks_all_resolved(&path));
     assert_eq!(buffer.files[&path].undo.len(), 2);
@@ -50,7 +57,10 @@ fn buffer_hunk_order_both_has_one_history_entry_per_changed_order() {
     assert!(!buffer.files[&path].pending_edit.is_pending());
     assert_eq!(buffer.files[&path].undo.len(), 2);
     assert!(buffer.undo(&path));
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), current_first);
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        current_first
+    );
     assert_eq!(buffer.files[&path].redo.len(), 1);
     // The unchanged command must not checkpoint, clear redo or dirty the draft.
     buffer.files[&path].pending_edit.mark_saved();
@@ -58,7 +68,10 @@ fn buffer_hunk_order_both_has_one_history_entry_per_changed_order() {
     assert!(!buffer.files[&path].pending_edit.is_pending());
     assert_eq!(buffer.files[&path].redo.len(), 1);
     assert!(buffer.redo(&path));
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), incoming_first);
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        incoming_first
+    );
     assert!(buffer.undo(&path));
     assert!(buffer.undo(&path));
     assert_eq!(buffer.resolved_text(&path), None);
@@ -72,16 +85,31 @@ fn buffer_hunk_order_partial_preserves_selection_and_undo_bytes() {
     assert!(buffer.set_hunk_line_selection(&path, 0, SelectionSide::Current, 0, true));
     assert!(buffer.set_hunk_line_selection(&path, 0, SelectionSide::Incoming, 0, true));
     assert!(buffer.set_hunk_line_selection(&path, 0, SelectionSide::Incoming, 2, true));
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), b"top\nc1\ni1\ni3\nbottom\n");
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        b"top\nc1\ni1\ni3\nbottom\n"
+    );
     assert!(buffer.set_hunk_line_order(&path, 0, LineOrder::IncomingFirst));
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), b"top\ni1\nc1\ni3\nbottom\n");
-    assert_eq!(buffer.provenance(&path).unwrap(), vec![
-        LineOrigin::Context, LineOrigin::Incoming, LineOrigin::Current,
-        LineOrigin::Incoming, LineOrigin::Context,
-    ]);
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        b"top\ni1\nc1\ni3\nbottom\n"
+    );
+    assert_eq!(
+        buffer.provenance(&path).unwrap(),
+        vec![
+            LineOrigin::Context,
+            LineOrigin::Incoming,
+            LineOrigin::Current,
+            LineOrigin::Incoming,
+            LineOrigin::Context,
+        ]
+    );
     assert!(buffer.hunks_all_resolved(&path));
     assert!(buffer.undo(&path));
-    assert_eq!(buffer.resolved_text(&path).unwrap().as_bytes(), b"top\nc1\ni1\ni3\nbottom\n");
+    assert_eq!(
+        buffer.resolved_text(&path).unwrap().as_bytes(),
+        b"top\nc1\ni1\ni3\nbottom\n"
+    );
 }
 
 #[test]

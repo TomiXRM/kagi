@@ -1,0 +1,99 @@
+//! Borrowed traversal shared by assembly and Result comparison.
+use super::{ConflictHunk, HunkChoice, HunkModel, LineOrder, LineOrigin, Region, ResolvedLine};
+
+fn visit_group(
+    lines: &[String],
+    origin: LineOrigin,
+    visit: &mut impl FnMut(&str, LineOrigin) -> bool,
+) -> bool {
+    lines.iter().all(|line| visit(line, origin))
+}
+
+impl ConflictHunk {
+    pub(super) fn visit_resolved_lines(
+        &self,
+        visit: &mut impl FnMut(&str, LineOrigin) -> bool,
+    ) -> bool {
+        if let Some(selection) = &self.line_select {
+            let current = (&self.current, &selection.current_taken, LineOrigin::Current);
+            let incoming = (
+                &self.incoming,
+                &selection.incoming_taken,
+                LineOrigin::Incoming,
+            );
+            let sides = match selection.order {
+                LineOrder::CurrentFirst => [current, incoming],
+                LineOrder::IncomingFirst => [incoming, current],
+            };
+            for index in 0..self.current.len().max(self.incoming.len()) {
+                for (lines, taken, origin) in sides {
+                    if taken.get(index) == Some(&true) && !visit(&lines[index], origin) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        match &self.choice {
+            HunkChoice::AcceptCurrent => visit_group(&self.current, LineOrigin::Current, visit),
+            HunkChoice::AcceptIncoming => visit_group(&self.incoming, LineOrigin::Incoming, visit),
+            HunkChoice::BothCurrentFirst => {
+                visit_group(&self.current, LineOrigin::Current, visit)
+                    && visit_group(&self.incoming, LineOrigin::Incoming, visit)
+            }
+            HunkChoice::BothIncomingFirst => {
+                visit_group(&self.incoming, LineOrigin::Incoming, visit)
+                    && visit_group(&self.current, LineOrigin::Current, visit)
+            }
+            HunkChoice::Manual(text) => text
+                .split_terminator('\n')
+                .all(|line| visit(line, LineOrigin::Manual)),
+            HunkChoice::Unresolved => {
+                visit("<<<<<<< Current", LineOrigin::Manual)
+                    && visit_group(&self.current, LineOrigin::Manual, visit)
+                    && (self.base.is_empty()
+                        || (visit("||||||| Base", LineOrigin::Manual)
+                            && visit_group(&self.base, LineOrigin::Manual, visit)))
+                    && visit("=======", LineOrigin::Manual)
+                    && visit_group(&self.incoming, LineOrigin::Manual, visit)
+                    && visit(">>>>>>> Incoming", LineOrigin::Manual)
+            }
+        }
+    }
+}
+
+impl HunkModel {
+    pub(super) fn visit_resolved_lines(
+        &self,
+        visit: &mut impl FnMut(&str, LineOrigin) -> bool,
+    ) -> bool {
+        self.regions.iter().all(|region| match region {
+            Region::Passthrough(lines) => visit_group(lines, LineOrigin::Context, visit),
+            Region::Hunk(hunk) => hunk.visit_resolved_lines(visit),
+        })
+    }
+
+    /// Compare Result text without allocating an assembled file or comparing
+    /// provenance: manually typing the same bytes is not a divergent Result.
+    pub fn matches_result_text(&self, result: &[ResolvedLine]) -> bool {
+        let mut lines = result.iter();
+        self.visit_resolved_lines(&mut |text, _| lines.next().is_some_and(|line| line.text == text))
+            && lines.next().is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manual_assembly_preserves_empty_blank_and_crlf_text() {
+        let mut model = HunkModel::from_marker_text(
+            "<<<<<<< Current\ncurrent\n=======\nincoming\n>>>>>>> Incoming\n",
+        );
+        for (manual, expected) in [("", ""), ("\n", "\n"), ("a\r\n\nb", "a\r\n\nb\n")] {
+            assert!(model.set_choice(0, HunkChoice::Manual(manual.into())));
+            assert_eq!(model.assembled_text(), expected);
+        }
+    }
+}

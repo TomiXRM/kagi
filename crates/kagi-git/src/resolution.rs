@@ -626,6 +626,18 @@ impl ResolutionBuffer {
         self.files.get(path).is_some_and(|file| file.marker_residue)
     }
 
+    /// Whether the authoritative Result would be replaced by adopting source
+    /// hunks. Empty manual Results count; identical bytes with new provenance do
+    /// not. This presentation query neither allocates nor changes either model.
+    pub fn result_differs_from_hunks(&self, path: &Path) -> bool {
+        let Some(result) = self.files.get(path).and_then(|file| file.result.as_deref()) else {
+            return false;
+        };
+        self.hunks
+            .get(path)
+            .is_some_and(|model| !model.matches_result_text(result))
+    }
+
     /// Whether `path` has a Result draft (a side was chosen or text edited).
     /// A raw (binary / symlink / gitlink) file counts as resolved once a side is
     /// chosen via [`Self::apply_choice`] (#297).
@@ -1358,6 +1370,10 @@ fn parse_result_array(value: Option<Value>) -> Option<Vec<ResolvedLine>> {
 #[cfg(test)]
 #[path = "resolution/order_tests.rs"]
 mod order_tests;
+
+#[cfg(test)]
+#[path = "resolution/draft_tests.rs"]
+mod draft_tests;
 
 #[cfg(test)]
 mod tests {

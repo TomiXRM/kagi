@@ -32,7 +32,11 @@ fn add_add_materialization_accepts_regular_modes_and_rejects_raw_modes() {
 
         let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
         let markers = buffer.materialized_markers(&repo, path);
-        assert_eq!(markers.is_some(), text_allowed, "mode={mode:o}, binary={binary}");
+        assert_eq!(
+            markers.is_some(),
+            text_allowed,
+            "mode={mode:o}, binary={binary}"
+        );
         assert_eq!(buffer.is_raw(path), !text_allowed);
         if let Some(markers) = markers {
             assert!(buffer.ensure_hunks(path, &markers));
@@ -41,18 +45,32 @@ fn add_add_materialization_accepts_regular_modes_and_rejects_raw_modes() {
             for hunk in 0..buffer.hunk_count(path) {
                 assert!(buffer.apply_hunk_choice(path, hunk, HunkChoice::AcceptCurrent));
             }
-            assert_eq!(buffer.resolved_text(path).unwrap().as_bytes(), b"line one\nMAIN change\nline three\n");
+            assert_eq!(
+                buffer.resolved_text(path).unwrap().as_bytes(),
+                b"line one\nMAIN change\nline three\n"
+            );
             assert!(buffer.hunks_all_resolved(path));
             buffer.set_manual_text(path, "manual AddAdd\n").unwrap();
-            assert_eq!(buffer.resolved_text(path).unwrap().as_bytes(), b"manual AddAdd\n");
+            assert_eq!(
+                buffer.resolved_text(path).unwrap().as_bytes(),
+                b"manual AddAdd\n"
+            );
         } else {
-            assert!(!buffer.ensure_hunks(path, "<<<<<<< Current\nc\n=======\ni\n>>>>>>> Incoming\n"));
+            assert!(
+                !buffer.ensure_hunks(path, "<<<<<<< Current\nc\n=======\ni\n>>>>>>> Incoming\n")
+            );
             assert!(buffer.hunk_model(path).is_none());
             assert!(!buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
             assert!(!buffer.has_resolution(path));
         }
-        assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index_before);
-        assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), worktree_before);
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before
+        );
+        assert_eq!(
+            std::fs::read(tmp.path().join(path)).unwrap(),
+            worktree_before
+        );
         assert_eq!(repo.index().unwrap().get_path(path, 2).unwrap().mode, mode);
         assert_eq!(repo.index().unwrap().get_path(path, 3).unwrap().mode, mode);
     }

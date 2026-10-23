@@ -3,6 +3,9 @@
 //! The git2-backed `ResolutionBuffer` lives in the git-backend layer
 //! (`kagi::git::resolution`) and re-exports these models.
 
+#[path = "resolution/assembly.rs"]
+mod assembly;
+
 /// Which side(s) a per-file choice adopts (ADR-0057 / ADR-0058 §hunk buttons).
 ///
 /// `Both*` variants make the ordering explicit (Combination current-first /
@@ -346,96 +349,15 @@ impl ConflictHunk {
     /// markers (so an unresolved Result is recognizably unfinished and the
     /// marker gate still trips), tagged [`LineOrigin::Manual`].
     pub fn resolved_lines(&self) -> Vec<ResolvedLine> {
-        let cur = |g: &[String]| {
-            g.iter()
-                .map(|t| ResolvedLine {
-                    text: t.clone(),
-                    origin: LineOrigin::Current,
-                })
-                .collect::<Vec<_>>()
-        };
-        let inc = |g: &[String]| {
-            g.iter()
-                .map(|t| ResolvedLine {
-                    text: t.clone(),
-                    origin: LineOrigin::Incoming,
-                })
-                .collect::<Vec<_>>()
-        };
-        if let Some(selection) = &self.line_select {
-            // Interleave by LINE POSITION, not grouped by side: the two panes are
-            // displayed row-aligned (the shorter side blank-padded to
-            // max(current, incoming) lines), so a checked line must land at its own
-            // position. Grouping by side put a single checked current line at the
-            // top/bottom of the hunk instead of in place. `order` only breaks the
-            // tie when BOTH sides are checked at the same position (uncommon).
-            let take_cur = |i: usize| -> Option<ResolvedLine> {
-                selection.current_taken.get(i).copied().and_then(|t| {
-                    t.then(|| ResolvedLine {
-                        text: self.current[i].clone(),
-                        origin: LineOrigin::Current,
-                    })
-                })
-            };
-            let take_inc = |i: usize| -> Option<ResolvedLine> {
-                selection.incoming_taken.get(i).copied().and_then(|t| {
-                    t.then(|| ResolvedLine {
-                        text: self.incoming[i].clone(),
-                        origin: LineOrigin::Incoming,
-                    })
-                })
-            };
-            let n = self.current.len().max(self.incoming.len());
-            let mut v = Vec::new();
-            for i in 0..n {
-                match selection.order {
-                    LineOrder::CurrentFirst => {
-                        v.extend(take_cur(i));
-                        v.extend(take_inc(i));
-                    }
-                    LineOrder::IncomingFirst => {
-                        v.extend(take_inc(i));
-                        v.extend(take_cur(i));
-                    }
-                }
-            }
-            return v;
-        }
-        match &self.choice {
-            HunkChoice::AcceptCurrent => cur(&self.current),
-            HunkChoice::AcceptIncoming => inc(&self.incoming),
-            HunkChoice::BothCurrentFirst => {
-                let mut v = cur(&self.current);
-                v.extend(inc(&self.incoming));
-                v
-            }
-            HunkChoice::BothIncomingFirst => {
-                let mut v = inc(&self.incoming);
-                v.extend(cur(&self.current));
-                v
-            }
-            HunkChoice::Manual(text) => text_to_lines(text, LineOrigin::Manual),
-            HunkChoice::Unresolved => self.marker_lines(),
-        }
-    }
-
-    /// Re-emit the conflict markers for an unresolved hunk (so the assembled
-    /// Result is recognizably unfinished and trips the marker-residue gate).
-    fn marker_lines(&self) -> Vec<ResolvedLine> {
-        let m = |s: String| ResolvedLine {
-            text: s,
-            origin: LineOrigin::Manual,
-        };
-        let mut v = vec![m("<<<<<<< Current".to_string())];
-        v.extend(self.current.iter().cloned().map(m));
-        if !self.base.is_empty() {
-            v.push(m("||||||| Base".to_string()));
-            v.extend(self.base.iter().cloned().map(m));
-        }
-        v.push(m("=======".to_string()));
-        v.extend(self.incoming.iter().cloned().map(m));
-        v.push(m(">>>>>>> Incoming".to_string()));
-        v
+        let mut lines = Vec::new();
+        self.visit_resolved_lines(&mut |text, origin| {
+            lines.push(ResolvedLine {
+                text: text.to_owned(),
+                origin,
+            });
+            true
+        });
+        lines
     }
 }
 
@@ -683,21 +605,15 @@ impl HunkModel {
     /// Assemble the file Result lines from all regions, in order, tracking
     /// per-line provenance.  Passthrough lines are [`LineOrigin::Context`].
     pub fn assemble(&self) -> Vec<ResolvedLine> {
-        let mut out: Vec<ResolvedLine> = Vec::new();
-        for r in &self.regions {
-            match r {
-                Region::Passthrough(lines) => {
-                    for l in lines {
-                        out.push(ResolvedLine {
-                            text: l.clone(),
-                            origin: LineOrigin::Context,
-                        });
-                    }
-                }
-                Region::Hunk(h) => out.extend(h.resolved_lines()),
-            }
-        }
-        out
+        let mut lines = Vec::new();
+        self.visit_resolved_lines(&mut |text, origin| {
+            lines.push(ResolvedLine {
+                text: text.to_owned(),
+                origin,
+            });
+            true
+        });
+        lines
     }
 
     /// The assembled Result text (lines joined with `\n`, single trailing

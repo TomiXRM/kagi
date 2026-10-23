@@ -1,5 +1,6 @@
 //! Progressive add/add decisions and accepted Saved inspection.
 use super::*;
+use kagi::ui::conflict_editor_a11y as ax;
 fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     use kagi::ui::conflict_view::ConflictPage;
     let fixture = tempfile::tempdir().unwrap();
@@ -85,6 +86,14 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     }
     click_control(cx, window, "conflict-choice-menu-item-1-0");
     cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert_eq!(
+        ax::description("conflict-choice-0").as_deref(),
+        Some(if lang == Lang::Ja { "両方" } else { "Both" }),
+        "the BothCurrentFirst pill retains the localized Both label"
+    );
+    assert_eq!(ax::control("conflict-choice-0").unwrap().2, "both");
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
         assert_eq!(
@@ -128,6 +137,17 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         cx.notify();
     });
     click_control(cx, window, "resolver-hunk-0-incoming-line-0");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let label = ax::description("conflict-choice-0").expect("rendered gutter pill label");
+    assert_eq!(
+        label,
+        if lang == Lang::Ja { "手動" } else { "Manual" },
+        "adopting one source line is Manual, not Both"
+    );
+    assert_ne!(label, "両方");
+    assert_ne!(label, "Both");
+    assert_eq!(ax::control("conflict-choice-0").unwrap().2, "manual");
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
         assert_eq!(

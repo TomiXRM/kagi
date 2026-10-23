@@ -244,6 +244,8 @@ impl ControlState {
                     "left"
                 } else if label == Msg::ConflictChoiceRight.t() {
                     "right"
+                } else if label == Msg::ConflictChoiceManual.t() {
+                    "manual"
                 } else if label == "?" {
                     "none"
                 } else {

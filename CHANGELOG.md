@@ -9,6 +9,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Present conflict resolution as a document workspace with borderless whole-file sources, a re-openable gutter pill for Left / Right / Left Then Right / Right Then Left, previous/next hunk controls in the left commit footer, and directly editable Result with origin stripes. Remove detached adoption rows and Preview/Edit controls. Keep a collapsible 232px source list with top-down In progress/Saved groups, state letters, fill-only selection and a plain inline pending count when hidden. The file header owns one Save/Next file action; the unified toolbar retains Continue and its right icon group. This experiment is not yet approved for main. (#1729)
   - Preserve choices and manual text across navigation and hide/show, protect divergent manual Results until explicit Reset, and retain accepted saved selections for locked, read-only inspection without auto-advancing. Saved membership comes from the current operation's accepted conflict-path/index read, never unrelated staged files or a UI success ledger; stash has no saved entries. Navigation does not write Git, and Save/Continue keep the existing revision, lease and guarded CommitPanel handoff.
+  - Label single-line adoption and manually edited hunk results as Manual / 手動 in the gutter pill and accessibility state, reserving Both / 両方 for ordered adoption of both sources.
 
 ### Fixed
 

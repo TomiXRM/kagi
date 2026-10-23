@@ -31,9 +31,20 @@ The existing R2 implementation is retained until this design passes them.
 
 The earlier [actual Fork / GitButler / VS Code comparison](https://github.com/TomiXRM/kagi/issues/1729)
 is runtime evidence. Its finding that saved Kagi files disappear motivates the
-lower section. GitKraken remains user-approved deferred; no new claim of having
-examined its conflict editor. Apple guidance does not prescribe two equal-height
-file groups, and its usual two-level sidebar advice needs care with deep paths.
+lower section. GitKraken hands-on use remains user-approved deferred; the three
+GitKraken screenshots the user supplied on 2026-10-23 are the only reference:
+its merge tool groups `Conflicted Files (n)` above `Resolved Files (n)` in one
+pane, navigates `conflict k of n` over an Output pane, saves per file with
+`Save and mark resolved`, and keeps the commit message with `Commit and Merge`
+/ `Abort Merge` beneath the file groups. Taken: the two-group split with a
+per-file save that moves a row, and output-centred `k of n` hunk navigation.
+Not taken: `Mark all resolved` (marks without a verified save); commit message
+and Abort at the bottom of the file pane (Apple Sidebars: bottom-of-sidebar
+actions get hidden by window placement — Kagi keeps the commit hand-off and
+Abort in the toolbar); per-line checkboxes replacing adoption buttons (Kagi
+keeps labeled `採用` plus the existing gutter line selection). Apple guidance
+does not prescribe two equal-height file groups, and its usual two-level
+sidebar advice needs care with deep paths.
 
 ## Hypotheses and disconfirming observations
 

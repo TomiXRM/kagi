@@ -199,6 +199,7 @@ where
         role,
         cx,
     )
+    .small()
     .on_click(handler)
 }
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).

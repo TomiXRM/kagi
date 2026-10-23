@@ -1085,11 +1085,12 @@ fn dash_state(mode: &ConflictMode, _cx: &mut Context<ConflictView>) -> gpui::Any
         .flex_shrink_0()
         .flex_wrap()
         .items_center()
-        .gap_3()
-        .p(theme::scaled_px(12.))
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
         .child(
             div()
-                .text_size(theme::scaled_px(15.))
+                .text_size(theme::scaled_px(13.))
                 .child(SharedString::from(format!(
                     "{} ({})",
                     Msg::ConflictRemainingFiles.t(),
@@ -1098,7 +1099,7 @@ fn dash_state(mode: &ConflictMode, _cx: &mut Context<ConflictView>) -> gpui::Any
         )
         .child(
             div()
-                .text_size(theme::scaled_px(12.))
+                .text_size(theme::scaled_px(11.))
                 .child(SharedString::from(mode.session.op.slug())),
         )
         .when(mode.session.files.is_empty(), |el| {
@@ -1174,7 +1175,6 @@ fn dash_primary(
             cx,
         )
         .small()
-        .min_h(theme::scaled_px(30.))
         .on_click(open);
         #[cfg(feature = "gui-e2e")]
         let open_button = open_button.on_key_down(|event, _, _| {
@@ -1203,8 +1203,7 @@ fn dash_primary(
                     None
                 },
                 cx,
-            )
-            .min_h(theme::scaled_px(30.)),
+            ),
         ))
     };
     let primary_row = primary_row
@@ -1540,7 +1539,7 @@ fn dash_sections(
             .gap_2()
             .mx(theme::scaled_px(6.))
             .px(theme::scaled_px(6.))
-            .py(theme::scaled_px(6.))
+            .py(theme::scaled_px(3.))
             .rounded_md()
             .cursor_pointer()
             .when(selected, |s| {
@@ -1559,7 +1558,7 @@ fn dash_sections(
                     .flex_1()
                     .min_w(px(0.))
                     .id(path_id.clone())
-                    .gap_1()
+                    .gap(theme::scaled_px(1.))
                     .child(
                         div()
                             .text_size(theme::scaled_px(12.))
@@ -1630,8 +1629,8 @@ fn dash_sections(
                     .flex_shrink_0()
                     .child(
                         div()
-                            .px(theme::scaled_px(6.))
-                            .text_size(theme::scaled_px(16.))
+                            .px(theme::scaled_px(4.))
+                            .text_size(theme::scaled_px(13.))
                             .text_color(if selection_on_accent {
                                 theme().selection_secondary_foreground(window_active)
                             } else {

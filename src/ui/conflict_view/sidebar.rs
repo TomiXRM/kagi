@@ -418,7 +418,7 @@ impl ConflictView {
         };
         let row = list_a11y::list_option(
             "conflict-tree",
-            row,
+            rows.navigation(at, row),
             at,
             self.sidebar.visible.len(),
             full.clone(),

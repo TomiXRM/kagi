@@ -92,8 +92,9 @@ pub(super) fn render_panes(
         "conflict-prev-hunk",
         "‹",
         ButtonRole::Neutral,
-        cx.listener(|view, _, _, cx| {
+        cx.listener(|view, _, window, cx| {
             view.conflict_editor_select_hunk(view.selected_hunk.saturating_sub(1));
+            view.focus_navigation(window, cx);
             cx.notify();
         }),
         cx,
@@ -104,10 +105,11 @@ pub(super) fn render_panes(
         "conflict-next-hunk",
         "›",
         ButtonRole::Neutral,
-        cx.listener(move |view, _, _, cx| {
+        cx.listener(move |view, _, window, cx| {
             if view.selected_hunk + 1 < total {
                 view.conflict_editor_select_hunk(view.selected_hunk + 1);
             }
+            view.focus_navigation(window, cx);
             cx.notify();
         }),
         cx,

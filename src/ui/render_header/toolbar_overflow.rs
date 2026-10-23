@@ -45,6 +45,14 @@ impl Layout {
             0.
         }
     }
+    pub(super) fn icon_identity_width(&self, key: StyleKey) -> f32 {
+        let width = if self.operation_visible {
+            40.
+        } else {
+            ICON_IDENTITY_MIN_WIDTH
+        };
+        width * (theme::BASE_REM_PX / 16.) * f32::from_bits(key.2)
+    }
     pub(super) fn sidebar_width(&self, visible: bool, key: StyleKey) -> f32 {
         if visible {
             self.widths[16] * f32::from_bits(key.2)
@@ -168,10 +176,16 @@ impl Layout {
             // Refresh/repository/branch summary's readable minimum.
             repo + repo_spacing
                 + side
-                + side.max(
-                    ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale
-                        + self.sidebar_width(sidebar, key),
-                )
+                + if self.operation_visible {
+                    // The operation strip grows only the right column; its
+                    // minimum must not also reserve empty space on the left.
+                    self.icon_identity_width(key) + self.sidebar_width(sidebar, key)
+                } else {
+                    side.max(
+                        ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale
+                            + self.sidebar_width(sidebar, key),
+                    )
+                }
                 // Symmetric toolbar padding; native lights and + are above.
                 + 24. * scale
         };
@@ -738,6 +752,24 @@ mod tests {
             layout.hidden(0x3fff, 8, false, key),
             0x3e00,
             "once only selected Graph remains, every Git command fits without the 100px side reservation"
+        );
+    }
+
+    #[test]
+    fn conflict_strip_reserves_only_its_actual_right_column() {
+        let key = (true, i18n::Lang::En, 1_f32.to_bits());
+        let mut layout = Layout::default();
+        layout.measure(None, 700., key);
+        for index in 0..IDS.len() {
+            layout.measure(Some(index), 36., key);
+        }
+        layout.measure(Some(17), 300., key);
+        layout.operation_visible = true;
+        let present = 0x1f00;
+        assert_eq!(
+            layout.hidden(present, usize::MAX, false, key),
+            0,
+            "operation strip plus all five mode/settings controls fit beside the identity"
         );
     }
 

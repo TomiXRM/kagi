@@ -755,10 +755,9 @@ impl KagiApp {
                     .flex_1()
                     .min_w_0()
                     .when(icon_only, |el| {
-                        el.min_w(
-                            theme::scaled_px(toolbar_overflow::ICON_IDENTITY_MIN_WIDTH)
-                                + px(sidebar_width),
-                        )
+                        el.min_w(px(
+                            self.toolbar_layout.icon_identity_width(style_key) + sidebar_width
+                        ))
                     })
                     .when(!icon_only, |el| el.min_w(px(identity_width)))
                     .when(show_sidebar_toggle, |el| {
@@ -862,7 +861,11 @@ impl KagiApp {
                             .w(theme::scaled_px(180.))
                             .min_w_0()
                             .when(icon_only, |el| {
-                                el.flex_shrink(1.).min_w(theme::scaled_px(40.))
+                                el.flex_shrink(1.).min_w(if conflict_strip.is_some() {
+                                    px(0.)
+                                } else {
+                                    theme::scaled_px(40.)
+                                })
                             })
                             .relative()
                             .when(!icon_only, |el| {

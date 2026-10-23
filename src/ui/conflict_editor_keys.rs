@@ -99,7 +99,7 @@ impl ResolverKeyboard {
                     Region::Hunk(hunk) => {
                         let n = hunk_index;
                         if n == selected_hunk {
-                            scroll.scroll_to_item(row.saturating_sub(3), gpui::ScrollStrategy::Top);
+                            scroll.scroll_to_item_strict(row, gpui::ScrollStrategy::Center);
                         }
                         rows.push((format!("conflict-choice-{n}"), row));
                         let mut controls = Vec::new();

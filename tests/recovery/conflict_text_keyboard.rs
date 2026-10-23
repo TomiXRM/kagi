@@ -96,8 +96,14 @@ fn assert_operation_strip(cx: &mut VisualTestAppContext, window: AnyWindowHandle
     }
     paint(cx, window);
     let bounds = |id| {
-        e2e::control_bounds(window.window_id(), id)
-            .unwrap_or_else(|| panic!("missing toolbar control {id}"))
+        e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| {
+            panic!(
+                "missing toolbar control {id}: {:?} zoom={} toolbar={:?}",
+                i18n::lang(),
+                theme::zoom(),
+                e2e::control_bounds(window.window_id(), "toolbar-row")
+            )
+        })
     };
     let toolbar = bounds("toolbar-row");
     let operation = bounds("conflict-operation-strip");
@@ -218,6 +224,10 @@ fn choose(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hunk: usize, i
     paint(cx, window);
 }
 fn tab_to(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+    // Closing a choice menu restores the pill's real focus handle.
+    if probe(cx, window).as_deref() == Some(id) {
+        return;
+    }
     for _ in 0..100 {
         keys(cx, window, "tab");
         if probe(cx, window).as_deref() == Some(id) {
@@ -306,7 +316,8 @@ fn matrix_leg(
             window.window_id(),
             &format!("resolver-hunk-0-{side}-line-0"),
         )
-        .unwrap();
+        .unwrap()
+        .dilate(gpui::px(kagi_ui_core::keyboard_nav::RING));
         assert!((f32::from(line.size.height) - row_height).abs() <= 1.);
         let height = f32::from(viewport.size.height);
         assert!(

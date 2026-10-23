@@ -153,6 +153,21 @@ Native pixel probes sample row padding outside glyphs and badges, in logical
 window coordinates converted once by the window's scale factor. Renderer-fed
 AX/focus probes do not establish native VoiceOver, IME or real-window usability.
 
+The direct Result viewport uses layout-transparent measurement: an auto-sized
+test wrapper must not collapse its flex height or redirect its click. Sidebar
+rows attach the shared virtual-list arrow actions as well as pointer activation;
+Enter/Space then open the focused pending or saved row. The hunk resolver still
+has one roving Tab stop, with Down reaching the next hunk after source adoption
+changes the entry point. Selected-hunk navigation strictly centers the hunk,
+not a preceding context row that may fill a narrow/high-zoom viewport by itself.
+Footer navigation retires a button's focus before it becomes unavailable, and
+inline Up overrides the shared previous-row binding to return to its own pill.
+Toolbar fitting charges the operation strip only to the right column; compact
+conflict chrome lets repository identity truncate before losing right-hand
+controls. Save refusal
+coverage uses a ready draft with an externally stale revision; an unresolved
+draft's unavailable Save is not an executable refusal path.
+
 Blind model trials receive only the desired business result and native-window
 input tools, not source, a design explanation or a suggested click sequence.
 Record observed actions, screenshots and independently verified repository bytes.

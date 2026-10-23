@@ -59,8 +59,6 @@ fn save(cx: &mut VisualTestAppContext) {
                 if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
         )
     }));
-    // An unresolved draft has an unavailable Save. Exercise the authoritative
-    // refusal with a genuinely queued click from a previously ready rendering.
     conflict.update(cx, |view, cx| {
         view.conflict_editor_set_hunk_side(
             Path::new("file.txt"),
@@ -73,10 +71,11 @@ fn save(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
+    // Keep the ready draft and its rendered Save, but invalidate the observed
+    // revision externally. The real Save route must refuse before any write.
+    std::fs::write(repo.join("file.txt"), "changed outside Kagi\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
     let save_bounds = e2e::control_bounds(window.window_id(), "conflict-save").unwrap();
-    conflict.update(cx, |view, _| {
-        view.conflict_editor_reset_all(Path::new("file.txt"));
-    });
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     let before = std::fs::read(repo.join("file.txt")).unwrap();
     cx.simulate_click(window, save_bounds.center(), gpui::Modifiers::none());
@@ -88,7 +87,7 @@ fn save(cx: &mut VisualTestAppContext) {
     assert_eq!(entries.len(), 1);
     assert!(
         matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
-        if blockers.iter().any(|reason| reason.contains("conflict markers remain")))
+        if blockers.iter().any(|reason| reason.contains("conflict changed since it was observed")))
     );
     assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
     assert_eq!(std::fs::read(repo.join("file.txt")).unwrap(), before);

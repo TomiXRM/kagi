@@ -223,16 +223,29 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 kagi::ui::conflict_editor_a11y::take_focus_probe();
                 crate::keyboard_nav::keys(cx, window, "tab");
                 crate::keyboard_nav::keys(cx, window, "f19");
-                if kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref()
-                    == Some("conflict-choice-1")
-                {
-                    found = true;
-                    break;
+                match kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref() {
+                    Some("conflict-choice-0") => {
+                        // The whole-file resolver has one roving Tab stop.
+                        // Adoption of hunk 0 moved that entry point back to 0.
+                        crate::keyboard_nav::keys(cx, window, "down f19");
+                        assert_eq!(
+                            kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref(),
+                            Some("conflict-choice-1"),
+                            "Down reaches the next hunk from the actual Tab stop"
+                        );
+                        found = true;
+                        break;
+                    }
+                    Some("conflict-choice-1") => {
+                        found = true;
+                        break;
+                    }
+                    _ => {}
                 }
             }
             assert!(
                 found,
-                "Reset menu launcher is reached through actual Tab navigation"
+                "Reset menu launcher is reached through actual Tab navigation: {lang:?} {zoom} {navigation}"
             );
             crate::keyboard_nav::keys(cx, window, "enter end");
             crate::keyboard_nav::keys(cx, window, key);

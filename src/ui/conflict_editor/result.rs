@@ -216,7 +216,7 @@ pub(super) fn render_result_pane(
                         .child(status),
                 ),
         )
-        .child(e2e::measure_control(
+        .child(e2e::measure_leaf(
             "conflict-result-editor",
             div()
                 .relative()

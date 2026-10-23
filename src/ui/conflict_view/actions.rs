@@ -195,10 +195,8 @@ impl ConflictView {
                         kagi_git::resolution::Region::Passthrough(lines) => row += lines.len(),
                         kagi_git::resolution::Region::Hunk(hunk) => {
                             if index == hunk_index {
-                                self.ab_scroll_handle.scroll_to_item(
-                                    row.saturating_sub(3),
-                                    gpui::ScrollStrategy::Top,
-                                );
+                                self.ab_scroll_handle
+                                    .scroll_to_item_strict(row, gpui::ScrollStrategy::Center);
                                 break;
                             }
                             row += hunk.current.len().max(hunk.incoming.len()).max(1);
@@ -373,8 +371,8 @@ impl ConflictView {
             // No active conflict mode — no-op, no `[kagi]` line (matches original).
             None => {}
             Some(Ok(())) => {
-                eprintln!(
-                    "[kagi] conflict-mode: choice {} for {}",
+                klog!(
+                    "conflict-mode: choice {} for {}",
                     match choice {
                         kagi_git::ResolutionChoice::Current => "current",
                         kagi_git::ResolutionChoice::Incoming => "incoming",
@@ -385,25 +383,21 @@ impl ConflictView {
                 );
             }
             Some(Err(e)) => {
-                eprintln!(
-                    "[kagi] conflict-mode: choice failed for {}: {}",
-                    path.display(),
-                    e
-                );
+                klog!("conflict-mode: choice failed for {}: {}", path.display(), e);
                 self.marshal_error_toast(format!("{}", e), cx);
             }
         }
     }
 
     /// Entry point for "Open external tool" toolbar button (launch is W33). Emits
-    /// the contract `eprintln!` line and marshals the info toast to the parent.
+    /// the contract `klog!` line and marshals the info toast to the parent.
     pub fn conflict_editor_open_external(
         &mut self,
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        eprintln!(
-            "[kagi] conflict-editor: external tool requested for {} (launch is W33)",
+        klog!(
+            "conflict-editor: external tool requested for {} (launch is W33)",
             path.display()
         );
         let msg = format!(

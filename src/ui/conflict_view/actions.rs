@@ -181,8 +181,8 @@ impl ConflictView {
 
     /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
     pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
-        self.reset_all_target = None;
         if self.selected_hunk != hunk_index {
+            self.reset_all_target = None;
             if let Some(model) = self
                 .editing
                 .as_deref()
@@ -201,7 +201,7 @@ impl ConflictView {
                                 );
                                 break;
                             }
-                            row += 1 + hunk.current.len().max(hunk.incoming.len());
+                            row += hunk.current.len().max(hunk.incoming.len()).max(1);
                             index += 1;
                         }
                     }
@@ -281,11 +281,6 @@ impl ConflictView {
         if let Some(i) = self.editor_inputs.as_mut() {
             i.content_sig = 0;
         }
-    }
-
-    #[cfg(feature = "gui-e2e")]
-    pub fn result_mode_tabs_for_e2e(&self) -> Vec<(gpui::Role, String, bool, bool)> {
-        self.result_mode_focus.recorded_tabs()
     }
 
     /// Reset every hunk of `path` to unresolved (toolbar "Reset all").

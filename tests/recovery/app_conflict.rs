@@ -71,7 +71,7 @@ fn dir_file_fixture() -> tempfile::TempDir {
 pub(crate) fn click_control(
     cx: &mut VisualTestAppContext,
     window: gpui::AnyWindowHandle,
-    name: &'static str,
+    name: &str,
 ) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -80,6 +80,7 @@ pub(crate) fn click_control(
     cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
 }
 
 pub(crate) fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {

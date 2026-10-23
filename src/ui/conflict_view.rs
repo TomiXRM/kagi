@@ -28,6 +28,8 @@ use super::KagiApp;
 use super::{conflict_binary_view, e2e, ToastKind};
 
 mod actions;
+mod choice_menu;
+pub use choice_menu::render_choice_menu;
 mod file_menu;
 mod saved;
 mod sidebar;
@@ -61,7 +63,7 @@ pub fn take_next_conflict_focus_probe() -> bool {
 pub struct EditorInputs {
     /// The conflicting file these inputs are bound to.
     pub path: PathBuf,
-    /// Result editor (read-only in Preview, editable in Edit).
+    /// Directly editable Result; the Input is disabled while its writer is busy.
     pub result: Entity<InputState>,
 }
 
@@ -70,6 +72,7 @@ pub struct EditorInputs {
 /// on [`KagiApp`], not on the cloned [`ConflictMode`]).
 #[derive(Clone)]
 pub struct EditorChrome {
+    pub current_commit: String,
     /// Presentation-only projection of the authoritative Sessions writer lease.
     pub writer_busy: bool,
     pub save_refused: bool,
@@ -92,10 +95,6 @@ pub struct EditorChrome {
         std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::ResultHlCache>>>,
     /// Whether the Result pane is in Edit mode (UX-015).
     pub result_editing: bool,
-    /// Whether the destructive "Reset all" is armed (POLISH-042).
-    pub reset_all_armed: bool,
-    pub reset_focus: Option<gpui::FocusHandle>,
-    pub result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk,
@@ -136,6 +135,7 @@ pub struct EditorChrome {
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
     window_activation_subscription: Option<gpui::Subscription>,
+    pub(crate) operation_chrome_subscription: Option<gpui::Subscription>,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// `Some(_)` while a conflict/merge is in progress (set by
@@ -143,6 +143,7 @@ pub struct ConflictView {
     /// untouched until Continue / Abort execute through the existing plan
     /// pipeline.
     pub mode: Option<ConflictMode>,
+    pub current_commit: String,
     /// Retained editor owner; saved inspection never owns an editable draft.
     pub editing: Option<PathBuf>,
     pub page: ConflictPage,
@@ -161,20 +162,20 @@ pub struct ConflictView {
     sidebar_toggle_focus: Option<gpui::FocusHandle>,
     navigation_focus: Option<gpui::FocusHandle>,
     pub show_tools: bool,
+    pub choice_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    pub(crate) choice_menu_keys: super::menu_keys::MenuKeys,
     /// W32: last-saved resolved text per file, so a Save can log a before→after
     /// file-content hash pair (T-035) without re-reading the working tree.
     pub editing_before_text: HashMap<PathBuf, String>,
     /// T-CONFLICT-UI-001/005: the three CodeEditor `InputState`s backing the
     /// A / B / Result panes (ADR-0069). Lazily created in a `Window` context.
     pub editor_inputs: Option<ConflictEditorInputs>,
+    result_subscription: Option<gpui::Subscription>,
     /// T-CONFLICT-UX-015: whether the Result pane is in Edit mode (editable)
     /// rather than Preview (read-only).
     pub result_editing: bool,
     /// The edited path whose first-stage Reset all approval is still current.
     pub reset_all_target: Option<PathBuf>,
-    reset_focus: Option<gpui::FocusHandle>,
-    reset_blur_subscription: Option<gpui::Subscription>,
-    result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// T-CONFLICT-UI-003: A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
     /// Measured (left, right) screen-px bounds for A|B divider dragging.
@@ -230,9 +231,11 @@ impl ConflictView {
         static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
             window_activation_subscription: None,
+            operation_chrome_subscription: None,
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             mode: None,
+            current_commit: String::new(),
             editing: None,
             page: ConflictPage::Hunk,
             sidebar_hidden: false,
@@ -249,13 +252,13 @@ impl ConflictView {
             sidebar_toggle_focus: None,
             navigation_focus: None,
             show_tools: false,
+            choice_menu: None,
+            choice_menu_keys: Default::default(),
             editing_before_text: HashMap::new(),
             editor_inputs: None,
+            result_subscription: None,
             result_editing: false,
             reset_all_target: None,
-            reset_focus: None,
-            reset_blur_subscription: None,
-            result_mode_focus: Default::default(),
             ab_split: super::CONFLICT_AB_DEFAULT,
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             raw_preview_scroll: gpui::ScrollHandle::new(),
@@ -437,22 +440,12 @@ impl Render for ConflictView {
         if self.sidebar_toggle_focus.is_none() {
             self.sidebar_toggle_focus = Some(cx.focus_handle());
         }
-        if self.reset_focus.is_none() {
-            let focus = cx.focus_handle().tab_stop(false);
-            self.reset_blur_subscription =
-                Some(cx.on_focus_out(&focus, window, |view, _, _, cx| {
-                    view.reset_all_target = None;
-                    cx.notify();
-                }));
-            self.reset_focus = Some(focus);
-        }
-        // Reconcile logical focus as well as native focus-out: inactive windows
-        // retain logical focus, but GPUI suppresses their native focus events.
         if self.reset_all_target.is_some()
-            && self
-                .reset_focus
-                .as_ref()
-                .is_some_and(|focus| !focus.contains_focused(window, cx))
+            && self.choice_menu.is_none()
+            && !self
+                .resolver_keyboard
+                .borrow()
+                .hunk_focused(self.selected_hunk, window)
         {
             self.reset_all_target = None;
         }
@@ -478,9 +471,6 @@ impl Render for ConflictView {
         // paid for it. `render_body` already takes a reference, and `cx` is a
         // separate parameter from `self`, so the borrow is fine.
         let resolver = self.mode.as_ref().and_then(|mode| {
-            if self.page != ConflictPage::Hunk {
-                return None;
-            }
             let file = mode.selected_file.and_then(|i| mode.session.files.get(i))?;
             Some((file.path.as_path(), mode.buffer.hunk_model(&file.path)?))
         });
@@ -557,6 +547,7 @@ impl ConflictView {
                 .is_some_and(|mode| flow::manual_override(mode, path))
         });
         EditorChrome {
+            current_commit: self.current_commit.clone(),
             writer_busy: self.writer_busy,
             save_refused: self.save_refused.is_some() && self.save_refused == self.editing,
             source_choices_enabled: !self.writer_busy && !manual_override,
@@ -573,10 +564,6 @@ impl ConflictView {
             result_scroll: self.result_scroll_handle.clone(),
             result_hl: self.result_hl.clone(),
             result_editing: self.result_editing,
-            reset_all_armed: self.reset_all_target.as_ref() == self.editing.as_ref()
-                && self.reset_all_target.is_some(),
-            reset_focus: self.reset_focus.clone(),
-            result_mode_focus: self.result_mode_focus.clone(),
             ab_split: self.ab_split,
             selected_hunk: self.selected_hunk,
             ab_geom: self.ab_geom.clone(),

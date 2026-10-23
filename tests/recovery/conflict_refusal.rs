@@ -59,9 +59,27 @@ fn save(cx: &mut VisualTestAppContext) {
                 if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
         )
     }));
+    // An unresolved draft has an unavailable Save. Exercise the authoritative
+    // refusal with a genuinely queued click from a previously ready rendering.
+    conflict.update(cx, |view, cx| {
+        view.conflict_editor_set_hunk_side(
+            Path::new("file.txt"),
+            0,
+            kagi_git::resolution::SelectionSide::Current,
+            true,
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let save_bounds = e2e::control_bounds(window.window_id(), "conflict-save").unwrap();
+    conflict.update(cx, |view, _| {
+        view.conflict_editor_reset_all(Path::new("file.txt"));
+    });
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     let before = std::fs::read(repo.join("file.txt")).unwrap();
-    click_control(cx, window, "conflict-save");
+    cx.simulate_click(window, save_bounds.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
         .into_iter()

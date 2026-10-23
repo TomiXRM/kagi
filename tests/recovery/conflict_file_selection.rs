@@ -49,10 +49,13 @@ fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, row: usize) -> 
         .expect("file row measured");
         let image = window.render_to_image().expect("native row fill capture");
         let scale = window.scale_factor();
+        // Window-local logical coordinates: the left padding at x+4 is before
+        // the disclosure/document icons; mid-height avoids the rounded corners.
+        // Convert once to native image pixels. The old right-5/top+5 hit badges.
         image
             .get_pixel(
-                ((f32::from(bounds.right()) - 5.) * scale) as u32,
-                ((f32::from(bounds.top()) + 5.) * scale) as u32,
+                ((f32::from(bounds.left()) + 4.) * scale) as u32,
+                (f32::from(bounds.center().y) * scale) as u32,
             )
             .0
     })
@@ -70,6 +73,80 @@ fn selected_row(list: &str, path: &str) {
         .rows
         .values()
         .any(|(label, selected)| label == path && *selected));
+}
+
+fn chrome_contract(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    last_pending: usize,
+    saved: bool,
+) {
+    let ids = [
+        "conflict-pending-header",
+        "conflict-saved-header",
+        "conflict-save",
+        "conflict-next-file",
+        "conflict-file-header",
+    ];
+    for id in ids {
+        e2e::clear_control_bounds(window.window_id(), id);
+    }
+    paint(cx, window, 0);
+    let bounds = |id: &str| e2e::control_bounds(window.window_id(), id).unwrap();
+    let pending = bounds("conflict-pending-header");
+    let last = bounds(&format!("conflict-row-{last_pending}"));
+    let saved_header = bounds("conflict-saved-header");
+    assert!(pending.bottom() <= last.top());
+    assert!(
+        saved_header.top() >= last.bottom()
+            && saved_header.top() - last.bottom() <= theme::scaled_px(20.),
+        "Saved follows pending rows, not a bottom-pinned section"
+    );
+    let action = if saved {
+        "conflict-next-file"
+    } else {
+        "conflict-save"
+    };
+    let absent = if saved {
+        "conflict-save"
+    } else {
+        "conflict-next-file"
+    };
+    let header = bounds("conflict-file-header");
+    let action_bounds = bounds(action);
+    assert!(action_bounds.left() >= header.left() && action_bounds.right() <= header.right());
+    assert!(action_bounds.top() >= header.top() && action_bounds.bottom() <= header.bottom());
+    assert!(
+        e2e::control_bounds(window.window_id(), absent).is_none(),
+        "one file action only"
+    );
+}
+
+fn hidden_count(cx: &mut VisualTestAppContext, window: AnyWindowHandle, expected: Option<usize>) {
+    let id = "conflict-sidebar-inline-count";
+    e2e::clear_control_bounds(window.window_id(), id);
+    crate::native_ax::activate(cx);
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let count = e2e::control_bounds(window.window_id(), id);
+    assert_eq!(
+        count.is_some(),
+        expected.is_some(),
+        "count is inline only while the sidebar is hidden"
+    );
+    if let Some(count) = count {
+        let toggle = e2e::control_bounds(window.window_id(), "conflict-sidebar-toggle").unwrap();
+        assert!(count.left() >= toggle.left() && count.right() <= toggle.right());
+        assert!(count.top() >= toggle.top() && count.bottom() <= toggle.bottom());
+        let tree = crate::native_ax::tree(cx, window);
+        let expected = expected.unwrap().to_string();
+        assert!(
+            tree["nodes"].as_object().unwrap().values().any(|node| {
+                node["aria"]["role"] == "Status" && node["aria"]["label"] == expected
+            }),
+            "inline count reports actual remaining files: {expected}"
+        );
+    }
 }
 
 pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
@@ -108,21 +185,23 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
         assert_eq!(view.page, ConflictPage::Hunk);
         assert_eq!(view.editing.as_deref(), Some(Path::new("notes.txt")));
     });
-    click_control(cx, window, "conflict-review");
-    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Review);
+    click_control(cx, window, "conflict-result-editor");
+    chrome_contract(cx, window, 2, false);
+    hidden_count(cx, window, None);
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
     selected_row("conflict-tree", "notes.txt");
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     assert_eq!(paint(cx, window, 1), active_fill);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     click_control(cx, window, "conflict-sidebar-toggle");
+    hidden_count(cx, window, Some(3));
     cx.read(|cx| {
         let view = conflict.read(cx);
         assert!(view.sidebar_hidden);
         assert_eq!(view.editing.as_deref(), Some(Path::new("notes.txt")));
-        assert_eq!(view.page, ConflictPage::Review);
     });
     click_control(cx, window, "conflict-sidebar-toggle");
+    hidden_count(cx, window, None);
     assert!(!cx.read(|cx| conflict.read(cx).sidebar_hidden));
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
     selected_row("conflict-tree", "notes.txt");
@@ -142,8 +221,9 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
         Some(Path::new("notes.txt"))
     );
     assert_eq!(cx.read(|cx| conflict.read(cx).selected_hunk), 0);
-    click_control(cx, window, "conflict-use-left");
-    click_control(cx, window, "conflict-review");
+    click_control(cx, window, "conflict-choice-0");
+    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    click_control(cx, window, "conflict-result-editor");
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
     selected_row("conflict-tree", "notes.txt");
     assert_eq!(
@@ -186,6 +266,7 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
         );
         assert!(!view.result_editing);
     });
+    chrome_contract(cx, window, 1, true);
     assert_eq!(
         kagi::ui::conflict_view::continue_primary_for_e2e(),
         Some(false)
@@ -196,7 +277,9 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
         .map(|entry| entry.id)
         .collect();
     click_control(cx, window, "conflict-sidebar-toggle");
+    hidden_count(cx, window, Some(2));
     click_control(cx, window, "conflict-sidebar-toggle");
+    hidden_count(cx, window, None);
     assert_eq!(
         cx.read(|cx| conflict.read(cx).selected_saved.clone())
             .as_deref(),

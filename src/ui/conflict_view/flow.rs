@@ -158,86 +158,13 @@ pub(super) fn render(
                 mode, chrome, &file.path, cx,
             ));
         } else {
-            body = body
-                .child(file_navigation(mode, chrome, cx))
-                .child(special::render_center(
-                    mode,
-                    chrome.writer_busy,
-                    &chrome.raw_preview_scroll,
-                    cx,
-                ));
+            body = body.child(special::render_center(
+                mode,
+                chrome.writer_busy,
+                &chrome.raw_preview_scroll,
+                cx,
+            ));
         }
     }
     body.into_any_element()
-}
-
-/// The same compact navigation is present on safe whole-file/special pages.
-pub(super) fn file_navigation(
-    mode: &ConflictMode,
-    chrome: &EditorChrome,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    let review = cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-        view.conflict_show_page(ConflictPage::Review, cx);
-        view.focus_navigation(window, cx);
-        cx.notify();
-    });
-    let file = mode.selected_file.and_then(|i| mode.session.files.get(i));
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap_2()
-        .p(theme::scaled_px(8.))
-        .when_some(file, |el, file| {
-            el.child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .child(SharedString::from(file.path.to_string_lossy().into_owned())),
-            )
-            .child({
-                let status = if chrome.save_refused {
-                    Msg::ConflictSaveRefused.t().to_owned()
-                } else {
-                    draft_label(mode, &file.path)
-                };
-                sidebar::chip(
-                    &status,
-                    if chrome.save_refused {
-                        theme().color_blocker
-                    } else {
-                        theme().text_sub
-                    },
-                )
-            })
-        })
-        .when(chrome.page != ConflictPage::Review, |el| {
-            el.child(super::super::e2e::measure_control(
-                "conflict-review",
-                KagiButton::styled(
-                    "conflict-review",
-                    Msg::ConflictReview.t(),
-                    ButtonRole::NeutralTinted,
-                    cx,
-                )
-                .small()
-                .on_click(review),
-            ))
-        })
-        .when(chrome.page == ConflictPage::Review, |el| {
-            el.when_some(
-                file.filter(|f| f.kind != ConflictKind::DirFile),
-                |el, file| {
-                    el.child(super::super::conflict_editor::save_button(
-                        &file.path,
-                        chrome.writer_busy,
-                        chrome.save_refused,
-                        cx,
-                    ))
-                },
-            )
-        })
-        .into_any_element()
 }

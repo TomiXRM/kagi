@@ -853,33 +853,54 @@ not native VoiceOver evidence.
 
 For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
 `conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
-Tabs to the production resolver, roves across both whole-file source hunks
-without changing the selected hunk, and compares Enter adoption with the
-measured pointer control. It exercises Use Left/Right/ordered Both, line-level
-Partial state, Result undo/redo, both-pane Prev/Next reveal and fixed 8/12-row
-viewports at 940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark, with zero
-repository writes or receipts.
-The F19 probe observes only the actual focused owner; AX metadata records
-renderer-supplied role/name/state, not native VoiceOver delivery.
-`conflict_resolver_rebuild` replaces a retained path's model with changed hunk
-and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
-checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
-operation, and order selection is announced independently of adoption.
-On `feature/conflict-hunk` (ADR-0227), `conflict_progressive_add_add` exercises
-the persistent In progress/Saved tree beside Choose/Review, Both as one undo
-checkpoint, partial add/add selection, a protected empty manual Result, real Save
-and the fresh fully staged merge handoff. Initial selection opens the first hunk
-directly; Files/Overview/Open controls are removed. `conflict_result_segment`
-covers manual edits across page/file changes. `conflict_continue_cache` requires
-explicit Reset before replacing a divergent manual Result with source choices.
-Tier B: use an isolated conflict fixture, compare the tree and pages in EN/JA,
-Apple Light/Dark and narrow/high-zoom windows, operate Both/Edit and backtracking,
-hide/show through both toolbar and View command, and inspect a saved selection
-before explicitly choosing Next file in progress. Check that current accepted
-saved evidence excludes unrelated staged files, stale reads lose Saved claims,
-and stash has no saved entries. Verify actual Save/Continue/Commit bytes.
-Navigation needs a retained focus destination; do not repair missing product
-focus inside the test. Continue stays in the toolbar with its existing guard.
+Tabs to the production gutter pills, roves across hunks without selecting them,
+and compares keyboard menu adoption with measured pointer selection. It retains
+line-level Partial state, Result undo/redo, both-pane footer Prev/Next reveal and
+responsive source viewports with 18px code rows at 940×660 / 1392×883,
+100%/167%, EN/JA, Apple Light/Dark, with zero repository writes or receipts.
+The F19 probe observes the actual focused owner; renderer AX metadata is not
+native VoiceOver evidence. `conflict_resolver_rebuild` replaces a retained path's
+hunk/line counts and activates rebuilt controls. `conflict_resolver_roles` checks
+real merge/rebase side identities and distinguishes adoption from low-level order.
+
+On `feature/conflict-hunk` (ADR-0227), keep the 57 conflict registrations.
+`conflict_progressive_add_add` covers the four adoption choices, decided reopening,
+Both as one undo checkpoint, exact partial add/add bytes, protected empty manual
+Result, real Save and the fresh fully staged merge handoff. `conflict_reset_disarm`
+uses the final separated Reset all menu item and retains two-step confirmation,
+file/hunk/blur disarming and writer-busy refusal through pointer and Enter/Space.
+`conflict_result_segment` retains its registration name but now covers direct
+Result input, repeated focus, hunk/file navigation and writer-busy refusal,
+not removed Preview/Edit segments. `conflict_file_selection` checks the source
+list, hidden count, single header action, saved navigation and no Git receipts.
+Its native row-fill sample is window-local logical x=left+4, y=vertical centre,
+converted once by `window.scale_factor()`: outside icons, text, badges and rounded
+corners, not the old right/top sample. `conflict_continue_cache` still requires
+explicit Reset before replacing a divergent manual Result.
+
+Run the existing scoped selection with isolated logs:
+```sh
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 \
+  KAGI_GUI_E2E_ONLY='conflict_' KAGI_GUI_E2E_KEEP_GOING=1 \
+  cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+```
+Read existing `target/gui-e2e/<scenario>/panic.txt` and screenshots before a
+rerun. Never repair a product focus failure by focusing a hidden test owner,
+or relax exact bytes to make a failed line adoption pass.
+
+Tier B compares the real window against H1–H7 from
+`docs/ui/conflict-sidebar/build-hifi.js` and the FRD Visual design pass, using
+the same fixture, viewport, language, zoom and theme before/after. Capture
+unresolved/open-menu, decided/reopened, ready-unsaved, locked Saved, hidden
+sidebar, dark and narrow/high-zoom states. Require borderless source documents,
+a continuous conflict band and aligned 44px gutter pill, left-footer navigation,
+direct Result input/origin stripes, top-down unpinned sections, fill-only rows,
+plain hidden count, one header Save/Next file action and retained toolbar icons.
+Exercise pointer and keyboard choices, direct typing, IME, focus return and AX
+in the live window; probes and screenshots alone do not prove those behaviors.
+Inspect accepted Saved evidence excluding unrelated staged files, stale reads
+losing Saved claims and stash having no saved entries. Independently check actual
+Save/Continue/Commit bytes. Navigation must preserve Git and emit no receipts.
 Use goal-only independent trials as additional evidence, not proof of human
 novice or cross-language usability.
 For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.

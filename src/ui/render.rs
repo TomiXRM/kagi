@@ -617,6 +617,9 @@ impl Render for KagiApp {
         } else {
             None
         };
+        let conflict_choice_menu_overlay = conflict_entity.as_ref().and_then(|entity| {
+            conflict_view::render_choice_menu(entity, self.window_active, window, cx)
+        });
         let editor_tree_menu_overlay = if self.editor_tree_menu_visible(cx) {
             self.ui().editor_workspace.as_ref().and_then(|entity| {
                 let (target, pos) = entity.read(cx).tree_menu?;
@@ -1006,6 +1009,7 @@ impl Render for KagiApp {
             // The body owns the Commit Panel coauthor popover. Keep these
             // two root-level pane popovers below workspace menus as in Z_ORDER.
             .children(conflict_file_menu_overlay)
+            .children(conflict_choice_menu_overlay)
             .children(editor_tree_menu_overlay)
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)

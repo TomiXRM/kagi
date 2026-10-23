@@ -1,4 +1,4 @@
-//! #1511 / #1512: destructive confirmation ownership and explicit Result selection.
+//! Conflict draft reset ownership and directly editable Result safety.
 use crate::app_conflict::{click_control, wait_idle};
 use crate::macos::{git, mount, repo_fingerprint, unmount};
 use gpui::VisualTestAppContext;
@@ -9,6 +9,10 @@ use kagi_ui_core::{
     theme,
 };
 use std::path::Path;
+
+#[path = "conflict_progressive.rs"]
+mod progressive;
+pub use progressive::scenario_conflict_progressive_add_add;
 
 fn fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
@@ -47,28 +51,12 @@ fn fixture() -> tempfile::TempDir {
     fixture
 }
 
-fn fill(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, id: &str) -> [u8; 4] {
-    cx.update_window(window, |_, window, cx| {
-        window.draw(cx).clear();
-        let bounds = e2e::control_bounds(window.window_handle().window_id(), id).unwrap();
-        let image = window.render_to_image().expect("native segment fill");
-        let scale = window.scale_factor();
-        image
-            .get_pixel(
-                ((f32::from(bounds.right()) - 5.) * scale) as u32,
-                ((f32::from(bounds.top()) + 5.) * scale) as u32,
-            )
-            .0
-    })
-    .unwrap()
+fn reset_menu(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, hunk: usize) {
+    click_control(cx, window, &format!("conflict-choice-{hunk}"));
+    click_control(cx, window, "conflict-choice-menu-item-2-0");
 }
-
 fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
-    for navigation in [
-        "conflict-editor-next",
-        "conflict-editor-prev",
-        "conflict-row-1",
-    ] {
+    for navigation in ["conflict-next-hunk", "conflict-prev-hunk", "conflict-row-1"] {
         let fixture = fixture();
         let fingerprint = repo_fingerprint(fixture.path());
         let (app, window) = mount(cx, fixture.path());
@@ -96,7 +84,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 view.conflict_editor_set_hunk_side(Path::new(path), 0, side, true);
             }
             view.conflict_select_file(0);
-            if navigation == "conflict-editor-prev" {
+            if navigation == "conflict-prev-hunk" {
                 view.conflict_editor_select_hunk(1);
             }
             cx.notify();
@@ -119,7 +107,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 .buffer
                 .resolved_text(Path::new("a.txt"))
         });
-        click_control(cx, window, "conflict-editor-reset");
+        reset_menu(cx, window, usize::from(navigation == "conflict-prev-hunk"));
         cx.read(|cx| {
             assert_eq!(
                 conflict.read(cx).reset_all_target.as_deref(),
@@ -129,7 +117,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
         click_control(cx, window, navigation);
         cx.read(|cx| assert!(conflict.read(cx).reset_all_target.is_none()));
         click_control(cx, window, "conflict-row-1");
-        click_control(cx, window, "conflict-editor-reset");
+        reset_menu(cx, window, 0);
         cx.read(|cx| {
             let view = conflict.read(cx);
             assert_eq!(view.editing.as_deref(), Some(Path::new("b.txt")));
@@ -154,7 +142,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 1
             );
         });
-        click_control(cx, window, "conflict-editor-reset");
+        reset_menu(cx, window, 0);
         cx.read(|cx| {
             let view = conflict.read(cx);
             let mode = view.mode.as_ref().unwrap();
@@ -179,7 +167,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             assert!(view.reset_all_target.is_none());
             cx.notify();
         });
-        click_control(cx, window, "conflict-editor-reset");
+        reset_menu(cx, window, 0);
         cx.update_window(window, |_, window, cx| window.draw(cx).clear())
             .unwrap();
         cx.update_window(window, |_, window, cx| {
@@ -195,20 +183,21 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 "blur retires approval"
             )
         });
-        click_control(cx, window, "conflict-editor-reset");
+        reset_menu(cx, window, 0);
         conflict.update(cx, |view, cx| {
             view.conflict_editor_select_hunk(1);
             assert!(view.reset_all_target.is_none());
             view.writer_busy = true;
             cx.notify();
         });
-        click_control(cx, window, "conflict-editor-reset");
+        reset_menu(cx, window, 1);
         cx.read(|cx| {
             assert!(
                 conflict.read(cx).reset_all_target.is_none(),
                 "busy cannot arm"
             )
         });
+        crate::keyboard_nav::keys(cx, window, "escape");
         conflict.update(cx, |view, cx| {
             view.writer_busy = false;
             cx.notify();
@@ -231,15 +220,21 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             .unwrap();
             let mut found = false;
             for _ in 0..80 {
-                kagi::ui::conflict_editor::take_reset_focus_probe();
+                kagi::ui::conflict_editor_a11y::take_focus_probe();
                 crate::keyboard_nav::keys(cx, window, "tab");
                 crate::keyboard_nav::keys(cx, window, "f19");
-                if kagi::ui::conflict_editor::take_reset_focus_probe() {
+                if kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref()
+                    == Some("conflict-choice-1")
+                {
                     found = true;
                     break;
                 }
             }
-            assert!(found, "Reset all is reached through actual Tab navigation");
+            assert!(
+                found,
+                "Reset menu launcher is reached through actual Tab navigation"
+            );
+            crate::keyboard_nav::keys(cx, window, "enter end");
             crate::keyboard_nav::keys(cx, window, key);
             cx.read(|cx| {
                 assert_eq!(
@@ -247,12 +242,14 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                     Some(Path::new("a.txt"))
                 )
             });
-            kagi::ui::conflict_editor::take_reset_focus_probe();
+            kagi::ui::conflict_editor_a11y::take_focus_probe();
             crate::keyboard_nav::keys(cx, window, "f19");
-            assert!(
-                kagi::ui::conflict_editor::take_reset_focus_probe(),
-                "arming preserves Reset Button focus and ring"
+            assert_eq!(
+                kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref(),
+                Some("conflict-choice-1"),
+                "arming returns focus to the pill for explicit confirmation"
             );
+            crate::keyboard_nav::keys(cx, window, "enter end");
             crate::keyboard_nav::keys(cx, window, key);
             cx.read(|cx| {
                 let view = conflict.read(cx);
@@ -287,12 +284,7 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     });
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    conflict.update(cx, |view, cx| {
-        view.conflict_select_file(0);
-        view.conflict_show_page(kagi::ui::conflict_view::ConflictPage::Review, cx);
-        cx.notify();
-    });
-    let selected_fill = fill(cx, window, "conflict-result-preview");
+    click_control(cx, window, "conflict-result-editor");
     let input = cx.read(|cx| {
         conflict
             .read(cx)
@@ -302,100 +294,10 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             .result
             .clone()
     });
-    for (control, editing) in [
-        ("conflict-result-preview", false),
-        ("conflict-result-preview", false),
-        ("conflict-result-edit", true),
-        ("conflict-result-edit", true),
-        ("conflict-result-preview", false),
-    ] {
-        click_control(cx, window, control);
-        for body in ["conflict-result-edit-body", "conflict-result-preview-body"] {
-            e2e::clear_control_bounds(window.window_id(), body);
-        }
-        cx.run_until_parked();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
-        assert!(e2e::control_bounds(
-            window.window_id(),
-            if editing {
-                "conflict-result-edit-body"
-            } else {
-                "conflict-result-preview-body"
-            }
-        )
-        .is_some());
-        assert!(e2e::control_bounds(
-            window.window_id(),
-            if editing {
-                "conflict-result-preview-body"
-            } else {
-                "conflict-result-edit-body"
-            }
-        )
-        .is_none());
-        let selected_id = if editing {
-            "conflict-result-edit"
-        } else {
-            "conflict-result-preview"
-        };
-        let unselected_id = if editing {
-            "conflict-result-preview"
-        } else {
-            "conflict-result-edit"
-        };
-        assert_eq!(
-            fill(cx, window, selected_id),
-            selected_fill,
-            "selected fill agrees with Result mode"
-        );
-        assert_ne!(
-            fill(cx, window, unselected_id),
-            selected_fill,
-            "only one segment is selected"
-        );
-        cx.read(|cx| {
-            let view = conflict.read(cx);
-            assert_eq!(
-                view.result_editing, editing,
-                "segment explicitly selects its own mode"
-            );
-            let tabs = view.result_mode_tabs_for_e2e();
-            assert_eq!(tabs.len(), 2);
-            for (slot, (role, name, selected, stop)) in tabs.iter().enumerate() {
-                assert_eq!(*role, gpui::Role::Tab);
-                assert_eq!(
-                    name,
-                    if slot == 0 {
-                        i18n::Msg::EditorPreviewMode.t()
-                    } else {
-                        i18n::Msg::EditorEditMode.t()
-                    }
-                );
-                assert_eq!(*selected, editing == (slot == 1));
-                assert_eq!(*stop, *selected);
-            }
-        });
-    }
-    let group = e2e::control_bounds(window.window_id(), "conflict-result-group").unwrap();
-    // The separator/border belongs to the list, never either segment.
-    let border = gpui::point(group.center().x, group.top() + gpui::px(0.25));
-    cx.simulate_click(window, border, gpui::Modifiers::none());
-    cx.run_until_parked();
-    cx.read(|cx| {
-        assert!(
-            !conflict.read(cx).result_editing,
-            "list chrome cannot activate a segment"
-        )
-    });
-    click_control(cx, window, "conflict-result-edit");
-    cx.update_window(window, |_, window, cx| {
-        input.update(cx, |input, cx| {
-            input.set_value("manual result\n", window, cx)
-        });
-        window.draw(cx).clear();
-    })
-    .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "conflict-result-editor").is_some());
+    cx.read(|cx| assert!(conflict.read(cx).result_editing));
+    cx.simulate_keystrokes(window, "cmd-a");
+    cx.simulate_input(window, "manual result\n");
     cx.run_until_parked();
     let manual = cx.read(|cx| {
         conflict
@@ -408,7 +310,7 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     });
     assert_eq!(manual.as_deref(), Some("manual result\n"));
     for _ in 0..2 {
-        click_control(cx, window, "conflict-result-edit");
+        click_control(cx, window, "conflict-result-editor");
         cx.run_until_parked();
     }
     cx.read(|cx| {
@@ -440,11 +342,10 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             "clean manual Result is ready without falsifying source-hunk choices"
         );
     });
-    click_control(cx, window, "conflict-review");
-    click_control(cx, window, "conflict-editor-next");
+    click_control(cx, window, "conflict-next-hunk");
     click_control(cx, window, "conflict-row-1");
     click_control(cx, window, "conflict-row-0");
-    click_control(cx, window, "conflict-edit-result");
+    click_control(cx, window, "conflict-result-editor");
     cx.read(|cx| {
         let view = conflict.read(cx);
         assert_eq!(
@@ -471,22 +372,33 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
         repository_before,
         "navigation never saves or stages"
     );
-    // Restore Edit for the existing writer-busy refusal assertions.
-    click_control(cx, window, "conflict-result-edit");
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 20).is_empty(),
+        "direct editing and navigation emit no Git receipt"
+    );
+    // Busy refuses mode changes and cannot replace the authoritative draft.
     conflict.update(cx, |view, cx| {
         view.writer_busy = true;
+        view.conflict_editor_set_result_mode(false);
+        assert!(view.result_editing);
         cx.notify();
     });
-    click_control(cx, window, "conflict-result-preview");
-    cx.read(|cx| assert!(conflict.read(cx).result_editing));
+    click_control(cx, window, "conflict-result-editor");
+    cx.read(|cx| {
+        assert!(conflict.read(cx).result_editing);
+        assert_eq!(input.read(cx).value().as_str(), "manual result\n");
+    });
     conflict.update(cx, |view, cx| {
         view.writer_busy = false;
         view.conflict_editor_set_result_mode(false);
         view.writer_busy = true;
+        view.conflict_editor_set_result_mode(true);
+        assert!(!view.result_editing);
+        view.writer_busy = false;
+        view.conflict_editor_set_result_mode(true);
+        assert!(view.result_editing);
         cx.notify();
     });
-    click_control(cx, window, "conflict-result-edit");
-    cx.read(|cx| assert!(!conflict.read(cx).result_editing));
     drop(input);
     drop(conflict);
     unmount(cx, app, window);
@@ -511,298 +423,4 @@ pub fn scenario_conflict_reset_disarm(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_conflict_result_segment(cx: &mut VisualTestAppContext) {
     matrix(cx, result_leg);
-}
-
-fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
-    use kagi::ui::conflict_view::ConflictPage;
-    let fixture = tempfile::tempdir().unwrap();
-    let repo = fixture.path();
-    git(repo, &["init", "-q", "-b", "main"]);
-    std::fs::write(repo.join("base.txt"), "base\n").unwrap();
-    git(repo, &["add", "."]);
-    git(repo, &["commit", "-qm", "base"]);
-    git(repo, &["checkout", "-qb", "feature"]);
-    std::fs::write(repo.join("added.txt"), "incoming one\nincoming two\n").unwrap();
-    git(repo, &["add", "."]);
-    git(repo, &["commit", "-qm", "incoming"]);
-    git(repo, &["checkout", "-q", "main"]);
-    std::fs::write(repo.join("added.txt"), "current one\ncurrent two\n").unwrap();
-    git(repo, &["add", "."]);
-    git(repo, &["commit", "-qm", "current"]);
-    assert!(!std::process::Command::new("git")
-        .args(["merge", "feature"])
-        .current_dir(repo)
-        .output()
-        .unwrap()
-        .status
-        .success());
-    let before = repo_fingerprint(repo);
-    let head = git2::Repository::open(repo)
-        .unwrap()
-        .head()
-        .unwrap()
-        .target()
-        .unwrap();
-    let (app, window) = mount(cx, repo);
-    theme::set_zoom(zoom);
-    app.update(cx, |app, cx| {
-        app.set_lang(lang, cx);
-        app.detect_conflict_mode(cx);
-    });
-    cx.run_until_parked();
-    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    assert_eq!(cx.read(|cx| conflict.read(cx).page), ConflictPage::Hunk);
-    let window_id = window.window_id();
-    e2e::clear_control_bounds(window_id, "resolver-current-viewport");
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    assert!(
-        e2e::control_bounds(window_id, "resolver-current-viewport").is_some(),
-        "the first file opens directly into its source decision"
-    );
-    assert_eq!(
-        kagi::ui::conflict_view::continue_primary_for_e2e(),
-        Some(false)
-    );
-    click_control(cx, window, "conflict-row-0");
-    cx.read(|cx| {
-        let view = conflict.read(cx);
-        let mode = view.mode.as_ref().unwrap();
-        assert_eq!(view.page, ConflictPage::Hunk);
-        assert_eq!(mode.session.files[0].kind, kagi_git::ConflictKind::AddAdd);
-        assert_eq!(mode.buffer.hunk_count(Path::new("added.txt")), 1);
-    });
-    e2e::clear_control_bounds(window_id, "conflict-row-0");
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    assert!(
-        e2e::control_bounds(window_id, "conflict-row-0").is_some(),
-        "the file tree persists beside the decision page"
-    );
-    assert!(e2e::control_bounds(window_id, "resolver-current-viewport").is_some());
-    let before_both = cx.read(|cx| {
-        conflict
-            .read(cx)
-            .mode
-            .as_ref()
-            .unwrap()
-            .buffer
-            .resolved_text(Path::new("added.txt"))
-    });
-    click_control(cx, window, "conflict-use-both");
-    crate::keyboard_nav::keys(cx, window, "down enter");
-    cx.run_until_parked();
-    cx.read(|cx| {
-        let mode = conflict.read(cx).mode.as_ref().unwrap();
-        assert_eq!(
-            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
-            Some("current one\ncurrent two\nincoming one\nincoming two\n")
-        );
-    });
-    click_control(cx, window, "conflict-use-both");
-    crate::keyboard_nav::keys(cx, window, "down enter");
-    cx.run_until_parked();
-    conflict.update(cx, |view, cx| {
-        assert!(view
-            .mode
-            .as_mut()
-            .unwrap()
-            .buffer
-            .undo(Path::new("added.txt")));
-        cx.notify();
-    });
-    cx.read(|cx| {
-        let mode = conflict.read(cx).mode.as_ref().unwrap();
-        assert_eq!(
-            mode.buffer.resolved_text(Path::new("added.txt")),
-            before_both,
-            "Both is one reversible choice and repeated Both adds no undo checkpoint"
-        );
-    });
-    click_control(cx, window, "conflict-use-both");
-    crate::keyboard_nav::keys(cx, window, "down down enter");
-    cx.run_until_parked();
-    cx.read(|cx| {
-        let mode = conflict.read(cx).mode.as_ref().unwrap();
-        assert_eq!(
-            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
-            Some("incoming one\nincoming two\ncurrent one\ncurrent two\n"),
-            "Use Both (Right First) adopts both sides in the requested order"
-        );
-    });
-    conflict.update(cx, |view, cx| {
-        view.conflict_editor_reset_all(Path::new("added.txt"));
-        cx.notify();
-    });
-    click_control(cx, window, "resolver-hunk-0-incoming-line-0");
-    cx.read(|cx| {
-        let mode = conflict.read(cx).mode.as_ref().unwrap();
-        assert_eq!(
-            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
-            Some("incoming one\n")
-        );
-        assert_eq!(
-            mode.buffer
-                .hunk_model(Path::new("added.txt"))
-                .unwrap()
-                .file_side_state(SelectionSide::Incoming),
-            kagi_git::resolution::TriState::Partial
-        );
-    });
-    click_control(cx, window, "conflict-review");
-    e2e::clear_control_bounds(window_id, "resolver-current-viewport");
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    assert!(
-        e2e::control_bounds(window_id, "resolver-current-viewport").is_none(),
-        "full Result review is separate from source decisions"
-    );
-    click_control(cx, window, "conflict-result-edit");
-    let input = cx.read(|cx| {
-        conflict
-            .read(cx)
-            .editor_inputs
-            .as_ref()
-            .unwrap()
-            .result
-            .clone()
-    });
-    cx.update_window(window, |_, window, cx| {
-        input.update(cx, |input, cx| input.set_value("", window, cx));
-        window.draw(cx).clear();
-    })
-    .unwrap();
-    cx.run_until_parked();
-    click_control(cx, window, "conflict-review");
-    click_control(cx, window, "conflict-use-left");
-    cx.read(|cx| {
-        let mode = conflict.read(cx).mode.as_ref().unwrap();
-        assert_eq!(
-            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
-            Some(""),
-            "an empty manual Result is not an unresolved hunk or an invitation to replace it"
-        );
-        assert!(!mode.buffer.cached_marker_residue(Path::new("added.txt")));
-    });
-    click_control(cx, window, "conflict-row-0");
-    click_control(cx, window, "conflict-review");
-    assert_eq!(
-        kagi::ui::conflict_view::continue_primary_for_e2e(),
-        Some(false),
-        "a ready but unsaved draft does not promote Continue"
-    );
-    assert_eq!(
-        repo_fingerprint(repo),
-        before,
-        "all page changes and draft choices leave Git unchanged"
-    );
-    click_control(cx, window, "conflict-save");
-    wait_idle(cx, &app);
-    crate::busy_dismiss::ready(cx, &app);
-    cx.run_until_parked();
-    let repository = git2::Repository::open(repo).unwrap();
-    assert!(!repository.index().unwrap().has_conflicts());
-    let entry = repository
-        .index()
-        .unwrap()
-        .get_path(Path::new("added.txt"), 0)
-        .unwrap();
-    assert!(repository.find_blob(entry.id).unwrap().content().is_empty());
-    assert_eq!(std::fs::read(repo.join("added.txt")).unwrap(), b"");
-    assert_eq!(
-        repository.head().unwrap().target(),
-        Some(head),
-        "Save never commits"
-    );
-    cx.read(|cx| {
-        let view = conflict.read(cx);
-        assert_eq!(view.selected_saved.as_deref(), Some(Path::new("added.txt")));
-        assert!(view.editing.is_none(), "saved inspection is read-only");
-        assert!(
-            view.editor_inputs.is_none(),
-            "saved inspection mounts no editor"
-        );
-        assert!(!view.result_editing);
-        let preview = view.saved_preview.as_ref().expect("saved Result bytes");
-        assert_eq!(preview.path, Path::new("added.txt"));
-        assert_eq!(preview.oid, entry.id.to_string());
-        assert_eq!(
-            preview.bytes.as_ref(),
-            repository.find_blob(entry.id).unwrap().content()
-        );
-        assert!(
-            view.mode.as_ref().unwrap().session.files.is_empty(),
-            "fresh index observation is staged, not a draft flag"
-        );
-    });
-    for id in [
-        "conflict-save",
-        "conflict-result-edit",
-        "resolver-current-viewport",
-    ] {
-        e2e::clear_control_bounds(window_id, id);
-    }
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    assert!(e2e::control_bounds(window_id, "conflict-saved-row-0").is_some());
-    assert!(e2e::control_bounds(window_id, "conflict-saved-preview").is_some());
-    for id in [
-        "conflict-save",
-        "conflict-result-edit",
-        "resolver-current-viewport",
-    ] {
-        assert!(
-            e2e::control_bounds(window_id, id).is_none(),
-            "saved Result is read-only: {id}"
-        );
-    }
-    assert_eq!(
-        kagi::ui::conflict_view::continue_primary_for_e2e(),
-        Some(true)
-    );
-    let saved_before = repo_fingerprint(repo);
-    click_control(cx, window, "conflict-sidebar-toggle");
-    assert!(cx.read(|cx| conflict.read(cx).sidebar_hidden));
-    assert_eq!(
-        cx.read(|cx| conflict.read(cx).selected_saved.clone())
-            .as_deref(),
-        Some(Path::new("added.txt"))
-    );
-    click_control(cx, window, "conflict-sidebar-toggle");
-    click_control(cx, window, "conflict-saved-row-0");
-    assert_eq!(
-        repo_fingerprint(repo),
-        saved_before,
-        "saved navigation leaves Git unchanged"
-    );
-    click_control(cx, window, "conflict-continue");
-    wait_idle(cx, &app);
-    cx.run_until_parked();
-    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
-    assert!(cx.read(|cx| app.read(cx).ui().conflict_merge_pending));
-    app.update(cx, |app, cx| app.reload(cx));
-    wait_idle(cx, &app);
-    cx.run_until_parked();
-    cx.read(|cx| {
-        let state = app.read(cx);
-        assert!(state.ui().commit_panel_open);
-        assert!(state.ui().conflict_merge_pending);
-        assert!(
-            state.ui().conflict.is_none(),
-            "an accepted reload must not repaint the saved workspace over CommitPanel"
-        );
-    });
-    assert_eq!(
-        repository.head().unwrap().target(),
-        Some(head),
-        "Continue opens merge commit review, not a commit"
-    );
-    assert!(repo.join(".git/MERGE_HEAD").exists());
-    drop(input);
-    drop(conflict);
-    unmount(cx, app, window);
-}
-
-pub fn scenario_conflict_progressive_add_add(cx: &mut VisualTestAppContext) {
-    matrix(cx, progressive_add_add_leg);
 }

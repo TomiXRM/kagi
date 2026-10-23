@@ -273,6 +273,13 @@ impl KagiApp {
                 }
             }
             ConflictDetectOutcome::Detected(detected) => {
+                let accepted_view = self.reads.get(Some(owner.session));
+                let current_commit = accepted_view
+                    .head_oid
+                    .as_ref()
+                    .and_then(|head| accepted_view.rows.iter().find(|row| &row.id.0 == head))
+                    .map(|row| format!("{} · {}", row.short_id, row.summary))
+                    .unwrap_or_default();
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
                     ui.retire_issue_conversation_scope();
                 }
@@ -331,10 +338,14 @@ impl KagiApp {
                             .as_ref()
                             .is_some_and(|current| current.revision == mode.revision) =>
                     {
-                        entity.update(cx, |view, cx| view.refresh_saved_reads(cx));
+                        entity.update(cx, |view, cx| {
+                            view.current_commit = current_commit;
+                            view.refresh_saved_reads(cx);
+                        });
                     }
                     Some(entity) => {
                         entity.update(cx, |view, cx| {
+                            view.current_commit = current_commit;
                             view.adopt_detected(mode, editing_path, cx);
                         });
                     }
@@ -349,6 +360,7 @@ impl KagiApp {
                                 repo_path,
                                 owner.clone(),
                             );
+                            view.current_commit = current_commit;
                             view.adopt_detected(mode, editing_path, cx);
                             view
                         });

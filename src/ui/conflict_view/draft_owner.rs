@@ -2,7 +2,7 @@
 
 use super::{ConflictMode, ConflictView};
 use crate::ui::ConflictEditorInputs;
-use gpui::{AppContext, Context, Window};
+use gpui::{AppContext, Context, Focusable, Window};
 use gpui_component::input::InputState;
 use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::conflicts::ConflictStatus;
@@ -130,6 +130,14 @@ impl ConflictView {
                 state.set_search_labels(kagi_ui_core::find::labels(), cx);
             });
         }
+        if !self.writer_busy
+            && self
+                .editor_inputs
+                .as_ref()
+                .is_some_and(|inputs| inputs.result.read(cx).focus_handle(cx).is_focused(window))
+        {
+            self.result_editing = true;
+        }
         let Some(path) = self.editing.as_deref() else {
             self.editor_inputs = None;
             return;
@@ -165,7 +173,19 @@ impl ConflictView {
             .as_ref()
             .is_none_or(|inputs| inputs.path != path || inputs.revision != mode.revision)
         {
-            self.editor_inputs = Some(new_editor_inputs(path, &mode.revision, window, cx));
+            let inputs = new_editor_inputs(path, &mode.revision, window, cx);
+            self.result_subscription = Some(cx.subscribe(&inputs.result, |view, _, event, cx| {
+                use gpui_component::input::InputEvent;
+                if !view.writer_busy && matches!(event, InputEvent::Focus | InputEvent::Change) {
+                    view.result_editing = true;
+                    view.reset_all_target = None;
+                    if matches!(event, InputEvent::Change) {
+                        view.capture_result_for_navigation(cx);
+                    }
+                    cx.notify();
+                }
+            }));
+            self.editor_inputs = Some(inputs);
         }
         if let Some(inputs) = self.editor_inputs.as_mut() {
             inputs

@@ -592,5 +592,5 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
     }
     unmount(cx, app, window);
     surfaces::pr_card_legs(cx);
-    surfaces::conflict_segment_legs(cx);
+    surfaces::conflict_result_legs(cx);
 }

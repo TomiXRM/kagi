@@ -68,6 +68,8 @@ where
                 cx.notify();
             }),
         );
+    // Headerless pull-downs follow AppKit's compact document-menu metrics.
+    let pull_down = header.is_empty();
     let panel = Panel {
         id: id.into(),
         prefix: item_id_prefix.into(),
@@ -75,7 +77,8 @@ where
         danger_title,
         position,
         label: header,
-        header: true,
+        header: !pull_down,
+        pull_down,
         groups: &groups,
         keys,
         parent: None,
@@ -100,6 +103,7 @@ struct Panel<'a, A> {
     position: Point<Pixels>,
     label: SharedString,
     header: bool,
+    pull_down: bool,
     groups: &'a [MenuGroup<A>],
     keys: Option<&'a MenuKeys>,
     parent: Option<&'a MenuKeys>,
@@ -124,9 +128,14 @@ fn menu_height<A>(panel: &Panel<A>) -> f32 {
         titles += usize::from(group.title.is_some());
     }
     (if panel.header { MENU_HEADER_H } else { 0. })
-        + rows as f32 * MENU_ROW_H
+        + rows as f32 * if panel.pull_down { 22. } else { MENU_ROW_H }
         + titles as f32 * MENU_GROUP_H
-        + groups.saturating_sub(1) as f32 * MENU_SEPARATOR_H
+        + groups.saturating_sub(1) as f32
+            * if panel.pull_down {
+                11.
+            } else {
+                MENU_SEPARATOR_H
+            }
         + 16.
 }
 
@@ -171,6 +180,7 @@ where
                         position: point(px(x), bounds.top()),
                         label: item.label.clone(),
                         header: false,
+                        pull_down: panel.pull_down,
                         groups,
                         keys: Some(&child_keys),
                         parent: Some(keys),
@@ -325,7 +335,7 @@ where
             continue;
         }
         if previous {
-            list = list.child(separator());
+            list = list.child(separator(panel.pull_down));
             child += 1;
         }
         previous = true;
@@ -365,6 +375,7 @@ where
                 slot,
                 panel.keys,
                 panel.window_active,
+                panel.pull_down,
                 (*on_select).clone(),
                 cx,
             ));
@@ -375,9 +386,13 @@ where
     list
 }
 
-fn separator() -> impl IntoElement {
+fn separator(pull_down: bool) -> impl IntoElement {
     div()
-        .h(theme::scaled_px(MENU_SEPARATOR_H))
+        .h(theme::scaled_px(if pull_down {
+            11.
+        } else {
+            MENU_SEPARATOR_H
+        }))
         .flex_shrink_0()
         .px_2()
         .flex()
@@ -440,12 +455,14 @@ pub(crate) fn with_menu_keys(
         }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_item<A, S>(
     control: String,
     item: &MenuItem<A>,
     slot: usize,
     keys: Option<&MenuKeys>,
     window_active: bool,
+    pull_down: bool,
     on_select: S,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
@@ -455,7 +472,10 @@ where
 {
     let control: SharedString = control.into();
     let enabled = item.state == ItemState::Enabled;
-    let mut row = base_row(&control, item);
+    let mut row = base_row(&control, item).when(pull_down, |row| {
+        row.h(theme::scaled_px(22.))
+            .text_size(theme::scaled_px(12.))
+    });
     if let Some(keys) = keys {
         row = focus_row(row, keys, slot, enabled, window_active, cx);
     }

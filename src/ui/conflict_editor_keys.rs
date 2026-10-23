@@ -68,6 +68,14 @@ impl ResolverKeyboard {
             self.release(window, cx);
             return;
         };
+        let focused_hunk = self.list.as_ref().and_then(|list| {
+            (0..list.len()).find(|&at| {
+                list.focus_handle(at).is_focused(window)
+                    || self.controls[at]
+                        .iter()
+                        .any(|(_, handle, _)| handle.is_focused(window))
+            })
+        });
         let mut refocus = false;
         let mut rebuilt = false;
         if self.path != path
@@ -93,24 +101,8 @@ impl ResolverKeyboard {
                         if n == selected_hunk {
                             scroll.scroll_to_item(row.saturating_sub(3), gpui::ScrollStrategy::Top);
                         }
-                        rows.push((format!("resolver-hunk-{n}-current"), row));
-                        let mut controls = vec![
-                            (
-                                format!("resolver-hunk-{n}-incoming"),
-                                cx.focus_handle(),
-                                row,
-                            ),
-                            (
-                                format!("resolver-hunk-{n}-current-first"),
-                                cx.focus_handle(),
-                                row,
-                            ),
-                            (
-                                format!("resolver-hunk-{n}-incoming-first"),
-                                cx.focus_handle(),
-                                row,
-                            ),
-                        ];
+                        rows.push((format!("conflict-choice-{n}"), row));
+                        let mut controls = Vec::new();
                         for (side, lines) in
                             [("current", &hunk.current), ("incoming", &hunk.incoming)]
                         {
@@ -118,12 +110,12 @@ impl ResolverKeyboard {
                                 controls.push((
                                     format!("resolver-hunk-{n}-{side}-line-{line}"),
                                     cx.focus_handle(),
-                                    row + 1 + line,
+                                    row + line,
                                 ));
                             }
                         }
                         self.controls.push(controls);
-                        row += 1 + hunk.current.len().max(hunk.incoming.len());
+                        row += hunk.current.len().max(hunk.incoming.len()).max(1);
                         hunk_index += 1;
                     }
                 }
@@ -132,7 +124,11 @@ impl ResolverKeyboard {
         }
         // Selection chooses the entry point only when it changes. Arrow focus
         // otherwise roves independently, including through unselected hunks.
-        if rebuilt || self.selected_hunk != Some(selected_hunk) {
+        if rebuilt {
+            self.tab_hunk = focused_hunk
+                .unwrap_or(selected_hunk)
+                .min(self.rows.len().saturating_sub(1));
+        } else if self.selected_hunk != Some(selected_hunk) {
             self.tab_hunk = selected_hunk.min(self.rows.len().saturating_sub(1));
         } else if let Some(list) = &self.list {
             if let Some(at) = (0..list.len()).find(|&at| {
@@ -182,6 +178,16 @@ impl ResolverKeyboard {
         self.tab_hunk = 0;
         focused
     }
+    pub(crate) fn focus_hunk(&self, hunk: usize, window: &mut Window, cx: &mut App) {
+        if let Some(list) = &self.list {
+            list.focus_row(hunk, window, cx);
+        }
+    }
+    pub(crate) fn hunk_focused(&self, hunk: usize, window: &Window) -> bool {
+        self.list
+            .as_ref()
+            .is_some_and(|list| hunk < list.len() && list.focus_handle(hunk).is_focused(window))
+    }
     pub(crate) fn side_name(&self, side: SelectionSide) -> &str {
         &self.side_names[match side {
             SelectionSide::Current => 0,
@@ -218,7 +224,7 @@ impl ResolverKeyboard {
 }
 pub(crate) enum ControlState {
     Adoption(TriState),
-    Order { selected: bool, description: String },
+    Choice(String),
 }
 impl ControlState {
     fn parts(self) -> (&'static str, SharedString, bool) {
@@ -232,14 +238,19 @@ impl ControlState {
                 };
                 (key, message.t().into(), state == TriState::All)
             }
-            Self::Order {
-                selected,
-                description,
-            } => (
-                if selected { "selected" } else { "unselected" },
-                description.into(),
-                selected,
-            ),
+            Self::Choice(label) => {
+                use super::i18n::Msg;
+                let state = if label == Msg::ConflictChoiceLeft.t() {
+                    "left"
+                } else if label == Msg::ConflictChoiceRight.t() {
+                    "right"
+                } else if label == "?" {
+                    "none"
+                } else {
+                    "both"
+                };
+                (state, label.into(), state != "none")
+            }
         }
     }
 }

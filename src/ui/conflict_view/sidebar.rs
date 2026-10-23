@@ -1,4 +1,4 @@
-//! One roving keyboard tree spanning two independently scrolling groups.
+//! One roving source list with top-down sections and one shared scroll viewport.
 use super::*;
 use crate::ui::{keyboard_nav, list_a11y};
 use kagi_ui_core::file_tree::{build_file_tree_opt, TreeRow};
@@ -31,7 +31,7 @@ pub(super) struct SidebarState {
     keys: keyboard_nav::RowKeys,
     focus: keyboard_nav::RowFocus,
     logical_scroll: UniformListScrollHandle,
-    scroll: [gpui::ScrollHandle; 2],
+    scroll: gpui::ScrollHandle,
     last_focused: Option<String>,
 }
 
@@ -150,8 +150,7 @@ impl ConflictView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let entries = self.sidebar.visible.clone();
-        // These dense rows are eager elements, including clipped rows. The RowList
-        // supplies retained focus/one Tab stop; each group owns its actual reveal.
+        // Dense eager rows share one viewport; headers scroll with their files.
         let scroll =
             keyboard_nav::RowScroll::Uniform(self.sidebar.logical_scroll.clone(), 0..entries.len());
         let rows = Rc::new(self.sidebar.focus.rows(
@@ -169,11 +168,8 @@ impl ConflictView {
                 .enumerate()
                 .find(|(_, e)| Some(e.key()) == focused)
             {
-                let local = entries[..at]
-                    .iter()
-                    .filter(|e| e.saved == entry.saved)
-                    .count();
-                self.sidebar.scroll[usize::from(entry.saved)].scroll_to_item(local);
+                let header_count = if entry.saved { 2 } else { 1 };
+                self.sidebar.scroll.scroll_to_item(at + header_count);
             }
         }
         let Some(mode) = self.mode.as_ref() else {
@@ -190,70 +186,42 @@ impl ConflictView {
         let mut groups = Vec::new();
         for saved in [false, true] {
             let count = counts[usize::from(saved)];
-            let header = div()
-                .flex_shrink_0()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(6.))
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(format!(
-                    "{} ({count})",
-                    if saved {
+            let header_id = if saved {
+                "conflict-saved-header"
+            } else {
+                "conflict-pending-header"
+            };
+            groups.push(
+                div()
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .flex_shrink_0()
+                    .h(theme::scaled_px(28.))
+                    .px(theme::scaled_px(16.))
+                    .when(saved, |el| el.mt(theme::scaled_px(16.)))
+                    .text_size(theme::scaled_px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme().text_sub))
+                    .child(if saved {
                         Msg::ConflictSaved.t()
                     } else {
                         Msg::ConflictInProgress.t()
-                    }
-                )));
-            let mut content = div()
-                .id(if saved {
-                    "conflict-saved-scroll"
-                } else {
-                    "conflict-pending-scroll"
-                })
-                .flex()
-                .flex_col()
-                .min_h(px(0.))
-                .overflow_y_scroll()
-                .track_scroll(&self.sidebar.scroll[usize::from(saved)]);
+                    })
+                    .child(count.to_string())
+                    .child(e2e::measure_inside(header_id))
+                    .into_any_element(),
+            );
             for (at, entry) in entries.iter().enumerate().filter(|(_, e)| e.saved == saved) {
-                content = content.child(self.render_tree_row(entry, at, &rows, active, cx));
+                groups.push(self.render_tree_row(
+                    entry,
+                    at,
+                    &rows,
+                    active && focused.is_some(),
+                    cx,
+                ));
             }
-            if !entries.iter().any(|e| e.saved == saved) {
-                content = content.child(
-                    div()
-                        .h(theme::scaled_px(20.))
-                        .px(theme::scaled_px(26.))
-                        .text_color(rgb(theme().text_muted))
-                        .child("—"),
-                );
-            }
-            let group = div()
-                .flex()
-                .flex_col()
-                .min_h(px(0.))
-                .flex_shrink_0()
-                .child(header)
-                .child(
-                    div()
-                        .relative()
-                        .flex()
-                        .flex_1()
-                        .min_h(px(0.))
-                        .child(content.flex_1())
-                        .child(gpui_component::scroll::Scrollbar::vertical(
-                            &self.sidebar.scroll[usize::from(saved)],
-                        )),
-                )
-                .when(saved, |el| {
-                    el.border_t_1()
-                        .border_color(rgb(theme().surface))
-                        .h(theme::scaled_px(
-                            26. + 20. * entries.iter().filter(|e| e.saved).count().max(1) as f32,
-                        ))
-                        .max_h(gpui::relative(0.4))
-                })
-                .when(!saved, |el| el.flex_1().flex_shrink_1());
-            groups.push(group);
         }
         list_a11y::list_box(
             "conflict-tree",
@@ -263,13 +231,27 @@ impl ConflictView {
         .flex()
         .flex_col()
         .h_full()
-        .w(theme::scaled_px(248.))
+        .w(theme::scaled_px(232.))
         .flex_shrink_0()
         .min_h(px(0.))
         .bg(rgb(theme().sidebar))
         .border_r_1()
         .border_color(rgb(theme().surface))
-        .children(groups)
+        .relative()
+        .child(
+            div()
+                .id("conflict-tree-scroll")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .track_scroll(&self.sidebar.scroll)
+                .children(groups),
+        )
+        .child(gpui_component::scroll::Scrollbar::vertical(
+            &self.sidebar.scroll,
+        ))
         .into_any_element()
     }
 
@@ -317,114 +299,120 @@ impl ConflictView {
         );
         let keys = rows.clone();
         let entries = self.sidebar.visible.clone();
-        let row = keyboard_nav::with_ring(
-            div().id(id.clone()).track_focus(
+        let row = div()
+            .id(id.clone())
+            .track_focus(
                 &rows
                     .focus_handle(at)
                     .clone()
                     .tab_index(0)
                     .tab_stop(rows.is_tab_stop(at)),
-            ),
-        )
-        .flex()
-        .items_center()
-        .gap(theme::scaled_px(4.))
-        .flex_shrink_0()
-        .h(theme::scaled_px(20.))
-        .mx(theme::scaled_px(6.))
-        .pl(keyboard_nav::inset(6. + entry.depth as f32 * 12.))
-        .pr(keyboard_nav::inset(6.))
-        .rounded_sm()
-        .text_size(theme::scaled_px(12.))
-        .text_color(if selected {
-            theme().selection_foreground(active)
-        } else {
-            rgb(theme().text_main).into()
-        })
-        .when(selected, |el| el.bg(theme().selected_for_window(active)))
-        .when(!selected, |el| el.hover(|s| s.bg(rgb(theme().bg_row_alt))))
-        .active(|s| s.bg(rgb(theme().bg_row_alt)))
-        .cursor_pointer()
-        .on_click(click)
-        .on_key_down(
-            cx.listener(move |view, event: &gpui::KeyDownEvent, window, cx| {
-                #[cfg(feature = "gui-e2e")]
-                if event.keystroke.key == "f19" {
-                    NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
-                }
-                let key = event.keystroke.key.as_str();
-                if matches!(key, "left" | "right") {
-                    let entry = &entries[at];
-                    if entry.file.is_none() {
-                        let open = view.sidebar_expanded.contains(&entry.path);
-                        if open != (key == "right") {
-                            view.toggle_folder(&entry.path);
-                        }
+            )
+            .flex()
+            .items_center()
+            .gap(theme::scaled_px(4.))
+            .flex_shrink_0()
+            .h(theme::scaled_px(24.))
+            .mx(theme::scaled_px(8.))
+            .pl(theme::scaled_px(8. + entry.depth as f32 * 16.))
+            .pr(theme::scaled_px(8.))
+            .rounded(theme::scaled_px(6.))
+            .text_size(theme::scaled_px(13.))
+            .text_color(if selected {
+                theme().selection_foreground(active)
+            } else {
+                rgb(theme().text_main).into()
+            })
+            .when(selected, |el| el.bg(theme().selected_for_window(active)))
+            .when(!selected, |el| el.hover(|s| s.bg(rgb(theme().bg_row_alt))))
+            .active(|s| s.bg(rgb(theme().bg_row_alt)))
+            .cursor_pointer()
+            .on_click(click)
+            .on_key_down(
+                cx.listener(move |view, event: &gpui::KeyDownEvent, window, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    if event.keystroke.key == "f19" {
+                        NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
                     }
-                    cx.stop_propagation();
-                    cx.notify();
-                    return;
-                }
-                let next = match key {
-                    "up" => Some(at.saturating_sub(1)),
-                    "down" => Some((at + 1).min(entries.len().saturating_sub(1))),
-                    "home" => Some(0),
-                    "end" => Some(entries.len().saturating_sub(1)),
-                    "pageup" => Some(at.saturating_sub(10)),
-                    "pagedown" => Some((at + 10).min(entries.len().saturating_sub(1))),
-                    _ => None,
-                };
-                if let Some(next) = next {
-                    keys.focus_row(next, window, cx);
-                    cx.stop_propagation();
-                    cx.notify();
-                } else {
-                    keyboard_nav::stop_activation_keys(event, window, cx);
-                }
-            }),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(theme::scaled_px(12.))
-                .text_color(rgb(theme().text_sub))
-                .child(if file.is_some() {
-                    "▤"
-                } else if expanded {
-                    "▾"
-                } else {
-                    "▸"
+                    let key = event.keystroke.key.as_str();
+                    if matches!(key, "left" | "right") {
+                        let entry = &entries[at];
+                        if entry.file.is_none() {
+                            let open = view.sidebar_expanded.contains(&entry.path);
+                            if open != (key == "right") {
+                                view.toggle_folder(&entry.path);
+                            }
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                        return;
+                    }
+                    let next = match key {
+                        "up" => Some(at.saturating_sub(1)),
+                        "down" => Some((at + 1).min(entries.len().saturating_sub(1))),
+                        "home" => Some(0),
+                        "end" => Some(entries.len().saturating_sub(1)),
+                        "pageup" => Some(at.saturating_sub(10)),
+                        "pagedown" => Some((at + 10).min(entries.len().saturating_sub(1))),
+                        _ => None,
+                    };
+                    if let Some(next) = next {
+                        keys.focus_row(next, window, cx);
+                        cx.stop_propagation();
+                        cx.notify();
+                    } else {
+                        keyboard_nav::stop_activation_keys(event, window, cx);
+                    }
                 }),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis_middle()
-                .child(entry.name.clone()),
-        );
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(theme::scaled_px(4.))
+                    .flex_shrink_0()
+                    .child(
+                        gpui_component::Icon::new(if expanded {
+                            gpui_component::IconName::ChevronDown
+                        } else {
+                            gpui_component::IconName::ChevronRight
+                        })
+                        .size(theme::scaled_px(10.))
+                        .text_color(rgb(theme().text_sub))
+                        .when(file.is_some(), |el| el.invisible()),
+                    )
+                    .child(
+                        gpui::svg()
+                            .path(if file.is_some() {
+                                "icons/file-text.svg"
+                            } else {
+                                "icons/folder-open.svg"
+                            })
+                            .size(theme::scaled_px(14.))
+                            .text_color(rgb(if file.is_some() {
+                                theme().text_sub
+                            } else {
+                                theme().ui_accent()
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
+                    .child(entry.name.clone()),
+            );
         let row = if file.is_none() && !expanded {
             row.child(chip(&entry.count.to_string(), theme().text_main))
-        } else if saved && self.saved_review_needed {
-            row.child(chip(Msg::ConflictReviewNeeded.t(), theme().color_warning))
+        } else if saved && file.is_some() && self.saved_review_needed {
+            row.child(letter_badge("!", theme().color_warning, false))
         } else if !saved && file.is_some() && flow::draft_ready(mode, &path) {
-            row.child(chip(
-                Msg::ConflictUnsaved.t(),
-                if selected {
-                    theme().text_main
-                } else {
-                    theme().color_warning
-                },
-            ))
-        } else if !saved && file.is_some() && !flow::manual_override(mode, &path) {
-            row.when_some(mode.buffer.hunk_model(&path), |el, model| {
-                el.child(chip(
-                    &format!("{}/{}", model.resolved_hunk_count(), model.hunk_count()),
-                    theme().text_main,
-                ))
-            })
+            row.child(letter_badge("M", theme().change_modified, true))
+        } else if !saved && file.is_some() {
+            row.child(letter_badge("C", theme().color_blocker, true))
         } else {
             row
         };
@@ -455,4 +443,19 @@ pub(super) fn chip(text: &str, color: u32) -> gpui::AnyElement {
         .text_color(rgb(color))
         .child(SharedString::from(text.to_owned()))
         .into_any_element()
+}
+
+fn letter_badge(label: &'static str, color: u32, filled: bool) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .size(theme::scaled_px(14.))
+        .rounded(theme::scaled_px(3.))
+        .text_size(theme::scaled_px(10.))
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(rgb(if filled { 0xffffff } else { color }))
+        .when(filled, |el| el.bg(rgb(color)))
+        .child(label)
 }

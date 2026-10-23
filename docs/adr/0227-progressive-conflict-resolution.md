@@ -20,33 +20,44 @@ labels remain necessary; unlabeled icons and color alone are not substitutes.
 ## Decision
 
 Extend the existing `ConflictView`; do not create another resolver or onboarding
-framework. Keep a persistent, collapsible 248px file tree beside focused
-Choose/Review pages rather than place a tutorial over the old layout. There is
-no Overview/Files page or Open control; initial selection opens the first file
-directly in Choose.
+framework. The binding visual contract is the 2026-10-23 Visual design pass in
+[`conflict-sidebar-frd.md`](../ui/conflict-sidebar-frd.md#visual-design-pass-2026-10-23-after-the-user-rejected-the-wireframes),
+implemented from `docs/ui/conflict-sidebar/build-hifi.js` (H1–H7).
+It supersedes the earlier Choose/Review wireframes, detached adoption row and
+Preview/Edit segments.
 
-| Surface | Primary content | What is not permanently shown |
-| --- | --- | --- |
-| File tree | In progress and Saved groups, stable paths and selected state | Unrelated staged files |
-| Choose | Selected hunk, whole-file source panes, resulting snippet | Full Result |
-| Review | The authoritative full Result and manual editor | Persistent source comparison |
+The workspace is a document: two borderless whole-file source panes above a
+directly editable Result. Source jump bars identify each side; commit footers
+identify their revisions. The left footer owns `‹ n/m ›` Previous/Next navigation.
+Sources and Result divide available height responsively (2:1), replacing the
+earlier fixed 8/12-row wireframe. Code rows are 18 logical pixels at 100% zoom;
+source viewports flex to the remaining space and scroll to reveal the selected
+hunk in both sources. No Context toggle or content-sized source-height clamp is introduced.
 
-Choose compares the whole file in two scrollable source panes. Each pane has a
-fixed height of twelve code rows at 100 % zoom, or eight when the window is less
-than 1000 logical pixels wide. The current hunk is highlighted and scrolled into
-view in both panes; Previous/Next changes the hunk and re-scrolls both sources.
-There is no Context toggle or content-sized source-height clamp. A/B width
-remains resizable; the obsolete vertical split is removed. The decision page
-itself scrolls when a narrow/high-zoom window and the terminal leave insufficient
-height. Next becomes Review on the last hunk.
+A 44px gutter carries one re-openable choice pill per hunk, aligned with a
+continuous conflict band across both sources and gutter. Its four adoption choices are
+Use Left, Use Right, Left Then Right and Right Then Left (Japanese:
+左を使う / 右を使う / 左、次に右を使う / 右、次に左を使う).
+A decided pill shows the choice and can be reopened; adoption never advances
+automatically. A final separated Reset all item retains the existing explicit
+two-step destructive confirmation; navigation, dismissal and focus departure
+retire that approval. No adoption button row or Edit button is present.
 
-The adoption controls use Xcode's positional convention: Use Left, Use Right,
-and Use Both with explicit Left First / Right First menu choices. Japanese uses
-左を使う、右を使う、両方を使う and 左→右 / 右→左. Button labels contain no side-dot
-glyphs; accessible names append the actual side identity. Pane headers retain
-their current/incoming role, side marker and branch/commit identity. Adoption
-never automatically advances. Edit beside Result opens the existing full-file
-editor before all hunks are decided.
+Result uses the existing authoritative input directly, with left/right/manual
+origin stripes, 18px code rows and an overlay scroller. Navigation
+captures live input without changing its draft owner. A retained logical
+Review transition does not switch to a second visual editor or hide sources.
+
+The 232px sidebar is a source list with unpinned In progress and Saved sections
+flowing top-down in one scroll owner. Section counts are trailing; empty sections
+are headers only. Rows are 24px with folder/document icons and C/M/! state
+letters. Selection uses focused/inactive fill without a focus ring.
+The panel-colour file header has a sidebar toggle (grey wash when shown,
+plain inline pending count when hidden), path jump bar, status and exactly one
+file action: Save while editing, Next file in progress after saving. Saved
+inspection has a lock and read-only code. The unified toolbar retains its right
+icon group and compact operation strip. Push buttons use 20px height, radius 5
+and 12px labels, with the header action aligned at the 16px trailing inset.
 
 The upper In progress group includes partial and ready unsaved drafts. The lower
 Saved group is derived from accepted `ConflictSession.resolved`, not a UI ledger.
@@ -64,8 +75,9 @@ Enter/Space opens the focused row without saving.
 
 Save refusal retains the editing path and exact draft. Result review shows
 Unsaved · save refused with one primary Save again action through the same
-revision-bound save route and a secondary Operation Log action. It adds neither
-a Reload control nor a banner; successful Save clears refusal presentation.
+revision-bound save route. Operation Log remains in the unified toolbar rather
+than becoming a second file action. It adds neither a Reload control nor a
+banner; successful Save clears refusal presentation.
 
 The role is a focused editing workspace: compact navigation, readable code,
 existing themed controls and one primary action for the current page. No
@@ -92,9 +104,9 @@ or mandatory introductory carousel.
 - While Result diverges, source adoption must not silently replace manual edits.
   Comparison and navigation retain the Result; the existing guarded Reset is
   the explicit discard route. Mutation handlers recheck this condition.
-- The Use Both order menu adopts both sides as a single draft choice. Existing
-  low-level order controls only reorder already adopted content; an unchanged
-  order is not an edit.
+- The pill's ordered-both choices adopt both sides as a single draft checkpoint.
+  Repeating the same choice is not an edit. Low-level order mutations still only
+  reorder adopted content; opening or navigating a menu does not adopt anything.
 - Ordinary text add/add conflicts use the same existing materialization and
   hunk/manual editor. Binary, symlink and gitlink conflicts remain raw choices;
   changing presentation never authorizes lossy text materialization.
@@ -132,6 +144,14 @@ Use native Kagi on real isolated conflict fixtures, then revise observed
 failures. Compare Japanese/English, Apple Light/Dark, ordinary and narrow/high-zoom
 windows. Exercise partial selection, both orderings, manual editing, backtracking,
 add/add, actual Save and Continue/Commit, and long file lists.
+
+Keep the existing conflict scenario registrations (57) while extending their
+oracles: all four menu choices and decided-pill reopening, footer navigation,
+direct Result editing and writer-busy refusal, unpinned groups, hidden inline
+count, one header file action, and byte/receipt-identical Git navigation.
+Native pixel probes sample row padding outside glyphs and badges, in logical
+window coordinates converted once by the window's scale factor. Renderer-fed
+AX/focus probes do not establish native VoiceOver, IME or real-window usability.
 
 Blind model trials receive only the desired business result and native-window
 input tools, not source, a design explanation or a suggested click sequence.

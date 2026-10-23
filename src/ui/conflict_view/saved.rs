@@ -155,57 +155,38 @@ impl ConflictView {
         chrome: &EditorChrome,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let mut header = div()
+        let header = div()
             .flex()
-            .flex_wrap()
             .items_center()
-            .gap_2()
-            .p(theme::scaled_px(8.))
+            .flex_shrink_0()
+            .h(theme::scaled_px(26.))
+            .px(theme::scaled_px(12.))
+            .gap(theme::scaled_px(8.))
+            .bg(rgb(theme().panel))
+            .border_b_1()
+            .border_color(rgb(theme().surface))
+            .text_size(theme::scaled_px(11.5))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .child(
+                gpui::svg()
+                    .path("icons/lock-keyhole.svg")
+                    .size(theme::scaled_px(12.))
+                    .text_color(rgb(theme().text_sub)),
+            )
+            .child(Msg::ConflictStagedContents.t())
             .child(
                 div()
+                    .flex_1()
                     .min_w(px(0.))
-                    .overflow_hidden()
-                    .text_ellipsis_middle()
+                    .truncate()
                     .child(SharedString::from(
                         self.selected_saved
                             .as_ref()
-                            .map(|p| p.to_string_lossy().into_owned())
+                            .and_then(|p| p.file_name())
+                            .map(|name| format!("— {}", name.to_string_lossy()))
                             .unwrap_or_default(),
                     )),
             );
-        if self
-            .mode
-            .as_ref()
-            .is_some_and(|m| !m.session.files.is_empty())
-        {
-            header = header.child(e2e::measure_control(
-                "conflict-next-file",
-                KagiButton::styled(
-                    "conflict-next-file",
-                    Msg::ConflictNextFile.t(),
-                    ButtonRole::NeutralTinted,
-                    cx,
-                )
-                .small()
-                .on_click(cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-                    view.conflict_open_file(0, cx);
-                    view.focus_navigation(window, cx);
-                    cx.notify();
-                })),
-            ));
-        }
-        header = header.child(sidebar::chip(
-            if self.saved_review_needed {
-                Msg::ConflictReviewNeeded.t()
-            } else {
-                Msg::ConflictSaved.t()
-            },
-            if self.saved_review_needed {
-                theme().color_warning
-            } else {
-                theme().color_success
-            },
-        ));
         let body = if self.saved_review_needed {
             div().into_any_element()
         } else if let Some(preview) = &self.saved_preview {
@@ -232,7 +213,7 @@ impl ConflictView {
             .flex_1()
             .min_w(px(0.))
             .min_h(px(0.))
-            .bg(rgb(theme().sidebar))
+            .bg(rgb(theme().bg_base))
             .child(header)
             .child(e2e::measure_control("conflict-saved-preview", body))
             .into_any_element()

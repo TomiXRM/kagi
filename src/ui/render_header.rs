@@ -356,6 +356,28 @@ impl KagiApp {
         // neither said which one you'd land in — user report.)
         let pr_mode_on = self.repo_path.is_some() && kagi_git::github::gh_available();
         let mode = self.workspace_mode();
+        let conflict_strip = if self.conflict_body_visible() {
+            self.ui().conflict.clone().map(|view| {
+                if view.read(cx).operation_chrome_subscription.is_none() {
+                    let mut previous = view.read(cx).operation_chrome_state();
+                    let subscription = cx.observe(&view, move |app, view, cx| {
+                        let current = view.read(cx).operation_chrome_state();
+                        if current != previous {
+                            previous = current;
+                            if app.ui().conflict.as_ref() == Some(&view) {
+                                cx.notify();
+                            }
+                        }
+                    });
+                    view.update(cx, |view, _| {
+                        view.operation_chrome_subscription = Some(subscription);
+                    });
+                }
+                view.update(cx, |view, cx| view.render_operation_strip(cx))
+            })
+        } else {
+            None
+        };
         let graph_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.activate_toolbar(8, None, window, cx);
         });
@@ -458,6 +480,7 @@ impl KagiApp {
             _ => usize::MAX,
         };
         let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
+        self.toolbar_layout.operation_visible = conflict_strip.is_some();
         let pending_widths = self.toolbar_layout.pending(present, style_key);
         let show_sidebar_toggle = mode == WorkspaceMode::Prs && !super::compact::for_window(window);
         let hidden = self
@@ -1024,6 +1047,18 @@ impl KagiApp {
                     .justify_end()
                     .flex_1()
                     .min_w(px(workspace_width))
+                    .children(conflict_strip.map(|strip| {
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_shrink_0()
+                            .child(toolbar_overflow::probe(
+                                layout_app.clone(),
+                                Some(17),
+                                style_key,
+                            ))
+                            .child(strip)
+                    }))
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(

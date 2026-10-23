@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-19
+> **Last updated:** 2026-10-24
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-24 | Accent-filled component indicators use the Finder white-preferred 3:1 rule | Checkbox/radio marks are UI components, not 4.5:1 body-text labels; reuse `on_accent_foreground` as Apple primary buttons do, retaining black only when white falls below 3:1. Shared switch/slider thumbs, sidebar primary foreground and info foreground intentionally follow the same token. |
 | 2026-10-19 | #1672: Mermaid separates logical image size from generated pixel density | Follow [HIG Images](https://developer.apple.com/design/human-interface-guidelines/images) and the existing PDF unit separation: raster density is UI zoom × window backing scale; generated pixels convert back to zoomed logical size. Reuse the bounded absolute-image/Contain layout to preserve aspect ratio under pane-width limits. Read PNG dimensions only on the worker; cache source/theme/density and share immutable paths. The existing Editor owner runs one CLI conversion at a time, then prepares the latest visible draft/scale; an old completion remains under its own key. No renderer service, fork or image-network-policy change. |
 | 2026-10-19 | #1670: Mermaid failure notes show a bounded diagnostic headline, not stderr's last line | Real `mmdc` output ended in blank lines after its Chrome-missing explanation and stack trace, leaving an empty UI reason. Keep the first nonempty line through the existing 4 KiB/control-byte display bound; absent details get an explicit EN/JA fallback. Reuse the existing inline code card, secondary body-text role and constrained wrapping. No new modal, automatic install, retry policy or renderer. [HIG error guidance](https://developer.apple.com/design/human-interface-guidelines/alerts) favors specific context without unnecessary interruption. |
 | 2026-10-19 | #1666: Editor placeholder explanations use secondary body text and bounded wrapping | Size-limit, binary and decoding explanations are required content, not disabled controls ([ADR-0125](adr/0125-apple-hig-themes.md)). Reuse `text_sub` without changing the palette. The existing centered helper constrains its text child to the pane, following the PDF status pattern: a real 940×660 / JA /167% window previously painted the size-limit sentence over the file tree. Preserve wording, file classification, selection and Git state. |

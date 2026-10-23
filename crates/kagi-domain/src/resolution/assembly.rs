@@ -22,9 +22,20 @@ impl ConflictHunk {
                 LineOrigin::Incoming,
             );
             let sides = match selection.order {
-                LineOrder::CurrentFirst => [current, incoming],
-                LineOrder::IncomingFirst => [incoming, current],
+                LineOrder::CurrentFirst | LineOrder::CurrentBlockFirst => [current, incoming],
+                LineOrder::IncomingFirst | LineOrder::IncomingBlockFirst => [incoming, current],
             };
+            match selection.order {
+                LineOrder::CurrentBlockFirst | LineOrder::IncomingBlockFirst => {
+                    return sides.into_iter().all(|(lines, taken, origin)| {
+                        lines
+                            .iter()
+                            .zip(taken)
+                            .all(|(line, taken)| !taken || visit(line, origin))
+                    });
+                }
+                LineOrder::CurrentFirst | LineOrder::IncomingFirst => {}
+            }
             for index in 0..self.current.len().max(self.incoming.len()) {
                 for (lines, taken, origin) in sides {
                     if taken.get(index) == Some(&true) && !visit(&lines[index], origin) {

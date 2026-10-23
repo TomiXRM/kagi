@@ -10,11 +10,19 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "base"]);
     git(repo, &["checkout", "-qb", "feature"]);
-    std::fs::write(repo.join("added.txt"), "incoming one\nincoming two\n").unwrap();
+    std::fs::write(
+        repo.join("added.txt"),
+        "incoming one\nincoming two\nincoming three\n",
+    )
+    .unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "incoming"]);
     git(repo, &["checkout", "-q", "main"]);
-    std::fs::write(repo.join("added.txt"), "current one\ncurrent two\n").unwrap();
+    std::fs::write(
+        repo.join("added.txt"),
+        "current one\ncurrent two\ncurrent three\n",
+    )
+    .unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "current"]);
     assert!(!std::process::Command::new("git")
@@ -98,7 +106,12 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         let mode = conflict.read(cx).mode.as_ref().unwrap();
         assert_eq!(
             mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
-            Some("current one\ncurrent two\nincoming one\nincoming two\n")
+            Some("current one\ncurrent two\ncurrent three\nincoming one\nincoming two\nincoming three\n")
+        );
+        assert_eq!(
+            conflict.read(cx).editor_inputs.as_ref().unwrap().result.read(cx).value().as_str(),
+            "current one\ncurrent two\ncurrent three\nincoming one\nincoming two\nincoming three\n",
+            "the drawn Result input shows the menu's block order"
         );
     });
     click_control(cx, window, "conflict-hunk-0-more");
@@ -128,8 +141,55 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         let mode = conflict.read(cx).mode.as_ref().unwrap();
         assert_eq!(
             mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
-            Some("incoming one\nincoming two\ncurrent one\ncurrent two\n"),
+            Some("incoming one\nincoming two\nincoming three\ncurrent one\ncurrent two\ncurrent three\n"),
             "Use Both (Right First) adopts both sides in the requested order"
+        );
+    });
+    click_control(cx, window, "conflict-hunk-0-more");
+    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(
+            view.editor_inputs
+                .as_ref()
+                .unwrap()
+                .result
+                .read(cx)
+                .value()
+                .as_str(),
+            "current one\ncurrent two\ncurrent three\nincoming one\nincoming two\nincoming three\n"
+        );
+    });
+    click_control(cx, window, "resolver-hunk-0-incoming-line-1");
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let expected = "current one\ncurrent two\ncurrent three\nincoming one\nincoming three\n";
+        assert_eq!(
+            view.mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .resolved_text(Path::new("added.txt"))
+                .as_deref(),
+            Some(expected),
+            "unchecking one right-side line keeps the remaining block order"
+        );
+        assert_eq!(
+            view.editor_inputs
+                .as_ref()
+                .unwrap()
+                .result
+                .read(cx)
+                .value()
+                .as_str(),
+            expected,
+            "the drawn Result must not interleave after a checkbox edit"
         );
     });
     conflict.update(cx, |view, cx| {

@@ -68,8 +68,12 @@ impl ConflictView {
                 let (current, incoming, order) = match choice {
                     HunkChoice::AcceptCurrent => (true, false, None),
                     HunkChoice::AcceptIncoming => (false, true, None),
-                    HunkChoice::BothCurrentFirst => (true, true, Some(LineOrder::CurrentFirst)),
-                    HunkChoice::BothIncomingFirst => (true, true, Some(LineOrder::IncomingFirst)),
+                    HunkChoice::BothCurrentFirst => {
+                        (true, true, Some(LineOrder::CurrentBlockFirst))
+                    }
+                    HunkChoice::BothIncomingFirst => {
+                        (true, true, Some(LineOrder::IncomingBlockFirst))
+                    }
                     _ => return false,
                 };
                 selection

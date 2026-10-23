@@ -11,6 +11,7 @@
   **abort してもバッファは oplog 参照付きで退避**
   (jj の「部分解決を失わせない」の git 互換実装)。
 - 行ごとの採用元(current/incoming/manual)を保持し UI で出所可視化(BC/KDiff3 流)
+- `LineOrder::CurrentBlockFirst` / `IncomingBlockFirst` preserve hunk-level Both as all taken lines of one side followed by all taken lines of the other after checkbox edits; fresh line selections retain positional `CurrentFirst` / `IncomingFirst` tie-breaking.
 
 ## JSON codec（#513 resolution slice）
 

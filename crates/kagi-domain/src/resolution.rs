@@ -60,22 +60,29 @@ pub enum LineOrigin {
     Context,
 }
 
-/// Tie-breaker order for line-level selections: results are assembled by line
-/// POSITION (see `ConflictHunk::resolved_lines`); `order` only decides which side
-/// comes first when BOTH sides are selected at the *same* position.
+/// Output ordering for line-level selections: either by position with a
+/// same-position tie-breaker, or grouped by side to preserve a hunk-level Both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineOrder {
     /// At a shared position, emit the Current line before the Incoming line.
     CurrentFirst,
     /// At a shared position, emit the Incoming line before the Current line.
     IncomingFirst,
+    /// Emit all taken Current lines, then all taken Incoming lines.
+    CurrentBlockFirst,
+    /// Emit all taken Incoming lines, then all taken Current lines.
+    IncomingBlockFirst,
 }
 
 impl LineOrder {
     fn from_choice(choice: &HunkChoice) -> LineOrder {
         match choice {
-            HunkChoice::BothIncomingFirst => LineOrder::IncomingFirst,
-            _ => LineOrder::CurrentFirst,
+            HunkChoice::BothCurrentFirst => LineOrder::CurrentBlockFirst,
+            HunkChoice::BothIncomingFirst => LineOrder::IncomingBlockFirst,
+            HunkChoice::AcceptCurrent
+            | HunkChoice::AcceptIncoming
+            | HunkChoice::Manual(_)
+            | HunkChoice::Unresolved => LineOrder::CurrentFirst,
         }
     }
 }
@@ -573,31 +580,49 @@ impl HunkModel {
     /// Reorder already adopted lines without making a resolution choice.
     /// Returns `false` for unchanged or inapplicable orders (including unresolved,
     /// manual, empty and one-sided choices), so callers need not record an edit.
+    /// Positional orders require a same-position tie; block orders apply whenever
+    /// both sides have taken lines, even without a same-position tie.
     pub fn set_hunk_line_order(&mut self, hunk_index: usize, order: LineOrder) -> bool {
         let mut changed = false;
         self.with_hunk_mut(hunk_index, |h| {
+            let current_first = match order {
+                LineOrder::CurrentFirst | LineOrder::CurrentBlockFirst => true,
+                LineOrder::IncomingFirst | LineOrder::IncomingBlockFirst => false,
+            };
             if let Some(selection) = &mut h.line_select {
-                let has_tie = selection
-                    .current_taken
-                    .iter()
-                    .zip(&selection.incoming_taken)
-                    .any(|(current, incoming)| *current && *incoming);
-                if has_tie && selection.order != order {
-                    selection.order = order;
-                    changed = true;
-                }
-            } else if !h.current.is_empty() && !h.incoming.is_empty() {
-                let choice = match (&h.choice, order) {
-                    (HunkChoice::BothCurrentFirst, LineOrder::IncomingFirst) => {
-                        HunkChoice::BothIncomingFirst
+                let applicable = match order {
+                    LineOrder::CurrentFirst | LineOrder::IncomingFirst => selection
+                        .current_taken
+                        .iter()
+                        .zip(&selection.incoming_taken)
+                        .any(|(current, incoming)| *current && *incoming),
+                    LineOrder::CurrentBlockFirst | LineOrder::IncomingBlockFirst => {
+                        selection.current_taken.contains(&true)
+                            && selection.incoming_taken.contains(&true)
                     }
-                    (HunkChoice::BothIncomingFirst, LineOrder::CurrentFirst) => {
-                        HunkChoice::BothCurrentFirst
-                    }
-                    _ => return,
                 };
-                h.choice = choice;
+                if !applicable || selection.order == order {
+                    return;
+                }
+                selection.order = order;
                 changed = true;
+            } else if h.current.is_empty() || h.incoming.is_empty() {
+                return;
+            }
+            match h.choice {
+                HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst => {
+                    let choice = if current_first {
+                        HunkChoice::BothCurrentFirst
+                    } else {
+                        HunkChoice::BothIncomingFirst
+                    };
+                    changed |= h.choice != choice;
+                    h.choice = choice;
+                }
+                HunkChoice::AcceptCurrent
+                | HunkChoice::AcceptIncoming
+                | HunkChoice::Manual(_)
+                | HunkChoice::Unresolved => {}
             }
         }) && changed
     }
@@ -859,7 +884,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![true, true],
-                order: LineOrder::CurrentFirst,
+                order: LineOrder::CurrentBlockFirst,
             }
         );
         assert_eq!(
@@ -867,7 +892,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![true, true],
-                order: LineOrder::IncomingFirst,
+                order: LineOrder::IncomingBlockFirst,
             }
         );
         for empty in [HunkChoice::Unresolved, HunkChoice::Manual(String::new())] {

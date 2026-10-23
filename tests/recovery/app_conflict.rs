@@ -402,11 +402,19 @@ pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppCon
             .as_ref()
             .and_then(|view| view.read(cx).mode.as_ref().map(|m| m.revision.clone()))
     });
-    assert_ne!(
-        mode_revision.as_ref(),
-        Some(&r2_revision),
-        "a stale payload must not be given the accepted read's revision"
-    );
+    assert_eq!(mode_revision.as_ref(), Some(&r2_revision));
+    cx.read(|cx| {
+        let view = app.read(cx).ui().conflict.as_ref().unwrap().read(cx);
+        let mode = view.mode.as_ref().unwrap();
+        assert!(
+            mode.session.files.is_empty(),
+            "the accepted staged read must not regain R1's unmerged files"
+        );
+        assert!(
+            !mode.buffer.has_resolution(Path::new("file.txt")),
+            "a late R1 payload cannot supply a draft under R2's authority"
+        );
+    });
     let observed = cx.read(|cx| {
         let app = app.read(cx);
         app.active_session()

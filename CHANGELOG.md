@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Experimental — conflict-hunk branch
 
 - Separate conflict files, one-hunk decisions and full Result review instead of showing every pane at once. Preserve choices and manual text across page navigation; protect divergent manual Results from source adoption until explicit Reset. Route ordinary text add/add through the same editor and keep a freshly observed fully staged merge reachable through the existing CommitPanel handoff. This experiment is not yet approved for main. (#1729)
+  - Expose Both and direct Result editing, retain nearby code context, and size small decisions to their content. Keep remaining files in one list, preserve keyboard focus across pages, and avoid claiming source-hunk progress for restored/manual Result text.
 
 ### Fixed
 

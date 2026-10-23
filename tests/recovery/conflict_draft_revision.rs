@@ -4,7 +4,7 @@ use crate::macos::{mount, unmount};
 use crate::repository_state::RepositoryState;
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use gpui_component::input::InputState;
-use kagi::ui::{conflict_view::ConflictView, KagiApp};
+use kagi::ui::{conflict_view::ConflictView, e2e, KagiApp};
 use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use std::path::{Path, PathBuf};
@@ -269,9 +269,10 @@ fn stable_second_conflict(
         assert_unresolved(cx, app);
         detect(cx, app, window);
         assert_unresolved(cx, app);
-        // Exercise the actual disabled control, not just its computed verdict.
-        click_control(cx, window, "conflict-continue");
-        cx.run_until_parked();
+        // Unfinished files expose Open, not an actionable Continue.
+        e2e::clear_control_bounds(window.window_id(), "conflict-continue");
+        paint(cx, app, window);
+        assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_none());
         assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_none()));
         assert_eq!(before, RepositoryState::read(repo));
         assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);

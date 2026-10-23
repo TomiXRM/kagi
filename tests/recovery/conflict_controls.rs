@@ -449,7 +449,7 @@ fn result_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     click_control(cx, window, "conflict-row-1");
     click_control(cx, window, "conflict-overview");
     click_control(cx, window, "conflict-row-0");
-    click_control(cx, window, "conflict-review");
+    click_control(cx, window, "conflict-edit-result");
     cx.read(|cx| {
         let view = conflict.read(cx);
         assert_eq!(
@@ -581,6 +581,45 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         "the decision page does not retain the full file dashboard"
     );
     assert!(e2e::control_bounds(window_id, "resolver-current-viewport").is_some());
+    let before_both = cx.read(|cx| {
+        conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .resolved_text(Path::new("added.txt"))
+    });
+    click_control(cx, window, "conflict-both");
+    cx.read(|cx| {
+        let mode = conflict.read(cx).mode.as_ref().unwrap();
+        assert_eq!(
+            mode.buffer.resolved_text(Path::new("added.txt")).as_deref(),
+            Some("current one\ncurrent two\nincoming one\nincoming two\n")
+        );
+    });
+    click_control(cx, window, "conflict-both");
+    conflict.update(cx, |view, cx| {
+        assert!(view
+            .mode
+            .as_mut()
+            .unwrap()
+            .buffer
+            .undo(Path::new("added.txt")));
+        cx.notify();
+    });
+    cx.read(|cx| {
+        let mode = conflict.read(cx).mode.as_ref().unwrap();
+        assert_eq!(
+            mode.buffer.resolved_text(Path::new("added.txt")),
+            before_both,
+            "Both is one reversible choice and repeated Both adds no undo checkpoint"
+        );
+    });
+    conflict.update(cx, |view, cx| {
+        view.conflict_editor_reset_all(Path::new("added.txt"));
+        cx.notify();
+    });
     click_control(cx, window, "resolver-hunk-0-incoming-line-0");
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();

@@ -10,6 +10,13 @@ pub enum ConflictPage {
 }
 
 impl ConflictView {
+    /// Retire hidden editor focus without leaving Tab outside the app's context.
+    pub(crate) fn focus_navigation(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = &self.navigation_focus {
+            focus.focus(window, cx);
+        }
+    }
+
     /// Navigation captures a pending keystroke, but never persists or stages it.
     pub fn conflict_show_page(&mut self, page: ConflictPage, cx: &Context<Self>) {
         self.capture_result_for_navigation(cx);
@@ -123,6 +130,9 @@ pub(crate) fn draft_label(mode: &ConflictMode, path: &std::path::Path) -> String
     if draft_ready(mode, path) {
         return Msg::ConflictDraftReady.t().into();
     }
+    if manual_override(mode, path) {
+        return Msg::ConflictDraft.t().into();
+    }
     match mode.buffer.hunk_model(path) {
         Some(model) => format!(
             "{} · {}/{}",
@@ -148,6 +158,9 @@ pub(super) fn render(
         .flex_1()
         .min_h(px(0.))
         .min_w(px(0.))
+        .when_some(chrome.navigation_focus.as_ref(), |el, focus| {
+            el.track_focus(focus)
+        })
         .bg(rgb(theme().bg_base));
     if overview {
         body = body.child(render_dashboard(mode, chrome, window_active, cx));
@@ -178,12 +191,12 @@ pub(super) fn file_navigation(
 ) -> gpui::AnyElement {
     let files = cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
         view.conflict_show_page(ConflictPage::Overview, cx);
-        window.blur();
+        view.focus_navigation(window, cx);
         cx.notify();
     });
     let review = cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
         view.conflict_show_page(ConflictPage::Review, cx);
-        window.blur();
+        view.focus_navigation(window, cx);
         cx.notify();
     });
     let file = mode.selected_file.and_then(|i| mode.session.files.get(i));

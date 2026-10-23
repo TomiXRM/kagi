@@ -29,8 +29,8 @@ pub(super) fn render_toolbar(
             this.conflict_editor_select_hunk(this.selected_hunk + 1);
         } else {
             this.conflict_show_page(ConflictPage::Review, cx);
+            this.focus_navigation(window, cx);
         }
-        window.blur();
         cx.notify();
     });
     let p_reset = path.to_path_buf();
@@ -67,7 +67,7 @@ pub(super) fn render_toolbar(
                 ButtonRole::NeutralTinted,
                 cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
                     view.conflict_show_page(ConflictPage::Overview, cx);
-                    window.blur();
+                    view.focus_navigation(window, cx);
                     cx.notify();
                 }),
                 cx,
@@ -137,7 +137,7 @@ pub(super) fn render_toolbar(
                     ButtonRole::NeutralTinted,
                     cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
                         view.conflict_show_page(ConflictPage::Hunk, cx);
-                        window.blur();
+                        view.focus_navigation(window, cx);
                         cx.notify();
                     }),
                     cx,
@@ -254,8 +254,8 @@ pub(super) fn render_panes(
     let ab_measure = canvas(
         move |bounds: Bounds<Pixels>, _w, _cx| {
             if std::env::var("KAGI_DEBUG_SPLIT").as_deref() == Ok("1") {
-                eprintln!(
-                    "[kagi] ab_geom left={:.1} right={:.1} width={:.1}",
+                kagi_ui_core::klog!(
+                    "ab_geom left={:.1} right={:.1} width={:.1}",
                     f32::from(bounds.origin.x),
                     f32::from(bounds.origin.x + bounds.size.width),
                     f32::from(bounds.size.width)

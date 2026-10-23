@@ -853,21 +853,29 @@ not native VoiceOver evidence.
 
 For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
 `conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
-Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,
+Tabs to the production resolver, pages to hunk 2 and moves Right to Incoming,
 and compares Enter adoption with the measured pointer control. It exercises
-Space, both orders, line-level Partial state, file-side Use all, Result
-undo/redo, viewport containment and zero repository writes/receipts at
-940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
+Space, both orders, line-level Partial state, Result undo/redo, viewport
+containment and zero repository writes/receipts at 940×660 / 1392×883,
+100%/167%, EN/JA, Apple Light/Dark.
 The F19 probe observes only the actual focused owner; AX metadata records
 renderer-supplied role/name/state, not native VoiceOver delivery.
 `conflict_resolver_rebuild` replaces a retained path's model with changed hunk
 and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
 checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
 operation, and order selection is announced independently of adoption.
-Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
-the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
-and read live EN/JA adoption names in Accessibility Inspector. Do not Save
-while comparing buffer-only adoption with pointer behavior.
+On `feature/conflict-hunk` (ADR-0227), `conflict_progressive_add_add` exercises
+separate Files/Choose/Review pages, Both as one undo checkpoint, partial
+add/add selection, a protected empty manual Result, real Save and the fresh
+fully staged merge handoff. `conflict_result_segment` covers manual edits
+across page/file changes. `conflict_continue_cache` requires explicit Reset
+before replacing a divergent manual Result with source choices.
+Tier B: use an isolated conflict fixture, compare the pages in EN/JA,
+Apple Light/Dark and narrow/high-zoom windows, operate Both/Edit and backtracking,
+then verify actual Save/Continue/Commit bytes. Page navigation needs a retained
+focus destination; do not repair missing product focus inside the test.
+Use goal-only independent trials as additional evidence, not proof of human
+novice or cross-language usability.
 For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
 `graph_columns_fit` uses an isolated 40rem threshold to retain desktop
 1000×660/167% and compact 940×660/167%, requiring a scaled 120px subject minimum, contained author/time,
@@ -927,11 +935,12 @@ compare the real 700×500 JA toolbar with a long repository/branch identity at
 100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
 
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
-`conflict_file_selection` finds the actual dashboard Next button through real
+`conflict_file_selection` finds the actual overview Open button through real
 Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard
-owns the window's last Tab stop (#1222 added status-bar stops). Space and Enter
-must paint the same inactive `#d3d3d3` selection and selected AX option; pointer,
-hover, editor navigation, binary cleanup and draft-resolution assertions remain.
+owns the window's last Tab stop (#1222 added status-bar stops). After pointer
+navigation, the product itself must preserve keyboard entry; the test does
+not refocus the root. Open preserves the selected path, including the first raw
+file and a ready unsaved draft. Inactive fill and selected AX option must agree.
 The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
 for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
 checks that the retained stash has no write lease before explicit approval,

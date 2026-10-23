@@ -65,6 +65,7 @@ impl ResolverKeyboard {
             self.release(window, cx);
             return;
         };
+        let mut refocus = false;
         if self.path != path
             || self.visible_hunk != selected_hunk
             || self.context != context
@@ -74,7 +75,7 @@ impl ResolverKeyboard {
                 .copied()
                 .eq(model.regions.iter().map(RegionShape::of))
         {
-            self.release(window, cx);
+            refocus = self.release(window, cx);
             self.path = path.into();
             self.visible_hunk = selected_hunk;
             self.context = context;
@@ -144,15 +145,20 @@ impl ResolverKeyboard {
             window,
             cx,
         ));
+        if refocus {
+            if let Some(list) = &self.list {
+                list.focus_row(0, window, cx);
+            }
+        }
     }
-    fn release(&mut self, window: &mut Window, cx: &mut App) {
-        if self
+    fn release(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        let focused = self
             .controls
             .iter()
             .flatten()
             .any(|(_, handle, _)| handle.is_focused(window))
-            || self.focus.focused(window).is_some()
-        {
+            || self.focus.focused(window).is_some();
+        if focused {
             window.blur();
         }
         self.focus.release(None, window, cx);
@@ -162,6 +168,7 @@ impl ResolverKeyboard {
         self.rows = Rc::default();
         self.list = None;
         self.drawn = 0..0;
+        focused
     }
     pub(crate) fn side_name(&self, side: SelectionSide) -> &str {
         &self.side_names[match side {
@@ -304,6 +311,9 @@ fn attach_navigation(
     };
     let owner_ref = owner.borrow();
     let list = owner_ref.list.as_ref().expect("prepared resolver RowList");
+    // A page change lays out new virtual rows after prepare chose its Tab stop.
+    // Reconcile against this processor's range, not the previous page's bounds.
+    let list = list.as_drawn(&owner_ref.drawn);
     if let Some((_, handle, _)) = owner_ref.controls[hunk]
         .iter()
         .find(|(key, _, _)| key == id)

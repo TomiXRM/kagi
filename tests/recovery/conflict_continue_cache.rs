@@ -126,6 +126,13 @@ pub fn scenario_conflict_continue_cache(cx: &mut VisualTestAppContext) {
     });
     app.update(cx, |_, cx| cx.notify());
     draw(cx, window);
+    assert_verdict(cx, Some(Msg::ConflictBlockerMarker));
+    conflict.update(cx, |view, cx| {
+        view.conflict_editor_reset_all(Path::new("file.txt"));
+        view.conflict_editor_set_file_side(Path::new("file.txt"), SelectionSide::Current, true);
+        cx.notify();
+    });
+    draw(cx, window);
     assert_verdict(cx, None);
     assert_eq!(
         repo_fingerprint(&repo),

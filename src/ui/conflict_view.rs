@@ -62,6 +62,7 @@ pub struct EditorChrome {
     pub source_choices_enabled: bool,
     pub manual_override: bool,
     pub page: ConflictPage,
+    pub navigation_focus: Option<gpui::FocusHandle>,
     pub show_context: bool,
     pub show_tools: bool,
     /// The Result pane `InputState`, when present for the edited content file.
@@ -84,13 +85,9 @@ pub struct EditorChrome {
     pub result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
-    /// A·B / Result vertical split ratio (fraction given to the A·B row).
-    pub result_split: f32,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk,
     /// for the selected-hunk highlight in the per-hunk accept list.
     pub selected_hunk: usize,
-    /// Measured (top, bottom) screen-px bounds of the editor split region.
-    pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     pub raw_preview_scroll: gpui::ScrollHandle,
@@ -136,6 +133,7 @@ pub struct ConflictView {
     /// Retained text-editor owner, including while the file overview is shown.
     pub editing: Option<PathBuf>,
     pub page: ConflictPage,
+    navigation_focus: Option<gpui::FocusHandle>,
     pub show_context: bool,
     pub show_tools: bool,
     /// W32: last-saved resolved text per file, so a Save can log a before→after
@@ -154,16 +152,8 @@ pub struct ConflictView {
     result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// T-CONFLICT-UI-003: A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
-    /// T-CONFLICT-UI-003: A·B / Result vertical split ratio (fraction to A·B).
-    pub result_split: f32,
-    /// T-CONFLICT-UI-003: measured (top, bottom) screen-px bounds of the
-    /// editor's split region, for absolute-coordinate divider dragging. Shared
-    /// with `KagiApp` (the *same* `Rc<Cell>`): the render writes the measured
-    /// bounds; the root `on_drag_move` handler (on `KagiApp`) reads them and
-    /// updates the split via `entity.update`. Mirrors FileHistory `geom` sharing.
-    pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
-    /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
-    /// row, for the vertical A|B divider drag. Shared with `KagiApp` as above.
+    /// Measured (left, right) screen-px bounds for A|B divider dragging.
+    /// Shared with `KagiApp`: render writes bounds, the root drag handler reads.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Stable raw-preview scroll owner, shared by production and E2E renders.
     pub raw_preview_scroll: gpui::ScrollHandle,
@@ -220,6 +210,7 @@ impl ConflictView {
             mode: None,
             editing: None,
             page: ConflictPage::Overview,
+            navigation_focus: None,
             show_context: false,
             show_tools: false,
             editing_before_text: HashMap::new(),
@@ -230,8 +221,6 @@ impl ConflictView {
             reset_blur_subscription: None,
             result_mode_focus: Default::default(),
             ab_split: super::CONFLICT_AB_DEFAULT,
-            result_split: super::CONFLICT_RESULT_DEFAULT,
-            geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             raw_preview_scroll: gpui::ScrollHandle::new(),
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -256,14 +245,6 @@ impl ConflictView {
     pub fn set_ab_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
         if (ratio - self.ab_split).abs() > 0.001 {
             self.ab_split = ratio;
-            cx.notify();
-        }
-    }
-
-    /// Update the A·B / Result split ratio from the root divider-drag handler.
-    pub fn set_result_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
-        if (ratio - self.result_split).abs() > 0.001 {
-            self.result_split = ratio;
             cx.notify();
         }
     }
@@ -568,6 +549,9 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 impl Render for ConflictView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor_inputs(window, cx);
+        if self.navigation_focus.is_none() {
+            self.navigation_focus = Some(cx.focus_handle().tab_stop(false));
+        }
         if self.reset_focus.is_none() {
             let focus = cx.focus_handle().tab_stop(false);
             self.reset_blur_subscription =
@@ -699,6 +683,7 @@ impl ConflictView {
             source_choices_enabled: !self.writer_busy && !manual_override,
             manual_override,
             page: self.page,
+            navigation_focus: self.navigation_focus.clone(),
             show_context: self.show_context,
             show_tools: self.show_tools,
             inputs: self.editor_inputs.as_ref().map(|i| EditorInputs {
@@ -715,9 +700,7 @@ impl ConflictView {
             reset_focus: self.reset_focus.clone(),
             result_mode_focus: self.result_mode_focus.clone(),
             ab_split: self.ab_split,
-            result_split: self.result_split,
             selected_hunk: self.selected_hunk,
-            geom: self.geom.clone(),
             ab_geom: self.ab_geom.clone(),
             raw_preview_scroll: self.raw_preview_scroll.clone(),
             hl_cache: self.hl_cache.clone(),
@@ -1177,7 +1160,7 @@ fn dash_primary(
                 });
                 if let Some(idx) = selected {
                     view.conflict_open_file(idx, cx);
-                    window.blur();
+                    view.focus_navigation(window, cx);
                     cx.notify();
                 }
             },
@@ -1534,7 +1517,7 @@ fn dash_sections(
         let row_click = cx.listener(
             move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
                 view.conflict_open_file(idx, cx);
-                window.blur();
+                view.focus_navigation(window, cx);
                 cx.notify();
             },
         );
@@ -1576,10 +1559,6 @@ fn dash_sections(
                     .flex_1()
                     .min_w(px(0.))
                     .id(path_id.clone())
-                    .hover_tooltip_builder((path_id, 0usize), {
-                        let path = path_str.clone();
-                        move |window, cx| Tooltip::new(path.clone()).build(window, cx)
-                    })
                     .gap_1()
                     .child(
                         div()
@@ -1598,17 +1577,24 @@ fn dash_sections(
                                     .into_owned(),
                             )),
                     )
-                    .child(
-                        div()
-                            .min_w(px(0.))
-                            .text_size(theme::scaled_px(10.))
-                            .text_color(if selection_on_accent {
-                                theme().selection_secondary_foreground(window_active)
-                            } else {
-                                rgb(theme().text_sub).into()
-                            })
-                            .truncate()
-                            .child(path_str.clone()),
+                    .when(
+                        file.path
+                            .parent()
+                            .is_some_and(|parent| !parent.as_os_str().is_empty()),
+                        |el| {
+                            el.child(
+                                div()
+                                    .min_w(px(0.))
+                                    .text_size(theme::scaled_px(10.))
+                                    .text_color(if selection_on_accent {
+                                        theme().selection_secondary_foreground(window_active)
+                                    } else {
+                                        rgb(theme().text_sub).into()
+                                    })
+                                    .truncate()
+                                    .child(path_str.clone()),
+                            )
+                        },
                     )
                     .child(
                         div()
@@ -1628,7 +1614,11 @@ fn dash_sections(
                                     .child(SharedString::from(status_text)),
                             )
                             .child(kind_badge(kind, selected.then_some(window_active))),
-                    ),
+                    )
+                    .hover_tooltip_builder((path_id, 0usize), {
+                        let path = path_str.clone();
+                        move |window, cx| Tooltip::new(path.clone()).build(window, cx)
+                    }),
             )
             // A disclosure affordance makes the row's navigation visible.
             .child(

@@ -469,12 +469,7 @@ const INNER_DIV_W: f32 = 4.0;
 pub(crate) const CONFLICT_AB_DEFAULT: f32 = 0.5;
 const CONFLICT_AB_MIN: f32 = 0.2;
 const CONFLICT_AB_MAX: f32 = 0.8;
-/// A·B / Result vertical split ratio (fraction of the editor height given to
-/// the A·B row; the remainder is the Result pane).
-pub(crate) const CONFLICT_RESULT_DEFAULT: f32 = 0.55;
-const CONFLICT_RESULT_MIN: f32 = 0.25;
-const CONFLICT_RESULT_MAX: f32 = 0.8;
-/// Height of the Conflict Editor split divider handles.
+/// Width of the Conflict Editor A|B divider.
 const CONFLICT_SPLIT_DIVIDER: f32 = 4.0;
 
 // ── W2-GRAPH: compact mode ────────────────────────────────────

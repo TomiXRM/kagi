@@ -90,6 +90,16 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     let active_fill = paint(cx, window, 0);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
+    click_control(cx, window, "conflict-next");
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(view.mode.as_ref().unwrap().selected_file, Some(0));
+        assert!(
+            view.editing.is_none(),
+            "Open must not skip the first raw file"
+        );
+    });
+    click_control(cx, window, "conflict-overview");
     click_control(cx, window, "conflict-row-1");
     cx.read(|cx| {
         let view = conflict.read(cx);
@@ -107,17 +117,18 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "conflict-next");
     cx.read(|cx| {
         let view = conflict.read(cx);
-        assert_eq!(view.editing.as_deref(), Some(Path::new("zeta.txt")));
+        assert_eq!(view.editing.as_deref(), Some(Path::new("notes.txt")));
         assert_eq!(
             view.selected_hunk, 0,
             "file navigation is not hunk navigation"
         );
     });
     click_control(cx, window, "conflict-overview");
-    assert_eq!(&paint(cx, window, 2)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "zeta.txt");
+    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
+    selected_row("conflict-files", "notes.txt");
+    click_control(cx, window, "conflict-row-0");
+    click_control(cx, window, "conflict-overview");
     cx.update_window(window, |_, window, cx| {
-        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
         window.draw(cx).clear();
     })
     .unwrap();
@@ -137,7 +148,7 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     }
     assert!(
         reached_next,
-        "Next file must be keyboard reachable in the overview"
+        "Open must be keyboard reachable in the overview"
     );
     crate::keyboard_nav::keys(cx, window, "space");
     cx.read(|cx| {
@@ -160,11 +171,11 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     });
     click_control(cx, window, "conflict-overview");
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
-    selected_row("conflict-resolved-files", "notes.txt");
+    selected_row("conflict-files", "notes.txt");
     click_control(cx, window, "conflict-next");
     click_control(cx, window, "conflict-overview");
-    assert_eq!(&paint(cx, window, 2)[..3], &[211, 211, 211]);
-    selected_row("conflict-files", "zeta.txt");
+    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
+    selected_row("conflict-files", "notes.txt");
     assert_eq!(
         repo_fingerprint(fixture.path()),
         before,

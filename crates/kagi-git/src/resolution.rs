@@ -470,7 +470,7 @@ impl ResolutionBuffer {
     /// hunks), it is preserved so per-hunk choices are not lost.  Returns `false`
     /// if `path` is not a tracked text conflict.
     pub fn ensure_hunks(&mut self, path: &Path, marker_text: &str) -> bool {
-        if !self.files.get(path).is_some_and(|file| !file.raw) {
+        if self.files.get(path).is_none_or(|file| file.raw) {
             return false;
         }
         self.hunks

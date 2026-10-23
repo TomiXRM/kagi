@@ -176,6 +176,10 @@ fn hunk_adoption(
     );
     click_control(cx, window, "conflict-editor-next");
     paint(cx, window);
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(view.selected_hunk, 1);
+    });
     tab_to(cx, window, "resolver-hunk-1-current");
     keys(cx, window, "right");
     let id = "resolver-hunk-1-incoming";
@@ -421,12 +425,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                     }
                 );
             }
-            assert_order_only(
-                cx,
-                window,
-                lang,
-                &format!("{} ({})", labels.incoming.role, labels.incoming.name),
-            );
+            assert_order_only(cx, window, &conflict);
             drop(conflict);
             unmount(cx, app, window);
         }
@@ -437,27 +436,32 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
 fn assert_order_only(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
-    lang: Lang,
-    incoming: &str,
+    conflict: &Entity<ConflictView>,
 ) {
+    let before = assembled(cx, conflict);
     click_control(cx, window, "resolver-hunk-0-incoming-first");
     paint(cx, window);
+    assert_eq!(assembled(cx, conflict), before);
+    cx.read(|cx| {
+        assert!(
+            !conflict
+                .read(cx)
+                .mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .has_resolution(Path::new("notes.txt")),
+            "ordering an untouched hunk must not adopt an empty resolution"
+        );
+    });
     assert_eq!(ax::control("resolver-hunk-0-current").unwrap().2, "none");
     assert_eq!(ax::control("resolver-hunk-0-incoming").unwrap().2, "none");
     assert_eq!(
         ax::control("resolver-hunk-0-incoming-first").unwrap().2,
-        "selected"
-    );
-    assert_eq!(
-        ax::control("resolver-hunk-0-current-first").unwrap().2,
         "unselected"
     );
     assert_eq!(
-        ax::description("resolver-hunk-0-current-first").unwrap(),
-        if lang == Lang::En {
-            format!("Selected output order: {incoming} first")
-        } else {
-            format!("選択中の出力順序: {incoming} を先に")
-        }
+        ax::control("resolver-hunk-0-current-first").unwrap().2,
+        "selected"
     );
 }

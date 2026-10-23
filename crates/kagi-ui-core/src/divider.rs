@@ -26,9 +26,6 @@ pub enum DividerKind {
     /// T-CONFLICT-UI-003: vertical divider between the A (Current) and B
     /// (Incoming) panes in the Conflict Editor (adjusts the A|B width ratio).
     ConflictAB,
-    /// T-CONFLICT-UI-003: horizontal divider between the A·B row (top) and the
-    /// Result pane (bottom) in the Conflict Editor (adjusts that split ratio).
-    ConflictResult,
     /// ADR-0089: horizontal divider between the File History commit list (top)
     /// and the diff viewer (bottom).  Adjusts the list/diff vertical split.
     FileHistoryRows,

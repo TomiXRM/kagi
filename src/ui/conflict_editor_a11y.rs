@@ -17,6 +17,23 @@ pub(crate) fn record(id: &str, name: &str, state: &str, description: &str) {
     });
 }
 #[cfg(feature = "gui-e2e")]
+pub(crate) fn record_checkbox(id: &str, name: &str, taken: bool) {
+    use super::i18n::Msg;
+    let (state, description) = if taken {
+        ("all", Msg::EditorSelectionAll.t())
+    } else {
+        ("none", Msg::EditorSelectionNone.t())
+    };
+    CONTROLS.with(|controls| {
+        controls
+            .borrow_mut()
+            .insert(id.into(), (gpui::Role::CheckBox, name.into(), state.into()));
+    });
+    DESCRIPTIONS.with(|values| {
+        values.borrow_mut().insert(id.into(), description.into());
+    });
+}
+#[cfg(feature = "gui-e2e")]
 pub fn control(id: &str) -> Option<(gpui::Role, String, String)> {
     CONTROLS.with(|controls| controls.borrow().get(id).cloned())
 }

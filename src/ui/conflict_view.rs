@@ -163,6 +163,8 @@ pub struct ConflictView {
     navigation_focus: Option<gpui::FocusHandle>,
     pub show_tools: bool,
     pub choice_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// Same-pane checkbox painting; resolution state stays in `line_select`.
+    pub(crate) line_paint: Option<(kagi_git::resolution::SelectionSide, bool)>,
     pub(crate) choice_menu_keys: super::menu_keys::MenuKeys,
     /// W32: last-saved resolved text per file, so a Save can log a before→after
     /// file-content hash pair (T-035) without re-reading the working tree.
@@ -253,6 +255,7 @@ impl ConflictView {
             navigation_focus: None,
             show_tools: false,
             choice_menu: None,
+            line_paint: None,
             choice_menu_keys: Default::default(),
             editing_before_text: HashMap::new(),
             editor_inputs: None,
@@ -445,7 +448,7 @@ impl Render for ConflictView {
             && !self
                 .resolver_keyboard
                 .borrow()
-                .hunk_focused(self.selected_hunk, window)
+                .more_focused(self.selected_hunk, window)
         {
             self.reset_all_target = None;
         }
@@ -454,6 +457,7 @@ impl Render for ConflictView {
                 Some(cx.observe_window_activation(window, |view, window, cx| {
                     if !window.is_window_active() {
                         view.reset_all_target = None;
+                        view.line_paint = None;
                     }
                     cx.notify();
                 }));

@@ -221,8 +221,7 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
         Some(Path::new("notes.txt"))
     );
     assert_eq!(cx.read(|cx| conflict.read(cx).selected_hunk), 0);
-    click_control(cx, window, "conflict-choice-0");
-    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    click_control(cx, window, "conflict-hunk-0-left");
     click_control(cx, window, "conflict-result-editor");
     assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
     selected_row("conflict-tree", "notes.txt");

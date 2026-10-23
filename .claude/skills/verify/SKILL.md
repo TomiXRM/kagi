@@ -3551,6 +3551,12 @@ PID=$!
 WID=12345 # Replace with the selected window ID from the listing.
 ```
 
+`pidclick drag <x1> <y1> <x2> <y2>` posts a left-button down, interpolated
+held-button moves (at most 4 logical pixels apart), and mouse-up to that same
+PID/window without moving the user's pointer. Use this for the conflict-line
+checkbox paint gesture: start at the first checkbox centre and end at the third;
+repeat from a checked checkbox to paint the same range clear.
+
 For #1721, use independent EN/JA two-conflict repositories and a preserved
 default-feature binary; record its source SHA, SHA-256 and actual `features=[]`
 fingerprint separately from the GUI runner. Type the first Result and actually

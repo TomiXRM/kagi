@@ -22,26 +22,35 @@ labels remain necessary; unlabeled icons and color alone are not substitutes.
 Extend the existing `ConflictView`; do not create another resolver or onboarding
 framework. The binding visual contract is the 2026-10-23 Visual design pass in
 [`conflict-sidebar-frd.md`](../ui/conflict-sidebar-frd.md#visual-design-pass-2026-10-23-after-the-user-rejected-the-wireframes),
-implemented from `docs/ui/conflict-sidebar/build-hifi.js` (H1–H7).
-It supersedes the earlier Choose/Review wireframes, detached adoption row and
-Preview/Edit segments.
+implemented from `docs/ui/conflict-sidebar/build-hifi.js` (H1–H7), as amended by
+the final 2026-10-24 live-build review Decision in that document.
+It supersedes the earlier Choose/Review wireframes, detached adoption row,
+Preview/Edit segments and gutter choice pill.
 
 The workspace is a document: two borderless whole-file source panes above a
 directly editable Result. Source jump bars identify each side; commit footers
 identify their revisions. The left footer owns `‹ n/m ›` Previous/Next navigation.
 Sources and Result divide available height responsively (2:1), replacing the
-earlier fixed 8/12-row wireframe. Code rows are 18 logical pixels at 100% zoom;
+earlier fixed 8/12-row wireframe. Source rows are 24 logical pixels at 100% zoom
+to fit the S=24 hunk controls without overlapping adjacent one-line hunks;
 source viewports flex to the remaining space and scroll to reveal the selected
 hunk in both sources. No Context toggle or content-sized source-height clamp is introduced.
 
-A 44px gutter carries one re-openable choice pill per hunk, aligned with a
-continuous conflict band across both sources and gutter. Its four adoption choices are
-Use Left, Use Right, Left Then Right and Right Then Left (Japanese:
-左を使う / 右を使う / 左、次に右を使う / 右、次に左を使う).
-A decided pill shows the choice and can be reopened; adoption never advances
-automatically. A final separated Reset all item retains the existing explicit
-two-step destructive confirmation; navigation, dismissal and focus departure
-retire that approval. No adoption button row or Edit button is present.
+The gutter carries `←` / `…` / `→` per hunk, aligned with the continuous conflict
+band. Each arrow adopts its entire source side and clears the opposite side in
+one click; selected/mixed state comes from authoritative line selection. More
+contains exactly Use both, left first / Use both, right first (Japanese:
+両方を使う（← → の順） / 両方を使う（→ ← の順）), then a separator and Reset this
+hunk / Reset all. Reset all retains the existing explicit two-step confirmation;
+navigation, dismissal and focus departure retire that approval. Adoption never
+advances automatically. Each source conflict line has a checkbox; context rows
+do not. Mouse-down fixes the opposite checked state and dragging paints that
+state only in the same pane, including across hunks. Space toggles the focused
+line; Shift+Up/Down paints its neighbouring conflict line and moves roving focus.
+The existing `ConflictView` and `ResolutionBuffer` remain the only owners.
+Arrow accessible names are Use left side / Use right side, and More choices
+for the menu; line names retain the localized side and line number.
+No adoption button row or Edit button is present.
 
 Result uses the existing authoritative input directly, with left/right/manual
 origin stripes, 18px code rows and an overlay scroller. Navigation
@@ -104,7 +113,7 @@ or mandatory introductory carousel.
 - While Result diverges, source adoption must not silently replace manual edits.
   Comparison and navigation retain the Result; the existing guarded Reset is
   the explicit discard route. Mutation handlers recheck this condition.
-- The pill's ordered-both choices adopt both sides as a single draft checkpoint.
+- The More menu's ordered-both choices adopt both sides as a single draft checkpoint.
   Repeating the same choice is not an edit. Low-level order mutations still only
   reorder adopted content; opening or navigating a menu does not adopt anything.
 - Ordinary text add/add conflicts use the same existing materialization and
@@ -146,9 +155,10 @@ windows. Exercise partial selection, both orderings, manual editing, backtrackin
 add/add, actual Save and Continue/Commit, and long file lists.
 
 Keep the existing conflict scenario registrations (57) while extending their
-oracles: all four menu choices and decided-pill reopening, footer navigation,
-direct Result editing and writer-busy refusal, unpinned groups, hidden inline
-count, one header file action, and byte/receipt-identical Git navigation.
+oracles: one-click arrows, all four More commands, per-line checkboxes and
+same-pane range painting, footer navigation, direct Result editing and writer-busy
+refusal, unpinned groups, hidden inline count, one header file action, and
+byte/receipt-identical Git navigation.
 Native pixel probes sample row padding outside glyphs and badges, in logical
 window coordinates converted once by the window's scale factor. Renderer-fed
 AX/focus probes do not establish native VoiceOver, IME or real-window usability.
@@ -161,7 +171,7 @@ has one roving Tab stop, with Down reaching the next hunk after source adoption
 changes the entry point. Selected-hunk navigation strictly centers the hunk,
 not a preceding context row that may fill a narrow/high-zoom viewport by itself.
 Footer navigation retires a button's focus before it becomes unavailable, and
-inline Up overrides the shared previous-row binding to return to its own pill.
+inline Up overrides the shared previous-row binding to return to its own left arrow.
 Toolbar fitting charges the operation strip only to the right column; compact
 conflict chrome lets repository identity truncate before losing right-hand
 controls. Save refusal

@@ -161,15 +161,23 @@ fn horizontal_controls(
     conflict: &Entity<ConflictView>,
     lang: Lang,
 ) {
-    choose(cx, window, 1, "1-0");
+    choose(cx, window, 1, "0-0");
     let ours_first = assembled(cx, conflict);
     assert!(ours_first.find("ours 17").unwrap() < ours_first.find("theirs 17").unwrap());
-    choose(cx, window, 1, "1-1");
+    choose(cx, window, 1, "0-1");
     let theirs_first = assembled(cx, conflict);
     assert!(theirs_first.find("theirs 17").unwrap() < theirs_first.find("ours 17").unwrap());
     let line = "resolver-hunk-1-current-line-0";
-    tab_to(cx, window, "conflict-choice-1");
-    keys(cx, window, "right");
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some("conflict-hunk-1-more"),
+        "choosing an ordered-both command restores its More launcher"
+    );
+    // Tab leaves the resolver's single roving stop for the Result code input;
+    // horizontal movement stays within this hunk's controls.
+    keys(cx, window, "left");
+    assert_eq!(probe(cx, window).as_deref(), Some("conflict-hunk-1-left"));
+    keys(cx, window, "right right right");
     assert_eq!(probe(cx, window).as_deref(), Some(line));
     assert_eq!(
         ax::control(line).unwrap().1,
@@ -213,28 +221,39 @@ fn horizontal_controls(
     keys(cx, window, "up");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("conflict-choice-1"),
+        Some("conflict-hunk-1-left"),
         "line editing and undo/redo retain the same hunk's keyboard owner"
     );
 }
 
 fn choose(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hunk: usize, item: &str) {
-    click_control(cx, window, &format!("conflict-choice-{hunk}"));
+    click_control(cx, window, &format!("conflict-hunk-{hunk}-more"));
     click_control(cx, window, &format!("conflict-choice-menu-item-{item}"));
     paint(cx, window);
 }
+#[track_caller]
 fn tab_to(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
-    // Closing a choice menu restores the pill's real focus handle.
-    if probe(cx, window).as_deref() == Some(id) {
+    // Closing More restores the launcher's real focus handle.
+    let initial = probe(cx, window);
+    if initial.as_deref() == Some(id) {
         return;
     }
+    let mut focus_sequence = vec![initial];
     for _ in 0..100 {
         keys(cx, window, "tab");
-        if probe(cx, window).as_deref() == Some(id) {
+        let focused = probe(cx, window);
+        if focused.as_deref() == Some(id) {
             return;
         }
+        focus_sequence.push(focused);
     }
-    panic!("Tab must reach the resolver adoption controls: {id}");
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    panic!(
+        "Tab must reach the resolver adoption controls: {id}; lang={:?}, zoom={}, viewport={viewport:?}, focus_sequence={focus_sequence:?}",
+        i18n::lang(), theme::zoom(),
+    );
 }
 
 fn hunk_adoption(
@@ -243,11 +262,11 @@ fn hunk_adoption(
     conflict: &Entity<ConflictView>,
     lang: Lang,
 ) {
-    tab_to(cx, window, "conflict-choice-0");
+    tab_to(cx, window, "conflict-hunk-0-left");
     keys(cx, window, "down");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("conflict-choice-1"),
+        Some("conflict-hunk-1-left"),
         "whole-file roving focus reaches the next hunk"
     );
     assert_eq!(
@@ -262,23 +281,63 @@ fn hunk_adoption(
         let view = conflict.read(cx);
         assert_eq!(view.selected_hunk, 1);
     });
-    tab_to(cx, window, "conflict-choice-1");
-    let (role, name, state) = ax::control("conflict-choice-1").expect("named hunk pill");
+    tab_to(cx, window, "conflict-hunk-1-left");
+    keys(cx, window, "right right");
+    let (role, name, state) = ax::control("conflict-hunk-1-right").expect("named right arrow");
     assert_eq!(role, gpui::Role::Button);
-    assert_eq!(name, format!("{} 2/2", i18n::Msg::EditorConflictNofM.t()));
+    assert_eq!(name, i18n::Msg::ConflictUseRightSide.t());
     assert_eq!(state, "none");
-    keys(cx, window, "enter down enter");
+    keys(cx, window, "enter");
     let text = assembled(cx, conflict);
     assert!(text.contains("theirs 17"));
-    assert_eq!(ax::control("conflict-choice-1").unwrap().2, "right");
+    assert_eq!(ax::control("conflict-hunk-1-right").unwrap().2, "all");
     conflict.update(cx, |view, cx| {
         view.conflict_editor_reset_all(Path::new("notes.txt"));
         cx.notify();
     });
     paint(cx, window);
-    choose(cx, window, 1, "0-1");
+    click_control(cx, window, "conflict-hunk-1-right");
     assert_eq!(text, assembled(cx, conflict));
     horizontal_controls(cx, window, conflict, lang);
+    line_range_keyboard(cx, window, conflict);
+}
+
+fn line_range_keyboard(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    conflict: &Entity<ConflictView>,
+) {
+    click_control(cx, window, "conflict-hunk-1-right");
+    keys(cx, window, "right right right");
+    let line = |index| format!("resolver-hunk-1-current-line-{index}");
+    assert_eq!(probe(cx, window).as_deref(), Some(line(0).as_str()));
+    assert_eq!(ax::control(&line(0)).unwrap().2, "none");
+    keys(cx, window, "space");
+    assert_eq!(ax::control(&line(0)).unwrap().2, "all");
+    assert_eq!(probe(cx, window).as_deref(), Some(line(0).as_str()));
+    for index in 1..=2 {
+        keys(cx, window, "shift-down");
+        assert_eq!(probe(cx, window).as_deref(), Some(line(index).as_str()));
+        assert_eq!(ax::control(&line(index)).unwrap().2, "all");
+        assert_eq!(
+            ax::control(&format!("resolver-hunk-1-incoming-line-{index}"))
+                .unwrap()
+                .2,
+            "all",
+            "range painting does not clear the opposite pane"
+        );
+    }
+    keys(cx, window, "space");
+    assert_eq!(ax::control(&line(2)).unwrap().2, "none");
+    for index in [1, 0] {
+        keys(cx, window, "shift-up");
+        assert_eq!(probe(cx, window).as_deref(), Some(line(index).as_str()));
+        assert_eq!(ax::control(&line(index)).unwrap().2, "none");
+    }
+    assert!(!assembled(cx, conflict).contains("ours 17"));
+    assert!(!assembled(cx, conflict).contains("ours 18"));
+    assert!(!assembled(cx, conflict).contains("ours 19"));
+    assert!(assembled(cx, conflict).contains("theirs 17"));
 }
 
 fn matrix_leg(
@@ -308,7 +367,7 @@ fn matrix_leg(
     paint(cx, window);
     assert_operation_strip(cx, window);
     assert_source_hunk_visible(cx, window, 0);
-    let row_height = f32::from(theme::scaled_px(18.));
+    let row_height = f32::from(theme::scaled_px(24.));
     for side in ["current", "incoming"] {
         let viewport =
             e2e::control_bounds(window.window_id(), &format!("resolver-{side}-viewport")).unwrap();
@@ -318,7 +377,11 @@ fn matrix_leg(
         )
         .unwrap()
         .dilate(gpui::px(kagi_ui_core::keyboard_nav::RING));
-        assert!((f32::from(line.size.height) - row_height).abs() <= 1.);
+        assert!(
+            (f32::from(line.size.height) - row_height).abs() <= 1.,
+            "{side}: source row including fixed focus border is 24 scaled px: actual={:?}, expected={row_height}, zoom={zoom}",
+            line.size.height
+        );
         let height = f32::from(viewport.size.height);
         assert!(
             height >= row_height,
@@ -350,9 +413,9 @@ fn matrix_leg(
     click_control(cx, window, "conflict-prev-hunk");
     paint(cx, window);
     assert_source_hunk_visible(cx, window, 0);
-    tab_to(cx, window, "conflict-choice-0");
-    keys(cx, window, "space enter");
-    assert_eq!(ax::control("conflict-choice-0").unwrap().2, "left");
+    tab_to(cx, window, "conflict-hunk-0-left");
+    keys(cx, window, "space");
+    assert_eq!(ax::control("conflict-hunk-0-left").unwrap().2, "all");
     assert!(
         kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 20).is_empty(),
         "adoption emits no Git receipt"
@@ -424,7 +487,7 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "conflict-choice-0");
+    tab_to(cx, window, "conflict-hunk-0-left");
     replace_model(cx, &conflict, fixture.path(), 3, 1);
     paint(cx, window);
     cx.update_window(window, |_, window, cx| {
@@ -434,8 +497,8 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "conflict-next-hunk");
     click_control(cx, window, "conflict-next-hunk");
     paint(cx, window);
-    tab_to(cx, window, "conflict-choice-2");
-    keys(cx, window, "enter down enter");
+    tab_to(cx, window, "conflict-hunk-2-left");
+    keys(cx, window, "right right enter");
     assert!(assembled(cx, &conflict).contains("incoming 2 0"));
     replace_model(cx, &conflict, fixture.path(), 3, 4);
     paint(cx, window);
@@ -443,8 +506,8 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "conflict-choice-2");
-    keys(cx, window, "right right right right");
+    tab_to(cx, window, "conflict-hunk-2-left");
+    keys(cx, window, "right right right right right right");
     assert_eq!(
         probe(cx, window).as_deref(),
         Some("resolver-hunk-2-current-line-3")
@@ -484,14 +547,14 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                 }
             );
             crate::native_ax::activate(cx);
-            click_control(cx, window, "conflict-choice-0");
+            click_control(cx, window, "conflict-hunk-0-more");
             paint(cx, window);
             let tree = crate::native_ax::tree(cx, window);
             for message in [
-                i18n::Msg::ConflictUseLeft,
-                i18n::Msg::ConflictUseRight,
-                i18n::Msg::ConflictUseBothLeftFirst,
-                i18n::Msg::ConflictUseBothRightFirst,
+                i18n::Msg::ConflictBothLeftFirst,
+                i18n::Msg::ConflictBothRightFirst,
+                i18n::Msg::ConflictResetHunk,
+                i18n::Msg::EditorReset,
             ] {
                 let expected = message.t();
                 assert!(
@@ -509,7 +572,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                 .is_some());
             }
             keys(cx, window, "escape");
-            assert_eq!(ax::control("conflict-choice-0").unwrap().2, "none");
+            assert_eq!(ax::control("conflict-hunk-0-left").unwrap().2, "none");
             for (side, label) in [("current", &labels.current), ("incoming", &labels.incoming)] {
                 let identity = format!("{} ({})", label.role, label.name);
                 let line = format!("resolver-hunk-0-{side}-line-0");
@@ -559,5 +622,5 @@ fn assert_order_only(
             "ordering an untouched hunk must not adopt an empty resolution"
         );
     });
-    assert_eq!(ax::control("conflict-choice-0").unwrap().2, "none");
+    assert_eq!(ax::control("conflict-hunk-0-left").unwrap().2, "none");
 }

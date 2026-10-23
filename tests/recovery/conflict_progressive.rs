@@ -77,23 +77,23 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             .buffer
             .resolved_text(Path::new("added.txt"))
     });
-    click_control(cx, window, "conflict-choice-0");
+    click_control(cx, window, "conflict-hunk-0-more");
     for item in ["0-0", "0-1", "1-0", "1-1"] {
         assert!(
             e2e::control_bounds(window_id, &format!("conflict-choice-menu-item-{item}")).is_some(),
-            "four adoption choices: {item}"
+            "four More commands: {item}"
         );
     }
-    click_control(cx, window, "conflict-choice-menu-item-1-0");
+    click_control(cx, window, "conflict-choice-menu-item-0-0");
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    assert_eq!(
-        ax::description("conflict-choice-0").as_deref(),
-        Some(if lang == Lang::Ja { "両方" } else { "Both" }),
-        "the BothCurrentFirst pill retains the localized Both label"
-    );
-    assert_eq!(ax::control("conflict-choice-0").unwrap().2, "both");
+    for side in ["left", "right"] {
+        assert_eq!(
+            ax::control(&format!("conflict-hunk-0-{side}")).unwrap().2,
+            "all"
+        );
+    }
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
         assert_eq!(
@@ -101,8 +101,8 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             Some("current one\ncurrent two\nincoming one\nincoming two\n")
         );
     });
-    click_control(cx, window, "conflict-choice-0");
-    click_control(cx, window, "conflict-choice-menu-item-1-0");
+    click_control(cx, window, "conflict-hunk-0-more");
+    click_control(cx, window, "conflict-choice-menu-item-0-0");
     cx.run_until_parked();
     conflict.update(cx, |view, cx| {
         assert!(view
@@ -121,8 +121,8 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             "Both is one reversible choice and repeated Both adds no undo checkpoint"
         );
     });
-    click_control(cx, window, "conflict-choice-0");
-    click_control(cx, window, "conflict-choice-menu-item-1-1");
+    click_control(cx, window, "conflict-hunk-0-more");
+    click_control(cx, window, "conflict-choice-menu-item-0-1");
     cx.run_until_parked();
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
@@ -139,15 +139,12 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     click_control(cx, window, "resolver-hunk-0-incoming-line-0");
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    let label = ax::description("conflict-choice-0").expect("rendered gutter pill label");
+    assert_eq!(ax::control("conflict-hunk-0-left").unwrap().2, "partial");
     assert_eq!(
-        label,
-        if lang == Lang::Ja { "手動" } else { "Manual" },
-        "adopting one source line is Manual, not Both"
+        ax::control("conflict-hunk-0-right").unwrap().2,
+        "partial",
+        "one incoming line is mixed, never a fully selected right arrow"
     );
-    assert_ne!(label, "両方");
-    assert_ne!(label, "Both");
-    assert_eq!(ax::control("conflict-choice-0").unwrap().2, "manual");
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
         assert_eq!(
@@ -178,8 +175,7 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     });
     cx.simulate_keystrokes(window, "cmd-a backspace");
     cx.run_until_parked();
-    click_control(cx, window, "conflict-choice-0");
-    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    click_control(cx, window, "conflict-hunk-0-left");
     crate::keyboard_nav::keys(cx, window, "escape");
     // Even a direct mutation request must refuse to replace divergent manual text.
     conflict.update(cx, |view, cx| {

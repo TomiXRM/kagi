@@ -169,7 +169,7 @@ fn line_number(line_no: usize) -> gpui::Div {
         .w(theme::scaled_px(47.))
         .pl(theme::scaled_px(9.))
         .text_size(theme::scaled_px(11.))
-        .line_height(theme::scaled_px(18.))
+        .line_height(theme::scaled_px(24.))
         .font_family(terminal::pick_font_family())
         .text_color(rgb(theme().text_sub))
         .child(line_no.to_string())
@@ -190,12 +190,13 @@ fn render_source_row(
         .flex()
         .items_center()
         .min_w(relative(1.))
-        .h(theme::scaled_px(18.))
+        .h(theme::scaled_px(24.))
         .border_l(theme::scaled_px(3.));
     match row {
         SideRow::Context { line_no, text } => base
             .id(SharedString::from(format!("context-{row_index}")))
             .border_color(gpui::transparent_black())
+            .child(div().w(theme::scaled_px(24.)).flex_shrink_0())
             .child(line_number(*line_no))
             .child(code_text(
                 text.clone(),
@@ -221,9 +222,66 @@ fn render_source_row(
             dim,
             diff_spans,
         } => {
+            let (hunk, line) = (*hunk_index, *line_index);
+            let taken = *taken;
+            let id = format!("resolver-hunk-{hunk}-{}-line-{line}", side_key(side));
+            let name = Msg::conflict_line(keyboard.borrow().side_name(side), *line_no);
+            #[cfg(feature = "gui-e2e")]
+            crate::ui::conflict_editor_a11y::record_checkbox(&id, &name, taken);
+            let down_path = path.clone();
+            let checkbox_path = path.clone();
+            let move_path = path.clone();
+            let key_path = path.clone();
+            // The row owns focus. Remount the indicator on state changes rather
+            // than retaining the pinned Checkbox's detached 250ms animation
+            // after a virtual row (or its window) has been retired.
+            let checkbox = gpui_component::checkbox::Checkbox::new(SharedString::from(format!(
+                "{id}-checkbox-{taken}"
+            )))
+            .xsmall()
+            .tab_stop(false)
+            .disabled(!enabled)
+            .checked(taken)
+            .aria_label(SharedString::from(name.clone()))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |view, _, window, cx| {
+                    cx.stop_propagation();
+                    if enabled && view.editing.as_deref() == Some(checkbox_path.as_path()) {
+                        view.resolver_keyboard
+                            .borrow()
+                            .focus_line(hunk, side, line, window, cx);
+                        view.line_paint = Some((side, !taken));
+                        view.conflict_editor_set_hunk_line(
+                            &checkbox_path,
+                            hunk,
+                            side,
+                            line,
+                            !taken,
+                        );
+                        cx.notify();
+                    }
+                }),
+            );
             let content = base
+                .id(SharedString::from(id.clone()))
+                .role(gpui::Role::CheckBox)
+                .aria_label(SharedString::from(name))
+                .aria_toggled(if taken {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
                 .border_color(rgb(theme().color_blocker))
                 .bg(rgb(theme().diff_removed_bg))
+                .child(
+                    div()
+                        .w(theme::scaled_px(24.))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_center()
+                        .child(checkbox),
+                )
                 .child(line_number(*line_no))
                 .child(
                     code_text(
@@ -234,31 +292,56 @@ fn render_source_row(
                         gpui::transparent_black(),
                     )
                     .when(*dim, |el| el.opacity(0.45)),
-                );
-            let (hunk, line) = (*hunk_index, *line_index);
-            let path = path.clone();
-            let take = !*taken;
-            crate::ui::conflict_editor_keys::adoption(
-                format!("resolver-hunk-{hunk}-{}-line-{line}", side_key(side)),
-                Msg::conflict_line(keyboard.borrow().side_name(side), *line_no),
-                crate::ui::conflict_editor_keys::ControlState::Adoption(if *taken {
-                    TriState::All
-                } else {
-                    TriState::None
-                }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |view, _, window, cx| {
+                        if enabled && view.editing.as_deref() == Some(down_path.as_path()) {
+                            view.resolver_keyboard
+                                .borrow()
+                                .focus_line(hunk, side, line, window, cx);
+                            view.conflict_editor_set_hunk_line(
+                                &down_path, hunk, side, line, !taken,
+                            );
+                            cx.notify();
+                        }
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(move |view, event: &gpui::MouseMoveEvent, _, cx| {
+                        if enabled
+                            && event.pressed_button == Some(gpui::MouseButton::Left)
+                            && view.editing.as_deref() == Some(move_path.as_path())
+                        {
+                            if let Some((pane, target)) = view.line_paint {
+                                if pane == side && target != taken {
+                                    view.conflict_editor_set_hunk_line(
+                                        &move_path, hunk, side, line, target,
+                                    );
+                                    cx.notify();
+                                }
+                            }
+                        }
+                    }),
+                )
+                .on_click(cx.listener(move |view, event: &gpui::ClickEvent, _, cx| {
+                    if enabled && event.is_keyboard() {
+                        view.conflict_editor_set_hunk_line(&key_path, hunk, side, line, !taken);
+                        cx.notify();
+                    }
+                }))
+                .relative()
+                .child(e2e::measure_inside(id));
+            crate::ui::conflict_editor_keys::line_navigation(
                 content,
-                Some(hunk),
+                hunk,
+                side,
+                line,
+                taken,
                 enabled,
                 keyboard,
-                cx.listener(move |view, _: &gpui::ClickEvent, _, cx| {
-                    view.conflict_editor_select_hunk(hunk);
-                    view.conflict_editor_set_hunk_line(&path, hunk, side, line, take);
-                    cx.notify();
-                }),
-                cx,
+                &cx.entity(),
             )
-            .h(theme::scaled_px(18.))
-            .min_w(relative(1.))
             .into_any_element()
         }
     }

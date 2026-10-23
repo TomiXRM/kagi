@@ -27,7 +27,9 @@ impl ConflictView {
         } else {
             flow::render(self.mode.as_ref().expect("workspace mode"), &chrome, cx)
         };
+        let paint_owner = cx.entity().downgrade();
         div()
+            .relative()
             .flex()
             .flex_1()
             .min_w(px(0.))
@@ -42,6 +44,21 @@ impl ConflictView {
                     .min_h(px(0.))
                     .child(header)
                     .child(body),
+            )
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        let owner = paint_owner.clone();
+                        window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, _, cx| {
+                            if phase.capture() && event.button == gpui::MouseButton::Left {
+                                let _ = owner.update(cx, |view, _| view.line_paint = None);
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
             )
             .into_any_element()
     }

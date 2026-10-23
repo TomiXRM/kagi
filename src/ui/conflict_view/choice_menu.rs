@@ -1,11 +1,12 @@
-//! Gutter pull-down: shared menu overlay and focus lifecycle, in-memory choices only.
+//! Gutter More menu: shared overlay and focus lifecycle, in-memory choices only.
 use super::*;
 use kagi_git::resolution::HunkChoice;
 
 #[derive(Clone)]
 enum ChoiceAction {
     Choose(HunkChoice),
-    Reset,
+    ResetHunk,
+    ResetAll,
 }
 
 pub fn render_choice_menu(
@@ -16,7 +17,14 @@ pub fn render_choice_menu(
 ) -> Option<gpui::AnyElement> {
     let view = entity.read(cx);
     let keys = view.choice_menu_keys.clone();
-    let fallback = view.navigation_focus.clone();
+    let fallback = view
+        .resolver_keyboard
+        .borrow()
+        .more_focus(
+            view.choice_menu
+                .map_or(view.selected_hunk, |(hunk, _)| hunk),
+        )
+        .or_else(|| view.navigation_focus.clone());
     let open = view.choice_menu.is_some();
     keys.sync(open, false, fallback.as_ref(), window, cx);
     let view = entity.read(cx);
@@ -50,13 +58,13 @@ pub fn render_choice_menu(
             title: None,
             items: vec![
                 item(
-                    ChoiceAction::Choose(HunkChoice::AcceptCurrent),
-                    Msg::ConflictUseLeft.t(),
+                    ChoiceAction::Choose(HunkChoice::BothCurrentFirst),
+                    Msg::ConflictBothLeftFirst.t(),
                     enabled,
                 ),
                 item(
-                    ChoiceAction::Choose(HunkChoice::AcceptIncoming),
-                    Msg::ConflictUseRight.t(),
+                    ChoiceAction::Choose(HunkChoice::BothIncomingFirst),
+                    Msg::ConflictBothRightFirst.t(),
                     enabled,
                 ),
             ],
@@ -65,28 +73,20 @@ pub fn render_choice_menu(
             title: None,
             items: vec![
                 item(
-                    ChoiceAction::Choose(HunkChoice::BothCurrentFirst),
-                    Msg::ConflictUseBothLeftFirst.t(),
-                    enabled,
+                    ChoiceAction::ResetHunk,
+                    Msg::ConflictResetHunk.t(),
+                    reset_enabled,
                 ),
                 item(
-                    ChoiceAction::Choose(HunkChoice::BothIncomingFirst),
-                    Msg::ConflictUseBothRightFirst.t(),
-                    enabled,
+                    ChoiceAction::ResetAll,
+                    if armed {
+                        Msg::EditorResetAllConfirm.t()
+                    } else {
+                        Msg::EditorReset.t()
+                    },
+                    reset_enabled,
                 ),
             ],
-        },
-        MenuGroup {
-            title: None,
-            items: vec![item(
-                ChoiceAction::Reset,
-                if armed {
-                    Msg::EditorResetAllConfirm.t()
-                } else {
-                    Msg::EditorReset.t()
-                },
-                reset_enabled,
-            )],
         },
     ];
     let dismiss = entity.clone();
@@ -116,7 +116,20 @@ pub fn render_choice_menu(
                     ChoiceAction::Choose(choice) => {
                         view.conflict_choose_hunk(&path, hunk, choice, cx)
                     }
-                    ChoiceAction::Reset => view.conflict_editor_reset_all_request(&path),
+                    ChoiceAction::ResetHunk => {
+                        if !view.writer_busy {
+                            view.reset_all_target = None;
+                            if let Some(inputs) = view.editor_inputs.as_mut() {
+                                inputs.content_sig = 0;
+                            }
+                            if let Some(mode) = view.mode.as_mut() {
+                                mode.buffer.reset_hunk(&path, hunk);
+                                mode.refresh_file_status(&path);
+                                let _ = mode.buffer.autosave();
+                            }
+                        }
+                    }
+                    ChoiceAction::ResetAll => view.conflict_editor_reset_all_request(&path),
                 }
                 cx.notify();
             });

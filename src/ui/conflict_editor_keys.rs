@@ -101,8 +101,11 @@ impl ResolverKeyboard {
                         if n == selected_hunk {
                             scroll.scroll_to_item_strict(row, gpui::ScrollStrategy::Center);
                         }
-                        rows.push((format!("conflict-choice-{n}"), row));
-                        let mut controls = Vec::new();
+                        rows.push((format!("conflict-hunk-{n}-left"), row));
+                        let mut controls = vec![
+                            (format!("conflict-hunk-{n}-more"), cx.focus_handle(), row),
+                            (format!("conflict-hunk-{n}-right"), cx.focus_handle(), row),
+                        ];
                         for (side, lines) in
                             [("current", &hunk.current), ("incoming", &hunk.incoming)]
                         {
@@ -183,16 +186,99 @@ impl ResolverKeyboard {
             list.focus_row(hunk, window, cx);
         }
     }
-    pub(crate) fn hunk_focused(&self, hunk: usize, window: &Window) -> bool {
-        self.list
-            .as_ref()
-            .is_some_and(|list| hunk < list.len() && list.focus_handle(hunk).is_focused(window))
+    pub(crate) fn more_focus(&self, hunk: usize) -> Option<FocusHandle> {
+        self.controls
+            .get(hunk)
+            .and_then(|controls| controls.first())
+            .map(|(_, handle, _)| handle.clone())
+    }
+
+    pub(crate) fn focus_more(&self, hunk: usize, window: &mut Window, cx: &mut App) {
+        if let Some(handle) = self.more_focus(hunk) {
+            if let Some(list) = &self.list {
+                list.reveal_entry(self.rows[hunk].1);
+            }
+            handle.focus(window, cx);
+        }
+    }
+
+    pub(crate) fn more_focused(&self, hunk: usize, window: &Window) -> bool {
+        self.controls
+            .get(hunk)
+            .and_then(|controls| controls.first())
+            .is_some_and(|(_, handle, _)| handle.is_focused(window))
     }
     pub(crate) fn side_name(&self, side: SelectionSide) -> &str {
         &self.side_names[match side {
             SelectionSide::Current => 0,
             SelectionSide::Incoming => 1,
         }]
+    }
+    pub(crate) fn focus_line(
+        &self,
+        hunk: usize,
+        side: SelectionSide,
+        line: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let offset = match side {
+            SelectionSide::Current => 2,
+            SelectionSide::Incoming => {
+                let Some(RegionShape::Hunk(current, _)) = self
+                    .structure
+                    .iter()
+                    .filter(|shape| matches!(shape, RegionShape::Hunk(..)))
+                    .nth(hunk)
+                else {
+                    return;
+                };
+                2 + current
+            }
+        };
+        if let Some((_, handle, row)) = self
+            .controls
+            .get(hunk)
+            .and_then(|items| items.get(offset + line))
+        {
+            if let Some(list) = &self.list {
+                list.reveal_entry(*row);
+            }
+            handle.focus(window, cx);
+        }
+    }
+
+    fn neighbour_line(
+        &self,
+        hunk: usize,
+        side: SelectionSide,
+        line: usize,
+        forward: bool,
+    ) -> Option<(usize, usize)> {
+        let hunks = self.structure.iter().filter_map(|shape| match shape {
+            RegionShape::Hunk(current, incoming) => Some(match side {
+                SelectionSide::Current => *current,
+                SelectionSide::Incoming => *incoming,
+            }),
+            RegionShape::Context(_) => None,
+        });
+        if forward {
+            for (index, count) in hunks.enumerate().skip(hunk) {
+                let next = if index == hunk { line + 1 } else { 0 };
+                if next < count {
+                    return Some((index, next));
+                }
+            }
+            None
+        } else if line > 0 {
+            Some((hunk, line - 1))
+        } else {
+            hunks
+                .enumerate()
+                .take(hunk)
+                .filter_map(|(index, count)| count.checked_sub(1).map(|line| (index, line)))
+                .last()
+        }
     }
     fn move_control(
         &self,
@@ -224,7 +310,6 @@ impl ResolverKeyboard {
 }
 pub(crate) enum ControlState {
     Adoption(TriState),
-    Choice(String),
 }
 impl ControlState {
     fn parts(self) -> (&'static str, SharedString, bool) {
@@ -237,21 +322,6 @@ impl ControlState {
                     TriState::All => ("all", Msg::EditorSelectionAll),
                 };
                 (key, message.t().into(), state == TriState::All)
-            }
-            Self::Choice(label) => {
-                use super::i18n::Msg;
-                let state = if label == Msg::ConflictChoiceLeft.t() {
-                    "left"
-                } else if label == Msg::ConflictChoiceRight.t() {
-                    "right"
-                } else if label == Msg::ConflictChoiceManual.t() {
-                    "manual"
-                } else if label == "?" {
-                    "none"
-                } else {
-                    "both"
-                };
-                (state, label.into(), state != "none")
             }
         }
     }
@@ -328,7 +398,7 @@ pub(crate) fn adoption(
     el.relative().child(super::e2e::measure_inside(id))
 }
 
-fn attach_navigation(
+pub(crate) fn attach_navigation(
     mut el: gpui::Stateful<gpui::Div>,
     hunk: Option<usize>,
     id: &str,
@@ -398,4 +468,67 @@ fn attach_navigation(
             .borrow()
             .move_control(hunk, &next_id, 1, window, cx)
     })
+}
+
+/// Paint the neighbouring conflict line without changing panes or the roving owner.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn line_navigation(
+    el: gpui::Stateful<gpui::Div>,
+    hunk: usize,
+    side: SelectionSide,
+    line: usize,
+    taken: bool,
+    enabled: bool,
+    owner: &Rc<RefCell<ResolverKeyboard>>,
+    entity: &gpui::Entity<ConflictView>,
+) -> gpui::Stateful<gpui::Div> {
+    let side_key = match side {
+        SelectionSide::Current => "current",
+        SelectionSide::Incoming => "incoming",
+    };
+    let id = format!("resolver-hunk-{hunk}-{side_key}-line-{line}");
+    let mut el = el.on_key_down(keyboard_nav::stop_activation_keys);
+    if enabled {
+        el = attach_navigation(el, Some(hunk), &id, owner);
+        let owner = owner.clone();
+        let entity = entity.clone();
+        el = el.on_key_down(move |event, window, cx| {
+            let key = &event.keystroke;
+            if !key.modifiers.shift
+                || key.modifiers.control
+                || key.modifiers.alt
+                || key.modifiers.platform
+                || !matches!(key.key.as_str(), "up" | "down")
+            {
+                return;
+            }
+            cx.stop_propagation();
+            let neighbour = owner
+                .borrow()
+                .neighbour_line(hunk, side, line, key.key == "down");
+            if let Some((next_hunk, next_line)) = neighbour {
+                entity.update(cx, |view, cx| {
+                    if let Some(path) = view.editing.clone() {
+                        view.conflict_editor_set_hunk_line(
+                            &path, next_hunk, side, next_line, taken,
+                        );
+                        cx.notify();
+                    }
+                });
+                owner
+                    .borrow()
+                    .focus_line(next_hunk, side, next_line, window, cx);
+            }
+        });
+    }
+    #[cfg(feature = "gui-e2e")]
+    {
+        el = el.on_key_down(move |event, _, cx| {
+            if event.keystroke.key == "f19" {
+                super::conflict_editor_a11y::focus(&id);
+                cx.stop_propagation();
+            }
+        });
+    }
+    el
 }

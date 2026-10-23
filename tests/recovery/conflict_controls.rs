@@ -52,8 +52,8 @@ fn fixture() -> tempfile::TempDir {
 }
 
 fn reset_menu(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, hunk: usize) {
-    click_control(cx, window, &format!("conflict-choice-{hunk}"));
-    click_control(cx, window, "conflict-choice-menu-item-2-0");
+    click_control(cx, window, &format!("conflict-hunk-{hunk}-more"));
+    click_control(cx, window, "conflict-choice-menu-item-1-1");
 }
 fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
     for navigation in ["conflict-next-hunk", "conflict-prev-hunk", "conflict-row-1"] {
@@ -224,19 +224,20 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 crate::keyboard_nav::keys(cx, window, "tab");
                 crate::keyboard_nav::keys(cx, window, "f19");
                 match kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref() {
-                    Some("conflict-choice-0") => {
+                    Some("conflict-hunk-0-left") => {
                         // The whole-file resolver has one roving Tab stop.
                         // Adoption of hunk 0 moved that entry point back to 0.
-                        crate::keyboard_nav::keys(cx, window, "down f19");
+                        crate::keyboard_nav::keys(cx, window, "down right f19");
                         assert_eq!(
                             kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref(),
-                            Some("conflict-choice-1"),
+                            Some("conflict-hunk-1-more"),
                             "Down reaches the next hunk from the actual Tab stop"
                         );
                         found = true;
                         break;
                     }
-                    Some("conflict-choice-1") => {
+                    Some("conflict-hunk-1-left") => {
+                        crate::keyboard_nav::keys(cx, window, "right");
                         found = true;
                         break;
                     }
@@ -259,8 +260,8 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             crate::keyboard_nav::keys(cx, window, "f19");
             assert_eq!(
                 kagi::ui::conflict_editor_a11y::take_focus_probe().as_deref(),
-                Some("conflict-choice-1"),
-                "arming returns focus to the pill for explicit confirmation"
+                Some("conflict-hunk-1-more"),
+                "arming returns focus to More for explicit confirmation"
             );
             crate::keyboard_nav::keys(cx, window, "enter end");
             crate::keyboard_nav::keys(cx, window, key);
@@ -436,4 +437,212 @@ pub fn scenario_conflict_reset_disarm(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_conflict_result_segment(cx: &mut VisualTestAppContext) {
     matrix(cx, result_leg);
+}
+
+fn assert_incoming_lines(selected: [bool; 3]) {
+    use kagi::ui::conflict_editor_a11y as ax;
+    for (line, selected) in selected.into_iter().enumerate() {
+        let (role, _, state) =
+            ax::control(&format!("resolver-hunk-0-incoming-line-{line}")).unwrap();
+        assert_eq!(role, gpui::Role::CheckBox);
+        assert_eq!(state, if selected { "all" } else { "none" });
+    }
+}
+
+fn drag_three_lines(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle) {
+    use gpui::{Modifiers, MouseButton};
+    let points: Vec<_> = (0..3)
+        .map(|line| {
+            let bounds = e2e::control_bounds(
+                window.window_id(),
+                &format!("resolver-hunk-0-incoming-line-{line}"),
+            )
+            .expect("dragged checkbox is laid out");
+            gpui::point(bounds.left() + theme::scaled_px(12.), bounds.center().y)
+        })
+        .collect();
+    cx.simulate_mouse_move(window, points[0], None, Modifiers::none());
+    cx.simulate_mouse_down(window, points[0], MouseButton::Left, Modifiers::none());
+    for point in &points[1..] {
+        cx.simulate_mouse_move(window, *point, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+    }
+    cx.simulate_mouse_up(window, points[2], MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+}
+
+fn assert_more_menu(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, lang: Lang) {
+    crate::native_ax::activate(cx);
+    click_control(cx, window, "conflict-hunk-0-more");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let tree = crate::native_ax::tree(cx, window);
+    let items: Vec<_> = tree["nodes"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|node| node["aria"]["role"] == "MenuItem")
+        .collect();
+    assert_eq!(items.len(), 4, "More contains exactly four commands");
+    let labels = if lang == Lang::Ja {
+        [
+            "両方を使う（← → の順）",
+            "両方を使う（→ ← の順）",
+            "この hunk をリセット",
+            "すべてリセット",
+        ]
+    } else {
+        [
+            "Use both, left first",
+            "Use both, right first",
+            "Reset this hunk",
+            "Reset all",
+        ]
+    };
+    let mut previous_bottom = None;
+    for (item, label) in ["0-0", "0-1", "1-0", "1-1"].into_iter().zip(labels) {
+        let id = format!("conflict-choice-menu-item-{item}");
+        let identity = format!("{:?}", gpui::ElementId::Name(id.clone().into()));
+        let node = items
+            .iter()
+            .find(|node| node["element_id"] == identity)
+            .unwrap_or_else(|| panic!("missing More item {id}: {tree}"));
+        assert_eq!(node["aria"]["label"], label);
+        let bounds = e2e::control_bounds(window.window_id(), &id).unwrap();
+        if let Some(bottom) = previous_bottom {
+            assert!(
+                bounds.top() >= bottom,
+                "More commands retain their specified order"
+            );
+        }
+        previous_bottom = Some(bounds.bottom());
+    }
+    crate::keyboard_nav::keys(cx, window, "escape");
+}
+
+fn arrow_checkbox_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
+    use kagi::ui::conflict_editor_a11y as ax;
+    let fixture = crate::conflict_text_keyboard::fixture();
+    let before = repo_fingerprint(fixture.path());
+    let (app, window) = mount(cx, fixture.path());
+    theme::set_zoom(zoom);
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        app.detect_conflict_mode(cx);
+    });
+    crate::pr_detail_adaptive::resize(cx, window, (1392., 883.));
+    cx.run_until_parked();
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    click_control(cx, window, "conflict-hunk-0-right");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert_incoming_lines([true; 3]);
+    assert_eq!(ax::control("conflict-hunk-0-right").unwrap().2, "all");
+    assert_eq!(ax::control("conflict-hunk-0-left").unwrap().2, "none");
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let result = view
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .resolved_text(Path::new("notes.txt"))
+            .unwrap();
+        assert!(result.contains("theirs 1\ntheirs 2\ntheirs 3\n"));
+        assert!(!result.contains("ours 1\n"));
+        assert_eq!(
+            view.editor_inputs
+                .as_ref()
+                .unwrap()
+                .result
+                .read(cx)
+                .value()
+                .as_str(),
+            result
+        );
+    });
+    let line = e2e::control_bounds(window.window_id(), "resolver-hunk-0-incoming-line-1").unwrap();
+    let checkbox = gpui::point(line.left() + theme::scaled_px(12.), line.center().y);
+    cx.simulate_mouse_move(window, checkbox, None, gpui::Modifiers::none());
+    cx.simulate_click(window, checkbox, gpui::Modifiers::none());
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert_incoming_lines([true, false, true]);
+    assert_eq!(ax::control("conflict-hunk-0-right").unwrap().2, "partial");
+    cx.read(|cx| {
+        let result = conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .resolved_text(Path::new("notes.txt"))
+            .unwrap();
+        assert!(result.contains("theirs 1\ntheirs 3\n"));
+        assert!(!result.contains("theirs 2\n"));
+    });
+    assert_more_menu(cx, window, lang);
+    click_control(cx, window, "conflict-hunk-0-more");
+    click_control(cx, window, "conflict-choice-menu-item-1-0");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert_incoming_lines([false; 3]);
+    let unresolved = cx.read(|cx| {
+        conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .resolved_text(Path::new("notes.txt"))
+            .unwrap()
+    });
+    drag_three_lines(cx, window);
+    assert_incoming_lines([true; 3]);
+    assert_eq!(ax::control("conflict-hunk-0-right").unwrap().2, "all");
+    cx.read(|cx| {
+        let result = conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .resolved_text(Path::new("notes.txt"))
+            .unwrap();
+        assert!(result.contains("theirs 1\ntheirs 2\ntheirs 3\n"));
+    });
+    drag_three_lines(cx, window);
+    assert_incoming_lines([false; 3]);
+    assert_eq!(ax::control("conflict-hunk-0-right").unwrap().2, "none");
+    cx.read(|cx| {
+        let buffer = &conflict.read(cx).mode.as_ref().unwrap().buffer;
+        let result = buffer.resolved_text(Path::new("notes.txt")).unwrap();
+        assert_eq!(
+            result, unresolved,
+            "clearing the final selected line restores the exact unresolved Result, including markers"
+        );
+        let model = buffer.hunk_model(Path::new("notes.txt")).unwrap();
+        let hunk = model.hunks()[0];
+        assert_eq!(hunk.choice, kagi_git::resolution::HunkChoice::Unresolved);
+        assert!(hunk.line_select.is_none());
+        assert!(!hunk.is_resolved());
+        assert!(buffer.cached_marker_residue(Path::new("notes.txt")));
+    });
+    assert_eq!(
+        repo_fingerprint(fixture.path()),
+        before,
+        "arrow, checkbox, drag and More never write HEAD/index/worktree"
+    );
+    assert!(kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 100).is_empty());
+    drop(conflict);
+    unmount(cx, app, window);
+}
+
+pub fn scenario_conflict_arrow_checkboxes(cx: &mut VisualTestAppContext) {
+    matrix(cx, arrow_checkbox_leg);
 }

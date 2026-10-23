@@ -3259,6 +3259,10 @@ mod macos {
                 Box::new(crate::conflict_controls::scenario_conflict_reset_disarm),
             ),
             (
+                "conflict_arrow_checkboxes",
+                Box::new(crate::conflict_controls::scenario_conflict_arrow_checkboxes),
+            ),
+            (
                 "conflict_result_segment",
                 Box::new(crate::conflict_controls::scenario_conflict_result_segment),
             ),

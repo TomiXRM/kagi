@@ -1,6 +1,7 @@
 //! Borderless source documents, aligned decision gutter, and direct Result editor.
 use super::*;
 use kagi_git::resolution::HunkChoice;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(super) fn tool_button<H>(
     id: &str,
@@ -154,7 +155,7 @@ pub(super) fn render_panes(
                 )
                 .child(
                     div()
-                        .w(theme::scaled_px(44.))
+                        .w(theme::scaled_px(78.))
                         .flex_shrink_0()
                         .flex()
                         .flex_col()
@@ -194,31 +195,26 @@ fn decision_gutter(
         match region {
             Region::Passthrough(lines) => rows.extend((0..lines.len()).map(|_| None)),
             Region::Hunk(conflict) => {
-                let label = if conflict.line_select.is_some() {
-                    // Line adoption overrides choice, which can still be Unresolved.
-                    Msg::ConflictChoiceManual.t()
+                let left = conflict.side_state(SelectionSide::Current);
+                let right = conflict.side_state(SelectionSide::Incoming);
+                let mixed = left == TriState::Partial || right == TriState::Partial;
+                let states = if mixed {
+                    [TriState::Partial; 2]
                 } else {
-                    match conflict.choice {
-                        HunkChoice::Unresolved => "?",
-                        HunkChoice::AcceptCurrent => Msg::ConflictChoiceLeft.t(),
-                        HunkChoice::AcceptIncoming => Msg::ConflictChoiceRight.t(),
-                        HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst => {
-                            Msg::ConflictChoiceBoth.t()
-                        }
-                        HunkChoice::Manual(_) => Msg::ConflictChoiceManual.t(),
-                    }
+                    [left, right]
                 };
-                rows.push(Some((hunk, label.to_owned())));
+                rows.push(Some((hunk, states, true)));
                 rows.extend(
                     (1..conflict.current.len().max(conflict.incoming.len()).max(1))
-                        .map(|_| Some((hunk, String::new()))),
+                        .map(|_| Some((hunk, states, false))),
                 );
                 hunk += 1;
             }
         }
     }
     let path = path.to_path_buf();
-    let total = hunk;
+    let enabled = chrome.source_choices_enabled;
+    let menu_enabled = !chrome.writer_busy;
     let scroll = chrome.ab_scroll.clone();
     div().relative().flex_1().min_h(px(0.)).child(
         uniform_list(
@@ -231,70 +227,91 @@ fn decision_gutter(
                     .map(|(i, row)| {
                         let band = div()
                             .id(SharedString::from(format!("gutter-{i}")))
-                            .h(theme::scaled_px(18.))
+                            .h(theme::scaled_px(24.))
                             .w_full()
                             .flex()
                             .items_center()
                             .justify_center()
                             .when(row.is_some(), |el| el.bg(rgb(theme().diff_removed_bg)));
-                        if let Some((hunk, label)) =
-                            row.as_ref().filter(|(_, label)| !label.is_empty())
-                        {
+                        if let Some((hunk, states, true)) = row {
                             let hunk = *hunk;
-                            let id = format!("conflict-choice-{hunk}");
-                            let menu_path = path.clone();
-                            let name =
-                                format!("{} {}/{total}", Msg::EditorConflictNofM.t(), hunk + 1);
-                            band.child(
-                                crate::ui::conflict_editor_keys::adoption(
+                            let mut band = band;
+                            for (key, label, name, choice, state) in [
+                                (
+                                    "left",
+                                    "←",
+                                    Msg::ConflictUseLeftSide,
+                                    Some(HunkChoice::AcceptCurrent),
+                                    states[0],
+                                ),
+                                ("more", "…", Msg::ConflictMoreChoices, None, TriState::None),
+                                (
+                                    "right",
+                                    "→",
+                                    Msg::ConflictUseRightSide,
+                                    Some(HunkChoice::AcceptIncoming),
+                                    states[1],
+                                ),
+                            ] {
+                                let id = format!("conflict-hunk-{hunk}-{key}");
+                                let path = path.clone();
+                                let control = crate::ui::conflict_editor_keys::adoption(
                                     id,
-                                    name,
-                                    crate::ui::conflict_editor_keys::ControlState::Choice(
-                                        label.clone(),
-                                    ),
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .gap(theme::scaled_px(3.))
-                                        .text_color(rgb(theme().ui_accent()))
-                                        .child(label.clone())
-                                        .child(
-                                            gpui_component::Icon::new(
-                                                gpui_component::IconName::ChevronDown,
-                                            )
-                                            .size(theme::scaled_px(9.))
-                                            .text_color(rgb(theme().ui_accent())),
-                                        ),
+                                    name.t().to_owned(),
+                                    crate::ui::conflict_editor_keys::ControlState::Adoption(state),
+                                    label,
                                     Some(hunk),
-                                    true,
+                                    if key == "more" { menu_enabled } else { enabled },
                                     &view.resolver_keyboard,
                                     cx.listener(
                                         move |view, event: &gpui::ClickEvent, window, cx| {
-                                            if view.editing.as_deref() == Some(menu_path.as_path())
-                                            {
-                                                view.conflict_editor_select_hunk(hunk);
+                                            if view.editing.as_deref() != Some(path.as_path()) {
+                                                return;
+                                            }
+                                            view.conflict_editor_select_hunk(hunk);
+                                            if choice.is_some() {
                                                 view.resolver_keyboard
                                                     .borrow()
                                                     .focus_hunk(hunk, window, cx);
-                                                view.choice_menu = Some((hunk, event.position()));
-                                                cx.notify();
+                                            } else {
+                                                view.resolver_keyboard
+                                                    .borrow()
+                                                    .focus_more(hunk, window, cx);
                                             }
+                                            if let Some(choice) = &choice {
+                                                view.conflict_choose_hunk(
+                                                    &path,
+                                                    hunk,
+                                                    choice.clone(),
+                                                    cx,
+                                                );
+                                            } else {
+                                                view.choice_menu = Some((hunk, event.position()));
+                                            }
+                                            cx.notify();
                                         },
                                     ),
                                     cx,
                                 )
-                                .w(theme::scaled_px(38.))
-                                .h(theme::scaled_px(20.))
-                                .rounded(theme::scaled_px(10.))
-                                .border_1()
-                                .border_color(rgb(theme().elevated_border(theme().surface)))
-                                .bg(rgb(theme().elevated_surface(theme().modal)))
-                                .text_size(theme::scaled_px(12.))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(rgb(theme().ui_accent())),
-                            )
-                            .into_any_element()
+                                .size(theme::scaled_px(24.))
+                                .rounded(theme::scaled_px(5.))
+                                .text_size(theme::scaled_px(16.))
+                                .text_color(rgb(theme().ui_accent()))
+                                .when(state == TriState::All, |el| el.bg(rgb(theme().selected)))
+                                .when(
+                                    state == TriState::Partial,
+                                    |el| {
+                                        el.bg(gpui::rgba((theme().ui_accent() << 8) | 0x28))
+                                            .border_b_2()
+                                            .border_color(rgb(theme().ui_accent()))
+                                    },
+                                );
+                                band = band.child(control.hover_tooltip(
+                                    SharedString::from(format!("conflict-hunk-{hunk}-{key}-help")),
+                                    name.t(),
+                                ));
+                            }
+                            band.into_any_element()
                         } else {
                             band.into_any_element()
                         }

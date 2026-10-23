@@ -43,6 +43,7 @@ pub mod hotspot_report;
 pub mod issue_composer;
 pub mod list_filter;
 pub mod load_request;
+pub mod merge_msg;
 pub mod merge_state;
 pub mod mermaid;
 pub mod message;

@@ -1155,6 +1155,64 @@ fn save_resolution_stages_file_to_stage_zero() {
     assert!(!kagi_git::text_has_conflict_marker(&wt));
 }
 
+/// The session's `resolved` list is Git's own evidence (`MERGE_MSG` conflicts ∩
+/// index stage 0): empty while unmerged, the saved path with its staged OID
+/// after Save, and never an unrelated staged file (ADR-0227 sidebar).
+#[test]
+fn session_resolved_lists_saved_conflict_paths_only() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+
+    let before = detect_conflict_session(&repo).expect("merge in progress");
+    assert_eq!(before.files.len(), 1);
+    assert!(before.resolved.is_empty(), "nothing resolved before Save");
+
+    // An unrelated staged file must never read as a resolved conflict.
+    write_file(dir, "other.txt", "unrelated\n");
+    git(dir, &["add", "other.txt"]);
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    execute_conflict_save(&repo, &buffer, path).expect("save");
+
+    let repo2 = Repository::open(dir).unwrap();
+    let after = detect_conflict_session(&repo2).expect("merge still in progress");
+    assert!(
+        after.files.is_empty(),
+        "saved path leaves the unmerged list"
+    );
+    let staged = repo2
+        .index()
+        .unwrap()
+        .get_path(path, 0)
+        .unwrap()
+        .id
+        .to_string();
+    assert_eq!(
+        after
+            .resolved
+            .iter()
+            .map(|file| (file.path.clone(), file.oid.clone()))
+            .collect::<Vec<_>>(),
+        vec![(path.to_path_buf(), staged)]
+    );
+
+    // A later external change to the staged blob is reflected, not remembered.
+    write_file(dir, "file.txt", "line one\nEXTERNAL\nline three\n");
+    git(dir, &["add", "file.txt"]);
+    let repo3 = Repository::open(dir).unwrap();
+    let moved = detect_conflict_session(&repo3).unwrap();
+    assert_eq!(moved.resolved.len(), 1);
+    assert_ne!(moved.resolved[0].oid, after.resolved[0].oid);
+}
+
 /// Save refuses (blocks) when the resolved text still has conflict markers.
 #[test]
 fn save_resolution_blocks_on_marker_residue() {

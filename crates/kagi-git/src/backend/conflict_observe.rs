@@ -133,6 +133,7 @@ pub(crate) fn draft_context(repo: &Repository) -> Option<ConflictRevision> {
     let session = conflicts::ConflictSession {
         op: conflicts::classify_op(repo, repo.state())?,
         files: Vec::new(),
+        resolved: Vec::new(),
     };
     let (mut parts, tail, known) = operation_parts(repo, &session, true).ok()?;
     if !known {

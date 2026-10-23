@@ -182,3 +182,48 @@ writes, persistence, safety, rendering performance or native accessibility.
 
 OpenPencil review and mock experiments are prerequisites, not substitutes for
 these native acceptance checks. Main stays unchanged throughout this experiment.
+
+## Record: OpenPencil design, Fable review, mock trials (2026-10-23)
+
+Design source: `docs/ui/conflict-sidebar/build-boards.js` (run through
+`openpencil import` + `eval`, see `rebuild.sh`). Fonts: Noto Sans JP, JetBrains
+Mono, Noto Sans Symbols 2 fetched by OpenPencil; Inter alone drops CJK glyphs.
+Thirteen boards: 01 mixed, 02 ready-unsaved, 03 save-accepted, 04 all-saved,
+05 hidden, 06a/b narrow dark, 07/11 save-refused EN/JA, 08 deep paths, 09/10
+other files opened, 12 commit review hand-off.
+
+Fable cross-review (P1/P2/P3) changed the design before any trial:
+
+- One primary per screen: toolbar Continue is outline while 作業中 > 0 and the
+  only primary on the all-saved board. Next-file after Save is a secondary
+  control beside the title, never under the pointer position of the Save button.
+- No banners. All-saved state is carried by `作業中 (0)`, `保存済み (n)`, the
+  `未コミット` chip beside the operation and `コミットを確認`.
+- Stale evidence after an external change renders as `要確認` with `保存済み (0)`
+  and an unavailable Continue; no green chip survives a changed index.
+- Empty group collapses to header + dash; the lower group is content-sized up
+  to 40 %; an explicit scroller thumb marks clipped rows; folder counts only
+  when collapsed; neutral chips at 11 px with ≥4.5:1 ink; tree rows at the
+  existing 20 px; focus ring distinct from selection; `すべてリセット`.
+- Narrow JA adoption keeps the verb: `● 採用` / `○ 採用`; narrow toolbar keeps
+  その他; toggle shown = grey wash, hidden = surface + count badge; tooltip layer
+  `サイドバーを表示 ⌘⌥B`.
+
+Click-through trials (goal-only, Vietnamese goals, Haiku 4.5 / Sonnet 5.5 /
+GPT-6 Luna, hit regions from the actual node geometry):
+
+| Observation | Round 1 | Round 2 (after revision) |
+| --- | --- | --- |
+| Recovered a refused Save without losing the draft | 0/3 (Reload avoided: "might discard the draft") | Haiku ✓, Luna ✓, Sonnet named `もう一度保存` as the retry but stopped on two prototype no-ops |
+| Located the just-saved file before clicking | 3/3 | 3/3 |
+| Stated "no commit yet" with on-screen evidence | 3/3 (`未コミット`, lists, `コミットを確認`) | 3/3 |
+| Revealed hidden sidebar and opened another file | reveal 3/3; open blocked by missing boards | Sonnet ✓, Luna ✓ (Haiku did not run D2) |
+| Out-of-range / off-target clicks | Haiku 19/37, Luna 1/8, Sonnet 1/10 | Haiku 3/17, Luna 0/7, Sonnet 1/8 |
+
+Design consequence adopted: after a refused Save the screen keeps one primary
+`もう一度保存` / `Save again` (Save already re-reads inside plan → preflight) and
+a secondary `操作ログ`; the separate Reload control is removed. Prototype
+artifacts, not design findings: inert Operation Log affordances, an END state
+without a screen, and (round 1) missing boards for other files. Aim errors
+stay separate from UX interpretation; they motivate the harness driver, not
+larger controls. Model trials are not novice-human evidence.

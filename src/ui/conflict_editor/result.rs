@@ -136,6 +136,68 @@ pub(super) fn render_result_pane(
         })
         .unwrap_or(0);
     let status = format!("{} · {decided}/{total}", Msg::ConflictDraft.t());
+    let focused_resolved = mode
+        .buffer
+        .hunk_model(path)
+        .and_then(|model| {
+            model
+                .regions
+                .iter()
+                .filter_map(|region| match region {
+                    Region::Hunk(hunk) => Some(hunk.is_resolved()),
+                    _ => None,
+                })
+                .nth(chrome.selected_hunk)
+        })
+        .unwrap_or(false);
+    let reset_path = path.to_path_buf();
+    let reset = crate::ui::conflict_editor_keys::adoption(
+        "conflict-reset-hunk".into(),
+        Msg::ConflictResetFocusedAccessible.t().into(),
+        TriState::None,
+        Msg::ConflictResetFocused.t(),
+        ButtonRole::NeutralTinted,
+        None,
+        !chrome.writer_busy && focused_resolved,
+        &chrome.resolver_keyboard,
+        cx.listener(move |view, _, _, cx| {
+            view.conflict_editor_reset_hunk(&reset_path, view.selected_hunk);
+            cx.notify();
+        }),
+        cx,
+    );
+    let reset_path = path.to_path_buf();
+    let reset_focus = chrome.reset_all_focus.clone();
+    let reset_all = crate::ui::conflict_editor_keys::adoption(
+        "conflict-reset-all".into(),
+        if chrome.reset_all_armed {
+            Msg::EditorResetAllConfirm.t()
+        } else {
+            Msg::EditorReset.t()
+        }
+        .into(),
+        TriState::None,
+        if chrome.reset_all_armed {
+            Msg::EditorResetAllConfirm.t()
+        } else {
+            Msg::EditorReset.t()
+        },
+        ButtonRole::NeutralTinted,
+        None,
+        !chrome.writer_busy,
+        &chrome.resolver_keyboard,
+        cx.listener(move |view, _, window, cx| {
+            if let Some(focus) = &reset_focus {
+                focus.focus(window, cx);
+            }
+            view.conflict_editor_reset_all_request(&reset_path);
+            cx.notify();
+        }),
+        cx,
+    )
+    .when_some(chrome.reset_all_focus.as_ref(), |el, focus| {
+        el.track_focus(&focus.clone().tab_index(0).tab_stop(!chrome.writer_busy))
+    });
     let editor = inputs.result.clone();
     let stripe_editor = editor.clone();
     let lines = if chrome.manual_override {
@@ -214,7 +276,10 @@ pub(super) fn render_result_pane(
                         .text_size(theme::scaled_px(11.))
                         .text_color(rgb(theme().text_sub))
                         .child(status),
-                ),
+                )
+                .child(div().flex_1())
+                .child(reset)
+                .child(reset_all),
         )
         .child(e2e::measure_leaf(
             "conflict-result-editor",

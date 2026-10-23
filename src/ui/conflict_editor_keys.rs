@@ -1,4 +1,5 @@
 //! Whole-file hunk RowList, with horizontal adoption controls sharing navigation.
+use super::button_style::{ButtonRole, KagiButton};
 use super::{
     conflict_view::ConflictView,
     keyboard_nav::{self, RowFocus, RowKeys, RowList, RowScroll},
@@ -7,10 +8,7 @@ use gpui::{
     actions, prelude::*, App, Context, FocusHandle, KeyBinding, Role, SharedString, Window,
 };
 use gpui_component::Disableable as _;
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    Sizable,
-};
+use gpui_component::Sizable;
 use kagi_git::resolution::{HunkModel, Region, SelectionSide, TriState};
 use std::{
     cell::RefCell,
@@ -20,25 +18,51 @@ use std::{
 
 actions!(
     conflict_resolver,
-    [PreviousControl, NextControl, ReturnToHeader]
+    [
+        PreviousControl,
+        NextControl,
+        PreviousTabControl,
+        NextTabControl,
+        ReturnToHeader
+    ]
 );
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("left", PreviousControl, Some("KagiConflictResolver")),
         KeyBinding::new("right", NextControl, Some("KagiConflictResolver")),
+        KeyBinding::new(
+            "shift-tab",
+            PreviousTabControl,
+            Some("KagiConflictResolver"),
+        ),
+        KeyBinding::new("tab", NextTabControl, Some("KagiConflictResolver")),
         KeyBinding::new("up", ReturnToHeader, Some("KagiConflictResolverControl")),
     ]);
+}
+pub(crate) fn center_hunk(scroll: &gpui::UniformListScrollHandle, action_row: usize) {
+    let row_height = super::theme::scaled_px(24.);
+    let height = scroll.0.borrow().base_handle.bounds().size.height;
+    // Center the first code line when both it and its action row fit.
+    // Compact panes instead put the pair at the top, keeping both reachable.
+    let (row, strategy) = if height < row_height * 3. {
+        (action_row, gpui::ScrollStrategy::Top)
+    } else {
+        (action_row + 1, gpui::ScrollStrategy::Center)
+    };
+    scroll.scroll_to_item_strict(row, strategy);
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RegionShape {
     Context(usize),
-    Hunk(usize, usize),
+    Hunk(usize, usize, bool),
 }
 impl RegionShape {
     fn of(region: &Region) -> Self {
         match region {
             Region::Passthrough(lines) => Self::Context(lines.len()),
-            Region::Hunk(hunk) => Self::Hunk(hunk.current.len(), hunk.incoming.len()),
+            Region::Hunk(hunk) => {
+                Self::Hunk(hunk.current.len(), hunk.incoming.len(), hunk.is_resolved())
+            }
         }
     }
 }
@@ -53,6 +77,7 @@ pub struct ResolverKeyboard {
     controls: Vec<Vec<(String, FocusHandle, usize)>>,
     selected_hunk: Option<usize>,
     tab_hunk: usize,
+    viewport: Option<(gpui::Size<gpui::Pixels>, gpui::Pixels, gpui::Pixels)>,
     pub drawn: std::ops::Range<usize>,
 }
 impl ResolverKeyboard {
@@ -75,6 +100,13 @@ impl ResolverKeyboard {
                         .iter()
                         .any(|(_, handle, _)| handle.is_focused(window))
             })
+        });
+        let focused_id = focused_hunk.and_then(|hunk| {
+            self.controls[hunk]
+                .iter()
+                .find(|(_, handle, _)| handle.is_focused(window))
+                .map(|(id, _, _)| id.clone())
+                .or_else(|| self.rows.get(hunk).map(|(id, _)| id.clone()))
         });
         let mut refocus = false;
         let mut rebuilt = false;
@@ -99,13 +131,30 @@ impl ResolverKeyboard {
                     Region::Hunk(hunk) => {
                         let n = hunk_index;
                         if n == selected_hunk {
-                            scroll.scroll_to_item_strict(row, gpui::ScrollStrategy::Center);
+                            center_hunk(scroll, row);
                         }
-                        rows.push((format!("conflict-hunk-{n}-left"), row));
-                        let mut controls = vec![
-                            (format!("conflict-hunk-{n}-more"), cx.focus_handle(), row),
-                            (format!("conflict-hunk-{n}-right"), cx.focus_handle(), row),
-                        ];
+                        let actions: &[&str] = if hunk.is_resolved() {
+                            &["current-change", "incoming-change"]
+                        } else {
+                            &[
+                                "current-use",
+                                "current-both",
+                                "incoming-use",
+                                "incoming-both",
+                            ]
+                        };
+                        rows.push((format!("conflict-hunk-{n}-{}", actions[0]), row));
+                        let mut controls = actions
+                            .iter()
+                            .skip(1)
+                            .map(|action| {
+                                (
+                                    format!("conflict-hunk-{n}-{action}"),
+                                    cx.focus_handle(),
+                                    row,
+                                )
+                            })
+                            .collect::<Vec<_>>();
                         for (side, lines) in
                             [("current", &hunk.current), ("incoming", &hunk.incoming)]
                         {
@@ -113,12 +162,12 @@ impl ResolverKeyboard {
                                 controls.push((
                                     format!("resolver-hunk-{n}-{side}-line-{line}"),
                                     cx.focus_handle(),
-                                    row + line,
+                                    row + 1 + line,
                                 ));
                             }
                         }
                         self.controls.push(controls);
-                        row += hunk.current.len().max(hunk.incoming.len()).max(1);
+                        row += 1 + hunk.current.len().max(hunk.incoming.len()).max(1);
                         hunk_index += 1;
                     }
                 }
@@ -155,9 +204,42 @@ impl ResolverKeyboard {
             if let Some(list) = &self.list {
                 if let Some((_, row)) = self.rows.get(self.tab_hunk) {
                     list.reveal_entry(*row);
-                    list.focus_row(self.tab_hunk, window, cx);
+                    let id = focused_id.as_deref().unwrap_or("");
+                    let side = if id.contains("-incoming-") {
+                        "incoming"
+                    } else {
+                        "current"
+                    };
+                    let action = if self.rows[self.tab_hunk].0.ends_with("-change") {
+                        "change"
+                    } else {
+                        "use"
+                    };
+                    let replacement = format!("conflict-hunk-{}-{side}-{action}", self.tab_hunk);
+                    let target = if self.controls[self.tab_hunk]
+                        .iter()
+                        .any(|(key, _, _)| key == id)
+                    {
+                        id
+                    } else {
+                        &replacement
+                    };
+                    self.focus_control(self.tab_hunk, target, window, cx);
                 }
             }
+        }
+        let viewport = (
+            window.viewport_size(),
+            super::theme::scaled_px(24.),
+            scroll.0.borrow().base_handle.bounds().size.height,
+        );
+        if self.viewport != Some(viewport) {
+            // A newly inserted action row must not push the first code line
+            // below a compact viewport after a resize or zoom change.
+            if let Some((_, row)) = self.rows.get(focused_hunk.unwrap_or(selected_hunk)) {
+                center_hunk(scroll, *row);
+            }
+            self.viewport = Some(viewport);
         }
     }
     fn release(&mut self, window: &mut Window, cx: &mut App) -> bool {
@@ -179,6 +261,7 @@ impl ResolverKeyboard {
         self.drawn = 0..0;
         self.selected_hunk = None;
         self.tab_hunk = 0;
+        self.viewport = None;
         focused
     }
     pub(crate) fn focus_hunk(&self, hunk: usize, window: &mut Window, cx: &mut App) {
@@ -186,27 +269,19 @@ impl ResolverKeyboard {
             list.focus_row(hunk, window, cx);
         }
     }
-    pub(crate) fn more_focus(&self, hunk: usize) -> Option<FocusHandle> {
-        self.controls
+    pub(crate) fn focus_control(&self, hunk: usize, id: &str, window: &mut Window, cx: &mut App) {
+        if let Some((_, handle, row)) = self
+            .controls
             .get(hunk)
-            .and_then(|controls| controls.first())
-            .map(|(_, handle, _)| handle.clone())
-    }
-
-    pub(crate) fn focus_more(&self, hunk: usize, window: &mut Window, cx: &mut App) {
-        if let Some(handle) = self.more_focus(hunk) {
+            .and_then(|controls| controls.iter().find(|(key, _, _)| key == id))
+        {
             if let Some(list) = &self.list {
-                list.reveal_entry(self.rows[hunk].1);
+                list.reveal_entry(*row);
             }
             handle.focus(window, cx);
+        } else {
+            self.focus_hunk(hunk, window, cx);
         }
-    }
-
-    pub(crate) fn more_focused(&self, hunk: usize, window: &Window) -> bool {
-        self.controls
-            .get(hunk)
-            .and_then(|controls| controls.first())
-            .is_some_and(|(_, handle, _)| handle.is_focused(window))
     }
     pub(crate) fn side_name(&self, side: SelectionSide) -> &str {
         &self.side_names[match side {
@@ -222,24 +297,15 @@ impl ResolverKeyboard {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let offset = match side {
-            SelectionSide::Current => 2,
-            SelectionSide::Incoming => {
-                let Some(RegionShape::Hunk(current, _)) = self
-                    .structure
-                    .iter()
-                    .filter(|shape| matches!(shape, RegionShape::Hunk(..)))
-                    .nth(hunk)
-                else {
-                    return;
-                };
-                2 + current
-            }
+        let side = match side {
+            SelectionSide::Current => "current",
+            SelectionSide::Incoming => "incoming",
         };
+        let id = format!("resolver-hunk-{hunk}-{side}-line-{line}");
         if let Some((_, handle, row)) = self
             .controls
             .get(hunk)
-            .and_then(|items| items.get(offset + line))
+            .and_then(|items| items.iter().find(|(key, _, _)| key == &id))
         {
             if let Some(list) = &self.list {
                 list.reveal_entry(*row);
@@ -256,7 +322,7 @@ impl ResolverKeyboard {
         forward: bool,
     ) -> Option<(usize, usize)> {
         let hunks = self.structure.iter().filter_map(|shape| match shape {
-            RegionShape::Hunk(current, incoming) => Some(match side {
+            RegionShape::Hunk(current, incoming, _) => Some(match side {
                 SelectionSide::Current => *current,
                 SelectionSide::Incoming => *incoming,
             }),
@@ -308,23 +374,14 @@ impl ResolverKeyboard {
         }
     }
 }
-pub(crate) enum ControlState {
-    Adoption(TriState),
-}
-impl ControlState {
-    fn parts(self) -> (&'static str, SharedString, bool) {
-        use super::i18n::Msg;
-        match self {
-            Self::Adoption(state) => {
-                let (key, message) = match state {
-                    TriState::None => ("none", Msg::EditorSelectionNone),
-                    TriState::Partial => ("partial", Msg::EditorSelectionPartial),
-                    TriState::All => ("all", Msg::EditorSelectionAll),
-                };
-                (key, message.t().into(), state == TriState::All)
-            }
-        }
-    }
+fn state_description(state: TriState) -> (&'static str, SharedString) {
+    use super::i18n::Msg;
+    let (key, message) = match state {
+        TriState::None => ("none", Msg::EditorSelectionNone),
+        TriState::Partial => ("partial", Msg::EditorSelectionPartial),
+        TriState::All => ("all", Msg::EditorSelectionAll),
+    };
+    (key, message.t().into())
 }
 /// The pinned Button owns pointer feedback; its enclosing roving owner handles
 /// keyboard clicks. Both call the very same listener, never duplicate mutation.
@@ -332,49 +389,52 @@ impl ControlState {
 pub(crate) fn adoption(
     id: String,
     name: String,
-    state: ControlState,
-    content: impl IntoElement,
+    state: TriState,
+    content: &'static str,
+    role: ButtonRole,
     hunk: Option<usize>,
     enabled: bool,
     owner: &Rc<RefCell<ResolverKeyboard>>,
     activate: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    _cx: &mut Context<ConflictView>,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::Stateful<gpui::Div> {
     let activate = Rc::new(activate);
     let pointer = activate.clone();
-    let (_state, description, toggled) = state.parts();
+    let (_state, description) = state_description(state);
     #[cfg(feature = "gui-e2e")]
     super::conflict_editor_a11y::record(&id, &name, _state, &description);
-    let button = super::button_style::named_button(
-        Button::new(SharedString::from(format!("{id}-button")))
-            .ghost()
-            .xsmall()
-            .compact()
-            .tab_stop(false)
-            .disabled(!enabled)
-            .p(gpui::px(0.))
-            .size_full()
-            .child(content)
-            .on_click(move |event, window, cx| {
-                cx.stop_propagation();
-                if enabled {
-                    pointer(event, window, cx);
-                }
-            }),
-        SharedString::from(name.clone()),
-        Some(toggled),
-    );
+    let button = KagiButton::styled(
+        SharedString::from(format!("{id}-button")),
+        content,
+        role,
+        cx,
+    )
+    .when(role == ButtonRole::NeutralTinted, |button| button.outline())
+    .small()
+    .h(super::theme::scaled_px(20.))
+    .rounded(super::theme::scaled_px(5.))
+    .text_size(super::theme::scaled_px(11.5))
+    .tab_stop(false)
+    .disabled(!enabled)
+    .aria_label(SharedString::from(name.clone()))
+    .on_click(move |event, window, cx| {
+        cx.stop_propagation();
+        if enabled {
+            pointer(event, window, cx);
+        }
+    });
     let mut el = gpui::div()
         .id(SharedString::from(id.clone()))
         .role(Role::Button)
         .aria_label(SharedString::from(name))
         .aria_description(description)
-        .aria_toggled(if toggled {
-            gpui::Toggled::True
+        .when(hunk.is_some(), |el| el.key_context("KagiConflictResolver"))
+        .h(super::theme::scaled_px(if hunk.is_some() {
+            24.
         } else {
-            gpui::Toggled::False
-        })
-        .key_context("KagiConflictResolver")
+            20.
+        }))
+        .flex_shrink_0()
         .on_key_down(keyboard_nav::stop_activation_keys)
         .on_click(move |event, window, cx| {
             if enabled {
@@ -458,6 +518,33 @@ pub(crate) fn attach_navigation(
     let next_owner = owner.clone();
     let prev_id = id.to_owned();
     let next_id = id.to_owned();
+    let tab_prev_owner = owner.clone();
+    let tab_next_owner = owner.clone();
+    let tab_prev_id = id.to_owned();
+    let tab_next_id = id.to_owned();
+    el = el
+        .on_action(move |_: &PreviousTabControl, window, cx| {
+            let owner = tab_prev_owner.borrow();
+            if owner.controls[hunk]
+                .iter()
+                .any(|(key, _, _)| key == &tab_prev_id)
+            {
+                owner.move_control(hunk, &tab_prev_id, -1, window, cx);
+            } else {
+                window.focus_prev(cx);
+            }
+        })
+        .on_action(move |_: &NextTabControl, window, cx| {
+            let owner = tab_next_owner.borrow();
+            if owner.controls[hunk]
+                .last()
+                .is_some_and(|(key, _, _)| key == &tab_next_id)
+            {
+                window.focus_next(cx);
+            } else {
+                owner.move_control(hunk, &tab_next_id, 1, window, cx);
+            }
+        });
     el.on_action(move |_: &PreviousControl, window, cx| {
         prev_owner
             .borrow()

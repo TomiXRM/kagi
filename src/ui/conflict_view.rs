@@ -28,8 +28,6 @@ use super::KagiApp;
 use super::{conflict_binary_view, e2e, ToastKind};
 
 mod actions;
-mod choice_menu;
-pub use choice_menu::render_choice_menu;
 mod file_menu;
 mod saved;
 mod sidebar;
@@ -81,6 +79,8 @@ pub struct EditorChrome {
     pub page: ConflictPage,
     pub navigation_focus: Option<gpui::FocusHandle>,
     pub show_tools: bool,
+    pub reset_all_armed: bool,
+    pub reset_all_focus: Option<gpui::FocusHandle>,
     /// The Result pane `InputState`, when present for the edited content file.
     pub inputs: Option<EditorInputs>,
     /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
@@ -162,10 +162,9 @@ pub struct ConflictView {
     sidebar_toggle_focus: Option<gpui::FocusHandle>,
     navigation_focus: Option<gpui::FocusHandle>,
     pub show_tools: bool,
-    pub choice_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    reset_all_focus: Option<gpui::FocusHandle>,
     /// Same-pane checkbox painting; resolution state stays in `line_select`.
     pub(crate) line_paint: Option<(kagi_git::resolution::SelectionSide, bool)>,
-    pub(crate) choice_menu_keys: super::menu_keys::MenuKeys,
     /// W32: last-saved resolved text per file, so a Save can log a before→after
     /// file-content hash pair (T-035) without re-reading the working tree.
     pub editing_before_text: HashMap<PathBuf, String>,
@@ -254,9 +253,8 @@ impl ConflictView {
             sidebar_toggle_focus: None,
             navigation_focus: None,
             show_tools: false,
-            choice_menu: None,
+            reset_all_focus: None,
             line_paint: None,
-            choice_menu_keys: Default::default(),
             editing_before_text: HashMap::new(),
             editor_inputs: None,
             result_subscription: None,
@@ -437,6 +435,11 @@ pub fn blocker_msg(b: &kagi_git::ContinueBlocker) -> Msg {
 impl Render for ConflictView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor_inputs(window, cx);
+        #[cfg(feature = "gui-e2e")]
+        super::conflict_editor_a11y::begin_frame();
+        if self.reset_all_focus.is_none() {
+            self.reset_all_focus = Some(cx.focus_handle());
+        }
         if self.navigation_focus.is_none() {
             self.navigation_focus = Some(cx.focus_handle().tab_stop(false));
         }
@@ -444,11 +447,10 @@ impl Render for ConflictView {
             self.sidebar_toggle_focus = Some(cx.focus_handle());
         }
         if self.reset_all_target.is_some()
-            && self.choice_menu.is_none()
             && !self
-                .resolver_keyboard
-                .borrow()
-                .more_focused(self.selected_hunk, window)
+                .reset_all_focus
+                .as_ref()
+                .is_some_and(|handle| handle.is_focused(window))
         {
             self.reset_all_target = None;
         }
@@ -559,6 +561,8 @@ impl ConflictView {
             page: self.page,
             navigation_focus: self.navigation_focus.clone(),
             show_tools: self.show_tools,
+            reset_all_armed: self.reset_all_target.is_some(),
+            reset_all_focus: self.reset_all_focus.clone(),
             inputs: self.editor_inputs.as_ref().map(|i| EditorInputs {
                 path: i.path.clone(),
                 result: i.result.clone(),

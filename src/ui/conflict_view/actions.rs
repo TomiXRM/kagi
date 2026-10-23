@@ -195,11 +195,13 @@ impl ConflictView {
                         kagi_git::resolution::Region::Passthrough(lines) => row += lines.len(),
                         kagi_git::resolution::Region::Hunk(hunk) => {
                             if index == hunk_index {
-                                self.ab_scroll_handle
-                                    .scroll_to_item_strict(row, gpui::ScrollStrategy::Center);
+                                super::super::conflict_editor_keys::center_hunk(
+                                    &self.ab_scroll_handle,
+                                    row,
+                                );
                                 break;
                             }
-                            row += hunk.current.len().max(hunk.incoming.len()).max(1);
+                            row += 1 + hunk.current.len().max(hunk.incoming.len()).max(1);
                             index += 1;
                         }
                     }
@@ -248,6 +250,16 @@ impl ConflictView {
         order: kagi_git::resolution::LineOrder,
     ) {
         self.set_hunk_order(path, hunk_index, order);
+    }
+
+    pub fn conflict_editor_reset_hunk(&mut self, path: &std::path::Path, hunk: usize) {
+        if self.writer_busy || self.editing.as_deref() != Some(path) {
+            return;
+        }
+        if let Some(mode) = self.mode.as_mut() {
+            mode.buffer.reset_hunk(path, hunk);
+        }
+        self.after_selection_change(path, Some(hunk));
     }
 
     /// T-CONFLICT-POLISH-042: "Reset all" two-stage confirm. First click arms,

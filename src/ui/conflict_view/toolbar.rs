@@ -85,15 +85,11 @@ impl ConflictView {
             Msg::ConflictSaveRefused.t().to_owned()
         } else {
             path.map(|p| {
-                if flow::draft_ready(mode, p) {
-                    Msg::ConflictUnsaved.t().to_owned()
-                } else if let Some(model) = mode.buffer.hunk_model(p) {
-                    format!(
-                        "{} {}/{}",
-                        Msg::EditorConflictNofM.t(),
-                        self.selected_hunk + 1,
-                        model.hunk_count()
-                    )
+                if let Some(model) = mode.buffer.hunk_model(p) {
+                    let resolved = model.regions.iter().filter(|region| {
+                        matches!(region, kagi_git::resolution::Region::Hunk(hunk) if hunk.is_resolved())
+                    }).count();
+                    Msg::conflict_counts(model.hunk_count(), resolved)
                 } else {
                     flow::draft_label(mode, p)
                 }
@@ -118,6 +114,9 @@ impl ConflictView {
             .when_some(path, |el, path| el.child(jump_path(path)))
             .child(
                 div()
+                    .id("conflict-file-count")
+                    .role(gpui::Role::Status)
+                    .aria_label(SharedString::from(status.clone()))
                     .text_size(theme::scaled_px(11.))
                     .text_color(rgb(
                         if self.saved_review_needed

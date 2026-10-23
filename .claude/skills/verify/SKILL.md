@@ -853,10 +853,10 @@ not native VoiceOver evidence.
 
 For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
 `conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
-Tabs to the production gutter pills, roves across hunks without selecting them,
-and compares keyboard menu adoption with measured pointer selection. It retains
-line-level Partial state, Result undo/redo, both-pane footer Prev/Next reveal and
-responsive source viewports with 18px code rows at 940×660 / 1392×883,
+Tabs to the production per-pane action rows, roves across hunks without selecting them,
+and compares keyboard Use/Both adoption with measured pointer selection. It retains
+line-level Partial state, Result undo/redo, left-footer Prev/Next reveal and
+responsive source viewports with 24px uniform rows at 940×660 / 1392×883,
 100%/167%, EN/JA, Apple Light/Dark, with zero repository writes or receipts.
 The F19 probe observes the actual focused owner; renderer AX metadata is not
 native VoiceOver evidence. `conflict_resolver_rebuild` replaces a retained path's
@@ -867,7 +867,7 @@ On `feature/conflict-hunk` (ADR-0227), keep the 57 conflict registrations.
 `conflict_progressive_add_add` covers the four adoption choices, decided reopening,
 Both as one undo checkpoint, exact partial add/add bytes, protected empty manual
 Result, real Save and the fresh fully staged merge handoff. `conflict_reset_disarm`
-uses the final separated Reset all menu item and retains two-step confirmation,
+uses the Result-header Reset all button and retains two-step confirmation,
 file/hunk/blur disarming and writer-busy refusal through pointer and Enter/Space.
 `conflict_result_segment` retains its registration name but now covers direct
 Result input, repeated focus, hunk/file navigation and writer-busy refusal,
@@ -889,11 +889,13 @@ rerun. Never repair a product focus failure by focusing a hidden test owner,
 or relax exact bytes to make a failed line adoption pass.
 
 Tier B compares the real window against H1–H7 from
-`docs/ui/conflict-sidebar/build-hifi.js` and the FRD Visual design pass, using
-the same fixture, viewport, language, zoom and theme before/after. Capture
-unresolved/open-menu, decided/reopened, ready-unsaved, locked Saved, hidden
-sidebar, dark and narrow/high-zoom states. Require borderless source documents,
-a continuous conflict band and aligned 44px gutter pill, left-footer navigation,
+`docs/ui/conflict-sidebar/build-hifi.js` and the FRD Visual design pass as superseded
+by FRD A+C, using the same fixture, viewport, language, zoom and theme before/after.
+Capture unresolved Use/Both rows, resolved state/Change rows, reopened, ready-unsaved,
+locked Saved, hidden sidebar, dark and narrow/high-zoom states. Require borderless
+source documents, aligned 24px action rows, a control-free 12px gutter band,
+Result-header focused Reset and confirmed Reset all, total/resolved header counts,
+left-footer navigation,
 direct Result input/origin stripes, top-down unpinned sections, fill-only rows,
 plain hidden count, one header Save/Next file action and retained toolbar icons.
 Exercise pointer and keyboard choices, direct typing, IME, focus return and AX

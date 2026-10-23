@@ -11,7 +11,7 @@ fn source_panes_contain_every_hunk_and_all_surrounding_lines() {
     );
     for side in [SelectionSide::Current, SelectionSide::Incoming] {
         let rows = build_side_rows(&model, side);
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), 12);
         let headers: Vec<_> = rows
             .iter()
             .enumerate()
@@ -24,7 +24,9 @@ fn source_panes_contain_every_hunk_and_all_surrounding_lines() {
                 _ => None,
             })
             .collect();
-        assert_eq!(headers, vec![(1, 0), (7, 1)]);
+        assert_eq!(headers, vec![(2, 0), (9, 1)]);
+        assert!(matches!(rows[1], SideRow::Action { hunk_index: 0 }));
+        assert!(matches!(rows[8], SideRow::Action { hunk_index: 1 }));
         assert!(matches!(rows.first(), Some(SideRow::Context { text, .. }) if text == "head"));
         assert!(matches!(rows.last(), Some(SideRow::Context { text, .. }) if text == "tail2"));
     }
@@ -39,6 +41,7 @@ fn counts(rows: &[SideRow]) -> (usize, usize, usize, usize) {
             SideRow::Context { .. } => ctx += 1,
             SideRow::Blank { .. } => blank += 1,
             SideRow::Line { .. } => line += 1,
+            SideRow::Action { .. } => {}
         }
     }
     (rows.len(), ctx, blank, line)
@@ -106,6 +109,9 @@ fn side_panes_are_equal_length_and_include_all_context() {
         counts(&cur),
         counts(&inc),
     );
+    assert_eq!(cur.len(), 7, "one action row plus six source/context rows");
+    assert!(matches!(cur[1], SideRow::Action { hunk_index: 0 }));
+    assert!(matches!(inc[1], SideRow::Action { hunk_index: 0 }));
 
     let (_c_total, c_ctx, c_blank, c_line) = counts(&cur);
     let (_i_total, i_ctx, i_blank, i_line) = counts(&inc);

@@ -36,21 +36,22 @@ to fit the S=24 hunk controls without overlapping adjacent one-line hunks;
 source viewports flex to the remaining space and scroll to reveal the selected
 hunk in both sources. No Context toggle or content-sized source-height clamp is introduced.
 
-The gutter carries `←` / `…` / `→` per hunk, aligned with the continuous conflict
-band. Each arrow adopts its entire source side and clears the opposite side in
-one click; selected/mixed state comes from authoritative line selection. More
-contains exactly Use both, left first / Use both, right first (Japanese:
-両方を使う（← → の順） / 両方を使う（→ ← の順）), then a separator and Reset this
-hunk / Reset all. Reset all retains the existing explicit two-step confirmation;
-navigation, dismissal and focus departure retire that approval. Adoption never
-advances automatically. Each source conflict line has a checkbox; context rows
-do not. Mouse-down fixes the opposite checked state and dragging paints that
-state only in the same pane, including across hunks. Space toggles the focused
-line; Shift+Up/Down paints its neighbouring conflict line and moves roving focus.
-The existing `ConflictView` and `ResolutionBuffer` remain the only owners.
-Arrow accessible names are Use left side / Use right side, and More choices
-for the menu; line names retain the localized side and line number.
-No adoption button row or Edit button is present.
+The [FRD A+C decision](../ui/conflict-sidebar-frd.md#ac-per-pane-action-rows-2026-10-24-owner-mock-conflictacdchtml)
+supersedes the gutter arrows and More menu with an action row above every hunk
+in both source panes: unresolved rows offer primary Use this side and neutral
+Both in that pane's block order; resolved rows show Used / Not used / Partly
+used and Change, which resets that hunk. Action rows are **24px**, correcting
+the mock's 26px to the uniform-list contract: both sources and the gutter retain
+equal row counts and measured row heights. The gutter is a **control-free 12px**
+hunk band with a focused-hunk edge. Result's header owns focused-hunk Reset
+(enabled only for a resolved hunk) and Reset all with the existing two-step
+confirmation; navigation, dismissal and focus departure retire that approval.
+The file header shows `{m} conflicts · {k} resolved` (singular `1 conflict`) or
+`conflict {m} 件 · {k} 解決済み`; footer navigation remains unchanged and adoption
+never advances automatically. Per-line checkboxes, same-pane drag painting,
+Space toggling and Shift+Up/Down painting retain their existing behavior and
+localized side/line names. `ConflictView` and `ResolutionBuffer` remain the only
+owners; there is no detached adoption row or Edit button.
 
 Result uses the existing authoritative input directly, with left/right/manual
 origin stripes, 18px code rows and an overlay scroller. Navigation
@@ -113,9 +114,9 @@ or mandatory introductory carousel.
 - While Result diverges, source adoption must not silently replace manual edits.
   Comparison and navigation retain the Result; the existing guarded Reset is
   the explicit discard route. Mutation handlers recheck this condition.
-- The More menu's ordered-both choices adopt both sides as a single draft checkpoint.
+- The per-pane Both choices adopt both sides as a single draft checkpoint.
   Repeating the same choice is not an edit. Low-level order mutations still only
-  reorder adopted content; opening or navigating a menu does not adopt anything.
+  reorder adopted content; focus and navigation do not adopt anything.
 - Ordinary text add/add conflicts use the same existing materialization and
   hunk/manual editor. Binary, symlink and gitlink conflicts remain raw choices;
   changing presentation never authorizes lossy text materialization.
@@ -155,9 +156,9 @@ windows. Exercise partial selection, both orderings, manual editing, backtrackin
 add/add, actual Save and Continue/Commit, and long file lists.
 
 Keep the existing conflict scenario registrations (57) while extending their
-oracles: one-click arrows, all four More commands, per-line checkboxes and
-same-pane range painting, footer navigation, direct Result editing and writer-busy
-refusal, unpinned groups, hidden inline count, one header file action, and
+oracles: per-pane Use/Both/Change, focused-hunk Reset and confirmed Reset all,
+per-line checkboxes and same-pane range painting, footer navigation, direct Result
+editing and writer-busy refusal, unpinned groups, hidden inline count, one header file action, and
 byte/receipt-identical Git navigation.
 Native pixel probes sample row padding outside glyphs and badges, in logical
 window coordinates converted once by the window's scale factor. Renderer-fed
@@ -171,7 +172,7 @@ has one roving Tab stop, with Down reaching the next hunk after source adoption
 changes the entry point. Selected-hunk navigation strictly centers the hunk,
 not a preceding context row that may fill a narrow/high-zoom viewport by itself.
 Footer navigation retires a button's focus before it becomes unavailable, and
-inline Up overrides the shared previous-row binding to return to its own left arrow.
+inline Up overrides the shared previous-row binding to return to its own action row.
 Toolbar fitting charges the operation strip only to the right column; compact
 conflict chrome lets repository identity truncate before losing right-hand
 controls. Save refusal

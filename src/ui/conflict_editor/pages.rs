@@ -1,7 +1,5 @@
 //! Borderless source documents, aligned decision gutter, and direct Result editor.
 use super::*;
-use kagi_git::resolution::HunkChoice;
-use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(super) fn tool_button<H>(
     id: &str,
@@ -130,7 +128,7 @@ pub(super) fn render_panes(
             .child(format!("{}/{total}", selected + 1)),
     )
     .child(e2e::measure_control("conflict-next-hunk", next));
-    let gutter = decision_gutter(model, path, chrome, cx);
+    let gutter = decision_gutter(model, chrome, cx);
     div()
         .id("conflict-decision-scroll")
         .flex()
@@ -155,12 +153,10 @@ pub(super) fn render_panes(
                 )
                 .child(
                     div()
-                        .w(theme::scaled_px(78.))
+                        .w(theme::scaled_px(12.))
                         .flex_shrink_0()
                         .flex()
                         .flex_col()
-                        .border_x_1()
-                        .border_color(rgb(theme().surface))
                         .bg(rgb(theme().panel))
                         .child(div().h(theme::scaled_px(26.)).flex_shrink_0())
                         .child(gutter)
@@ -185,7 +181,6 @@ pub(super) fn render_panes(
 
 fn decision_gutter(
     model: &kagi_git::resolution::HunkModel,
-    path: &std::path::Path,
     chrome: &EditorChrome,
     cx: &mut Context<ConflictView>,
 ) -> impl IntoElement {
@@ -195,132 +190,58 @@ fn decision_gutter(
         match region {
             Region::Passthrough(lines) => rows.extend((0..lines.len()).map(|_| None)),
             Region::Hunk(conflict) => {
-                let left = conflict.side_state(SelectionSide::Current);
-                let right = conflict.side_state(SelectionSide::Incoming);
-                let mixed = left == TriState::Partial || right == TriState::Partial;
-                let states = if mixed {
-                    [TriState::Partial; 2]
-                } else {
-                    [left, right]
-                };
-                rows.push(Some((hunk, states, true)));
+                let band = Some((hunk, conflict.is_resolved()));
                 rows.extend(
-                    (1..conflict.current.len().max(conflict.incoming.len()).max(1))
-                        .map(|_| Some((hunk, states, false))),
+                    (0..1 + conflict.current.len().max(conflict.incoming.len()).max(1))
+                        .map(|_| band),
                 );
                 hunk += 1;
             }
         }
     }
-    let path = path.to_path_buf();
-    let enabled = chrome.source_choices_enabled;
-    let menu_enabled = !chrome.writer_busy;
-    let scroll = chrome.ab_scroll.clone();
-    div().relative().flex_1().min_h(px(0.)).child(
-        uniform_list(
-            "conflict-decision-gutter",
-            rows.len(),
-            cx.processor(move |view, range: Range<usize>, _, cx| {
-                view.resolver_keyboard.borrow_mut().drawn = range.clone();
-                range
-                    .filter_map(|i| rows.get(i).map(|row| (i, row)))
-                    .map(|(i, row)| {
-                        let band = div()
-                            .id(SharedString::from(format!("gutter-{i}")))
-                            .h(theme::scaled_px(24.))
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(row.is_some(), |el| el.bg(rgb(theme().diff_removed_bg)));
-                        if let Some((hunk, states, true)) = row {
-                            let hunk = *hunk;
-                            let mut band = band;
-                            for (key, label, name, choice, state) in [
-                                (
-                                    "left",
-                                    "←",
-                                    Msg::ConflictUseLeftSide,
-                                    Some(HunkChoice::AcceptCurrent),
-                                    states[0],
-                                ),
-                                ("more", "…", Msg::ConflictMoreChoices, None, TriState::None),
-                                (
-                                    "right",
-                                    "→",
-                                    Msg::ConflictUseRightSide,
-                                    Some(HunkChoice::AcceptIncoming),
-                                    states[1],
-                                ),
-                            ] {
-                                let id = format!("conflict-hunk-{hunk}-{key}");
-                                let path = path.clone();
-                                let control = crate::ui::conflict_editor_keys::adoption(
-                                    id,
-                                    name.t().to_owned(),
-                                    crate::ui::conflict_editor_keys::ControlState::Adoption(state),
-                                    label,
-                                    Some(hunk),
-                                    if key == "more" { menu_enabled } else { enabled },
-                                    &view.resolver_keyboard,
-                                    cx.listener(
-                                        move |view, event: &gpui::ClickEvent, window, cx| {
-                                            if view.editing.as_deref() != Some(path.as_path()) {
-                                                return;
-                                            }
-                                            view.conflict_editor_select_hunk(hunk);
-                                            if choice.is_some() {
-                                                view.resolver_keyboard
-                                                    .borrow()
-                                                    .focus_hunk(hunk, window, cx);
-                                            } else {
-                                                view.resolver_keyboard
-                                                    .borrow()
-                                                    .focus_more(hunk, window, cx);
-                                            }
-                                            if let Some(choice) = &choice {
-                                                view.conflict_choose_hunk(
-                                                    &path,
-                                                    hunk,
-                                                    choice.clone(),
-                                                    cx,
-                                                );
-                                            } else {
-                                                view.choice_menu = Some((hunk, event.position()));
-                                            }
-                                            cx.notify();
-                                        },
-                                    ),
-                                    cx,
-                                )
-                                .size(theme::scaled_px(24.))
-                                .rounded(theme::scaled_px(5.))
-                                .text_size(theme::scaled_px(16.))
-                                .text_color(rgb(theme().ui_accent()))
-                                .when(state == TriState::All, |el| el.bg(rgb(theme().selected)))
-                                .when(
-                                    state == TriState::Partial,
-                                    |el| {
-                                        el.bg(gpui::rgba((theme().ui_accent() << 8) | 0x28))
-                                            .border_b_2()
-                                            .border_color(rgb(theme().ui_accent()))
-                                    },
-                                );
-                                band = band.child(control.hover_tooltip(
-                                    SharedString::from(format!("conflict-hunk-{hunk}-{key}-help")),
-                                    name.t(),
-                                ));
-                            }
-                            band.into_any_element()
-                        } else {
-                            band.into_any_element()
-                        }
-                    })
-                    .collect()
-            }),
+    #[cfg(feature = "gui-e2e")]
+    crate::ui::conflict_editor_a11y::record_row_count("gutter", rows.len());
+    let focused = chrome.selected_hunk;
+    div()
+        .relative()
+        .flex_1()
+        .min_h(px(0.))
+        .child(e2e::measure_inside("resolver-gutter-viewport"))
+        .child(
+            uniform_list(
+                "conflict-decision-gutter",
+                rows.len(),
+                cx.processor(move |_, range: Range<usize>, _, _| {
+                    range
+                        .filter_map(|i| rows.get(i).map(|row| (i, row)))
+                        .map(|(i, row)| {
+                            let hunk = row.map(|(hunk, _)| hunk);
+                            div()
+                                .id(SharedString::from(format!("gutter-{i}")))
+                                .relative()
+                                .h(theme::scaled_px(24.))
+                                .w_full()
+                                .border_l(theme::scaled_px(2.))
+                                .border_color(if hunk == Some(focused) {
+                                    rgb(theme().ui_accent()).into()
+                                } else {
+                                    gpui::transparent_black()
+                                })
+                                .when_some(*row, |el, (_, resolved)| {
+                                    el.bg(rgb(if resolved {
+                                        theme().diff_added_bg
+                                    } else {
+                                        theme().diff_removed_bg
+                                    }))
+                                })
+                                .child(e2e::measure_inside(format!("resolver-gutter-row-{i}")))
+                                .into_any_element()
+                        })
+                        .collect()
+                }),
+            )
+            .track_scroll(&chrome.ab_scroll)
+            .h_full()
+            .w_full(),
         )
-        .track_scroll(&scroll)
-        .h_full()
-        .w_full(),
-    )
 }

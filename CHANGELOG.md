@@ -11,6 +11,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   - Preserve choices and manual text across navigation and hide/show, protect divergent manual Results until explicit Reset, and retain accepted saved selections for locked, read-only inspection without auto-advancing. Saved membership comes from the current operation's accepted conflict-path/index read, never unrelated staged files or a UI success ledger; stash has no saved entries. Navigation does not write Git, and Save/Continue keep the existing revision, lease and guarded CommitPanel handoff.
   - Replace the choice pill with `←` / `…` / `→`, showing whole-side and mixed adoption state. Source conflict lines have checkboxes with same-pane drag painting; Space toggles the focused line and Shift+Up/Down paints the neighbouring conflict line across hunks. More offers Use both, left first / Use both, right first, Reset this hunk and the existing confirmed Reset all, with localized accessible control names.
   - Keep whole-side block order after Use both when individual source lines are unchecked; selections built from scratch still assemble by position.
+  - Replace the gutter arrows/More menu with per-pane Use/Both action rows and resolved-state Change controls (FRD A+C): action rows share the 24px uniform-list height, the gutter is a control-free 12px band, Result owns focused-hunk Reset and confirmed Reset all, and the file header shows total conflicts and resolved count.
 
 ### Fixed
 

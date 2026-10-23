@@ -180,7 +180,7 @@ impl KagiApp {
             && !self.ui().conflict_merge_pending
             && self.ui().conflict.as_ref().is_some_and(|entity| {
                 let view = entity.read(cx);
-                (view.file_menu.is_some() || view.choice_menu.is_some()) && view.mode.is_some()
+                view.file_menu.is_some() && view.mode.is_some()
             })
     }
 
@@ -310,7 +310,6 @@ impl KagiApp {
                 if let Some(entity) = self.ui().conflict.clone() {
                     entity.update(cx, |view, cx| {
                         view.file_menu = None;
-                        view.choice_menu = None;
                         view.reset_all_target = None;
                         cx.notify();
                     });

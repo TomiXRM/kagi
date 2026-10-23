@@ -33,6 +33,7 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         .status
         .success());
     let before = repo_fingerprint(repo);
+    let index_before = std::fs::read(repo.join(".git/index")).unwrap();
     let head = git2::Repository::open(repo)
         .unwrap()
         .head()
@@ -85,21 +86,25 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             .buffer
             .resolved_text(Path::new("added.txt"))
     });
-    click_control(cx, window, "conflict-hunk-0-more");
-    for item in ["0-0", "0-1", "1-0", "1-1"] {
-        assert!(
-            e2e::control_bounds(window_id, &format!("conflict-choice-menu-item-{item}")).is_some(),
-            "four More commands: {item}"
-        );
+    for side in ["current", "incoming"] {
+        for action in ["use", "both"] {
+            assert!(
+                e2e::control_bounds(window_id, &format!("conflict-hunk-0-{side}-{action}"))
+                    .is_some(),
+                "four per-pane adoption commands: {side}-{action}"
+            );
+        }
     }
-    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    click_control(cx, window, "conflict-hunk-0-current-both");
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    for side in ["left", "right"] {
+    for side in ["current", "incoming"] {
         assert_eq!(
-            ax::control(&format!("conflict-hunk-0-{side}")).unwrap().2,
-            "all"
+            ax::control(&format!("conflict-hunk-0-{side}-state"))
+                .unwrap()
+                .1,
+            i18n::Msg::ConflictUsed.t()
         );
     }
     cx.read(|cx| {
@@ -111,11 +116,17 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         assert_eq!(
             conflict.read(cx).editor_inputs.as_ref().unwrap().result.read(cx).value().as_str(),
             "current one\ncurrent two\ncurrent three\nincoming one\nincoming two\nincoming three\n",
-            "the drawn Result input shows the menu's block order"
+            "the drawn Result input shows the action row's block order"
         );
     });
-    click_control(cx, window, "conflict-hunk-0-more");
-    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    conflict.update(cx, |view, cx| {
+        view.conflict_choose_hunk(
+            Path::new("added.txt"),
+            0,
+            kagi_git::resolution::HunkChoice::BothCurrentFirst,
+            cx,
+        );
+    });
     cx.run_until_parked();
     conflict.update(cx, |view, cx| {
         assert!(view
@@ -134,8 +145,16 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             "Both is one reversible choice and repeated Both adds no undo checkpoint"
         );
     });
-    click_control(cx, window, "conflict-hunk-0-more");
-    click_control(cx, window, "conflict-choice-menu-item-0-1");
+    // Result undo retains the source model's choice; Change explicitly returns
+    // that hunk to unresolved before selecting the opposite block order.
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    click_control(cx, window, "conflict-hunk-0-current-change");
+    click_control(cx, window, "conflict-hunk-0-incoming-both");
     cx.run_until_parked();
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
@@ -145,8 +164,39 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             "Use Both (Right First) adopts both sides in the requested order"
         );
     });
-    click_control(cx, window, "conflict-hunk-0-more");
-    click_control(cx, window, "conflict-choice-menu-item-0-0");
+    click_control(cx, window, "resolver-hunk-0-current-line-1");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert_eq!(
+        ax::control("conflict-hunk-0-current-state").unwrap().1,
+        i18n::Msg::ConflictPartlyUsed.t()
+    );
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let expected = "incoming one\nincoming two\nincoming three\ncurrent one\ncurrent three\n";
+        assert_eq!(
+            view.mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .resolved_text(Path::new("added.txt"))
+                .as_deref(),
+            Some(expected),
+            "unchecking a current line retains incoming-first block order"
+        );
+        assert_eq!(
+            view.editor_inputs
+                .as_ref()
+                .unwrap()
+                .result
+                .read(cx)
+                .value()
+                .as_str(),
+            expected
+        );
+    });
+    click_control(cx, window, "conflict-hunk-0-incoming-change");
+    click_control(cx, window, "conflict-hunk-0-current-both");
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -192,6 +242,14 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             "the drawn Result must not interleave after a checkbox edit"
         );
     });
+    assert_eq!(
+        ax::control("conflict-hunk-0-incoming-state").unwrap().1,
+        i18n::Msg::ConflictPartlyUsed.t()
+    );
+    assert_eq!(
+        ax::control("conflict-hunk-0-current-state").unwrap().1,
+        i18n::Msg::ConflictUsed.t()
+    );
     conflict.update(cx, |view, cx| {
         view.conflict_editor_reset_all(Path::new("added.txt"));
         cx.notify();
@@ -199,11 +257,14 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     click_control(cx, window, "resolver-hunk-0-incoming-line-0");
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    assert_eq!(ax::control("conflict-hunk-0-left").unwrap().2, "partial");
     assert_eq!(
-        ax::control("conflict-hunk-0-right").unwrap().2,
-        "partial",
-        "one incoming line is mixed, never a fully selected right arrow"
+        ax::control("conflict-hunk-0-current-state").unwrap().1,
+        i18n::Msg::ConflictNotUsed.t()
+    );
+    assert_eq!(
+        ax::control("conflict-hunk-0-incoming-state").unwrap().1,
+        i18n::Msg::ConflictPartlyUsed.t(),
+        "one incoming line is partly used, never fully adopted"
     );
     cx.read(|cx| {
         let mode = conflict.read(cx).mode.as_ref().unwrap();
@@ -235,7 +296,17 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     });
     cx.simulate_keystrokes(window, "cmd-a backspace");
     cx.run_until_parked();
-    click_control(cx, window, "conflict-hunk-0-left");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let change = e2e::control_bounds(window_id, "conflict-hunk-0-current-change")
+        .expect("manual Result retains an explicit Change action");
+    assert_eq!(
+        ax::control("conflict-hunk-0-current-change").unwrap().1,
+        i18n::Msg::ConflictChangeAccessible.t()
+    );
+    // Inspecting and dismissing the action must not explicitly reset the draft.
+    cx.simulate_mouse_move(window, change.center(), None, gpui::Modifiers::none());
+    cx.run_until_parked();
     crate::keyboard_nav::keys(cx, window, "escape");
     // Even a direct mutation request must refuse to replace divergent manual text.
     conflict.update(cx, |view, cx| {
@@ -266,6 +337,20 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         repo_fingerprint(repo),
         before,
         "all page changes and draft choices leave Git unchanged"
+    );
+    assert_eq!(
+        std::fs::read(repo.join(".git/index")).unwrap(),
+        index_before,
+        "draft adoption and Change preserve index bytes"
+    );
+    assert_eq!(
+        git2::Repository::open(repo)
+            .unwrap()
+            .head()
+            .unwrap()
+            .target(),
+        Some(head),
+        "draft adoption and Change preserve HEAD"
     );
     click_control(cx, window, "conflict-save");
     wait_idle(cx, &app);

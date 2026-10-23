@@ -346,9 +346,13 @@ directly above the hunk they act on; the gutter becomes a band only.
 - **Gutter: 12 px, no controls.** It carries the hunk band colour (resolved →
   `diff_added_bg` tint, unresolved → `diff_removed_bg`) and a 2 px `ui_accent`
   left edge on the focused hunk.
-- **Action row above every hunk, in both panes.** Height 26 px, text 11.5 px,
-  leading edge aligned with the code column (44 px at 100 %), background = the
-  hunk band of that side, 1 px top rule.
+- **Action row above every hunk, in both panes.** Height **24 px** (the mock
+  says 26; the panes and the gutter are `uniform_list`s that give every row the
+  same measured height and stay aligned only by equal row count × row height,
+  so the row is a `SideRow::Action` at the same index in both panes and the
+  gutter), text 11.5 px, buttons 20 px tall, leading edge aligned with the
+  code column (44 px at 100 %), background = the hunk band of that side, 1 px
+  top rule.
   - Unresolved: `Conflict N` (`text_sub`) · **採用** (filled `ui_accent`,
     `on_accent` ink, 20 px tall, radius 5) · **両方（現在 → 取り込み）** on the
     left pane / **両方（取り込み → 現在）** on the right pane (outline button).

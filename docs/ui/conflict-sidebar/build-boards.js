@@ -227,11 +227,21 @@ function contentHunk(board, T, cfg, L, left) {
   const c = frame(board, 'Content', left, 36, w, cfg.height - 36 - cfg.terminalH - 24, T.window);
   contentHeader(c, T, cfg, L, w);
   const paneW = Math.floor((w - 48) / 2);
-  const paneH = 148;
-  const cur = cfg.paneLines?.current ?? [[6, '// Checkout policy context 006'], [7, '// Checkout policy context 007'], [8, 'export const taxRate = 0.08;', true], [9, '// Checkout policy context 009'], [10, '// Checkout policy context 010'], [11, '// Checkout policy context 011']];
-  const inc = cfg.paneLines?.incoming ?? [[6, '// Checkout policy context 006'], [7, '// Checkout policy context 007'], [8, 'export const taxRate = 0.10;', true], [9, '// Checkout policy context 009'], [10, '// Checkout policy context 010'], [11, '// Checkout policy context 011']];
-  codePane(c, 'Pane/Current', 16, 40, paneW, paneH, T, `● ${L.current} — pricing-redesign`, T.accent, cur, T.current);
-  codePane(c, 'Pane/Incoming', 32 + paneW, 40, paneW, paneH, T, `○ ${L.incoming} — c3b74a7a Adjust tax and add pickup shipping`, T.success, inc, T.incoming);
+  // Whole file, scrolled so the current hunk is visible (Xcode / VS Code); no context toggle.
+  const rows = cfg.width < 1000 ? 8 : 12;
+  const paneH = 28 + rows * 18 + 8;
+  const ctx = (n) => [n, `// Checkout policy context ${String(n).padStart(3, '0')}`];
+  const around = (center, value) => {
+    const out = [];
+    for (let n = center - Math.floor(rows / 2) + 1; n <= center + Math.ceil(rows / 2); n++) out.push(n === center ? [n, value, true] : ctx(n));
+    return out;
+  };
+  const cur = cfg.paneLines?.current ?? around(8, 'export const taxRate = 0.08;');
+  const inc = cfg.paneLines?.incoming ?? around(8, 'export const taxRate = 0.10;');
+  const curPane = codePane(c, 'Pane/Current', 16, 40, paneW, paneH, T, `● ${L.current} — pricing-redesign`, T.accent, cur, T.current);
+  const incPane = codePane(c, 'Pane/Incoming', 32 + paneW, 40, paneW, paneH, T, `○ ${L.incoming} — c3b74a7a Adjust tax and add pickup shipping`, T.success, inc, T.incoming);
+  // Overlay scroller thumbs: the panes are the whole file, not a snippet.
+  for (const pane of [curPane, incPane]) rect(pane, 'scroller-thumb', paneW - 8, 30, 4, Math.round(paneH * 0.22), T.muted, { radius: 2 });
   let ax = 16;
   for (const [name, label, kind, bw] of cfg.adopt) { button(c, name, ax, 40 + paneH + 10, bw, label, T, kind); ax += bw + 8; }
   text(c, 'result-title', 16, 40 + paneH + 48, L.result, 13, T.text, { medium: true });
@@ -310,7 +320,7 @@ const base = {
   width: 1440, height: 900, terminalH: 120, operation: 'merge', path: 'src/pricing/checkout.ts',
   actions: jaActions('確認へ進む', 'secondary'),
   localActions: [['prev', '‹ 前へ', null, 64], ['next', '次へ ›', 'primary', 64], ['reset', 'すべてリセット', null, 96]],
-  adopt: [['current', '● 採用', null, 72], ['incoming', '○ 採用', null, 72], ['both', '両方 ▾', null, 72], ['context', '前後の行', null, 72]],
+  adopt: [['use-left', '左を使う', null, 88], ['use-right', '右を使う', null, 88], ['use-both', '両方を使う ▾', null, 112]],
   resultLines: resultPartial, conflictCount: 3,
   fileParent: 'src/pricing', fileTitle: 'checkout.ts', fileStatus: 'conflict 1/3', resultStatus: '下書き · 1/3', mode: 'hunk'
 };
@@ -389,7 +399,7 @@ makeBoard('05 Sidebar hidden · JA · Light', 6160, 0, LIGHT, { ...base, sidebar
 const narrow = { ...base, width: 940, height: 660, terminalH: 110,
   actions: jaActions('確認へ進む', 'secondary'),
   localActions: [['prev', '‹', null, 28], ['next', '›', 'primary', 28], ['reset', 'リセット', null, 56]],
-  adopt: [['current', '● 採用', null, 72], ['incoming', '○ 採用', null, 72], ['both', '両方 ▾', null, 72], ['context', '前後の行', null, 72]],
+  adopt: [['use-left', '左を使う', null, 88], ['use-right', '右を使う', null, 88], ['use-both', '両方を使う ▾', null, 112]],
   resultLines: resultPartial.slice(0, 5) };
 makeBoard('06a Narrow · JA · Dark · shown', 7700, 0, DARK, { ...narrow, upper: upperMixed, lower: lowerOne }, JA);
 makeBoard('06b Narrow · JA · Dark · hidden', 8740, 0, DARK, { ...narrow, sidebarHidden: true, upper: upperMixed, lower: lowerOne }, JA);
@@ -508,7 +518,7 @@ makeBoard('08 Many deep paths · EN · Light', 1540, 1000, LIGHT, {
   ],
   actions: enActions('Review commit', 'secondary'),
   localActions: [['prev', '‹ Prev', null, 64], ['next', 'Next ›', 'primary', 64], ['reset', 'Reset all', null, 80]],
-  adopt: [['current', '● Use', null, 72], ['incoming', '○ Use', null, 72], ['both', 'Both ▾', null, 72], ['context', 'Context', null, 72]],
+  adopt: [['use-left', 'Use Left', null, 88], ['use-right', 'Use Right', null, 88], ['use-both', 'Use Both ▾', null, 104]],
   path: 'services/billing/src/pricing/checkout.ts', fileParent: 'services/billing/src/pricing', resultStatus: 'Draft · 1/3'
 }, EN);
 

@@ -238,3 +238,17 @@ artifacts, not design findings: inert Operation Log affordances, an END state
 without a screen, and (round 1) missing boards for other files. Aim errors
 stay separate from UX interpretation; they motivate the harness driver, not
 larger controls. Model trials are not novice-human evidence.
+
+### Correction after user review of the boards (2026-10-23)
+
+The user rejected `前後の行`, `● 採用` / `○ 採用` and `両方` as meaningless in
+isolation. The shortened labels came from over-applying the narrow-width
+suggestion to every board. Decision, following Xcode's conflict resolution:
+
+- No context toggle. Each source pane shows the whole file in a fixed-height
+  scrollable pane (12 rows; 8 below 1000 px wide), scrolled to the current hunk
+  with the hunk highlighted; Prev/Next re-scroll both panes.
+- Adoption controls are `左を使う` / `右を使う` / `両方を使う ▾`
+  (`両方を使う（左→右）`, `両方を使う（右→左）`); EN `Use Left` / `Use Right` /
+  `Use Both ▾`. The pane headers carry the identity (`● 現在の側 — <branch>`,
+  `○ 取り込む側 — <sha> <subject>`); AX names append it. No glyph-only labels.

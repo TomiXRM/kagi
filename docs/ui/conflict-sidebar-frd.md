@@ -41,8 +41,8 @@ per-file save that moves a row, and output-centred `k of n` hunk navigation.
 Not taken: `Mark all resolved` (marks without a verified save); commit message
 and Abort at the bottom of the file pane (Apple Sidebars: bottom-of-sidebar
 actions get hidden by window placement — Kagi keeps the commit hand-off and
-Abort in the toolbar); per-line checkboxes replacing adoption buttons (Kagi
-keeps labeled `採用` plus the existing gutter line selection). Apple guidance
+Abort in the toolbar); per-line checkboxes replacing adoption buttons (adopted
+on 2026-10-24 — see the decision section at the end). Apple guidance
 does not prescribe two equal-height file groups, and its usual two-level
 sidebar advice needs care with deep paths.
 
@@ -263,13 +263,14 @@ exports) and the Finder/Mail source list, with Kagi's `theme_apple_light` /
 Noto Sans JP for CJK runs):
 
 - **Document, not controls.** Two borderless whole-file panes with a jump bar
-  (side identity) and a commit footer each; a 44 px gutter carries one `? ⌄`
-  pull-down pill at each conflict; the conflict band (`diff_removed_bg`,
+  (side identity) and a commit footer each; the conflict band (`diff_removed_bg`,
   3 px blocker stripe) runs continuously across both panes and the gutter.
-  The pill's menu is `左を使う / 右を使う / 左、次に右を使う / 右、次に左を使う`
-  (Xcode: Choose Left / Right / Left Then Right / Right Then Left). A decided
-  pill shows the choice (`右 ⌄`) and stays re-openable. `‹ 1/3 ›` sits at the
-  trailing end of the left footer. No adoption button row, no context toggle.
+  *Superseded 2026-10-24:* the gutter originally carried one `? ⌄` pull-down
+  pill per conflict with a `左を使う / 右を使う / 左、次に右を使う / 右、次に左を使う`
+  menu (Xcode: Choose Left / Right / Left Then Right / Right Then Left); the
+  user rejected it and it is replaced by `← … →` plus per-line checkboxes (see
+  the decision section). `‹ 1/3 ›` sits at the trailing end of the left
+  footer. No adoption button row, no context toggle.
 - **Result** is a directly editable pane below the files with origin stripes
   per line (`color_branch` left, `color_remote` right, warning for manual);
   no Edit button. Whole rows only; an overlay scroller when clipped.

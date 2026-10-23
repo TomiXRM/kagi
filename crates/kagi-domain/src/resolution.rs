@@ -345,7 +345,7 @@ impl ConflictHunk {
     /// provenance.  An [`HunkChoice::Unresolved`] hunk re-emits the conflict
     /// markers (so an unresolved Result is recognizably unfinished and the
     /// marker gate still trips), tagged [`LineOrigin::Manual`].
-    fn resolved_lines(&self) -> Vec<ResolvedLine> {
+    pub fn resolved_lines(&self) -> Vec<ResolvedLine> {
         let cur = |g: &[String]| {
             g.iter()
                 .map(|t| ResolvedLine {
@@ -648,11 +648,36 @@ impl HunkModel {
         }) && changed
     }
 
-    /// Set the output order for one hunk's line-level selection.
+    /// Reorder already adopted lines without making a resolution choice.
+    /// Returns `false` for unchanged or inapplicable orders (including unresolved,
+    /// manual, empty and one-sided choices), so callers need not record an edit.
     pub fn set_hunk_line_order(&mut self, hunk_index: usize, order: LineOrder) -> bool {
+        let mut changed = false;
         self.with_hunk_mut(hunk_index, |h| {
-            h.ensure_line_selection().order = order;
-        })
+            if let Some(selection) = &mut h.line_select {
+                let has_tie = selection
+                    .current_taken
+                    .iter()
+                    .zip(&selection.incoming_taken)
+                    .any(|(current, incoming)| *current && *incoming);
+                if has_tie && selection.order != order {
+                    selection.order = order;
+                    changed = true;
+                }
+            } else if !h.current.is_empty() && !h.incoming.is_empty() {
+                let choice = match (&h.choice, order) {
+                    (HunkChoice::BothCurrentFirst, LineOrder::IncomingFirst) => {
+                        HunkChoice::BothIncomingFirst
+                    }
+                    (HunkChoice::BothIncomingFirst, LineOrder::CurrentFirst) => {
+                        HunkChoice::BothCurrentFirst
+                    }
+                    _ => return,
+                };
+                h.choice = choice;
+                changed = true;
+            }
+        }) && changed
     }
 
     /// Assemble the file Result lines from all regions, in order, tracking
@@ -722,6 +747,10 @@ pub fn lines_to_text(lines: &[ResolvedLine]) -> String {
 // ────────────────────────────────────────────────────────────
 // Unit tests (pure hunk model / line conversion)
 // ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "resolution/order_tests.rs"]
+mod order_tests;
 
 #[cfg(test)]
 mod tests {

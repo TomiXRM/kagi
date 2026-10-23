@@ -518,14 +518,16 @@ fn collect_conflict_files(
 
 /// Originally conflicted paths (Git's `MERGE_MSG` `# Conflicts:` block) that the
 /// index now holds as exactly one stage-0 entry and that are not still unmerged.
-/// Best effort: a missing or unparsable `MERGE_MSG` yields an empty list rather
-/// than an error, because detection must never fail over presentation evidence.
+/// Best effort: a missing, non-regular (symlink / FIFO / directory), oversized
+/// or unparsable `MERGE_MSG` yields an empty list rather than an error or a
+/// blocking read, because detection must never fail or stall over presentation
+/// evidence. The strict metadata checks stay with the approval digest.
 fn collect_resolved_files(
     repo: &Repository,
     index: &git2::Index,
     unmerged: &[ConflictFile],
 ) -> Vec<ResolvedConflictFile> {
-    let Ok(raw) = std::fs::read_to_string(repo.path().join("MERGE_MSG")) else {
+    let Some(raw) = read_regular_merge_msg(&repo.path().join("MERGE_MSG")) else {
         return Vec::new();
     };
     let listed = kagi_domain::merge_msg::conflicted_paths(&raw);
@@ -551,6 +553,26 @@ fn collect_resolved_files(
     resolved.sort_by(|a, b| a.path.cmp(&b.path));
     resolved.dedup_by(|a, b| a.path == b.path);
     resolved
+}
+
+/// Bounded read of `MERGE_MSG` only when it is a regular file: a FIFO would
+/// block the detector and a symlink could point outside `.git`.
+fn read_regular_merge_msg(path: &Path) -> Option<String> {
+    use std::io::Read;
+    const MAX_MERGE_MSG_BYTES: u64 = 1 << 20;
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_MERGE_MSG_BYTES {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut raw = String::new();
+    file.take(MAX_MERGE_MSG_BYTES)
+        .read_to_string(&mut raw)
+        .ok()?;
+    Some(raw)
 }
 
 /// Extract the path of a conflict from whichever stage entry is present.

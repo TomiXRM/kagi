@@ -296,3 +296,44 @@ badge removed, AppKit menu metrics and elevated dark menu border/shadow,
 terminal tokens, consistent 12/16 px insets. These screens are the visual
 contract for the GPUI implementation; the functional contract (two groups,
 evidence rule, Save/Continue safety) is unchanged.
+
+## Decision after user review of the live build (2026-10-24)
+
+The user watched the implemented workspace (HEAD 554a283a, visible Tier B
+replay) and rejected the hunk control as shipped:
+
+- `左` / `右` are visually similar kanji; the pull-down costs two clicks per
+  hunk; `右、次に左を使う` reads as a per-line sequence ("with three lines does
+  it become 右、次に左、次に左?"). It is in fact the concatenation order of the
+  two side blocks (`HunkChoice::BothIncomingFirst`) and never grows with line
+  count, but a label that can be read that way is wrong regardless.
+- GitKraken's per-line checkboxes are the preferred fine-grained control;
+  hunk-level buttons are the coarse control.
+
+Replacement contract (supersedes the `? ⌄` pill and its four-item menu):
+
+- **Gutter per hunk: three buttons `←` `…` `→`.** `←` takes every line of the
+  left (current) side only; `→` takes every line of the right (incoming) side
+  only — the arrow points at the pane whose lines are used. One click, no menu.
+  `…` opens the menu: `両方を使う(← → の順)` / `両方を使う(→ ← の順)` /
+  `この hunk をリセット` / `すべてリセット` (EN: `Use both, left first` /
+  `Use both, right first` / `Reset this hunk` / `Reset all`). No "then"
+  wording anywhere. The state shows on the buttons: `←` selected when the whole
+  left side is taken, `→` for the right, both when both sides are taken, a
+  mixed state when the selection is partial (per-line). `?` disappears.
+- **Per-line checkboxes** at the leading edge of every conflict line in both
+  source panes (GitKraken). A checked line is in the Result; the hunk buttons
+  are just "check all of this side / uncheck the other". Per-line state is the
+  existing `line_select` (`conflict_editor_set_hunk_line`); nothing new in the
+  domain.
+- **Drag to range-select** (Excel): mouse-down on a checkbox fixes the target
+  state (the opposite of that checkbox); dragging over further checkboxes in
+  the same pane paints them to that state; mouse-up ends. Context lines have
+  no checkbox and are skipped. Keyboard: Space toggles the focused line,
+  Shift+↑/↓ extends.
+- AX: `←` "左の内容を使う" / "Use left side", `→` "右の内容を使う" / "Use right
+  side", `…` "その他の選択肢" / "More choices"; each checkbox is named by side
+  and line number (existing `Msg::conflict_line`) with checked state.
+
+Functional contract (two groups, evidence rule, Save/Continue safety, no write
+from navigation) is unchanged.

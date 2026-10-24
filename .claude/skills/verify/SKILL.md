@@ -1000,7 +1000,7 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
-For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_stale_restore_failure,conflict_draft_stale_restore_async,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
 with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
 exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
@@ -1010,6 +1010,13 @@ byte-for-byte rather than dropping the log from the no-write witness.
 saved edits, an unopenable lock, bounded lock contention and exhausted rescue
 names. It preserves the exact cause, keeps the editor fail-closed without
 per-frame re-detection, and verifies unchanged Git state and damaged bytes.
+`conflict_draft_stale_restore_failure` delivers an older real lock-timeout restore
+after a newer rebase conflict and a failed autosave: the exact pane, Result input,
+live text and pending revalidation gate must survive, without an obsolete notice.
+`conflict_draft_stale_restore_async` holds a real async error immediately before
+admission, accepts a newer read or detection of the same Git state, and checks
+that read keys and detector generations independently reject it. The hold is
+GUI-feature-only and releases even on unwinding; it never substitutes a result.
 The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated

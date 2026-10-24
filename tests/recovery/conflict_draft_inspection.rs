@@ -17,6 +17,12 @@ mod git_fixture;
 #[path = "conflict_draft_inspection_hold.rs"]
 mod inspection_hold;
 
+#[path = "conflict_draft_stale_failure.rs"]
+mod stale_failure;
+pub use stale_failure::{
+    scenario_conflict_draft_stale_restore_async, scenario_conflict_draft_stale_restore_failure,
+};
+
 const OTHER: &str = "OTHER REPOSITORY PRESERVED RESULT\n";
 
 // Like the existing theme_custom sandbox: restore the runner-owned environment
@@ -534,7 +540,7 @@ pub fn scenario_conflict_draft_restore_io_failure(cx: &mut VisualTestAppContext)
             let before = RepositoryState::read(&repo);
             let payload = detect_payload_for_test(&repo, "main");
             let cause = match &payload {
-                ConflictDetectOutcome::OpenFailed(Some(cause)) => cause.clone(),
+                ConflictDetectOutcome::OpenFailed(Some(failure)) => failure.cause.clone(),
                 _ => panic!("restore failure was lost: {failure}"),
             };
             let owner = cx.read(|cx| {

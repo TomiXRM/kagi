@@ -23,7 +23,7 @@ witnesses are named there; those local artifacts are not committed).
   HEAD/index/status; no commit panel). Skip TOCTOU's naive replacement drill is
   stopped by refresh resetting the armed control. C6's external-final-skip
   drill removes Conflict Mode, and real Git returns 128, not zero/no movement.
-  C6 remains an isolated-predicate REFUTATION, not a globally disproved risk.
+  C6 was an isolated-predicate REFUTATION at that snapshot; #1746 D2 now fixes it.
   Receipt-after-kill runs at **479, 568, 732, and 1037 ms measured elapsed** all
   retained exactly one successful Continue receipt; the narrower pre-479 ms
   mutation/accounting gap was not exercised or disproved.
@@ -96,7 +96,7 @@ State counts separated by `/` follow the check/trace order in that row. CONTRACT
 | `ManualCapturePersisted (successful synchronous callback)` | HOLD | HELD | 14 | — | `ui/conflict_view/draft_owner.rs:13-18,180-187` | CONTRACT; map P1 DISPROVED | The current callback already autosaves; remove the obsolete map suspicion, not the working guard. |
 | `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | REFUTE | REFUTED | 44 / 44 / 40 | [receipt-continue](#trace-receipt-continue), [receipt-merge](#trace-receipt-merge), [receipt-skip](#trace-receipt-skip) | `ui/operations/conflict.rs:404-448,653-698; ui/operations/conflict_skip.rs:100-149; app/session.rs:760-776` | BUG | Append/retain accounting in the mutation-owning worker before releasing its close gate. |
 | `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 65 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
-| `SkipDropsOnlyApprovedStep` | REFUTE | REFUTED | 51 | [skip-replacement](#trace-skip-replacement) | `conflicts.rs:1803-1808,1869-1894; ui/operations/conflict_skip.rs:68-107` | BUG | Carry the approved full revision/replay position into Skip and revalidate immediately before CLI mutation. |
+| `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | see current TLC summary | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |
 | `NoDestructiveProgressAfterPreservationFailure (Abort / Skip / D-F)` | REFUTE | REFUTED | 36 / 32 / 16 | [preserve-abort](#trace-preserve-abort), [preserve-skip](#trace-preserve-skip), [preserve-dir-file](#trace-preserve-dir-file) | `ops/conflict_abort.rs:274-286,342-351; conflicts.rs:1880-1894; ops/dir_file_conflict.rs:202-222,299-316` | BUG | Fail closed when the required recovery copy cannot be created; do not destroy the previous copy in place. |
 | `MergeCommitTreeIsApprovedTree` | REFUTE | REFUTED | 25 | [merge-tree](#trace-merge-tree) | `ui/operations/commit.rs:1054-1076,1191-1209; backend.rs:979-998; ops/commit.rs:38-44,74-83` | BUG | Pass the displayed approved index digest through merge finalization instead of silently replanning. |
 | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | REFUTED | 62 | [sibling-invalidation](#trace-sibling-invalidation) | `ops/conflict_abort.rs:367-400; app/flow.rs:78; app/settle.rs:272-300` | BUG | Mark ref-moving Abort as shared-ref-changing so retained sibling worktree views are invalidated. |
@@ -768,8 +768,11 @@ No product changes are proposed as already implemented. Fix sketches in the ledg
 ## Trace-checking (2026-10-24)
 
 The refined model admits 34 saved drill projections and rejects a forged Skip
-without an arm. `skip-replacement` now HOLDs under refresh-disarm; the narrower
-`skip-confirm-cli-race` remains REFUTED. Unreadable operation metadata now has
-a named HOLD guard with a broken negative control. See the complete
-[trace reconciliation appendix](conflict-trace-ledger.md) for the 34-trial table,
-confirmed pairs, evidence boundaries, and reproduction commands.
+without an arm. `skip-replacement` HOLDs under refresh-disarm. #1746 D2 makes
+`skip-confirm-cli-race` HOLD under frozen approval and immediate pre-CLI validation,
+including replacement after initial preflight. `skip-prewrite-broken` removes
+those checks and remains red; `skip-refresh-broken` independently checks disarming.
+Unreadable operation metadata retains its named HOLD guard and negative control.
+See the [trace reconciliation appendix](conflict-trace-ledger.md) for the historical
+34-trial table and its evidence boundaries; those saved drills did not exercise
+the Rust regression's post-confirm replacement schedule.

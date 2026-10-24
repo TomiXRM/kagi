@@ -319,11 +319,10 @@ pub struct ConflictMode {
     /// dependency on this view being alive. Skip is still entity-local; it is
     /// a sequencer step, not an escape hatch.
     ///
-    /// Whether the destructive Skip is armed (two-stage confirm, ADR-0067).
-    /// It permanently drops the current step's changes *and* the in-progress
-    /// resolution buffer, and it used to execute on a single click with no
-    /// confirm at all — the only destructive conflict action without one.
-    pub skip_armed: bool,
+    /// Full step identity frozen on the first Skip click. A refreshed mode
+    /// disarms confirmation; the backend checks this same revision again
+    /// immediately before spawning Git.
+    pub skip_approval: Option<kagi_domain::conflict_family::ConflictRevision>,
 }
 
 impl ConflictMode {

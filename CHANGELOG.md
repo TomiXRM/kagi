@@ -22,6 +22,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Keep adopted empty conflict sides selected when materializing line choices; reject invalid line edits without resolving untouched hunks and safely ignore stale selection bits. Treat literal marker-looking source lines as content in readiness, Save and Continue, while unresolved and hand-typed markers still block. (#1746)
   - Materialize conflict markers wider than every source marker run and parse that exact width, preserving literal marker lines without blocking per-hunk choices after clean auto-merges. Keep incompatible older hunk drafts in preserved read-only recovery instead of authorizing them against the new materialization, including when saving another file triggers re-detection. (#1751)
+- Bind Skip confirmation to the approved operation step and full conflict revision; refuse a CLI-advanced or replaced step immediately before Git runs. Report a zero-exit Skip without observed movement as an uncertain warning, never success. (#1746)
+  - Keep execution-time stale-step refusals localized in the EN/JA footer and unattended notification, while retaining the English durable blocker and log contract.
 - Refuse conflict Save and Continue after an external worktree edit, preserving the file and index. Show an explanatory header, disable Save, and offer index re-detection without discarding the matching draft or granting it fresh write authority. (#1733)
   - Preserve the original source fingerprint across watcher refreshes before the first choice, and allow an interrupted Save/Continue to retry when the worktree already equals its frozen text exactly.
 - Show a saved submodule conflict's commit OID instead of trying to preview it as a blob. (4363857802)

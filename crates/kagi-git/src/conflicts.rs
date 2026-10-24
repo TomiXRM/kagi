@@ -1800,6 +1800,33 @@ pub struct SkipOutcome {
     pub error: Option<GitError>,
 }
 
+/// A skip approval bound to the original step, never renewed at execution.
+#[derive(Debug, Clone)]
+pub struct ConflictSkipPlan {
+    pub plan: OperationPlan,
+    // The canonical full observation includes operation kind, replayed commit
+    // marker, rebase msgnum/end and sequencer todo (including its head). Reuse
+    // it rather than establishing a weaker second metadata fingerprint.
+    revision: kagi_domain::conflict_family::ConflictRevision,
+    op: ConflictOp,
+}
+
+fn preflight_skip_revision(
+    repo: &Repository,
+    op: &ConflictOp,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<(), GitError> {
+    let live = crate::backend::conflict_ops::conflict_observe::observation(repo)?;
+    if !live.as_ref().is_some_and(|snapshot| {
+        snapshot.session.op == *op && snapshot.observation.revision == *expected
+    }) {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::SkipStepChanged,
+        ))));
+    }
+    Ok(())
+}
+
 /// Plan a `skip` of the current sequencer step (rebase / cherry-pick / revert).
 ///
 /// **Merge has no skip** — a plain merge is a single step, so this errors for
@@ -1809,13 +1836,15 @@ pub struct SkipOutcome {
 pub fn plan_conflict_skip(
     repo: &Repository,
     session: &ConflictSession,
-) -> Result<OperationPlan, GitError> {
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<ConflictSkipPlan, GitError> {
     if !session.op.is_sequencer() {
         return Err(GitError::Other(
             "skip is only available for rebase / cherry-pick / revert (a merge has no skip)."
                 .to_string(),
         ));
     }
+    preflight_skip_revision(repo, &session.op, expected)?;
 
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
@@ -1827,7 +1856,7 @@ pub fn plan_conflict_skip(
         commands: Vec::new(),
     };
 
-    Ok(OperationPlan {
+    let plan = OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
         push_identity: None,
@@ -1851,6 +1880,11 @@ pub fn plan_conflict_skip(
         preview_commits: Vec::new(),
         destructive: false,
         equivalent_command: None,
+    };
+    Ok(ConflictSkipPlan {
+        plan,
+        revision: expected.clone(),
+        op: session.op.clone(),
     })
 }
 
@@ -1868,14 +1902,15 @@ pub fn plan_conflict_skip(
 /// git's sequencer can advance one step; libgit2 exposes no such API.
 pub(crate) fn execute_conflict_skip(
     repo: &Repository,
-    session: &ConflictSession,
+    approved: &ConflictSkipPlan,
     buffer: &ResolutionBuffer,
 ) -> Result<SkipOutcome, GitError> {
-    if !session.op.is_sequencer() {
+    if !approved.op.is_sequencer() {
         return Err(GitError::Other(
             "skip is only available for sequencer operations.".to_string(),
         ));
     }
+    preflight_skip_revision(repo, &approved.op, &approved.revision)?;
 
     // 1. Preserve the buffer first (never lose partial work).
     let buffer_preserved_at = buffer.autosave().ok();
@@ -1889,8 +1924,16 @@ pub(crate) fn execute_conflict_skip(
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
         .to_path_buf();
-    let slug = session.op.slug();
-    let position_before = sequencer_position(repo, session);
+    let slug = approved.op.slug();
+    let session = ConflictSession {
+        op: approved.op.clone(),
+        files: Vec::new(),
+        resolved: Vec::new(),
+    };
+    let position_before = sequencer_position(repo, &session);
+    // Last read before spawning Git: neither a queued dispatch nor buffer
+    // preservation may silently renew approval for a replacement CLI step.
+    preflight_skip_revision(repo, &approved.op, &approved.revision)?;
     let out = run_git(&workdir, &[slug, "--skip"]).map_err(|e| match e {
         GitError::TerminationUnknown(_) => e,
         other => GitError::Other(format!("{} --skip failed to start: {}", slug, other)),
@@ -1902,7 +1945,7 @@ pub(crate) fn execute_conflict_skip(
         // Same libgit2 index-cache trap as `--continue` (#296b): re-read.
         unmerged: fresh_index_has_conflicts(repo),
         before: position_before,
-        after: sequencer_position(repo, session),
+        after: sequencer_position(repo, &session),
     });
     let error = (out.status != 0).then(|| {
         format!(

@@ -54,6 +54,8 @@ pub enum ConflictsNote {
     /// warning (continue) — no conflicting files were detected; continue will
     /// finish the operation as-is.
     NoConflictingFilesDetected,
+    /// warning (continue) — the current step is resolved, but replay has more steps.
+    ContinuesToNextStep { remaining: usize },
     /// warning (abort) — the partial resolution buffer is preserved, not
     /// discarded.
     PartialResolutionsPreserved,
@@ -114,6 +116,9 @@ impl ConflictsNote {
             ConflictsNote::ChecklistBlocker { message } => message.clone(),
             ConflictsNote::NoConflictingFilesDetected => {
                 crate::advice_template_en!(ConflictsNoConflictingFilesDetected).to_string()
+            }
+            ConflictsNote::ContinuesToNextStep { remaining } => {
+                format!("Continues to the next step ({remaining} remaining)")
             }
             ConflictsNote::PartialResolutionsPreserved => {
                 crate::advice_template_en!(ConflictsPartialResolutionsPreserved).to_string()

@@ -1079,9 +1079,15 @@ fn continue_plan_after_preflight(
     let blockers: Vec<PlanNote> = structured.iter().map(blocker_note).collect();
 
     if session.files.is_empty() && structured.is_empty() {
-        warnings.push(PlanNote::Conflicts(
-            ConflictsNote::NoConflictingFilesDetected,
-        ));
+        let note = match session.op {
+            ConflictOp::Rebase { step, total, .. } if step > 0 && total > step => {
+                ConflictsNote::ContinuesToNextStep {
+                    remaining: total - step,
+                }
+            }
+            _ => ConflictsNote::NoConflictingFilesDetected,
+        };
+        warnings.push(PlanNote::Conflicts(note));
     }
 
     let predicted = StateSummary {
@@ -1090,11 +1096,6 @@ fn continue_plan_after_preflight(
     };
 
     let op = session.op.slug().to_string();
-    let recovery = PlanRecovery {
-        kind: RecoveryKind::Conflicts(ConflictsRecovery::Continue { op: op.clone() }),
-        commands: vec![format!("git {} --abort", op)],
-    };
-
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
@@ -1106,7 +1107,7 @@ fn continue_plan_after_preflight(
         predicted,
         warnings,
         blockers,
-        recovery: Some(recovery),
+        recovery: None,
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,

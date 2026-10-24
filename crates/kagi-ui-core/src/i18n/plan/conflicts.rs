@@ -86,6 +86,9 @@ pub fn note_ja(note: &ConflictsNote) -> String {
         ConflictsNote::NoConflictingFilesDetected => {
             super::advice_text(Msg::AdviceConflictsNoConflictingFilesDetected, &[])
         }
+        ConflictsNote::ContinuesToNextStep { remaining } => {
+            format!("次の step に進みます（残り {remaining}）")
+        }
         ConflictsNote::PartialResolutionsPreserved => {
             super::advice_text(Msg::AdviceConflictsPartialResolutionsPreserved, &[])
         }

@@ -3226,6 +3226,10 @@ mod macos {
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_unrelated_replan),
             ),
             (
+                "conflict_continue_presentation",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_presentation),
+            ),
+            (
                 "conflict_draft_revision_audit",
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_audit),
             ),

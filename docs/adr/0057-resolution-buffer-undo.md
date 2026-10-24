@@ -27,7 +27,9 @@
   surrogate pair は Unicode 文字として復元し、再保存しても脱落させない。
 - live index 由来の raw metadata は再検出する。保存済みの選択を適用するには、
   以下の既知かつ一致する file identity と text/raw の互換性を要求する。
-  undo/redo・hunk model は JSON に保存しない。保存先と oplog は維持する。
+  undo/redo・source hunk data は JSON に保存しない。hunk choices・line selections・
+  positional/block の全 LineOrder と materialization fingerprint は保存し、
+  既知かつ一致する live file identity と materialization にだけ復元する。保存先と oplog は維持する。
 
 ## 描画用 marker 派生状態（#497）
 

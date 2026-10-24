@@ -3203,6 +3203,10 @@ mod macos {
                 Box::new(crate::conflict_controls::scenario_conflict_manual_reset_guard),
             ),
             (
+                "conflict_partial_resume",
+                Box::new(crate::conflict_controls::scenario_conflict_partial_resume),
+            ),
+            (
                 "conflict_continue_approval_replacement_queued",
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_replacement_queued),
             ),

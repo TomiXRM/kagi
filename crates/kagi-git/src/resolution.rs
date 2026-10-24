@@ -116,6 +116,8 @@ struct FileResolution {
     /// The current Result lines (the editable draft).  `None` until a choice or
     /// manual edit produces a resolution.
     result: Option<Vec<ResolvedLine>>,
+    /// Compact decisions retained with the draft across autosave and recovery.
+    hunk_state: Option<hunk_state::HunkState>,
     /// Derived from this exact Result revision; not persisted or used by safety gates.
     marker_residue: bool,
     /// Undo stack: prior `result` states (most recent last).
@@ -140,6 +142,7 @@ impl FileResolution {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            hunk_state: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -191,10 +194,8 @@ pub struct ResolutionBuffer {
     files: BTreeMap<PathBuf, FileResolution>,
     /// Presentation-only aggregate, updated at each Result replacement.
     marker_residue_count: usize,
-    /// Per-file **hunk-level** editing state for the Conflict Editor (W32).  In
-    /// memory only (rebuilt from the materialization on demand): the persisted
-    /// artifact is the assembled `result` in [`FileResolution`].  A file appears
-    /// here once [`ResolutionBuffer::ensure_hunks`] has decomposed it.
+    /// Live source hunks, rebuilt from materialization. Only editing decisions
+    /// and a materialization fingerprint are persisted with each file draft.
     hunks: BTreeMap<PathBuf, HunkModel>,
     /// Older, unbound or incompatible drafts in the same autosave document.
     recoveries: Vec<RecoveryEntry>,
@@ -225,6 +226,9 @@ impl Clone for ResolutionBuffer {
 
 mod conflict_boundary;
 mod drafts;
+mod hunk_state;
+#[cfg(test)]
+mod hunk_state_tests;
 use drafts::RecoveryEntry;
 pub use drafts::{OwnedRecoveryDraft, RecoveryDraft};
 
@@ -470,12 +474,21 @@ impl ResolutionBuffer {
     /// hunks), it is preserved so per-hunk choices are not lost.  Returns `false`
     /// if `path` is not a tracked text conflict.
     pub fn ensure_hunks(&mut self, path: &Path, marker_text: &str) -> bool {
-        if self.files.get(path).is_none_or(|file| file.raw) {
+        let Some(file) = self.files.get_mut(path).filter(|file| !file.raw) else {
             return false;
+        };
+        if !self.hunks.contains_key(path) {
+            let mut model = HunkModel::from_marker_text(marker_text);
+            // Decoding alone grants no authority. retain_drafts first binds the
+            // decisions to a live file with the same known stage identity.
+            if self.live_context.is_some() {
+                if let Some(state) = &file.hunk_state {
+                    state.restore(marker_text, &mut model);
+                }
+            }
+            file.hunk_state = Some(hunk_state::HunkState::new(marker_text, &model));
+            self.hunks.insert(path.to_path_buf(), model);
         }
-        self.hunks
-            .entry(path.to_path_buf())
-            .or_insert_with(|| HunkModel::from_marker_text(marker_text));
         true
     }
 
@@ -501,15 +514,7 @@ impl ResolutionBuffer {
         if !model.set_choice(hunk_index, choice) {
             return false;
         }
-        let assembled = model.assemble();
-        // Commit the re-assembled Result into the file resolution.
-        if let Some(fr) = self.files.get_mut(path) {
-            fr.checkpoint();
-            fr.replace_result(Some(assembled), &mut self.marker_residue_count);
-            true
-        } else {
-            false
-        }
+        self.commit_hunk_model(path)
     }
 
     fn commit_hunk_model(&mut self, path: &Path) -> bool {
@@ -519,6 +524,9 @@ impl ResolutionBuffer {
         let assembled = model.assemble();
         if let Some(fr) = self.files.get_mut(path) {
             fr.checkpoint();
+            if let Some(state) = &mut fr.hunk_state {
+                state.update(model);
+            }
             fr.replace_result(Some(assembled), &mut self.marker_residue_count);
             true
         } else {
@@ -1145,7 +1153,7 @@ fn now_unix() -> u64 {
 // ────────────────────────────────────────────────────────────
 
 // Borrow the persisted data without cloning draft text or serializing live-index
-// metadata, hunk models, or undo history. Domain types remain serde-free.
+// metadata, source hunk data, or undo history. Domain types remain serde-free.
 #[derive(serde::Serialize)]
 struct BufferRecord<'a> {
     repo: Cow<'a, str>,
@@ -1170,6 +1178,7 @@ struct FileRecord<'a> {
     #[serde(serialize_with = "serialize_result")]
     result: &'a Option<Vec<ResolvedLine>>,
     raw_result: Option<RawRecord<'a>>,
+    hunk_state: &'a Option<hunk_state::HunkState>,
 }
 
 #[derive(serde::Serialize)]
@@ -1226,6 +1235,7 @@ fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
         current: fr.current_text.as_deref(),
         incoming: fr.incoming_text.as_deref(),
         result: &fr.result,
+        hunk_state: &fr.hunk_state,
         raw_result: fr.raw_result.as_ref().map(|raw| RawRecord {
             oid: &raw.oid,
             mode: raw.mode,
@@ -1310,6 +1320,9 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         current_text: json_string(fields.remove("current")),
         incoming_text: json_string(fields.remove("incoming")),
         result: None,
+        hunk_state: fields
+            .remove("hunk_state")
+            .and_then(|value| serde_json::from_value(value).ok()),
         marker_residue: false,
         raw_result,
         raw: false,
@@ -1396,6 +1409,7 @@ mod tests {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            hunk_state: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1499,6 +1513,7 @@ mod tests {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            hunk_state: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1548,6 +1563,7 @@ mod tests {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            hunk_state: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),

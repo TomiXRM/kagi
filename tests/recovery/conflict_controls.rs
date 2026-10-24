@@ -16,6 +16,9 @@ pub use progressive::scenario_conflict_progressive_add_add;
 #[path = "conflict_manual_reset.rs"]
 mod manual_reset;
 pub use manual_reset::scenario_conflict_manual_reset_guard;
+#[path = "conflict_resume.rs"]
+mod resume;
+pub use resume::scenario_conflict_partial_resume;
 
 fn fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();

@@ -118,6 +118,7 @@ fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
         && left.draft_state == right.draft_state
         && left.result == right.result
         && left.raw_result == right.raw_result
+        && left.hunk_state == right.hunk_state
         && left.current_text == right.current_text
         && left.incoming_text == right.incoming_text
         && left.binary == right.binary
@@ -192,6 +193,8 @@ impl ResolutionBuffer {
                 if has_draft_state(&saved) {
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
+                    current.hunk_state = saved.hunk_state.take();
+                    self.hunks.remove(&path);
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;
@@ -219,6 +222,8 @@ impl ResolutionBuffer {
                     let mut saved = entry.file;
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
+                    current.hunk_state = saved.hunk_state.take();
+                    self.hunks.remove(&entry.path);
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;

@@ -39,7 +39,11 @@ witnesses are named there; those local artifacts are not committed).
 Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
-REFUTATIONS remain harness-green while tracked by #1731–#1738. Update a model
+REFUTATIONS remain harness-green while tracked by #1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
+The maintained lifecycle/pure expected-outcome tables linked above map each
+REFUTE to its issue, owner QUESTION, negative control, or runtime CONTRACT.
+The historical ledger below retains its original extraction classifications.
+Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
 

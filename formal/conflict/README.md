@@ -64,8 +64,10 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by issues **#1731–#1738**, not promises that those holes
-are acceptable. TLC itself exits 12 (safety counterexample) or 13 (temporal
+holes/questions tracked by **#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
+not promises that those holes are acceptable. The Issue columns below distinguish
+product holes, owner questions, deliberate negative controls, and runtime contracts.
+TLC itself exits 12 (safety counterexample) or 13 (temporal
 counterexample); the harness requires the named violation and a trace, not just
 any nonzero exit. The pure checks require a nonempty finite domain and a concrete
 witness for a REFUTATION. Unknown errors never count as a counterexample.
@@ -104,99 +106,99 @@ external drill artifacts; ordinary runs require no live app or external files.
 
 ### Lifecycle table (`tla/run.py:CHECKS`)
 
-| Check/config basename | Property | Expected | Deliberately removed guard |
-|---|---|---|---|
-| `approval` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-broken` | `NoWriteBeforeApproval` | REFUTE | approval |
-| `approval-skip` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-abort` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-dir-file` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-continue` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-merge-continue` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-merge-commit` | `NoWriteBeforeApproval` | HOLD | none |
-| `approval-two-instances` | `NoWriteBeforeApproval` | HOLD | none |
-| `save-payload` | `ApprovedSavePayloadFrozen` | HOLD | none |
-| `save-payload-broken` | `ApprovedSavePayloadFrozen` | REFUTE | payload |
-| `approved-revision` | `ApprovedRevisionFrozen` | REFUTE | none |
-| `approved-index-race` | `ApprovedRevisionFrozen` | REFUTE | none |
-| `approved-two-writers` | `ApprovedRevisionFrozen` | REFUTE | none |
-| `stale-worktree` | `StaleSnapshotNeverWrites` | REFUTE | none |
-| `stale-index` | `StaleSnapshotNeverWrites` | HOLD | none |
-| `stale-index-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision |
-| `stale-head` | `StaleSnapshotNeverWrites` | HOLD | none |
-| `stale-head-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision |
-| `stale-metadata` | `StaleSnapshotNeverWrites` | HOLD | none |
-| `stale-metadata-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision |
-| `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none |
-| `manual-capture` | `ManualCapturePersisted` | HOLD | none |
-| `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture |
-| `draft-crash` | `DraftNeverLost` | REFUTE | none |
-| `draft-io-quit` | `DraftNeverLost` | REFUTE | none |
-| `draft-torn` | `DraftWriteAtomic` | REFUTE | none |
-| `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none |
-| `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none |
-| `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none |
-| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none |
-| `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none |
-| `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none |
-| `receipt-skip` | `ReceiptFollowsMutation` | REFUTE | none |
-| `receipt-save` | `ReceiptFollowsMutation` | HOLD | none |
-| `receipt-save-broken` | `ReceiptFollowsMutation` | REFUTE | receipt |
-| `skip-replacement` | `SkipDropsOnlyApprovedStep` | HOLD | none |
-| `skip-refresh-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipReset |
-| `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | REFUTE | none |
-| `continue-metadata-read` | `MetadataReadErrorNeverAdmitted` | HOLD | none |
-| `continue-metadata-read-broken` | `MetadataReadErrorNeverAdmitted` | REFUTE | metadata |
-| `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none |
-| `preserve-skip` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none |
-| `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none |
-| `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none |
-| `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none |
-| `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none |
-| `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none |
+| Check/config basename | Property | Expected | Deliberately removed guard | Issue |
+|---|---|---|---|---|
+| `approval` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-broken` | `NoWriteBeforeApproval` | REFUTE | approval | Negative control; no product issue |
+| `approval-skip` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-abort` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-dir-file` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-continue` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-merge-continue` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-merge-commit` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `approval-two-instances` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
+| `save-payload` | `ApprovedSavePayloadFrozen` | HOLD | none | CONTRACT |
+| `save-payload-broken` | `ApprovedSavePayloadFrozen` | REFUTE | payload | Negative control; no product issue |
+| `approved-revision` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
+| `approved-index-race` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
+| `approved-two-writers` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
+| `stale-worktree` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `stale-index` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
+| `stale-index-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
+| `stale-head` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
+| `stale-head-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
+| `stale-metadata` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
+| `stale-metadata-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
+| `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
+| `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
+| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
+| `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
+| `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
+| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
+| `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
+| `receipt-skip` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
+| `receipt-save` | `ReceiptFollowsMutation` | HOLD | none | CONTRACT |
+| `receipt-save-broken` | `ReceiptFollowsMutation` | REFUTE | receipt | Negative control; no product issue |
+| `skip-replacement` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT |
+| `skip-refresh-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipReset | Negative control; no product issue |
+| `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | REFUTE | none | #1746 (owner QUESTION) |
+| `continue-metadata-read` | `MetadataReadErrorNeverAdmitted` | HOLD | none | CONTRACT at runtime (metadata guard) |
+| `continue-metadata-read-broken` | `MetadataReadErrorNeverAdmitted` | REFUTE | metadata | Negative control; no product issue |
+| `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
+| `preserve-skip` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
+| `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
+| `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none | #1743 |
+| `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
+| `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
+| `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
 
 ### Pure table (`pure/predict_*.py`)
 
-| Model | Property | Expected |
-|---|---|---|
-| `predict_hunks` | `SideStateConsistent` | HOLD |
-| `predict_hunks` | `SideStateChoiceMaskEquivalentIncludingEmpty` | REFUTE |
-| `predict_hunks` | `SelectionPresenceResolvesEvenEmpty` | HOLD |
-| `predict_hunks` | `ChildTriStateAggregation` | HOLD |
-| `predict_hunks` | `AssembleAllFourOrdersAndProvenance` | HOLD |
-| `predict_hunks` | `AssembleBlockOrderStable` | HOLD |
-| `predict_hunks` | `AssembleNoSyntheticMarkers` | HOLD |
-| `predict_hunks` | `AssembleNoMarkerLeak` | REFUTE |
-| `predict_hunks` | `UndecideOnlyOnDeselect` | HOLD |
-| `predict_hunks` | `OrderApplicability` | HOLD |
-| `predict_hunks` | `InvalidLineFailureIsNoOp` | REFUTE |
-| `predict_hunks` | `MalformedSelectionNeverPanics` | REFUTE |
-| `predict_hunks` | `ChoiceSelectionPreservesSourceChoices` | HOLD |
-| `predict_hunks` | `RegionAssemblyPreservesOrder` | HOLD |
-| `predict_ready` | `ReadyImpliesNoMarkers` | HOLD |
-| `predict_ready` | `ManualDivergenceIsTextual` | HOLD |
-| `predict_ready` | `EmptyResultIsAResolution` | HOLD |
-| `predict_ready` | `MissingResultOrModelNotDivergent` | HOLD |
-| `predict_blockers` | `BlockersOrderedAndComplete` | HOLD |
-| `predict_blockers` | `IndexContextIdentityErrorsFailClosed` | HOLD |
-| `predict_blockers` | `MessageReadErrorNeverFailOpen` | REFUTE |
-| `predict_blockers` | `MessageContentGate` | HOLD |
-| `predict_blockers` | `UIBlockerPrecedence` | HOLD |
-| `predict_drafts` | `DraftNeverAdoptsUnknownAuthority` | HOLD |
-| `predict_drafts` | `DraftPayloadCompatibility` | HOLD |
-| `predict_drafts` | `LatestExplicitNullOutranksOldBody` | HOLD |
-| `predict_drafts` | `NewestCompatibleRecoveryWins` | HOLD |
-| `predict_drafts` | `UnknownOwnerCoalescenceIsFileOnly` | HOLD |
-| `predict_drafts` | `OnlyPendingRecoveryOutranksDisk` | HOLD |
-| `predict_drafts` | `DedupMovesLatestToTail` | HOLD |
-| `predict_skip` | `SkipClassificationNoFalseSuccess` | REFUTE |
-| `predict_skip` | `BrokenSignalDominatesMovement` | HOLD |
-| `predict_skip` | `NextConflictIsSuccessOnObservedMovement` | HOLD |
-| `predict_skip` | `FinishedRequiresCleanRepository` | HOLD |
-| `predict_skip` | `NonzeroUnchangedIsNoProgress` | HOLD |
-| `predict_intent` | `IntentAdmissionConjunctive` | HOLD |
-| `predict_intent` | `PlanApprovalConjunctive` | HOLD |
-| `predict_intent` | `BeginWriteConjunctive` | HOLD |
+| Model | Property | Expected | Issue |
+|---|---|---|---|
+| `predict_hunks` | `SideStateConsistent` | HOLD | CONTRACT |
+| `predict_hunks` | `SideStateChoiceMaskEquivalentIncludingEmpty` | REFUTE | #1746 (C1; owner QUESTION) |
+| `predict_hunks` | `SelectionPresenceResolvesEvenEmpty` | HOLD | CONTRACT |
+| `predict_hunks` | `ChildTriStateAggregation` | HOLD | CONTRACT |
+| `predict_hunks` | `AssembleAllFourOrdersAndProvenance` | HOLD | CONTRACT |
+| `predict_hunks` | `AssembleBlockOrderStable` | HOLD | CONTRACT |
+| `predict_hunks` | `AssembleNoSyntheticMarkers` | HOLD | CONTRACT |
+| `predict_hunks` | `AssembleNoMarkerLeak` | REFUTE | #1746 (C2; owner QUESTION) |
+| `predict_hunks` | `UndecideOnlyOnDeselect` | HOLD | CONTRACT |
+| `predict_hunks` | `OrderApplicability` | HOLD | CONTRACT |
+| `predict_hunks` | `InvalidLineFailureIsNoOp` | REFUTE | #1746 (C3; owner QUESTION) |
+| `predict_hunks` | `MalformedSelectionNeverPanics` | REFUTE | #1746 (C4; owner QUESTION) |
+| `predict_hunks` | `ChoiceSelectionPreservesSourceChoices` | HOLD | CONTRACT |
+| `predict_hunks` | `RegionAssemblyPreservesOrder` | HOLD | CONTRACT |
+| `predict_ready` | `ReadyImpliesNoMarkers` | HOLD | CONTRACT |
+| `predict_ready` | `ManualDivergenceIsTextual` | HOLD | CONTRACT |
+| `predict_ready` | `EmptyResultIsAResolution` | HOLD | CONTRACT |
+| `predict_ready` | `MissingResultOrModelNotDivergent` | HOLD | CONTRACT |
+| `predict_blockers` | `BlockersOrderedAndComplete` | HOLD | CONTRACT |
+| `predict_blockers` | `IndexContextIdentityErrorsFailClosed` | HOLD | CONTRACT |
+| `predict_blockers` | `MessageReadErrorNeverFailOpen` | REFUTE | C5: CONTRACT at runtime (metadata guard, `continue-metadata-read` HOLD) |
+| `predict_blockers` | `MessageContentGate` | HOLD | CONTRACT |
+| `predict_blockers` | `UIBlockerPrecedence` | HOLD | CONTRACT |
+| `predict_drafts` | `DraftNeverAdoptsUnknownAuthority` | HOLD | CONTRACT |
+| `predict_drafts` | `DraftPayloadCompatibility` | HOLD | CONTRACT |
+| `predict_drafts` | `LatestExplicitNullOutranksOldBody` | HOLD | CONTRACT |
+| `predict_drafts` | `NewestCompatibleRecoveryWins` | HOLD | CONTRACT |
+| `predict_drafts` | `UnknownOwnerCoalescenceIsFileOnly` | HOLD | CONTRACT |
+| `predict_drafts` | `OnlyPendingRecoveryOutranksDisk` | HOLD | CONTRACT |
+| `predict_drafts` | `DedupMovesLatestToTail` | HOLD | CONTRACT |
+| `predict_skip` | `SkipClassificationNoFalseSuccess` | REFUTE | #1746 (C6; owner QUESTION) |
+| `predict_skip` | `BrokenSignalDominatesMovement` | HOLD | CONTRACT |
+| `predict_skip` | `NextConflictIsSuccessOnObservedMovement` | HOLD | CONTRACT |
+| `predict_skip` | `FinishedRequiresCleanRepository` | HOLD | CONTRACT |
+| `predict_skip` | `NonzeroUnchangedIsNoProgress` | HOLD | CONTRACT |
+| `predict_intent` | `IntentAdmissionConjunctive` | HOLD | CONTRACT |
+| `predict_intent` | `PlanApprovalConjunctive` | HOLD | CONTRACT |
+| `predict_intent` | `BeginWriteConjunctive` | HOLD | CONTRACT |
 
 ## Runtime reconciliation and limits
 

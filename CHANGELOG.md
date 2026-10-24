@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-- Preserve conflict lifecycle and pure-predicate formal models as an advisory CI regression guard, with pinned TLC, explicit expected outcomes, red broken-variant checks, and runtime-reconciled ledgers. (#1731–#1738)
+- Preserve conflict lifecycle and pure-predicate formal models as an advisory CI regression guard, with pinned TLC, explicit issue-mapped expected outcomes, red broken-variant checks, and runtime-reconciled ledgers. (#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738))
   - Replay 34 saved native-drill projections, reject a forged unarmed Skip, and retain explicit evidence gaps. Refine refreshed-Skip and unreadable-metadata guards; run the 48 lifecycle checks in bounded batches.
 
 ### Experimental — conflict-hunk branch

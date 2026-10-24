@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Preserve leading and trailing spaces in conflict paths when identifying saved resolutions. (4361355977)
 - Use Finder's white-preferred 3:1 accent rule for checkbox/radio indicators and shared switch/slider thumbs, rather than the 4.5:1 text-label rule.
 - Keep untouched conflict hunks unresolved when changing line order. Reorder only already adopted content, preserve partial/manual/empty choices, and avoid adding no-op undo entries. Keep binary, symlink and submodule conflicts out of text hunk materialization. (#1728)
 - Bind conflict Result inputs and saved drafts to their owning operation and file-stage identity. A later rebase conflict at the same path starts unresolved instead of inheriting the previous Result; unchanged reads preserve live editing, selection and undo. Keep older and identity-unknown drafts available through read-only Operation Log inspection, even without a recorded operation, without changing ordinary receipt Copy. (#1721)

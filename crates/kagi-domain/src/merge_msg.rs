@@ -33,7 +33,6 @@ pub fn conflicted_paths(merge_msg: &str) -> Vec<String> {
         let Some(path) = trimmed
             .strip_prefix('#')
             .and_then(|rest| rest.strip_prefix('\t'))
-            .map(str::trim)
         else {
             break;
         };
@@ -50,6 +49,12 @@ pub fn conflicted_paths(merge_msg: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::conflicted_paths;
+
+    #[test]
+    fn preserves_path_edge_whitespace() {
+        let msg = "# Conflicts:\r\n#\t leading and trailing \r\n";
+        assert_eq!(conflicted_paths(msg), vec![" leading and trailing "]);
+    }
 
     #[test]
     fn parses_git_block() {

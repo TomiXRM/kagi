@@ -430,10 +430,13 @@ impl ConflictView {
     /// reloads, so it must defer to the parent); `false` when this click only
     /// ARMED it.
     pub fn skip_request_arm(&mut self) -> bool {
-        let armed = self.mode.as_ref().map(|c| c.skip_armed).unwrap_or(false);
+        let armed = self
+            .mode
+            .as_ref()
+            .is_some_and(|c| c.skip_approval.is_some());
         if !armed {
             if let Some(c) = self.mode.as_mut() {
-                c.skip_armed = true;
+                c.skip_approval = Some(c.revision.clone());
             }
             klog!("conflict-mode: skip armed (second confirm required)");
             false

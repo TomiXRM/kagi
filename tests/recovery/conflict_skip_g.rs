@@ -1,5 +1,5 @@
 //! Skip classification against real app admission/reconciliation, without GPUI.
-use super::{isolated, skip_settlement};
+use super::{isolated, skip_outcome, skip_settlement};
 use crate::app::{settle_conflict_write, AdmissionError, Sessions};
 use kagi_git::{GitError, OpOutcome, SkipOutcome, SkipProgress, StateSummary, Termination};
 
@@ -121,4 +121,26 @@ fn known_skip_results_release_the_writer_without_reconcile() {
             .expect("a known result admits the next writer")
             .complete();
     }
+}
+
+#[test]
+fn zero_exit_without_movement_maps_to_warning_not_success() {
+    use kagi_domain::sequencer_skip::{classify_skip, ReplayPosition, SkipObservation};
+    let progress = classify_skip(SkipObservation {
+        ok: true,
+        in_progress: true,
+        unmerged: false,
+        before: ReplayPosition::default(),
+        after: ReplayPosition::default(),
+    });
+    let mut observed = outcome(progress);
+    observed.error = None; // A zero exit has no Git complaint to render.
+    let before = observed.after.clone();
+    let (mapped, failure) = skip_outcome(observed);
+    assert!(matches!(mapped, OpOutcome::Unknown { .. }));
+    assert!(failure.is_some());
+    let (footer, success) =
+        crate::ui::KagiApp::operation_footer_contract("rebase-skip", &before, &mapped);
+    assert!(!success);
+    assert!(footer.contains("partially applied"), "{footer}");
 }

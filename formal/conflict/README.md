@@ -3,9 +3,9 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 54 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), 14 TLC negative controls,
-30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+No product code is imported or changed. There are 55 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), 15 TLC negative controls,
+31 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -82,14 +82,19 @@ model REFUTATIONS only within their isolated assumptions, not confirmed app bugs
 
 The TLC `*-broken.cfg` rows remove a known working guard. The ordinary table
 expects their counterexamples; a separate `--broken` pass retains the original
-HOLD expectations and must exit 1 for all nine, with actual violation witnesses.
+HOLD expectations and must exit 1 for every guard mutation, with actual violation witnesses.
 Every pure `VARIANTS` entry similarly runs as a child that must exit 1 with a
 named mismatch. These expected red children are green only in the outer harness.
 
 The refined `skip-replacement` guard HOLDs because an accepted changed revision
-disarms Skip; its removed-guard variant is red. The narrower
-`skip-confirm-cli-race` remains REFUTED. `continue-metadata-read` HOLDs under the
-full operation-metadata admission guard, with a separate red broken variant.
+disarms Skip. #1746 D2 also makes `skip-confirm-cli-race` HOLD: the plan carries
+the original full conflict revision, rechecked immediately before CLI execution.
+`skip-refresh-broken` now checks the first-line disarm invariant independently
+of that backend defence; `skip-prewrite-broken` removes revision checks and is red.
+`SkipClassificationNoFalseSuccess` HOLDs after C6 requires observed movement on
+zero exit; `zero-exit-advanced` restores the old classifier and is red.
+`continue-metadata-read` HOLDs under the full operation-metadata admission guard,
+with a separate red broken variant.
 
 ### Saved runtime projections
 
@@ -151,8 +156,9 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `receipt-save` | `ReceiptFollowsMutation` | HOLD | none | CONTRACT |
 | `receipt-save-broken` | `ReceiptFollowsMutation` | REFUTE | receipt | Negative control; no product issue |
 | `skip-replacement` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT |
-| `skip-refresh-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipReset | Negative control; no product issue |
-| `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | REFUTE | none | #1746 (owner QUESTION) |
+| `skip-refresh-broken` | `SkipRefreshDisarmsChangedStep` | REFUTE | skipReset | Negative control; no product issue |
+| `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT after #1746 D2 |
+| `skip-prewrite-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipRevision | Negative control for #1746 D2 |
 | `continue-metadata-read` | `MetadataReadErrorNeverAdmitted` | HOLD | none | CONTRACT at runtime (metadata guard) |
 | `continue-metadata-read-broken` | `MetadataReadErrorNeverAdmitted` | REFUTE | metadata | Negative control; no product issue |
 | `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
@@ -212,7 +218,7 @@ and preserve pending/failed close gates; the backend API alone does not wire the
 | `predict_drafts` | `UnknownOwnerCoalescenceIsFileOnly` | HOLD | CONTRACT |
 | `predict_drafts` | `OnlyPendingRecoveryOutranksDisk` | HOLD | CONTRACT |
 | `predict_drafts` | `DedupMovesLatestToTail` | HOLD | CONTRACT |
-| `predict_skip` | `SkipClassificationNoFalseSuccess` | REFUTE | #1746 (C6; owner QUESTION) |
+| `predict_skip` | `SkipClassificationNoFalseSuccess` | HOLD | CONTRACT after #1746 C6 |
 | `predict_skip` | `BrokenSignalDominatesMovement` | HOLD | CONTRACT |
 | `predict_skip` | `NextConflictIsSuccessOnObservedMovement` | HOLD | CONTRACT |
 | `predict_skip` | `FinishedRequiresCleanRepository` | HOLD | CONTRACT |

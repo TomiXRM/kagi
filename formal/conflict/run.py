@@ -94,6 +94,10 @@ def main():
                     and row["tlc_exit"] == 12 and bool(row["trace"]) for row in rows)
                 summary["checks"].append({"name": "tla-broken", "exit": red,
                                           "detected": detected, "mutations": len(rows)})
+                code = run("tla/trace/klog2events.py", env=env)
+                summary["checks"].append({"name": "runtime-traces", "exit": code})
+                if code not in (0, 1):
+                    raise RuntimeError(f"trace harness tooling failure: exit {code}")
         summary["ok"] = all(row.get("detected", row["exit"] == 0) for row in summary["checks"])
         code = 0 if summary["ok"] else 1
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:

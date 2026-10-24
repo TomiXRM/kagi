@@ -3,9 +3,10 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 44 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), seven TLC negative controls,
-and 30 pure mutants. Bounds, extracted source citations, and witnesses are in
+No product code is imported or changed. There are 48 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), nine TLC negative controls,
+30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
 
@@ -36,8 +37,13 @@ required by CI or by the harness itself.
 
 The one command runs both baselines and demands that every deliberate broken
 variant is red. Full-suite JSON is `summary.json`; detailed traces/logs are in
-`tla/results/`, `tla/broken-results/`, and `pure/results.json` (all ignored).
-It never rewrites model configs or the reconciled documentation ledgers.
+`tla/results/`, `tla/broken-results/`, `tla/trace/results/`, and
+`pure/results.json` (all ignored). The recorded `tla/trace/events.json` and
+historical `tla/trace/results.json` are committed; raw drill stderr logs are not.
+Generated per-trial/batch TLC modules, configs, logs, and the current trace
+`summary.json` stay under ignored `tla/trace/results/`. The harness never rewrites
+committed model configs or the reconciled documentation ledgers. Up to six
+single-worker JVMs check independent lifecycle configs concurrently.
 
 | Exit | Meaning |
 |---:|---|
@@ -74,9 +80,27 @@ model REFUTATIONS only within their isolated assumptions, not confirmed app bugs
 
 The TLC `*-broken.cfg` rows remove a known working guard. The ordinary table
 expects their counterexamples; a separate `--broken` pass retains the original
-HOLD expectations and must exit 1 for all seven, with actual violation witnesses.
+HOLD expectations and must exit 1 for all nine, with actual violation witnesses.
 Every pure `VARIANTS` entry similarly runs as a child that must exit 1 with a
 named mismatch. These expected red children are green only in the outer harness.
+
+The refined `skip-replacement` guard HOLDs because an accepted changed revision
+disarms Skip; its removed-guard variant is red. The narrower
+`skip-confirm-cli-race` remains REFUTED. `continue-metadata-read` HOLDs under the
+full operation-metadata admission guard, with a separate red broken variant.
+
+### Saved runtime projections
+
+The same entry point replays `tla/trace/events.json` through `TraceHarness.tla`.
+All 34 observable drill projections must be admitted, no lifecycle line may
+remain `UNMAPPED`, and a forged Skip execution without an arm must be rejected
+with TLC exit 12. Admission is **not** a proof that the unlogged lease, preflight,
+draft-write, or receipt interleaving lifts to the original microstep model.
+Independent klog and Git-witness lanes retain their own order; no cross-lane
+chronology or successful autosave is invented. See the full
+[trace reconciliation appendix](../../docs/formal/conflict-trace-ledger.md).
+`--extract --trials PATH` on the mapper explicitly refreshes projections from
+external drill artifacts; ordinary runs require no live app or external files.
 
 ### Lifecycle table (`tla/run.py:CHECKS`)
 

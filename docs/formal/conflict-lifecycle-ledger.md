@@ -52,7 +52,7 @@ never weaken an assertion just to restore green.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Final observed run: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. Counts are TLC distinct states found (not globally unique and, for safety violations, not exhaustive after the first counterexample). Complete logs and machine-readable events: `tla/results/*.log`, `*.json`, `summary.json`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **48** checks, including refreshed-Skip and unreadable-metadata guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
@@ -757,3 +757,13 @@ The values below are copied from TLC's `event` field without reordering. Each ev
 - Non-UTF-8 stash abort: **concrete trace**, raw conflict entry removed, filtered checkout list empty, WT remains `markers`, Verify succeeds on operation absence/HEAD. The empty-list return guard confirms the no-op, not safety.
 
 No product changes are proposed as already implemented. Fix sketches in the ledger are owner decisions, and all model-to-runtime consequences above remain source-grounded [INFERENCE] pending fixture reconciliation.
+
+
+## Trace-checking (2026-10-24)
+
+The refined model admits 34 saved drill projections and rejects a forged Skip
+without an arm. `skip-replacement` now HOLDs under refresh-disarm; the narrower
+`skip-confirm-cli-race` remains REFUTED. Unreadable operation metadata now has
+a named HOLD guard with a broken negative control. See the complete
+[trace reconciliation appendix](conflict-trace-ledger.md) for the 34-trial table,
+confirmed pairs, evidence boundaries, and reproduction commands.

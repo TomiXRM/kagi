@@ -4,4 +4,5 @@ summary*.json
 pure/results.json
 tla/results/
 tla/broken-results/
+tla/trace/results/
 *.jar

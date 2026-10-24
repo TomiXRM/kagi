@@ -8,11 +8,11 @@ Files == {1, 2}
 DraftScenario == Scenario \in {"manual", "draftCrash", "draftIO", "draftAtomic", "draftRace", "draftRaceLost"}
 Concurrent == Scenario \in {"draftRace", "draftRaceLost", "saveRace"}
 Participants == IF Concurrent THEN Actors ELSE {1}
-Kind == CASE Scenario \in {"skip", "preserveSkip", "receiptSkip"} -> "skip"
+Kind == CASE Scenario \in {"skip", "skipRefresh", "preserveSkip", "receiptSkip"} -> "skip"
           [] Scenario \in {"preserveAbort", "sibling"} -> "abort"
           [] Scenario = "stashAbort" -> "stashAbort"
           [] Scenario = "preserveDF" -> "df"
-          [] Scenario \in {"receiptContinue", "liveness"} -> "continue"
+          [] Scenario \in {"receiptContinue", "liveness", "metadataUnreadable"} -> "continue"
           [] Scenario = "receiptMerge" -> "mergeContinue"
           [] Scenario = "merge" -> "mergeCommit"
           [] OTHER -> "save"
@@ -43,6 +43,7 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     preservationFailed |-> [a \in Actors |-> FALSE], destructiveAfterFailure |-> FALSE,
     sharedMoved |-> FALSE, siblingInvalidated |-> FALSE,
     external |-> FALSE, committedTree |-> "none", abandoned |-> FALSE,
+    refreshPending |-> FALSE, metadataReadable |-> TRUE, metadataFailOpen |-> FALSE,
     event |-> "Init"]
 
 \* backend/conflict_observe.rs:91-101: index.read(true) precedes operation_parts.
@@ -112,6 +113,7 @@ Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
 \* its lease bit represents the busy synchronous UI interval, not a new backend lease.
 \* Broken="approval" bypasses confirmation, not the later preflight.
 Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
+    /\ ~s.refreshPending
     /\ s' = [s EXCEPT !.approved[a] = Broken # "approval", !.lease[a] = TRUE,
         !.pc[a] = "preflight", !.event = <<"Approve(confirm)",a>>]
 \* ui/operations/commit.rs:1191-1209: silently renews shown merge plan at click.
@@ -123,9 +125,11 @@ RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
 \* Skip has no expected revision argument (conflicts.rs:1869-1894).
 \* Commit index checked against the NEW plan (ops/commit.rs:38-44,74-83).
 Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "preflight")
+    /\ (s.metadataReadable \/ Broken = "metadata")
     /\ (Kind = "skip" \/ s.planRev[a] = Revision \/ Broken = "revision")
     /\ (Kind # "mergeCommit" \/ s.planTree[a] = s.index[1])
     /\ s' = [s EXCEPT !.preflight[a] = TRUE,
+        !.metadataFailOpen = @ \/ (~s.metadataReadable /\ Kind = "continue"),
         !.pc[a] = CASE Kind \in {"skip","abort","stashAbort","df"} -> "preserve"
                   [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wt",
         !.event = <<"Preflight",a>>]
@@ -269,9 +273,30 @@ ExternalGit == /\ ~s.external /\ s.life[1] = "open"
 \* conflicts.rs:1893-1894 live position read allows CLI to replace approved step.
 \* Both revision and draft context change when REBASE_HEAD/step change:
 \* conflict_observe.rs:155-176; drafts.rs:176-247 disallows fresh-context adoption.
-ReplaceOperation == /\ Scenario = "skip" /\ ~s.external /\ s.pc[1] = "preflight"
+ReplaceOperation == /\ Scenario \in {"skip", "skipRefresh"} /\ ~s.external
+    /\ s.pc[1] = (IF Scenario = "skipRefresh" THEN "approve" ELSE "preflight")
     /\ s' = [s EXCEPT !.operation = @ + 1, !.metadataRev = @ + 1,
+        !.refreshPending = Scenario = "skipRefresh",
         !.external = TRUE, !.event = "ReplaceOperation(next rebase step)"]
+\* Refresh-before-confirm schedule from DrillSequencers, Skip controls.
+\* actions.rs:432-442 checks mode.skip_armed; conflict_detect.rs:311-318,326-360
+\* retains an UNCHANGED revision, but replaces a changed mode with skip_armed=false.
+\* reset_all_target (actions.rs:134 etc.) is a separate Reset-All arm, not Skip.
+\* Freeze represents the first arm; returning to ready requires a fresh arm.
+WatcherRefresh == /\ s.refreshPending /\ s.pc[1] = "approve"
+    /\ s' = [s EXCEPT !.refreshPending = FALSE,
+        !.pc[1] = IF Broken = "skipReset" THEN "approve" ELSE "ready",
+        !.observation[1] = Revision, !.context[1] = s.operation,
+        !.event = "WatcherRefresh(disarm changed revision)"]
+\* C5: approval_metadata.rs:15-21,42-54,111,139 propagates MERGE_MSG read errors.
+\* conflicts.rs:1266,1292 checks observation BEFORE any staging/CLI mutation.
+MetadataReadFailure == /\ Scenario = "metadataUnreadable" /\ ~s.external
+    /\ s.pc[1] = "preflight"
+    /\ s' = [s EXCEPT !.metadataReadable = FALSE, !.external = TRUE,
+        !.event = "MetadataReadFailure(MERGE_MSG unreadable)"]
+MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "metadata"
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+        !.event = <<"MetadataRefused",a>>]
 
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
@@ -279,8 +304,9 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
-    \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a)
+    \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
 Next == (\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
+    \/ WatcherRefresh \/ MetadataReadFailure
 Spec == Init /\ [][Next]_vars
 \* Fair scheduling cannot save a callback whose weak owner has been destroyed.
 FairSpec == Spec /\ (\A a \in Participants : WF_vars(ActorNext(a)))
@@ -304,6 +330,7 @@ ManualCapturePersisted == s.pc[1] = "ready" => s.captured \subseteq s.disk
 ReceiptFollowsMutation == \A a \in Participants :
     (s.successful[a] /\ (s.released[a] \/ s.life[a] = "closed")) => s.receipt[a]
 SkipDropsOnlyApprovedStep == ~s.wrongStep
+MetadataReadErrorNeverAdmitted == ~s.metadataFailOpen
 NoDestructiveProgressAfterPreservationFailure == ~s.destructiveAfterFailure
 MergeCommitTreeIsApprovedTree == s.committedTree = "none" \/ s.committedTree = s.shownTree[1]
 SiblingWorktreesInvalidatedOnSharedRef ==
@@ -317,4 +344,53 @@ StashAbortRestoresConflictedBytes ==
 ContinueEventuallyRecordedOrReported ==
     (s.successful[1] /\ Kind \in {"continue","mergeContinue"}) ~>
         (s.receipt[1] \/ s.reported[1])
+\* Runtime observable quotient, checked by trace/TraceHarness.tla.
+\* This is not a proof that partial logs lift to every hidden pc/lease/draft
+\* state above: those steps remain explicit log gaps. Klog/witness lanes have
+\* no shared timestamps; their order is checked independently.
+RuntimeInit == [mode |-> "unknown", skip |-> FALSE, abort |-> FALSE,
+    review |-> FALSE, panel |-> FALSE, witness |-> ""]
+RuntimeAdvance(r, e) ==
+    CASE e.kind = "Start" -> {RuntimeInit}
+    \* conflict_detect.rs:296-360: equal revision retains pane, changed replaces.
+    \* Log omits revision; both alternatives are possible at equal counts.
+    [] e.kind = "Detect" ->
+        {[r EXCEPT !.mode = e.op, !.skip = armed] : armed \in {FALSE, r.skip}}
+    [] e.kind = "Clear" -> {[r EXCEPT !.mode = "none", !.skip = FALSE,
+        !.abort = FALSE, !.review = FALSE, !.panel = FALSE]}
+    \* actions.rs:432-442: a new arm log is impossible while still armed.
+    [] e.kind = "ArmSkip" ->
+        IF r.mode \in {"rebase", "cherry-pick", "revert"} /\ ~r.skip
+        THEN {[r EXCEPT !.skip = TRUE]} ELSE {}
+    \* conflict_abort.rs:113-131: Abort has separate explicit confirmation.
+    [] e.kind = "ArmAbort" ->
+        IF r.mode \notin {"unknown", "none"} THEN {[r EXCEPT !.abort = TRUE]} ELSE {}
+    \* operations/conflict.rs:487-490: unresolved index can have ready buffers.
+    [] e.kind = "Review" ->
+        IF r.mode = e.op THEN {[r EXCEPT !.review = TRUE]} ELSE {}
+    \* operations/conflict.rs:404-448: routing proves metadata read succeeded.
+    [] e.kind = "MergePanel" ->
+        IF r.mode = "merge" THEN {[r EXCEPT !.panel = TRUE]} ELSE {}
+    [] e.kind = "ExecuteSkip" ->
+        IF r.mode = e.op /\ r.skip THEN {[r EXCEPT !.skip = FALSE]} ELSE {}
+    [] e.kind = "ExecuteAbort" ->
+        IF r.mode = e.op /\ r.abort THEN {[r EXCEPT !.abort = FALSE]} ELSE {}
+    [] e.kind = "ExecuteContinue" ->
+        IF r.mode = e.op /\ (r.review \/ r.mode = "stash")
+        THEN {[r EXCEPT !.review = FALSE]} ELSE {}
+    [] e.kind = "MergeCommit" -> IF r.panel THEN {r} ELSE {}
+    \* Save footer proves staging, not unlogged draft/lease/append ordering.
+    [] e.kind \in {"Save", "Choice", "ChoiceFailed", "DraftFailure", "MetadataRefused"} ->
+        IF r.mode \notin {"unknown", "none"} THEN {r} ELSE {}
+    \* reload.rs:367 logs AFTER detect; it does not itself reset the arm.
+    [] e.kind \in {"Refresh", "Footer", "Failure", "Inspection", "Ancillary"} -> {r}
+    \* Digests are opaque. null metadata means absent OR unreadable (C5);
+    \* never derive operation completion from null.
+    [] e.kind = "WitnessInit" -> {[r EXCEPT !.witness = e.after]}
+    [] e.kind \in {"WitnessChanged", "WitnessUnchanged", "ExternalObserved"} ->
+        IF r.witness = e.before
+           /\ (e.kind # "WitnessUnchanged" \/ e.before = e.after)
+           /\ (e.kind # "WitnessChanged" \/ e.before # e.after)
+        THEN {[r EXCEPT !.witness = e.after]} ELSE {}
+    [] OTHER -> {}
 =============================================================================

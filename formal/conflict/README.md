@@ -124,6 +124,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `approved-two-writers` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
 | `stale-worktree` | `StaleSnapshotNeverWrites` | HOLD | none | #1733 fixed: captured WT provenance checked before mutation |
 | `stale-worktree-broken` | `StaleSnapshotNeverWrites` | REFUTE | worktree | Negative control; remove #1733 WT provenance guard |
+| `stale-worktree-before-choice` | `StaleSnapshotNeverWrites` | HOLD | none | #1733: watcher refresh before any choice retains original WT provenance |
+| `stale-worktree-before-choice-broken` | `StaleSnapshotNeverWrites` | REFUTE | materialization | Negative control; watcher adopts changed WT as fresh source |
 | `stale-index` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-index-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
 | `stale-head` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |

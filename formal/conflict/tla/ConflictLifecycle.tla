@@ -137,16 +137,17 @@ Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "pre
         !.pc[a] = CASE Kind \in {"skip","abort","stashAbort","df"} -> "preserve"
                   [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wtValidate",
         !.event = <<"Preflight",a>>]
-\* #1733 resolution/conflict_boundary.rs:73-78,104-110; worktree_state.rs:39-54:
+\* #1733 conflict_boundary.rs::validate_save_binding / validate_current_paths;
+\* worktree_state.rs::validate accepts only the original WT or exact frozen bytes.
 \* fresh file identity + captured WT hash immediately before the executor write.
 \* This is a separate read transition, NOT an atomic guard-and-write assumption.
 ValidateFile(a) == /\ At(a, "wtValidate")
     /\ (s.planRev[a] = Revision \/ Broken = "revision")
-    /\ (s.materializedWT[a] = s.wt[File(a)] \/ Broken = "worktree")
+    /\ (s.materializedWT[a] = s.wt[File(a)] \/ s.frozen[a] = s.wt[File(a)] \/ Broken = "worktree")
     /\ s' = [s EXCEPT !.pc[a] = "wt", !.event = <<"ValidateFile(index,WT)",a>>]
 FileRefused(a) == /\ At(a, "wtValidate")
     /\ ((s.planRev[a] # Revision /\ Broken # "revision") \/
-        (s.materializedWT[a] # s.wt[File(a)] /\ Broken # "worktree"))
+        (s.materializedWT[a] # s.wt[File(a)] /\ s.frozen[a] # s.wt[File(a)] /\ Broken # "worktree"))
     /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"FileRefused",a>>]
 \* conflicts.rs:1880-1881; conflict_abort.rs:274-286,489-493; dir_file_conflict.rs:202-218.
@@ -266,9 +267,11 @@ Restart(a) == /\ DraftScenario /\ a \in Participants /\ s.life[a] # "open" /\ ~s
 \* #1733 additionally freezes each live draft's WT bytes at materialization.
 \* One external edit is the finite interference bound, not a production guard.
 ExternalGit == /\ ~s.external /\ s.life[1] = "open"
-    /\ CASE Scenario = "staleWT" ->
-          /\ s.pc[1] = "preflight"
-          /\ s' = [s EXCEPT !.wt[1] = "external", !.external = TRUE, !.event = "ExternalGit(worktree)"]
+    /\ CASE Scenario \in {"staleWT", "staleWTBeforeChoice"} ->
+          /\ s.pc[1] = IF Scenario = "staleWTBeforeChoice" THEN "edit" ELSE "preflight"
+          /\ s' = [s EXCEPT !.wt[1] = "external", !.external = TRUE,
+              !.refreshPending = Scenario = "staleWTBeforeChoice",
+              !.event = "ExternalGit(worktree)"]
        [] Scenario \in {"staleIndex","staleHead","staleMeta","merge"} ->
           /\ s.pc[1] = "preflight"
           /\ s' = [s EXCEPT !.indexRev = IF Scenario \in {"staleIndex","merge"} THEN @ + 1 ELSE @,
@@ -286,6 +289,12 @@ ExternalGit == /\ ~s.external /\ s.life[1] = "open"
           /\ s' = [s EXCEPT !.wt[1] = "external", !.external = TRUE,
               !.event = "ExternalGit(worktree before add_path)"]
        [] OTHER -> FALSE
+\* drafts.rs::retain_drafts keeps WT provenance even for untouched files.
+\* Removing that carry reproduces drift + watcher refresh before the first choice.
+WatcherFileRefresh == /\ Scenario = "staleWTBeforeChoice" /\ s.refreshPending
+    /\ s' = [s EXCEPT !.refreshPending = FALSE,
+        !.materializedWT[1] = IF Broken = "materialization" THEN s.wt[1] ELSE @,
+        !.event = "WatcherFileRefresh(retain original WT provenance)"]
 \* conflicts.rs:1893-1894 live position read allows CLI to replace approved step.
 \* Both revision and draft context change when REBASE_HEAD/step change:
 \* conflict_observe.rs:155-176; drafts.rs:176-247 disallows fresh-context adoption.
@@ -323,7 +332,7 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
 Next == (\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
-    \/ WatcherRefresh \/ MetadataReadFailure
+    \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure
 Spec == Init /\ [][Next]_vars
 \* Fair scheduling cannot save a callback whose weak owner has been destroyed.
 FairSpec == Spec /\ (\A a \in Participants : WF_vars(ActorNext(a)))

@@ -21,6 +21,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Refuse conflict Save and Continue after an external worktree edit, preserving the file and index. Show an explanatory header, disable Save, and offer index re-detection without discarding the matching draft or granting it fresh write authority. (#1733)
+  - Preserve the original source fingerprint across watcher refreshes before the first choice, and allow an interrupted Save/Continue to retry when the worktree already equals its frozen text exactly.
 - Show a saved submodule conflict's commit OID instead of trying to preview it as a blob. (4363857802)
 - Restore conflict hunk choices, selected lines and both ordering modes after restarting a partial resolution; older drafts remain readable. (4363162008)
 - Disable per-hunk Reset and Change for manually edited Results; only confirmed Reset all may discard those edits. (4363161991)

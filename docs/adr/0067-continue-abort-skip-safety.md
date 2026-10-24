@@ -60,6 +60,12 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
 - A mismatch or unknown source refuses with `File changed outside Kagi` /
   `ファイルが外部で変更されました`; neither worktree nor index is changed.
   Watcher worktree events re-detect open conflicts even when the index is unchanged.
+  The original fingerprint is retained across watcher refreshes even before the
+  first hunk choice; an untouched file is not permission to rebase its source.
+  Current regular-file bytes exactly equal to the frozen Text draft are the
+  sole idempotent exception: Partial Save/Continue may have already written them
+  before staging failed. Retrying those identical bytes cannot overwrite an
+  external edit; differing bytes and symlinks remain refused.
 - Source hunks always remain index-derived, never parsed from arbitrary
   worktree markers. Matching materializations retain the draft and its original
   byte fingerprint, not fresh write authority; unknown/changed materializations

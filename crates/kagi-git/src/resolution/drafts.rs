@@ -195,10 +195,8 @@ impl ResolutionBuffer {
                 .get_mut(&path)
                 .filter(|current| compatible(current, &saved))
             {
+                super::worktree_state::retain_provenance(current, &mut saved);
                 if has_draft_state(&saved) {
-                    current.worktree_changed |=
-                        current.worktree_fingerprint != saved.worktree_fingerprint;
-                    current.worktree_fingerprint = saved.worktree_fingerprint.take();
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();
@@ -229,6 +227,7 @@ impl ResolutionBuffer {
                     has_draft_state(&entry.file) && compatible(current, &entry.file)
                 }) {
                     let mut saved = entry.file;
+                    super::worktree_state::retain_provenance(current, &mut saved);
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();

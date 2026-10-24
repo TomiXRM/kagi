@@ -36,15 +36,43 @@ pub(super) fn fingerprint(path: &Path) -> Result<String, GitError> {
     Ok(format!("{kind}:{}", hex::encode(hash.finalize())))
 }
 
+pub(super) fn bytes_fingerprint(bytes: &[u8]) -> String {
+    format!("file:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+pub(super) fn lines_fingerprint(lines: &[ResolvedLine]) -> String {
+    let mut hash = Sha256::new();
+    for line in lines {
+        hash.update(line.text.as_bytes());
+        hash.update(b"\n");
+    }
+    format!("file:{}", hex::encode(hash.finalize()))
+}
+
+pub(super) fn retain_provenance(current: &mut FileResolution, saved: &mut FileResolution) {
+    // Source authority survives re-detection even before the first choice.
+    current.worktree_changed |= current.worktree_fingerprint != saved.worktree_fingerprint
+        && !saved.result.as_ref().is_some_and(|lines| {
+            current.worktree_fingerprint.as_deref() == Some(lines_fingerprint(lines).as_str())
+        });
+    current.worktree_fingerprint = saved.worktree_fingerprint.take();
+}
+
 pub(crate) fn validate(
     repo: &Repository,
     path: &Path,
     expected: Option<&str>,
+    retry_fingerprint: impl FnOnce() -> Option<String>,
 ) -> Result<(), GitError> {
     let root = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
-    if expected.is_none() || fingerprint(&root.join(path)).ok().as_deref() != expected {
+    let live = fingerprint(&root.join(path)).ok();
+    // An interrupted Save/Continue may already have written exactly these
+    // frozen draft bytes. Rewriting identical bytes cannot lose an edit.
+    if (expected.is_none() || live.as_deref() != expected)
+        && (live.is_none() || live != retry_fingerprint())
+    {
         return Err(GitError::Blocked(Box::new(
             kagi_domain::plan_note::PlanNote::Conflicts(
                 kagi_domain::plan_note::ConflictsNote::WorktreeChanged,
@@ -67,6 +95,12 @@ impl ResolutionBuffer {
     }
 
     pub(crate) fn validate_worktree(&self, repo: &Repository, path: &Path) -> Result<(), GitError> {
-        validate(repo, path, self.worktree_fingerprint(path))
+        validate(repo, path, self.worktree_fingerprint(path), || {
+            self.files
+                .get(path)?
+                .result
+                .as_deref()
+                .map(lines_fingerprint)
+        })
     }
 }

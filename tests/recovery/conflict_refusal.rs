@@ -29,7 +29,8 @@ pub(super) fn save_and_abort(cx: &mut VisualTestAppContext) {
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
         save(cx);
-        external_worktree(cx);
+        external_worktree(cx, false);
+        external_worktree(cx, true);
         abort(cx, false);
         abort(cx, true);
     }
@@ -381,15 +382,27 @@ pub(super) fn continue_result_owner(cx: &mut VisualTestAppContext) {
     }
 }
 
-fn external_worktree(cx: &mut VisualTestAppContext) {
+fn external_worktree(cx: &mut VisualTestAppContext, before_first_choice: bool) {
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
+    let original_bytes = std::fs::read(repo.join("file.txt")).unwrap();
+    let mut bytes = original_bytes.clone();
+    bytes.extend_from_slice(b"\n// EXTERNAL_WT_MUST_SURVIVE\n");
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
     conflict.update(cx, |view, cx| {
         view.conflict_open_editor(Path::new("file.txt"));
+        cx.notify();
+    });
+    cx.run_until_parked();
+    if before_first_choice {
+        std::fs::write(repo.join("file.txt"), &bytes).unwrap();
+        app.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+    }
+    conflict.update(cx, |view, cx| {
         view.conflict_editor_set_hunk_side(
             Path::new("file.txt"),
             0,
@@ -409,10 +422,9 @@ fn external_worktree(cx: &mut VisualTestAppContext) {
             .resolved_text(Path::new("file.txt"))
             .unwrap()
     });
-    let mut bytes = std::fs::read(repo.join("file.txt")).unwrap();
-    let original_bytes = bytes.clone();
-    bytes.extend_from_slice(b"\n// EXTERNAL_WT_MUST_SURVIVE\n");
-    std::fs::write(repo.join("file.txt"), &bytes).unwrap();
+    if !before_first_choice {
+        std::fs::write(repo.join("file.txt"), &bytes).unwrap();
+    }
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     // Deliver the same refresh used by the worktree watcher's conflict branch.
     app.update(cx, |app, cx| app.reload_external(cx));

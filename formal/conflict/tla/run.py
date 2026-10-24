@@ -25,6 +25,8 @@ CHECKS = [
     ("approved-two-writers", "saveRace", "ApprovedRevisionFrozen", "REFUTE", "none"),
     ("stale-worktree", "staleWT", "StaleSnapshotNeverWrites", "HOLD", "none"),
     ("stale-worktree-broken", "staleWT", "StaleSnapshotNeverWrites", "REFUTE", "worktree"),
+    ("stale-worktree-before-choice", "staleWTBeforeChoice", "StaleSnapshotNeverWrites", "HOLD", "none"),
+    ("stale-worktree-before-choice-broken", "staleWTBeforeChoice", "StaleSnapshotNeverWrites", "REFUTE", "materialization"),
     ("stale-index", "staleIndex", "StaleSnapshotNeverWrites", "HOLD", "none"),
     ("stale-index-broken", "staleIndex", "StaleSnapshotNeverWrites", "REFUTE", "revision"),
     ("stale-head", "staleHead", "StaleSnapshotNeverWrites", "HOLD", "none"),

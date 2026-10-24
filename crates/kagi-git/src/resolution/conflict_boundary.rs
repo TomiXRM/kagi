@@ -107,7 +107,12 @@ impl ResolutionBuffer {
         {
             return Err(observation_changed());
         }
-        super::worktree_state::validate(repo, path, worktree_fingerprint)?;
+        super::worktree_state::validate(repo, path, worktree_fingerprint, || match draft {
+            kagi_domain::conflict_family::ConflictDraft::Text(bytes) => {
+                Some(super::worktree_state::bytes_fingerprint(bytes))
+            }
+            _ => None,
+        })?;
         Ok(SaveBinding {
             identity,
             context,

@@ -95,6 +95,10 @@ fn compatible(current: &FileResolution, saved: &FileResolution) -> bool {
     if !same_identity(current, saved) {
         return false;
     }
+    // Legacy source-unknown drafts remain inspectable, never re-authorized.
+    if saved.worktree_fingerprint.is_none() && current.worktree_fingerprint.is_some() {
+        return false;
+    }
     if current.raw {
         saved.result.is_none()
             && saved.raw_result.is_none_or(|raw| {
@@ -115,6 +119,7 @@ fn has_draft_state(file: &FileResolution) -> bool {
 
 fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
     left.identity == right.identity
+        && left.worktree_fingerprint == right.worktree_fingerprint
         && left.draft_state == right.draft_state
         && left.result == right.result
         && left.raw_result == right.raw_result
@@ -191,6 +196,9 @@ impl ResolutionBuffer {
                 .filter(|current| compatible(current, &saved))
             {
                 if has_draft_state(&saved) {
+                    current.worktree_changed |=
+                        current.worktree_fingerprint != saved.worktree_fingerprint;
+                    current.worktree_fingerprint = saved.worktree_fingerprint.take();
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();
@@ -209,6 +217,7 @@ impl ResolutionBuffer {
                     matched.insert(path);
                 }
             } else {
+                self.hunks.remove(&path);
                 recoveries.push(RecoveryEntry { path, file: saved });
             }
         }

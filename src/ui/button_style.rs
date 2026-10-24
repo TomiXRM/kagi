@@ -3,7 +3,7 @@
 use gpui::{div, prelude::*, rgb, ElementId, Hsla, Role, SharedString, Window};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme as _, Sizable as _};
+use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
@@ -82,6 +82,45 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
         .foreground(c) // unused by 0.5.2; kept for forward/back compat
         .hover(c) // unused by 0.5.2 (hover derives from `color`)
         .active(active)
+}
+
+/// Framed, neutral Abort control with stable destructive ink in every state.
+/// The pinned kit derives Custom ink from its background `color`, ignoring
+/// `foreground`; the explicit label keeps that neutral fill from changing the
+/// destructive role on hover/press. Disabled labels use the kit's muted ink.
+pub(super) fn conflict_abort_button(id: &'static str, disabled: bool, cx: &gpui::App) -> Button {
+    let palette = theme();
+    let ink = if disabled {
+        cx.theme().muted_foreground.opacity(0.5)
+    } else {
+        rgb(palette.color_blocker).into()
+    };
+    let label = super::i18n::Msg::ConflictAbort.t();
+    Button::new(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(cx.theme().button)
+                .foreground(ink)
+                .hover(cx.theme().button_hover)
+                .active(cx.theme().button_active),
+        )
+        .outline()
+        .border_color(cx.theme().input)
+        .small()
+        .compact()
+        .h(super::theme::scaled_px(20.))
+        .rounded(super::theme::scaled_px(5.))
+        .text_size(super::theme::scaled_px(12.))
+        .aria_label(label)
+        .disabled(disabled)
+        .child(
+            div()
+                .relative()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(ink)
+                .child(super::e2e::measure_inside("conflict-abort-label"))
+                .child(label),
+        )
 }
 
 /// An operation's hierarchy is independent of its palette's RGB values.

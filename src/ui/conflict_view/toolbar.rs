@@ -373,19 +373,26 @@ impl ConflictView {
             value.push_str(&label);
         });
         div()
+            .id("conflict-session-header")
             .relative()
             .flex()
-            .flex_wrap()
             .items_center()
-            .flex_shrink_0()
+            .h_full()
             .flex_1()
-            .gap(theme::scaled_px(8.))
+            .min_w(px(0.))
+            .gap(theme::scaled_px(6.))
             .text_size(theme::scaled_px(12.))
             .text_color(rgb(theme().text_main))
+            .role(gpui::Role::Group)
+            .aria_label(label.clone())
+            .when_some(self.sidebar.session_focus.as_ref(), |el, focus| {
+                el.track_focus(focus)
+            })
             .child(e2e::measure_inside("conflict-session-header"))
             .child(
                 div()
                     .size(theme::scaled_px(8.))
+                    .flex_shrink_0()
                     .rounded_full()
                     .bg(rgb(theme().color_warning)),
             )
@@ -394,26 +401,29 @@ impl ConflictView {
                     .id("conflict-session-identity")
                     .role(gpui::Role::Status)
                     .aria_label(label.clone())
+                    .relative()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
+                    .child(e2e::measure_inside("conflict-session-identity"))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .child(label),
             )
-            .child(div().flex_1())
             .child(
                 div()
                     .flex()
                     .items_center()
                     .flex_shrink_0()
-                    .gap(theme::scaled_px(8.))
+                    .gap(theme::scaled_px(6.))
                     .child(e2e::measure_control(
                         "conflict-abort",
-                        compact_button(
+                        crate::ui::button_style::conflict_abort_button(
                             "conflict-abort",
-                            Msg::ConflictAbort.t(),
-                            ButtonRole::Secondary,
+                            self.writer_busy,
                             cx,
                         )
-                        .text_color(rgb(theme().color_blocker))
-                        .disabled(self.writer_busy)
                         .on_click(cx.listener(
                             |view, _: &gpui::ClickEvent, window, cx| {
                                 let app = view.app.clone();
@@ -440,6 +450,7 @@ impl ConflictView {
                                 ButtonRole::Secondary,
                                 cx,
                             )
+                            .compact()
                             .disabled(self.writer_busy)
                             .on_click(cx.listener(
                                 |view, _: &gpui::ClickEvent, window, cx| {

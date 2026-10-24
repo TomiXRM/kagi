@@ -33,6 +33,7 @@ pub(super) struct SidebarState {
     logical_scroll: UniformListScrollHandle,
     scroll: gpui::ScrollHandle,
     last_focused: Option<String>,
+    pub(super) session_focus: Option<gpui::FocusHandle>,
 }
 
 impl ConflictView {
@@ -142,6 +143,17 @@ impl ConflictView {
     }
 
     pub(super) fn yield_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .sidebar
+            .session_focus
+            .as_ref()
+            .is_some_and(|focus| focus.contains_focused(window, cx))
+        {
+            if let Some(toggle) = &self.sidebar_toggle_focus {
+                toggle.focus(window, cx);
+            }
+            return;
+        }
         self.sidebar
             .focus
             .yield_focus(self.sidebar_toggle_focus.as_ref(), window, cx);
@@ -153,6 +165,9 @@ impl ConflictView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        self.sidebar
+            .session_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(false));
         let entries = self.sidebar.visible.clone();
         // Dense eager rows share one viewport; headers scroll with their files.
         let scroll =
@@ -227,50 +242,58 @@ impl ConflictView {
                 ));
             }
         }
-        list_a11y::list_box(
-            "conflict-tree",
-            rows.list(div().id("conflict-tree")),
-            Msg::ConflictRemainingFiles.t(),
-        )
-        .flex()
-        .flex_col()
-        .h_full()
-        .w(theme::scaled_px(232.))
-        .flex_shrink_0()
-        .min_h(px(0.))
-        .bg(rgb(theme().sidebar))
-        .border_r_1()
-        .border_color(rgb(theme().surface))
-        .relative()
-        .when(!self.sidebar_hidden, |el| {
-            el.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .min_h(theme::scaled_px(36.))
-                    .py(theme::scaled_px(4.))
-                    .px(theme::scaled_px(12.))
-                    .border_b_1()
-                    .border_color(rgb(theme().surface))
-                    .child(self.render_session_header(cx)),
-            )
-        })
-        .child(
-            div()
-                .id("conflict-tree-scroll")
+        div()
+            .id("conflict-sidebar")
+            .flex()
+            .flex_col()
+            .h_full()
+            .w(theme::scaled_px(232.))
+            .flex_shrink_0()
+            .min_h(px(0.))
+            .bg(rgb(theme().sidebar))
+            .border_r_1()
+            .border_color(rgb(theme().surface))
+            .relative()
+            .when(!self.sidebar_hidden, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .flex_shrink_0()
+                        .h(theme::scaled_px(36.))
+                        .px(theme::scaled_px(8.))
+                        .border_b_1()
+                        .border_color(rgb(theme().surface))
+                        .child(self.render_session_header(cx)),
+                )
+            })
+            .child(
+                list_a11y::list_box(
+                    "conflict-tree",
+                    rows.list(div().id("conflict-tree")),
+                    Msg::ConflictRemainingFiles.t(),
+                )
+                .relative()
                 .flex()
                 .flex_col()
                 .flex_1()
                 .min_h(px(0.))
-                .overflow_y_scroll()
-                .track_scroll(&self.sidebar.scroll)
-                .children(groups),
-        )
-        .child(gpui_component::scroll::Scrollbar::vertical(
-            &self.sidebar.scroll,
-        ))
-        .into_any_element()
+                .child(
+                    div()
+                        .id("conflict-tree-scroll")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.sidebar.scroll)
+                        .children(groups),
+                )
+                .child(gpui_component::scroll::Scrollbar::vertical(
+                    &self.sidebar.scroll,
+                )),
+            )
+            .into_any_element()
     }
 
     fn render_tree_row(

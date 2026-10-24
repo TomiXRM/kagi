@@ -1212,7 +1212,8 @@ fn relative_luminance(c: u32) -> f64 {
         + 0.0722 * channel(c & 0xff)
 }
 
-fn contrast_ratio(a: u32, b: u32) -> f64 {
+/// WCAG contrast ratio of two opaque `0xRRGGBB` colours.
+pub fn contrast_ratio(a: u32, b: u32) -> f64 {
     let (la, lb) = (relative_luminance(a), relative_luminance(b));
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }

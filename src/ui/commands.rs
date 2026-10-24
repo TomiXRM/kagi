@@ -715,19 +715,19 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         id: "repo.conflictAbort",
-        label: "Abort merge…",
+        label: "Abort Operation…",
         keystroke: None,
         dangerous: true,
     },
     Command {
         id: "repo.conflictSkip",
-        label: "Skip this step…",
+        label: "Skip This Step…",
         keystroke: None,
         dangerous: true,
     },
     Command {
         id: "repo.conflictContinue",
-        label: "Continue",
+        label: "Review to Continue…",
         keystroke: None,
         dangerous: false,
     },
@@ -1140,7 +1140,9 @@ pub(crate) fn is_enabled(app: &KagiApp, id: &str, cx: &App) -> bool {
     matches!(command_state_in(app, id, cx), CommandState::Enabled)
 }
 
-/// Entity-backed conflict admission; never cache editor readiness on KagiApp.
+/// Conflict admission shared by native and in-app menus. Editor readiness stays
+/// on ConflictView; a fully saved operation can still Abort through the accepted
+/// session observation when CommitPanel has replaced that view.
 pub(crate) fn command_state_in(app: &KagiApp, id: &str, cx: &App) -> CommandState {
     if !matches!(
         id,
@@ -1156,6 +1158,15 @@ pub(crate) fn command_state_in(app: &KagiApp, id: &str, cx: &App) -> CommandStat
     }
     if app.op_latched() {
         return CommandState::Disabled(Msg::OpInProgress.t());
+    }
+    let Some(owner) = app.detect_owner() else {
+        return CommandState::Disabled(Msg::ConflictReviewNeeded.t());
+    };
+    if app.view().operation.is_none() || !app.conflict_action_owner_on_screen(&owner) {
+        return CommandState::Disabled(Msg::ConflictReviewNeeded.t());
+    }
+    if id == "repo.conflictAbort" && app.ui().conflict.is_none() {
+        return CommandState::Enabled;
     }
     app.ui().conflict.as_ref().map_or(
         CommandState::Disabled(Msg::ConflictReviewNeeded.t()),
@@ -2265,6 +2276,13 @@ impl KagiApp {
             "repo.createSnapshot" => self.create_snapshot_now(cx),
             "repo.conflictAbort" | "repo.conflictSkip" | "repo.conflictContinue" => {
                 if !is_enabled(self, id, cx) {
+                    return;
+                }
+                if id == "repo.conflictAbort" && self.ui().conflict.is_none() {
+                    if let Some(owner) = self.detect_owner() {
+                        self.open_conflict_abort_modal(owner, window, cx);
+                    }
+                    cx.notify();
                     return;
                 }
                 let Some(view) = self.ui().conflict.clone() else {

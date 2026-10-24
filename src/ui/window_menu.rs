@@ -19,6 +19,8 @@ pub struct ViewMenuState {
     pub undo_summary: Option<gpui::SharedString>,
     pub redo_summary: Option<gpui::SharedString>,
     pub conflict_skip_armed: bool,
+    /// Presentation only: the accepted active-session operation observation.
+    pub conflict_operation: Option<kagi_domain::conflict_family::ConflictOperationKind>,
 }
 impl Default for ViewMenuState {
     fn default() -> Self {
@@ -33,6 +35,7 @@ impl Default for ViewMenuState {
             undo_summary: None,
             redo_summary: None,
             conflict_skip_armed: false,
+            conflict_operation: None,
         }
     }
 }
@@ -102,7 +105,28 @@ pub(super) fn publish_settings_edit_state(window: &mut Window, cx: &mut App) {
 /// Used by both native menus and the in-app dropdown; IDs and bindings do not vary.
 pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
     let msg = match id {
-        "repo.conflictSkip" if state.conflict_skip_armed => Msg::ConflictConfirmSkip,
+        "repo.conflictAbort" => {
+            use kagi_domain::conflict_family::ConflictOperationKind;
+            use kagi_domain::plan_note::InProgressOp;
+            match state.conflict_operation {
+                Some(ConflictOperationKind::Repository(InProgressOp::Merge)) => Msg::MenuAbortMerge,
+                Some(ConflictOperationKind::Repository(InProgressOp::Rebase)) => {
+                    Msg::MenuAbortRebase
+                }
+                Some(ConflictOperationKind::Repository(InProgressOp::CherryPick)) => {
+                    Msg::MenuAbortCherryPick
+                }
+                Some(ConflictOperationKind::Repository(InProgressOp::Revert)) => {
+                    Msg::MenuAbortRevert
+                }
+                Some(ConflictOperationKind::StashApply) => Msg::MenuAbortStashApply,
+                Some(ConflictOperationKind::Repository(
+                    InProgressOp::Bisect | InProgressOp::Other,
+                ))
+                | None => Msg::MenuAbortOperation,
+            }
+        }
+        "repo.conflictSkip" if state.conflict_skip_armed => Msg::MenuConfirmSkip,
         "view.toggleSidebar" if state.sidebar_visible => Msg::MenuHideSidebar,
         "view.toggleSidebar" => Msg::MenuShowSidebar,
         "view.toggleEditorDetails" if state.editor_details_visible => Msg::EditorDetailsHide,
@@ -244,6 +268,14 @@ impl KagiApp {
             workspace_mode: (!self.home_in_front()).then(|| self.workspace_mode()),
             editor_details_visible: previous.editor_details_visible,
             conflict_skip_armed: false,
+            conflict_operation: (!self.home_in_front())
+                .then(|| {
+                    self.view()
+                        .operation
+                        .as_ref()
+                        .map(|operation| operation.kind())
+                })
+                .flatten(),
             find_input: false,
             find_sidebar: false,
             undo_summary: history

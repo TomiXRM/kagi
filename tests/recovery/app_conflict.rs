@@ -236,7 +236,7 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
         "an unmounted editor never duplicates the strip exit"
     );
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS operation strip visible at startup on a stuck MERGING repo");
+    eprintln!("[gui-e2e] PASS operation_strip_startup: runtime verified stuck MERGING has no ConflictView, operation and fallback Abort are visible");
 }
 
 /// While the conflict sidebar is visible its session header owns Abort. Hiding
@@ -300,6 +300,8 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
+    eprintln!("[gui-e2e] operation_strip_stale_detector: runtime verified no ConflictView before stale detection");
     let observed = |cx: &mut VisualTestAppContext| {
         cx.read(|cx| {
             let app = app.read(cx);
@@ -694,6 +696,10 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
+    eprintln!(
+        "[gui-e2e] operation_strip_abort: runtime verified no ConflictView before CommitPanel"
+    );
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_commit_panel(window, cx));

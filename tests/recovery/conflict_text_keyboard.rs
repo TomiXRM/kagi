@@ -155,7 +155,9 @@ fn assert_operation_placement(
         "conflict-operation-strip",
         "operation-strip",
         "operation-strip-abort",
+        "operation-strip-skip",
         "conflict-session-header",
+        "conflict-session-identity",
         "conflict-sidebar-clip",
         "conflict-file-header",
         "conflict-sidebar-toggle",
@@ -229,6 +231,11 @@ fn assert_operation_placement(
         let abort = bounds("operation-strip-abort");
         assert!(contains(strip, abort));
         assert!(abort.size.width > gpui::px(0.) && abort.size.height > gpui::px(0.));
+        assert_eq!(
+            e2e::control_bounds(window.window_id(), "operation-strip-skip").is_some(),
+            sequencer,
+            "hidden sequencer Skip remains visible beside Abort"
+        );
     } else {
         assert_eq!(ConflictView::session_header_label_for_e2e(), identity);
         assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_none());
@@ -238,12 +245,25 @@ fn assert_operation_placement(
         assert!(contains(bounds("conflict-sidebar-clip"), session));
         assert!(session.top() >= toolbar.bottom());
         assert!(
+            (f32::from(session.size.height - header.size.height)).abs() <= 1.,
+            "session and file headers keep one aligned 36px row"
+        );
+        let identity = e2e::control_paint(window.window_id(), "conflict-session-identity").unwrap();
+        assert!(
+            identity.middle_ellipsis,
+            "short identity space truncates in the middle"
+        );
+        assert!(
             session.right() <= header.left(),
             "Abort and Skip stay in the sidebar, apart from file actions and Continue"
         );
         if sequencer {
             assert!(contains(session, bounds("conflict-skip")));
             assert!(bounds("conflict-abort").right() <= bounds("conflict-skip").left());
+            assert_eq!(
+                bounds("conflict-abort").center().y,
+                bounds("conflict-skip").center().y
+            );
         } else {
             assert!(e2e::control_bounds(window.window_id(), "conflict-skip").is_none());
         }
@@ -272,6 +292,157 @@ fn assert_operation_placement(
             );
         }
     }
+}
+
+fn assert_abort_interaction_ink(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    conflict: &Entity<ConflictView>,
+) {
+    use gpui::{Modifiers, MouseButton};
+    let button = e2e::control_bounds(window.window_id(), "conflict-abort").unwrap();
+    let outside = gpui::point(button.right() + gpui::px(12.), button.center().y);
+    cx.simulate_mouse_move(window, outside, None, Modifiers::none());
+    paint(cx, window);
+    assert_abort_paint(cx, window, "rest");
+    cx.simulate_mouse_move(window, button.center(), None, Modifiers::none());
+    paint(cx, window);
+    assert_abort_paint(cx, window, "hover");
+    cx.simulate_mouse_down(
+        window,
+        button.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    paint(cx, window);
+    assert_abort_paint(cx, window, "pressed");
+    // Release outside the button so this colour test never opens or confirms Abort.
+    cx.simulate_mouse_move(window, outside, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(window, outside, MouseButton::Left, Modifiers::none());
+    conflict.update(cx, |view, cx| {
+        view.writer_busy = true;
+        cx.notify();
+    });
+    paint(cx, window);
+    let disabled = e2e::control_paint(window.window_id(), "conflict-abort-label").unwrap();
+    assert_ne!(
+        u32::from(disabled.text_color.to_rgb()) >> 8,
+        theme::theme().color_blocker,
+        "disabled Abort does not retain active destructive ink"
+    );
+    conflict.update(cx, |view, cx| {
+        view.writer_busy = false;
+        cx.notify();
+    });
+    paint(cx, window);
+}
+
+fn assert_abort_paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, state: &str) {
+    let label = e2e::control_paint(window.window_id(), "conflict-abort-label").unwrap();
+    let ink = u32::from(label.text_color.to_rgb()) >> 8;
+    for shift in [0, 8, 16] {
+        let actual = ((ink >> shift) & 255) as u8;
+        let expected = ((theme::theme().color_blocker >> shift) & 255) as u8;
+        assert!(
+            actual.abs_diff(expected) <= 1,
+            "{state}: destructive ink stays red"
+        );
+    }
+    assert_eq!(label.font_weight, gpui::FontWeight::BOLD);
+    let button = e2e::control_bounds(window.window_id(), "conflict-abort").unwrap();
+    cx.update_window(window, |_, window, _| {
+        let image = window
+            .render_to_image()
+            .expect("native Abort density capture");
+        let scale = window.scale_factor();
+        let rgb = |pixel: [u8; 4]| {
+            (u32::from(pixel[0]) << 16) | (u32::from(pixel[1]) << 8) | u32::from(pixel[2])
+        };
+        let background = rgb(image
+            .get_pixel(
+                (f32::from(button.left() + gpui::px(4.)) * scale) as u32,
+                (f32::from(button.center().y) * scale) as u32,
+            )
+            .0);
+        assert!(
+            theme::contrast_ratio(ink, background) >= 3.,
+            "{state}: bold Abort contrast"
+        );
+        let mut strongest: f64 = 1.;
+        for y in (f32::from(label.bounds.top()) * scale).ceil() as u32
+            ..(f32::from(label.bounds.bottom()) * scale).floor() as u32
+        {
+            for x in (f32::from(label.bounds.left()) * scale).ceil() as u32
+                ..(f32::from(label.bounds.right()) * scale).floor() as u32
+            {
+                strongest = strongest.max(theme::contrast_ratio(
+                    rgb(image.get_pixel(x, y).0),
+                    background,
+                ));
+            }
+        }
+        assert!(
+            strongest >= 3.,
+            "{state}: actual bold glyph contrast {strongest:.3}:1"
+        );
+    })
+    .unwrap();
+}
+
+fn invoke_menu(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<kagi::ui::KagiApp>,
+    command: &'static str,
+) {
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.handle_menu_command(command, window, cx));
+    })
+    .unwrap();
+    paint(cx, window);
+}
+
+fn assert_sidebar_focus_yields(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<kagi::ui::KagiApp>,
+    conflict: &Entity<ConflictView>,
+    toggle: &serde_json::Value,
+) {
+    crate::native_ax::focus_named(cx, window, "Button", i18n::Msg::ConflictAbort.t());
+    invoke_menu(cx, window, app, "view.toggleSidebar");
+    assert!(cx.read(|cx| conflict.read(cx).sidebar_hidden));
+    assert_eq!(
+        crate::native_ax::focused(cx, window)["element_id"],
+        toggle["element_id"],
+        "View > Hide Sidebar returns session-button focus to its visible toggle"
+    );
+    keys(cx, window, "enter");
+    assert!(
+        !cx.read(|cx| conflict.read(cx).sidebar_hidden),
+        "the returned toggle remains keyboard actionable"
+    );
+}
+
+fn assert_session_accessibility(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    fn has_abort(tree: &serde_json::Value, node: &serde_json::Value) -> bool {
+        (node["aria"]["role"] == "Button" && node["aria"]["label"] == i18n::Msg::ConflictAbort.t())
+            || node["children"].as_array().is_some_and(|children| {
+                children
+                    .iter()
+                    .any(|id| has_abort(tree, &tree["nodes"][id.as_str().unwrap()]))
+            })
+    }
+    let tree = crate::native_ax::tree(cx, window);
+    let session = crate::native_ax::node(cx, window, "conflict-session-header".into());
+    let files = crate::native_ax::node(cx, window, "conflict-tree".into());
+    assert_eq!(session["aria"]["role"], "Group");
+    assert_eq!(files["aria"]["role"], "ListBox");
+    assert!(has_abort(&tree, &session));
+    assert!(
+        !has_abort(&tree, &files),
+        "session controls are not file-list items"
+    );
 }
 fn probe(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> Option<String> {
     ax::take_focus_probe();
@@ -536,6 +707,9 @@ fn matrix_leg(
     );
     paint(cx, window);
     assert_operation_placement(cx, window, &conflict);
+    if zoom == 1. && dimensions.0 > 1000. {
+        assert_abort_interaction_ink(cx, window, &conflict);
+    }
     assert_source_hunk_visible(cx, window, 0);
     let row_height = f32::from(theme::scaled_px(24.));
     for side in ["current", "incoming"] {
@@ -722,6 +896,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
             crate::native_ax::activate(cx);
             paint(cx, window);
             let tree = crate::native_ax::tree(cx, window);
+            assert_session_accessibility(cx, window);
             for message in [
                 i18n::Msg::ConflictBothCurrentFirst,
                 i18n::Msg::ConflictBothIncomingFirst,
@@ -762,7 +937,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                 );
             }
             assert_order_only(cx, window, &conflict);
-            assert_header_tab_order(cx, window, &conflict);
+            assert_header_tab_order(cx, window, &app, &conflict);
             drop(conflict);
             unmount(cx, app, window);
         }
@@ -807,6 +982,7 @@ fn assert_order_only(
 fn assert_header_tab_order(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
+    app: &Entity<kagi::ui::KagiApp>,
     conflict: &Entity<ConflictView>,
 ) {
     // Enable Save and Continue through real buffer-only adoption, without Git writes.
@@ -898,6 +1074,22 @@ fn assert_header_tab_order(
                     "Skip follows Abort in the sidebar, not Save in the file header"
                 );
             }
+            assert_sidebar_focus_yields(cx, window, app, conflict, &toggle);
         }
+    }
+    if sequencer {
+        let repo = cx.read(|cx| app.read(cx).repo_path.clone().unwrap());
+        let before = repo_fingerprint(&repo);
+        invoke_menu(cx, window, app, "repo.conflictSkip");
+        assert_eq!(
+            crate::native_ax::node(cx, window, "operation-strip-skip".into())["aria"]["label"],
+            i18n::Msg::ConflictConfirmSkip.t(),
+            "a menu-armed hidden sequencer shows its confirmation in the strip"
+        );
+        assert_eq!(
+            before,
+            repo_fingerprint(&repo),
+            "the first menu Skip only arms"
+        );
     }
 }

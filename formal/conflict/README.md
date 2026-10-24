@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 48 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), nine TLC negative controls,
+No product code is imported or changed. There are 52 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), 13 TLC negative controls,
 30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -132,11 +132,15 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
-| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
+| `draft-crash` | `DraftNeverLost` | HOLD | none | #1732; returned synchronous capture boundary |
+| `draft-crash-broken` | `DraftNeverLost` | REFUTE | draftSync | Negative control; expose capture before commit |
 | `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
-| `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |
+| `draft-two-writers` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-two-writers-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; unlocked read/merge/write |
+| `draft-lost-update` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
@@ -156,6 +160,18 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
 | `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
+
+The #1732 draft guards cite `resolution/draft_storage.rs`'s OS lock, checked
+content-CAS read, and ADR-0191 atomic temp/sync/rename writer. The synchronous
+capture action represents a **returned successful Change callback** at the
+primary rename linearization point (`draft_owner.rs:13-18,184-185`), exercised
+by `conflict_draft_revision_same_revision` before any task drain or paint.
+`draft-torn` still explores a crash during the temp-write microsteps: the old
+committed document remains valid. An unacknowledged in-flight new edit may be
+lost before the primary rename; this is not a power-loss guarantee. The lock
+quotient models successful acquisition, not the bounded timeout's UI error
+presentation; backend child tests cover the two-second error and SIGKILL release.
+
 
 ### Pure table (`pure/predict_*.py`)
 

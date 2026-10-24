@@ -1236,6 +1236,36 @@ fn session_resolved_respects_core_comment_char() {
     assert_eq!(session.resolved[0].path, path);
 }
 
+#[cfg(unix)]
+#[test]
+fn session_resolved_preserves_non_utf8_path() {
+    use std::os::unix::ffi::OsStrExt;
+    if !test_support::run_isolated() {
+        return;
+    }
+    // APFS rejects non-UTF-8 working-tree names, so build Git's byte-faithful
+    // stage-0 evidence directly; this also runs on Unix filesystems that do
+    // support those names without depending on host filename normalization.
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let path = Path::new(std::ffi::OsStr::from_bytes(b"file-\xff.txt"));
+    let repo = Repository::open(dir).unwrap();
+    let mut index = repo.index().unwrap();
+    let mut entry = index.get_path(Path::new("file.txt"), 2).unwrap();
+    entry.path = b"file-\xff.txt".to_vec();
+    entry.flags &= !0x3000;
+    index.add(&entry).unwrap();
+    index.write().unwrap();
+    std::fs::write(
+        dir.join(".git/MERGE_MSG"),
+        b"Merge\n\n# Conflicts:\n#\tfile-\xff.txt\n",
+    )
+    .unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    assert_eq!(session.resolved.len(), 1);
+    assert_eq!(session.resolved[0].path, path);
+}
+
 /// Save refuses (blocks) when the resolved text still has conflict markers.
 #[test]
 fn save_resolution_blocks_on_marker_residue() {

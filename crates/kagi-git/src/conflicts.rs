@@ -536,8 +536,8 @@ fn collect_resolved_files(
         .and_then(|config| config.get_string("core.commentChar").ok());
     let comment_char = match configured.as_deref() {
         Some("auto") => kagi_domain::merge_msg::auto_comment_char(&raw),
-        Some(value) => value.chars().next().unwrap_or('#'),
-        None => '#',
+        Some(value) => value.as_bytes().first().copied().unwrap_or(b'#'),
+        None => b'#',
     };
     let listed = kagi_domain::merge_msg::conflicted_paths(&raw, comment_char);
     if listed.is_empty() {
@@ -546,7 +546,7 @@ fn collect_resolved_files(
     let mut resolved: Vec<ResolvedConflictFile> = listed
         .iter()
         .filter_map(|listed_path| {
-            let path = PathBuf::from(listed_path);
+            let path = bytes_to_pathbuf(listed_path)?;
             if unmerged.iter().any(|file| file.path == path) {
                 return None;
             }
@@ -566,7 +566,7 @@ fn collect_resolved_files(
 
 /// Bounded read of `MERGE_MSG` only when it is a regular file: a FIFO would
 /// block the detector and a symlink could point outside `.git`.
-fn read_regular_merge_msg(path: &Path) -> Option<String> {
+fn read_regular_merge_msg(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
     const MAX_MERGE_MSG_BYTES: u64 = 1 << 20;
     let metadata = std::fs::symlink_metadata(path).ok()?;
@@ -577,10 +577,8 @@ fn read_regular_merge_msg(path: &Path) -> Option<String> {
     if !file.metadata().ok()?.is_file() {
         return None;
     }
-    let mut raw = String::new();
-    file.take(MAX_MERGE_MSG_BYTES)
-        .read_to_string(&mut raw)
-        .ok()?;
+    let mut raw = Vec::new();
+    file.take(MAX_MERGE_MSG_BYTES).read_to_end(&mut raw).ok()?;
     Some(raw)
 }
 

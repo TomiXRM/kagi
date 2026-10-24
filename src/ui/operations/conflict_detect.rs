@@ -29,7 +29,7 @@ thread_local! {
 /// (`detect_conflict_mode_async`) without changing the emitted `[kagi]` lines.
 pub enum ConflictDetectOutcome {
     /// Repo/snapshot open failed, or saved edits could not be restored. Retain
-    /// restore failures for a mandatory notice instead of silently retrying.
+    /// restore failures for a durable receipt instead of silently retrying.
     OpenFailed(Option<ConflictRestoreFailure>),
     /// No conflict session — clear Conflict Mode (emits `conflict-mode: cleared`
     /// only when a mode was previously open).
@@ -337,9 +337,20 @@ impl KagiApp {
         match outcome {
             ConflictDetectOutcome::OpenFailed(error) => {
                 if let Some(error) = error {
-                    self.app_notices
-                        .push_back(Msg::conflict_draft_restore_failed(&error.cause).into());
-                    self.present_app_notice();
+                    self.record_operation_completion(
+                        "conflict-draft-restore",
+                        StateSummary {
+                            head: "unobserved".into(),
+                            dirty: "unobserved".into(),
+                        },
+                        OpOutcome::Failed { error: error.cause },
+                        Some(Vec::new()),
+                        &owner.path,
+                        active_owner && exact_visit,
+                        false,
+                        Some(Msg::conflict_draft_restore_failed()),
+                        cx,
+                    );
                 }
                 // This failure passed the observation/request freshness checks.
                 // Keep the run-once guard until explicit reload/revalidation.

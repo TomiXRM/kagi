@@ -1006,10 +1006,14 @@ exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
 canonical receipt append; it still compares every Git field and complete log
 byte-for-byte rather than dropping the log from the no-write witness.
-`conflict_draft_restore_io_failure` covers EN/JA acknowledgment of unreadable
-saved edits, an unopenable lock, bounded lock contention and exhausted rescue
-names. It preserves the exact cause, keeps the editor fail-closed without
-per-frame re-detection, and verifies unchanged Git state and damaged bytes.
+`conflict_draft_restore_io_failure` covers unreadable saved edits (including a
+readable older `.prev`), an unopenable lock, bounded lock contention and exhausted
+rescue names in EN/JA. A successful append preserves the exact cause in one Failed
+receipt and presents only one bounded, path-free footer or notification, never a
+modal; an intentionally blocked append instead requires acknowledgment retaining
+both causes, with no ordinary preview. It keeps the editor fail-closed without
+per-frame re-detection and verifies unchanged Git/draft bytes plus only the exact
+asserted receipt append.
 `conflict_draft_stale_restore_failure` delivers an older real lock-timeout restore
 after a newer rebase conflict and a failed autosave: the exact pane, Result input,
 live text and pending revalidation gate must survive, without an obsolete notice.

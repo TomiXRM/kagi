@@ -181,6 +181,79 @@ fn corrupt_document_without_good_backup_refuses_overwrite() {
     assert_eq!(std::fs::read(&store).unwrap(), torn);
 }
 
+#[cfg(unix)]
+#[test]
+fn unreadable_primary_with_good_backup_refuses_restore_and_stale_autosave() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("buffer.json");
+    let previous = sibling(&store, ".prev");
+    let mut newest = live(root.path());
+    newest.save_draft_document(&store).unwrap();
+    let mut stale = restored(root.path(), &store);
+    newest
+        .set_manual_text(Path::new("a.txt"), "newer primary Result\n")
+        .unwrap();
+    newest.save_draft_document(&store).unwrap();
+    stale
+        .set_manual_text(Path::new("b.txt"), "stale writer Result\n")
+        .unwrap();
+    let primary_before = std::fs::read(&store).unwrap();
+    let previous_before = std::fs::read(&previous).unwrap();
+    assert_ne!(primary_before, previous_before);
+    assert!(
+        parse_buffer_json(root.path(), std::str::from_utf8(&previous_before).unwrap()).is_some()
+    );
+
+    let permissions = std::fs::metadata(&store).unwrap().permissions();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+    let denied = std::fs::read(&store);
+    let read_error = read(root.path(), &store).err();
+    let restore_error = draft_storage::read_for_restore(root.path(), &store).err();
+    let save_error = stale.save_draft_document(&store).err();
+    // Restore before asserting so fixture cleanup also works on a failed oracle.
+    std::fs::set_permissions(&store, permissions).unwrap();
+
+    let denied = denied.expect_err("requires a Unix user subject to file permission bits");
+    assert_eq!(denied.kind(), std::io::ErrorKind::PermissionDenied);
+    for error in [read_error, restore_error, save_error] {
+        let error = error.expect("an unreadable primary must refuse backup fallback");
+        let message = error.to_string();
+        assert!(message.contains(&store.display().to_string()), "{message}");
+        assert!(message.contains(&denied.to_string()), "{message}");
+    }
+    assert_eq!(std::fs::read(&store).unwrap(), primary_before);
+    assert_eq!(std::fs::read(&previous).unwrap(), previous_before);
+    assert!(!sibling(&store, ".corrupt").exists());
+    assert!(!sibling(&previous, ".corrupt").exists());
+}
+
+#[test]
+fn invalid_utf8_primary_restores_good_backup_without_quarantine() {
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("buffer.json");
+    let mut buffer = live(root.path());
+    buffer
+        .set_manual_text(Path::new("a.txt"), "backup Result\n")
+        .unwrap();
+    buffer.save_draft_document(&store).unwrap();
+    let previous = sibling(&store, ".prev");
+    let previous_before = std::fs::read(&previous).unwrap();
+    let corrupt = b"\xff";
+    std::fs::write(&store, corrupt).unwrap();
+
+    let (disk, warnings) = draft_storage::read_for_restore(root.path(), &store).unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(
+        disk.unwrap().buffer.resolved_text(Path::new("a.txt")),
+        buffer.resolved_text(Path::new("a.txt"))
+    );
+    assert_eq!(std::fs::read(&store).unwrap(), corrupt);
+    assert_eq!(std::fs::read(&previous).unwrap(), previous_before);
+    assert!(!sibling(&store, ".corrupt").exists());
+}
+
 #[test]
 fn failed_autosave_then_preservation_clone_keeps_the_newest_edit() {
     let root = tempfile::tempdir().unwrap();

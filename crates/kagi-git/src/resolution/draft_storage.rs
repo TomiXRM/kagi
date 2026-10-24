@@ -72,15 +72,19 @@ fn error(path: &Path, cause: impl std::fmt::Display) -> GitError {
 }
 
 /// A missing primary may be the interval after a legacy interrupted replacement;
-/// try the backup too. Corruption is never accepted as an empty merge base.
+/// try the backup too. Only verified corruption permits fallback on read failure;
+/// filesystem errors must not hide a newer primary behind an older backup.
 pub(super) fn read(repo: &Path, path: &Path) -> Result<Option<Disk>, GitError> {
-    let primary = std::fs::read_to_string(path);
-    let absent = primary
-        .as_ref()
-        .is_err_and(|e| e.kind() == io::ErrorKind::NotFound);
-    let good = primary
-        .ok()
-        .and_then(|text| parse_buffer_json(repo, &text).map(|buffer| (text, buffer)));
+    let (absent, good) = match std::fs::read(path) {
+        Ok(bytes) => (
+            false,
+            String::from_utf8(bytes)
+                .ok()
+                .and_then(|text| parse_buffer_json(repo, &text).map(|buffer| (text, buffer))),
+        ),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (true, None),
+        Err(e) => return Err(error(path, e)),
+    };
     let (content, buffer) = match good {
         Some(good) => good,
         None => {

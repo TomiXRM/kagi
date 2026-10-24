@@ -47,6 +47,7 @@ pub fn note_ja(note: &ConflictsNote) -> String {
         ConflictsNote::SkipStepChanged => {
             super::advice_text(Msg::AdviceConflictsSkipStepChanged, &[])
         }
+        ConflictsNote::WorktreeChanged => Msg::ConflictWorktreeChangedHelp.t().into(),
         ConflictsNote::RepositoryIdentityChanged => {
             super::advice_text(Msg::AdviceConflictsRepositoryIdentityChanged, &[])
         }

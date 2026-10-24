@@ -19,7 +19,7 @@ match runtime build `834a1796`). No Cargo or new GUI drill was run.
 | `skip-prewrite-broken` / `SkipDropsOnlyApprovedStep` | New negative control | **REFUTE** | Remove the frozen revision checks; a replacement at preflight/preservation/CLI dispatch drops the unapproved step. |
 | `continue-metadata-read` / `MetadataReadErrorNeverAdmitted` | Pure C5 suggested end-to-end fail-open | **HOLD**, 87 states | `approval_metadata.rs:15-21,42-54,111,139` propagates unreadable MERGE_MSG; `conflicts.rs:1266,1292` observes the complete revision before staging. `MetadataReadFailure` enables `MetadataRefused`, not writes. `DrillPreexistingComplete.md:69-78` records refusal and unchanged Git. |
 | `continue-metadata-read-broken` | New negative control | **REFUTE**, 33 states | Remove the strict metadata-read admission guard; the unreadable observation reaches preflight. |
-| All other lifecycle expectations | Existing checks | **Unchanged** | After #1746 D2: 49 checks, 59,636 distinct states summed; all 10 broken variants remain red. The pure blocker-function C5 result is not rewritten: only its invalid end-to-end extrapolation is corrected. |
+| All other lifecycle expectations | Existing checks | **Unchanged** | After #1746 D2 and #1733: 52 checks, 85,292 distinct states summed; all 12 broken variants remain red. The pure blocker-function C5 result is not rewritten: only its invalid end-to-end extrapolation is corrected. |
 
 `reset_all_target` in `actions.rs:134,161,185` is the separate Reset-All arm,
 not Skip's arm. The refinement uses the actual `skip_armed` reset through

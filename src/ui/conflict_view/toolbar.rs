@@ -9,7 +9,17 @@ pub fn continue_primary_for_e2e() -> Option<bool> {
     CONTINUE_PRIMARY.with(|value| value.get())
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static FILE_HEADER_STATUS: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 impl ConflictView {
+    #[cfg(feature = "gui-e2e")]
+    pub fn file_header_status_for_e2e(&self) -> String {
+        FILE_HEADER_STATUS.with(|status| status.borrow().clone())
+    }
+
     pub(super) fn render_workspace(
         &mut self,
         active: bool,
@@ -74,6 +84,7 @@ impl ConflictView {
                     .and_then(|i| mode.session.files.get(i).map(|f| &f.path))
             });
         let saved = self.selected_saved.is_some();
+        let external = path.is_some_and(|path| mode.buffer.worktree_changed(path));
         let status = if saved {
             if self.saved_review_needed {
                 Msg::ConflictReviewNeeded.t()
@@ -81,6 +92,8 @@ impl ConflictView {
                 Msg::ConflictSavedStaged.t()
             }
             .to_owned()
+        } else if external {
+            Msg::ConflictWorktreeChanged.t().to_owned()
         } else if self.save_refused.as_ref() == path && path.is_some() {
             Msg::ConflictSaveRefused.t().to_owned()
         } else {
@@ -96,6 +109,8 @@ impl ConflictView {
             })
             .unwrap_or_default()
         };
+        #[cfg(feature = "gui-e2e")]
+        FILE_HEADER_STATUS.with(|value| value.borrow_mut().clone_from(&status));
         let mut header = div()
             .relative()
             .flex()
@@ -119,7 +134,8 @@ impl ConflictView {
                     .aria_label(SharedString::from(status.clone()))
                     .text_size(theme::scaled_px(11.))
                     .text_color(rgb(
-                        if self.saved_review_needed
+                        if external
+                            || self.saved_review_needed
                             || self.save_refused.as_ref() == path && path.is_some()
                             || !saved && path.is_some_and(|p| flow::draft_ready(mode, p))
                         {
@@ -148,7 +164,25 @@ impl ConflictView {
                     cx.notify();
                 })),
             ));
-        } else if !saved {
+        }
+        if external {
+            header = header.child(e2e::measure_control(
+                "conflict-reload",
+                compact_button(
+                    "conflict-reload",
+                    Msg::ConflictReload.t(),
+                    ButtonRole::Secondary,
+                    cx,
+                )
+                .on_click(cx.listener(|view, _: &gpui::ClickEvent, _, cx| {
+                    let app = view.app.clone();
+                    cx.defer(move |cx| {
+                        let _ = app.update(cx, |app, cx| app.reload_external(cx));
+                    });
+                })),
+            ));
+        }
+        if !saved {
             if let Some(path) = path.filter(|p| {
                 mode.session
                     .files
@@ -158,13 +192,29 @@ impl ConflictView {
                 header = header.child(crate::ui::conflict_editor::save_button(
                     path,
                     self.writer_busy,
-                    self.save_refused.as_ref() == Some(path),
+                    external,
+                    !external && self.save_refused.as_ref() == Some(path),
                     flow::draft_ready(mode, path),
                     cx,
                 ));
             }
         }
-        header.into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .child(header)
+            .when(external, |column| {
+                column.child(
+                    div()
+                        .px(theme::scaled_px(12.))
+                        .py(theme::scaled_px(6.))
+                        .text_size(theme::scaled_px(11.))
+                        .text_color(rgb(theme().color_warning))
+                        .child(Msg::ConflictWorktreeChangedHelp.t()),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> gpui::AnyElement {

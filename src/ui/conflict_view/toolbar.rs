@@ -35,6 +35,11 @@ impl ConflictView {
             .sync_sidebar(shown, shown, now, kagi_ui_core::motion::instant());
         let fraction = self.panel_motion.left.visible(now);
         kagi_ui_core::motion::request_frame(window, self.panel_motion.left.animating(now));
+        // A closing row can regain focus before its clip disappears.
+        // Hand it back at the actual unmount boundary as well as on toggle.
+        if fraction == 0. {
+            self.yield_sidebar_focus(window, cx);
+        }
         let tree = (fraction > 0.).then(|| {
             kagi_ui_core::motion::clip(
                 "conflict-sidebar-clip",

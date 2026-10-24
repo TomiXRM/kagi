@@ -554,6 +554,34 @@ pub fn scenario_sidebar_motion(cx: &mut VisualTestAppContext) {
             );
         }
     }
+    // Rows remain interactive during the exit. A late click must not strand
+    // focus on an unmounted row once the clip reaches zero (#1739 review).
+    theme::set_reduce_motion(false);
+    crate::app_conflict::click_control(cx, window, "conflict-sidebar-toggle");
+    let toggle_focus = cx
+        .update_window(window, |_, window, cx| window.focused(cx))
+        .unwrap()
+        .expect("the clicked toggle owns focus");
+    draw(cx, at + Duration::from_millis(40));
+    crate::app_conflict::click_control(cx, window, "conflict-row-0");
+    kagi::ui::conflict_view::take_next_conflict_focus_probe();
+    cx.simulate_keystrokes(window, "f19");
+    cx.run_until_parked();
+    assert!(
+        kagi::ui::conflict_view::take_next_conflict_focus_probe(),
+        "the closing row regained keyboard focus"
+    );
+    draw(cx, at + Duration::from_millis(300));
+    assert!(
+        cx.update_window(window, |_, window, _| toggle_focus.is_focused(window))
+            .unwrap(),
+        "the final exit frame returns row focus to the toggle"
+    );
+    crate::keyboard_nav::keys(cx, window, "space");
+    assert!(
+        !cx.read(|cx| conflict.read(cx).sidebar_hidden),
+        "Space still activates the focused toggle after its row unmounts"
+    );
     drop(conflict);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS sidebar_motion");

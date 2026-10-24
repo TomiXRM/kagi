@@ -261,6 +261,10 @@ mod update_notice;
 mod create_branch_warnings;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_cancel_reopen.rs"]
+mod create_branch_cancel_reopen;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
 mod smart_picker;
 
@@ -4015,6 +4019,10 @@ mod macos {
             (
                 "create_branch_warnings",
                 Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
+            ),
+            (
+                "create_branch_cancel_reopen",
+                Box::new(crate::create_branch_cancel_reopen::scenario_create_branch_cancel_reopen),
             ),
             (
                 "stash_push_stacked_preview",

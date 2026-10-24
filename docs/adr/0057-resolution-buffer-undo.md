@@ -87,6 +87,11 @@
   authority: preserve its exact body in recoveries and clear the live
   resolution. Validate all saved hunk models during live restoration, not only
   the selected file, so Save/Continue cannot consume an unvalidated old body.
+  Materialization-rejected drafts carry a persisted `recovery_only` flag:
+  matching file/worktree identities retain inspection context but never restore
+  their write authority. Every post-detection `retain_drafts` revalidates all
+  retained hunk states against fresh materialization, including cached models and
+  unselected files; saving another file cannot revive an incompatible body.
   Operation Log's existing preserved-draft inspection uses the same loader and
   shows that body read-only, never applying it to the fresh conflict.
 

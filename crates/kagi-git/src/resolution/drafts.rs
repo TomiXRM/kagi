@@ -92,7 +92,7 @@ fn same_identity(current: &FileResolution, saved: &FileResolution) -> bool {
 }
 
 fn compatible(current: &FileResolution, saved: &FileResolution) -> bool {
-    if !same_identity(current, saved) {
+    if saved.recovery_only || !same_identity(current, saved) {
         return false;
     }
     // Legacy source-unknown drafts remain inspectable, never re-authorized.
@@ -121,6 +121,7 @@ fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
     left.identity == right.identity
         && left.worktree_fingerprint == right.worktree_fingerprint
         && left.draft_state == right.draft_state
+        && left.recovery_only == right.recovery_only
         && left.result == right.result
         && left.raw_result == right.raw_result
         && left.hunk_state == right.hunk_state

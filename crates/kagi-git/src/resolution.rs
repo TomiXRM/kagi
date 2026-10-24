@@ -98,6 +98,9 @@ struct FileResolution {
     /// Explicit draft state, including undo-to-unresolved. A fresh index
     /// materialization must not supersede a saved draft merely by being null.
     draft_state: bool,
+    /// Materialization rejected this draft; retain its context for inspection,
+    /// never promote it back to live authority during a later re-detection.
+    recovery_only: bool,
     /// Current side text (stage 2), `None` when that side is absent
     /// (modify-delete) or binary.
     current_text: Option<String>,
@@ -140,6 +143,7 @@ impl FileResolution {
             live_editing_origin: false,
             pending_edit: PendingEdit::default(),
             draft_state: false,
+            recovery_only: false,
             current_text: None,
             incoming_text: None,
             binary: false,
@@ -168,7 +172,8 @@ impl FileResolution {
         fresh.raw = self.raw;
         fresh.current_raw = self.current_raw;
         fresh.incoming_raw = self.incoming_raw;
-        let saved = std::mem::replace(self, fresh);
+        let mut saved = std::mem::replace(self, fresh);
+        saved.recovery_only = true;
         *marker_count -= usize::from(saved.marker_residue);
         saved
     }
@@ -352,25 +357,37 @@ impl ResolutionBuffer {
         let mut base = Self::from_repo(repo)?;
         if let Some(saved) = Self::load(&base.repo_path) {
             base.retain_drafts(saved);
-            // Validate saved hunk authority before publishing any restored
-            // resolution, including files the UI has not selected. The same
-            // loader powers Operation Log's preserved-draft inspection.
-            let paths: Vec<_> = base
-                .files
-                .iter()
-                .filter(|(_, file)| file.hunk_state.is_some())
-                .map(|(path, _)| path.clone())
-                .collect();
-            for path in paths {
-                if let Some(markers) = base.materialized_markers(repo, &path) {
-                    base.ensure_hunks(&path, &markers.text, markers.marker_width);
-                } else if let Some(file) = base.files.get_mut(&path) {
-                    let saved = file.take_draft_for_recovery(&mut base.marker_residue_count);
-                    base.preserve_recovery(path, saved);
-                }
-            }
+            base.validate_hunk_states(Some(repo));
         }
         Ok(base)
+    }
+
+    /// Revalidate every retained hunk draft before publishing file readiness.
+    /// An unavailable materialization preserves the body without live authority.
+    pub fn revalidate_hunk_states(&mut self) {
+        let repo = Repository::open(&self.repo_path).ok();
+        self.validate_hunk_states(repo.as_ref());
+    }
+
+    fn validate_hunk_states(&mut self, repo: Option<&Repository>) {
+        let paths: Vec<_> = self
+            .files
+            .iter()
+            .filter(|(_, file)| file.hunk_state.is_some())
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in paths {
+            let markers = repo.and_then(|repo| self.materialized_markers(repo, &path));
+            // A retained model is not proof that its saved fingerprint matches
+            // today's materialization. Restore decisions against a fresh model.
+            self.hunks.remove(&path);
+            if let Some(markers) = markers {
+                self.ensure_hunks(&path, &markers.text, markers.marker_width);
+            } else if let Some(file) = self.files.get_mut(&path) {
+                let saved = file.take_draft_for_recovery(&mut self.marker_residue_count);
+                self.preserve_recovery(path, saved);
+            }
+        }
     }
 
     /// Return the zdiff3 (or standard fallback) materialized marker text for a
@@ -1126,6 +1143,7 @@ struct FileRecord<'a> {
     identity: Option<IdentityRecord<'a>>,
     editing_origin: Option<&'a str>,
     draft_state: bool,
+    recovery_only: bool,
     binary: bool,
     current: Option<&'a str>,
     incoming: Option<&'a str>,
@@ -1186,6 +1204,7 @@ fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
         }),
         editing_origin: fr.editing_origin.as_deref(),
         draft_state: fr.draft_state || fr.result.is_some() || fr.raw_result.is_some(),
+        recovery_only: fr.recovery_only,
         binary: fr.binary,
         current: fr.current_text.as_deref(),
         incoming: fr.incoming_text.as_deref(),
@@ -1271,6 +1290,10 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         live_editing_origin: false,
         pending_edit: PendingEdit::default(),
         draft_state,
+        recovery_only: !matches!(
+            fields.remove("recovery_only"),
+            None | Some(Value::Bool(false))
+        ),
         binary: fields
             .get("binary")
             .and_then(Value::as_bool)
@@ -1359,6 +1382,7 @@ mod tests {
             live_editing_origin: false,
             pending_edit: PendingEdit::default(),
             draft_state: false,
+            recovery_only: false,
             current_text: Some(current.to_string()),
             incoming_text: Some(incoming.to_string()),
             binary: false,
@@ -1465,6 +1489,7 @@ mod tests {
             live_editing_origin: false,
             pending_edit: PendingEdit::default(),
             draft_state: false,
+            recovery_only: false,
             current_text: Some("only current\n".to_string()),
             incoming_text: None, // modify/delete: incoming deleted
             binary: false,
@@ -1517,6 +1542,7 @@ mod tests {
             live_editing_origin: false,
             pending_edit: PendingEdit::default(),
             draft_state: false,
+            recovery_only: false,
             current_text: Some("quote \"x\"\ttab\n".to_string()),
             incoming_text: None,
             binary: false,

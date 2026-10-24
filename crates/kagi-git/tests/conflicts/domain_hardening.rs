@@ -352,6 +352,97 @@ fn legacy_width_draft_is_preserved_as_recovery_not_live_resolution() {
 }
 
 #[test]
+fn materialization_recovery_never_readopts_after_retention_or_reload() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (tmp, repo) = source_fixture("b\n=======\nc\n", "a\n", "d\n");
+    let path = Path::new("file.txt");
+    let before_file = std::fs::read(tmp.path().join(path)).unwrap();
+    let before_index = std::fs::read(repo.path().join("index")).unwrap();
+    let mut legacy = ResolutionBuffer::from_repo(&repo).unwrap();
+    let identity = legacy.file_identity(path).unwrap().clone();
+    let old_markers =
+        "<<<<<<< Current\nb\n=======\nc\n||||||| Base\na\n=======\nd\n>>>>>>> Incoming\n";
+    assert!(legacy.ensure_hunks(path, old_markers, 7));
+    let body = "non-readoptable legacy draft 日本語\n";
+    legacy.set_manual_text(path, body).unwrap();
+    legacy.autosave().unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    let mut previous = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    for _ in 0..3 {
+        let recovery: Vec<_> = previous.recovery_drafts().collect();
+        assert_eq!(recovery.len(), 1);
+        assert_eq!(recovery[0].identity, Some(&identity));
+        assert_eq!(
+            kagi_domain::resolution::lines_to_text(recovery[0].result.unwrap()),
+            body
+        );
+        let mut fresh = ResolutionBuffer::from_repo(&repo).unwrap();
+        fresh.retain_drafts(previous);
+        assert!(
+            !fresh.has_resolution(path),
+            "retention cannot adopt a recovery"
+        );
+        fresh.revalidate_hunk_states();
+        assert!(!fresh.has_resolution(path));
+        assert_eq!(fresh.recovery_drafts().count(), 1);
+        assert!(!continue_blockers(&repo, &session, &fresh)
+            .unwrap()
+            .is_empty());
+        assert!(execute_conflict_save(&repo, &fresh, path).is_err());
+        fresh.autosave().unwrap();
+        previous = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    }
+    assert!(!previous.has_resolution(path));
+    assert_eq!(previous.recovery_drafts().count(), 1);
+    assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), before_file);
+    assert_eq!(
+        std::fs::read(repo.path().join("index")).unwrap(),
+        before_index
+    );
+}
+
+#[test]
+fn retained_hunk_state_revalidates_even_when_a_model_was_cached() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, repo) = source_fixture("b\n=======\nc\n", "a\n", "d\n");
+    let path = Path::new("file.txt");
+    let mut previous = ResolutionBuffer::from_repo(&repo).unwrap();
+    let old_markers =
+        "<<<<<<< Current\nb\n=======\nc\n||||||| Base\na\n=======\nd\n>>>>>>> Incoming\n";
+    assert!(previous.ensure_hunks(path, old_markers, 7));
+    let body = "cached stale hunk draft 日本語\n";
+    previous.set_manual_text(path, body).unwrap();
+    let mut fresh = ResolutionBuffer::from_repo(&repo).unwrap();
+    fresh.retain_drafts(previous);
+    assert!(
+        fresh.hunk_model(path).is_some(),
+        "exercise cached-model bypass"
+    );
+    fresh.revalidate_hunk_states();
+    assert!(!fresh.has_resolution(path));
+    assert!(!fresh.hunks_all_resolved(path));
+    let recovery: Vec<_> = fresh.recovery_drafts().collect();
+    assert_eq!(recovery.len(), 1);
+    assert_eq!(
+        kagi_domain::resolution::lines_to_text(recovery[0].result.unwrap()),
+        body
+    );
+    assert!(recovery[0].identity.is_some(), "keep inspection context");
+    assert!(fresh.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
+    assert_eq!(
+        fresh.resolved_text(path).as_deref(),
+        Some("b\n=======\nc\n")
+    );
+    assert!(!fresh.has_marker_residue(path));
+    execute_conflict_save(&repo, &fresh, path).unwrap();
+    assert_eq!(fresh.recovery_drafts().count(), 1);
+}
+
+#[test]
 fn unresolved_wide_hunk_blocks_continue_direct_and_recorded_save() {
     if !test_support::run_isolated() {
         return;

@@ -3286,6 +3286,12 @@ mod macos {
                 Box::new(crate::conflict_marker_width::scenario_conflict_width_draft_recovery),
             ),
             (
+                "conflict_width_recovery_survives_other_file_save",
+                Box::new(
+                    crate::conflict_marker_width::scenario_conflict_width_recovery_survives_other_file_save,
+                ),
+            ),
+            (
                 "conflict_result_segment",
                 Box::new(crate::conflict_controls::scenario_conflict_result_segment),
             ),

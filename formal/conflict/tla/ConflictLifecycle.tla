@@ -36,6 +36,7 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     planTree |-> [a \in Actors |-> "unmerged"], planRev |-> [a \in Actors |-> <<0,0,0,0>>],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
     lease |-> [a \in Actors |-> FALSE], preflight |-> [a \in Actors |-> FALSE],
+    repoLease |-> [a \in Actors |-> FALSE],
     executed |-> [a \in Actors |-> "none"], successful |-> [a \in Actors |-> FALSE],
     receipt |-> [a \in Actors |-> FALSE], released |-> [a \in Actors |-> FALSE],
     reported |-> [a \in Actors |-> FALSE], mutated |-> [a \in Actors |-> FALSE],
@@ -115,7 +116,16 @@ Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
 Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
     /\ ~s.refreshPending
     /\ s' = [s EXCEPT !.approved[a] = Broken # "approval", !.lease[a] = TRUE,
-        !.pc[a] = "preflight", !.event = <<"Approve(confirm)",a>>]
+        !.pc[a] = "admit", !.event = <<"Approve(confirm)",a>>]
+\* #1746: write_lock.rs::acquire and conflict_ops.rs::run_recorded_conflict.
+\* Sessions leases remain per-process. The kernel writer lease is separate:
+\* final revision preflight follows acquisition, and Verify releases it.
+\* Draft preservation precedes this critical section in Rust; its separate
+\* draft lock is not represented in this writer-exclusion quotient.
+AcquireRepositoryLease(a) == /\ At(a, "admit")
+    /\ ((\A b \in Actors : ~s.repoLease[b]) \/ Broken = "repoLock")
+    /\ s' = [s EXCEPT !.repoLease[a] = TRUE,
+        !.pc[a] = "preflight", !.event = <<"AcquireRepositoryLease",a>>]
 \* ui/operations/commit.rs:1191-1209: silently renews shown merge plan at click.
 RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
     /\ s' = [s EXCEPT !.planTree[a] = s.index[1], !.planRev[a] = Revision,
@@ -198,7 +208,7 @@ MergeCommit(a) == /\ At(a, "commit")
 \* Continue/Skip measured summaries: conflicts.rs:1234-1245,1898-1906.
 Verify(a) == /\ At(a, "verify")
     /\ (Kind # "save" \/ (s.wt[1] = s.frozen[a] /\ s.index[1] = s.frozen[a]))
-    /\ s' = [s EXCEPT !.successful[a] = TRUE,
+    /\ s' = [s EXCEPT !.successful[a] = TRUE, !.repoLease[a] = FALSE,
         !.pc[a] = IF DeferredReceipt THEN "release" ELSE "append",
         !.event = <<"Verify",a>>]
 \* conflict_ops.rs:581-603 backend records before returning; Continue/Skip UI
@@ -295,13 +305,13 @@ MetadataReadFailure == /\ Scenario = "metadataUnreadable" /\ ~s.external
     /\ s' = [s EXCEPT !.metadataReadable = FALSE, !.external = TRUE,
         !.event = "MetadataReadFailure(MERGE_MSG unreadable)"]
 MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "metadata"
-    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.repoLease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"MetadataRefused",a>>]
 
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
-    \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
+    \/ Freeze(a) \/ Approve(a) \/ AcquireRepositoryLease(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
@@ -335,8 +345,9 @@ NoDestructiveProgressAfterPreservationFailure == ~s.destructiveAfterFailure
 MergeCommitTreeIsApprovedTree == s.committedTree = "none" \/ s.committedTree = s.shownTree[1]
 SiblingWorktreesInvalidatedOnSharedRef ==
     (s.sharedMoved /\ s.pc[1] = "done") => s.siblingInvalidated
-\* REFUTE: leases are per application, not a repository-global lock.
-RepoHasAtMostOneLease == Cardinality({a \in Actors : s.lease[a]}) <= 1
+\* HOLD: count kernel writer leases, not the process-local UI reservations.
+\* Broken="repoLock" restores the old independent-process writer admission.
+RepoHasAtMostOneLease == Cardinality({a \in Actors : s.repoLease[a]}) <= 1
 \* Additional map P1: non-UTF8 stash abort passes verification leaving conflict WT.
 StashAbortRestoresConflictedBytes ==
     (Kind = "stashAbort" /\ s.successful[1]) => s.wt[1] = "original"

@@ -625,6 +625,7 @@ impl Backend {
         buffer: &ResolutionBuffer,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
         conflicts::plan_conflict_continue(&self.repo, session, buffer, expected)
     }
 
@@ -635,6 +636,7 @@ impl Backend {
         current_branch: &str,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ContinueRoute, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
         conflicts::plan_conflict_continue_route(
             &self.repo,
             session,
@@ -712,6 +714,7 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
     ) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
         conflicts::plan_conflict_abort(&self.repo, session)
     }
 
@@ -720,6 +723,7 @@ impl Backend {
     /// open the confirmation with no `ConflictView` and no conflict editor —
     /// the state the issue got stuck in.
     pub fn plan_operation_abort(&self) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
         let snapshot = observation(&self.repo)?
             .ok_or_else(|| GitError::Other("no operation is in progress".into()))?;
         conflicts::plan_conflict_abort(&self.repo, &snapshot.session)
@@ -751,6 +755,7 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
     ) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
         conflicts::plan_conflict_skip(&self.repo, session)
     }
 

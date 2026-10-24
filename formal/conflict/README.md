@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 48 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), nine TLC negative controls,
+No product code is imported or changed by the guard. There are 49 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), ten TLC negative controls,
 30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -121,7 +121,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `save-payload-broken` | `ApprovedSavePayloadFrozen` | REFUTE | payload | Negative control; no product issue |
 | `approved-revision` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
 | `approved-index-race` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
-| `approved-two-writers` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
+| `approved-two-writers` | `ApprovedRevisionFrozen` | HOLD | none | HOLD via #1746 D3 (lock); #1743 residual = external CLI |
 | `stale-worktree` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
 | `stale-index` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-index-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
@@ -137,8 +137,9 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
-| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `two-instance-leases` | `RepoHasAtMostOneLease` | HOLD | none | #1746 D3: kernel writer ownership |
+| `two-instance-leases-broken` | `RepoHasAtMostOneLease` | REFUTE | repoLock | Negative control: remove repository lock |
+| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | HOLD | none | HOLD via #1746 D3 (lock); #1733 residual = external CLI |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
 | `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
 | `receipt-skip` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
@@ -220,6 +221,9 @@ isolated model counterexamples. See both reconciliation headers for exact scope.
 
 The models do not run Rust, emulate the GUI, or establish model/code equivalence.
 HOLD is bounded by the finite equality/order quotients and vector/text bounds;
-leases are per modeled instance, crashes are explicit events, and cached marker
-verdicts are supplied inputs. The advisory `formal-conflict` CI job runs this same
+Sessions reservations remain per modeled instance; `repoLease` separately models
+the kernel writer lease acquired before final preflight and released at verification.
+`RepoHasAtMostOneLease` counts that writer lease, not approval/UI reservations.
+The broken-lock variant removes only kernel exclusion. Crashes are explicit events,
+and cached marker verdicts are supplied inputs. The advisory `formal-conflict` CI job runs this same
 entry point with a five-minute job limit; it is not part of `blocking-ci`.

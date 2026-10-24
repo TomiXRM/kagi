@@ -432,7 +432,7 @@ impl KagiApp {
                                     dirty: "resolving".into(),
                                 },
                                 unknown.unwrap_or_else(|| {
-                                    if let Some(note) = e.blocker() {
+                                    if let Some(note) = e.blocker().filter(|note| matches!(note, kagi_domain::plan_note::PlanNote::Conflicts(kagi_domain::plan_note::ConflictsNote::RepositoryBusy))) {
                                         OpOutcome::Refused {
                                             blockers: vec![note.message_en()],
                                         }
@@ -726,7 +726,14 @@ impl KagiApp {
                             &op_name,
                             before,
                             unknown.unwrap_or_else(|| {
-                                if let Some(note) = e.blocker() {
+                                if let Some(note) = e.blocker().filter(|note| {
+                                    matches!(
+                                        note,
+                                        kagi_domain::plan_note::PlanNote::Conflicts(
+                                            kagi_domain::plan_note::ConflictsNote::RepositoryBusy
+                                        )
+                                    )
+                                }) {
                                     OpOutcome::Refused {
                                         blockers: vec![note.message_en()],
                                     }

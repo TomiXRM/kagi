@@ -135,7 +135,7 @@ impl KagiApp {
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);
-                        let refused = e.blocker().map(|note| OpOutcome::Refused { blockers: vec![note.message_en()] });
+                        let refused = e.blocker().filter(|note| matches!(note, kagi_domain::plan_note::PlanNote::Conflicts(kagi_domain::plan_note::ConflictsNote::RepositoryBusy))).map(|note| OpOutcome::Refused { blockers: vec![note.message_en()] });
                         (unknown.or(refused).unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }), Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
                     }
                 };

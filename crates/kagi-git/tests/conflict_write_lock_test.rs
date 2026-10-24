@@ -124,11 +124,33 @@ fn child_lock_refuses_save_continue_abort_without_writes_and_death_releases_it()
             .unwrap()
         };
         let plan = Backend::plan_recorded_conflict(&repo, request.clone()).unwrap();
+        let linked = tmp.path().join("linked");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-qb",
+                "linked",
+                linked.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
         let before = witness(&repo);
         let owner = Owner::start(&repo);
         // Reads stay available while another process owns write admission.
         assert!(b.conflict_snapshot().unwrap().is_some());
+        busy(&Backend::check_conflict_write_admission(&linked).unwrap_err());
         busy(&Backend::plan_recorded_conflict(&repo, request).unwrap_err());
+        // The header's early Abort planning refusal has no recorded conflict
+        // job yet: backend admission must persist it before returning to UI.
+        busy(&b.plan_operation_abort().unwrap_err());
+        let receipt = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 1)
+            .pop()
+            .unwrap();
+        assert!(matches!(&receipt.outcome, OpOutcome::Refused { blockers }
+            if blockers == &["Another Kagi window is operating on this repository"]));
+        assert_eq!(receipt.ref_moves, Some(Vec::new()));
         if route == "continue" {
             busy(
                 &b.plan_conflict_continue(

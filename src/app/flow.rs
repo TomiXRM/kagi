@@ -320,8 +320,8 @@ pub fn begin_write(s: &mut Sessions, approved: &Approved) -> Result<RunningWrite
     if s.has_leases() {
         return Err(AdmissionError::Busy);
     }
-    let owner = approved.prepared.owner();
-    if let OwnerAttachment::Local(owner) = owner {
+    let attachment = approved.prepared.owner();
+    if let OwnerAttachment::Local(owner) = &attachment {
         kagi_git::Backend::check_conflict_write_admission(&owner.path).map_err(|error| {
             if error.blocker().is_some() {
                 AdmissionError::RepositoryBusy
@@ -332,7 +332,6 @@ pub fn begin_write(s: &mut Sessions, approved: &Approved) -> Result<RunningWrite
     }
     let id = OperationId(next_id());
     s.reserve_lease(scope, id)?;
-    let attachment = approved.prepared.owner();
     let session = attachment.session();
     // The owner was verified attached by `approve`; a visit of 0 for a session
     // that vanished between approve and here is still a routing key that will

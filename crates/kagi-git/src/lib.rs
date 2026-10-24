@@ -82,7 +82,7 @@ use kagi_domain::trailers; // ADR-0121: was a shim file
 pub mod worker;
 pub mod worktree_inspection;
 pub mod worktree_ports;
-pub mod write_lock;
+mod write_lock;
 
 #[allow(unused_imports)]
 pub use authoring::{load_commit_template, recent_authors, AuthorCandidate};

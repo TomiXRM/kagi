@@ -100,7 +100,7 @@ Readiness takes a supplied cached marker verdict: `ReadyImpliesNoMarkers` means 
 
 From the repository root: `uv run --project formal/conflict formal/conflict/run.sh --suite pure` (omit `--suite pure` for both model families). Dependencies are declared in `formal/conflict/pyproject.toml` and `uv.lock`: Python >=3.11, standard library only. Individual models: `uv run --project formal/conflict python formal/conflict/pure/predict_hunks.py --self-check`; all support `--broken NAME`. Exit 0 = every named expected HOLD/REFUTE matches, exit 1 = mismatch, exit 2 = invalid CLI/tooling. Suite exits 0 only if all baselines exit 0 and every broken variant exits exactly 1 with a named mismatch. Refuted expectations are green only with a concrete witness. Full normal and mutant witnesses: `formal/conflict/pure/results.json`.
 
-Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property/input evaluations; 34 deliberate mutants**. These are property evaluations, not deduplicated concrete repository states. Per-property domain size below counts every evaluated input (conditional properties count their antecedent domain only).
+Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property/input evaluations; 35 deliberate mutants**. These are property evaluations, not deduplicated concrete repository states. Per-property domain size below counts every evaluated input (conditional properties count their antecedent domain only).
 
 ## Ledger
 

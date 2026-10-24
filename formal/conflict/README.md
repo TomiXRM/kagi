@@ -4,8 +4,8 @@ This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
 No product code is imported or changed. There are 52 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), twelve TLC negative controls,
-31 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+properties (1,695,579 input/property evaluations), twelve TLC negative controls,
+35 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).

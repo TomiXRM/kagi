@@ -20,7 +20,6 @@ pub(super) const EXACT: &[(&str, &str, &str)] = &[
     ("executor unwound; side effects may have occurred", "Stash stopped unexpectedly and may have changed your files. Do not retry until you have checked your files and stashes.", "stash が予期せず停止し、ファイルが変更された可能性があります。ファイルと stash を確認するまで再実行しないでください。"),
     ("stash executor panicked", "Stash stopped unexpectedly. Do not retry until you have checked your files and stashes.", "stash が予期せず停止しました。ファイルと stash を確認するまで再実行しないでください。"),
     ("conflict operation changed since it was observed", "The conflict changed. Review it again.", "conflict の状態が変わりました。確認し直してください。"),
-    ("The operation moved to another step; review the current state", "The operation moved to another step; review the current state", "別の step に進んでいます。最新の状態を確認してください"),
     ("resolution buffer changed since it was prepared", "The resolution changed. Review it again before saving.", "解決内容が変わりました。保存する前に確認し直してください。"),
     ("conflict job dropped before execution", "Conflict resolution was canceled before it started. No files were changed.", "conflict の解決は開始前に取り消されました。ファイルは変更されていません。"),
     ("Refusing to continue: conflict markers remain in the resolution buffer.", "Conflict markers remain in the result. Remove them before continuing.", "解決結果に conflict マーカーが残っています。削除してから続行してください。"),

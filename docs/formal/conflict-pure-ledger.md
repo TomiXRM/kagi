@@ -84,6 +84,23 @@ when the opposite side is deselected. All five amended negative controls exit 1:
 | plain-text-gate | MarkerGateRespectsChosenSourceProvenance | chosen Current literal `<<<<<<< user` is incorrectly blocked |
 | undecide-empty-adoption | UndecideOnlyOnDeselect | chosen empty Current, deselect empty Incoming incorrectly resets |
 
+### #1732 post-merge recovery equality amendment — 2026-10-25
+
+The complete maintained pure run passes **39 properties / 1,695,651 baseline
+property/input evaluations**, detecting all **36** deliberate mutants.
+
+`TwoWriterRecoveryRetained` adds 72 finite evaluations: two known identities,
+both orderings of distinct bodies from three representatives, disk adoption or
+assembled-hunk overrides, and three subsequent other-file saves. The stale
+editor's local target body is not the primary being serialized. Compare recovery
+equality with that actual record, preserving the exact earlier bytes/identity for
+the owned read-only inspection API. The `pre-merge-recovery` mutant restores the
+lost-update bug. This is a body/metadata equality extraction, not a proof of CAS,
+locking, codec behavior or complete Rust/model equivalence; the lifecycle
+`two-writer-recovery` refinement and real backend subprocess test cover those
+successful transaction sequences independently.
+
+
 
 
 ---
@@ -136,6 +153,7 @@ Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property
 | draft serialization | UnknownOwnerCoalescenceIsFileOnly (HOLD) | exhaustive | 324 | HOLD | none in domain | crates/kagi-git/src/resolution/drafts.rs:253-290 | CONTRACT | crates/kagi-git/tests/conflicts/draft_revision.rs:166 (authority); no exact pure owner predicate test |
 | draft serialization | OnlyPendingRecoveryOutranksDisk (HOLD) | exhaustive | 3160 | HOLD | none in domain | crates/kagi-git/src/resolution/drafts.rs:260-267,303-311 | CONTRACT | crates/kagi-git/tests/conflicts/draft_revision.rs:659; crates/kagi-git/tests/conflicts/draft_recency.rs:7 |
 | draft preservation | DedupMovesLatestToTail (HOLD) | exhaustive | 504 | HOLD | none in domain | crates/kagi-git/src/resolution/drafts.rs:160-173 | CONTRACT | crates/kagi-git/tests/conflicts/draft_revision.rs:659 |
+| draft serialization | TwoWriterRecoveryRetained (HOLD) | exhaustive | 72 | HOLD in maintained guard | none in domain; pre-merge mutant drops the first recovery | `resolution/drafts.rs::autosave_json; resolution/draft_merge.rs::matches_record` | CONTRACT (#1732 P1) | `resolution/draft_storage_tests.rs::two_writer_recovery_survives_other_file_autosaves`; independent-hunk merge both orderings |
 | Skip classification | SkipClassificationNoFalseSuccess (HOLD) | exhaustive | 1152 | HOLD | none in domain after #1746 C6 | crates/kagi-domain/src/sequencer_skip.rs:125-151; src/ui/operations/conflict_skip.rs::skip_outcome | CONTRACT | `zero_exit_requires_observed_movement_while_operation_remains`; `zero_exit_without_movement_maps_to_warning_not_success` |
 | Skip evidence | BrokenSignalDominatesMovement (HOLD) | exhaustive | 1152 | HOLD | none in domain | crates/kagi-domain/src/sequencer_skip.rs:87-102 | CONTRACT | crates/kagi-domain/src/sequencer_skip.rs:263-334 |
 | Skip classification | NextConflictIsSuccessOnObservedMovement (HOLD) | exhaustive | 46 | HOLD | none in domain | crates/kagi-domain/src/sequencer_skip.rs:139-146 | CONTRACT | crates/kagi-domain/src/sequencer_skip.rs:176,186 |
@@ -177,6 +195,7 @@ Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property
 - **UnknownOwnerCoalescenceIsFileOnly** — Declared: Unknown identity may coalesce only immediately previous same-editor FILE, never preserved history. Implicit: none beyond the explicitly stated finite-domain boundary.
 - **OnlyPendingRecoveryOutranksDisk** — Declared: named contract checked against the cited implementation Implicit: none beyond the explicitly stated finite-domain boundary.
 - **DedupMovesLatestToTail** — Declared: named contract checked against the cited implementation Implicit: none beyond the explicitly stated finite-domain boundary.
+- **TwoWriterRecoveryRetained** — Declared: a stale unchanged local body must not deduplicate the only recovery of that body when the actual post-merge primary differs. Implicit: successful merge selection is supplied; disk adoption and assembled-hunk body/state overrides are covered, not the CAS/lock algorithm.
 - **SkipClassificationNoFalseSuccess** — #1746 C6 requires observed movement while the operation remains active, including exit zero. Unchanged, absent and broken signals are Unclear and map to the existing Unknown warning. The `zero-exit-advanced` mutant restores the historical false-success policy.
 - **BrokenSignalDominatesMovement** — Declared: A broken signal cannot be interpreted as progress. Implicit: none beyond the explicitly stated finite-domain boundary.
 - **NextConflictIsSuccessOnObservedMovement** — Declared: named contract checked against the cited implementation Implicit: none beyond the explicitly stated finite-domain boundary.
@@ -211,6 +230,7 @@ Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property
 | predict_drafts | null-not-state | 1 | LatestExplicitNullOutranksOldBody | {"after":{"binary":false,"draft_state":false,"hunk":null,"identity":"A","live":false,"origin":null,"pending":false,"raw":false,"raw_result":null,"raw_sides":["C","I"],"redo":false,"result":null,"sides":"same","undo":false},"current_identity":"A","events":["old recovery body","latest explicit null record","retain_drafts"],"old":{"binary":false,"draft_state":false,"hunk":null,"identity":null,"live":false,"origin":null,"pending":false,"raw":false,"raw_result":null,"raw_sides":["C","I"],"redo":false,"result":null,"sides":"same","undo":false},"previous":{"binary":false,"draft_state":true,"hunk":null,"identity":"A","live":false,"origin":null,"pending":false,"raw":false,"raw_result":null,"raw_sides":["C","I"],"redo":false,"result":null,"sides":"same","undo":false}} |
 | predict_drafts | coalesce-preserved | 1 | UnknownOwnerCoalescenceIsFileOnly | {"current":{"binary":false,"draft_state":true,"hunk":null,"identity":null,"live":true,"origin":"X","pending":false,"raw":false,"raw_result":null,"raw_sides":["C","I"],"redo":false,"result":["live"],"sides":"same","undo":false},"disk":{"binary":false,"draft_state":true,"hunk":null,"identity":null,"live":false,"origin":"X","pending":false,"raw":false,"raw_result":null,"raw_sides":["C","I"],"redo":false,"result":["disk"],"sides":"same","undo":false},"preserved":true,"serialized_history":[]} |
 | predict_drafts | ignore-pending-recency | 1 | OnlyPendingRecoveryOutranksDisk | {"actual":[],"disk":[],"expected":[[["A"],true]],"local":[[["A"],true]]} |
+| predict_drafts | pre-merge-recovery | 1 | TwoWriterRecoveryRetained | A and B save different target bodies; A's other-file save writes B primary but deletes A recovery by comparing it with A's unchanged local target |
 | predict_skip | ignore-broken | 1 | BrokenSignalDominatesMovement | {"after":["A",0],"before":[null,0],"classified":"Unclear","events":["observe before","git <op> --skip returns nonzero","observe after","classify Unclear"],"in_progress":false,"ok":false,"signals":["Broken","Unchanged"],"unmerged":false} |
 | predict_skip | nonzero-always-fails | 1 | NextConflictIsSuccessOnObservedMovement | {"after":[null,1],"before":[null,0],"classified":"NoProgress","events":["observe before","git <op> --skip returns nonzero","observe after","classify NoProgress"],"in_progress":false,"ok":false,"signals":["Absent","Advanced"],"unmerged":true} |
 | predict_skip | exit-alone-finishes | 1 | FinishedRequiresCleanRepository | {"after":[null,null],"before":[null,null],"classified":"Finished","events":["observe before","git <op> --skip returns 0","observe after","classify Finished"],"in_progress":false,"ok":true,"signals":["Absent","Absent"],"unmerged":true} |

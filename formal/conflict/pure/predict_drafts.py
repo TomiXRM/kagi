@@ -9,7 +9,7 @@ from itertools import product
 from checks import cli, prop
 S='crates/kagi-git/src/resolution/drafts.rs'
 T='crates/kagi-git/tests/conflicts/draft_revision.rs'
-VARIANTS=('unknown-matches','allow-other-raw','oldest-recovery','null-not-state','coalesce-preserved','ignore-pending-recency')
+VARIANTS=('unknown-matches','allow-other-raw','oldest-recovery','null-not-state','coalesce-preserved','ignore-pending-recency','pre-merge-recovery')
 
 @dataclass(frozen=True)
 class File:
@@ -86,17 +86,20 @@ def retain(current,previous,recoveries,broken=None):
     return current,history
 
 
-def autosave(current,local_recoveries,disk_recoveries,disk_file,broken=None):
-    """drafts.rs:260-311: local saved history, disk history/file, then pending edits.
+def autosave(current,local_recoveries,disk_recoveries,disk_file,broken=None,*,merged=None):
+    """drafts.rs::autosave_json, draft_merge.rs::matches_record: compare a
+    recovery against the actual post-merge record, including body overrides.
     Only disk FILE (not preserved recovery) may coalesce by matching owner.
     """
+    actual=current if merged is None else merged
     history=[f for f in local_recoveries if not f.pending]
     pending=[f for f in local_recoveries if f.pending]
     for file,preserved in [(f,True) for f in disk_recoveries]+([] if disk_file is None else [(disk_file,False)]):
         if not has_state(file,broken):
             continue
         may_coalesce=not preserved or broken=='coalesce-preserved'
-        superseded=same(current,file) or (may_coalesce and has_state(current,broken) and
+        compared=current if broken=='pre-merge-recovery' else actual
+        superseded=same(compared,file) or (may_coalesce and has_state(current,broken) and
                     (compatible(current,file,broken) or (current.live and current.origin is not None and current.origin==file.origin)))
         if not superseded:
             history=[f for f in history if not same(f,file)]+[file]
@@ -114,6 +117,10 @@ def run(broken=None):
     owner=prop('draft serialization','UnknownOwnerCoalescenceIsFileOnly','HOLD',S+':253-290',T+':166 (authority); no exact pure owner predicate test',declared='Unknown identity may coalesce only immediately previous same-editor FILE, never preserved history.')
     pending=prop('draft serialization','OnlyPendingRecoveryOutranksDisk','HOLD',S+':260-267,303-311',T+':659; crates/kagi-git/tests/conflicts/draft_recency.rs:7')
     recency=prop('draft preservation','DedupMovesLatestToTail','HOLD',S+':160-173',T+':659')
+    recovery=prop('draft serialization','TwoWriterRecoveryRetained','HOLD',
+                  S+'::autosave_json; crates/kagi-git/src/resolution/draft_merge.rs::matches_record',
+                  'crates/kagi-git/src/resolution/draft_storage_tests.rs::two_writer_recovery_survives_other_file_autosaves',
+                  declared='An unchanged stale editor must compare recoveries to the actual serialized primary, never its pre-merge body.')
     for ci,si,raw,saved_raw,result,payload,explicit,undo,redo,raw_sides in product((None,'A','B'),(None,'A','B'),(False,True),(False,True),(None,(),('body',)),(None,'C','I','OTHER'),(False,True),(False,True),(False,True),((),('C',),('I',),('C','I'))):
         c=File(identity=ci,raw=raw,raw_sides=raw_sides)
         saved=File(identity=si,raw=saved_raw,result=result,raw_result=payload,draft_state=explicit,undo=undo,redo=redo)
@@ -160,7 +167,24 @@ def run(broken=None):
         history=preserve(preserve(preserve([],a,broken),b,broken),a,broken)
         if has_state(a):
             recency.check(history and same(history[-1],a) and sum(same(f,a) for f in history)==1,{'events':['preserve A','preserve B','preserve A'],'A':a.__dict__,'B':b.__dict__,'history':[f.__dict__ for f in history]})
-    return [unknown,shape,null,newest,owner,pending,recency]
+    # Both body orderings, two known identities, disk adoption and assembled-hunk
+    # overrides; three later other-file saves rotate beyond the backup window.
+    for identity,early,late,kind in product(('A','B'),('first','second','third'),('first','second','third'),('disk','hunk-merge')):
+        if early==late:
+            continue
+        first=File(identity=identity,result=(early,),draft_state=True,origin='one',live=True,
+                   hunk=((0,early),) if kind=='hunk-merge' else None)
+        second=replace(first,result=(late,),origin='two',live=False,
+                       hunk=((1,late),) if kind=='hunk-merge' else None)
+        actual=second if kind=='disk' else replace(first,result=(early,late),hunk=((0,early),(1,late)))
+        history=[first]
+        for saved in range(3):
+            history=autosave(first,[],history,second,broken,merged=actual)
+            recovery.check(sum(same(file,first) for file in history)==1,
+                           {'identity':identity,'first':first.__dict__,'disk':second.__dict__,
+                            'actual':actual.__dict__,'other_file_save':saved+1,
+                            'history':[file.__dict__ for file in history]})
+    return [unknown,shape,null,newest,owner,pending,recency,recovery]
 
 if __name__=='__main__':
     cli(run,VARIANTS)

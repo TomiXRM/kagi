@@ -3250,6 +3250,26 @@ mod macos {
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
             ),
             (
+                "conflict_draft_corrupt_restore",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_corrupt_restore),
+            ),
+            (
+                "conflict_draft_restore_io_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_restore_io_failure),
+            ),
+            (
+                "conflict_draft_stale_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_failure),
+            ),
+            (
+                "conflict_draft_stale_restore_async",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_async),
+            ),
+            (
+                "conflict_draft_fresh_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_fresh_restore_failure),
+            ),
+            (
                 "conflict_draft_inspection_empty_legacy",
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
             ),

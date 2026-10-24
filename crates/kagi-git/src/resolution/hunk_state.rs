@@ -106,9 +106,51 @@ impl HunkState {
         }
     }
 
+    /// Three-way merge only independent decisions. A collision remains two
+    /// recoverable drafts rather than guessing between acknowledged choices.
+    pub(super) fn merge(&self, disk: &Self, base: Option<&Self>) -> Option<Self> {
+        if self.fingerprint != disk.fingerprint
+            || self.decisions.len() != disk.decisions.len()
+            || base.is_some_and(|base| {
+                base.fingerprint != self.fingerprint || base.decisions.len() != self.decisions.len()
+            })
+        {
+            return None;
+        }
+        let unresolved = Decision {
+            choice: Choice::Unresolved,
+            selection: None,
+        };
+        let mut merged = self.clone();
+        for (index, (ours, theirs)) in self.decisions.iter().zip(&disk.decisions).enumerate() {
+            let before = base.map_or(&unresolved, |base| &base.decisions[index]);
+            if ours == before {
+                merged.decisions[index] = theirs.clone();
+            } else if theirs != before && ours != theirs {
+                return None;
+            }
+        }
+        Some(merged)
+    }
+
+    pub(super) fn apply(&self, model: &mut HunkModel) -> bool {
+        if self.decisions.len() != model.hunk_count() {
+            return false;
+        }
+        self.restore_decisions(model)
+    }
+
     pub(super) fn restore(&self, markers: &str, model: &mut HunkModel) -> bool {
         if self.fingerprint != hex::encode(Sha256::digest(markers.as_bytes()))
-            || self.decisions.len() != model.hunk_count()
+            || !self.restore_decisions(model)
+        {
+            return false;
+        }
+        true
+    }
+
+    fn restore_decisions(&self, model: &mut HunkModel) -> bool {
+        if self.decisions.len() != model.hunk_count()
             || model
                 .regions
                 .iter()

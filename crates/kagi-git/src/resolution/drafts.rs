@@ -91,7 +91,7 @@ fn same_identity(current: &FileResolution, saved: &FileResolution) -> bool {
     current.identity.is_some() && current.identity == saved.identity
 }
 
-fn compatible(current: &FileResolution, saved: &FileResolution) -> bool {
+pub(super) fn compatible(current: &FileResolution, saved: &FileResolution) -> bool {
     if saved.recovery_only || !same_identity(current, saved) {
         return false;
     }
@@ -113,18 +113,25 @@ fn has_draft(file: &FileResolution) -> bool {
     file.result.is_some() || file.raw_result.is_some()
 }
 
-fn has_draft_state(file: &FileResolution) -> bool {
+pub(super) fn has_draft_state(file: &FileResolution) -> bool {
     file.draft_state || has_draft(file) || !file.undo.is_empty() || !file.redo.is_empty()
 }
 
-fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
+pub(super) fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
+    left.recovery_only == right.recovery_only && same_draft_body(left, right)
+}
+
+fn same_draft_body(left: &FileResolution, right: &FileResolution) -> bool {
+    same_draft_metadata(left, right)
+        && left.result == right.result
+        && left.hunk_state == right.hunk_state
+}
+
+pub(super) fn same_draft_metadata(left: &FileResolution, right: &FileResolution) -> bool {
     left.identity == right.identity
         && left.worktree_fingerprint == right.worktree_fingerprint
         && left.draft_state == right.draft_state
-        && left.recovery_only == right.recovery_only
-        && left.result == right.result
         && left.raw_result == right.raw_result
-        && left.hunk_state == right.hunk_state
         && left.current_text == right.current_text
         && left.incoming_text == right.incoming_text
         && left.binary == right.binary
@@ -187,9 +194,13 @@ impl ResolutionBuffer {
             files,
             mut hunks,
             mut recoveries,
+            disk_snapshot,
+            draft_writer,
             ..
         } = previous;
         let mut matched = std::collections::BTreeSet::new();
+        self.disk_snapshot = disk_snapshot;
+        self.draft_writer = draft_writer;
         for (path, mut saved) in files {
             if let Some(current) = self
                 .files
@@ -262,8 +273,13 @@ impl ResolutionBuffer {
     /// Merge disk recoveries by reference. Only the immediately previous file
     /// save from this live editing owner may coalesce without known identity.
     /// Prior editors and preserved recoveries remain inspection-only history.
-    pub(super) fn autosave_json(&self) -> Result<String, serde_json::Error> {
-        let disk = Self::load(&self.repo_path);
+    pub(super) fn autosave_json(
+        &self,
+        disk: Option<&Self>,
+        snapshot: &draft_storage::Snapshot,
+        changed: bool,
+    ) -> Result<String, serde_json::Error> {
+        let merged = self.merge_draft_files(disk, snapshot, changed);
         let mut recoveries: Vec<(&Path, &FileResolution)> = Vec::new();
         let mut pending = Vec::new();
         for entry in &self.recoveries {
@@ -275,7 +291,7 @@ impl ResolutionBuffer {
                 recoveries.push(record);
             }
         }
-        if let Some(disk) = &disk {
+        if let Some(disk) = disk {
             for (path, file, preserved) in disk
                 .recoveries
                 .iter()
@@ -289,14 +305,21 @@ impl ResolutionBuffer {
                 if !has_draft_state(file) {
                     continue;
                 }
+                // Invalidation is irreversible for this exact saved body. Do not
+                // copy its older, still-authoritative disk counterpart alongside
+                // the inspection-only recovery and let reload readopt that copy.
+                if !file.recovery_only
+                    && self.recoveries.iter().any(|entry| {
+                        entry.path == path
+                            && entry.file.recovery_only
+                            && same_draft_body(&entry.file, file)
+                    })
+                {
+                    continue;
+                }
                 let superseded = self.files.get(path).is_some_and(|current| {
-                    same_draft(current, file)
-                        || (!preserved
-                            && has_draft_state(current)
-                            && (compatible(current, file)
-                                || (current.live_editing_origin
-                                    && current.editing_origin.is_some()
-                                    && current.editing_origin == file.editing_origin)))
+                    merged.matches_record(path, current, file)
+                        || (!preserved && merged.supersedes(path, current, file, snapshot))
                 });
                 if !superseded {
                     if let Some(index) = recoveries
@@ -323,14 +346,17 @@ impl ResolutionBuffer {
         struct Record<'a> {
             repo: Cow<'a, str>,
             updated: u64,
-            #[serde(serialize_with = "serialize_files")]
-            files: &'a BTreeMap<PathBuf, FileResolution>,
+            files: Vec<FileRecord<'a>>,
             recoveries: Vec<FileRecord<'a>>,
         }
         serde_json::to_string(&Record {
             repo: self.repo_path.to_string_lossy(),
             updated: now_unix(),
-            files: &self.files,
+            files: self
+                .files
+                .iter()
+                .map(|(path, file)| merged.record(path, file))
+                .collect(),
             recoveries: recoveries
                 .into_iter()
                 .map(|(path, file)| file_record(path, file))

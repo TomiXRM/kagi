@@ -2,7 +2,7 @@
 use super::{entry_to_json, log_file_path, reading::Reader, OpLogEntry};
 use crate::{ops::backup, GitError};
 use git2::{Oid, Repository};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
@@ -47,36 +47,21 @@ fn valid_backup_kind(kind: Option<git2::ObjectType>) -> bool {
 /// Stable sidecar lock survives atomic log replacement. Append shares it.
 /// Fail closed if another writer owns it; do not block a GUI thread on a lock.
 pub(super) fn lock(path: &std::path::Path) -> Result<File, GitError> {
-    let file = open_lock(path)?;
-    file.try_lock().map_err(io)?;
-    Ok(file)
+    crate::advisory_lock::lock_exclusive(
+        &path.with_extension("jsonl.lock"),
+        std::time::Duration::ZERO,
+    )
+    .map_err(io)
 }
 
 /// Concurrent normal appends must not lose records just because a short write
 /// is in progress. Bound waiting so a stalled external owner cannot hang us.
 pub(super) fn append_lock(path: &std::path::Path) -> Result<File, GitError> {
-    use std::time::{Duration, Instant};
-    let file = open_lock(path)?;
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(error) => return Err(io(error)),
-        }
-    }
-}
-
-fn open_lock(path: &std::path::Path) -> Result<File, GitError> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path.with_extension("jsonl.lock"))
-        .map_err(io)
+    crate::advisory_lock::lock_exclusive(
+        &path.with_extension("jsonl.lock"),
+        std::time::Duration::from_secs(1),
+    )
+    .map_err(io)
 }
 
 pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogPlan, GitError> {

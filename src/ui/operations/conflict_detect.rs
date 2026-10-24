@@ -10,20 +10,41 @@
 use crate::ui::tab_ui_state_ops::PaneRevalidation;
 use crate::ui::*;
 
+#[cfg(feature = "gui-e2e")]
+type DetectionHold = (
+    gpui::Task<()>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DETECT_HOLD: std::cell::RefCell<Option<DetectionHold>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// T-PERF-RENDER-001: the `Send` result of the read-only conflict-detection I/O
 /// (`KagiApp::detect_conflict_payload`), applied to `KagiApp` on the UI thread by
 /// `apply_conflict_detect`.  Splitting the I/O out of the state mutation lets the
 /// same detection run either synchronously (`reload`) or off the UI thread
 /// (`detect_conflict_mode_async`) without changing the emitted `[kagi]` lines.
 pub enum ConflictDetectOutcome {
-    /// `Backend::open` failed — clear mode and leave the read model alone.
-    OpenFailed,
+    /// Repo/snapshot open failed, or saved edits could not be restored. Retain
+    /// restore failures for a durable receipt instead of silently retrying.
+    OpenFailed(Option<ConflictRestoreFailure>),
     /// No conflict session — clear Conflict Mode (emits `conflict-mode: cleared`
     /// only when a mode was previously open).
     Cleared,
     /// An active conflict/merge, including a fully staged operation awaiting
     /// Continue. The payload always owns a fresh snapshot and resolution buffer.
     Detected(Box<ConflictDetected>),
+}
+
+/// A restore error belongs to the snapshot that attempted to load its draft,
+/// not whichever conflict happens to be displayed when the error arrives.
+#[derive(Clone)]
+pub struct ConflictRestoreFailure {
+    pub observation: kagi_domain::conflict_family::ConflictObservation,
+    pub cause: String,
 }
 
 /// Payload of [`ConflictDetectOutcome::Detected`] — the assembled conflict state
@@ -39,9 +60,29 @@ pub struct ConflictDetected {
     /// Selected content file whose hunks were materialized; set as the open
     /// editor file on apply.
     editing_path: Option<PathBuf>,
+    /// Damaged local documents were preserved under reserved names by restore.
+    draft_restore_warnings: Vec<kagi_git::resolution::DraftRestoreWarning>,
 }
 
 impl KagiApp {
+    /// Hold the next real async result immediately before its freshness checks.
+    /// The returned flag becomes true only for an actual draft-restore error.
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_conflict_detection_for_e2e(
+        hold: gpui::Task<()>,
+    ) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        let reached = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        DETECT_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace((hold, reached.clone())).is_none());
+        });
+        reached
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn clear_conflict_detection_hold_for_e2e() {
+        DETECT_HOLD.with(|slot| drop(slot.borrow_mut().take()));
+    }
+
     /// The tab a detection run belongs to, frozen at launch (#707 review):
     /// SessionId, visit and path together, so a result that lands after a
     /// close and reopen of the same repository is recognisably not this tab's.
@@ -65,13 +106,13 @@ impl KagiApp {
     ) -> ConflictDetectOutcome {
         let repo = match crate::ui::blocking_ops::open_backend(repo_path) {
             Ok(r) => r,
-            Err(_) => return ConflictDetectOutcome::OpenFailed,
+            Err(_) => return ConflictDetectOutcome::OpenFailed(None),
         };
 
         let snapshot = match repo.conflict_snapshot() {
             Ok(Some(snapshot)) => snapshot,
             Ok(None) => return ConflictDetectOutcome::Cleared,
-            Err(_) => return ConflictDetectOutcome::OpenFailed,
+            Err(_) => return ConflictDetectOutcome::OpenFailed(None),
         };
         let session = snapshot.session;
 
@@ -79,9 +120,16 @@ impl KagiApp {
         // bound to this operation and file's stages; old/legacy drafts stay
         // recoverable without marking the current conflict resolved. Saved
         // data never replaces the raw metadata rebuilt from the index.
-        let mut buffer = repo
-            .resolution_buffer_from_repo_with_autosave()
-            .unwrap_or_else(|_| kagi_git::ResolutionBuffer::new(repo_path));
+        let mut buffer = match repo.resolution_buffer_from_repo_with_autosave() {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                return ConflictDetectOutcome::OpenFailed(Some(ConflictRestoreFailure {
+                    observation: snapshot.observation,
+                    cause: error.to_string(),
+                }))
+            }
+        };
+        let draft_restore_warnings = buffer.take_draft_restore_warnings();
 
         // Recompute per-file status from the buffer (detection seeds Unresolved).
         let mut session = session;
@@ -136,6 +184,7 @@ impl KagiApp {
             session,
             observation: snapshot.observation,
             buffer,
+            draft_restore_warnings,
             current_branch,
             selected_file,
             editing_file,
@@ -156,9 +205,30 @@ impl KagiApp {
     pub fn apply_conflict_detect(
         &mut self,
         owner: crate::app::Attachment,
-        outcome: ConflictDetectOutcome,
+        mut outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
+        // Rescue already happened in background I/O and was recorded there.
+        // Announce it even if the originating pane/observation was superseded:
+        // dropping a stale payload must not silently drop a recovery warning.
+        if let ConflictDetectOutcome::Detected(detected) = &mut outcome {
+            for warning in std::mem::take(&mut detected.draft_restore_warnings) {
+                let name = warning.rescued_path.file_name().unwrap_or_default();
+                let message = Msg::conflict_draft_rescued(&name.to_string_lossy());
+                if let Some(error) = warning.recording_error {
+                    self.app_notices.push_back(
+                        format!(
+                            "{message}\n\n{}",
+                            i18n::op_failed(i18n::Op::RecordOperation, error)
+                        )
+                        .into(),
+                    );
+                    self.present_app_notice();
+                    continue;
+                }
+                self.push_toast(ToastKind::Error, SharedString::from(message), cx);
+            }
+        }
         // The result belongs to its frozen attachment. A completion from the
         // visit that just departed may refresh its inactive owner's retained
         // pane, but it cannot become authoritative after that owner is active
@@ -199,11 +269,22 @@ impl KagiApp {
         let stale = match (&outcome, accepted) {
             (ConflictDetectOutcome::Detected(d), Some(op)) => op.observation != d.observation,
             (ConflictDetectOutcome::Detected(_), None) => false,
-            (ConflictDetectOutcome::Cleared | ConflictDetectOutcome::OpenFailed, accepted) => {
-                accepted.is_some()
-            }
+            (ConflictDetectOutcome::OpenFailed(Some(failure)), accepted) => accepted.map_or_else(
+                || self.reads.has_read(owner.session),
+                |op| op.observation != failure.observation,
+            ),
+            (
+                ConflictDetectOutcome::Cleared | ConflictDetectOutcome::OpenFailed(None),
+                accepted,
+            ) => accepted.is_some(),
         };
         if stale {
+            // Superseded failures own neither the current pane nor its pending
+            // revalidation. In particular, do not enter the AwaitingConflict
+            // fallback below: it would erase a newer Result after failed autosave.
+            if matches!(outcome, ConflictDetectOutcome::OpenFailed(Some(_))) {
+                return;
+            }
             if let Some(entity) = self
                 .ui
                 .get(&owner.session)
@@ -246,17 +327,64 @@ impl KagiApp {
                 ConflictDetectOutcome::Detected(d) => d.stash_identity.as_slice(),
                 _ => &[],
             };
-            if matches!(outcome, ConflictDetectOutcome::OpenFailed) {
+            if matches!(outcome, ConflictDetectOutcome::OpenFailed(_)) {
                 self.app_sessions.clear_stash_conflict(owner.session);
             } else {
                 self.app_sessions
                     .observe_stash_conflict(owner.session, identity);
             }
         }
+        if let Some(ui) = self.ui.get_mut(&owner.session) {
+            ui.conflict_restore_failed =
+                matches!(&outcome, ConflictDetectOutcome::OpenFailed(Some(_)));
+        }
         match outcome {
-            ConflictDetectOutcome::OpenFailed => {
+            ConflictDetectOutcome::OpenFailed(error) => {
+                let retain = error.as_ref().is_some_and(|failure| {
+                    self.ui
+                        .get(&owner.session)
+                        .and_then(|ui| ui.conflict.as_ref())
+                        .is_some_and(|entity| {
+                            entity.read(cx).mode.as_ref().is_some_and(|mode| {
+                                mode.revision == failure.observation.revision
+                                    && mode.session.op.kind() == failure.observation.kind
+                            })
+                        })
+                });
+                if let Some(error) = error {
+                    self.record_operation_completion(
+                        "conflict-draft-restore",
+                        StateSummary {
+                            head: "unobserved".into(),
+                            dirty: "unobserved".into(),
+                        },
+                        OpOutcome::Failed { error: error.cause },
+                        Some(Vec::new()),
+                        &owner.path,
+                        active_owner && exact_visit,
+                        false,
+                        Some(Msg::conflict_draft_restore_failed()),
+                        cx,
+                    );
+                }
+                // This failure passed the observation/request freshness checks.
+                // Keep the run-once guard until explicit reload/revalidation.
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
-                    ui.conflict = None;
+                    ui.conflict_detected = true;
+                    if retain {
+                        // A failed disk read cannot replace an already-owned
+                        // Result. Keep the exact entity/input and its unsaved
+                        // body, but do not acknowledge this checked pane read.
+                        ui.pane_revalidation = PaneRevalidation::AwaitingConflict;
+                    } else {
+                        ui.pane_revalidation = PaneRevalidation::Settled;
+                        ui.conflict = None;
+                    }
+                }
+                if retain {
+                    // Only a successful explicit re-detection may settle the
+                    // existing mutation gate; the common tail must not do so.
+                    return;
                 }
             }
             ConflictDetectOutcome::Cleared => {
@@ -292,6 +420,7 @@ impl KagiApp {
                     selected_file,
                     editing_file,
                     editing_path,
+                    draft_restore_warnings: _,
                 } = *detected;
                 if matches!(session.op, kagi_git::ConflictOp::Merge { .. })
                     && session.files.is_empty()
@@ -416,6 +545,7 @@ impl KagiApp {
         }
         if let Some(ui) = self.ui_mut() {
             ui.conflict_detected = true;
+            ui.conflict_detect_generation = ui.conflict_detect_generation.wrapping_add(1);
         }
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
@@ -471,9 +601,13 @@ impl KagiApp {
         if self.ui().conflict_detected {
             return;
         }
-        if let Some(ui) = self.ui_mut() {
-            ui.conflict_detected = true;
-        }
+        let Some(ui) = self.ui_mut() else {
+            return;
+        };
+        ui.conflict_detected = true;
+        ui.conflict_detect_generation = ui.conflict_detect_generation.wrapping_add(1);
+        let generation = ui.conflict_detect_generation;
+        let read_key = self.reads.current_key(owner.session);
 
         // Issue #285: capture the previously-selected/editing files by PATH, not
         // index — a per-file Save re-sorts `session.files`, so a stored index
@@ -502,9 +636,32 @@ impl KagiApp {
                 current_branch,
             )
         });
+        #[cfg(feature = "gui-e2e")]
+        let hold = DETECT_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some((hold, reached)) = hold {
+                reached.store(
+                    matches!(outcome, ConflictDetectOutcome::OpenFailed(Some(_))),
+                    std::sync::atomic::Ordering::Release,
+                );
+                hold.await;
+            }
             let _ = this.update(acx, |app, cx| {
+                // Content identity alone cannot distinguish two detections of
+                // the same Git state. A newer read or detector must supersede
+                // this restore failure before it can touch any pane or notice.
+                // Successful rescue warnings still follow apply's existing path.
+                if matches!(outcome, ConflictDetectOutcome::OpenFailed(Some(_)))
+                    && (!app.reads.is_fresh(read_key)
+                        || app
+                            .ui
+                            .get(&owner.session)
+                            .is_none_or(|ui| ui.conflict_detect_generation != generation))
+                {
+                    return;
+                }
                 app.apply_conflict_detect(owner, outcome, cx);
                 cx.notify();
             });

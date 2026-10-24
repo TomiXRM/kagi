@@ -13,7 +13,9 @@ impl ConflictView {
     pub(super) fn capture_result_for_navigation(&mut self, cx: &Context<Self>) {
         if self.result_editing {
             if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
-                let _ = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx);
+                if pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) == Some(true) {
+                    autosave_drafts(&mode.buffer);
+                }
             }
         }
     }

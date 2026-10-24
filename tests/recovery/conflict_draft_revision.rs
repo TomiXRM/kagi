@@ -353,6 +353,8 @@ pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppCont
     let original = cx.read(|cx| input.read(cx).value().to_string());
     let file = Path::new(FILE);
     replace_result(cx, &app, window, &input, FIRST);
+    let saved = ResolutionBuffer::load(&repo).expect("Change autosaves the Result draft");
+    assert_eq!(saved.resolved_text(file).as_deref(), Some(FIRST));
     input.update(cx, |input, cx| input.set_selected_range(2..8, cx));
     let revision = cx.read(|cx| {
         conflict_read(&app, cx)

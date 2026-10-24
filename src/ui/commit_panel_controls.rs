@@ -8,11 +8,12 @@ use crate::ui::{
     keyboard_nav,
     theme::{self, theme},
 };
-use gpui::{div, prelude::*, px, rgb, ClickEvent, Context, Role, Window};
+use gpui::{div, prelude::*, px, rgb, ClickEvent, Context, Role, SharedString, Window};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     Icon, Sizable as _,
 };
+use kagi_domain::plan_note::{CommonNote, OpPhrase, PlanNote};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 mod frame;
@@ -512,7 +513,7 @@ fn bulk_button(
     slot: usize,
     msg: Msg,
     enabled: bool,
-    reason: Option<&'static str>,
+    reason: Option<SharedString>,
     color: u32,
     cx: &mut Context<CommitPanelView>,
     activate: impl Fn(&CommitPanelView, &mut Window, &mut Context<CommitPanelView>) + Clone + 'static,
@@ -550,7 +551,7 @@ fn bulk_button(
         true,
         !enabled,
         None,
-        reason.map(Into::into),
+        reason,
         content,
         cx.listener(move |view: &mut CommitPanelView, _, window, cx| keyboard(view, window, cx)),
     )
@@ -611,9 +612,9 @@ pub(super) fn unstaged_header(
             eligible > 0,
             (eligible == 0).then(|| {
                 if count == 0 {
-                    Msg::CommitPanelNothingUnstaged.t()
+                    Msg::CommitPanelNothingUnstaged.t().into()
                 } else {
-                    Msg::CommitPanelNoStageTargets.t()
+                    Msg::CommitPanelNoStageTargets.t().into()
                 }
             }),
             theme().color_success,
@@ -628,8 +629,20 @@ pub(super) fn unstaged_header(
                     "cp-discard-all",
                     1,
                     Msg::CommitPanelDiscardAll,
-                    eligible > 0,
-                    (eligible == 0).then(|| Msg::ModalNoDiscardTargets.t()),
+                    eligible > 0 && view.state.conflicted_paths.is_empty(),
+                    if !view.state.conflicted_paths.is_empty() {
+                        Some(
+                            crate::ui::i18n::plan_note_text(&PlanNote::Common(
+                                CommonNote::ConflictedFiles {
+                                    count: view.state.conflicted_paths.len(),
+                                    before: OpPhrase::DiscardingChanges,
+                                },
+                            ))
+                            .into(),
+                        )
+                    } else {
+                        (eligible == 0).then(|| Msg::ModalNoDiscardTargets.t().into())
+                    },
                     theme().color_blocker,
                     cx,
                     |view, window, cx| view.defer_open_discard_all(window, cx),
@@ -681,7 +694,7 @@ pub(super) fn staged_header(
             2,
             Msg::CommitPanelUnstageAll,
             count > 0,
-            (count == 0).then(|| Msg::AdviceCommitNothingStaged.t()),
+            (count == 0).then(|| Msg::AdviceCommitNothingStaged.t().into()),
             theme().color_warning,
             cx,
             |view, window, cx| view.defer_unstage_all(window, cx),

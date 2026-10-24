@@ -6,6 +6,7 @@ use gpui::{
     px, size, AnyWindowHandle, Bounds, Entity, Focusable, Pixels, Role, VisualTestAppContext,
 };
 use kagi::ui::{e2e, KagiApp};
+use kagi_domain::plan_note::{CommonNote, OpPhrase, PlanNote};
 use kagi_ui_core::{
     i18n::{self, Msg},
     theme,
@@ -514,24 +515,33 @@ fn disabled_bulk_keys(cx: &mut VisualTestAppContext) {
         assert_eq!(cx.read(|cx| panel.read(cx).state.conflicted_paths.len()), 1);
         let index = std::fs::read(fixture.path().join(".git/index")).unwrap();
         let file = std::fs::read(fixture.path().join("README.md")).unwrap();
+        let discard_reason = i18n::plan_note_text(&PlanNote::Common(CommonNote::ConflictedFiles {
+            count: 1,
+            before: OpPhrase::DiscardingChanges,
+        }));
+        assert_ne!(discard_reason, Msg::ModalNoDiscardTargets.t());
+        assert_eq!(
+            discard_reason,
+            match case.locale {
+                "ja" => "conflict が 1 件あります。変更の破棄の前に解決してください。",
+                _ => "Repository has 1 conflicted file(s). Resolve conflicts before discarding changes.",
+            }
+        );
         for (id, name, reason) in [
             (
                 "cp-stage-all",
                 Msg::CommitPanelStageAll,
-                Msg::CommitPanelNoStageTargets,
+                Msg::CommitPanelNoStageTargets.t(),
             ),
             (
                 "cp-discard-all",
                 Msg::CommitPanelDiscardAll,
-                Msg::ModalNoDiscardTargets,
+                discard_reason.as_str(),
             ),
         ] {
             ax(id, Role::Button, name.t());
             assert_eq!(labels::accessible_disabled(id), Some(true));
-            assert_eq!(
-                labels::accessible_description(id).as_deref(),
-                Some(reason.t())
-            );
+            assert_eq!(labels::accessible_description(id).as_deref(), Some(reason));
             focus(cx, window, id);
             assert_focus(cx, window, id);
             for key in ["enter", "space"] {

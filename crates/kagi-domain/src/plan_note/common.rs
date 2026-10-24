@@ -40,6 +40,8 @@ pub enum OpPhrase {
     ApplyingAStash,
     /// "checking out the new branch"
     CheckingOutTheNewBranch,
+    /// "discarding changes"
+    DiscardingChanges,
 }
 
 impl OpPhrase {
@@ -60,6 +62,7 @@ impl OpPhrase {
             OpPhrase::Stashing => "stashing",
             OpPhrase::ApplyingAStash => "applying a stash",
             OpPhrase::CheckingOutTheNewBranch => "checking out the new branch",
+            OpPhrase::DiscardingChanges => "discarding changes",
         }
     }
 }

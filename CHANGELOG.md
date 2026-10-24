@@ -30,6 +30,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Freeze the approved merge commit plan through execution, refusing changed staging and re-presenting the new plan rather than silently committing the live index. Conflict staging writes the approved payload rather than rereading mutable worktree bytes, preserving index executable modes when `core.fileMode=false`. (#1743)
 - Invalidate sibling worktree reads when a conflict Abort plan restores a shared branch ref; detached and stash-only restores remain worktree-local. (#1744)
 - Restore non-UTF-8 stash-conflict paths without lossy path conversion, and verify both restored index entries and worktree content instead of only HEAD. (#1745)
+- Invalidate sibling worktree reads when a conflict Abort plan restores a shared branch ref; detached and stash-only restores remain worktree-local. (#1744)
 - Keep Continue confirmations free of command disclosures, consistent with Abort, and distinguish a resolved rebase step from completion when more steps remain. (#1736)
 - Preview the same pre-apply restore target used by stash-conflict Abort, and require explicit confirmation before Continue stages its resolution. (#1737)
 - Honor the effective repository comment character, including automatic selection, when preparing and submitting merge commit messages; strip comments from the body while preserving typed subjects even when they begin with the comment character. (#1738)

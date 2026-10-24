@@ -57,6 +57,9 @@ pub(crate) struct RestoreRef {
 /// cherry-pick / revert keep a symbolic HEAD, so `repo.head().name()` already
 /// yields the branch. `None` = genuinely detached, nothing to move.
 pub(crate) fn restore_ref(repo: &Repository, session: &ConflictSession) -> Option<RestoreRef> {
+    if matches!(session.op, ConflictOp::StashConflict) {
+        return None;
+    }
     let name = match session.op {
         ConflictOp::Rebase { .. } => read_rebase_head_name(repo.path()),
         _ => repo

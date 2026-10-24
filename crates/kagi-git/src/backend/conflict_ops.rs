@@ -73,6 +73,16 @@ impl ConflictPlan {
     pub fn request(&self) -> &ConflictRequest {
         &self.request
     }
+
+    pub fn changes_shared_refs(&self) -> bool {
+        matches!(
+            &self.action,
+            ConflictPreparedAction::Abort {
+                restore: Some(_),
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

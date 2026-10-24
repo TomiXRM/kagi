@@ -246,9 +246,11 @@ ReleaseLease(a) == /\ (At(a, "release") \/ (Broken = "receipt" /\ At(a, "append"
         !.successful[a] = TRUE,
         !.pc[a] = IF DeferredReceipt /\ Kind # "mergeContinue" THEN "append" ELSE "deliver",
         !.event = <<"ReleaseLease",a>>]
-\* Backend settlement survives UI detachment; sibling classification is unchanged.
+\* #1744: settlement invalidates siblings using the planned ref-restore intent,
+\* not a successful-outcome-only guess. UI detachment does not cancel settlement.
 Deliver(a) == /\ a \in Participants /\ s.pc[a] = "deliver"
     /\ s' = [s EXCEPT !.reported[a] = s.life[a] = "open" /\ Kind # "mergeContinue",
+        !.siblingInvalidated = @ \/ (Kind = "abort" /\ Broken # "sharedRef"),
         !.pc[a] = "done",
         !.event = <<"Deliver",a>>]
 \* ui/tabs.rs:231-251; app/flow.rs:287-290: departure invalidates pending approval.

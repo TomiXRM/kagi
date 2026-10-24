@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 60 TLC configurations, 38 pure
-properties (1,695,579 input/property evaluations), 20 TLC negative controls,
+No product code is imported or changed. There are 61 TLC configurations, 38 pure
+properties (1,695,579 input/property evaluations), 21 TLC negative controls,
 35 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -64,7 +64,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1731–#1733, #1744, #1745, #1746 (model-external runtime findings: #1734–#1738)**,
+holes/questions tracked by **#1731–#1733, #1745, #1746 (model-external runtime findings: #1734–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -103,6 +103,7 @@ worker lifetime (`life`); successful verification still precedes append.
 OS process death and receipt I/O failure remain outside this ordering contract.
 #1743 retains the approved merge plan and stages frozen payloads; all three
 `ApprovedRevisionFrozen` configs and `merge-tree` HOLD without narrowing scenarios.
+#1744 invalidates siblings from planned Abort ref restoration, not an outcome guess.
 Each original flaw remains refutable through its broken configurations below.
 Current run evidence is produced by the parent validation command.
 
@@ -179,7 +180,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | HOLD | none | #1743 |
 | `merge-tree-broken` | `MergeCommitTreeIsApprovedTree` | REFUTE | mergePlan | Negative control for #1743 |
-| `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
+| `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | HOLD | none | #1744 |
+| `sibling-invalidation-broken` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | sharedRef | Negative control for #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
 | `continue-liveness` | `ContinueEventuallyRecordedOrReported` | HOLD | none | #1740 |
 | `continue-liveness-broken` | `ContinueEventuallyRecordedOrReported` | REFUTE | workerReceipt | Negative control for #1740 |

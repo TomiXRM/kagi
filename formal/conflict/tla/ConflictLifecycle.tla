@@ -126,11 +126,12 @@ RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
         !.pc[a] = "mergePreflight", !.event = <<"RenewMergePlan",a>>]
 \* conflict_ops.rs:419-425 and conflict_boundary.rs:170-181: full revision check.
 \* Per-file index/WT provenance is checked again by ValidateFile before WTWrite.
-\* Skip has no expected revision argument (conflicts.rs:1869-1894).
+\* #1746: conflicts.rs::preflight_skip_revision validates the frozen full revision.
 \* Commit index checked against the NEW plan (ops/commit.rs:38-44,74-83).
 Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "preflight")
     /\ (s.metadataReadable \/ Broken = "metadata")
-    /\ (Kind = "skip" \/ s.planRev[a] = Revision \/ Broken = "revision")
+    /\ (s.planRev[a] = Revision \/ Broken = "revision"
+        \/ (Kind = "skip" /\ Broken = "skipRevision"))
     /\ (Kind # "mergeCommit" \/ s.planTree[a] = s.index[1])
     /\ s' = [s EXCEPT !.preflight[a] = TRUE,
         !.metadataFailOpen = @ \/ (~s.metadataReadable /\ Kind = "continue"),
@@ -195,8 +196,11 @@ Abort(a) == /\ At(a, "abort") /\ Kind \in {"abort","stashAbort"}
 RefCAS(a) == /\ At(a, "ref") /\ s.headRev = s.planRev[a][2]
     /\ s' = [s EXCEPT !.headRev = @ + 1, !.sharedMoved = TRUE,
         !.pc[a] = "verify", !.event = <<"RefCAS",a>>]
-\* conflicts.rs:1893-1894: read CURRENT step and run --skip; no approved-step test.
+\* #1746: execute_conflict_skip rechecks the same full approval immediately before run_git.
+\* Broken="skipRevision" removes both plan-time and final expected-revision checks.
 Skip(a) == /\ At(a, "skip")
+    /\ ((s.planRev[a] = Revision /\ s.operation = s.approvedStep[a])
+        \/ Broken = "skipRevision")
     /\ s' = [s EXCEPT !.wrongStep = @ \/ s.operation # s.approvedStep[a],
         !.operation = @ + 1, !.mutated[a] = TRUE, !.wroteUnapproved = @ \/ ~s.approved[a],
         !.destructiveAfterFailure = @ \/ s.preservationFailed[a],
@@ -299,13 +303,14 @@ WatcherFileRefresh == /\ Scenario = "staleWTBeforeChoice" /\ s.refreshPending
 \* Both revision and draft context change when REBASE_HEAD/step change:
 \* conflict_observe.rs:155-176; drafts.rs:176-247 disallows fresh-context adoption.
 ReplaceOperation == /\ Scenario \in {"skip", "skipRefresh"} /\ ~s.external
-    /\ s.pc[1] = (IF Scenario = "skipRefresh" THEN "approve" ELSE "preflight")
+    /\ (IF Scenario = "skipRefresh" THEN s.pc[1] = "approve"
+        ELSE s.pc[1] \in {"preflight", "preserve", "skip"})
     /\ s' = [s EXCEPT !.operation = @ + 1, !.metadataRev = @ + 1,
         !.refreshPending = Scenario = "skipRefresh",
         !.external = TRUE, !.event = "ReplaceOperation(next rebase step)"]
 \* Refresh-before-confirm schedule from DrillSequencers, Skip controls.
-\* actions.rs:432-442 checks mode.skip_armed; conflict_detect.rs:311-318,326-360
-\* retains an UNCHANGED revision, but replaces a changed mode with skip_armed=false.
+\* actions.rs::skip_request_arm freezes mode.revision in mode.skip_approval;
+\* conflict_detect.rs replaces a changed mode with skip_approval=None.
 \* reset_all_target (actions.rs:134 etc.) is a separate Reset-All arm, not Skip.
 \* Freeze represents the first arm; returning to ready requires a fresh arm.
 WatcherRefresh == /\ s.refreshPending /\ s.pc[1] = "approve"
@@ -356,6 +361,10 @@ ManualCapturePersisted == s.pc[1] = "ready" => s.captured \subseteq s.disk
 ReceiptFollowsMutation == \A a \in Participants :
     (s.successful[a] /\ (s.released[a] \/ s.life[a] = "closed")) => s.receipt[a]
 SkipDropsOnlyApprovedStep == ~s.wrongStep
+\* Independent first-line defence, even when the final backend check would refuse.
+SkipRefreshDisarmsChangedStep ==
+    ~(Scenario = "skipRefresh" /\ s.external /\ ~s.refreshPending
+      /\ s.pc[1] = "approve" /\ s.approvedStep[1] # s.operation)
 MetadataReadErrorNeverAdmitted == ~s.metadataFailOpen
 NoDestructiveProgressAfterPreservationFailure == ~s.destructiveAfterFailure
 MergeCommitTreeIsApprovedTree == s.committedTree = "none" \/ s.committedTree = s.shownTree[1]

@@ -315,7 +315,7 @@ impl KagiApp {
                     current_branch,
                     selected_file,
                     editing_file,
-                    skip_armed: false,
+                    skip_approval: None,
                 };
 
                 match self

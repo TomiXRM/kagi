@@ -149,7 +149,14 @@ fn skip_completion_keeps_each_discarded_draft_inspection_only() {
     let first_identity = first.file_identity(path).unwrap().clone();
     first.set_manual_text(path, "SKIPPED ONE\n").unwrap();
     let saved_path = first.autosave().unwrap();
-    let result = backend.execute_conflict_skip(&session, &first).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
+    let approved = backend.plan_conflict_skip(&session, &expected).unwrap();
+    let result = backend.execute_conflict_skip(&approved, &first).unwrap();
     assert_eq!(result.progress, SkipProgress::Advanced);
     assert_eq!(result.buffer_preserved_at.as_ref(), Some(&saved_path));
     drop(first);
@@ -169,7 +176,8 @@ fn skip_completion_keeps_each_discarded_draft_inspection_only() {
     assert_unresolved_continue_preserves_repository(&backend, dir, &session, &second, &expected);
     second.set_manual_text(path, "SKIPPED TWO\n").unwrap();
     assert_eq!(saved_path, second.autosave().unwrap());
-    let result = backend.execute_conflict_skip(&session, &second).unwrap();
+    let approved = backend.plan_conflict_skip(&session, &expected).unwrap();
+    let result = backend.execute_conflict_skip(&approved, &second).unwrap();
     assert_eq!(result.progress, SkipProgress::Finished);
     assert_eq!(result.buffer_preserved_at.as_ref(), Some(&saved_path));
     drop(second);

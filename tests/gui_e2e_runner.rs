@@ -4618,6 +4618,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_skip_panic),
             ),
             (
+                "conflict_skip_step_race",
+                Box::new(crate::app_conflict::scenario_conflict_skip_step_race),
+            ),
+            (
                 "stash_continue_panic",
                 Box::new(crate::app_stash::scenario_stash_continue_panic),
             ),

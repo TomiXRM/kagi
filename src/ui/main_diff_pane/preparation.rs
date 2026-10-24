@@ -173,7 +173,6 @@ fn prepare_diff_media(
     rename_from: Option<&std::path::Path>,
 ) -> (Option<PreparedPdfPair>, Option<DiffImagePair>) {
     use kagi_git::backend::file_reads::FileReadSource;
-    const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
 
     if matches!(
         source,
@@ -229,6 +228,59 @@ fn prepare_diff_media(
         ),
         MainDiffSource::Synthetic | MainDiffSource::Commit { commit: None, .. } => unreachable!(),
     };
+    let prepared = prepare_side_pair(
+        backend,
+        [old, new],
+        PreparationPolicy::Diff {
+            pdf_extension,
+            binary: file_diff.is_binary,
+            expected: [old_path.is_some(), new_path.is_some()],
+        },
+    );
+    (prepared.pdfs, prepared.images)
+}
+
+pub(crate) enum PreparationPolicy {
+    Diff {
+        pdf_extension: bool,
+        binary: bool,
+        expected: [bool; 2],
+    },
+    Conflict(kagi_git::ConflictKind),
+}
+
+#[derive(Default)]
+pub(crate) struct PreparedSidePair {
+    pub pdfs: Option<PreparedPdfPair>,
+    pub images: Option<DiffImagePair>,
+    pub raw: Option<[crate::ui::conflict_binary_view::SideData; 2]>,
+}
+
+/// The only side-pair byte/media preparation boundary. Both callers invoke it
+/// in a background task; descriptors are frozen before leaving their owner.
+pub(crate) fn prepare_side_pair(
+    backend: &kagi_git::Backend,
+    [old, new]: [MediaSide<'_>; 2],
+    policy: PreparationPolicy,
+) -> PreparedSidePair {
+    const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+    let PreparationPolicy::Diff {
+        pdf_extension,
+        binary,
+        expected,
+    } = policy
+    else {
+        let PreparationPolicy::Conflict(kind) = policy else {
+            unreachable!()
+        };
+        return PreparedSidePair {
+            raw: Some([
+                prepare_raw_side(backend, old, kind),
+                prepare_raw_side(backend, new, kind),
+            ]),
+            ..Default::default()
+        };
+    };
     let signature = |side: &MediaSide<'_>| {
         matches!(
             side.read(|source, path| backend.file_has_prefix(source, path, b"%PDF-")),
@@ -236,22 +288,22 @@ fn prepare_diff_media(
         )
     };
     if pdf_extension || signature(&old) || signature(&new) {
-        return (
-            Some(PreparedPdfPair {
+        return PreparedSidePair {
+            pdfs: Some(PreparedPdfPair {
                 old: PreparedPdfSide::from_read(
-                    old_path.is_some(),
+                    expected[0],
                     old.read(|source, path| backend.file_bytes(source, path, MAX_PDF_BYTES)),
                 ),
                 new: PreparedPdfSide::from_read(
-                    new_path.is_some(),
+                    expected[1],
                     new.read(|source, path| backend.file_bytes(source, path, MAX_PDF_BYTES)),
                 ),
             }),
-            None,
-        );
+            ..Default::default()
+        };
     }
-    if !file_diff.is_binary {
-        return (None, None);
+    if !binary {
+        return PreparedSidePair::default();
     }
     // Only the existing binary-image path needs unrestricted encoded bytes.
     let bytes = |side: &MediaSide<'_>| {
@@ -259,10 +311,13 @@ fn prepare_diff_media(
             .ok()
             .flatten()
     };
-    (None, image_pair_from_bytes(bytes(&old), bytes(&new)))
+    PreparedSidePair {
+        images: image_pair_from_bytes(bytes(&old), bytes(&new)),
+        ..Default::default()
+    }
 }
 
-enum MediaSide<'a> {
+pub(crate) enum MediaSide<'a> {
     Absent,
     File(
         kagi_git::backend::file_reads::FileReadSource<'a>,
@@ -285,6 +340,63 @@ impl MediaSide<'_> {
             Self::Failed(error) => Err(error.clone()),
         }
     }
+}
+
+fn prepare_raw_side(
+    backend: &kagi_git::Backend,
+    side: MediaSide<'_>,
+    kind: kagi_git::ConflictKind,
+) -> crate::ui::conflict_binary_view::SideData {
+    use crate::ui::avatar_fetch::{classify_image, ImageClassification};
+    use crate::ui::conflict_binary_view::{viewer_mode, BinaryViewMode, SideData, IMAGE_SIZE_CAP};
+    use kagi_git::backend::file_reads::FileReadSource;
+    let MediaSide::File(source @ FileReadSource::ConflictStage { oid, .. }, path) = side else {
+        return SideData::absent();
+    };
+    let mut data = SideData {
+        present: true,
+        oid_short: oid.chars().take(7).collect(),
+        size: None,
+        mode: viewer_mode(kind, false, None),
+        image: None,
+        symlink_target: None,
+        error: None,
+    };
+    match backend.file_size(source, path) {
+        Ok(size) => data.size = size,
+        Err(error) => {
+            data.error = Some(error.to_string());
+            return data;
+        }
+    }
+    if kind == kagi_git::ConflictKind::Submodule {
+        return data;
+    }
+    if kind != kagi_git::ConflictKind::Symlink && data.size.is_none_or(|size| size > IMAGE_SIZE_CAP)
+    {
+        return data;
+    }
+    match backend.file_bytes(source, path, IMAGE_SIZE_CAP as usize) {
+        Ok(Some(bytes)) if kind == kagi_git::ConflictKind::Symlink => {
+            data.symlink_target = Some(String::from_utf8_lossy(&bytes).into_owned());
+        }
+        Ok(Some(bytes)) => {
+            if let Some(fmt) = classify_image(path, &bytes, ImageClassification::ExtensionThenMagic)
+            {
+                klog!(
+                    "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
+                    data.oid_short,
+                    fmt,
+                    bytes.len()
+                );
+                data.image = Some(std::sync::Arc::new(gpui::Image::from_bytes(fmt, bytes)));
+                data.mode = BinaryViewMode::Image;
+            }
+        }
+        Ok(None) => {}
+        Err(error) => data.error = Some(error.to_string()),
+    }
+    data
 }
 
 /// Honor the actual delta's distinct paths, never look up a renamed old blob
@@ -319,6 +431,169 @@ fn image_pair_from_bytes(old: Option<Vec<u8>>, new: Option<Vec<u8>>) -> Option<D
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shared_preparation_preserves_diff_media_snapshot() {
+        use super::*;
+        use kagi_git::backend::file_reads::FileReadSource;
+        use std::path::Path;
+        let temp = tempfile::tempdir().unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(temp.path())
+            .status()
+            .unwrap()
+            .success());
+        let backend = kagi_git::Backend::open(temp.path()).unwrap();
+        let path = Path::new("image.png");
+        let png = b"\x89PNG\r\n\x1a\n";
+        std::fs::write(temp.path().join(path), png).unwrap();
+        let prepared = prepare_side_pair(
+            &backend,
+            [
+                MediaSide::Absent,
+                MediaSide::File(FileReadSource::Workdir, path),
+            ],
+            PreparationPolicy::Diff {
+                pdf_extension: false,
+                binary: true,
+                expected: [false, true],
+            },
+        );
+        let images = prepared.images.unwrap();
+        // Frozen pre-refactor MainDiffView.images snapshot: added PNG, one image.
+        assert_eq!(
+            (
+                images.old_exists,
+                images.new_exists,
+                images.old.is_some(),
+                images.new.is_some()
+            ),
+            (false, true, false, true)
+        );
+        assert!(prepared.pdfs.is_none());
+        std::fs::write(
+            temp.path().join(path),
+            b"BM legacy diff does not recognize BMP",
+        )
+        .unwrap();
+        let prepared = prepare_side_pair(
+            &backend,
+            [
+                MediaSide::Absent,
+                MediaSide::File(FileReadSource::Workdir, path),
+            ],
+            PreparationPolicy::Diff {
+                pdf_extension: false,
+                binary: true,
+                expected: [false, true],
+            },
+        );
+        assert!(prepared.images.is_none() && prepared.pdfs.is_none());
+        std::fs::write(temp.path().join(path), b"%PDF-invalid document").unwrap();
+        let prepared = prepare_side_pair(
+            &backend,
+            [
+                MediaSide::Absent,
+                MediaSide::File(FileReadSource::Workdir, path),
+            ],
+            PreparationPolicy::Diff {
+                pdf_extension: false,
+                binary: true,
+                expected: [false, true],
+            },
+        );
+        let pdfs = prepared.pdfs.unwrap();
+        // Signature still wins over image extension; parse failure stays a PDF source.
+        assert!(matches!(pdfs.old, PreparedPdfSide::Absent));
+        assert!(matches!(pdfs.new, PreparedPdfSide::Source(_)));
+        assert!(prepared.images.is_none());
+        let prepared = prepare_side_pair(
+            &backend,
+            [MediaSide::Absent, MediaSide::Failed("read failed".into())],
+            PreparationPolicy::Diff {
+                pdf_extension: true,
+                binary: true,
+                expected: [false, true],
+            },
+        );
+        let pdfs = prepared.pdfs.unwrap();
+        assert!(matches!(pdfs.old, PreparedPdfSide::Absent));
+        assert!(matches!(&pdfs.new, PreparedPdfSide::Failed(error) if error == "read failed"));
+    }
+
+    #[test]
+    fn conflict_preparation_preserves_absence_and_read_failure() {
+        use super::*;
+        use kagi_git::backend::file_reads::FileReadSource;
+        let temp = tempfile::tempdir().unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(temp.path())
+            .status()
+            .unwrap()
+            .success());
+        let backend = kagi_git::Backend::open(temp.path()).unwrap();
+        let prepared = prepare_side_pair(
+            &backend,
+            [
+                MediaSide::Absent,
+                MediaSide::File(
+                    FileReadSource::ConflictStage {
+                        oid: "invalid",
+                        mode: 0o100644,
+                    },
+                    std::path::Path::new("image.png"),
+                ),
+            ],
+            PreparationPolicy::Conflict(kagi_git::ConflictKind::Binary),
+        );
+        let [absent, failed] = prepared.raw.unwrap();
+        assert!(!absent.present && absent.error.is_none());
+        assert!(failed.present && failed.error.is_some());
+    }
+
+    #[test]
+    fn image_classification_policies_preserve_both_existing_surfaces() {
+        use crate::ui::avatar_fetch::{classify_image, ImageClassification};
+        use gpui::ImageFormat;
+        use std::path::Path;
+        for extension in ["png", "PNG", "jpg", "jpeg", "gif", "webp", "bmp"] {
+            let name = format!("image.{extension}");
+            assert!(classify_image(
+                Path::new(&name),
+                &[],
+                ImageClassification::ExtensionThenMagic
+            )
+            .is_some());
+            assert!(
+                classify_image(Path::new(&name), &[], ImageClassification::MagicOnly).is_none()
+            );
+        }
+        let png = b"\x89PNG\r\n\x1a\n";
+        assert_eq!(
+            classify_image(
+                Path::new("image.jpg"),
+                png,
+                ImageClassification::ExtensionThenMagic
+            ),
+            Some(ImageFormat::Jpeg)
+        );
+        assert_eq!(
+            classify_image(Path::new("image.jpg"), png, ImageClassification::MagicOnly),
+            Some(ImageFormat::Png)
+        );
+        assert_eq!(
+            classify_image(
+                Path::new("image"),
+                b"BM",
+                ImageClassification::ExtensionThenMagic
+            ),
+            Some(ImageFormat::Bmp)
+        );
+        assert!(
+            classify_image(Path::new("image"), b"BM", ImageClassification::MagicOnly).is_none()
+        );
+    }
     #[test]
     fn partially_previewable_modified_image_keeps_both_versions() {
         let png = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10];

@@ -62,9 +62,12 @@ pub(crate) fn buffer_revision(
     digest_part(&mut hash, path.as_os_str().as_encoded_bytes());
     digest_part(&mut hash, identity.as_str().as_bytes());
     match draft {
-        ConflictDraft::Text(bytes) => {
+        ConflictDraft::Text { bytes, origins } => {
             digest_part(&mut hash, b"text");
             digest_part(&mut hash, bytes);
+            for origin in origins {
+                digest_part(&mut hash, &[origin.tag() as u8]);
+            }
         }
         ConflictDraft::Raw { oid, mode } => {
             digest_part(&mut hash, b"raw");
@@ -367,7 +370,7 @@ pub(crate) fn verify_save(
         .get_path(path, 0)
         .ok_or_else(|| GitError::Other(format!("{} was not staged", path.display())))?;
     match draft {
-        ConflictDraft::Text(bytes) => {
+        ConflictDraft::Text { bytes, .. } => {
             let root = repo
                 .workdir()
                 .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;

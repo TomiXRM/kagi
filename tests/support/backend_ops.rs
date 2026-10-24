@@ -695,7 +695,14 @@ pub fn execute_conflict_skip(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<SkipOutcome, GitError> {
-    let result = backend(repo)?.execute_conflict_skip(session, buffer);
+    let backend = backend(repo)?;
+    let expected = backend
+        .conflict_snapshot()?
+        .ok_or_else(|| GitError::Other("no conflict to skip".into()))?
+        .observation
+        .revision;
+    let approved = backend.plan_conflict_skip(session, &expected)?;
+    let result = backend.execute_conflict_skip(&approved, buffer);
     refresh_fixture_index(repo, result)
 }
 

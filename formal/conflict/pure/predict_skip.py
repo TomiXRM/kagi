@@ -5,7 +5,7 @@ observation flags. Step magnitudes beyond 2 cannot change <,=,> predicates.
 from itertools import product
 from checks import cli,prop
 S='crates/kagi-domain/src/sequencer_skip.rs'
-VARIANTS=('ignore-broken','nonzero-always-fails','exit-alone-finishes')
+VARIANTS=('ignore-broken','nonzero-always-fails','exit-alone-finishes','zero-exit-advanced')
 
 
 def signal(before,after,step=False):
@@ -32,13 +32,13 @@ def advanced(before,after,broken=None):
 
 
 def predict(ok,in_progress,unmerged,before,after,broken=None):
-    """sequencer_skip.rs:125-147: zero exit while in flight bypasses movement."""
+    """sequencer_skip.rs:125-151: zero exit still requires observed movement (#1746 C6)."""
     if broken=='exit-alone-finishes' and ok:
         return 'Finished'
     if not (in_progress or unmerged):
         return 'Finished' if ok else 'Unclear'
     if ok:
-        return 'Advanced'
+        return 'Advanced' if broken=='zero-exit-advanced' or advanced(before,after,broken) is True else 'Unclear'
     if broken=='nonzero-always-fails':
         return 'NoProgress'
     moved=advanced(before,after,broken)
@@ -48,7 +48,7 @@ def predict(ok,in_progress,unmerged,before,after,broken=None):
 
 
 def run(broken=None):
-    safety=prop('Skip classification','SkipClassificationNoFalseSuccess','REFUTE',S+':125-146; crates/kagi-git/src/conflicts.rs:1899-1906,1929-1937; src/ui/operations/conflict_skip.rs:129-132',S+':203 (zero-exit example WITH movement; no no-movement test)','QUESTION',declared='Exit code is evidence; mid-sequence clean exit is Advanced.',implicit='Zero exit alone accepts unchanged/absent/broken movement evidence as Advanced; UI maps Advanced to Success if the later summary read succeeds.')
+    safety=prop('Skip classification','SkipClassificationNoFalseSuccess','HOLD',S+':125-151',S+'::tests::zero_exit_requires_observed_movement_while_operation_remains','CONTRACT',declared='An active sequence requires observed movement even after exit zero.',implicit='Missing, unchanged or broken movement maps to Unclear; UI preserves the Unknown warning.')
     dominate=prop('Skip evidence','BrokenSignalDominatesMovement','HOLD',S+':87-102',S+':263-334',declared='A broken signal cannot be interpreted as progress.')
     nextp=prop('Skip classification','NextConflictIsSuccessOnObservedMovement','HOLD',S+':139-146',S+':176,186')
     finished=prop('Skip classification','FinishedRequiresCleanRepository','HOLD',S+':126-138',S+':218')

@@ -9,6 +9,13 @@ use std::time::Duration;
 #[path = "conflict_refusal.rs"]
 mod refusal;
 
+#[path = "conflict_skip_race.rs"]
+mod skip_race;
+
+pub fn scenario_conflict_skip_step_race(cx: &mut VisualTestAppContext) {
+    skip_race::run(cx);
+}
+
 pub fn scenario_conflict_continue_refusal_result_owner(cx: &mut VisualTestAppContext) {
     refusal::continue_result_owner(cx);
 }
@@ -310,6 +317,16 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    // Match the neighboring mounted-editor scenario: finish the initial
+    // detector before injecting obsolete results, rather than racing startup.
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: the staged overview is mounted before stale results land"
+    );
     let observed = |cx: &mut VisualTestAppContext| {
         cx.read(|cx| {
             let app = app.read(cx);
@@ -1405,6 +1422,9 @@ pub fn scenario_conflict_skip_panic(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
+    let pane = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    pane.update(cx, |view, _| assert!(!view.skip_request_arm()));
+    drop(pane);
     kagi::ui::KagiApp::panic_next_conflict_skip_for_e2e();
     app.update(cx, |app, cx| {
         let owner = app

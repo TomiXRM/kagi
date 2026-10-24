@@ -47,6 +47,9 @@ pub fn note_ja(note: &ConflictsNote) -> String {
             super::advice_text(Msg::AdviceConflictsObservationChanged, &[])
         }
         ConflictsNote::PlanChanged => super::advice_text(Msg::AdviceConflictsPlanChanged, &[]),
+        ConflictsNote::SkipStepChanged => {
+            super::advice_text(Msg::AdviceConflictsSkipStepChanged, &[])
+        }
         ConflictsNote::WorktreeChanged => Msg::ConflictWorktreeChangedHelp.t().into(),
         ConflictsNote::RepositoryIdentityChanged => {
             super::advice_text(Msg::AdviceConflictsRepositoryIdentityChanged, &[])
@@ -86,6 +89,9 @@ pub fn note_ja(note: &ConflictsNote) -> String {
         ConflictsNote::NoConflictingFilesDetected => {
             super::advice_text(Msg::AdviceConflictsNoConflictingFilesDetected, &[])
         }
+        ConflictsNote::ContinuesToNextStep { remaining } => {
+            format!("次の step に進みます（残り {remaining}）")
+        }
         ConflictsNote::PartialResolutionsPreserved => {
             super::advice_text(Msg::AdviceConflictsPartialResolutionsPreserved, &[])
         }
@@ -120,6 +126,10 @@ mod contract_tests {
     #[test]
     fn changed_notes_preserve_legacy_bytes_and_raw_payloads() {
         let cases = [
+            (
+                ConflictsNote::SkipStepChanged,
+                "別の step に進んでいます。最新の状態を確認してください",
+            ),
             (
                 ConflictsNote::PlanChanged,
                 "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。",

@@ -22,6 +22,25 @@ impl<'a> MergedFiles<'a> {
         record
     }
 
+    /// Deduplicate against exactly the body `record` will persist, not the
+    /// editor's pre-merge body (which may itself now survive only in recovery).
+    pub fn matches_record(
+        &self,
+        path: &Path,
+        current: &FileResolution,
+        saved: &FileResolution,
+    ) -> bool {
+        let selected = self.disk.get(path).copied().unwrap_or(current);
+        if let Some(body) = self.bodies.get(path) {
+            selected.recovery_only == saved.recovery_only
+                && drafts::same_draft_metadata(selected, saved)
+                && body.result == saved.result
+                && body.state == saved.hunk_state
+        } else {
+            drafts::same_draft(selected, saved)
+        }
+    }
+
     pub fn supersedes(
         &self,
         path: &Path,

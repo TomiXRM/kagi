@@ -57,7 +57,7 @@ fn save(cx: &mut VisualTestAppContext) {
         let mode = view.mode.as_ref().expect("conflict mode");
         matches!(
             mode.buffer.conflict_draft(Path::new("file.txt")),
-            Some(kagi_domain::conflict_family::ConflictDraft::Text(bytes))
+            Some(kagi_domain::conflict_family::ConflictDraft::Text { bytes, .. })
                 if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
         )
     }));

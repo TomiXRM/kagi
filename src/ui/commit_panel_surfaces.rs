@@ -12,10 +12,7 @@ impl KagiApp {
             f32::from(super::theme::scaled_px(super::compact::RAIL_WIDTH))
         } else {
             f32::from(super::theme::scaled_px(self.sidebar.width + 4.))
-                * self
-                    .panel_motion
-                    .sidebar
-                    .visible(kagi_ui_core::motion::now())
+                * self.panel_motion.left.visible(kagi_ui_core::motion::now())
         };
         let available = (f32::from(window.viewport_size().width) - sidebar - 120.) / scale - 4.;
         self.panel_width.min(available.max(0.))

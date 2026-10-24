@@ -710,8 +710,10 @@ through execution and verification; the approved full revision is checked again
 under that lock. Reads do not acquire it. Nested executor calls on the same
 thread reuse the descriptor; unrelated background writers do not share admission.
 
-Draft preservation is a preceding phase: complete and release `buffer.json.lock`
-before acquiring `kagi-write.lock`. Never hold both locks, in either order.
+Draft preservation is a preceding phase: capture live input and complete the
+background writer's `flush()` barrier (or blocking backend `autosave()`) and
+release `buffer.json.lock` before acquiring `kagi-write.lock`. `flush()` drains
+queued captures, not uncaptured live input. Never hold both locks, in either order.
 After preservation, reacquire repository admission and repeat preflight; a changed
 approval refuses without mutation. This is advisory coordination among Kagi
 instances, not exclusion against arbitrary external Git/worktree writers.

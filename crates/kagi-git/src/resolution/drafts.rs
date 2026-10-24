@@ -92,7 +92,7 @@ fn same_identity(current: &FileResolution, saved: &FileResolution) -> bool {
 }
 
 pub(super) fn compatible(current: &FileResolution, saved: &FileResolution) -> bool {
-    if !same_identity(current, saved) {
+    if saved.recovery_only || !same_identity(current, saved) {
         return false;
     }
     // Legacy source-unknown drafts remain inspectable, never re-authorized.
@@ -117,13 +117,21 @@ pub(super) fn has_draft_state(file: &FileResolution) -> bool {
     file.draft_state || has_draft(file) || !file.undo.is_empty() || !file.redo.is_empty()
 }
 
-fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
+pub(super) fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
+    left.recovery_only == right.recovery_only && same_draft_body(left, right)
+}
+
+fn same_draft_body(left: &FileResolution, right: &FileResolution) -> bool {
+    same_draft_metadata(left, right)
+        && left.result == right.result
+        && left.hunk_state == right.hunk_state
+}
+
+pub(super) fn same_draft_metadata(left: &FileResolution, right: &FileResolution) -> bool {
     left.identity == right.identity
         && left.worktree_fingerprint == right.worktree_fingerprint
         && left.draft_state == right.draft_state
-        && left.result == right.result
         && left.raw_result == right.raw_result
-        && left.hunk_state == right.hunk_state
         && left.current_text == right.current_text
         && left.incoming_text == right.incoming_text
         && left.binary == right.binary
@@ -297,8 +305,20 @@ impl ResolutionBuffer {
                 if !has_draft_state(file) {
                     continue;
                 }
+                // Invalidation is irreversible for this exact saved body. Do not
+                // copy its older, still-authoritative disk counterpart alongside
+                // the inspection-only recovery and let reload readopt that copy.
+                if !file.recovery_only
+                    && self.recoveries.iter().any(|entry| {
+                        entry.path == path
+                            && entry.file.recovery_only
+                            && same_draft_body(&entry.file, file)
+                    })
+                {
+                    continue;
+                }
                 let superseded = self.files.get(path).is_some_and(|current| {
-                    same_draft(current, file)
+                    merged.matches_record(path, current, file)
                         || (!preserved && merged.supersedes(path, current, file, snapshot))
                 });
                 if !superseded {

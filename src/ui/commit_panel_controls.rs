@@ -8,11 +8,12 @@ use crate::ui::{
     keyboard_nav,
     theme::{self, theme},
 };
-use gpui::{div, prelude::*, px, rgb, ClickEvent, Context, Role, Window};
+use gpui::{div, prelude::*, px, rgb, ClickEvent, Context, Role, SharedString, Window};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     Icon, Sizable as _,
 };
+use kagi_domain::plan_note::{CommonNote, OpPhrase, PlanNote};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 mod frame;
@@ -27,6 +28,11 @@ fn button_paint(button: impl IntoElement) -> gpui::Stateful<gpui::Div> {
             builder.parent_node().set_hidden();
         })
         .child(button)
+}
+
+/// The xsmall action shares its frame with inert status badges.
+pub(super) fn inline_file_control(button: Button, id: &'static str, cx: &gpui::App) -> Button {
+    super::button_style::dense_control(button.xsmall(), id, cx)
 }
 
 /// The Stage/Unstage button stays inside its virtualized file-row slot.
@@ -56,34 +62,22 @@ pub(super) fn inline_file_action(
             view.defer_stage_file(fi, window, cx);
         }
     });
-    KagiButton::styled(
-        (btn_id, fi),
-        e2e::commit_panel_labels::caption(action_id, label),
-        role,
+    inline_file_control(
+        KagiButton::styled(
+            (btn_id, fi),
+            e2e::commit_panel_labels::caption(action_id, label),
+            role,
+            cx,
+        ),
+        action_id,
         cx,
     )
-    .xsmall()
-    .h(theme::scaled_px(20.))
-    .py_0()
-    .text_xs()
-    .line_height(theme::scaled_px(16.))
     // Keep focus inside the slot, clear of the next row's opaque paint.
-    .border_2()
-    .border_color(gpui::transparent_black())
-    .overflow_hidden()
     .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
     // Only the remembered row's inline action participates in Tab;
     // preceding rows must not intercept Shift+Tab out of the section.
     .tab_stop(crate::ui::commit_panel_navigation::action_tab_stop(
         view, drawn, staged, fi,
-    ))
-    .min_h(px(20.))
-    .ml_2()
-    .flex_shrink_0()
-    .relative()
-    .child(e2e::commit_panel_labels::measure_hit_box(
-        action_id,
-        keyboard_nav::RING,
     ))
     .when(fi == 0, |button| {
         button.child(e2e::measure_inside(if staged {
@@ -512,7 +506,7 @@ fn bulk_button(
     slot: usize,
     msg: Msg,
     enabled: bool,
-    reason: Option<&'static str>,
+    reason: Option<SharedString>,
     color: u32,
     cx: &mut Context<CommitPanelView>,
     activate: impl Fn(&CommitPanelView, &mut Window, &mut Context<CommitPanelView>) + Clone + 'static,
@@ -550,7 +544,7 @@ fn bulk_button(
         true,
         !enabled,
         None,
-        reason.map(Into::into),
+        reason,
         content,
         cx.listener(move |view: &mut CommitPanelView, _, window, cx| keyboard(view, window, cx)),
     )
@@ -611,9 +605,9 @@ pub(super) fn unstaged_header(
             eligible > 0,
             (eligible == 0).then(|| {
                 if count == 0 {
-                    Msg::CommitPanelNothingUnstaged.t()
+                    Msg::CommitPanelNothingUnstaged.t().into()
                 } else {
-                    Msg::CommitPanelNoStageTargets.t()
+                    Msg::CommitPanelNoStageTargets.t().into()
                 }
             }),
             theme().color_success,
@@ -628,8 +622,20 @@ pub(super) fn unstaged_header(
                     "cp-discard-all",
                     1,
                     Msg::CommitPanelDiscardAll,
-                    eligible > 0,
-                    (eligible == 0).then(|| Msg::ModalNoDiscardTargets.t()),
+                    eligible > 0 && view.state.conflicted_paths.is_empty(),
+                    if !view.state.conflicted_paths.is_empty() {
+                        Some(
+                            crate::ui::i18n::plan_note_text(&PlanNote::Common(
+                                CommonNote::ConflictedFiles {
+                                    count: view.state.conflicted_paths.len(),
+                                    before: OpPhrase::DiscardingChanges,
+                                },
+                            ))
+                            .into(),
+                        )
+                    } else {
+                        (eligible == 0).then(|| Msg::ModalNoDiscardTargets.t().into())
+                    },
                     theme().color_blocker,
                     cx,
                     |view, window, cx| view.defer_open_discard_all(window, cx),
@@ -681,7 +687,7 @@ pub(super) fn staged_header(
             2,
             Msg::CommitPanelUnstageAll,
             count > 0,
-            (count == 0).then(|| Msg::AdviceCommitNothingStaged.t()),
+            (count == 0).then(|| Msg::AdviceCommitNothingStaged.t().into()),
             theme().color_warning,
             cx,
             |view, window, cx| view.defer_unstage_all(window, cx),

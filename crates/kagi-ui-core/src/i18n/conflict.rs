@@ -5,8 +5,12 @@ impl Msg {
         draft_rescued_for(lang(), name)
     }
 
-    pub fn conflict_draft_restore_failed(reason: &str) -> String {
-        draft_restore_failed_for(lang(), reason)
+    pub fn conflict_draft_restore_failed() -> String {
+        draft_restore_failed_for(lang()).into()
+    }
+
+    pub fn conflict_draft_preserve_failed() -> String {
+        draft_preserve_failed_for(lang()).into()
     }
 
     /// A stopped merge/rebase is not a completed operation. A failed status
@@ -89,11 +93,17 @@ fn draft_rescued_for(language: Lang, name: &str) -> String {
     }
 }
 
-fn draft_restore_failed_for(language: Lang, reason: &str) -> String {
-    let reason = kagi_domain::text_safety::sanitize_control_bytes(reason);
+fn draft_restore_failed_for(language: Lang) -> &'static str {
     match language {
-        Lang::En => format!("Could not read your saved conflict edits. Check the problem below, then reload the repository to try again.\n\n{reason}"),
-        Lang::Ja => format!("保存した conflict の編集内容を読めませんでした。以下の問題を確認してから、リポジトリを再読み込みしてやり直してください。\n\n{reason}"),
+        Lang::En => "Could not read saved conflict edits. See Operation Log, then reload to try again.",
+        Lang::Ja => "保存した conflict の編集内容を読めませんでした。Operation Log を確認してから再読み込みしてください。",
+    }
+}
+
+fn draft_preserve_failed_for(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "Could not save conflict edits. Keep this window open; see Operation Log, then reload.",
+        Lang::Ja => "conflict の編集内容を保存できませんでした。このウィンドウを閉じず、Operation Log を確認して再読み込みしてください。",
     }
 }
 
@@ -102,13 +112,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn failed_draft_restore_notice_preserves_the_cause_in_both_languages() {
+    fn failed_draft_restore_preview_is_bounded_in_both_languages() {
         for language in [Lang::En, Lang::Ja] {
-            let notice = draft_restore_failed_for(language, "Permission denied: buffer.json");
-            assert!(notice.contains("Permission denied: buffer.json"));
-            assert!(notice.contains("conflict"));
-            assert!(!draft_restore_failed_for(language, "bad\u{1b}path").contains('\u{1b}'));
+            let preview = draft_restore_failed_for(language);
+            assert!(preview.contains("Operation Log"));
+            assert!(preview.chars().count() < 100);
+            assert!(!preview.contains('/') && !preview.contains('\n'));
         }
+    }
+
+    #[test]
+    fn failed_draft_preservation_preview_is_bounded_in_both_languages() {
+        for language in [Lang::En, Lang::Ja] {
+            let preview = draft_preserve_failed_for(language);
+            assert!(preview.contains("Operation Log"));
+            assert!(preview.chars().count() < 100);
+            assert!(!preview.contains('/') && !preview.contains('\n'));
+        }
+        assert!(draft_preserve_failed_for(Lang::En).contains("Keep this window open"));
+        assert!(draft_preserve_failed_for(Lang::Ja).contains("閉じず"));
     }
 
     #[test]

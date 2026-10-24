@@ -1,10 +1,13 @@
 //! Rendered diff mode and binary-state regression coverage (#1235/#1236).
 use crate::diff_highlight::{commit_image_index, png_bytes};
+use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, git, mount, unmount};
 use crate::recovery_layout::{draw, GlobalSettings};
 use gpui::{AnyWindowHandle, Modifiers, VisualTestAppContext};
+use kagi::ui::conflict_view::ConflictView;
 use kagi::ui::e2e;
 use kagi_ui_core::{i18n, theme};
+use std::sync::atomic::Ordering;
 
 fn frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     for _ in 0..3 {
@@ -199,17 +202,213 @@ pub fn scenario_conflict_image_zoom(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS conflict_image_zoom");
 }
 
+pub fn scenario_conflict_preview_no_render_io(cx: &mut VisualTestAppContext) {
+    let restore = GlobalSettings::capture();
+    theme::set_zoom(1.);
+    let fixture = conflict_image_fixture();
+    let repo = fixture.path();
+    let (hold, release) = deferred::<()>(cx);
+    let completion = ConflictView::hold_next_raw_preview_for_e2e(hold);
+    kagi_git::backend::render_probe::reset();
+    e2e::diff_presentation::clear();
+    let (app, win) = mount(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    frame(cx, win);
+    assert_eq!(
+        completion.load(Ordering::SeqCst),
+        1,
+        "real preparation is held"
+    );
+    assert_eq!(
+        conflict.read_with(cx, |view, _| view.raw_preview_state_for_e2e()),
+        ("loading", 0)
+    );
+    assert_eq!(
+        kagi_git::backend::render_probe::opens(),
+        0,
+        "including the first uncached render"
+    );
+    for side in ["current", "incoming"] {
+        assert!(
+            e2e::control_bounds(win.window_id(), &format!("conflict-image-{side}-header"))
+                .is_some()
+        );
+    }
+    assert!(
+        e2e::diff_presentation::description().is_none(),
+        "loading must not flash the binary error caption"
+    );
+    assert!(e2e::control_bounds(win.window_id(), "conflict-open-both-external").is_none());
+    release.send(());
+    resize_image_frame(cx, win, (940., 660.));
+    assert_eq!(completion.load(Ordering::SeqCst), 2);
+    assert!(e2e::control_bounds(win.window_id(), "conflict-image-current").is_some());
+    // Repaint consumes the accepted pair even when Backend cannot open its repo.
+    std::fs::rename(repo.join(".git"), repo.join(".git-held")).unwrap();
+    assert!(kagi_git::Backend::open(repo).is_err());
+    conflict.update(cx, |_, cx| cx.notify());
+    resize_image_frame(cx, win, (1392., 883.));
+    assert_image_geometry(win, "retained", 1., (1392., 883.));
+    assert_eq!(kagi_git::backend::render_probe::opens(), 0);
+    std::fs::rename(repo.join(".git-held"), repo.join(".git")).unwrap();
+    drop(conflict);
+    unmount(cx, app, win);
+    drop(restore);
+    eprintln!("[gui-e2e] PASS conflict_preview_no_render_io");
+}
+
+pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext) {
+    let restore = GlobalSettings::capture();
+    let fixture = conflict_images_fixture(&["image.png", "second.png"]);
+    let repo = fixture.path();
+    let (app, win) = mount(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    frame(cx, win);
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+
+    for transition in ["selection", "revision", "retirement"] {
+        conflict.update(cx, |view, cx| {
+            view.conflict_select_file(0);
+            cx.notify();
+        });
+        frame(cx, win);
+        let (hold, release) = deferred::<()>(cx);
+        let completion = ConflictView::hold_next_raw_preview_for_e2e(hold);
+        conflict.update(cx, |view, cx| {
+            view.retire_raw_preview_for_e2e();
+            cx.notify();
+        });
+        frame(cx, win);
+        assert_eq!(
+            completion.load(Ordering::SeqCst),
+            1,
+            "{transition}: old real worker is held"
+        );
+        conflict.update(cx, |view, _| view.detach_raw_preview_for_e2e());
+
+        match transition {
+            "selection" => conflict.update(cx, |view, cx| {
+                view.conflict_select_file(1);
+                cx.notify();
+            }),
+            "revision" => {
+                let previous =
+                    conflict.read_with(cx, |view, _| view.mode.as_ref().unwrap().revision.clone());
+                replace_current_image(repo);
+                app.update(cx, |app, cx| app.reload_external(cx));
+                frame(cx, win);
+                assert_ne!(
+                    conflict.read_with(cx, |view, _| view.mode.as_ref().unwrap().revision.clone()),
+                    previous
+                );
+            }
+            "retirement" => conflict.update(cx, |view, cx| {
+                // Identical file/revision on re-admission: only the attachment
+                // generation distinguishes this request from its predecessor.
+                view.retire_raw_preview_for_e2e();
+                cx.notify();
+            }),
+            _ => unreachable!(),
+        }
+        frame(cx, win);
+        let shown = conflict
+            .read_with(cx, |view, _| view.raw_preview_identity_for_e2e())
+            .unwrap();
+        release.send(());
+        frame(cx, win);
+        assert_eq!(
+            completion.load(Ordering::SeqCst),
+            3,
+            "{transition}: old completion must reach and fail production admission"
+        );
+        assert_eq!(
+            conflict.read_with(cx, |view, _| view.raw_preview_identity_for_e2e()),
+            Some(shown),
+            "{transition}: late result must not replace the shown pair"
+        );
+    }
+    drop(conflict);
+    unmount(cx, app, win);
+    drop(restore);
+    eprintln!("[gui-e2e] PASS conflict_preview_owner_transitions");
+}
+
+pub fn scenario_conflict_preview_read_retry(cx: &mut VisualTestAppContext) {
+    let restore = GlobalSettings::capture();
+    let fixture = conflict_image_fixture();
+    let repo = fixture.path();
+    let (app, win) = mount(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    frame(cx, win);
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    std::fs::rename(repo.join(".git"), repo.join(".git-held")).unwrap();
+    conflict.update(cx, |view, cx| {
+        view.retire_raw_preview_for_e2e();
+        cx.notify();
+    });
+    frame(cx, win);
+    assert_eq!(
+        conflict.read_with(cx, |view, _| view.raw_preview_state_for_e2e()),
+        ("failed", 2)
+    );
+    for _ in 0..4 {
+        conflict.update(cx, |_, cx| cx.notify());
+        frame(cx, win);
+    }
+    assert_eq!(
+        conflict.read_with(cx, |view, _| view.raw_preview_state_for_e2e()),
+        ("failed", 2),
+        "redraw must not hot-loop failed reads"
+    );
+    std::fs::rename(repo.join(".git-held"), repo.join(".git")).unwrap();
+    replace_current_image(repo);
+    app.update(cx, |app, cx| app.reload_external(cx));
+    frame(cx, win);
+    assert_eq!(
+        conflict.read_with(cx, |view, _| view.raw_preview_state_for_e2e()),
+        ("ready", 0),
+        "a new observation permits preparation after failure"
+    );
+    drop(conflict);
+    unmount(cx, app, win);
+    drop(restore);
+    eprintln!("[gui-e2e] PASS conflict_preview_read_retry");
+}
+
+fn replace_current_image(repo: &std::path::Path) {
+    let repository = git2::Repository::open(repo).unwrap();
+    let mut index = repository.index().unwrap();
+    let path = std::path::Path::new("image.png");
+    let mut current = index.get_path(path, 2).unwrap();
+    current.id = repository.blob(&png_bytes([80, 90, 100, 255])).unwrap();
+    index.add(&current).unwrap();
+    index.write().unwrap();
+    assert_eq!(index.get_path(path, 2).unwrap().id, current.id);
+}
+
 fn conflict_image_fixture() -> tempfile::TempDir {
+    conflict_images_fixture(&["image.png"])
+}
+
+fn conflict_images_fixture(paths: &[&str]) -> tempfile::TempDir {
     let fixture = build_fixture();
     let repo = fixture.path();
-    std::fs::write(repo.join("image.png"), png_bytes([255, 0, 0, 255])).unwrap();
+    for path in paths {
+        std::fs::write(repo.join(path), png_bytes([255, 0, 0, 255])).unwrap();
+    }
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "image base"]);
     git(repo, &["checkout", "-qb", "image-incoming"]);
-    std::fs::write(repo.join("image.png"), png_bytes([0, 255, 0, 255])).unwrap();
+    for path in paths {
+        std::fs::write(repo.join(path), png_bytes([0, 255, 0, 255])).unwrap();
+    }
     git(repo, &["commit", "-qam", "incoming"]);
     git(repo, &["checkout", "-q", "main"]);
-    std::fs::write(repo.join("image.png"), png_bytes([0, 0, 255, 255])).unwrap();
+    for path in paths {
+        std::fs::write(repo.join(path), png_bytes([0, 0, 255, 255])).unwrap();
+    }
     git(repo, &["commit", "-qam", "current"]);
     let repository = git2::Repository::open(repo).unwrap();
     let commit = repository

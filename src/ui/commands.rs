@@ -2784,6 +2784,7 @@ impl KagiApp {
                             &repo_path_guard,
                             false,
                             false,
+                            None,
                             cx,
                         );
                     }

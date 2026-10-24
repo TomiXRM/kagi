@@ -11,6 +11,12 @@ pub enum FileReadSource<'a> {
     Index,
     /// Unstaged base: stage 0, then conflict ours/ancestor, otherwise HEAD.
     IndexOrHead,
+    /// Frozen conflict-side identity; never consults the current index or path.
+    /// Gitlinks have no blob and return `None` without object lookup.
+    ConflictStage {
+        oid: &'a str,
+        mode: u32,
+    },
     Workdir,
 }
 
@@ -20,6 +26,28 @@ impl Backend {
     pub fn index_file_mode(&self, path: &Path) -> Result<Option<u32>, GitError> {
         let index = self.repo.index().map_err(git_error)?;
         Ok(index.get_path(path, 0).map(|entry| entry.mode))
+    }
+
+    /// Size without copying content; absent sources and frozen gitlinks have no
+    /// blob size. Invalid or unreadable present objects remain errors.
+    pub fn file_size(
+        &self,
+        source: FileReadSource<'_>,
+        path: &Path,
+    ) -> Result<Option<u64>, GitError> {
+        if matches!(source, FileReadSource::Workdir) {
+            return self
+                .open_workdir_file(path)?
+                .map(|file| {
+                    file.metadata()
+                        .map(|metadata| metadata.len())
+                        .map_err(io_error)
+                })
+                .transpose();
+        }
+        self.file_blob_id(source, path)?
+            .map(|oid| blob_size(&self.repo, oid).map(|size| size as u64))
+            .transpose()
     }
 
     /// Probe only `prefix.len()` bytes without allocating an application Vec.
@@ -79,21 +107,7 @@ impl Backend {
         let Some(oid) = self.file_blob_id(source, path)? else {
             return Ok(None);
         };
-        let odb = self.repo.odb().map_err(git_error)?;
-        let (size, kind) = odb.read_header(oid).map_err(git_error)?;
-        if kind != git2::ObjectType::Blob {
-            return Err(GitError::Other("File side is not a blob".into()));
-        }
-        if size > max_bytes {
-            return Err(too_large(max_bytes));
-        }
-        // libgit2 may decompress/cache the entire object. Only the subsequent
-        // application-owned copy is bounded by this API.
-        let blob = self.repo.find_blob(oid).map_err(git_error)?;
-        if blob.content().len() > max_bytes {
-            return Err(too_large(max_bytes));
-        }
-        Ok(Some(blob.content().to_vec()))
+        blob_bytes(&self.repo, oid, max_bytes).map(Some)
     }
 
     fn open_workdir_file(&self, path: &Path) -> Result<Option<std::fs::File>, GitError> {
@@ -127,6 +141,12 @@ impl Backend {
         path: &Path,
     ) -> Result<Option<git2::Oid>, GitError> {
         let commit = match source {
+            FileReadSource::ConflictStage { oid, mode } => {
+                if mode == 0o160000 {
+                    return Ok(None);
+                }
+                return git2::Oid::from_str(oid).map(Some).map_err(git_error);
+            }
             FileReadSource::Commit(id) => self
                 .repo
                 .find_commit(git2::Oid::from_str(&id.0).map_err(git_error)?)
@@ -168,6 +188,33 @@ impl Backend {
             Err(error) => Err(git_error(error)),
         }
     }
+}
+
+/// Bounded blob read for live file sources and frozen conflict stages.
+fn blob_bytes(
+    repo: &git2::Repository,
+    oid: git2::Oid,
+    max_bytes: usize,
+) -> Result<Vec<u8>, GitError> {
+    let size = blob_size(repo, oid)?;
+    if size > max_bytes {
+        return Err(too_large(max_bytes));
+    }
+    // libgit2 may materialize/cache the entire object; only our copy is bounded.
+    let blob = repo.find_blob(oid).map_err(git_error)?;
+    if blob.content().len() > max_bytes {
+        return Err(too_large(max_bytes));
+    }
+    Ok(blob.content().to_vec())
+}
+
+fn blob_size(repo: &git2::Repository, oid: git2::Oid) -> Result<usize, GitError> {
+    let odb = repo.odb().map_err(git_error)?;
+    let (size, kind) = odb.read_header(oid).map_err(git_error)?;
+    if kind != git2::ObjectType::Blob {
+        return Err(GitError::Other("File side is not a blob".into()));
+    }
+    Ok(size)
 }
 
 fn git_error(error: git2::Error) -> GitError {

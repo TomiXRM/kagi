@@ -103,6 +103,7 @@ pub struct EditorChrome {
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     pub raw_preview_scroll: gpui::ScrollHandle,
+    pub(crate) raw_preview: conflict_binary_view::PreviewState,
     /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
     /// Interior-mutable so the render path can fill it lazily; keyed by
     /// (path, theme slug) — row TEXT never changes within a session, only the
@@ -148,6 +149,7 @@ pub struct ConflictView {
     pub editing: Option<PathBuf>,
     pub page: ConflictPage,
     pub sidebar_hidden: bool,
+    panel_motion: super::panel_motion::PanelMotions,
     pub sidebar_expanded: HashSet<PathBuf>,
     pub selected_saved: Option<PathBuf>,
     pub saved_preview: Option<SavedPreview>,
@@ -184,6 +186,7 @@ pub struct ConflictView {
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Stable raw-preview scroll owner, shared by production and E2E renders.
     pub raw_preview_scroll: gpui::ScrollHandle,
+    pub(crate) raw_preview: conflict_binary_view::RawPreview,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk
     /// in the per-hunk Conflict Editor.
     pub selected_hunk: usize,
@@ -240,6 +243,7 @@ impl ConflictView {
             editing: None,
             page: ConflictPage::Hunk,
             sidebar_hidden: false,
+            panel_motion: Default::default(),
             sidebar_expanded: HashSet::new(),
             selected_saved: None,
             saved_preview: None,
@@ -263,6 +267,7 @@ impl ConflictView {
             ab_split: super::CONFLICT_AB_DEFAULT,
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             raw_preview_scroll: gpui::ScrollHandle::new(),
+            raw_preview: Default::default(),
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
@@ -319,11 +324,10 @@ pub struct ConflictMode {
     /// dependency on this view being alive. Skip is still entity-local; it is
     /// a sequencer step, not an escape hatch.
     ///
-    /// Whether the destructive Skip is armed (two-stage confirm, ADR-0067).
-    /// It permanently drops the current step's changes *and* the in-progress
-    /// resolution buffer, and it used to execute on a single click with no
-    /// confirm at all — the only destructive conflict action without one.
-    pub skip_armed: bool,
+    /// Full step identity frozen on the first Skip click. A refreshed mode
+    /// disarms confirmation; the backend checks this same revision again
+    /// immediately before spawning Git.
+    pub skip_approval: Option<kagi_domain::conflict_family::ConflictRevision>,
 }
 
 impl ConflictMode {
@@ -434,7 +438,10 @@ pub fn blocker_msg(b: &kagi_git::ContinueBlocker) -> Msg {
 
 impl Render for ConflictView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "gui-e2e")]
+        let _render_io = kagi_git::backend::render_probe::enter();
         self.sync_editor_inputs(window, cx);
+        self.sync_raw_preview(cx);
         #[cfg(feature = "gui-e2e")]
         super::conflict_editor_a11y::begin_frame();
         if self.reset_all_focus.is_none() {
@@ -576,6 +583,7 @@ impl ConflictView {
             selected_hunk: self.selected_hunk,
             ab_geom: self.ab_geom.clone(),
             raw_preview_scroll: self.raw_preview_scroll.clone(),
+            raw_preview: self.raw_preview.state.clone(),
             hl_cache: self.hl_cache.clone(),
         }
     }

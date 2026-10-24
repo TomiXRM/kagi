@@ -10,7 +10,7 @@ use kagi_ui_core::motion::Reveal;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PanelMotions {
     pub bottom: Reveal,
-    pub sidebar: Reveal,
+    pub left: Reveal,
     pub right: Reveal,
     /// The right pane last drawn, so it can still be drawn while it closes
     /// after the layout has already moved on to `Hidden`.
@@ -25,7 +25,7 @@ impl PanelMotions {
     /// `toggle` the user's View → Toggle Sidebar state.
     pub(crate) fn sync_sidebar(&mut self, shown: bool, toggle: bool, now: Instant, instant: bool) {
         follow(
-            &mut self.sidebar,
+            &mut self.left,
             &mut self.sidebar_toggle,
             shown,
             toggle,
@@ -74,7 +74,7 @@ impl PanelMotions {
 
     /// Whether any pane still moves and needs another frame.
     pub(crate) fn animating(&self, now: Instant) -> bool {
-        self.bottom.animating(now) || self.sidebar.animating(now) || self.right.animating(now)
+        self.bottom.animating(now) || self.left.animating(now) || self.right.animating(now)
     }
 }
 
@@ -105,18 +105,14 @@ mod tests {
         let start = Instant::now();
         let mut panes = PanelMotions::default();
         panes.sync_sidebar(true, true, start, false);
-        assert_eq!(
-            panes.sidebar.visible(start),
-            1.,
-            "the first frame is the end"
-        );
+        assert_eq!(panes.left.visible(start), 1., "the first frame is the end");
 
         // The user hides it: it slides, and the next frame does not cut it.
         panes.sync_sidebar(false, false, start, false);
         let mid = start + Duration::from_millis(50);
         panes.sync_sidebar(false, false, mid, false);
-        assert!(panes.sidebar.animating(mid));
-        let shown = panes.sidebar.visible(mid);
+        assert!(panes.left.animating(mid));
+        let shown = panes.left.visible(mid);
         assert!(0. < shown && shown < 1., "closing in mid-flight: {shown}");
 
         // Shown again by its toggle, then hidden by a takeover: a jump.
@@ -125,11 +121,11 @@ mod tests {
         let settled = back + Duration::from_millis(500);
         panes.sync_sidebar(true, true, settled, false);
         panes.sync_sidebar(false, true, settled, false);
-        assert_eq!(panes.sidebar.visible(settled), 0.);
-        assert!(!panes.sidebar.animating(settled));
+        assert_eq!(panes.left.visible(settled), 0.);
+        assert!(!panes.left.animating(settled));
         panes.sync_sidebar(true, true, settled, false);
         assert_eq!(
-            panes.sidebar.visible(settled),
+            panes.left.visible(settled),
             1.,
             "the takeover ends at once too"
         );

@@ -530,15 +530,7 @@ fn collect_resolved_files(
     let Some(raw) = read_regular_merge_msg(&repo.path().join("MERGE_MSG")) else {
         return Vec::new();
     };
-    let configured = repo
-        .config()
-        .ok()
-        .and_then(|config| config.get_string("core.commentChar").ok());
-    let comment_char = match configured.as_deref() {
-        Some("auto") => kagi_domain::merge_msg::auto_comment_char(&raw),
-        Some(value) => value.as_bytes().first().copied().unwrap_or(b'#'),
-        None => b'#',
-    };
+    let comment_char = merge_comment_char(repo, &raw);
     let listed = kagi_domain::merge_msg::conflicted_paths(&raw, comment_char);
     if listed.is_empty() {
         return Vec::new();
@@ -911,6 +903,15 @@ pub fn continue_blockers(
     Ok(out)
 }
 
+/// Share Git's effective comment character across Saved evidence and messages.
+fn merge_comment_char(repo: &Repository, raw: &[u8]) -> u8 {
+    let configured = repo
+        .config()
+        .ok()
+        .and_then(|config| config.get_string("core.commentChar").ok());
+    kagi_domain::merge_msg::effective_comment_char(configured.as_deref(), raw)
+}
+
 /// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.
 ///
 /// Git writes a default merge message to `MERGE_MSG`; an empty / comment-only
@@ -922,11 +923,10 @@ fn merge_message_is_empty(repo: &Repository) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let meaningful = raw
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .any(|l| !l.trim().is_empty());
-    !meaningful
+    let empty =
+        !kagi_domain::merge_msg::non_comment_lines(&raw, merge_comment_char(repo, raw.as_bytes()))
+            .any(|line| !line.trim().is_empty());
+    empty
 }
 
 /// Render a [`ContinueBlocker`] as a structured [`PlanNote`] for the plan
@@ -1019,14 +1019,15 @@ pub enum ContinueRoute {
     MergeCommitPanel {
         /// The pre-filled merge commit message ("Merge <incoming> into <current>").
         message: String,
+        /// Effective character resolved from repository config and the original MERGE_MSG.
+        comment_char: u8,
     },
     /// rebase / cherry-pick / revert: confirm this `<op> --continue` plan, then
     /// continue the sequencer.
     SequencerPlan(Box<OperationPlan>),
-    /// #309 stash conflict: staging the resolved paths is the whole "continue"
-    /// (no commit, no `<op> --continue`). After staging, the UI offers to drop
-    /// the kept stash. The resolution is staged by [`execute_conflict_continue`].
-    StashComplete,
+    /// Stash: confirm staging the resolution without creating a commit.
+    /// After staging, the UI offers to drop the kept stash separately.
+    StashPlan(Box<OperationPlan>),
 }
 
 /// Outcome of saving a single file's resolution (ADR-0068 Save resolution).
@@ -1080,9 +1081,15 @@ fn continue_plan_after_preflight(
     let blockers: Vec<PlanNote> = structured.iter().map(blocker_note).collect();
 
     if session.files.is_empty() && structured.is_empty() {
-        warnings.push(PlanNote::Conflicts(
-            ConflictsNote::NoConflictingFilesDetected,
-        ));
+        let note = match session.op {
+            ConflictOp::Rebase { step, total, .. } if step > 0 && total > step => {
+                ConflictsNote::ContinuesToNextStep {
+                    remaining: total - step,
+                }
+            }
+            _ => ConflictsNote::NoConflictingFilesDetected,
+        };
+        warnings.push(PlanNote::Conflicts(note));
     }
 
     let predicted = StateSummary {
@@ -1091,11 +1098,6 @@ fn continue_plan_after_preflight(
     };
 
     let op = session.op.slug().to_string();
-    let recovery = PlanRecovery {
-        kind: RecoveryKind::Conflicts(ConflictsRecovery::Continue { op: op.clone() }),
-        commands: vec![format!("git {} --abort", op)],
-    };
-
     Ok(OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
@@ -1107,7 +1109,7 @@ fn continue_plan_after_preflight(
         predicted,
         warnings,
         blockers,
-        recovery: Some(recovery),
+        recovery: None,
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
@@ -1535,8 +1537,13 @@ fn create_merge_commit(
 
     let message = match message_override {
         Some(m) => m.to_string(),
-        None => std::fs::read_to_string(repo.path().join("MERGE_MSG"))
-            .unwrap_or_else(|_| format!("Merge commit {}", short_sha(&merge_head_oid.to_string()))),
+        None => match std::fs::read_to_string(repo.path().join("MERGE_MSG")) {
+            Ok(raw) => kagi_domain::merge_msg::strip_comments(
+                &raw,
+                merge_comment_char(repo, raw.as_bytes()),
+            ),
+            Err(_) => format!("Merge commit {}", short_sha(&merge_head_oid.to_string())),
+        },
     };
 
     crate::ops::execute_git_commit(
@@ -1616,9 +1623,9 @@ pub(crate) fn execute_conflict_save_with_progress(
         ))
     })?;
 
-    // Marker-residue check: a Save that still has markers is blocked (ADR-0066 /
-    // ADR-0068).  Reuse the checklist detector so the gate and Save agree.
-    if super::checklist::text_has_conflict_marker(&text) {
+    // Fresh Result validation includes provenance: literal source lines are not
+    // synthetic or hand-typed conflict markers (ADR-0057).
+    if buffer.has_marker_residue(path) {
         return Err(GitError::Other(format!(
             "Cannot save {}: conflict markers (<<<<<<< ======= >>>>>>>) remain. Remove them first.",
             path.display()
@@ -1710,11 +1717,17 @@ pub fn plan_conflict_continue_route(
 
     match &session.op {
         ConflictOp::Merge { .. } => {
-            let message = prefilled_merge_message(repo, &session.op, current_branch);
-            Ok(ContinueRoute::MergeCommitPanel { message })
+            let (message, comment_char) =
+                prefilled_merge_message(repo, &session.op, current_branch);
+            Ok(ContinueRoute::MergeCommitPanel {
+                message,
+                comment_char,
+            })
         }
-        // #309: staging is the whole continue for a stash conflict.
-        ConflictOp::StashConflict => Ok(ContinueRoute::StashComplete),
+        ConflictOp::StashConflict => {
+            let plan = continue_plan_after_preflight(repo, session, &blockers)?;
+            Ok(ContinueRoute::StashPlan(Box::new(plan)))
+        }
         _ => {
             let plan = continue_plan_after_preflight(repo, session, &blockers)?;
             Ok(ContinueRoute::SequencerPlan(Box::new(plan)))
@@ -1725,21 +1738,24 @@ pub fn plan_conflict_continue_route(
 /// The pre-filled merge commit message: `MERGE_MSG` (comment lines stripped) when
 /// it carries text, else a synthesized "Merge <incoming> into <current>" line
 /// using the ADR-0058 role labels (never ours/theirs).  `chars()`-safe joins.
-fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &str) -> String {
-    if let Ok(raw) = std::fs::read_to_string(repo.path().join("MERGE_MSG")) {
-        let meaningful: String = raw
-            .lines()
-            .filter(|l| !l.trim_start().starts_with('#'))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !meaningful.trim().is_empty() {
-            return meaningful.trim_end().to_string();
-        }
+fn prefilled_merge_message(
+    repo: &Repository,
+    op: &ConflictOp,
+    current_branch: &str,
+) -> (String, u8) {
+    let raw = std::fs::read_to_string(repo.path().join("MERGE_MSG")).unwrap_or_default();
+    let comment_char = merge_comment_char(repo, raw.as_bytes());
+    let meaningful = kagi_domain::merge_msg::strip_comments(&raw, comment_char);
+    if !meaningful.trim().is_empty() {
+        return (meaningful, comment_char);
     }
     let labels = side_labels(op, current_branch);
-    format!(
-        "Merge {} into {}",
-        labels.incoming.name, labels.current.name
+    (
+        format!(
+            "Merge {} into {}",
+            labels.incoming.name, labels.current.name
+        ),
+        comment_char,
     )
 }
 
@@ -1806,6 +1822,33 @@ pub struct SkipOutcome {
     pub error: Option<GitError>,
 }
 
+/// A skip approval bound to the original step, never renewed at execution.
+#[derive(Debug, Clone)]
+pub struct ConflictSkipPlan {
+    pub plan: OperationPlan,
+    // The canonical full observation includes operation kind, replayed commit
+    // marker, rebase msgnum/end and sequencer todo (including its head). Reuse
+    // it rather than establishing a weaker second metadata fingerprint.
+    revision: kagi_domain::conflict_family::ConflictRevision,
+    op: ConflictOp,
+}
+
+fn preflight_skip_revision(
+    repo: &Repository,
+    op: &ConflictOp,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<(), GitError> {
+    let live = crate::backend::conflict_ops::conflict_observe::observation(repo)?;
+    if !live.as_ref().is_some_and(|snapshot| {
+        snapshot.session.op == *op && snapshot.observation.revision == *expected
+    }) {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::SkipStepChanged,
+        ))));
+    }
+    Ok(())
+}
+
 /// Plan a `skip` of the current sequencer step (rebase / cherry-pick / revert).
 ///
 /// **Merge has no skip** — a plain merge is a single step, so this errors for
@@ -1815,7 +1858,8 @@ pub struct SkipOutcome {
 pub fn plan_conflict_skip(
     repo: &Repository,
     session: &ConflictSession,
-) -> Result<OperationPlan, GitError> {
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+) -> Result<ConflictSkipPlan, GitError> {
     let _lock = crate::write_lock::acquire(repo)?;
     if !session.op.is_sequencer() {
         return Err(GitError::Other(
@@ -1823,6 +1867,7 @@ pub fn plan_conflict_skip(
                 .to_string(),
         ));
     }
+    preflight_skip_revision(repo, &session.op, expected)?;
 
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
@@ -1834,7 +1879,7 @@ pub fn plan_conflict_skip(
         commands: Vec::new(),
     };
 
-    Ok(OperationPlan {
+    let plan = OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
         push_identity: None,
@@ -1858,6 +1903,11 @@ pub fn plan_conflict_skip(
         preview_commits: Vec::new(),
         destructive: false,
         equivalent_command: None,
+    };
+    Ok(ConflictSkipPlan {
+        plan,
+        revision: expected.clone(),
+        op: session.op.clone(),
     })
 }
 
@@ -1875,15 +1925,15 @@ pub fn plan_conflict_skip(
 /// git's sequencer can advance one step; libgit2 exposes no such API.
 pub(crate) fn execute_conflict_skip(
     repo: &Repository,
-    session: &ConflictSession,
+    approved: &ConflictSkipPlan,
     buffer: &ResolutionBuffer,
 ) -> Result<SkipOutcome, GitError> {
-    drop(crate::write_lock::acquire(repo)?);
-    if !session.op.is_sequencer() {
+    if !approved.op.is_sequencer() {
         return Err(GitError::Other(
             "skip is only available for sequencer operations.".to_string(),
         ));
     }
+    preflight_skip_revision(repo, &approved.op, &approved.revision)?;
 
     let expected = crate::backend::conflict_ops::conflict_observe::observation(repo)?
         .ok_or_else(|| GitError::Other("the conflict ended before skip".into()))?
@@ -1911,8 +1961,16 @@ pub(crate) fn execute_conflict_skip(
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
         .to_path_buf();
-    let slug = session.op.slug();
-    let position_before = sequencer_position(repo, session);
+    let slug = approved.op.slug();
+    let session = ConflictSession {
+        op: approved.op.clone(),
+        files: Vec::new(),
+        resolved: Vec::new(),
+    };
+    let position_before = sequencer_position(repo, &session);
+    // Last read before spawning Git: neither a queued dispatch nor buffer
+    // preservation may silently renew approval for a replacement CLI step.
+    preflight_skip_revision(repo, &approved.op, &approved.revision)?;
     let out = run_git(&workdir, &[slug, "--skip"]).map_err(|e| match e {
         GitError::TerminationUnknown(_) => e,
         other => GitError::Other(format!("{} --skip failed to start: {}", slug, other)),
@@ -1924,7 +1982,7 @@ pub(crate) fn execute_conflict_skip(
         // Same libgit2 index-cache trap as `--continue` (#296b): re-read.
         unmerged: fresh_index_has_conflicts(repo),
         before: position_before,
-        after: sequencer_position(repo, session),
+        after: sequencer_position(repo, &session),
     });
     let error = (out.status != 0).then(|| {
         format!(

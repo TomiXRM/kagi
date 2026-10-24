@@ -102,9 +102,9 @@ pub use cli::{run_git, run_git_with_options, FsmonitorMode, GitCliOptions, GitCl
 pub use conflicts::{
     continue_blockers, detect_conflict_session, plan_conflict_abort, plan_conflict_continue,
     plan_conflict_continue_route, plan_conflict_skip, resolve_selected_file, side_labels,
-    AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictStatus,
-    ContinueBlocker, ContinueOutcome, ContinueResult, ContinueRoute, SaveOutcome, SideLabel,
-    SideLabels, SkipOutcome, SkipProgress,
+    AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictSkipPlan,
+    ConflictStatus, ContinueBlocker, ContinueOutcome, ContinueResult, ContinueRoute, SaveOutcome,
+    SideLabel, SideLabels, SkipOutcome, SkipProgress,
 };
 #[allow(unused_imports)]
 pub(crate) use conflicts::{
@@ -192,7 +192,7 @@ pub use refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Work
 #[allow(unused_imports)]
 pub use resolution::{
     ConflictHunk, HunkChoice, HunkModel, LineOrigin, RawResolution, Region, ResolutionBuffer,
-    ResolutionChoice, ResolvedLine, SelectionSide, SideBlobInfo,
+    ResolutionChoice, ResolvedLine, SelectionSide,
 };
 #[allow(unused_imports)]
 pub use snapshot::{

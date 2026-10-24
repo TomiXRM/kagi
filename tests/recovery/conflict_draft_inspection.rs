@@ -17,6 +17,25 @@ mod git_fixture;
 #[path = "conflict_draft_inspection_hold.rs"]
 mod inspection_hold;
 
+#[path = "conflict_draft_continue_admission.rs"]
+mod continue_admission;
+pub use continue_admission::scenario_conflict_draft_continue_restore_admission;
+
+#[path = "conflict_draft_abort_admission.rs"]
+mod abort_admission;
+pub use abort_admission::scenario_conflict_draft_abort_restore_admission;
+
+#[path = "conflict_draft_stale_failure.rs"]
+mod stale_failure;
+pub use stale_failure::{
+    scenario_conflict_draft_fresh_restore_failure, scenario_conflict_draft_stale_restore_async,
+    scenario_conflict_draft_stale_restore_failure, scenario_conflict_draft_stale_restore_success,
+};
+
+#[path = "conflict_draft_restore_io.rs"]
+mod restore_io;
+pub use restore_io::scenario_conflict_draft_restore_io_failure;
+
 const OTHER: &str = "OTHER REPOSITORY PRESERVED RESULT\n";
 
 // Like the existing theme_custom sandbox: restore the runner-owned environment
@@ -64,7 +83,11 @@ fn panel(
     cx.read(|cx| app.read(cx).op_log.clone().unwrap())
 }
 
-fn show_log(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn show_log(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     if cx.read(|cx| app.read(cx).bottom_panel_open) {
         cx.simulate_keystrokes(window, "cmd-j");
         paint(cx, app, window);
@@ -97,7 +120,7 @@ fn draft_text(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<St
     })
 }
 
-fn open_drafts(
+pub(super) fn open_drafts(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -474,109 +497,6 @@ pub fn scenario_conflict_draft_corrupt_restore(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
 }
-
-pub fn scenario_conflict_draft_restore_io_failure(cx: &mut VisualTestAppContext) {
-    use kagi::ui::e2e::{detect_payload_for_test, ConflictDetectOutcome};
-    use std::os::unix::fs::PermissionsExt;
-    let _presentation = crate::presentation_support::Presentation::keep();
-    for language in [Lang::En, Lang::Ja] {
-        for failure in [
-            "unreadable",
-            "lock-directory",
-            "lock-timeout",
-            "reserved-names",
-        ] {
-            let _isolated = IsolatedLog::new();
-            let fixture = content_fixture();
-            let repo = fixture.path().canonicalize().unwrap();
-            let (app, window) = mount(cx, &repo);
-            app.update(cx, |app, cx| app.set_lang(language, cx));
-            let store = kagi_git::Backend::open(&repo)
-                .unwrap()
-                .resolution_buffer_from_repo()
-                .unwrap()
-                .autosave()
-                .unwrap();
-            std::fs::remove_file(store.with_file_name("buffer.json.prev")).unwrap();
-            let torn = b"{\"files\":[damaged legacy draft";
-            std::fs::write(&store, torn).unwrap();
-            let lock_path = store.with_file_name("buffer.json.lock");
-            let mut lock = None;
-            match failure {
-                "unreadable" => {
-                    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap()
-                }
-                "lock-directory" => {
-                    std::fs::remove_file(&lock_path).unwrap();
-                    std::fs::create_dir(&lock_path).unwrap();
-                }
-                "lock-timeout" => {
-                    lock = Some(
-                        kagi_git::advisory_lock::lock_exclusive(
-                            &lock_path,
-                            std::time::Duration::ZERO,
-                        )
-                        .unwrap(),
-                    )
-                }
-                "reserved-names" => {
-                    for index in 0..100 {
-                        let name = if index == 0 {
-                            "buffer.json.corrupt".into()
-                        } else {
-                            format!("buffer.json.corrupt.{index}")
-                        };
-                        std::fs::write(store.with_file_name(name), b"already preserved").unwrap();
-                    }
-                }
-                _ => unreachable!(),
-            }
-            let before = RepositoryState::read(&repo);
-            let payload = detect_payload_for_test(&repo, "main");
-            let cause = match &payload {
-                ConflictDetectOutcome::OpenFailed(Some(cause)) => cause.clone(),
-                _ => panic!("restore failure was lost: {failure}"),
-            };
-            let owner = cx.read(|cx| {
-                let state = app.read(cx);
-                state
-                    .app_sessions
-                    .attachment(state.active_session().unwrap())
-                    .unwrap()
-            });
-            app.update(cx, |app, cx| app.apply_conflict_detect(owner, payload, cx));
-            paint(cx, &app, window);
-            cx.read(|cx| {
-                let state = app.read(cx);
-                assert_eq!(
-                    e2e::app_notice_message(state).unwrap(),
-                    kagi_ui_core::i18n::Msg::conflict_draft_restore_failed(&cause)
-                );
-                assert!(state.ui().conflict.is_none());
-                assert!(
-                    state.ui().conflict_detected,
-                    "failure must not re-arm per-render retries"
-                );
-            });
-            app.update(cx, |app, cx| {
-                app.confirm_app_notice(cx);
-                app.detect_conflict_mode(cx);
-            });
-            assert!(
-                cx.read(|cx| app.read(cx).app_notice().is_none()),
-                "run-once guard must retain the failure until explicit reload"
-            );
-            assert_eq!(before, RepositoryState::read(&repo));
-            if failure == "unreadable" {
-                std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
-            }
-            assert_eq!(std::fs::read(&store).unwrap(), torn);
-            drop(lock.take());
-            unmount(cx, app, window);
-        }
-    }
-}
-
 pub fn scenario_conflict_draft_inspection_empty_legacy(cx: &mut VisualTestAppContext) {
     let _isolated = IsolatedLog::new();
     let fixture = content_fixture(); // Real CLI merge: no Kagi operation or receipt.

@@ -76,14 +76,18 @@ impl ConflictView {
                     }
                     _ => return false,
                 };
-                selection
-                    .current_taken
-                    .iter()
-                    .all(|taken| *taken == current)
-                    && selection
-                        .incoming_taken
-                        .iter()
-                        .all(|taken| *taken == incoming)
+                selection.side_state(kagi_git::resolution::SelectionSide::Current)
+                    == if current {
+                        kagi_git::resolution::TriState::All
+                    } else {
+                        kagi_git::resolution::TriState::None
+                    }
+                    && selection.side_state(kagi_git::resolution::SelectionSide::Incoming)
+                        == if incoming {
+                            kagi_git::resolution::TriState::All
+                        } else {
+                            kagi_git::resolution::TriState::None
+                        }
                     && order.is_none_or(|order| selection.order == order)
             },
         );
@@ -113,7 +117,8 @@ impl ConflictView {
 }
 
 /// Source-choice completion is not the Result verdict: hand editing may finish
-/// a file while its original source hunks deliberately remain undecided.
+/// undecided source hunks. Cached residue checks only manual/synthetic markers;
+/// literal marker-looking lines from an adopted source remain ready.
 pub(crate) fn draft_ready(mode: &ConflictMode, path: &std::path::Path) -> bool {
     mode.buffer.has_resolution(path) && !mode.buffer.cached_marker_residue(path)
 }
@@ -166,6 +171,7 @@ pub(super) fn render(
                 mode,
                 chrome.writer_busy,
                 &chrome.raw_preview_scroll,
+                &chrome.raw_preview,
                 cx,
             ));
         }

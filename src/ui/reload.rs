@@ -362,13 +362,21 @@ impl KagiApp {
                 FooterStatus::Idle(SharedString::from(super::i18n::Msg::Ready.t()));
         }
 
+        // Detection's failed restore owns the reload result. Do not replace its
+        // bounded error (or recording-failure acknowledgment) with "Refreshed".
+        let restore_failed = self
+            .ui
+            .get(&session)
+            .is_some_and(|ui| ui.conflict_restore_failed);
         match feedback {
             ReloadFeedback::External => {
                 klog!("refreshed (external change)");
-                self.status_footer =
-                    FooterStatus::Idle(SharedString::from(super::i18n::Msg::Refreshed.t()));
+                if !restore_failed {
+                    self.status_footer =
+                        FooterStatus::Idle(SharedString::from(super::i18n::Msg::Refreshed.t()));
+                }
             }
-            ReloadFeedback::Manual => {
+            ReloadFeedback::Manual if !restore_failed => {
                 // W3-NOTIFY: an explicit refresh gets a completion toast (the
                 // watcher's automatic reloads stay silent to avoid spam).
                 self.status_footer =
@@ -379,7 +387,7 @@ impl KagiApp {
                     cx,
                 );
             }
-            ReloadFeedback::Quiet => {}
+            ReloadFeedback::Manual | ReloadFeedback::Quiet => {}
         }
 
         // #309: open the "drop the kept stash?" prompt AFTER the modal-clearing

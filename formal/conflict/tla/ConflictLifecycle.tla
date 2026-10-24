@@ -39,6 +39,7 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     lease |-> [a \in Actors |-> FALSE], preflight |-> [a \in Actors |-> FALSE],
     repoLease |-> [a \in Actors |-> FALSE],
     draftOwner |-> 0,
+    recoveryStep |-> 0, recoveryPrimary |-> "none", recoveryHistory |-> {},
     executed |-> [a \in Actors |-> "none"], successful |-> [a \in Actors |-> FALSE],
     receipt |-> [a \in Actors |-> FALSE], released |-> [a \in Actors |-> FALSE],
     reported |-> [a \in Actors |-> FALSE], mutated |-> [a \in Actors |-> FALSE],
@@ -143,11 +144,12 @@ RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
         !.pc[a] = "mergePreflight", !.event = <<"RenewMergePlan",a>>]
 \* conflict_ops.rs:419-425 and conflict_boundary.rs:170-181: full revision check.
 \* Per-file index/WT provenance is checked again by ValidateFile before WTWrite.
-\* Skip has no expected revision argument (conflicts.rs:1869-1894).
+\* #1746: conflicts.rs::preflight_skip_revision validates the frozen full revision.
 \* Commit index checked against the NEW plan (ops/commit.rs:38-44,74-83).
 Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "preflight")
     /\ (s.metadataReadable \/ Broken = "metadata")
-    /\ (Kind = "skip" \/ s.planRev[a] = Revision \/ Broken = "revision")
+    /\ (s.planRev[a] = Revision \/ Broken = "revision"
+        \/ (Kind = "skip" /\ Broken = "skipRevision"))
     /\ (Kind # "mergeCommit" \/ s.planTree[a] = s.index[1])
     /\ s' = [s EXCEPT !.preflight[a] = TRUE,
         !.metadataFailOpen = @ \/ (~s.metadataReadable /\ Kind = "continue"),
@@ -212,8 +214,11 @@ Abort(a) == /\ At(a, "abort") /\ Kind \in {"abort","stashAbort"}
 RefCAS(a) == /\ At(a, "ref") /\ s.headRev = s.planRev[a][2]
     /\ s' = [s EXCEPT !.headRev = @ + 1, !.sharedMoved = TRUE,
         !.pc[a] = "verify", !.event = <<"RefCAS",a>>]
-\* conflicts.rs:1893-1894: read CURRENT step and run --skip; no approved-step test.
+\* #1746: execute_conflict_skip rechecks the same full approval immediately before run_git.
+\* Broken="skipRevision" removes both plan-time and final expected-revision checks.
 Skip(a) == /\ At(a, "skip")
+    /\ ((s.planRev[a] = Revision /\ s.operation = s.approvedStep[a])
+        \/ Broken = "skipRevision")
     /\ s' = [s EXCEPT !.wrongStep = @ \/ s.operation # s.approvedStep[a],
         !.operation = @ + 1, !.mutated[a] = TRUE, !.wroteUnapproved = @ \/ ~s.approved[a],
         !.destructiveAfterFailure = @ \/ s.preservationFailed[a],
@@ -317,13 +322,14 @@ WatcherFileRefresh == /\ Scenario = "staleWTBeforeChoice" /\ s.refreshPending
 \* Both revision and draft context change when REBASE_HEAD/step change:
 \* conflict_observe.rs:155-176; drafts.rs:176-247 disallows fresh-context adoption.
 ReplaceOperation == /\ Scenario \in {"skip", "skipRefresh"} /\ ~s.external
-    /\ s.pc[1] = (IF Scenario = "skipRefresh" THEN "approve" ELSE "preflight")
+    /\ (IF Scenario = "skipRefresh" THEN s.pc[1] = "approve"
+        ELSE s.pc[1] \in {"preflight", "preserve", "skip"})
     /\ s' = [s EXCEPT !.operation = @ + 1, !.metadataRev = @ + 1,
         !.refreshPending = Scenario = "skipRefresh",
         !.external = TRUE, !.event = "ReplaceOperation(next rebase step)"]
 \* Refresh-before-confirm schedule from DrillSequencers, Skip controls.
-\* actions.rs:432-442 checks mode.skip_armed; conflict_detect.rs:311-318,326-360
-\* retains an UNCHANGED revision, but replaces a changed mode with skip_armed=false.
+\* actions.rs::skip_request_arm freezes mode.revision in mode.skip_approval;
+\* conflict_detect.rs replaces a changed mode with skip_approval=None.
 \* reset_all_target (actions.rs:134 etc.) is a separate Reset-All arm, not Skip.
 \* Freeze represents the first arm; returning to ready requires a fresh arm.
 WatcherRefresh == /\ s.refreshPending /\ s.pc[1] = "approve"
@@ -341,6 +347,35 @@ MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "
     /\ s' = [s EXCEPT !.lease[a] = FALSE, !.repoLease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"MetadataRefused",a>>]
 
+\* #1732 drafts.rs::autosave_json + draft_merge.rs::matches_record.
+\* Quotient four successful, lock-serialized transactions after both editors
+\* loaded the same empty baseline. A and B collide on file 1; A then saves
+\* file 2 twice without changing its stale in-memory file-1 body.
+\* Disk includes both the primary and inspection-only recovery bodies.
+RecoveryA == <<1, 0, "A">>
+RecoveryB == <<1, 0, "B">>
+RecoveryOther == <<2, 0, "other">>
+DraftRecoveryNext ==
+    /\ Scenario = "draftRecovery"
+    /\ CASE s.recoveryStep = 0 ->
+          s' = [s EXCEPT !.recoveryPrimary = RecoveryA, !.disk = {RecoveryA},
+              !.committed = {RecoveryA}, !.recoveryStep = 1,
+              !.event = "RecoverySave(A primary)"]
+       [] s.recoveryStep = 1 ->
+          s' = [s EXCEPT !.recoveryPrimary = RecoveryB,
+              !.recoveryHistory = {RecoveryA}, !.disk = {RecoveryA, RecoveryB},
+              !.committed = {RecoveryA, RecoveryB}, !.recoveryStep = 2,
+              !.event = "RecoverySave(B primary, A recovery)"]
+       [] s.recoveryStep \in 2..3 ->
+          LET compared == IF Broken = "preMergeRecovery"
+                          THEN RecoveryA ELSE s.recoveryPrimary
+              kept == {r \in s.recoveryHistory : r # compared}
+          IN s' = [s EXCEPT !.recoveryHistory = kept,
+              !.disk = kept \cup {s.recoveryPrimary, RecoveryOther},
+              !.committed = @ \cup {RecoveryOther}, !.recoveryStep = @ + 1,
+              !.event = "RecoverySave(A other file, adopt B primary, dedup recoveries)"]
+       [] OTHER -> FALSE
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
@@ -349,8 +384,9 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
-Next == (\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
-    \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure
+Next == IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+    ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
+        \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars
 \* Fair scheduling cannot save a callback whose weak owner has been destroyed.
 FairSpec == Spec /\ (\A a \in Participants : WF_vars(ActorNext(a)))
@@ -374,6 +410,10 @@ ManualCapturePersisted == s.pc[1] = "ready" => s.captured \subseteq s.disk
 ReceiptFollowsMutation == \A a \in Participants :
     (s.successful[a] /\ (s.released[a] \/ s.life[a] = "closed")) => s.receipt[a]
 SkipDropsOnlyApprovedStep == ~s.wrongStep
+\* Independent first-line defence, even when the final backend check would refuse.
+SkipRefreshDisarmsChangedStep ==
+    ~(Scenario = "skipRefresh" /\ s.external /\ ~s.refreshPending
+      /\ s.pc[1] = "approve" /\ s.approvedStep[1] # s.operation)
 MetadataReadErrorNeverAdmitted == ~s.metadataFailOpen
 NoDestructiveProgressAfterPreservationFailure == ~s.destructiveAfterFailure
 MergeCommitTreeIsApprovedTree == s.committedTree = "none" \/ s.committedTree = s.shownTree[1]

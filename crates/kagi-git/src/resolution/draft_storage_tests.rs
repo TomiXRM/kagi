@@ -4,6 +4,7 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 const MARKERS: &str = "<<<<<<< Current\na\n=======\nb\n>>>>>>> Incoming\ncontext\n<<<<<<< Current\nc\n=======\nd\n>>>>>>> Incoming\n";
+const WRITER_BODIES: [&str; 2] = ["first Result 日本語  \n\nA\n", "second Result 日本語\nB\n"];
 
 fn live(repo: &Path) -> ResolutionBuffer {
     let mut buffer = ResolutionBuffer::new(repo);
@@ -15,7 +16,7 @@ fn live(repo: &Path) -> ResolutionBuffer {
         let mut file = FileResolution::empty();
         file.identity = Some(ConflictRevision::from_fingerprint("a".repeat(64)));
         buffer.files.insert(path.into(), file);
-        assert!(buffer.ensure_hunks(Path::new(path), MARKERS));
+        assert!(buffer.ensure_hunks(Path::new(path), MARKERS, 7));
     }
     buffer
 }
@@ -24,7 +25,7 @@ fn restored(repo: &Path, path: &Path) -> ResolutionBuffer {
     let mut buffer = live(repo);
     buffer.retain_drafts(read(repo, path).unwrap().unwrap().buffer);
     for file in ["a.txt", "b.txt"] {
-        assert!(buffer.ensure_hunks(Path::new(file), MARKERS));
+        assert!(buffer.ensure_hunks(Path::new(file), MARKERS, 7));
     }
     buffer
 }
@@ -138,6 +139,128 @@ fn concurrent_processes_preserve_same_file_independent_hunks() {
 }
 
 #[test]
+fn recovery_writer_child() {
+    let Some(root) = std::env::var_os("KAGI_DRAFT_RECOVERY_CHILD") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let index: usize = std::env::var("KAGI_DRAFT_WRITER").unwrap().parse().unwrap();
+    let first: usize = std::env::var("KAGI_DRAFT_RECOVERY_FIRST")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let queued = std::env::var("KAGI_DRAFT_RECOVERY_QUEUED").unwrap() == "true";
+    let store = buffer_file_path(&root).unwrap();
+    let mut buffer = restored(&root, &store);
+    buffer
+        .set_manual_text(Path::new("a.txt"), WRITER_BODIES[index])
+        .unwrap();
+    let save = |buffer: &ResolutionBuffer| {
+        if queued {
+            let ticket = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            assert_eq!(ticket.wait().unwrap(), store);
+        } else {
+            assert_eq!(buffer.autosave().unwrap(), store);
+        }
+        assert!(!buffer.has_unflushed_drafts());
+    };
+    std::fs::write(root.join(format!("recovery-ready-{index}")), b"ready").unwrap();
+    wait_for(&root.join(format!("recovery-go-{index}")));
+    save(&buffer);
+    assert!(!buffer.files[Path::new("a.txt")].pending_edit.is_pending());
+    std::fs::write(root.join(format!("recovery-saved-{index}")), b"saved").unwrap();
+    if index == first {
+        for pass in 0..3 {
+            wait_for(&root.join(format!("recovery-again-{pass}")));
+            buffer
+                .set_manual_text(Path::new("b.txt"), &format!("other file edit {pass}\n"))
+                .unwrap();
+            save(&buffer);
+            // The writer still owns its original, unmerged live target body.
+            assert_eq!(
+                buffer.resolved_text(Path::new("a.txt")).unwrap().as_bytes(),
+                WRITER_BODIES[first].as_bytes()
+            );
+            std::fs::write(root.join(format!("recovery-finished-{pass}")), b"saved").unwrap();
+        }
+    }
+}
+
+#[test]
+fn two_writer_recovery_survives_other_file_autosaves() {
+    isolated_async_test(
+        "two_writer_recovery_survives_other_file_autosaves",
+        |base| {
+            for queued in [false, true] {
+                for first in [0, 1] {
+                    let root = tempfile::tempdir_in(base).unwrap();
+                    let root = root.path();
+                    let store = live(root).autosave().unwrap();
+                    let mut children = [0, 1].map(|index| {
+                        Command::new(std::env::current_exe().unwrap())
+                            .args([
+                                "--exact",
+                                "resolution::draft_storage_tests::recovery_writer_child",
+                                "--nocapture",
+                            ])
+                            .env("KAGI_DRAFT_RECOVERY_CHILD", root)
+                            .env("KAGI_DRAFT_WRITER", index.to_string())
+                            .env("KAGI_DRAFT_RECOVERY_FIRST", first.to_string())
+                            .env("KAGI_DRAFT_RECOVERY_QUEUED", queued.to_string())
+                            .spawn()
+                            .unwrap()
+                    });
+                    for index in [0, 1] {
+                        wait_for(&root.join(format!("recovery-ready-{index}")));
+                    }
+                    for index in [first, 1 - first] {
+                        std::fs::write(root.join(format!("recovery-go-{index}")), b"go").unwrap();
+                        wait_for(&root.join(format!("recovery-saved-{index}")));
+                    }
+                    // Rotate .prev more than once: keeping the lost body only in an
+                    // older backup must not make this regression pass.
+                    for pass in 0..3 {
+                        std::fs::write(root.join(format!("recovery-again-{pass}")), b"go").unwrap();
+                        wait_for(&root.join(format!("recovery-finished-{pass}")));
+                        for document in [&store, &sibling(&store, ".prev")] {
+                            let loaded = restored(root, document);
+                            let target = Path::new("a.txt");
+                            assert_eq!(
+                                loaded.resolved_text(target).unwrap().as_bytes(),
+                                WRITER_BODIES[1 - first].as_bytes()
+                            );
+                            let identity = loaded.file_identity(target).unwrap().clone();
+                            assert_eq!(
+                                loaded
+                                    .recovery_drafts()
+                                    .filter(|draft| draft.path == target)
+                                    .count(),
+                                1
+                            );
+                            // Consume the exact API that supplies the read-only
+                            // recovery inspector; no fallback to .prev is involved.
+                            let inspected = loaded
+                                .into_recovery_drafts()
+                                .find(|draft| draft.path == target)
+                                .unwrap();
+                            assert_eq!(inspected.identity, Some(identity));
+                            assert_eq!(
+                                lines_to_text(inspected.result.as_deref().unwrap()).as_bytes(),
+                                WRITER_BODIES[first].as_bytes()
+                            );
+                        }
+                    }
+                    for child in &mut children {
+                        assert!(child.wait().unwrap().success());
+                    }
+                }
+            }
+        },
+    );
+}
+
+#[test]
 fn interrupted_temp_write_leaves_the_last_good_document_readable() {
     let root = tempfile::tempdir().unwrap();
     let store = root.path().join("buffer.json");
@@ -181,6 +304,79 @@ fn corrupt_document_without_good_backup_refuses_overwrite() {
     assert_eq!(std::fs::read(&store).unwrap(), torn);
 }
 
+#[cfg(unix)]
+#[test]
+fn unreadable_primary_with_good_backup_refuses_restore_and_stale_autosave() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("buffer.json");
+    let previous = sibling(&store, ".prev");
+    let mut newest = live(root.path());
+    newest.save_draft_document(&store).unwrap();
+    let mut stale = restored(root.path(), &store);
+    newest
+        .set_manual_text(Path::new("a.txt"), "newer primary Result\n")
+        .unwrap();
+    newest.save_draft_document(&store).unwrap();
+    stale
+        .set_manual_text(Path::new("b.txt"), "stale writer Result\n")
+        .unwrap();
+    let primary_before = std::fs::read(&store).unwrap();
+    let previous_before = std::fs::read(&previous).unwrap();
+    assert_ne!(primary_before, previous_before);
+    assert!(
+        parse_buffer_json(root.path(), std::str::from_utf8(&previous_before).unwrap()).is_some()
+    );
+
+    let permissions = std::fs::metadata(&store).unwrap().permissions();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+    let denied = std::fs::read(&store);
+    let read_error = read(root.path(), &store).err();
+    let restore_error = draft_storage::read_for_restore(root.path(), &store).err();
+    let save_error = stale.save_draft_document(&store).err();
+    // Restore before asserting so fixture cleanup also works on a failed oracle.
+    std::fs::set_permissions(&store, permissions).unwrap();
+
+    let denied = denied.expect_err("requires a Unix user subject to file permission bits");
+    assert_eq!(denied.kind(), std::io::ErrorKind::PermissionDenied);
+    for error in [read_error, restore_error, save_error] {
+        let error = error.expect("an unreadable primary must refuse backup fallback");
+        let message = error.to_string();
+        assert!(message.contains(&store.display().to_string()), "{message}");
+        assert!(message.contains(&denied.to_string()), "{message}");
+    }
+    assert_eq!(std::fs::read(&store).unwrap(), primary_before);
+    assert_eq!(std::fs::read(&previous).unwrap(), previous_before);
+    assert!(!sibling(&store, ".corrupt").exists());
+    assert!(!sibling(&previous, ".corrupt").exists());
+}
+
+#[test]
+fn invalid_utf8_primary_restores_good_backup_without_quarantine() {
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("buffer.json");
+    let mut buffer = live(root.path());
+    buffer
+        .set_manual_text(Path::new("a.txt"), "backup Result\n")
+        .unwrap();
+    buffer.save_draft_document(&store).unwrap();
+    let previous = sibling(&store, ".prev");
+    let previous_before = std::fs::read(&previous).unwrap();
+    let corrupt = b"\xff";
+    std::fs::write(&store, corrupt).unwrap();
+
+    let (disk, warnings) = draft_storage::read_for_restore(root.path(), &store).unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(
+        disk.unwrap().buffer.resolved_text(Path::new("a.txt")),
+        buffer.resolved_text(Path::new("a.txt"))
+    );
+    assert_eq!(std::fs::read(&store).unwrap(), corrupt);
+    assert_eq!(std::fs::read(&previous).unwrap(), previous_before);
+    assert!(!sibling(&store, ".corrupt").exists());
+}
+
 #[test]
 fn failed_autosave_then_preservation_clone_keeps_the_newest_edit() {
     let root = tempfile::tempdir().unwrap();
@@ -188,12 +384,17 @@ fn failed_autosave_then_preservation_clone_keeps_the_newest_edit() {
     let path = Path::new("a.txt");
     let mut buffer = live(root.path());
     buffer.save_draft_document(&store).unwrap();
+    assert!(!buffer.has_unflushed_drafts());
     buffer
         .set_manual_text(path, "newest unsaved Result\n")
         .unwrap();
     let held = draft_storage::lock(&store).unwrap();
     let error = buffer.save_draft_document(&store).unwrap_err();
     assert!(error.to_string().contains("timed out after 2 s"));
+    assert!(
+        buffer.has_unflushed_drafts(),
+        "failed synchronous saves still own live edits"
+    );
     let preserved = buffer.clone();
     assert!(!preserved.files[path].pending_edit.is_pending());
     drop(held);
@@ -240,8 +441,20 @@ fn independent_hunk_merge_is_order_independent() {
         assert!(b.set_hunk_line_selection(path, 1, SelectionSide::Current, 0, true));
         let (first, later) = if reverse { (&b, &a) } else { (&a, &b) };
         first.save_draft_document(&store).unwrap();
+        let disk = read(root.path(), &store).unwrap().unwrap().buffer;
+        let snapshot = later
+            .disk_snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let merged = later.merge_draft_files(Some(&disk), &snapshot, true);
+        assert!(
+            !merged.matches_record(path, &later.files[path], &later.files[path]),
+            "a recovery equal to the pre-merge editor is not the assembled record"
+        );
         later.save_draft_document(&store).unwrap();
         let saved = read(root.path(), &store).unwrap().unwrap().buffer;
+        assert!(merged.matches_record(path, &later.files[path], &saved.files[path]));
         let mut record = serde_json::to_value(file_record(path, &saved.files[path])).unwrap();
         // This is writer bookkeeping, not conflict content or a decision.
         record.as_object_mut().unwrap().remove("editing_origin");
@@ -326,7 +539,7 @@ fn autosave_latency_three_files_five_hunks_200kb() {
         let markers =
             "<<<<<<< Current\ncurrent\n=======\nincoming\n>>>>>>> Incoming\nunchanged context\n"
                 .repeat(hunk_count);
-        assert!(buffer.ensure_hunks(&path, &markers));
+        assert!(buffer.ensure_hunks(&path, &markers, 7));
         assert_eq!(buffer.hunk_model(&path).unwrap().hunks().len(), hunk_count);
         buffer.set_manual_text(&path, &result).unwrap();
         result_bytes += result.len();
@@ -511,6 +724,42 @@ fn queued_autosave_restore_retains_worktree_fingerprint() {
             );
             assert!(restored.worktree_changed(path));
             assert_eq!(restored.resolved_text(path), buffer.resolved_text(path));
+        },
+    );
+}
+
+#[test]
+fn queued_hunk_recovery_remains_inspection_only_after_reload() {
+    isolated_async_test(
+        "queued_hunk_recovery_remains_inspection_only_after_reload",
+        |root| {
+            let mut buffer = live(root);
+            let file = Path::new("a.txt");
+            assert!(buffer.apply_hunk_choice(file, 0, HunkChoice::AcceptIncoming));
+            let body = buffer.resolved_text(file).unwrap();
+            buffer.autosave().unwrap();
+            // A changed materialization invalidates old hunk authority and moves
+            // the complete body into D1's explicitly non-readoptable recovery.
+            buffer.hunks.remove(file);
+            assert!(buffer.ensure_hunks(file, &MARKERS.replace("a\n", "changed\n"), 7));
+            assert!(!buffer.has_resolution(file));
+            assert_eq!(buffer.recovery_drafts().count(), 1);
+            let saved = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            let path = saved.wait().unwrap();
+            let decoded = read(root, &path).unwrap().unwrap().buffer;
+            assert!(decoded.recoveries[0].file.recovery_only);
+            // Even returning to the original markers/identity cannot promote
+            // this recovery after it crosses the queued persistence boundary.
+            let loaded = restored(root, &path);
+            assert!(!loaded.has_resolution(file));
+            let recoveries: Vec<_> = loaded.recovery_drafts().collect();
+            assert_eq!(recoveries.len(), 1);
+            assert_eq!(recoveries[0].path, file);
+            assert_eq!(
+                kagi_domain::resolution::lines_to_text(recoveries[0].result.unwrap()),
+                body
+            );
         },
     );
 }

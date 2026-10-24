@@ -10,6 +10,16 @@ use kagi_git::resolution::ResolutionBuffer;
 use std::path::{Path, PathBuf};
 
 impl ConflictView {
+    /// Capture the live owned input without doing disk I/O on the UI thread.
+    /// The caller must keep this entity until its ordered writer completes.
+    pub(crate) fn capture_result_for_handoff(&mut self, cx: &Context<Self>) {
+        if self.result_editing {
+            if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
+                let _ = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx);
+            }
+        }
+    }
+
     pub(super) fn capture_result_for_navigation(&mut self, cx: &Context<Self>) {
         if self.result_editing {
             if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
@@ -27,6 +37,7 @@ impl ConflictView {
         editing_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        self.retire_raw_preview();
         let mut previous = self.mode.take();
         if self.result_editing {
             if let (Some(previous), Some(path)) = (previous.as_mut(), self.editing.as_deref()) {
@@ -84,6 +95,7 @@ impl ConflictView {
         let first_detection = previous.is_none();
         if let Some(previous) = previous {
             mode.buffer.retain_drafts(previous.buffer);
+            mode.buffer.revalidate_hunk_states();
             mode.refresh_file_statuses();
             // This writes only the existing recovery document, never the repo.
             // It also retains an old live edit if its earlier autosave failed.

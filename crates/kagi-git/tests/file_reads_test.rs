@@ -1,8 +1,13 @@
-//! Real Git/index/workdir sources behind main-diff media preparation.
+//! Real Git/index/workdir and frozen conflict sources behind media preparation.
 use std::path::Path;
+use std::process::Command;
 
 use git2::{Repository, Signature};
-use kagi_git::{backend::file_reads::FileReadSource, Backend, CommitId};
+use kagi_git::{
+    backend::file_reads::FileReadSource, detect_conflict_session, Backend, CommitId, ConflictKind,
+    ResolutionBuffer, SelectionSide,
+};
+use tempfile::TempDir;
 
 const LIMIT: usize = 10 * 1024 * 1024;
 
@@ -49,6 +54,267 @@ impl Fixture {
     }
     fn backend(&self) -> Backend {
         Backend::open(self.temp.path()).unwrap()
+    }
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .status()
+        .expect("git runs")
+        .success();
+    assert!(ok, "git {:?} failed", args);
+}
+
+fn git_allow_fail(dir: &Path, args: &[&str]) {
+    let _ = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .status();
+}
+
+fn init_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    git(tmp.path(), &["init", "-q", "-b", "main"]);
+    tmp
+}
+
+/// A binary conflict: our=main_bytes, their=side_bytes (main merges side).
+fn binary_conflict() -> (TempDir, Vec<u8>, Vec<u8>) {
+    let tmp = init_repo();
+    let dir = tmp.path();
+    let base = vec![0u8, 1, 2, 0, 3];
+    let main_bytes = vec![0u8, 1, 2, 0, 9, 9, 9];
+    let side_bytes = vec![0u8, 7, 7, 0, 4, 2];
+    std::fs::write(dir.join("blob.bin"), &base).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(dir.join("blob.bin"), &side_bytes).unwrap();
+    git(dir, &["commit", "-qam", "side"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("blob.bin"), &main_bytes).unwrap();
+    git(dir, &["commit", "-qam", "main"]);
+
+    git_allow_fail(dir, &["merge", "side"]);
+    (tmp, main_bytes, side_bytes)
+}
+
+/// Distinct frozen descriptors must preserve the exact current/incoming blobs,
+/// even after staging a replacement; missing objects are errors, not absence.
+#[test]
+fn binary_conflict_stage_reads_are_exact_per_side() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (tmp, current, incoming) = binary_conflict();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.files[0].kind, ConflictKind::Binary);
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let path = Path::new("blob.bin");
+    assert_ne!(current, incoming, "fixture sides must differ");
+    assert_eq!(
+        buffer.side_raw_meta(Path::new("absent"), SelectionSide::Current),
+        None
+    );
+    let descriptors = [SelectionSide::Current, SelectionSide::Incoming]
+        .map(|side| buffer.side_raw_meta(path, side).unwrap());
+    std::fs::write(tmp.path().join(path), b"replacement").unwrap();
+    git(tmp.path(), &["add", "blob.bin"]);
+    let backend = Backend::open(tmp.path()).unwrap();
+    for ((side, expected), (oid, mode)) in [
+        (SelectionSide::Current, current.as_slice()),
+        (SelectionSide::Incoming, incoming.as_slice()),
+    ]
+    .into_iter()
+    .zip(&descriptors)
+    {
+        assert_eq!(buffer.side_raw_meta(path, side), Some((oid.clone(), *mode)));
+        let source = FileReadSource::ConflictStage { oid, mode: *mode };
+        assert_eq!(
+            backend.file_bytes(source, path, expected.len()).unwrap(),
+            Some(expected.to_vec()),
+            "{side:?} bytes must match the frozen side"
+        );
+        assert_eq!(
+            backend.file_size(source, path).unwrap(),
+            Some(expected.len() as u64)
+        );
+        assert!(backend
+            .file_bytes(source, path, expected.len() - 1)
+            .is_err());
+    }
+    let (oid, mode) = &descriptors[0];
+    let object = repo.path().join("objects").join(&oid[..2]).join(&oid[2..]);
+    std::fs::remove_file(object).unwrap();
+    // A fresh handle avoids libgit2's already-materialized object cache.
+    let backend = Backend::open(tmp.path()).unwrap();
+    let source = FileReadSource::ConflictStage { oid, mode: *mode };
+    assert!(backend.file_bytes(source, path, usize::MAX).is_err());
+    assert!(backend.file_size(source, path).is_err());
+}
+
+/// Reading the worktree link instead would substitute one side or dereference
+/// its target: each frozen symlink blob must return its own target verbatim.
+#[test]
+fn symlink_conflict_stage_reads_are_link_targets() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = init_repo();
+    let dir = tmp.path();
+    std::os::unix::fs::symlink("placeholder", dir.join("link")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "base link"]);
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    std::fs::remove_file(dir.join("link")).unwrap();
+    std::os::unix::fs::symlink("incoming-target", dir.join("link")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "side link"]);
+    git(dir, &["checkout", "-q", "main"]);
+    std::fs::remove_file(dir.join("link")).unwrap();
+    std::os::unix::fs::symlink("current-target", dir.join("link")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-qm", "main link"]);
+    git_allow_fail(dir, &["merge", "side"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.files[0].kind, ConflictKind::Symlink);
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let backend = Backend::open(dir).unwrap();
+    let path = Path::new("link");
+    for (side, expected) in [
+        (SelectionSide::Current, b"current-target".as_slice()),
+        (SelectionSide::Incoming, b"incoming-target".as_slice()),
+    ] {
+        let (oid, mode) = buffer.side_raw_meta(path, side).unwrap();
+        assert_eq!(mode, 0o120000);
+        let source = FileReadSource::ConflictStage { oid: &oid, mode };
+        assert_eq!(
+            backend.file_bytes(source, path, expected.len()).unwrap(),
+            Some(expected.to_vec()),
+            "{side:?} symlink target verbatim"
+        );
+    }
+}
+
+#[test]
+fn frozen_conflict_sources_are_bounded_and_never_reread_the_index() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let bytes = b"%PDF-frozen";
+    let oid = fixture.repo.blob(bytes).unwrap().to_string();
+    let empty_oid = fixture.repo.blob(b"").unwrap().to_string();
+    fixture.write("side", b"replacement");
+    fixture.stage("side");
+    std::fs::write(fixture.repo.path().join("index"), b"invalid index").unwrap();
+    let backend = fixture.backend();
+    for mode in [0o100644, 0o100755, 0o120000] {
+        let source = FileReadSource::ConflictStage { oid: &oid, mode };
+        for path in [Path::new("side"), Path::new("absent")] {
+            assert_eq!(
+                backend.file_size(source, path).unwrap(),
+                Some(bytes.len() as u64)
+            );
+            assert_eq!(
+                backend
+                    .file_bytes(source, path, bytes.len())
+                    .unwrap()
+                    .unwrap(),
+                bytes
+            );
+            assert!(backend.file_bytes(source, path, bytes.len() - 1).is_err());
+            for (prefix, expected) in [
+                (b"".as_slice(), true),
+                (b"%PDF-".as_slice(), true),
+                (bytes.as_slice(), true),
+                (b"%PDF-frozen-longer".as_slice(), false),
+                (b"other".as_slice(), false),
+            ] {
+                assert_eq!(
+                    backend.file_has_prefix(source, path, prefix).unwrap(),
+                    Some(expected)
+                );
+            }
+        }
+    }
+    let empty = FileReadSource::ConflictStage {
+        oid: &empty_oid,
+        mode: 0o100644,
+    };
+    assert_eq!(
+        backend.file_bytes(empty, Path::new("absent"), 0).unwrap(),
+        Some(vec![])
+    );
+    assert_eq!(
+        backend
+            .file_has_prefix(empty, Path::new("absent"), b"x")
+            .unwrap(),
+        Some(false)
+    );
+}
+
+#[test]
+fn frozen_present_object_errors_are_not_absence_and_gitlinks_skip_lookup() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    fixture.write("side", b"content");
+    fixture.stage("side");
+    let commit = fixture.commit();
+    let backend = fixture.backend();
+    let path = Path::new("absent");
+    assert_eq!(
+        backend
+            .file_bytes(FileReadSource::Index, path, LIMIT)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        backend.file_size(FileReadSource::Index, path).unwrap(),
+        None
+    );
+    assert_eq!(
+        backend
+            .file_has_prefix(FileReadSource::Index, path, b"x")
+            .unwrap(),
+        None
+    );
+    for oid in [
+        "not-an-oid",
+        "1111111111111111111111111111111111111111",
+        &commit.0,
+    ] {
+        let source = FileReadSource::ConflictStage {
+            oid,
+            mode: 0o100644,
+        };
+        assert!(backend.file_bytes(source, path, LIMIT).is_err());
+        assert!(backend.file_has_prefix(source, path, b"").is_err());
+        assert!(backend.file_size(source, path).is_err());
+        let gitlink = FileReadSource::ConflictStage {
+            oid,
+            mode: 0o160000,
+        };
+        assert_eq!(backend.file_bytes(gitlink, path, 0).unwrap(), None);
+        assert_eq!(backend.file_has_prefix(gitlink, path, b"").unwrap(), None);
+        assert_eq!(backend.file_size(gitlink, path).unwrap(), None);
     }
 }
 

@@ -73,7 +73,7 @@ mod tests {
             current_branch: branch.to_string(),
             selected_file: Some(0),
             editing_file: None,
-            skip_armed: false,
+            skip_approval: None,
         }
     }
 

@@ -963,6 +963,24 @@ leg recorded Terminal x=483.5..512 intersecting Graph x=495.5..524. Tier B shoul
 compare the real 700×500 JA toolbar with a long repository/branch identity at
 100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
 
+For #1742 step ① use `KAGI_GUI_E2E_ONLY='conflict_preview_'` for the focused
+preparation checks, then the complete ADR-0228 image/PDF/sync/focus/`conflict_`
+regression filter. `gui-e2e` forwards `kagi-git/gui-e2e` solely for the
+thread-local Backend-open witness: `conflict_preview_no_render_io` counts zero
+opens in ConflictView render from the first uncached frame, holds the real
+worker result to inspect header-only loading, then checks retained-image redraw
+with the repository poisoned. A warmed cache alone is not this proof.
+`conflict_preview_owner_transitions` holds actual completions across selection,
+revision and same-key retirement/re-admission; its feature-only detach bypasses
+task cancellation so the production generation/owner checks must reject each
+late result without replacing the shown pair. `conflict_preview_read_retry`
+checks terminal failure after two attempts, no repaint retry loop, and recovery
+on a fresh observation. Pair with `cargo test -p kagi-git --features gui-e2e
+render_probe` and `cargo test -p kagi-git --test file_reads_test`. The probe and
+scheduling seam compile out of ordinary binaries. Tier B compares the original
+merge-complex image/gitlink rows plus identical valid-PNG variants on isolated
+fixture copies; never mutate the source fixtures or infer native AX/IME evidence.
+
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
 `conflict_file_selection` enters the persistent `conflict-tree` ListBox through
 real Tab/Shift-Tab and its GUI-only F19 focus probe, rather than seeking a removed
@@ -1000,20 +1018,84 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
-For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft,conflict_open,conflict_launch,conflict_file_selection'`
 with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
 exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
 canonical receipt append; it still compares every Git field and complete log
 byte-for-byte rather than dropping the log from the no-write witness.
-`conflict_draft_restore_io_failure` covers EN/JA acknowledgment of unreadable
-saved edits, an unopenable lock, bounded lock contention and exhausted rescue
-names. It preserves the exact cause, keeps the editor fail-closed without
-per-frame re-detection, and verifies unchanged Git state and damaged bytes.
+`conflict_draft_restore_io_failure` covers first-open failures with no retained
+pane: unreadable saved edits (including a
+readable older `.prev`), an unopenable lock, bounded lock contention and exhausted
+rescue names in EN/JA. A successful append preserves the exact cause in one Failed
+receipt and presents only one bounded, path-free footer or notification, never a
+modal; an intentionally blocked append instead requires acknowledgment retaining
+both causes, with no ordinary preview. It keeps the editor fail-closed without
+per-frame re-detection and verifies unchanged Git/draft bytes plus only the exact
+asserted receipt append.
+`conflict_draft_stale_restore_failure` delivers an older real lock-timeout restore
+and older real successful detections after a newer rebase conflict and failed
+autosave. The exact pane, Result input, live text, run-once/review flags and pending
+revalidation gate must survive both rejected outcomes, without an obsolete notice.
+`conflict_draft_stale_restore_async` holds a real async error immediately before
+admission, accepts a newer read or detection of the same Git state, and checks
+that read keys and detector generations independently reject it. The hold is
+GUI-feature-only and releases even on unwinding; it never substitutes a result.
+`conflict_draft_fresh_restore_failure` types a manual Result while autosave fails,
+then makes the draft unreadable and invokes quiet, manual and external production
+Reload in EN/JA without changing Git. The exact pane, editor entity and pending body remain;
+the Failed receipt owns the full cause and the footer stays bounded. A real Save
+click must leave every Git field and complete log unchanged because the checked
+pane read remains refused. Repairing persistence and explicitly reloading settles
+that gate without replacing the editor.
+`conflict_draft_revision_unrelated_index` also fails autosave, makes the draft
+unreadable, stages an unrelated CLI file, and reloads in EN/JA. The changed global
+observation cannot discard the exact pane/input, pending body, selection or
+undo/redo; successful repair adopts the new revision without losing that history.
+`conflict_draft_continue_restore_admission` opens a real sequencer confirmation,
+then runs real graph paging and fails same-observation restore. Paging keeps the
+ReadKey and bypasses Reload's modal sweep, so only failed detection can invalidate
+the approval. The modal must close with the existing bounded failure preview.
+Reinstalling that genuine approval and clicking Confirm separately
+tests the consumer gate: no lease, staging, sequencer advance or receipt append.
+`conflict_draft_stale_restore_success` holds an older real successful detection,
+then applies a newer real failed restore with the same Git observation. ReadKey
+and detector-generation supersession are exercised independently; neither stale
+success may clear the failure, settle the gate, or admit Save/Continue. EN/JA cases
+also perform a real old-request corruption rescue: its bounded warning must still
+surface on stale completion, without changing the newer failed pane or receipt.
+`conflict_draft_abort_restore_admission` applies the same real paging failure to
+an existing Abort approval, then reinstalls the genuine approval and confirms:
+producer dismissal and consumer admission must independently prevent Git work,
+leases and duplicate receipts; repaired Abort remains usable in EN/JA.
+`conflict_draft_cleared_handoff` fails real autosave, externally aborts or completes
+the sequencer, and requires the exact Result/input/selection/history to remain
+until an explicit repaired Reload durably preserves it for restart inspection.
+Its failed receipt owns the full cause and the bounded EN/JA save preview tells
+the user to keep the window open; no render-frame retry may append another receipt.
+`conflict_draft_stale_handoff` withholds a real durable writer completion, makes a
+newer edit fail, and proves the older ticket cannot remove that newer live owner.
+The hold is GUI-only and never replaces a writer result. Backend assertions also
+require `has_unflushed_drafts` after a synchronous save failure with no queued ticket.
+`conflict_open_fresh`, `conflict_open_second_tab` and `conflict_launch` exercise
+production native-picker completion/CLI startup and real asynchronous accepted
+reads in EN/JA, without corrective Reload or synthetic detector results.
+The first workspace must belong to the accepted revision and have a rendered
+Result with checked-pane admission settled. Tier B launches a plain binary into
+Home with restore disabled, delivers a real Finder Open Documents event to that
+PID, then opens a distinct conflicted copy as its second tab. Capture each real
+window without Reload and compare the missing-workspace before screenshots.
 The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated
 `KAGI_LOG_DIR`; restart must retain both independent same-file hunk decisions.
+For recovery-retention review, run `cargo test -p kagi-git --lib
+two_writer_recovery_survives_other_file_autosaves`: two real subprocesses collide
+on one Result, then the earlier writer repeatedly autosaves another file. Both
+commit orders and blocking/queued saves must retain the later primary and the
+earlier recovery's exact bytes/identity through the owned inspection API, in both
+the primary document and repeatedly rotated `.prev`. The formal
+`two-writer-recovery` check must HOLD; pre-merge-dedup controls must stay red.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation

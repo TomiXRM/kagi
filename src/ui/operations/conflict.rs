@@ -217,13 +217,16 @@ impl KagiApp {
     }
 
     /// Plan → approve → dispatch one conflict-family request. `false` = the
-    /// request never became a job (a refused plan, a stale approval); its
-    /// recording has already been presented.
+    /// request never became a job (closed pane admission, refused plan, stale
+    /// approval). A closed pane gate retains its already-presented failure.
     pub(crate) fn start_conflict_request(
         &mut self,
         request: app::ConflictAppRequest,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.pane_mutation_admitted(request.owner.session) {
+            return false;
+        }
         let policy = crate::ui::blocking_ops::execution_policy();
         let owner = request.owner.session;
         let action = request.request.action();
@@ -362,7 +365,10 @@ impl KagiApp {
         };
 
         match route {
-            kagi_git::ContinueRoute::MergeCommitPanel { message } => {
+            kagi_git::ContinueRoute::MergeCommitPanel {
+                message,
+                comment_char,
+            } => {
                 // Transition to the commit message panel pre-filled with the merge
                 // message.  MERGE_HEAD stays present so the commit becomes a merge
                 // commit.  No commit is created here (ADR-0068).
@@ -446,6 +452,7 @@ impl KagiApp {
                                 &repo_path,
                                 current,
                                 false,
+                                None,
                                 cx,
                             );
                         }
@@ -480,7 +487,13 @@ impl KagiApp {
                             if let Some(input) = body_input {
                                 input.update(cx, |state, cx| state.set_value(body, window, cx));
                             }
-                            entity.update(cx, |v, _| v.state.commit_msg = message.clone());
+                            entity.update(cx, |v, _| {
+                                v.state.commit_msg = message.clone();
+                                v.merge_comment_char = comment_char;
+                            });
+                        }
+                        if let Some(conflict) = app.ui().conflict.clone() {
+                            conflict.update(cx, |view, _| view.retire_raw_preview());
                         }
                         if let Some(ui) = app.ui_mut() {
                             ui.conflict_merge_pending = true;
@@ -503,97 +516,13 @@ impl KagiApp {
                     error: None,
                 });
             }
-            kagi_git::ContinueRoute::StashComplete => {
-                // #309: a stash conflict is not a commit — "continue" just stages
-                // the resolved paths (execute_conflict_continue collapses the
-                // unmerged entries to stage 0). No merge commit, no `--continue`.
-                let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
-                    return;
-                };
-                let owner = owner.session;
-                let visit = self.app_sessions.visit(owner);
-                let before = StateSummary {
-                    head: format!("op={}", mode.session.op.slug()),
-                    dirty: "resolving".to_string(),
-                };
-                let expected_revision = mode.revision;
-                let session = mode.session;
-                let buffer = mode.buffer;
-                let abandonment = guard.abandonment();
-                let supervision = abandonment.supervision();
-                let bg_path = repo_path.clone();
-                let bg_before = before.clone();
-                let task = cx.background_spawn(async move {
-                    let _supervised = kagi_git::proc::supervisor::enter(supervision);
-                    #[cfg(feature = "gui-e2e")]
-                    if PANIC_NEXT_CONTINUE_STASH.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                        let _ =
-                            std::panic::catch_unwind(|| panic!("injected stash continue panic"));
-                        return None;
-                    }
-                    let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
-                        Ok(backend) => backend.observe_ref_moves(|b| {
-                            b.execute_conflict_continue(&session, &buffer, &expected_revision)
-                        }),
-                        Err(error) => (Err(error), None),
-                    };
-                    let unknown = app::settle_conflict_write(guard, &result, bg_before);
-                    Some((result, ref_moves, unknown))
+            kagi_git::ContinueRoute::StashPlan(plan) => {
+                self.set_conflict_continue_modal(ConflictContinuePlanModal {
+                    plan: std::sync::Arc::new(*plan),
+                    revision: mode.revision,
+                    operation_kind: mode.session.op.kind(),
+                    error: None,
                 });
-                cx.spawn(async move |this, acx| {
-                    let (result, ref_moves, unknown) =
-                        task.fallible().await.flatten().unwrap_or_else(|| {
-                            let error = abandonment.into_unknown();
-                            let unknown = conflict_unknown(&error, before.clone());
-                            (Err(error), None, unknown)
-                        });
-                    let _ = this.update(acx, |app, cx| {
-                        app.refresh_write_busy();
-                        let current = app.active_session() == Some(owner)
-                            && app.app_sessions.visit(owner) == visit;
-                        match result {
-                            Ok(result) => {
-                                klog!("executed: {}", op_name);
-                                app.record_operation_completion(
-                                    &op_name,
-                                    before,
-                                    OpOutcome::Success {
-                                        after: result.after.clone(),
-                                    },
-                                    ref_moves,
-                                    &repo_path,
-                                    current,
-                                    false,
-                                    cx,
-                                );
-                                if current {
-                                    app.app_sessions.continue_stash_conflict(owner);
-                                    app.reload(cx);
-                                }
-                            }
-                            Err(e) => {
-                                let err_msg = format!("{}", e);
-                                klog!("{} failed: {}", op_name, err_msg);
-                                app.record_operation_completion(
-                                    &op_name,
-                                    before,
-                                    unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
-                                    ref_moves,
-                                    &repo_path,
-                                    current,
-                                    false,
-                                    cx,
-                                );
-                            }
-                        }
-                        for (id, op, path) in app.app_sessions.drain_unaccounted() {
-                            app.notice_reconcile_required(id, op, &path);
-                        }
-                        app.present_app_notice();
-                        cx.notify();
-                    });
-                })
-                .detach();
             }
         }
         cx.notify();
@@ -604,6 +533,14 @@ impl KagiApp {
     /// sequencer), record the oplog, and reload. Keep the revision-bound autosave
     /// available for recovery even if the UI never adopts the next observation.
     pub fn confirm_conflict_continue(&mut self, cx: &mut Context<Self>) {
+        if !self
+            .active_session()
+            .is_some_and(|owner| self.pane_mutation_admitted(owner))
+        {
+            self.clear_conflict_continue_modal();
+            cx.notify();
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -635,6 +572,7 @@ impl KagiApp {
         let owner = self.active_session();
         let visit = owner.and_then(|id| self.app_sessions.visit(id));
         let session = mode.session;
+        let is_stash = matches!(session.op, kagi_git::ConflictOp::StashConflict);
         let buffer = mode.buffer;
         let expected_revision = modal.revision;
         let before = plan.current.clone();
@@ -656,6 +594,13 @@ impl KagiApp {
             #[cfg(feature = "gui-e2e")]
             if PANIC_NEXT_CONTINUE_CONFIRM.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 let _ = std::panic::catch_unwind(|| panic!("injected sequencer continue panic"));
+                return None;
+            }
+            #[cfg(feature = "gui-e2e")]
+            if is_stash
+                && PANIC_NEXT_CONTINUE_STASH.swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                let _ = std::panic::catch_unwind(|| panic!("injected stash continue panic"));
                 return None;
             }
             let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
@@ -691,7 +636,8 @@ impl KagiApp {
                 match result {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
-                        let stopped = matches!(&result.outcome, kagi_git::ContinueOutcome::Staged);
+                        let stopped = !is_stash
+                            && matches!(&result.outcome, kagi_git::ContinueOutcome::Staged);
                         app.record_operation_completion(
                             &op_name,
                             before,
@@ -702,12 +648,18 @@ impl KagiApp {
                             &repo_path,
                             current,
                             stopped,
+                            None,
                             cx,
                         );
                         if modal_matches {
                             app.clear_conflict_continue_modal();
                         }
                         if current {
+                            if is_stash {
+                                if let Some(owner) = owner {
+                                    app.app_sessions.continue_stash_conflict(owner);
+                                }
+                            }
                             app.reload(cx);
                             if let Some(ui) = app.ui_mut() {
                                 ui.conflict_detected = false;
@@ -745,6 +697,7 @@ impl KagiApp {
                             &repo_path,
                             current,
                             false,
+                            None,
                             cx,
                         );
                         if modal_matches {

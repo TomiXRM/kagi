@@ -44,6 +44,28 @@ impl KagiApp {
     /// [`CommitPanelView::committable_message`]. `""` when no panel is open.
     pub(crate) fn committable_message(&self, cx: &Context<Self>) -> String {
         match self.ui().commit_panel.as_ref() {
+            Some(e) if self.ui().conflict_merge_pending => {
+                let panel = e.read(cx);
+                let title = panel
+                    .title_input
+                    .as_ref()
+                    .map(|input| input.read(cx).value());
+                let body = panel
+                    .body_input
+                    .as_ref()
+                    .map(|input| input.read(cx).value());
+                let (subject, body) = if let Some(subject) = title.as_deref() {
+                    (subject, body.as_deref().unwrap_or_default())
+                } else {
+                    panel
+                        .state
+                        .commit_msg
+                        .split_once('\n')
+                        .unwrap_or((&panel.state.commit_msg, ""))
+                };
+                let body = kagi_domain::merge_msg::strip_comments(body, panel.merge_comment_char);
+                kagi_git::join_title_body(subject, &body)
+            }
             Some(e) => e.read(cx).committable_message(cx),
             None => String::new(),
         }
@@ -930,7 +952,7 @@ impl KagiApp {
         }
         // T026: prefer the effective message (subject + body from the two
         // Inputs); fall back to commit_msg (headless path).
-        let msg: String = if self.cp_has_commit_input(cx) {
+        let msg: String = if self.cp_has_commit_input(cx) || self.ui().conflict_merge_pending {
             self.committable_message(cx)
         } else {
             match self.ui().commit_panel.as_ref() {
@@ -1042,15 +1064,16 @@ impl KagiApp {
             klog!("commit-panel: commit into {}", repo_path.display());
         }
         let busy = self.op_latched() || self.active_tab_has_queue();
-        let commit_message: String = if self.cp_has_commit_input(cx) {
-            self.committable_message(cx)
-        } else {
-            self.ui()
-                .commit_panel
-                .as_ref()
-                .map(|e| e.read(cx).state.commit_msg.clone())
-                .unwrap_or_default()
-        };
+        let commit_message: String =
+            if self.cp_has_commit_input(cx) || self.ui().conflict_merge_pending {
+                self.committable_message(cx)
+            } else {
+                self.ui()
+                    .commit_panel
+                    .as_ref()
+                    .map(|e| e.read(cx).state.commit_msg.clone())
+                    .unwrap_or_default()
+            };
         let plan = match self
             .ui()
             .commit_panel

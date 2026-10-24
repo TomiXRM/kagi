@@ -9,12 +9,16 @@ use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use std::path::{Path, PathBuf};
 
+#[path = "conflict_draft_cleared_handoff.rs"]
+mod cleared_handoff;
 #[path = "conflict_draft_completion.rs"]
 mod completion;
 #[path = "../support/git_fixture.rs"]
 mod fixture_git;
 #[path = "../support/oplog.rs"]
 mod oplog;
+#[path = "conflict_draft_revision_failure.rs"]
+mod unrelated_failure;
 
 pub(super) const FILE: &str = "file.txt";
 pub(super) const FIRST: &str = "RESOLVED ONE\n";
@@ -353,6 +357,14 @@ fn finish_second(
     drop(input);
 }
 
+pub fn scenario_conflict_draft_cleared_handoff(cx: &mut VisualTestAppContext) {
+    cleared_handoff::check_cleared_handoff(cx);
+}
+
+pub fn scenario_conflict_draft_stale_handoff(cx: &mut VisualTestAppContext) {
+    cleared_handoff::check_stale_handoff(cx);
+}
+
 pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppContext) {
     let fixture = RebaseFixture::new();
     let repo = fixture.path();
@@ -513,6 +525,7 @@ pub fn scenario_conflict_draft_revision_unrelated_index(cx: &mut VisualTestAppCo
     assert_eq!(before, RepositoryState::read(&repo));
     drop(input);
     unmount(cx, app, window);
+    unrelated_failure::check_unrelated_restore_failure(cx);
 }
 
 fn append_lock() -> std::fs::File {

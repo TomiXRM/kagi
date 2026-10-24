@@ -462,3 +462,127 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS right_selection_motion");
 }
+
+/// #1739: both lifecycle owners share the left reveal and instant policy.
+pub fn scenario_sidebar_motion(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            kagi_ui_core::motion::set_clock_for_e2e(None);
+            theme::set_reduce_motion(self.0);
+        }
+    }
+    let _restore = Restore(theme::reduce_motion());
+    theme::set_reduce_motion(false);
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let mut at = Instant::now();
+    frame(cx, window, at);
+    let full = width(window, "sidebar-clip").unwrap();
+    for shown in [false, true] {
+        cx.dispatch_action(window, ToggleSidebar);
+        frame(cx, window, at);
+        frame(cx, window, at + Duration::from_millis(40));
+        let intermediate = width(window, "sidebar-clip").unwrap();
+        assert!(0. < intermediate && intermediate < full);
+        at += Duration::from_millis(300);
+        frame(cx, window, at);
+        assert_eq!(
+            width(window, "sidebar-clip").unwrap_or(0.),
+            if shown { full } else { 0. }
+        );
+    }
+    theme::set_reduce_motion(true);
+    for shown in [false, true] {
+        cx.dispatch_action(window, ToggleSidebar);
+        frame(cx, window, at);
+        assert_eq!(
+            width(window, "sidebar-clip").unwrap_or(0.),
+            if shown { full } else { 0. }
+        );
+    }
+    unmount(cx, app, window);
+
+    let repo = fixture.path();
+    git(repo, &["checkout", "-qb", "sidebar-motion"]);
+    std::fs::write(repo.join("motion.txt"), "base\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "motion base"]);
+    git(repo, &["checkout", "-qb", "sidebar-incoming"]);
+    std::fs::write(repo.join("motion.txt"), "incoming\n").unwrap();
+    git(repo, &["commit", "-qam", "incoming"]);
+    git(repo, &["checkout", "-q", "sidebar-motion"]);
+    std::fs::write(repo.join("motion.txt"), "current\n").unwrap();
+    git(repo, &["commit", "-qam", "current"]);
+    assert!(!std::process::Command::new("git")
+        .args(["merge", "sidebar-incoming"])
+        .current_dir(repo)
+        .status()
+        .unwrap()
+        .success());
+    theme::set_reduce_motion(false);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    let draw = |cx: &mut VisualTestAppContext, at| {
+        e2e::clear_control_bounds(window.window_id(), "conflict-sidebar-clip");
+        frame(cx, window, at);
+    };
+    draw(cx, at);
+    let full = width(window, "conflict-sidebar-clip").unwrap();
+    for instant in [false, true] {
+        theme::set_reduce_motion(instant);
+        for shown in [false, true] {
+            cx.update_window(window, |_, window, cx| {
+                conflict.update(cx, |view, cx| view.toggle_sidebar(window, cx));
+            })
+            .unwrap();
+            assert_eq!(cx.read(|cx| conflict.read(cx).sidebar_hidden), !shown);
+            draw(cx, at);
+            if !instant {
+                draw(cx, at + Duration::from_millis(40));
+                let intermediate = width(window, "conflict-sidebar-clip").unwrap();
+                assert!(0. < intermediate && intermediate < full);
+                at += Duration::from_millis(300);
+                draw(cx, at);
+            }
+            assert_eq!(
+                width(window, "conflict-sidebar-clip").unwrap_or(0.),
+                if shown { full } else { 0. }
+            );
+        }
+    }
+    // Rows remain interactive during the exit. A late click must not strand
+    // focus on an unmounted row once the clip reaches zero (#1739 review).
+    theme::set_reduce_motion(false);
+    crate::app_conflict::click_control(cx, window, "conflict-sidebar-toggle");
+    let toggle_focus = cx
+        .update_window(window, |_, window, cx| window.focused(cx))
+        .unwrap()
+        .expect("the clicked toggle owns focus");
+    draw(cx, at + Duration::from_millis(40));
+    crate::app_conflict::click_control(cx, window, "conflict-row-0");
+    kagi::ui::conflict_view::take_next_conflict_focus_probe();
+    cx.simulate_keystrokes(window, "f19");
+    cx.run_until_parked();
+    assert!(
+        kagi::ui::conflict_view::take_next_conflict_focus_probe(),
+        "the closing row regained keyboard focus"
+    );
+    draw(cx, at + Duration::from_millis(300));
+    assert!(
+        cx.update_window(window, |_, window, _| toggle_focus.is_focused(window))
+            .unwrap(),
+        "the final exit frame returns row focus to the toggle"
+    );
+    crate::keyboard_nav::keys(cx, window, "space");
+    assert!(
+        !cx.read(|cx| conflict.read(cx).sidebar_hidden),
+        "Space still activates the focused toggle after its row unmounts"
+    );
+    drop(conflict);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS sidebar_motion");
+}

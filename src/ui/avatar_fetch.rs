@@ -245,11 +245,34 @@ fn write_disk_cache(url: &str, bytes: &[u8]) {
 // Image decoding helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Detect a supported raster image format from magic bytes.
-///
-/// Returns `None` for unrecognised / corrupt data so callers fall back to the
-/// initial circle instead of handing gpui bytes it cannot decode.
-pub(crate) fn detect_format(bytes: &[u8]) -> Option<ImageFormat> {
+/// Input policy retained during the side-pair preparation cutover (ADR-0228).
+#[derive(Clone, Copy)]
+pub(crate) enum ImageClassification {
+    MagicOnly,
+    ExtensionThenMagic,
+}
+
+/// One classifier; the policy preserves today's avatar/diff and conflict formats.
+pub(crate) fn classify_image(
+    path: &std::path::Path,
+    bytes: &[u8],
+    policy: ImageClassification,
+) -> Option<ImageFormat> {
+    if matches!(policy, ImageClassification::ExtensionThenMagic) {
+        match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("png") => return Some(ImageFormat::Png),
+            Some("jpg" | "jpeg") => return Some(ImageFormat::Jpeg),
+            Some("gif") => return Some(ImageFormat::Gif),
+            Some("webp") => return Some(ImageFormat::Webp),
+            Some("bmp") => return Some(ImageFormat::Bmp),
+            _ => {}
+        }
+    }
     if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
         Some(ImageFormat::Png)
     } else if bytes.len() >= 3 && bytes[..3] == [0xff, 0xd8, 0xff] {
@@ -258,9 +281,20 @@ pub(crate) fn detect_format(bytes: &[u8]) -> Option<ImageFormat> {
         Some(ImageFormat::Webp)
     } else if bytes.len() >= 6 && (&bytes[..6] == b"GIF87a" || &bytes[..6] == b"GIF89a") {
         Some(ImageFormat::Gif)
+    } else if matches!(policy, ImageClassification::ExtensionThenMagic) && bytes.starts_with(b"BM")
+    {
+        Some(ImageFormat::Bmp)
     } else {
         None
     }
+}
+
+pub(crate) fn detect_format(bytes: &[u8]) -> Option<ImageFormat> {
+    classify_image(
+        std::path::Path::new(""),
+        bytes,
+        ImageClassification::MagicOnly,
+    )
 }
 
 /// Wrap avatar bytes into a `gpui::Image` if the format is recognised.

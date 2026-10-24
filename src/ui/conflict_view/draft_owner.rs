@@ -85,6 +85,7 @@ impl ConflictView {
         let first_detection = previous.is_none();
         if let Some(previous) = previous {
             mode.buffer.retain_drafts(previous.buffer);
+            mode.buffer.revalidate_hunk_states();
             mode.refresh_file_statuses();
             // This writes only the existing recovery document, never the repo.
             // It also retains an old live edit if its earlier autosave failed.

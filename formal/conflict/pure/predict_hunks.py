@@ -1,8 +1,7 @@
-"""Read from crates/kagi-domain/src/resolution.rs:63-87,110-202,295-351,
-542-628 and resolution/assembly.rs:12-94 at 6f9696df.
-Finite deterministic bounded domain: lengths 0..3, all masks, six choices,
-four orders. Arbitrary text is quotiented into unique tokens / marker tokens.
-This is NOT an unbounded proof of all vector lengths or Rust execution.
+"""Extracted from kagi-domain resolution and assembly; #1746 C1-C4 amendments
+map to LineSelection::empty_taken/side_state/new, set_hunk_line, the provenance
+marker gate, and assembly's checked source lookup. Finite bounded domain:
+lengths 0..3, all masks, six choices, four orders. Not an unbounded proof.
 """
 from copy import deepcopy
 from itertools import product
@@ -13,7 +12,7 @@ ORDERS = ('CF', 'IF', 'CB', 'IB')
 R = 'crates/kagi-domain/src/resolution.rs'
 A = 'crates/kagi-domain/src/resolution/assembly.rs'
 T = 'crates/kagi-domain/src/resolution/order_tests.rs'
-VARIANTS = ('both-positional', 'empty-all', 'undecide-on-select', 'order-without-tie', 'resolved-choice-only', 'wrong-origin', 'emit-marker', 'reverse-regions')
+VARIANTS = ('both-positional', 'empty-all', 'empty-adoption-lost', 'invalid-materializes', 'malformed-index', 'plain-text-gate', 'undecide-empty-adoption', 'order-without-tie', 'resolved-choice-only', 'wrong-origin', 'emit-marker', 'reverse-regions')
 
 
 def tri(bits, broken=None):
@@ -25,6 +24,12 @@ def tri(bits, broken=None):
 def marker(line):
     """crates/kagi-domain/src/checklist.rs:158-178: exact ASCII prefixes."""
     return line.startswith(('<<<<<<< ', '>>>>>>> ', '======= ')) or line == '======='
+
+
+def marker_gate(lines, broken=None):
+    """resolution::resolved_lines_have_conflict_marker: Manual-only residue."""
+    return any(marker(text) and (origin == 'm' or broken == 'plain-text-gate')
+               for text, origin in lines)
 
 
 def children(values):
@@ -39,13 +44,16 @@ def seed(n, m, choice, broken=None):
     order = 'CB' if choice == 'BC' else 'IB' if choice == 'BI' else 'CF'
     if broken == 'both-positional':
         order = {'CB': 'CF', 'IB': 'IF'}.get(order, order)
-    return [[choice in ('C', 'BC', 'BI')] * n,
-            [choice in ('I', 'BC', 'BI')] * m, order]
+    takes = [choice in ('C', 'BC', 'BI'), choice in ('I', 'BC', 'BI')]
+    return [[takes[0]] * n, [takes[1]] * m, order,
+            [takes[0] and n == 0, takes[1] and m == 0]]
 
 
 def state(choice, selection, side, broken=None):
-    """resolution.rs:306-321: absent masks use choice, even on empty sides."""
+    """LineSelection::side_state: empty adoption is an explicit persisted bit."""
     if selection is not None:
+        if not selection[side] and selection[3][side] and broken != 'empty-adoption-lost':
+            return 'All'
         return tri(selection[side], broken)
     return 'All' if choice in (('C', 'BC', 'BI') if side == 0 else ('I', 'BC', 'BI')) else 'None'
 
@@ -56,11 +64,11 @@ def resolved(choice, selection, broken=None):
 
 
 def assemble(c, i, choice, selection=None, manual='', base=(), broken=None):
-    """assembly.rs:17-46 (zip/block vs indexed/positional),48-70 (choice).
+    """assembly.rs checked source/mask lookups (including stale dimensions).
     Source tokens retain provenance; unresolved adds Manual marker wrappers.
     """
     if selection is not None:
-        cb, ib, order = selection
+        cb, ib, order = selection[:3]
         sides = ((c, cb, 'c'), (i, ib, 'i'))
         if order in ('IF', 'IB'):
             sides = sides[::-1]
@@ -70,8 +78,8 @@ def assemble(c, i, choice, selection=None, manual='', base=(), broken=None):
             out = []
             for index in range(max(len(c), len(i))):
                 for lines, bits, origin in sides:
-                    if index < len(bits) and bits[index]:
-                        out.append((lines[index], origin))  # Rust panics here for malformed masks.
+                    if index < len(bits) and bits[index] and (index < len(lines) or broken == 'malformed-index'):
+                        out.append((lines[index], origin))
     elif choice == 'C':
         out = [(x, 'c') for x in c]
     elif choice == 'I':
@@ -97,15 +105,19 @@ def assemble(c, i, choice, selection=None, manual='', base=(), broken=None):
 
 
 def edit(n, m, choice, selection, side, taken, index=None, broken=None):
-    """resolution.rs:326-351,554-577: seed before bounds check; reset only on valid deselect."""
+    """set_hunk_line validates before materializing; deselect respects deletion."""
+    if index is not None and index >= (n if side == 0 else m) and broken != 'invalid-materializes':
+        return choice, deepcopy(selection), False
     selection = deepcopy(selection) if selection is not None else seed(n, m, choice, broken)
     changed = index is None or index < len(selection[side])
     if changed:
         if index is None:
             selection[side] = [taken] * len(selection[side])
+            selection[3][side] = taken and not selection[side]
         else:
             selection[side][index] = taken
-        if (not taken or broken == 'undecide-on-select') and not any(selection[0] + selection[1]):
+        adoption = [] if broken == 'undecide-empty-adoption' else selection[3]
+        if not taken and not any(selection[0] + selection[1] + adoption):
             choice, selection = 'U', None
     return choice, selection, changed
 
@@ -148,17 +160,17 @@ def run(broken=None):
         properties.append(item)
         return item
     side = p('SideStateConsistent', 'HOLD', R+':110-131,174-181,306-321', R+':972', declared='Masks aggregate None/All/Partial; empty masks are None.')
-    empty = p('SideStateChoiceMaskEquivalentIncludingEmpty', 'REFUTE', R+':157-181,306-321', classification='QUESTION', implicit='Choice-only All on an empty adopted side becomes None when masks are materialized.')
+    empty = p('SideStateChoiceMaskEquivalentIncludingEmpty', 'HOLD', R+'::LineSelection::side_state/from_choice', R.replace('resolution.rs', 'resolution/hardening_tests.rs')+'::empty_side_state_survives_choice_materialization', declared='Adopted empty sides remain All after mask materialization.')
     res = p('SelectionPresenceResolvesEvenEmpty', 'HOLD', R+':297-301', T+':28-62', declared='Some(selection), including zero bits, is resolved.')
     agg = p('ChildTriStateAggregation', 'HOLD', R+':124-131,536-538', R+':972')
     orderprop = p('AssembleAllFourOrdersAndProvenance', 'HOLD', A+':17-46', T+':86-113,140-178', declared='Position order or whole-side concatenation; origin retained.')
     stable = p('AssembleBlockOrderStable', 'HOLD', R+':78-85,157-173,564-577; '+A+':17-46', T+':116,128')
     clean = p('AssembleNoSyntheticMarkers', 'HOLD', A+':48-70', R+':1023', declared='Marker-free source/manual inputs receive no synthetic marker when resolved.')
-    leak = p('AssembleNoMarkerLeak', 'REFUTE', A+':49-61; '+R+':297-301', R+':1023 (ordinary source only)', 'QUESTION', implicit='Resolved is a decision flag, not a marker-free verdict; manual/source marker text survives.')
+    leak = p('MarkerGateRespectsChosenSourceProvenance', 'HOLD', R+'::resolved_lines_have_conflict_marker', R.replace('resolution.rs', 'resolution/hardening_tests.rs')+'::marker_gate_respects_chosen_source_provenance', declared='Only manual marker text blocks; chosen source literals survive without blocking.')
     deselect = p('UndecideOnlyOnDeselect', 'HOLD', R+':334-351,554-577', R+':723,750; '+T+':54-61')
     applicable = p('OrderApplicability', 'HOLD', R+':580-627', T+':7,28,86,171')
-    invalid = p('InvalidLineFailureIsNoOp', 'REFUTE', R+':326-331,564-577', classification='QUESTION', implicit='ensure_line_selection precedes set_line failure: false can still resolve an unresolved hunk.')
-    malformed = p('MalformedSelectionNeverPanics', 'REFUTE', A+':29-41', classification='QUESTION', implicit='Block zip truncates; positional selection indexes beyond a shorter source. Shape must be a caller invariant.')
+    invalid = p('InvalidLineFailureIsNoOp', 'HOLD', R+'::HunkModel::set_hunk_line', R.replace('resolution.rs', 'resolution/hardening_tests.rs')+'::invalid_hunk_line_edit_is_a_complete_noop')
+    malformed = p('MalformedSelectionNeverPanics', 'HOLD', A+'::ConflictHunk::visit_resolved_lines', R.replace('resolution.rs', 'resolution/hardening_tests.rs')+'::stale_selection_dimensions_never_panic_or_emit_missing_lines')
     converted = p('ChoiceSelectionPreservesSourceChoices', 'HOLD', R+':157-173; '+A+':17-58', R+':863; '+T+':116,128')
     regionprop = p('RegionAssemblyPreservesOrder', 'HOLD', A+':76-84', R+':789', declared='Passthrough and hunk regions preserve sequence and context provenance.')
     for values_len in range(4):
@@ -173,7 +185,7 @@ def run(broken=None):
         for s in (0, 1):
             empty.check(state(choice, None, s, broken) == state(choice, seed_bits, s, broken), {'lengths': [n,m], 'choice': choice, 'side': s, 'before': state(choice,None,s,broken), 'after': state(choice,seed_bits,s,broken)})
         for cb, ib, order in product(masks(n), masks(m), ORDERS):
-            sel = [list(cb), list(ib), order]
+            sel = [list(cb), list(ib), order, [False, False]]
             witness = {'lengths': [n,m], 'choice': choice, 'selection': sel}
             for s in (0, 1):
                 bits = sel[s]
@@ -200,16 +212,18 @@ def run(broken=None):
                     if valid:
                         if index is None:
                             expected_bits[s] = [taken]*len(sel[s])
+                            expected_bits[3][s] = taken and not expected_bits[s]
                         else:
                             expected_bits[s][index] = taken
-                    reset = valid and not taken and not any(expected_bits[0]+expected_bits[1])
+                    reset = valid and not taken and not any(expected_bits[0]+expected_bits[1]+expected_bits[3])
                     expected_state = ('U',None) if reset else (choice,expected_bits)
                     deselect.check((newchoice,newsel)==expected_state and changed==valid, dict(witness,side=s,taken=taken,index=index,after=[newchoice,newsel],expected=expected_state))
         for s,taken in product((0,1),(False,True)):
             newchoice,newsel,_ = edit(n,m,choice,None,s,taken,broken=broken)
             bits = seed(n,m,choice)
             bits[s] = [taken]*len(bits[s])
-            expected_reset = not taken and not any(bits[0]+bits[1])
+            bits[3][s] = taken and not bits[s]
+            expected_reset = not taken and not any(bits[0]+bits[1]+bits[3])
             deselect.check((newchoice,newsel) == (('U',None) if expected_reset else (choice,bits)), {'lengths':[n,m], 'choice':choice, 'side':s, 'taken':taken, 'after':[newchoice,newsel]})
             failedchoice,failedsel,changed = edit(n,m,choice,None,s,True,index=(n if s==0 else m),broken=broken)
             if choice == 'U':
@@ -231,14 +245,15 @@ def run(broken=None):
         if choice != 'U':
             out = assemble(c,i,choice,manual='plain',broken=broken)
             clean.check(not any(marker(x) for x,_ in out), {'choice':choice,'lengths':[n,m]})
-    for choice in CHOICES[:-1]:
+    for choice in CHOICES:
         for text in ('plain','<<<<<<< user','=======','>>>>>>> user',''):
             out=assemble([text],[text],choice,manual=text,broken=broken)
-            leak.check(not any(marker(x) for x,_ in out), {'choice':choice,'text':text,'resolved':True,'actual':out})
+            expected = choice == 'U' or (choice == 'M' and marker(text))
+            leak.check(marker_gate(out, broken) == expected, {'choice':choice,'text':text,'expected_blocked':expected,'actual':out})
     for n,m,cb_len,ib_len,order in product(range(4),range(4),range(5),range(5),ORDERS):
         for cb,ib in product(masks(cb_len),masks(ib_len)):
             try:
-                assemble(['c']*n,['i']*m,'U',[cb,ib,order])
+                assemble(['c']*n,['i']*m,'U',[cb,ib,order,[False,False]],broken=broken)
                 ok=True
             except IndexError:
                 ok=False
@@ -247,7 +262,7 @@ def run(broken=None):
     # and all one-line-per-side masks/orders through three ordered regions.
     variants=[('context',()),('context',('context',))]
     variants += [('hunk',(['c'],['i'],ch,None,'manual')) for ch in CHOICES]
-    variants += [('hunk',(['c'],['i'],'U',[[c],[i],order])) for c,i,order in product((False,True),(False,True),ORDERS)]
+    variants += [('hunk',(['c'],['i'],'U',[[c],[i],order,[False,False]])) for c,i,order in product((False,True),(False,True),ORDERS)]
     for length in range(4):
         for regions in product(variants,repeat=length):
             expected=[]

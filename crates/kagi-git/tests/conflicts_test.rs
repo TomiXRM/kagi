@@ -34,6 +34,9 @@ use kagi_git::{
     SkipProgress,
 };
 
+#[path = "conflicts/domain_hardening.rs"]
+mod domain_hardening;
+
 fn write_binary(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(dir.join(name), content).expect("write_binary failed");
 }
@@ -286,13 +289,13 @@ fn add_add_text_conflict_materializes_as_text() {
         .materialized_markers(&repo, path)
         .expect("add/add text conflict must materialize markers (regression: was None)");
     assert!(
-        markers.contains("feature_fn(void)") && markers.contains("main_fn(void)"),
-        "markers must show both sides:\n{markers}"
+        markers.text.contains("feature_fn(void)") && markers.text.contains("main_fn(void)"),
+        "markers must show both sides:\n{markers:?}"
     );
 
     // And a hunk model builds from those markers (so the editor shows hunks).
     assert!(
-        buffer.ensure_hunks(path, &markers),
+        buffer.ensure_hunks(path, &markers.text, markers.marker_width),
         "ensure_hunks should succeed"
     );
     assert!(
@@ -819,7 +822,7 @@ fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
     let markers = buffer
         .materialized_markers(&repo, path)
         .expect("zdiff3 materialization");
-    assert!(buffer.ensure_hunks(path, &markers));
+    assert!(buffer.ensure_hunks(path, &markers.text, markers.marker_width));
     assert_eq!(buffer.hunk_count(path), 2, "two separate conflict hunks");
 
     // Resolve hunk 0 → current, hunk 1 → incoming.
@@ -870,7 +873,7 @@ fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let path = Path::new("file.txt");
     let markers = buffer.materialized_markers(&repo, path).unwrap();
-    buffer.ensure_hunks(path, &markers);
+    buffer.ensure_hunks(path, &markers.text, markers.marker_width);
 
     buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent);
     buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming);
@@ -1480,7 +1483,7 @@ fn per_hunk_accept_is_independent() {
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let markers = buffer.materialized_markers(&repo, path).unwrap();
-    buffer.ensure_hunks(path, &markers);
+    buffer.ensure_hunks(path, &markers.text, markers.marker_width);
     assert_eq!(buffer.hunk_count(path), 2);
 
     // Hunk 0 → current, hunk 1 left unresolved.

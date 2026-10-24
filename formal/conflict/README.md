@@ -4,8 +4,8 @@ This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
 No product code is imported or changed. There are 52 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), twelve TLC negative controls,
-31 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+properties (1,695,579 input/property evaluations), twelve TLC negative controls,
+35 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -171,17 +171,17 @@ external drill artifacts; ordinary runs require no live app or external files.
 | Model | Property | Expected | Issue |
 |---|---|---|---|
 | `predict_hunks` | `SideStateConsistent` | HOLD | CONTRACT |
-| `predict_hunks` | `SideStateChoiceMaskEquivalentIncludingEmpty` | REFUTE | #1746 (C1; owner QUESTION) |
+| `predict_hunks` | `SideStateChoiceMaskEquivalentIncludingEmpty` | HOLD | #1746 C1 fixed: explicit empty-side adoption |
 | `predict_hunks` | `SelectionPresenceResolvesEvenEmpty` | HOLD | CONTRACT |
 | `predict_hunks` | `ChildTriStateAggregation` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleAllFourOrdersAndProvenance` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleBlockOrderStable` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleNoSyntheticMarkers` | HOLD | CONTRACT |
-| `predict_hunks` | `AssembleNoMarkerLeak` | REFUTE | #1746 (C2; owner QUESTION) |
+| `predict_hunks` | `MarkerGateRespectsChosenSourceProvenance` | HOLD | #1746 C2 fixed: manual-only gate; collision-free materialization and width-aware parser (#1751) |
 | `predict_hunks` | `UndecideOnlyOnDeselect` | HOLD | CONTRACT |
 | `predict_hunks` | `OrderApplicability` | HOLD | CONTRACT |
-| `predict_hunks` | `InvalidLineFailureIsNoOp` | REFUTE | #1746 (C3; owner QUESTION) |
-| `predict_hunks` | `MalformedSelectionNeverPanics` | REFUTE | #1746 (C4; owner QUESTION) |
+| `predict_hunks` | `InvalidLineFailureIsNoOp` | HOLD | #1746 C3 fixed: validate before materialization |
+| `predict_hunks` | `MalformedSelectionNeverPanics` | HOLD | #1746 C4 fixed: validated dimensions and checked source lookup |
 | `predict_hunks` | `ChoiceSelectionPreservesSourceChoices` | HOLD | CONTRACT |
 | `predict_hunks` | `RegionAssemblyPreservesOrder` | HOLD | CONTRACT |
 | `predict_ready` | `ReadyImpliesNoMarkers` | HOLD | CONTRACT |
@@ -208,6 +208,23 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `predict_intent` | `IntentAdmissionConjunctive` | HOLD | CONTRACT |
 | `predict_intent` | `PlanApprovalConjunctive` | HOLD | CONTRACT |
 | `predict_intent` | `BeginWriteConjunctive` | HOLD | CONTRACT |
+
+C2 replaces the mis-posed `AssembleNoMarkerLeak`: raw literal/manual marker text
+is intentionally preserved; blocking is a provenance decision. Manual markers
+still block, and the `plain-text-gate` mutant rejects chosen source literals.
+Parser attribution is protected by collision-free marker widths across all three
+source blobs and an exact-width, state-specific parser (#1751). Rust backend/UI
+regressions cover source marker literals, width 10, clean merged changes outside
+hunks, and inspection-only legacy drafts after the width fingerprint changes.
+Do not compare merged passthrough with either stage: clean changes from the
+other side belong in the Result by design.
+The C1/C3/C4 removed-guard mutants are `empty-adoption-lost`,
+`invalid-materializes`, and `malformed-index`; each must remain red.
+`undecide-empty-adoption` supersedes the now-redundant `undecide-on-select`:
+explicit adoption means selecting a zero-line side no longer looks empty even
+if the deselect-only call guard is removed. The new mutant clears an adopted
+deletion when deselecting the other side, and must be detected.
+
 
 ## Runtime reconciliation and limits
 

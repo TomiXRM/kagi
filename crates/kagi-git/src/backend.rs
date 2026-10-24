@@ -1017,7 +1017,11 @@ impl Backend {
         ResolutionBuffer::from_repo_with_autosave(&self.repo)
     }
 
-    pub fn materialized_markers(&self, buffer: &ResolutionBuffer, path: &Path) -> Option<String> {
+    pub fn materialized_markers(
+        &self,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+    ) -> Option<crate::resolution::ConflictMaterialization> {
         buffer.materialized_markers(&self.repo, path)
     }
 

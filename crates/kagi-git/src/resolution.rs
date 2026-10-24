@@ -171,9 +171,9 @@ impl FileResolution {
     /// Publish a Result edit and its presentation verdict together. Undo/redo
     /// also pass here; unrelated files never need to be scanned again.
     fn replace_result(&mut self, result: Option<Vec<ResolvedLine>>, marker_count: &mut usize) {
-        let residue = result
-            .as_ref()
-            .is_some_and(|lines| super::checklist::text_has_conflict_marker(&lines_to_text(lines)));
+        let residue = result.as_ref().is_some_and(|lines| {
+            kagi_domain::resolution::resolved_lines_have_conflict_marker(lines)
+        });
         *marker_count = *marker_count - usize::from(self.marker_residue) + usize::from(residue);
         self.result = result;
         self.marker_residue = residue;
@@ -634,6 +634,14 @@ impl ResolutionBuffer {
         self.files.get(path).is_some_and(|file| file.marker_residue)
     }
 
+    /// Fresh provenance-aware marker verdict for one authoritative Result.
+    pub fn has_marker_residue(&self, path: &Path) -> bool {
+        self.files
+            .get(path)
+            .and_then(|file| file.result.as_deref())
+            .is_some_and(kagi_domain::resolution::resolved_lines_have_conflict_marker)
+    }
+
     /// Whether the authoritative Result would be replaced by adopting source
     /// hunks. Empty manual Results count; identical bytes with new provenance do
     /// not. This presentation query neither allocates nor changes either model.
@@ -752,15 +760,14 @@ impl ResolutionBuffer {
             .map(|fr| (fr.current_text.clone(), fr.incoming_text.clone()))
     }
 
-    /// Paths whose **resolved** text still contains a conflict marker, reusing
-    /// the checklist's detection (ADR-0043 rule 4 / ADR-0057 residue gate).
-    /// Unresolved files are excluded (they have no Result yet).
+    /// Paths whose Results contain manual/synthetic conflict markers.
+    /// Chosen source and passthrough text is not marker residue (ADR-0057).
+    /// Unresolved files without a Result are excluded.
     pub fn files_with_marker_residue(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
         for (path, fr) in &self.files {
             if let Some(lines) = &fr.result {
-                let text = lines_to_text(lines);
-                if super::checklist::text_has_conflict_marker(&text) {
+                if kagi_domain::resolution::resolved_lines_have_conflict_marker(lines) {
                     out.push(path.clone());
                 }
             }

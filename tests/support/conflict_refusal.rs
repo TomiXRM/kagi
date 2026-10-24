@@ -64,7 +64,7 @@ fn marker_draft_refusal_preserves_the_session_suffix_in_the_recording() {
     assert!(matches!(
         &request,
         ConflictRequest::Save {
-            draft: ConflictDraft::Text(bytes),
+            draft: ConflictDraft::Text { bytes, .. },
             ..
         } if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
     ));

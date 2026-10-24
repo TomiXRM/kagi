@@ -135,21 +135,64 @@ impl TriState {
 /// Per-line selection state for a conflict hunk (ADR-0071).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineSelection {
-    /// Whether each Current-side line is included in the Result.
-    pub current_taken: Vec<bool>,
-    /// Whether each Incoming-side line is included in the Result.
-    pub incoming_taken: Vec<bool>,
+    // Private masks keep their constructor-validated dimensions immutable.
+    current_taken: Vec<bool>,
+    incoming_taken: Vec<bool>,
+    // Empty sides have no bits, but adopting a deletion is still a choice.
+    empty_taken: [bool; 2],
     /// Output order when both sides have selected lines.
     pub order: LineOrder,
 }
 
+/// A restored selection mask does not match its materialized source sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineSelectionShapeError;
+
 impl LineSelection {
+    /// Restore masks only when both dimensions match the source hunk.
+    pub fn new(
+        current_len: usize,
+        incoming_len: usize,
+        current_taken: Vec<bool>,
+        incoming_taken: Vec<bool>,
+        order: LineOrder,
+        empty_taken: [bool; 2],
+    ) -> Result<Self, LineSelectionShapeError> {
+        if current_taken.len() != current_len || incoming_taken.len() != incoming_len {
+            return Err(LineSelectionShapeError);
+        }
+        debug_assert_eq!(
+            (current_taken.len(), incoming_taken.len()),
+            (current_len, incoming_len)
+        );
+        Ok(Self {
+            current_taken,
+            incoming_taken,
+            order,
+            empty_taken,
+        })
+    }
+
+    /// Borrow immutable selection bits for one source side.
+    pub fn taken(&self, side: SelectionSide) -> &[bool] {
+        match side {
+            SelectionSide::Current => &self.current_taken,
+            SelectionSide::Incoming => &self.incoming_taken,
+        }
+    }
+
+    /// Explicit adoption of zero-line sides, retained by the draft codec.
+    pub fn empty_taken(&self) -> [bool; 2] {
+        self.empty_taken
+    }
+
     /// Empty selection for a hunk with `current_len` / `incoming_len` side lines.
     pub fn empty(current_len: usize, incoming_len: usize, order: LineOrder) -> LineSelection {
         LineSelection {
             current_taken: vec![false; current_len],
             incoming_taken: vec![false; incoming_len],
             order,
+            empty_taken: [false; 2],
         }
     }
 
@@ -161,31 +204,37 @@ impl LineSelection {
     ) -> LineSelection {
         let mut selection =
             LineSelection::empty(current_len, incoming_len, LineOrder::from_choice(choice));
-        match choice {
-            HunkChoice::AcceptCurrent => selection.current_taken.fill(true),
-            HunkChoice::AcceptIncoming => selection.incoming_taken.fill(true),
-            HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst => {
-                selection.current_taken.fill(true);
-                selection.incoming_taken.fill(true);
-            }
-            HunkChoice::Manual(_) | HunkChoice::Unresolved => {}
+        for side in [SelectionSide::Current, SelectionSide::Incoming] {
+            selection.set_side(side, choice.takes_side(side));
         }
         selection
     }
 
     /// Tri-state for one side of this hunk.
     pub fn side_state(&self, side: SelectionSide) -> TriState {
-        match side {
-            SelectionSide::Current => TriState::from_bools(&self.current_taken),
-            SelectionSide::Incoming => TriState::from_bools(&self.incoming_taken),
+        let index = match side {
+            SelectionSide::Current => 0,
+            SelectionSide::Incoming => 1,
+        };
+        let taken = self.taken(side);
+        if taken.is_empty() && self.empty_taken[index] {
+            TriState::All
+        } else {
+            TriState::from_bools(taken)
         }
     }
 
     /// Set every line on one side, implementing parent→child propagation.
     pub fn set_side(&mut self, side: SelectionSide, taken: bool) {
         match side {
-            SelectionSide::Current => self.current_taken.fill(taken),
-            SelectionSide::Incoming => self.incoming_taken.fill(taken),
+            SelectionSide::Current => {
+                self.current_taken.fill(taken);
+                self.empty_taken[0] = self.current_taken.is_empty() && taken;
+            }
+            SelectionSide::Incoming => {
+                self.incoming_taken.fill(taken);
+                self.empty_taken[1] = self.incoming_taken.is_empty() && taken;
+            }
         }
     }
 
@@ -233,6 +282,14 @@ pub struct ResolvedLine {
     pub origin: LineOrigin,
 }
 
+/// Whether a Result contains residual markers, excluding literal source/context
+/// text. Manual text has no source authority and uses the plain-text detector.
+pub fn resolved_lines_have_conflict_marker(lines: &[ResolvedLine]) -> bool {
+    lines.iter().any(|line| {
+        line.origin == LineOrigin::Manual && crate::checklist::text_has_conflict_marker(&line.text)
+    })
+}
+
 // ────────────────────────────────────────────────────────────
 // Hunk-level model (W32-CONFLICT-EDITOR, T-CONFLICT-020..025)
 // ────────────────────────────────────────────────────────────
@@ -256,6 +313,18 @@ pub enum HunkChoice {
     Manual(String),
     /// Not yet decided — the hunk is still unresolved ("Reset this hunk").
     Unresolved,
+}
+
+impl HunkChoice {
+    fn takes_side(&self, side: SelectionSide) -> bool {
+        matches!(
+            (self, side),
+            (Self::AcceptCurrent, SelectionSide::Current)
+                | (Self::AcceptIncoming, SelectionSide::Incoming)
+                | (Self::BothCurrentFirst, _)
+                | (Self::BothIncomingFirst, _)
+        )
+    }
 }
 
 /// One ordered region of a conflicted file's zdiff3 materialization.
@@ -307,14 +376,7 @@ impl ConflictHunk {
         if let Some(selection) = &self.line_select {
             return selection.side_state(side);
         }
-        let all = matches!(
-            (&self.choice, side),
-            (HunkChoice::AcceptCurrent, SelectionSide::Current)
-                | (HunkChoice::AcceptIncoming, SelectionSide::Incoming)
-                | (HunkChoice::BothCurrentFirst, _)
-                | (HunkChoice::BothIncomingFirst, _)
-        );
-        if all {
+        if self.choice.takes_side(side) {
             TriState::All
         } else {
             TriState::None
@@ -339,11 +401,8 @@ impl ConflictHunk {
     /// that happens to have zero lines (a deletion) still counts as resolved.
     pub fn undecide_if_empty(&mut self) {
         let empty = self.line_select.as_ref().is_some_and(|selection| {
-            selection
-                .current_taken
-                .iter()
-                .chain(selection.incoming_taken.iter())
-                .all(|taken| !taken)
+            selection.side_state(SelectionSide::Current) == TriState::None
+                && selection.side_state(SelectionSide::Incoming) == TriState::None
         });
         if empty {
             self.line_select = None;
@@ -570,6 +629,13 @@ impl HunkModel {
     ) -> bool {
         let mut changed = false;
         self.with_hunk_mut(hunk_index, |h| {
+            let len = match side {
+                SelectionSide::Current => h.current.len(),
+                SelectionSide::Incoming => h.incoming.len(),
+            };
+            if line_index >= len {
+                return;
+            }
             changed = h.ensure_line_selection().set_line(side, line_index, taken);
             if changed && !taken {
                 h.undecide_if_empty();
@@ -692,6 +758,10 @@ pub fn lines_to_text(lines: &[ResolvedLine]) -> String {
 #[cfg(test)]
 #[path = "resolution/order_tests.rs"]
 mod order_tests;
+
+#[cfg(test)]
+#[path = "resolution/hardening_tests.rs"]
+mod hardening_tests;
 
 #[cfg(test)]
 mod tests {
@@ -868,6 +938,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![false, false],
+                empty_taken: [false; 2],
                 order: LineOrder::CurrentFirst,
             }
         );
@@ -876,6 +947,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![false, false],
                 incoming_taken: vec![true, true],
+                empty_taken: [false; 2],
                 order: LineOrder::CurrentFirst,
             }
         );
@@ -884,6 +956,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![true, true],
+                empty_taken: [false; 2],
                 order: LineOrder::CurrentBlockFirst,
             }
         );
@@ -892,6 +965,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![true, true],
+                empty_taken: [false; 2],
                 order: LineOrder::IncomingBlockFirst,
             }
         );

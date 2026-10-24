@@ -34,6 +34,9 @@ use kagi_git::{
     SkipProgress,
 };
 
+#[path = "conflicts/domain_hardening.rs"]
+mod domain_hardening;
+
 fn write_binary(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(dir.join(name), content).expect("write_binary failed");
 }

@@ -241,7 +241,10 @@ fn changed_conflict_and_changed_buffer_are_refused_without_mutation() {
             path,
             revision,
             buffer_revision,
-            draft: ConflictDraft::Text(b"different\n".to_vec()),
+            draft: ConflictDraft::Text {
+                bytes: b"different\n".to_vec(),
+                origins: vec![kagi_domain::resolution::LineOrigin::Manual],
+            },
             kind,
             before_hash,
             actions,

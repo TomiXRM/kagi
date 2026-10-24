@@ -38,7 +38,9 @@ impl ConflictHunk {
             }
             for index in 0..self.current.len().max(self.incoming.len()) {
                 for (lines, taken, origin) in sides {
-                    if taken.get(index) == Some(&true) && !visit(&lines[index], origin) {
+                    if taken.get(index) == Some(&true)
+                        && lines.get(index).is_some_and(|line| !visit(line, origin))
+                    {
                         return false;
                     }
                 }

@@ -47,6 +47,28 @@
 - cache は表示専用。`files_with_marker_residue` と Save/Continue の実データに対する
   fresh validation は維持し、cache を書き込みの安全ゲートにしない。
 
+## Pure selection and provenance gates（#1746）
+
+- A chosen zero-line side represents an adopted deletion: its side state is
+  `All`, not `None`, before and after line-selection materialization. Persist
+  explicit empty-side adoption alongside the masks; older drafts derive it from
+  their hunk choice. Parent deselection respects adopted empty sides.
+- Selection masks are immutable in size outside their validated constructors.
+  Restoring a draft rejects either mismatched dimension before changing any
+  hunk. Assembly also bounds-checks source lines so a stale in-memory selection
+  cannot panic or invent content. An invalid line edit is a complete no-op.
+- Readiness, fresh Save and Continue marker checks inspect each `ResolvedLine`:
+  only `Manual` lines can contain blocking residue. Unresolved hunks re-emit
+  markers with that origin. Literal marker-looking text from an adopted Current
+  or Incoming side, and shared Context, is source content, not residue.
+  The plain-text detector remains for manual overrides, where source provenance
+  is absent, and for the independent staged-blob checklist.
+- Recorded Save freezes and hashes provenance together with text and file
+  identity, and restores those exact origins after preflight. Dropping origins
+  at the request boundary must not turn a chosen literal into a manual marker;
+  changing only provenance invalidates the prepared payload binding.
+
+
 ## Result input と永続 draft の適用権限（#1721）
 
 - Result の `InputState` は path だけでなく、受理した `ConflictRevision` と

@@ -153,6 +153,9 @@ pub struct ConflictView {
     pub saved_preview: Option<SavedPreview>,
     pub save_refused: Option<PathBuf>,
     pub(crate) save_attempt: Option<PathBuf>,
+    /// Live decisions have not reached their recovery document; host close must ask.
+    pub draft_persist_failed: Option<String>,
+    draft_failure_pending: Option<String>,
     /// Presentation projection from the existing accepted-observation stale path.
     pub(crate) saved_review_needed: bool,
     sidebar: sidebar::SidebarState,
@@ -245,6 +248,8 @@ impl ConflictView {
             saved_preview: None,
             save_refused: None,
             save_attempt: None,
+            draft_persist_failed: None,
+            draft_failure_pending: None,
             saved_review_needed: false,
             sidebar: Default::default(),
             saved_cache: HashMap::new(),

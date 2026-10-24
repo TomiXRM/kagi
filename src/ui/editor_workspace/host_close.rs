@@ -34,6 +34,7 @@ impl KagiApp {
         if self.offer_editor_dirty_guard_from_async(EditorDirtyGuardModal {
             intent: EditorPendingIntent::Relaunch,
             saving: None,
+            conflict_discard_armed: false,
         }) {
             klog!("editor-ws: dirty-guard");
             if !self.may_close_host() {
@@ -60,11 +61,21 @@ impl KagiApp {
     }
 
     pub(crate) fn host_dirty_buffer_count(&self, cx: &App) -> usize {
-        self.ui
+        let editors: usize = self
+            .ui
             .values()
             .filter_map(|ui| ui.editor_workspace.as_ref())
             .map(|editor| editor.read(cx).dirty_buffer_count())
-            .sum()
+            .sum();
+        editors + self.failed_conflict_draft_count(cx)
+    }
+
+    pub(crate) fn failed_conflict_draft_count(&self, cx: &App) -> usize {
+        self.ui
+            .values()
+            .filter_map(|ui| ui.conflict.as_ref())
+            .filter(|pane| pane.read(cx).draft_persist_failed.is_some())
+            .count()
     }
 
     pub(crate) fn host_dirty_guard_open(&self) -> bool {
@@ -193,6 +204,23 @@ impl KagiApp {
         }
         if !self.may_close_host() {
             self.explain_host_save_wait(cx);
+            return;
+        }
+        let conflicts: Vec<_> = self
+            .ui
+            .values()
+            .filter_map(|ui| ui.conflict.as_ref())
+            .filter(|pane| pane.read(cx).draft_persist_failed.is_some())
+            .cloned()
+            .collect();
+        if let Some(modal) = self.editor_dirty_guard_modal_mut() {
+            modal.conflict_discard_armed = false;
+        }
+        for conflict in conflicts {
+            conflict.update(cx, |view, cx| view.retry_draft_autosave(cx));
+        }
+        if self.failed_conflict_draft_count(cx) > 0 {
+            cx.notify();
             return;
         }
         let editor = self

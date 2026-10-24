@@ -382,3 +382,44 @@ fn frozen_dir_file_plan_rejects_a_new_index_child() {
         0
     );
 }
+
+#[test]
+fn keep_file_refuses_when_recovery_snapshot_cannot_be_written() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (td, repo) = df_conflict("dir-side", "file-side");
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    std::fs::write(td.path().join("thing/untracked"), b"irreplaceable\n").unwrap();
+    // Block creation of the recovery ref without relying on Unix permissions.
+    std::fs::create_dir_all(repo.path().join("refs/kagi")).unwrap();
+    std::fs::write(repo.path().join("refs/kagi/snapshots"), b"blocked\n").unwrap();
+    let index = std::fs::read(repo.path().join("index")).unwrap();
+    let head = repo.head().unwrap().target();
+    let merge_head = std::fs::read(repo.path().join("MERGE_HEAD")).unwrap();
+    let child = std::fs::read(td.path().join("thing/child")).unwrap();
+    let error = execute_dir_file_resolution(&repo, td.path(), &plan).unwrap_err();
+    assert_eq!(
+        error.blocker(),
+        Some(&kagi_domain::plan_note::PlanNote::Conflicts(
+            kagi_domain::plan_note::ConflictsNote::DraftPreservationFailed
+        ))
+    );
+    assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
+    assert_eq!(repo.head().unwrap().target(), head);
+    assert_eq!(
+        std::fs::read(repo.path().join("MERGE_HEAD")).unwrap(),
+        merge_head
+    );
+    assert_eq!(std::fs::read(td.path().join("thing/child")).unwrap(), child);
+    assert_eq!(
+        std::fs::read(td.path().join("thing/untracked")).unwrap(),
+        b"irreplaceable\n"
+    );
+    let entries = kagi_git::oplog::read_oplog_tail(1);
+    assert!(matches!(
+        entries.last().unwrap().outcome,
+        kagi_git::oplog::OpOutcome::Refused { .. }
+    ));
+}

@@ -1878,7 +1878,15 @@ pub(crate) fn execute_conflict_skip(
     }
 
     // 1. Preserve the buffer first (never lose partial work).
-    let buffer_preserved_at = buffer.autosave().ok();
+    let buffer_preserved_at = if session.files.is_empty() {
+        None
+    } else {
+        Some(
+            buffer
+                .autosave()
+                .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?,
+        )
+    };
 
     // 2. Run the skip, then judge it by the state git left behind (#540).
     //    The exit code alone cannot: `rebase --skip` that drops the step and

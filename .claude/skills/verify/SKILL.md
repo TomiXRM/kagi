@@ -57,6 +57,17 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1731 use `KAGI_GUI_E2E_ONLY='conflict_draft_persist_failure,conflict_abort'`
+with KEEP_GOING. The draft failure scenario makes the real conflicts directory
+unwritable, edits the native Result, and checks the durable Failed receipt,
+bounded Error toast and EN/JA host-close/quit sheet. Renderer-fed guard labels
+are observed through `record_conflict_draft_guard`; this is not OS accessibility
+evidence. Retry must retain the sheet while writes fail, then save exact live
+text after permissions recover; discard must require a second explicit action.
+Tier B repeats DrillLeaveResume §1c and DrillSequencers §1 on private fixture
+copies with chmod 000, comparing the plain binary before/after and capturing
+the close sheet and refused abort without changing the repository.
+
 For #1706 W3 use
 `KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Shared helpers own byte-exact repository

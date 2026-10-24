@@ -625,6 +625,8 @@ pub struct EditorDirtyGuardModal {
     pub intent: EditorPendingIntent,
     /// The single save currently admitted by Save All; Cancel stops continuation.
     pub saving: Option<gpui::EntityId>,
+    /// Losing an unpersisted conflict draft always needs a second explicit action.
+    pub conflict_discard_armed: bool,
 }
 
 // ──────────────────────────────────────────────────────────────

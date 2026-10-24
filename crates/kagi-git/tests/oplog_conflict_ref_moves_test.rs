@@ -262,3 +262,173 @@ fn a_refused_conflict_write_records_nothing_moved() {
     );
     assert_eq!(recording.entry().ref_moves, Some(Vec::new()));
 }
+
+#[test]
+fn external_worktree_append_refuses_save_and_continue_without_mutation() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for append_after_plan in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = diverged(tmp.path());
+        assert!(!git_succeeds(&repo, &["merge", "side"]));
+        let b = backend(&repo);
+        let snapshot = b.conflict_snapshot().unwrap().unwrap();
+        let mut buffer = b.resolution_buffer_from_repo().unwrap();
+        let path = Path::new("file.txt");
+        let markers = b.materialized_markers(&buffer, path).unwrap();
+        buffer.ensure_hunks(path, &markers);
+        buffer.apply_hunk_choice(path, 0, kagi_git::resolution::HunkChoice::AcceptIncoming);
+        buffer.autosave().unwrap();
+        let request = Backend::conflict_save_request(
+            snapshot.observation.revision.clone(),
+            &buffer,
+            path,
+            snapshot.observation.kind,
+            "",
+        )
+        .unwrap();
+        let plan = append_after_plan
+            .then(|| Backend::plan_recorded_conflict(&repo, request.clone()).unwrap());
+        let mut bytes = std::fs::read(repo.join(path)).unwrap();
+        bytes.extend_from_slice(b"\n// EXTERNAL_WT_MUST_SURVIVE\n");
+        std::fs::write(repo.join(path), &bytes).unwrap();
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        if let Some(plan) = plan {
+            let report = Backend::run_recorded_conflict(&plan, ExecutionPolicy::human(false), None);
+            assert!(
+                matches!(
+                    report.recording.entry().outcome,
+                    kagi_git::oplog::OpOutcome::Refused { .. }
+                ),
+                "Save must refuse a worktree-only edit after materialization"
+            );
+            assert_eq!(
+                report.blocker,
+                Some(kagi_domain::plan_note::PlanNote::Conflicts(
+                    kagi_domain::plan_note::ConflictsNote::WorktreeChanged
+                ))
+            );
+        } else {
+            assert!(matches!(Backend::plan_recorded_conflict(&repo, request),
+                Err(kagi_git::GitError::Blocked(note)) if *note == kagi_domain::plan_note::PlanNote::Conflicts(
+                    kagi_domain::plan_note::ConflictsNote::WorktreeChanged)));
+        }
+        assert!(matches!(b.continue_blockers(&snapshot.session, &buffer),
+            Err(kagi_git::GitError::Blocked(note)) if *note == kagi_domain::plan_note::PlanNote::Conflicts(
+                kagi_domain::plan_note::ConflictsNote::WorktreeChanged)));
+        assert_eq!(std::fs::read(repo.join(path)).unwrap(), bytes);
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        let mut fresh = b.resolution_buffer_from_repo_with_autosave().unwrap();
+        assert!(
+            fresh.has_resolution(path),
+            "matching index materialization retains the draft"
+        );
+        assert!(fresh.worktree_changed(path));
+        assert_eq!(fresh.recovery_drafts().count(), 0);
+        let markers = b.materialized_markers(&fresh, path).unwrap();
+        assert!(
+            !markers.contains("EXTERNAL_WT_MUST_SURVIVE"),
+            "source hunks remain index-derived"
+        );
+        fresh.ensure_hunks(path, &markers);
+        assert!(fresh
+            .hunk_model(path)
+            .unwrap()
+            .assembled_text()
+            .contains("SIDE"));
+    }
+}
+
+#[test]
+fn external_append_before_first_choice_keeps_materialization_provenance() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = diverged(tmp.path());
+    assert!(!git_succeeds(&repo, &["merge", "side"]));
+    let backend = backend(&repo);
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let original = backend.resolution_buffer_from_repo().unwrap();
+    let path = Path::new("file.txt");
+    let origin = original.worktree_fingerprint(path).unwrap().to_owned();
+    let mut bytes = std::fs::read(repo.join(path)).unwrap();
+    bytes.extend_from_slice(b"\n// BEFORE_FIRST_CHOICE\n");
+    std::fs::write(repo.join(path), &bytes).unwrap();
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let mut refreshed = backend.resolution_buffer_from_repo().unwrap();
+    refreshed.retain_drafts(original);
+    assert_eq!(refreshed.worktree_fingerprint(path), Some(origin.as_str()));
+    assert!(refreshed.worktree_changed(path));
+    let markers = backend.materialized_markers(&refreshed, path).unwrap();
+    refreshed.ensure_hunks(path, &markers);
+    refreshed.apply_hunk_choice(path, 0, kagi_git::resolution::HunkChoice::AcceptIncoming);
+    let request = Backend::conflict_save_request(
+        snapshot.observation.revision,
+        &refreshed,
+        path,
+        snapshot.observation.kind,
+        "",
+    )
+    .unwrap();
+    assert!(matches!(Backend::plan_recorded_conflict(&repo, request),
+        Err(kagi_git::GitError::Blocked(note)) if *note == kagi_domain::plan_note::PlanNote::Conflicts(
+            kagi_domain::plan_note::ConflictsNote::WorktreeChanged)));
+    assert_eq!(std::fs::read(repo.join(path)).unwrap(), bytes);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+}
+
+#[test]
+fn partial_worktree_write_allows_idempotent_save_retry() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = diverged(tmp.path());
+    assert!(!git_succeeds(&repo, &["merge", "side"]));
+    let backend = backend(&repo);
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let path = Path::new("file.txt");
+    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Incoming)
+        .unwrap();
+    buffer.autosave().unwrap();
+    let request = Backend::conflict_save_request(
+        snapshot.observation.revision,
+        &buffer,
+        path,
+        snapshot.observation.kind,
+        "",
+    )
+    .unwrap();
+    let plan = Backend::plan_recorded_conflict(&repo, request.clone()).unwrap();
+    let report = Backend::run_recorded_conflict(
+        &plan,
+        ExecutionPolicy::human(false),
+        Some(kagi_git::backend::conflict_ops::ConflictFaultPoint::AfterWorktreeWrite),
+    );
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Partial { .. }
+    ));
+    assert_eq!(std::fs::read(repo.join(path)).unwrap(), b"SIDE\n");
+    assert!(backend
+        .continue_blockers(&snapshot.session, &buffer)
+        .is_ok());
+    let mut refreshed = backend.resolution_buffer_from_repo_with_autosave().unwrap();
+    refreshed.retain_drafts(buffer);
+    assert!(
+        !refreshed.worktree_changed(path),
+        "our exact draft bytes are retryable"
+    );
+    let retry = Backend::plan_recorded_conflict(&repo, request).unwrap();
+    let report = Backend::run_recorded_conflict(&retry, ExecutionPolicy::human(false), None);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Success { .. }
+    ));
+    assert_eq!(std::fs::read(repo.join(path)).unwrap(), b"SIDE\n");
+    assert!(git_output(&repo, &["ls-files", "-u"]).is_empty());
+}

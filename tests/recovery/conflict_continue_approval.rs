@@ -558,3 +558,102 @@ pub fn scenario_conflict_continue_approval_modal_revision_replaced(cx: &mut Visu
 pub fn scenario_conflict_continue_approval_unrelated_replan(cx: &mut VisualTestAppContext) {
     exercise(cx, Drift::UnrelatedReplan);
 }
+
+/// #1736: a resolved mid-rebase is not completion, and Continue offers no abort command.
+pub fn scenario_conflict_continue_presentation(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        for more_steps in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let repo = directory.path().canonicalize().unwrap();
+            fixture_git::init_repo(&repo, "main");
+            fixture_git::write_file(&repo, FILE, "base\n");
+            fixture_git::commit_all(&repo, "base");
+            fixture_git::git(&repo, &["checkout", "-qb", "side"]);
+            fixture_git::write_file(&repo, FILE, "side\n");
+            fixture_git::commit_all(&repo, "first");
+            if more_steps {
+                fixture_git::write_file(&repo, "next.txt", "next\n");
+                fixture_git::commit_all(&repo, "next");
+            }
+            fixture_git::git(&repo, &["checkout", "-q", "main"]);
+            fixture_git::write_file(&repo, FILE, "main\n");
+            fixture_git::commit_all(&repo, "main");
+            fixture_git::git(&repo, &["checkout", "-q", "side"]);
+            assert!(!fixture_git::git_succeeds(&repo, &["rebase", "main"]));
+            stage(&repo, FILE, FIRST);
+            let (app, window) = mount(cx, &repo);
+            detect(cx, &app, window);
+            assert!(cx.read(|cx| conflict_read(&app, cx)
+                .mode
+                .as_ref()
+                .unwrap()
+                .session
+                .files
+                .is_empty()));
+            let before = NoWrite::read(&repo);
+            open_continue(cx, &app, window);
+            paint(cx, &app, window);
+            cx.read(|cx| {
+                let plan = &app.read(cx).conflict_continue_modal().unwrap().plan;
+                assert!(plan.recovery.is_none());
+                assert!(plan.equivalent_command.is_none());
+                let warning = plan.warnings.first().unwrap();
+                let text = i18n::plan_note_text(warning);
+                let expected = match (lang, more_steps) {
+                    (Lang::En, true) => "Continues to the next step (1 remaining)",
+                    (Lang::Ja, true) => "次の step に進みます（残り 1）",
+                    (Lang::En, false) => {
+                        "No conflicting files detected; continue will finish the operation as-is."
+                    }
+                    (Lang::Ja, false) => {
+                        "conflict ファイルはありません。続行すると操作はそのまま完了します。"
+                    }
+                };
+                assert_eq!(text, expected);
+            });
+            click_control(cx, window, "plan-card-copy");
+            let copied = cx.read(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+            assert!(!copied.contains("git rebase --abort"), "{copied}");
+            assert!(!copied.contains("git rebase --continue"), "{copied}");
+            assert_eq!(
+                before,
+                NoWrite::read(&repo),
+                "preview and copy do not continue"
+            );
+            click_control(cx, window, "plan-cancel");
+            unmount(cx, app, window);
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let repo = directory.path().canonicalize().unwrap();
+        fixture_git::init_repo(&repo, "main");
+        fixture_git::write_file(&repo, FILE, "base\n");
+        fixture_git::commit_all(&repo, "base");
+        fixture_git::write_file(&repo, FILE, "first\n");
+        fixture_git::commit_all(&repo, "first");
+        fixture_git::write_file(&repo, FILE, "second\n");
+        fixture_git::commit_all(&repo, "second");
+        assert!(!fixture_git::git_succeeds(
+            &repo,
+            &["revert", "--no-edit", "HEAD~1"]
+        ));
+        stage(&repo, FILE, "reverted\n");
+        let (app, window) = mount(cx, &repo);
+        detect(cx, &app, window);
+        open_continue(cx, &app, window);
+        paint(cx, &app, window);
+        cx.read(|cx| {
+            let plan = &app.read(cx).conflict_continue_modal().unwrap().plan;
+            assert!(plan.recovery.is_none());
+            assert!(plan.equivalent_command.is_none());
+        });
+        click_control(cx, window, "plan-card-copy");
+        let copied = cx.read(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+        assert!(!copied.contains("git revert --abort"), "{copied}");
+        assert!(!copied.contains("git revert --continue"), "{copied}");
+        click_control(cx, window, "plan-cancel");
+        unmount(cx, app, window);
+    }
+}

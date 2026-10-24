@@ -23,6 +23,11 @@ the rule names it.
 - **Gate before push**: build, `cargo test --workspace`, the touched Tier A
   scenarios and `uv run --project ci check-all` pass first. Chain them so a failure
   stops the push (`set -e`, or capture the output and test it) — never with `;`.
+- **HIG review** (owner ruling, #1764): a PR that changes what the user sees
+  carries an independent Apple HIG review of its real-window screenshots
+  (`.claude/skills/hig-review/SKILL.md`), posted on the PR in Japanese with the
+  HIG sentences quoted; a new or moved control also had its design review on the
+  issue before code. An open HIG P1/P2 blocks the merge, with or without Codex.
 - **Codex review**: read every Codex line comment before a PR is merged, and reply
   to each one (in Japanese, per "Code Review Rules" in `AGENTS.md`). Fix every P0 and P1, and any P2
   that can lead to a wrong write, data loss or a misleading action. A theoretical case (a race

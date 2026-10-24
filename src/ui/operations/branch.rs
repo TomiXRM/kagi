@@ -26,13 +26,16 @@ impl KagiApp {
             at,
             start_title,
             input: String::new(),
-            input_state: None, // created lazily on first render (needs Window)
+            // Each opening owns a fresh editor, including when no Window is
+            // available yet. Never retain the cancelled editor's text/caret.
+            input_state: None,
             checkout_after: false,
             plan: ModalPlan::Pending,
             error: None,
         });
         // Re-plan immediately (empty name → blocker).
         self.replan_create_branch();
+        cx.notify();
     }
 
     pub(crate) fn commit_title_for(&self, at: &CommitId) -> String {

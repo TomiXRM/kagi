@@ -90,7 +90,12 @@ pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
         std::fs::write(repo.join("new"), "keep\n").unwrap();
         let before_head = std::fs::read(repo.join(".git/HEAD")).unwrap();
         let (app, window) = mount(cx, &repo);
-        app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+        app.update(cx, |app, cx| {
+            // #1698 puts an inactive window's result in a notification instead.
+            // This scenario verifies the active window's exact footer preview.
+            app.set_window_active_for_e2e(true, cx);
+            app.open_stash_push_modal(cx);
+        });
         wait(cx, &app, |app| {
             app.stash_push_modal().is_some_and(|m| m.plan.is_some())
         });
@@ -128,13 +133,21 @@ pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
         wait(cx, &app, |app| {
             !app.app_sessions.has_leases() && app.stash_push_modal().is_none()
         });
-        assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
-            FooterStatus::Failed(text) if text.contains(reason))));
+        // #1698 intentionally bounds the result preview; the complete blocker
+        // remains on the plan/disabled action above and in the durable receipt.
+        let expected_footer = match lang {
+            i18n::Lang::En => "Save changes to stash: The operation could not be completed. Review its details before continuing. See the Operation Log for details.",
+            i18n::Lang::Ja => "変更を stash に保存: 操作を完了できませんでした。続行する前に詳細を確認してください。 詳しくは操作ログを確認してください。",
+        };
+        cx.read(|cx| match &app.read(cx).status_footer {
+            FooterStatus::Failed(text) => assert_eq!(text.as_ref(), expected_footer),
+            other => panic!("expected the failed stash preview, got {other:?}"),
+        });
         let entries = read_oplog_tail_for_repo(&repo, 100);
         assert_eq!(entries.len(), 1);
         assert!(
             matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
-            if blockers.iter().any(|b| b.contains("HEAD commit")))
+            if blockers == &["Stash push requires a HEAD commit. Create an initial commit before stashing."])
         );
         assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), before_head);
         assert_eq!(std::fs::read_to_string(repo.join("new")).unwrap(), "keep\n");
@@ -444,13 +457,23 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     for (duplicate, cancel_followup) in [(false, false), (false, true), (true, false)] {
+        i18n::set_lang(if cancel_followup {
+            i18n::Lang::Ja
+        } else {
+            i18n::Lang::En
+        });
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         stash_three(&repo);
         let before = ids(&repo);
         std::fs::write(repo.join("README.md"), "ours\n").unwrap();
         git(&repo, &["commit", "-qam", "ours"]);
+        let head = git_output(&repo, &["rev-parse", "HEAD"]);
+        let stale = git_output(&repo, &["rev-parse", "HEAD^"]);
+        assert_ne!(head, stale);
+        git(&repo, &["update-ref", "ORIG_HEAD", &stale]);
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| app.open_pop_modal(1, cx));
         wait(cx, &app, |app| {
@@ -471,6 +494,26 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             cx.read(|cx| !matches!(&app.read(cx).active_modal, Some(ActiveModal::AppNotice(_))))
         );
         assert!(cx.read(|cx| !matches!(app.read(cx).status_footer, FooterStatus::Success(_))));
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let owner = app
+                    .app_sessions
+                    .attachment(app.active_session().unwrap())
+                    .unwrap();
+                app.open_conflict_abort_modal(owner, window, cx);
+            });
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        cx.read(|cx| {
+            let modal = app.read(cx).conflict_abort_modal().unwrap();
+            assert_eq!(
+                modal.plan.predicted.head,
+                format!("restored to {}", &head[..8])
+            );
+            assert!(!modal.plan.predicted.head.contains(&stale[..8]));
+        });
+        crate::app_conflict::click_control(cx, window, "plan-cancel");
         let other = build_fixture();
         let other_path = other.path().canonicalize().unwrap();
         let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
@@ -526,9 +569,15 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
                     .and_then(|session| app.app_sessions.attachment(session))
                     .expect("continue owner");
                 app.conflict_continue(owner, window, cx);
+                assert!(app.conflict_continue_modal().is_some());
+                assert!(!app.app_sessions.has_leases());
             });
         })
         .unwrap();
+        let before_confirm = crate::macos::repo_fingerprint(&repo);
+        cx.run_until_parked();
+        assert_eq!(before_confirm, crate::macos::repo_fingerprint(&repo));
+        app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
         wait(cx, &app, |app| app.ui().conflict.is_none());
         wait(cx, &app, |app| {
             if duplicate {
@@ -644,6 +693,8 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("continue owner");
             app.conflict_continue(owner, window, cx);
+            assert!(app.conflict_continue_modal().is_some());
+            app.confirm_conflict_continue(cx);
             app.close_tab(0, cx);
         });
     })
@@ -759,6 +810,8 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("continue owner");
             app.conflict_continue(owner, window, cx);
+            assert!(app.conflict_continue_modal().is_some());
+            app.confirm_conflict_continue(cx);
         });
     })
     .unwrap();
@@ -870,6 +923,8 @@ pub fn scenario_stash_continue_panic(cx: &mut VisualTestAppContext) {
                 .attachment(app.active_session().unwrap())
                 .unwrap();
             app.conflict_continue(owner, window, cx);
+            assert!(app.conflict_continue_modal().is_some());
+            app.confirm_conflict_continue(cx);
         });
     })
     .unwrap();
@@ -924,6 +979,8 @@ pub fn scenario_stash_continue_after_tab_switch(cx: &mut VisualTestAppContext) {
                 .attachment(app.active_session().unwrap())
                 .unwrap();
             app.conflict_continue(owner, window, cx);
+            assert!(app.conflict_continue_modal().is_some());
+            app.confirm_conflict_continue(cx);
             app.switch_repo(1, cx);
             app.status_footer = FooterStatus::Idle("other tab sentinel".into());
         });

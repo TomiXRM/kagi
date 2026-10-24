@@ -250,6 +250,15 @@ part (and its story) before hand-making a control, write the state contract,
 and compare before / reference / after in Tier B. A hand-made interactive
 control says in the PR why the existing part did not fit.
 
+**Every placement follows Apple's Human Interface Guidelines** (owner ruling,
+#1764): read `.claude/skills/hig-review/SKILL.md` (Codex:
+`.agents/skills/kagi-hig-review`). A new or moved control gets a design review
+*before* code — the governing HIG sentences quoted from the live page, plus a
+figure of current vs proposed at the same scale — and every PR that changes
+what the user sees gets an independent HIG review of its real-window
+screenshots before merge. An open HIG P1/P2 blocks the merge. A control in a
+place the HIG does not sanction is a bug regardless of its tests.
+
 ## Verifying the GUI
 
 **An agent verifies UI changes itself — "not verified in the GUI" is not a finished

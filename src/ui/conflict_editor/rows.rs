@@ -59,12 +59,16 @@ pub(super) fn build_side_rows(
                     SelectionSide::Current => (
                         &hunk.current,
                         &hunk.incoming,
-                        hunk.line_select.as_ref().map(|s| &s.current_taken),
+                        hunk.line_select
+                            .as_ref()
+                            .map(|s| s.taken(SelectionSide::Current)),
                     ),
                     SelectionSide::Incoming => (
                         &hunk.incoming,
                         &hunk.current,
-                        hunk.line_select.as_ref().map(|s| &s.incoming_taken),
+                        hunk.line_select
+                            .as_ref()
+                            .map(|s| s.taken(SelectionSide::Incoming)),
                     ),
                 };
                 for (line_index, text) in lines.iter().enumerate() {

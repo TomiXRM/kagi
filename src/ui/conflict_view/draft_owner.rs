@@ -255,18 +255,29 @@ impl ConflictView {
         cx.spawn(async move |_, cx| {
             let _ = parent.update(cx, |app, cx| {
                 let current = app.conflict_action_owner_on_screen(&owner);
-                app.record_operation_completion(
-                    "conflict-draft-autosave",
-                    kagi_git::StateSummary {
-                        head: "conflict".into(),
-                        dirty: "unsaved decisions".into(),
-                    },
-                    kagi_git::oplog::OpOutcome::Failed { error },
-                    None,
-                    &repo,
-                    current,
-                    false,
+                // Unlike ordinary short operation results, a failed autosave
+                // must announce even while its Graph workspace is foreground.
+                // This shared path records once and keeps the preview bounded.
+                app.record_op_result(
+                    kagi_git::oplog::OpLogEntry::new(
+                        "conflict-draft-autosave",
+                        repo.display().to_string(),
+                        kagi_git::StateSummary {
+                            head: "conflict".into(),
+                            dirty: "unsaved decisions".into(),
+                        },
+                        kagi_git::oplog::OpOutcome::Failed { error },
+                    ),
                     cx,
+                    true,
+                    None,
+                    None,
+                    true,
+                    current,
+                    None,
+                    false,
+                    None,
+                    None,
                 );
             });
         })

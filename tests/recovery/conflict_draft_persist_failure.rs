@@ -180,7 +180,12 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Entry, discard: bo
     let repo = fixture.path().canonicalize().unwrap();
     let original = std::fs::read(repo.join(FILE)).unwrap();
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, cx| app.set_lang(lang, cx));
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        // Autosave failures must announce even in the foreground Graph view,
+        // where ordinary short operation-result toasts are intentionally quiet.
+        app.set_window_active_for_e2e(true, cx);
+    });
     detect(cx, &app, window);
     let input = result_input(cx, &app, window);
     // Deny actual filesystem access, not an injected view flag or mocked backend.

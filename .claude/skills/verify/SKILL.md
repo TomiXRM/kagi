@@ -60,7 +60,9 @@ that crashed macOS.
 For #1731 use `KAGI_GUI_E2E_ONLY='conflict_draft_persist_failure,conflict_abort'`
 with KEEP_GOING. The draft failure scenario makes the real conflicts directory
 unwritable, edits the native Result, and checks the durable Failed receipt,
-bounded Error toast and EN/JA host-close/quit sheet. Renderer-fed guard labels
+bounded Error toast even in the active Graph workspace, and EN/JA host-close/quit
+sheet. Its active-window seam prevents ordinary short-operation toast suppression
+from hiding mandatory autosave errors. Renderer-fed guard labels
 are observed through `record_conflict_draft_guard`; this is not OS accessibility
 evidence. Retry must retain the sheet while writes fail, then save exact live
 text after permissions recover; discard must require a second explicit action.

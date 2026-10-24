@@ -15,6 +15,13 @@ pub enum FileReadSource<'a> {
 }
 
 impl Backend {
+    /// Stage-0 mode, without looking up the object (gitlinks need not exist in
+    /// this repository's object database). No HEAD or conflict-stage fallback.
+    pub fn index_file_mode(&self, path: &Path) -> Result<Option<u32>, GitError> {
+        let index = self.repo.index().map_err(git_error)?;
+        Ok(index.get_path(path, 0).map(|entry| entry.mode))
+    }
+
     /// Probe only `prefix.len()` bytes without allocating an application Vec.
     /// Git's compressed/delta object storage can still materialize the blob inside
     /// libgit2; this is not a bound on libgit2's cache or process memory.

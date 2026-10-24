@@ -10,6 +10,52 @@ pub struct SavedPreview {
     lines: Arc<Vec<kagi_git::resolution::ResolvedLine>>,
 }
 
+impl SavedPreview {
+    /// Inspect stage 0; gitlinks contain a commit identity, not blob bytes.
+    /// The caller brackets this read with the accepted observation's revision.
+    fn read_index(
+        backend: &kagi_git::Backend,
+        path: PathBuf,
+        oid: String,
+    ) -> Result<Self, kagi_git::GitError> {
+        let bytes = if backend.index_file_mode(&path)? == Some(0o160000) {
+            oid.as_bytes().to_vec()
+        } else {
+            backend
+                .file_bytes(
+                    kagi_git::backend::file_reads::FileReadSource::Index,
+                    &path,
+                    16 * 1024 * 1024,
+                )?
+                .ok_or_else(|| kagi_git::GitError::Other("Saved index entry is absent".into()))?
+        };
+        let text = if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
+            use std::fmt::Write;
+            let mut hex = String::new();
+            for (offset, chunk) in bytes.chunks(16).enumerate() {
+                let _ = write!(hex, "{:08x}  ", offset * 16);
+                for byte in chunk {
+                    let _ = write!(hex, "{byte:02x} ");
+                }
+                hex.push('\n');
+            }
+            std::borrow::Cow::Owned(hex)
+        } else {
+            String::from_utf8_lossy(&bytes)
+        };
+        let lines = Arc::new(kagi_git::resolution::text_to_lines(
+            &text,
+            kagi_git::resolution::LineOrigin::Context,
+        ));
+        Ok(Self {
+            path,
+            oid,
+            bytes: bytes.into(),
+            lines,
+        })
+    }
+}
+
 impl ConflictView {
     pub fn conflict_open_saved(&mut self, idx: usize, cx: &mut Context<Self>) {
         self.capture_result_for_navigation(cx);
@@ -83,13 +129,7 @@ impl ConflictView {
                     "Conflict observation changed".into(),
                 ));
             }
-            let bytes = backend
-                .file_bytes(
-                    kagi_git::backend::file_reads::FileReadSource::Index,
-                    &path,
-                    16 * 1024 * 1024,
-                )?
-                .ok_or_else(|| kagi_git::GitError::Other("Saved index entry is absent".into()))?;
+            let preview = SavedPreview::read_index(&backend, path, oid)?;
             let after = backend.conflict_snapshot()?;
             if after
                 .as_ref()
@@ -99,30 +139,7 @@ impl ConflictView {
                     "Conflict observation changed".into(),
                 ));
             }
-            let text = if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
-                use std::fmt::Write;
-                let mut hex = String::new();
-                for (offset, chunk) in bytes.chunks(16).enumerate() {
-                    let _ = write!(hex, "{:08x}  ", offset * 16);
-                    for byte in chunk {
-                        let _ = write!(hex, "{byte:02x} ");
-                    }
-                    hex.push('\n');
-                }
-                std::borrow::Cow::Owned(hex)
-            } else {
-                String::from_utf8_lossy(&bytes)
-            };
-            let lines = Arc::new(kagi_git::resolution::text_to_lines(
-                &text,
-                kagi_git::resolution::LineOrigin::Context,
-            ));
-            Ok(SavedPreview {
-                path,
-                oid,
-                bytes: bytes.into(),
-                lines,
-            })
+            Ok(preview)
         });
         cx.spawn(async move |view, cx| {
             let result = task.await;
@@ -217,5 +234,119 @@ impl ConflictView {
             .child(header)
             .child(e2e::measure_control("conflict-saved-preview", body))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SavedPreview;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn submodule_conflict() -> (tempfile::TempDir, String) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dir = temp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.email", "saved-preview@example.com"]);
+        git(dir, &["config", "user.name", "Saved preview"]);
+        let mut targets = Vec::new();
+        for label in ["base", "current", "incoming"] {
+            git(dir, &["commit", "--allow-empty", "-qm", label]);
+            targets.push(git(dir, &["rev-parse", "HEAD"]));
+        }
+        git(
+            dir,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{},sub", targets[0]),
+            ],
+        );
+        git(dir, &["commit", "-qm", "base gitlink"]);
+        git(dir, &["checkout", "-qb", "side"]);
+        git(
+            dir,
+            &[
+                "update-index",
+                "--cacheinfo",
+                &format!("160000,{},sub", targets[2]),
+            ],
+        );
+        git(dir, &["commit", "-qm", "incoming gitlink"]);
+        git(dir, &["checkout", "-q", "main"]);
+        git(
+            dir,
+            &[
+                "update-index",
+                "--cacheinfo",
+                &format!("160000,{},sub", targets[1]),
+            ],
+        );
+        git(dir, &["commit", "-qm", "current gitlink"]);
+        let merge = Command::new("git")
+            .args(["merge", "side"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(!merge.status.success(), "gitlink merge must conflict");
+        (temp, targets.remove(2))
+    }
+
+    #[test]
+    fn saved_gitlink_preview_displays_chosen_commit_oid() {
+        let (temp, incoming) = submodule_conflict();
+        let backend = kagi_git::Backend::open(temp.path()).unwrap();
+        let path = Path::new("sub");
+        let before = backend.conflict_snapshot().unwrap().unwrap();
+        assert!(before.session.files.iter().any(|file| {
+            file.path == path && file.kind == kagi_git::conflicts::ConflictKind::Submodule
+        }));
+        let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+        buffer
+            .apply_choice(path, kagi_git::ResolutionChoice::Incoming)
+            .unwrap();
+        backend.execute_conflict_save(&buffer, path).unwrap();
+        let saved = backend.conflict_snapshot().unwrap().unwrap();
+        let file = saved
+            .session
+            .resolved
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap();
+        assert_eq!(file.oid, incoming);
+        assert_eq!(backend.index_file_mode(path).unwrap(), Some(0o160000));
+
+        // Exercise the same read and line construction used by the Saved pane,
+        // not a formatter with fabricated side metadata.
+        let preview = SavedPreview::read_index(&backend, file.path.clone(), file.oid.clone())
+            .expect("saved gitlink must not be read as a blob");
+        assert_eq!(preview.bytes.as_ref(), incoming.as_bytes());
+        assert_eq!(preview.lines.len(), 1);
+        assert_eq!(preview.lines[0].text, incoming);
+        assert_eq!(
+            backend
+                .conflict_snapshot()
+                .unwrap()
+                .unwrap()
+                .observation
+                .revision,
+            saved.observation.revision,
+            "inspection must not mutate the accepted stage-0 state"
+        );
     }
 }

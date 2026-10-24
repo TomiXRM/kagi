@@ -23,19 +23,40 @@ This gate is in addition to `docs/ui/modern-ui.md` (role, density, reference,
 state contract) and the Tier A / Tier B verification in
 `.claude/skills/verify/SKILL.md`. It replaces nothing.
 
+## The reviewer and the corpus
+
+The review method and the HIG text come from the owner-chosen
+[`dickwu/apple-design-skill`](https://github.com/dickwu/apple-design-skill)
+(pinned `914b6a3`, 2026-10-15). It is **not vendored**: the repository carries
+no license and `references/hig/*.md` is Apple's text. Install it per machine
+and point reviewers at it:
+
+```sh
+git clone https://github.com/dickwu/apple-design-skill.git ~/.claude/skills/apple-design
+git -C ~/.claude/skills/apple-design checkout 914b6a3
+```
+
+A reviewer follows `~/.claude/skills/apple-design/SKILL.md`: load the always-load
+set (`accessibility.md`, `layout.md`, `typography.md`, `color.md`,
+`designing-for-macos.md`) plus 3–6 pages for what is on screen via
+`references/hig-lookup.md`, read the file before citing, and cite
+`<page>.md › <Heading>`. The public `developer.apple.com/…/<page>.md` endpoint
+is the fallback when the local copy is missing; the `.html` pages are JS shells
+and quote nothing. Never cite from memory.
+
 ## Step 1 — design review (before code)
 
 The implementer posts on the issue, next to the architecture review:
 
-1. **The HIG pages that govern the surface**, by name, with the sentences
-   quoted verbatim from `developer.apple.com/design/human-interface-guidelines/<page>`
-   (fetch the page; never cite from memory). Typical pages: `toolbars`,
-   `sidebars`, `buttons`, `sheets`, `alerts`, `menus`, `layout`, `feedback`,
-   `writing`, `accessibility`, `color`, `typography`.
+1. **The HIG pages that govern the surface** and the sentences quoted verbatim
+   from them (`<page>.md › <Heading>`). Typical pages for Kagi: `toolbars`,
+   `sidebars`, `buttons`, `sheets`, `alerts`, `menus`, `the-menu-bar`, `layout`,
+   `feedback`, `writing`, `accessibility`, `color`, `typography`,
+   `focus-and-selection`.
 2. **A figure** — SVG rendered to PNG, OpenPencil export, or a real-window
    screenshot with the new control drawn in — showing *current* and *proposed*
-   at the same scale. Words alone are not a proposal; the owner cannot evaluate
-   a placement from prose.
+   at the same scale, saved to a file and opened for the owner. Words alone are
+   not a proposal; the owner cannot evaluate a placement from prose.
 3. **The placement rules the proposal satisfies** (checklist below) and the one
    or two it stretches, with the HIG sentence that permits the stretch. If none
    does, the proposal is wrong; change it.
@@ -66,18 +87,22 @@ header for the list it shows; it does not carry commands that act on the whole
 window or end a session. Row actions are in context menus or in the row.
 
 **Primary / secondary / destructive** — one primary action per surface, on the
-trailing edge of its row or sheet. A destructive action is visually distinct,
-never adjacent to the primary, and always confirmed in a sheet with Cancel as
-the safe default (`sheets`, `alerts`). The confirmation names the consequence,
+trailing edge of its row or sheet; prominent (filled) buttons stay at one or
+two per view (`buttons.md › Style`). A destructive action is visually
+distinct, never adjacent to the primary, and an uncommon, irreversible one is
+confirmed in a sheet (`alerts.md`). The confirmation names the consequence,
 not the command (#1588: no `git …` strings in copy).
 
 **Status is not a button** — an in-progress operation (merge 1/3, rebase step)
 is a status banner or label; its exits (abort) and its advance (continue) are
 controls next to it, separated by space, not mixed into unrelated rows.
 
-**Sheets and alerts** — one question, two or three buttons, the default is the
-safe one, Escape cancels, the destructive button uses the destructive style
-and never has keyboard focus by default.
+**Sheets and alerts** — one question, two or three buttons, Cancel on the
+leading side, Escape cancels. A danger sheet has **no default button**: Return
+does nothing, so people read it (`alerts.md`: "you don't want to make a Cancel
+button the default button… avoid making any button the default button"); the
+destructive button uses the destructive style and never has keyboard focus by
+default. A caution symbol only where data can be lost.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.

@@ -252,8 +252,10 @@ control says in the PR why the existing part did not fit.
 
 **Every placement follows Apple's Human Interface Guidelines** (owner ruling,
 #1764): read `.claude/skills/hig-review/SKILL.md` (Codex:
-`.agents/skills/kagi-hig-review`). A new or moved control gets a design review
-*before* code — the governing HIG sentences quoted from the live page, plus a
+`.agents/skills/kagi-hig-review`; corpus and method: the owner-chosen
+`dickwu/apple-design-skill`, installed per machine at `~/.claude/skills/apple-design`,
+never vendored). A new or moved control gets a design review *before* code —
+the governing HIG sentences quoted from `references/hig/<page>.md`, plus a
 figure of current vs proposed at the same scale — and every PR that changes
 what the user sees gets an independent HIG review of its real-window
 screenshots before merge. An open HIG P1/P2 blocks the merge. A control in a

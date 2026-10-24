@@ -1,5 +1,33 @@
 //! Git's conflict-path block in MERGE_MSG; pure byte parsing only.
 
+/// Resolve the configured character using the same recorded-message evidence
+/// for Saved paths and the merge commit composer.
+pub fn effective_comment_char(configured: Option<&str>, message: &[u8]) -> u8 {
+    match configured {
+        Some("auto") => auto_comment_char(message),
+        Some(value) => value.as_bytes().first().copied().unwrap_or(b'#'),
+        None => b'#',
+    }
+}
+
+/// Git comments start in column zero; indented prose remains user content.
+pub fn non_comment_lines(message: &str, comment_char: u8) -> impl Iterator<Item = &str> {
+    message
+        .lines()
+        .filter(move |line| line.as_bytes().first() != Some(&comment_char))
+}
+
+/// Strip generated comments without interpreting other punctuation as comments.
+pub fn strip_comments(message: &str, comment_char: u8) -> String {
+    let mut stripped = String::with_capacity(message.len());
+    for line in non_comment_lines(message, comment_char) {
+        stripped.push_str(line);
+        stripped.push('\n');
+    }
+    stripped.truncate(stripped.trim_end().len());
+    stripped
+}
+
 /// Git's automatic comment characters, in preference order. A recorded conflict
 /// heading identifies the choice already made by Git; otherwise select the first
 /// candidate not used at the start of a message line (Git's auto rule).
@@ -58,7 +86,7 @@ pub fn conflicted_paths(merge_msg: &[u8], comment_char: u8) -> Vec<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{auto_comment_char, conflicted_paths};
+    use super::{auto_comment_char, conflicted_paths, effective_comment_char, strip_comments};
 
     #[test]
     fn preserves_path_edge_whitespace() {
@@ -99,6 +127,34 @@ mod tests {
         assert_eq!(auto_comment_char(b"ordinary message\n"), b'#');
         assert_eq!(auto_comment_char(b"# message\n; message\n"), b'@');
         assert_eq!(auto_comment_char(b"# Conflicts:\n#\tfile.txt\n"), b'#');
+    }
+
+    #[test]
+    fn strips_configured_merge_comments_preserving_user_body() {
+        let message = "Merge topic\n\n# User heading\nBody; punctuation\n  ; indented prose\n\n; Conflicts:\n;\tfile.txt\n";
+        let expected = "Merge topic\n\n# User heading\nBody; punctuation\n  ; indented prose";
+        for configured in [Some(";"), Some("auto")] {
+            let comment = effective_comment_char(configured, message.as_bytes());
+            assert_eq!(comment, b';');
+            assert_eq!(strip_comments(message, comment), expected);
+        }
+    }
+
+    #[test]
+    fn strips_default_and_comment_only_merge_templates() {
+        assert_eq!(effective_comment_char(None, b""), b'#');
+        assert_eq!(
+            strip_comments("Merge topic\n\n# Conflicts:\n#\tfile\n", b'#'),
+            "Merge topic"
+        );
+        assert_eq!(strip_comments("; Conflicts:\n;\tfile\n", b';'), "");
+        assert_eq!(
+            strip_comments(
+                "Merge topic\n\nUser body\n",
+                effective_comment_char(Some("auto"), b"Merge topic\n\nUser body\n")
+            ),
+            "Merge topic\n\nUser body"
+        );
     }
 
     #[test]

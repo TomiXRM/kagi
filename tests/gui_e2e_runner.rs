@@ -53,6 +53,10 @@ mod time_locale;
 mod open_picker;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_open.rs"]
+mod conflict_open;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/ref_validation.rs"]
 mod ref_validation;
 
@@ -259,6 +263,10 @@ mod update_notice;
 #[cfg(target_os = "macos")]
 #[path = "recovery/create_branch_warnings.rs"]
 mod create_branch_warnings;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_cancel_reopen.rs"]
+mod create_branch_cancel_reopen;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
@@ -3230,6 +3238,10 @@ mod macos {
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_unrelated_replan),
             ),
             (
+                "conflict_continue_presentation",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_presentation),
+            ),
+            (
                 "conflict_draft_revision_audit",
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_audit),
             ),
@@ -3252,6 +3264,58 @@ mod macos {
             (
                 "conflict_draft_revision_saved_legacy",
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
+            ),
+            (
+                "conflict_draft_corrupt_restore",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_corrupt_restore),
+            ),
+            (
+                "conflict_draft_restore_io_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_restore_io_failure),
+            ),
+            (
+                "conflict_draft_stale_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_failure),
+            ),
+            (
+                "conflict_draft_stale_restore_async",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_async),
+            ),
+            (
+                "conflict_draft_fresh_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_fresh_restore_failure),
+            ),
+            (
+                "conflict_draft_continue_restore_admission",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_continue_restore_admission),
+            ),
+            (
+                "conflict_draft_stale_restore_success",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_success),
+            ),
+            (
+                "conflict_draft_abort_restore_admission",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_abort_restore_admission),
+            ),
+            (
+                "conflict_draft_cleared_handoff",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_cleared_handoff),
+            ),
+            (
+                "conflict_draft_stale_handoff",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_stale_handoff),
+            ),
+            (
+                "conflict_open_fresh",
+                Box::new(crate::conflict_open::scenario_conflict_open_fresh),
+            ),
+            (
+                "conflict_open_second_tab",
+                Box::new(crate::conflict_open::scenario_conflict_open_second_tab),
+            ),
+            (
+                "conflict_launch",
+                Box::new(crate::conflict_open::scenario_conflict_launch),
             ),
             (
                 "conflict_draft_inspection_empty_legacy",
@@ -4027,6 +4091,10 @@ mod macos {
             (
                 "create_branch_warnings",
                 Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
+            ),
+            (
+                "create_branch_cancel_reopen",
+                Box::new(crate::create_branch_cancel_reopen::scenario_create_branch_cancel_reopen),
             ),
             (
                 "stash_push_stacked_preview",

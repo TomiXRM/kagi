@@ -219,9 +219,11 @@ fn stuck_merging_fixture() -> tempfile::TempDir {
 pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    let hold = crate::conflict_draft_inspection::DetectionHold::new(cx, false);
     let (app, window) = mount(cx, &repo);
-    // No unmerged or staged resolution remains to mount an editor. The first
-    // accepted read still exposes the operation and its #704 exit.
+    hold.wait(cx, &app);
+    // Admission arrives before presentation. Hold the real detector callback
+    // to prove #704's fallback stays reachable during that startup interval.
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
@@ -235,8 +237,23 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
         e2e::control_bounds(window.window_id(), "conflict-abort").is_none(),
         "an unmounted editor never duplicates the strip exit"
     );
+    drop(hold);
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "operation-strip");
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "#1755: the accepted startup read mounts the resolved-merge overview"
+    );
+    assert!(cx.read(|cx| app.read(cx).view().operation.is_some()));
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-session-header").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_some());
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS operation_strip_startup: runtime verified stuck MERGING has no ConflictView, operation and fallback Abort are visible");
+    eprintln!("[gui-e2e] PASS operation_strip_startup: runtime verified fallback Abort before the detector callback, then sidebar session header after #1755 mounts ConflictView");
 }
 
 /// While the conflict sidebar is visible its session header owns Abort. Hiding
@@ -300,8 +317,16 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
-    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
-    eprintln!("[gui-e2e] operation_strip_stale_detector: runtime verified no ConflictView before stale detection");
+    // Match the neighboring mounted-editor scenario: finish the initial
+    // detector before injecting obsolete results, rather than racing startup.
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: the staged overview is mounted before stale results land"
+    );
     let observed = |cx: &mut VisualTestAppContext| {
         cx.read(|cx| {
             let app = app.read(cx);
@@ -323,7 +348,7 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
         app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::Cleared, cx)
     });
     app.update(cx, |app, cx| {
-        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed, cx)
+        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed(None), cx)
     });
     cx.run_until_parked();
     assert_eq!(
@@ -332,8 +357,14 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
         "a stale detector result must not erase the accepted read's observation"
     );
 
-    // …and Abort still goes through, which is what the erasure used to break.
-    click_control(cx, window, "operation-strip-abort");
+    // …and the mounted sidebar's Abort still goes through, which is what
+    // the erasure used to break.
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_some()));
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
+    click_control(cx, window, "conflict-abort");
     cx.run_until_parked();
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
     wait_idle(cx, &app);
@@ -630,7 +661,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
     std::fs::write(&file_path, original_text).unwrap();
     for stale in [
         ConflictDetectOutcome::Cleared,
-        ConflictDetectOutcome::OpenFailed,
+        ConflictDetectOutcome::OpenFailed(None),
         staged,
     ] {
         app.update(cx, |app, cx| {
@@ -696,9 +727,12 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
-    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "#1755: the accepted startup read mounts the resolved-merge overview"
+    );
     eprintln!(
-        "[gui-e2e] operation_strip_abort: runtime verified no ConflictView before CommitPanel"
+        "[gui-e2e] operation_strip_abort: runtime verified mounted ConflictView before CommitPanel"
     );
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     cx.update_window(window, |_, window, cx| {
@@ -733,7 +767,7 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         repo.join(".git/MERGE_HEAD").exists(),
         "and a refused abort mutates nothing"
     );
-    click_control(cx, window, "operation-strip-abort");
+    click_control(cx, window, "conflict-abort");
     cx.run_until_parked();
     assert!(
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
@@ -1029,7 +1063,7 @@ pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppC
             app.ui().panes_revalidating(),
             "precondition: awaiting detection"
         );
-        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed, cx);
+        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed(None), cx);
     });
     cx.read(|cx| {
         let app = app.read(cx);

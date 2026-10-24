@@ -1346,7 +1346,11 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
     let route =
         plan_conflict_continue_route(&repo, &session, &buffer, "main", &expected).expect("route");
     match route {
-        ContinueRoute::MergeCommitPanel { message } => {
+        ContinueRoute::MergeCommitPanel {
+            message,
+            comment_char,
+        } => {
+            assert_eq!(comment_char, b'#');
             assert!(
                 message.to_lowercase().contains("merge"),
                 "merge message prefilled: {:?}",

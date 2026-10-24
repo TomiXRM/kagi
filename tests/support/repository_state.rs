@@ -19,6 +19,15 @@ pub(crate) struct RepositoryState {
 }
 
 impl RepositoryState {
+    /// An expected, separately asserted receipt is the only allowed difference;
+    /// retain byte-exact comparison of every Git field and the complete log.
+    pub(crate) fn with_appended_oplog(mut self, entry: &kagi_git::oplog::OpLogEntry) -> Self {
+        let bytes = self.oplog.get_or_insert_with(Vec::new);
+        bytes.extend_from_slice(kagi_git::oplog::entry_to_json(entry).as_bytes());
+        bytes.push(b'\n');
+        self
+    }
+
     pub(crate) fn read(repo: &Path) -> Self {
         fn output(repo: &Path, args: &[&str]) -> Vec<u8> {
             let result = Command::new("git")

@@ -91,6 +91,7 @@ fn phrase_ja(p: OpPhrase) -> &'static str {
         OpPhrase::Stashing => "stash",
         OpPhrase::ApplyingAStash => "stash の適用",
         OpPhrase::CheckingOutTheNewBranch => "新しい branch の checkout",
+        OpPhrase::DiscardingChanges => "変更の破棄",
     }
 }
 

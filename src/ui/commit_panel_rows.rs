@@ -237,18 +237,18 @@ fn render_cp_file_row(
             // issue #338: emphasis badge on a convention-body file — these steer
             // agent behaviour, so they are highlighted, never folded.
             el.child(
-                div()
-                    .ml_1()
-                    .mr_2()
-                    .px(px(3.))
-                    .rounded_sm()
-                    .flex_shrink_0()
-                    .bg(rgb(theme().color_warning))
-                    .text_size(px(9.))
-                    .line_height(px(14.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(rgb(theme().bg_base))
-                    .child(SharedString::from(Msg::AgentConventionBadge.t())),
+                super::button_style::status_badge(
+                    ("cp-convention-badge", fi),
+                    "cp-row-convention",
+                    Msg::AgentConventionBadge.t(),
+                    theme().color_warning,
+                    false,
+                    cx,
+                )
+                .ml_1()
+                .mr_2()
+                .px(px(3.))
+                .font_weight(gpui::FontWeight::BOLD),
             )
         })
         .child(diffstat_bar::diffstat_unit(
@@ -266,20 +266,15 @@ fn render_cp_file_row(
         cx,
     );
     if is_conflicted {
-        // Conflicted rows can be neither staged nor discarded from here.
-        return file_row.child(
-            div()
-                .id((conflict_id, fi))
-                .ml_2()
-                .px_1()
-                .py_px()
-                .rounded_sm()
-                .flex_shrink_0()
-                .bg(rgb(theme().color_blocker)) // red
-                .text_xs()
-                .text_color(rgb(theme().bg_base))
-                .child(SharedString::from(Msg::CommitPanelConflict.t())),
-        );
+        // A conflict is a status, not an unavailable Stage action.
+        return file_row.child(super::button_style::status_badge(
+            (conflict_id, fi),
+            "cp-row-conflict",
+            Msg::CommitPanelConflict.t(),
+            theme().color_blocker,
+            true,
+            cx,
+        ));
     }
     // #476 slice 3: offered on a linked worktree's panel too — Discard resolves
     // the panel's own repository now, and its confirm names that worktree.

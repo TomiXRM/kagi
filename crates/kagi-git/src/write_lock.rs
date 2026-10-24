@@ -7,10 +7,10 @@ use crate::GitError;
 use kagi_domain::plan_note::{ConflictsNote, PlanNote};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 thread_local! {
     // Reentrancy is lexical and thread-local, not process-wide permission for
@@ -33,31 +33,14 @@ pub(crate) fn acquire(repo: &git2::Repository) -> Result<RepositoryWriteLock, Gi
         if let Some(file) = held.get(&path).and_then(Weak::upgrade) {
             return Ok(RepositoryWriteLock { _file: file });
         }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(io)?;
-        let deadline = Instant::now() + Duration::from_millis(100);
-        loop {
-            // std uses flock(LOCK_EX | LOCK_NB) on Unix and the corresponding
-            // descriptor-based kernel lock on Windows. Closing releases it,
-            // including process death; the empty sidecar intentionally remains.
-            match file.try_lock() {
-                Ok(()) => break,
-                Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5));
+        let file = crate::advisory_lock::lock_exclusive(&path, Duration::from_millis(100))
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    GitError::Blocked(Box::new(PlanNote::Conflicts(ConflictsNote::RepositoryBusy)))
+                } else {
+                    io(error)
                 }
-                Err(std::fs::TryLockError::WouldBlock) => {
-                    return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
-                        ConflictsNote::RepositoryBusy,
-                    ))));
-                }
-                Err(error) => return Err(io(error)),
-            }
-        }
+            })?;
         let file = Rc::new(file);
         held.retain(|_, file| file.strong_count() != 0);
         held.insert(path, Rc::downgrade(&file));

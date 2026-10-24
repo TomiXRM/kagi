@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed by the guard. There are 52 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), twelve TLC negative controls,
+No product code is imported or changed by the guard. There are 56 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), 16 TLC negative controls,
 30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -135,11 +135,15 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | External CLI index-write TOCTOU after the last check; not closed by #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
-| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
+| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1732; capture before acknowledged flush can be lost |
+| `draft-crash-broken` | `DraftNeverLost` | REFUTE | draftSync | Negative control; omit the captured edit's commit |
 | `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
-| `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |
+| `draft-two-writers` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-two-writers-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; unlocked read/merge/write |
+| `draft-lost-update` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | HOLD | none | #1746 D3: kernel writer ownership |
 | `two-instance-leases-broken` | `RepoHasAtMostOneLease` | REFUTE | repoLock | Negative control: remove repository lock |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | HOLD | none | HOLD via #1746 D3 (lock); #1733 residual = external CLI |
@@ -160,6 +164,21 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
 | `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
+
+The #1732 draft guards cite `resolution/draft_storage.rs`'s OS lock, checked
+content-CAS read, and ADR-0191 atomic temp/sync/rename writer. Its backend
+`draft_writer.rs` captures memory immediately and offers one ordered background
+writer with latest-snapshot coalescing for at most 250 ms before starting.
+An in-flight fsync can extend that window. Queue acceptance is **not** a durable
+acknowledgment: `DraftSave::wait()` / blocking `flush()` must return `Ok`.
+Consequently the unchanged strong `draft-crash` capture invariant remains
+REFUTE; the model retains the real pre-commit crash transition rather than
+quotienting it away. The preceding acknowledged document remains valid.
+This is not a power-loss guarantee. The lock quotient models successful
+acquisition, not the timeout's UI presentation; backend child tests cover the
+two-second error and SIGKILL release. GUI consumers must await barriers off-thread
+and preserve pending/failed close gates; the backend API alone does not wire them.
+
 
 ### Pure table (`pure/predict_*.py`)
 

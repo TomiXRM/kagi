@@ -179,9 +179,9 @@ pub(super) fn conflict_read<'a>(app: &'a Entity<KagiApp>, cx: &'a gpui::App) -> 
     app.read(cx).ui().conflict.as_ref().unwrap().read(cx)
 }
 
-pub(super) fn replace_result(
+/// Deliver Change without draining tasks or painting after its callback returns.
+fn emit_result_change(
     cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
     window: AnyWindowHandle,
     input: &Entity<InputState>,
     text: &str,
@@ -193,6 +193,16 @@ pub(super) fn replace_result(
     .unwrap();
     cx.simulate_keystrokes(window, "cmd-a");
     cx.simulate_input(window, text);
+}
+
+pub(super) fn replace_result(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    input: &Entity<InputState>,
+    text: &str,
+) {
+    emit_result_change(cx, window, input, text);
     cx.run_until_parked();
     paint(cx, app, window);
     assert_eq!(cx.read(|cx| input.read(cx).value().to_string()), text);
@@ -352,9 +362,20 @@ pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppCont
     let input = result_input(cx, &app, window);
     let original = cx.read(|cx| input.read(cx).value().to_string());
     let file = Path::new(FILE);
-    replace_result(cx, &app, window, &input, FIRST);
-    let saved = ResolutionBuffer::load(&repo).expect("Change autosaves the Result draft");
+    emit_result_change(cx, window, &input, FIRST);
+    // DraftNeverLost / draft-crash: capture must commit synchronously. Neither
+    // run_until_parked nor paint may be needed to make the returned edit durable.
+    let saved = ResolutionBuffer::load(&repo)
+        .expect("Change capture must autosave before returning, without deferred work");
     assert_eq!(saved.resolved_text(file).as_deref(), Some(FIRST));
+    cx.run_until_parked();
+    paint(cx, &app, window);
+    assert_eq!(cx.read(|cx| input.read(cx).value().to_string()), FIRST);
+    cx.read(|cx| {
+        let mode = conflict_read(&app, cx).mode.as_ref().unwrap();
+        assert_eq!(mode.buffer.resolved_text(file).as_deref(), Some(FIRST));
+        assert!(mode.can_continue());
+    });
     input.update(cx, |input, cx| input.set_selected_range(2..8, cx));
     let revision = cx.read(|cx| {
         conflict_read(&app, cx)

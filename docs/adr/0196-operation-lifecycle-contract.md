@@ -700,6 +700,8 @@ merge finalization additionally use the backend's repository advisory lock at
 On Unix this is an fd-based `flock`, not `O_EXCL` or a PID marker. Never unlink
 the persistent sidecar. Closing the final descriptor (including process death)
 releases ownership in the kernel.
+Both draft and repository admission use `kagi_git::advisory_lock::lock_exclusive`;
+the caller supplies the distinct path and timeout, not a second flock implementation.
 
 Read-only plan and application admission probe the same lock with nonblocking
 attempts, retrying for at most 100 ms. The confirmation modal retains no lock.

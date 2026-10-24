@@ -481,6 +481,9 @@ impl KagiApp {
                                 v.merge_comment_char = comment_char;
                             });
                         }
+                        if let Some(conflict) = app.ui().conflict.clone() {
+                            conflict.update(cx, |view, _| view.retire_raw_preview());
+                        }
                         if let Some(ui) = app.ui_mut() {
                             ui.conflict_merge_pending = true;
                         }

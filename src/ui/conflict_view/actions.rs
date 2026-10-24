@@ -332,6 +332,9 @@ impl ConflictView {
         let Some(file) = mode.session.files.get(idx) else {
             return;
         };
+        if mode.selected_file != Some(idx) {
+            self.raw_preview.retire();
+        }
         let open_path = matches!(file.kind, ConflictKind::Content | ConflictKind::AddAdd)
             .then(|| file.path.clone());
         self.reset_all_target = None;
@@ -450,7 +453,7 @@ impl ConflictView {
     /// Marshal an error toast to the parent (deferred — `push_toast` lives on
     /// `KagiApp`; this may run from a leased listener so it must not touch the
     /// parent synchronously).
-    fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
         let weak_app = self.app.clone();
         let owner = self.owner.clone();
         cx.spawn(async move |_view, acx| {

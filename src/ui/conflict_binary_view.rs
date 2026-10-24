@@ -1,12 +1,9 @@
 //! #321 — informative side-by-side viewer for binary / symlink / submodule
 //! conflicts inside Conflict Mode.
 //!
-//! Backend resolution (take a side by raw OID) already works (#297); this module
-//! only adds the VIEWER so the user can see what they are choosing. It sits
-//! ABOVE the unchanged take-current / take-incoming buttons in `render_center`.
-//!
-//! Layer boundary (CLAUDE.md): all byte/blob access goes through
-//! `Backend::conflict_side_bytes` / `conflict_side_blob_info` — no git2 here.
+//! Backend resolution (take a side by raw OID) stays authoritative. ConflictView
+//! retains an accepted, off-thread prepared pair; rendering never opens Backend.
+//! Choice controls and the existing side layout remain unchanged in ADR-0228 step ①.
 //!
 //! Per side we render one of four modes:
 //!   - **Image** (png/jpg/jpeg/gif/webp/bmp, within a size cap): the decoded
@@ -17,24 +14,25 @@
 //!   - **Binary** (and images beyond the cap): size + short OID, plus a shared
 //!     "open both sides in external editor" action to compare.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, px, rgb, Context, Image, ImageFormat, SharedString};
+use gpui::{div, prelude::*, px, rgb, Context, Image, SharedString};
 
 use kagi_git::conflicts::{ConflictKind, SideLabels};
 use kagi_git::resolution::SelectionSide;
 
-use super::conflict_view::{ConflictMode, ConflictView};
+use super::conflict_view::ConflictView;
 use super::i18n::Msg;
 use super::theme::{self, theme};
+
+#[cfg(feature = "gui-e2e")]
+mod test_support;
 
 /// Decode budget: images larger than this are not decoded inline (shown as a
 /// binary side with an "open externally" affordance instead). Keeps a huge blob
 /// from being handed to the image decoder every session.
-const IMAGE_SIZE_CAP: u64 = 8 * 1024 * 1024;
+pub(crate) const IMAGE_SIZE_CAP: u64 = 8 * 1024 * 1024;
 /// Max on-screen box for a previewed image side.
 const IMAGE_MAX_PX: f32 = 260.;
 
@@ -55,42 +53,6 @@ pub enum BinaryViewMode {
     Binary,
 }
 
-/// Map a supported image extension / magic-byte signature to a gpui
-/// [`ImageFormat`]. Extension wins; magic bytes are the fallback when the path
-/// has no (or a lying) extension. Returns `None` for anything not renderable.
-pub fn image_format_for(path: &Path, magic: Option<&[u8]>) -> Option<ImageFormat> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("png") => return Some(ImageFormat::Png),
-        Some("jpg") | Some("jpeg") => return Some(ImageFormat::Jpeg),
-        Some("gif") => return Some(ImageFormat::Gif),
-        Some("webp") => return Some(ImageFormat::Webp),
-        Some("bmp") => return Some(ImageFormat::Bmp),
-        _ => {}
-    }
-    image_format_from_magic(magic?)
-}
-
-/// Detect a supported image format from leading magic bytes.
-fn image_format_from_magic(b: &[u8]) -> Option<ImageFormat> {
-    if b.len() >= 8 && b[..8] == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
-        Some(ImageFormat::Png)
-    } else if b.len() >= 3 && b[..3] == [0xff, 0xd8, 0xff] {
-        Some(ImageFormat::Jpeg)
-    } else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
-        Some(ImageFormat::Webp)
-    } else if b.len() >= 6 && (&b[..6] == b"GIF87a" || &b[..6] == b"GIF89a") {
-        Some(ImageFormat::Gif)
-    } else if b.len() >= 2 && &b[..2] == b"BM" {
-        Some(ImageFormat::Bmp)
-    } else {
-        None
-    }
-}
-
 /// Decide the viewer mode for a conflict side. Submodule and Symlink follow the
 /// conflict kind directly; a Binary conflict renders as an image only when the
 /// blob is detected as one AND within the size cap, otherwise as a raw binary.
@@ -109,45 +71,21 @@ pub fn viewer_mode(kind: ConflictKind, is_image: bool, size: Option<u64>) -> Bin
     }
 }
 
-// ────────────────────────────────────────────────────────────
-// Preview cache (content-addressed by blob OID) — resolve each side once
-// ────────────────────────────────────────────────────────────
-
-thread_local! {
-    // ponytail: session-lifetime cache, never evicted. Keyed by blob OID (+
-    // conflict kind) so it is content-addressed (no stale entries across
-    // repos/sessions); a conflict session has a handful of files, so unbounded
-    // growth is not a concern. Upgrade path: LRU if a huge multi-repo session
-    // ever makes this matter.
-    static SIDE_CACHE: RefCell<HashMap<String, SideData>> = RefCell::new(HashMap::new());
-}
-
-/// Cache-first lookup (#409): consult [`SIDE_CACHE`] BEFORE any repository
-/// access. `build` (which opens the backend and reads the blob) runs only on a
-/// miss and its result is cached; a `None` from `build` (backend open failure)
-/// is not cached so a later frame can retry.
-fn cached_or_build(key: &str, build: impl FnOnce() -> Option<SideData>) -> Option<SideData> {
-    if let Some(hit) = SIDE_CACHE.with(|c| c.borrow().get(key).cloned()) {
-        return Some(hit);
-    }
-    let data = build()?;
-    SIDE_CACHE.with(|c| c.borrow_mut().insert(key.to_string(), data.clone()));
-    Some(data)
-}
-
 /// Everything the viewer needs for one side, resolved once via the backend.
 #[derive(Clone)]
-struct SideData {
-    present: bool,
-    oid_short: String,
-    size: Option<u64>,
-    mode: BinaryViewMode,
-    image: Option<Arc<Image>>,
-    symlink_target: Option<String>,
+pub(crate) struct SideData {
+    pub(crate) present: bool,
+    pub(crate) oid_short: String,
+    pub(crate) size: Option<u64>,
+    pub(crate) mode: BinaryViewMode,
+    pub(crate) image: Option<Arc<Image>>,
+    pub(crate) symlink_target: Option<String>,
+    /// A present side can fail preparation; it must never become `Absent`.
+    pub(crate) error: Option<String>,
 }
 
 impl SideData {
-    fn absent() -> Self {
+    pub(crate) fn absent() -> Self {
         SideData {
             present: false,
             oid_short: String::new(),
@@ -155,76 +93,170 @@ impl SideData {
             mode: BinaryViewMode::Binary,
             image: None,
             symlink_target: None,
+            error: None,
         }
     }
 }
 
-/// Build one side's viewer data via the backend (open once per render). Uses the
-/// content-addressed image cache so a blob is only decoded once.
-fn build_side(
-    backend: &kagi_git::Backend,
-    buffer: &kagi_git::resolution::ResolutionBuffer,
-    path: &Path,
-    side: SelectionSide,
+#[derive(Clone, Default)]
+pub(crate) enum PreviewState {
+    #[default]
+    Loading,
+    Ready(Arc<[SideData; 2]>),
+    Failed(Arc<str>),
+}
+
+/// One attachment's accepted presentation and cancellable preparation lifetime.
+#[derive(Default)]
+pub(crate) struct RawPreview {
+    pub(crate) state: PreviewState,
+    key: Option<PreviewKey>,
+    task: Option<gpui::Task<()>>,
+    generation: u64,
+    failed: Option<(PreviewKey, u8)>,
+}
+
+impl RawPreview {
+    pub(crate) fn retire(&mut self) {
+        self.generation += 1;
+        self.task = None;
+        self.key = None;
+        self.failed = None;
+        self.state = PreviewState::Loading;
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PreviewKey {
+    path: PathBuf,
+    revision: kagi_domain::conflict_family::ConflictRevision,
+    sides: [Option<(String, u32)>; 2],
     kind: ConflictKind,
-) -> SideData {
-    let Some(info) = backend.conflict_side_blob_info(buffer, path, side) else {
-        return SideData::absent();
-    };
+}
 
-    // Symlink: the blob IS the target path.
-    if kind == ConflictKind::Symlink {
-        let target = backend
-            .conflict_side_bytes(buffer, path, side)
-            .map(|b| String::from_utf8_lossy(&b).into_owned());
-        return SideData {
-            present: true,
-            oid_short: info.oid_short,
-            size: info.size,
-            mode: BinaryViewMode::Symlink,
-            image: None,
-            symlink_target: target,
-        };
-    }
-    if kind == ConflictKind::Submodule {
-        return SideData {
-            present: true,
-            oid_short: info.oid_short,
-            size: info.size,
-            mode: BinaryViewMode::Submodule,
-            image: None,
-            symlink_target: None,
-        };
+impl ConflictView {
+    pub(crate) fn retire_raw_preview(&mut self) {
+        self.raw_preview.retire();
     }
 
-    // Binary: within the size cap, fetch bytes and decide image-vs-raw by
-    // extension AND magic bytes (catches an image with a wrong/absent
-    // extension), decoding once per blob OID.
-    let within_cap = info.size.map(|s| s <= IMAGE_SIZE_CAP).unwrap_or(false);
-    let mut image = None;
-    if within_cap {
-        if let Some(bytes) = backend.conflict_side_bytes(buffer, path, side) {
-            if let Some(fmt) = image_format_for(path, Some(&bytes)) {
-                // #409: build_side only runs on a SIDE_CACHE miss, so this
-                // decode (and the blob read above) happens once per blob.
-                klog!(
-                    "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
-                    info.oid_short,
-                    fmt,
-                    bytes.len()
-                );
-                image = Some(Arc::new(Image::from_bytes(fmt, bytes)));
-            }
+    fn selected_raw_key(&self) -> Option<PreviewKey> {
+        let mode = self.mode.as_ref()?;
+        let file = mode.session.files.get(mode.selected_file?)?;
+        if self.selected_saved.is_some() || !file.kind.is_raw() {
+            return None;
         }
+        Some(PreviewKey {
+            path: file.path.clone(),
+            revision: mode.revision.clone(),
+            sides: [SelectionSide::Current, SelectionSide::Incoming]
+                .map(|side| mode.buffer.side_raw_meta(&file.path, side)),
+            kind: file.kind,
+        })
     }
-    let mode = viewer_mode(kind, image.is_some(), info.size);
-    SideData {
-        present: true,
-        oid_short: info.oid_short,
-        size: info.size,
-        mode,
-        image,
-        symlink_target: None,
+
+    fn raw_preview_matches(&self, key: &PreviewKey) -> bool {
+        self.selected_saved.is_none()
+            && self.mode.as_ref().is_some_and(|mode| {
+                mode.revision == key.revision
+                    && mode
+                        .selected_file
+                        .and_then(|index| mode.session.files.get(index))
+                        .is_some_and(|file| file.path == key.path && file.kind == key.kind)
+            })
+    }
+
+    /// Frame admission only freezes descriptors; all Backend access is in the worker.
+    pub(crate) fn sync_raw_preview(&mut self, cx: &mut Context<Self>) {
+        if self
+            .raw_preview
+            .key
+            .as_ref()
+            .is_some_and(|key| self.raw_preview_matches(key))
+        {
+            return;
+        }
+        // At most one retry per accepted observation/selection lifetime. Failed
+        // requests relinquish their active key, but a repaint cannot hot-loop.
+        if self
+            .raw_preview
+            .failed
+            .as_ref()
+            .is_some_and(|(key, failures)| *failures >= 2 && self.raw_preview_matches(key))
+        {
+            return;
+        }
+        let key = self.selected_raw_key();
+        let failures = self
+            .raw_preview
+            .failed
+            .as_ref()
+            .map_or(0, |(failed, count)| {
+                if Some(failed) == key.as_ref() {
+                    *count
+                } else {
+                    0
+                }
+            });
+        self.retire_raw_preview();
+        let Some(key) = key else { return };
+        self.raw_preview.key = Some(key.clone());
+        let generation = self.raw_preview.generation;
+        let repo = self.repo_path.clone();
+        let owner = self.owner.clone();
+        let input = key.clone();
+        let task = cx.background_spawn(async move {
+            use super::main_diff_pane::preparation::{
+                prepare_side_pair, MediaSide, PreparationPolicy,
+            };
+            use kagi_git::backend::file_reads::FileReadSource;
+            let backend = kagi_git::Backend::open(&repo)?;
+            let sides = input.sides.each_ref().map(|side| match side {
+                Some((oid, mode)) => MediaSide::File(
+                    FileReadSource::ConflictStage { oid, mode: *mode },
+                    &input.path,
+                ),
+                None => MediaSide::Absent,
+            });
+            Ok::<_, kagi_git::GitError>(
+                prepare_side_pair(&backend, sides, PreparationPolicy::Conflict(input.kind))
+                    .raw
+                    .expect("conflict preparation returns a raw pair"),
+            )
+        });
+        #[cfg(feature = "gui-e2e")]
+        let hold = test_support::take_hold();
+        self.raw_preview.task = Some(cx.spawn(async move |view, cx| {
+            let result = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = &hold {
+                hold.reached();
+            }
+            #[cfg(feature = "gui-e2e")]
+            let completion = match hold {
+                Some(hold) => Some(hold.wait().await),
+                None => None,
+            };
+            let _ = view.update(cx, |view, cx| {
+                let accepted = view.owner == owner
+                    && view.raw_preview.generation == generation
+                    && view.raw_preview.key.as_ref() == Some(&key)
+                    && view.raw_preview_matches(&key);
+                #[cfg(feature = "gui-e2e")]
+                test_support::record_completion(completion, accepted);
+                if !accepted {
+                    return;
+                }
+                match result {
+                    Ok(pair) => view.raw_preview.state = PreviewState::Ready(Arc::new(pair)),
+                    Err(error) => {
+                        view.raw_preview.key = None;
+                        view.raw_preview.failed = Some((key, failures + 1));
+                        view.raw_preview.state = PreviewState::Failed(error.to_string().into());
+                    }
+                }
+                cx.notify();
+            });
+        }));
     }
 }
 
@@ -233,22 +265,26 @@ fn build_side(
 // ────────────────────────────────────────────────────────────
 
 /// The side-by-side viewer for a raw (binary / symlink / submodule) conflict.
-/// Rendered above the unchanged take-current / take-incoming buttons.
-pub fn render_raw_preview(
-    mode: &ConflictMode,
+/// Rendered below the unchanged take-current / take-incoming buttons.
+pub(crate) fn render_raw_preview(
+    state: &PreviewState,
     path: &Path,
-    kind: ConflictKind,
     labels: &SideLabels,
     scroll: &gpui::ScrollHandle,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let Some((current, incoming)) = side_pair(mode, path, kind) else {
-        return raw_error_box();
+    let (pair, failure) = match state {
+        PreviewState::Loading => (None, None),
+        PreviewState::Ready(pair) => (Some(pair.as_ref()), None),
+        PreviewState::Failed(error) => (None, Some(error.as_ref())),
     };
-
-    // Any non-image binary side offers the external-compare action.
+    let current = pair.map(|pair| &pair[0]);
+    let incoming = pair.map(|pair| &pair[1]);
+    // Loading retains the two headers without claiming absence or failure.
+    let image_layout = pair.is_none()
+        || pair.is_some_and(|pair| pair.iter().any(|side| side.mode == BinaryViewMode::Image));
     let show_external =
-        current.mode == BinaryViewMode::Binary || incoming.mode == BinaryViewMode::Binary;
+        pair.is_some_and(|pair| pair.iter().any(|side| side.mode == BinaryViewMode::Binary));
 
     #[cfg(feature = "gui-e2e")]
     super::e2e::diff_presentation::record_conflict_scroll(scroll.clone());
@@ -267,16 +303,14 @@ pub fn render_raw_preview(
             div()
                 .flex()
                 .flex_row()
-                .when(
-                    current.mode == BinaryViewMode::Image || incoming.mode == BinaryViewMode::Image,
-                    |row| row.flex_1().min_h(px(0.)),
-                )
+                .when(image_layout, |row| row.flex_1().min_h(px(0.)))
                 .self_stretch()
                 .justify_center()
                 .gap(theme::scaled_px(12.))
                 .child(side_column(
                     &format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
-                    &current,
+                    current,
+                    failure,
                     "conflict-image-current",
                 ))
                 .child(side_column(
@@ -285,7 +319,8 @@ pub fn render_raw_preview(
                         Msg::ConflictRoleIncoming.t(),
                         labels.incoming.name
                     ),
-                    &incoming,
+                    incoming,
+                    failure,
                     "conflict-image-incoming",
                 )),
         );
@@ -314,6 +349,9 @@ pub fn render_raw_preview(
 }
 
 fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
+    if let Some(error) = &data.error {
+        return read_error(error);
+    }
     if !data.present {
         muted(Msg::ConflictBinaryNoPreview.t())
     } else {
@@ -380,8 +418,17 @@ fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
 }
 
 /// One side's column: header + mode-specific body.
-fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyElement {
-    let body = side_body(data, probe);
+fn side_column(
+    header: &str,
+    data: Option<&SideData>,
+    failure: Option<&str>,
+    probe: &'static str,
+) -> gpui::AnyElement {
+    let body = match (data, failure) {
+        (Some(data), _) => side_body(data, probe),
+        (None, Some(error)) => read_error(error),
+        (None, None) => div().into_any_element(),
+    };
 
     // Keep adjacent preferred-width columns, shrinking both equally at high
     // zoom rather than allowing the pair to overflow the available pane.
@@ -398,7 +445,10 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
         .flex_col()
         .w(theme::scaled_px(IMAGE_MAX_PX))
         .flex_shrink(1.)
-        .when(data.mode == BinaryViewMode::Image, |column| column.h_full())
+        .when(
+            data.is_none_or(|data| data.mode == BinaryViewMode::Image),
+            |column| column.h_full(),
+        )
         .min_h(px(0.))
         .min_w(px(0.))
         .gap(theme::scaled_px(4.))
@@ -417,13 +467,17 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
                 .child(SharedString::from(header.to_string())),
         )
         .child(body)
-        .when_some(data.image.clone(), |column, image| {
-            column.child(ImageMetadata {
-                image,
-                size: data.size,
-                probe,
-            })
-        })
+        .when_some(
+            data.and_then(|data| data.image.as_ref()),
+            |column, image| {
+                let data = data.expect("image belongs to a prepared side");
+                column.child(ImageMetadata {
+                    image: image.clone(),
+                    size: data.size,
+                    probe,
+                })
+            },
+        )
         .into_any_element()
 }
 
@@ -499,11 +553,12 @@ fn muted(text: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-fn raw_error_box() -> gpui::AnyElement {
+fn read_error(error: &str) -> gpui::AnyElement {
     div()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .child(muted(Msg::ConflictBinaryNoPreview.t()))
+        .flex()
+        .flex_col()
+        .child(muted(Msg::DiffPdfReadFailed.t()))
+        .child(muted(error))
         .into_any_element()
 }
 
@@ -517,39 +572,48 @@ impl ConflictView {
     /// blocks Conflict Mode; failures surface as a toast.
     pub(crate) fn open_raw_sides_external(&mut self, path: &Path, cx: &mut Context<Self>) {
         let repo_path = self.repo_path.clone();
-        let backend = match kagi_git::Backend::open(&repo_path) {
-            Ok(b) => b,
-            Err(_) => return,
+        let Some(mode) = self.mode.as_ref() else {
+            return;
         };
-        let buffer = match backend.resolution_buffer_from_repo_with_autosave() {
-            Ok(b) => b,
-            Err(_) => return,
-        };
-
-        let stem = path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".to_string());
-        let mut temps: Vec<PathBuf> = Vec::new();
-        for (side, tag) in [
-            (SelectionSide::Current, "current"),
-            (SelectionSide::Incoming, "incoming"),
-        ] {
-            if let Some(bytes) = backend.conflict_side_bytes(&buffer, path, side) {
-                let tmp = std::env::temp_dir().join(format!("kagi-conflict-{}-{}", tag, stem));
-                if std::fs::write(&tmp, &bytes).is_ok() {
+        let sides = [SelectionSide::Current, SelectionSide::Incoming]
+            .map(|side| mode.buffer.side_raw_meta(path, side));
+        let path = path.to_path_buf();
+        let task = cx.background_spawn(async move {
+            use kagi_git::backend::file_reads::FileReadSource;
+            let backend = kagi_git::Backend::open(&repo_path)?;
+            let stem = path.file_name().unwrap_or_default().to_string_lossy();
+            let mut temps = Vec::new();
+            for (side, tag) in sides.into_iter().zip(["current", "incoming"]) {
+                let Some((oid, mode)) = side else { continue };
+                // External materialization is not an inline preview: preserve its
+                // existing unrestricted transfer, on a worker rather than render.
+                if let Some(bytes) = backend.file_bytes(
+                    FileReadSource::ConflictStage { oid: &oid, mode },
+                    &path,
+                    usize::MAX,
+                )? {
+                    let tmp = std::env::temp_dir().join(format!("kagi-conflict-{}-{}", tag, stem));
+                    std::fs::write(&tmp, bytes)
+                        .map_err(|error| kagi_git::GitError::Other(error.to_string()))?;
                     temps.push(tmp);
                 }
             }
-        }
-
-        if temps.is_empty() {
-            return;
-        }
-        // Defer to the parent: `open_files_external` (settings + toast) lives on
-        // KagiApp; calling it directly from a leased listener would re-enter.
+            Ok::<_, kagi_git::GitError>(temps)
+        });
         let weak_app = self.app.clone();
-        cx.spawn(async move |_view, acx| {
+        cx.spawn(async move |view, acx| {
+            let temps = match task.await {
+                Ok(temps) => temps,
+                Err(error) => {
+                    let _ = view.update(acx, |view, cx| {
+                        view.marshal_error_toast(error.to_string(), cx)
+                    });
+                    return;
+                }
+            };
+            if temps.is_empty() {
+                return;
+            }
             let _ = weak_app.update(acx, |app, cx| {
                 app.open_files_external(&temps, cx);
             });
@@ -573,30 +637,6 @@ fn external_compare_button(path: &Path, cx: &mut Context<ConflictView>) -> impl 
     }))
 }
 
-fn side_pair(mode: &ConflictMode, path: &Path, kind: ConflictKind) -> Option<(SideData, SideData)> {
-    // #409: the cache key comes from the buffer alone (`side_raw_meta`, no
-    // repository access) and SIDE_CACHE is consulted first — the backend is
-    // opened, and blob bytes read, only when a side misses the cache. Before
-    // this, every repaint on the one screen where the user types opened a
-    // git2 Repository and copied both sides' full blobs.
-    let mut backend: Option<kagi_git::Backend> = None;
-    let mut side = |s: SelectionSide| -> Option<SideData> {
-        let Some((oid, _)) = mode.buffer.side_raw_meta(path, s) else {
-            return Some(SideData::absent());
-        };
-        cached_or_build(&format!("{oid}:{kind:?}"), || {
-            if backend.is_none() {
-                backend = kagi_git::Backend::open(mode.buffer.repo_path()).ok();
-            }
-            let b = backend.as_ref()?;
-            Some(build_side(b, &mode.buffer, path, s, kind))
-        })
-    };
-    Some((
-        side(SelectionSide::Current)?,
-        side(SelectionSide::Incoming)?,
-    ))
-}
 // ────────────────────────────────────────────────────────────
 // Tests — pure helpers only (the render path needs a gpui window; see #321
 // acceptance: GUI-verify the rendering).
@@ -604,56 +644,6 @@ fn side_pair(mode: &ConflictMode, path: &Path, kind: ConflictKind) -> Option<(Si
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-
-    /// MUTATION GUARD (#409): the cache is consulted BEFORE the expensive
-    /// build. On a hit the builder must not run at all (it panics here); on a
-    /// miss it runs exactly once and the result is cached for the next frame.
-    #[test]
-    fn side_cache_consulted_before_build() {
-        SIDE_CACHE.with(|c| {
-            c.borrow_mut()
-                .insert("hit-oid:Binary".into(), SideData::absent())
-        });
-        let hit = cached_or_build("hit-oid:Binary", || {
-            panic!("cache hit must not open the backend / read the blob")
-        });
-        assert!(hit.is_some());
-
-        let mut builds = 0;
-        for _frame in 0..3 {
-            let _ = cached_or_build("miss-oid:Binary", || {
-                builds += 1;
-                Some(SideData::absent())
-            });
-        }
-        assert_eq!(builds, 1, "blob must be read once, not per frame");
-    }
-
-    #[test]
-    fn image_detected_by_extension() {
-        let is_img = |p: &str| image_format_for(Path::new(p), None).is_some();
-        assert!(is_img("logo.PNG"));
-        assert!(is_img("a.jpeg"));
-        assert!(is_img("a.jpg"));
-        assert!(is_img("a.gif"));
-        assert!(is_img("a.webp"));
-        assert!(is_img("a.bmp"));
-        assert!(!is_img("a.bin"));
-        assert!(!is_img("noext"));
-    }
-
-    #[test]
-    fn image_detected_by_magic_when_extension_missing_or_wrong() {
-        // No/renamed extension but PNG magic → still an image.
-        assert_eq!(
-            image_format_for(Path::new("blob.bin"), Some(&PNG_MAGIC)),
-            Some(ImageFormat::Png)
-        );
-        // Non-image magic → not an image.
-        assert!(image_format_for(Path::new("blob.bin"), Some(&[0u8, 1, 2, 3])).is_none());
-    }
 
     #[test]
     fn viewer_mode_follows_kind() {

@@ -75,6 +75,7 @@ impl ConflictView {
             mode.selected_file = None;
             mode.editing_file = None;
         }
+        self.retire_raw_preview();
         self.load_saved_preview(cx);
     }
 

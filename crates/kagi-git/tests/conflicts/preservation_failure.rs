@@ -73,16 +73,17 @@ fn skip_unwritable_draft_directory_is_blocked_without_repository_changes() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
     let draft = buffer.resolved_text(Path::new("file.txt")).unwrap();
-    assert!(backend
-        .plan_conflict_skip(&session)
+    let expected = backend
+        .conflict_snapshot()
         .unwrap()
-        .blockers
-        .is_empty());
+        .unwrap()
+        .observation
+        .revision;
+    let plan = backend.plan_conflict_skip(&session, &expected).unwrap();
+    assert!(plan.plan.blockers.is_empty());
     obstruct_draft_directory();
     let before = repository_bytes(tmp.path());
-    let error = backend
-        .execute_conflict_skip(&session, &buffer)
-        .unwrap_err();
+    let error = backend.execute_conflict_skip(&plan, &buffer).unwrap_err();
     assert_eq!(
         error.blocker(),
         Some(&PlanNote::Conflicts(ConflictsNote::DraftPreservationFailed))

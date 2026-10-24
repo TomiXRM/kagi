@@ -432,6 +432,111 @@ fn run_skip_case(cx: &mut VisualTestAppContext, lang: Lang, active: bool) {
     cleanup(cx, app, window);
 }
 
+fn queue_result(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    input: &Entity<gpui_component::input::InputState>,
+    text: &str,
+) {
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            state.set_value(text, window, cx);
+            cx.emit(gpui_component::input::InputEvent::Change);
+        });
+    })
+    .unwrap();
+}
+
+fn run_unflushed_close(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>) {
+    let _isolated = IsolatedLog::new();
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_lang(lang, cx));
+    detect(cx, &app, window);
+    let input = result_input(cx, &app, window);
+    queue_result(cx, window, &input, DRAFT);
+    cx.read(|cx| {
+        assert!(conflict_read(&app, cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .has_unflushed_drafts());
+    });
+    request_close(cx, &app, window, entry);
+    cx.run_until_parked();
+    let restored = ResolutionBuffer::load(&repo).expect("close must await the real durable writer");
+    assert_eq!(
+        restored.resolved_text(Path::new(FILE)).as_deref(),
+        Some(DRAFT)
+    );
+    assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
+    if entry.is_some() {
+        assert!(!alive(cx, window), "successful flush resumes window close");
+    } else {
+        assert!(
+            cx.read(|cx| app.read(cx).tabs.is_empty()),
+            "successful flush resumes tab close"
+        );
+    }
+    drop(input);
+    cleanup(cx, app, window);
+}
+
+pub fn scenario_conflict_draft_flush_boundaries(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for lang in [Lang::En, Lang::Ja] {
+        run_unflushed_close(cx, lang, Some(Entry::Close));
+        run_unflushed_close(cx, lang, None);
+        let _isolated = IsolatedLog::new();
+        let fixture = content_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        detect(cx, &app, window);
+        let input = result_input(cx, &app, window);
+        replace_result(cx, &app, window, &input, DRAFT);
+        let before = repository_bytes(&repo);
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let owner = app
+                    .app_sessions
+                    .attachment(app.active_session().unwrap())
+                    .unwrap();
+                app.conflict_continue(owner, window, cx);
+            });
+            input.update(cx, |state, cx| {
+                state.set_value("NEWER GENERATION MUST NOT INHERIT APPROVAL\n", window, cx);
+                cx.emit(gpui_component::input::InputEvent::Change);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        paint(cx, &app, window);
+        assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_none()));
+        assert_eq!(
+            repository_bytes(&repo),
+            before,
+            "stale flush cannot stage or continue"
+        );
+        cx.read(|cx| {
+            assert_eq!(
+                conflict_read(&app, cx)
+                    .mode
+                    .as_ref()
+                    .unwrap()
+                    .buffer
+                    .resolved_text(Path::new(FILE))
+                    .as_deref(),
+                Some("NEWER GENERATION MUST NOT INHERIT APPROVAL\n")
+            );
+        });
+        drop(input);
+        cleanup(cx, app, window);
+    }
+}
+
 pub fn scenario_conflict_draft_persist_failure(cx: &mut VisualTestAppContext) {
     let _presentation = crate::presentation_support::Presentation::keep();
     cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));

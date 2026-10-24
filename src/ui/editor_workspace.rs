@@ -757,6 +757,7 @@ impl KagiApp {
         self.set_editor_dirty_guard_modal(EditorDirtyGuardModal {
             intent,
             saving: None,
+            draft_save_token: None,
             conflict_discard_armed: false,
         });
         klog!("editor-ws: dirty-guard");

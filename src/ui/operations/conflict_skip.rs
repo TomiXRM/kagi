@@ -76,6 +76,15 @@ impl KagiApp {
         if !self.conflict_action_owner_on_screen(&owner) {
             return;
         }
+        self.flush_conflict_drafts(owner.clone(), "skip", cx, move |app, cx| {
+            app.conflict_skip_flushed(owner, cx);
+        });
+    }
+
+    fn conflict_skip_flushed(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }

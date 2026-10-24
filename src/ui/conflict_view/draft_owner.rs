@@ -118,7 +118,7 @@ impl ConflictView {
             mode.refresh_file_statuses();
             // This writes only the existing recovery document, never the repo.
             // It also retains an old live edit if its earlier autosave failed.
-            self.note_draft_result(autosave_drafts(&mode.buffer));
+            self.queue_draft_snapshot(&mode.buffer);
         }
         if retain_input {
             if let Some(inputs) = self.editor_inputs.as_mut() {
@@ -159,6 +159,7 @@ impl ConflictView {
     /// a fresh InputState so old text, selection and undo cannot cross owners.
     pub fn sync_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_owned_editor_inputs(window, cx);
+        self.watch_draft_save(cx);
         self.present_draft_failure(cx);
     }
 
@@ -241,12 +242,69 @@ impl ConflictView {
     }
 
     pub(super) fn autosave_drafts(&mut self) {
-        if let Some(mode) = self.mode.as_ref() {
-            self.note_draft_result(autosave_drafts(&mode.buffer));
+        let result = self.mode.as_ref().map(|mode| mode.buffer.queue_autosave());
+        if let Some(result) = result {
+            self.accept_draft_queue(result);
         }
     }
 
-    fn note_draft_result(&mut self, result: Result<(), String>) {
+    fn queue_draft_snapshot(&mut self, buffer: &ResolutionBuffer) {
+        self.accept_draft_queue(buffer.queue_autosave());
+    }
+
+    fn accept_draft_queue(
+        &mut self,
+        result: Result<kagi_git::resolution::DraftSave, kagi_git::GitError>,
+    ) {
+        match result {
+            Ok(ticket) => {
+                self.intent_token =
+                    super::NEXT_INTENT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.draft_save = Some(ticket);
+            }
+            Err(error) => self.note_draft_result(Err(error.to_string())),
+        }
+    }
+
+    pub(crate) fn has_unflushed_drafts(&self) -> bool {
+        self.draft_persist_failed.is_some()
+            || self
+                .mode
+                .as_ref()
+                .is_some_and(|mode| mode.buffer.has_unflushed_drafts())
+    }
+
+    fn watch_draft_save(&mut self, cx: &mut Context<Self>) {
+        if self.draft_watch_running {
+            return;
+        }
+        let Some(ticket) = self
+            .draft_save
+            .clone()
+            .filter(|ticket| ticket.generation() != self.draft_watched_generation)
+        else {
+            return;
+        };
+        self.draft_watch_running = true;
+        self.draft_watched_generation = ticket.generation();
+        let wait_ticket = ticket.clone();
+        let task = cx.background_spawn(async move { wait_ticket.wait() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |view, cx| {
+                view.draft_watch_running = false;
+                if ticket.is_current() {
+                    view.note_draft_result(result.map(|_| ()).map_err(|error| error.to_string()));
+                    view.present_draft_failure(cx);
+                }
+                view.watch_draft_save(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn note_draft_result(&mut self, result: Result<(), String>) {
         match result {
             Ok(()) => self.draft_persist_failed = None,
             Err(error) => {
@@ -297,16 +355,54 @@ impl ConflictView {
         .detach();
     }
 
-    pub(crate) fn retry_draft_autosave(&mut self, cx: &mut Context<Self>) {
-        if self.capture_result_for_navigation(cx) {
+    /// Capture first; the blocking barrier runs before repository admission and
+    /// never under its lock. A newer generation cannot inherit this approval.
+    pub(crate) fn retry_draft_autosave(&mut self, cx: &mut Context<Self>) -> gpui::Task<bool> {
+        self.flush_drafts(true, cx)
+    }
+
+    pub(crate) fn flush_drafts(&mut self, retry: bool, cx: &mut Context<Self>) -> gpui::Task<bool> {
+        if !retry && self.draft_persist_failed.is_some() {
+            return gpui::Task::ready(false);
+        }
+        if !self.capture_result_for_navigation(cx) {
+            return gpui::Task::ready(false);
+        }
+        if retry || self.draft_save.is_none() && self.has_unflushed_drafts() {
             self.autosave_drafts();
         }
-        // Explicit Retry is a new attempt, even when its diagnostic is unchanged.
-        if let Some(error) = self.draft_persist_failed.as_ref() {
-            self.draft_failure_pending = Some(error.clone());
-        }
-        self.present_draft_failure(cx);
-        cx.notify();
+        let Some(mode) = self.mode.as_ref() else {
+            return gpui::Task::ready(self.draft_persist_failed.is_none());
+        };
+        let revision = mode.revision.clone();
+        let ticket = self.draft_save.clone();
+        self.draft_flushes += 1;
+        let task = cx.background_spawn(async move {
+            let result = ticket.as_ref().map_or(Ok(()), |ticket| ticket.flush());
+            (result, ticket)
+        });
+        cx.spawn(async move |this, cx| {
+            let (result, ticket) = task.await;
+            this.update(cx, |view, cx| {
+                view.draft_flushes -= 1;
+                view.capture_result_for_handoff(cx);
+                let current = ticket.as_ref().is_none_or(|ticket| ticket.is_current())
+                    && view.mode.as_ref().is_some_and(|mode| {
+                        mode.revision == revision && !mode.buffer.has_unflushed_drafts()
+                    });
+                if result.is_err() || current {
+                    view.note_draft_result(result.map_err(|error| error.to_string()));
+                }
+                // An explicit Retry announces a repeated failure as well.
+                if let Some(error) = view.draft_persist_failed.as_ref() {
+                    view.draft_failure_pending = Some(error.clone());
+                }
+                view.present_draft_failure(cx);
+                cx.notify();
+                current && view.draft_persist_failed.is_none()
+            })
+            .unwrap_or(false)
+        })
     }
 }
 
@@ -344,14 +440,6 @@ fn pull_owned_editor(
     }
     mode.refresh_file_status(path);
     Ok(Some(true))
-}
-
-fn autosave_drafts(buffer: &ResolutionBuffer) -> Result<(), String> {
-    if let Err(error) = buffer.autosave() {
-        klog!("conflict-mode: resolution draft autosave failed: {error}");
-        return Err(error.to_string());
-    }
-    Ok(())
 }
 
 fn new_editor_inputs(

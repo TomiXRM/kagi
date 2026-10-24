@@ -61,6 +61,12 @@ impl DraftSave {
     pub fn wait(&self) -> Result<PathBuf, GitError> {
         self.writer.wait(self.generation, false)
     }
+
+    /// Force this snapshot to start and await durable completion off the GUI
+    /// thread. The caller must still reject a superseded generation.
+    pub fn flush(&self) -> Result<(), GitError> {
+        self.writer.wait(self.generation, true).map(|_| ())
+    }
 }
 
 impl Writer {

@@ -130,6 +130,26 @@ were unchanged. The fixed run's raw index hash changed only in `.gitmodules`
 ctime/inode fields; parsed staged paths/OIDs/modes/flags and extensions matched
 the original fixture exactly (`after/index-stat-reconciliation.json`).
 
+### #1760 UI barrier cutover — 2026-10-25
+
+The UI now captures ordinary edits/selections with the existing ordered writer.
+`conflict_view/draft_owner.rs::flush_drafts` performs the blocking barrier on
+the background executor and rejects a changed generation or pane revision;
+`operations/conflict.rs::flush_conflict_drafts` also rechecks the attachment and
+entity before approval. `editor_workspace/host_close.rs::save_host_dirty_guard`
+retains the modal continuation until flush completes; its unsaved gate reads
+`has_unflushed_drafts()`, not only an already-presented failure flag.
+
+The eight `draft-flush-*` checks add a two-generation ordering refinement:
+failure cannot authorize progress, an older completion cannot approve a newer
+edit, close cannot precede durability, and the UI flush's draft transaction lock
+must be released before repository admission. Each HOLD has an independently
+removed-guard REFUTATION. This does not model preservation inside an already
+admitted backend operation. It does not change `DraftNeverLost`: `draft-crash` remains REFUTE
+through the up-to-250 ms coalescing interval and any in-flight I/O. Explicit
+two-step Discard remains outside the no-intentional-loss scenarios.
+
+
 ---
 
 ## Reproduction and evidence boundary
@@ -139,7 +159,7 @@ the original fixture exactly (`after/index-stat-reconciliation.json`).
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The merged model has **61** checks and **20** negative controls, retaining #1731's failed-close and preservation guards alongside #1732's atomic writer and #1746 D1/D2; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model has **69** checks and **24** negative controls, retaining #1731's failed-close and preservation guards alongside #1732's atomic writer, #1746 D1/D2 and #1760's off-thread generation-bound barriers; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 

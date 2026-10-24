@@ -837,9 +837,11 @@ impl KagiApp {
         let save = pane.update(cx, |view, cx| {
             view.capture_result_for_handoff(cx);
             view.mode.as_ref().and_then(|mode| {
-                mode.buffer
-                    .has_unflushed_drafts()
-                    .then(|| mode.buffer.queue_autosave())
+                view.has_unflushed_drafts()
+                    .then(|| match view.draft_persist_failed.as_ref() {
+                        Some(error) => Err(kagi_git::GitError::Other(error.clone())),
+                        None => mode.buffer.queue_autosave(),
+                    })
             })
         });
         let Some(save) = save else {
@@ -859,7 +861,7 @@ impl KagiApp {
         }
         let task = cx.background_spawn(async move {
             match save {
-                Ok(ticket) => (ticket.wait(), Some(ticket)),
+                Ok(ticket) => (ticket.flush(), Some(ticket)),
                 Err(error) => (Err(error), None),
             }
         });
@@ -891,6 +893,7 @@ impl KagiApp {
                     return;
                 }
                 if let Err(error) = result {
+                    pane.update(cx, |view, _| view.note_draft_result(Err(error.to_string())));
                     app.record_operation_completion(
                         "conflict-draft-preserve",
                         kagi_git::ops::StateSummary {

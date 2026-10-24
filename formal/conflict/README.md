@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 61 TLC configurations, 39 pure
-properties (1,695,651 input/property evaluations), 20 TLC negative controls,
+No product code is imported or changed. There are 69 TLC configurations, 39 pure
+properties (1,695,651 input/property evaluations), 24 TLC negative controls,
 36 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -108,6 +108,25 @@ and retain the original loss/destructive-progress counterexamples. Atomic draft
 replacement and interprocess serialization remain the separate #1732 properties;
 the pure hunk/draft compatibility predicates are intentionally unchanged.
 
+### Background UI cutover (#1760)
+
+Ordinary Result edits and source selections call `queue_autosave()`; acceptance
+does not acknowledge disk. The UI awaits `flush()` on a background executor for
+close, quit, repository-tab close, Save, Continue, Abort, Skip and D/F. A failed
+barrier retains the live pane and Retry/two-step Discard gate; an operation is
+Refused. Approval additionally requires the same ticket generation, pane revision
+and attachment. Capture/flush completes before repository admission, never under
+its lock. `has_unflushed_drafts()` includes pending writes and failed saves.
+
+The `draft-flush-*` refinement explores two captured generations, an edit during
+the barrier, success/error completion and explicit draft/repository lock phases.
+Four assertions require current-generation approval, no approval after error,
+durable close and nonnested locks; each has a guard-removal counterexample.
+It is a hand-extracted ordering model, not an execution of GPUI or OS locks.
+`draft-crash` deliberately remains REFUTE: the up-to-250 ms coalescing interval
+plus in-flight I/O is unacknowledged and may be lost on abrupt process death.
+
+
 ### Saved runtime projections
 
 The same entry point replays `tla/trace/events.json` through `TraceHarness.tla`.
@@ -163,6 +182,14 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
 | `two-writer-recovery` | `DraftWriteAtomic` | HOLD | none | #1732: retain an earlier body after stale-editor other-file autosave |
 | `two-writer-recovery-broken` | `DraftWriteAtomic` | REFUTE | preMergeRecovery | Negative control; deduplicate against the pre-merge editor |
+| `draft-flush-failure` | `BarrierFailureNeverApproved` | HOLD | none | #1760: Err refuses approval |
+| `draft-flush-failure-broken` | `BarrierFailureNeverApproved` | REFUTE | flushFailure | Negative control; acknowledge Err |
+| `draft-flush-generation` | `BarrierApprovalCurrentGeneration` | HOLD | none | #1760: acknowledge only the current generation |
+| `draft-flush-generation-broken` | `BarrierApprovalCurrentGeneration` | REFUTE | flushGeneration | Negative control; approve stale completion |
+| `draft-flush-close` | `BarrierCloseDurable` | HOLD | none | #1760: close awaits successful current flush |
+| `draft-flush-close-broken` | `BarrierCloseDurable` | REFUTE | flushClose | Negative control; close while pending |
+| `draft-flush-lock-order` | `BarrierLocksNeverNested` | HOLD | none | #1760 / #1746: flush before repository admission |
+| `draft-flush-lock-order-broken` | `BarrierLocksNeverNested` | REFUTE | flushLock | Negative control; acquire repository lock before flush |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |

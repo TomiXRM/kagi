@@ -12,6 +12,18 @@
   (jj の「部分解決を失わせない」の git 互換実装)。
 - 行ごとの採用元(current/incoming/manual)を保持し UI で出所可視化(BC/KDiff3 流)
 - `LineOrder::CurrentBlockFirst` / `IncomingBlockFirst` preserve hunk-level Both as all taken lines of one side followed by all taken lines of the other after checkbox edits; fresh line selections retain positional `CurrentFirst` / `IncomingFirst` tie-breaking.
+- Ordinary UI edits and selections capture through `queue_autosave()` (#1760).
+  Queue acceptance is not durability: coalescing lasts up to 250 ms before
+  starting, and in-flight I/O can extend the unacknowledged crash window.
+  Close/quit/tab close and Save/Continue/Abort/Skip/D-F await `flush()` off the
+  UI thread, before repository admission. A successful current-generation flush
+  alone permits approval; changed generations/revisions/attachments invalidate it.
+  No draft lock may be nested under the repository admission lock.
+- `has_unflushed_drafts()` drives the unsaved gate, including failed saves.
+  Failed persistence retains live text, records the failure and refuses the
+  operation. Explicit Retry must durably finish; intentional close-time loss
+  requires both Discard confirmations. Merely recovering storage permissions
+  does not authorize Abort to substitute an older disk-loaded draft.
 
 ## JSON codec（#513 resolution slice）
 

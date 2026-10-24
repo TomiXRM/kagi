@@ -49,6 +49,10 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     sharedMoved |-> FALSE, siblingInvalidated |-> FALSE,
     external |-> FALSE, committedTree |-> "none", abandoned |-> FALSE,
     refreshPending |-> FALSE, metadataReadable |-> TRUE, metadataFailOpen |-> FALSE,
+    barrier |-> [generation |-> 0, durable |-> 0, ticket |-> 0,
+        flushed |-> 0, phase |-> "edit", failed |-> FALSE,
+        draftLock |-> FALSE, repoLock |-> FALSE,
+        badApproval |-> FALSE, badClose |-> FALSE, badGeneration |-> FALSE],
     event |-> "Init"]
 
 \* backend/conflict_observe.rs:91-101: index.read(true) precedes operation_parts.
@@ -390,6 +394,52 @@ DraftRecoveryNext ==
               !.event = "RecoverySave(A other file, adopt B primary, dedup recoveries)"]
        [] OTHER -> FALSE
 
+\* #1760: draft_owner.rs::{autosave_drafts,flush_drafts} and
+\* operations/conflict.rs::flush_conflict_drafts. Two captured generations
+\* quotient edits before/during an off-thread barrier; accepted != durable.
+\* No discard action: explicit two-step intentional loss is outside this safety
+\* assertion, as in draftIO. Draft lock release precedes returned flush success.
+BarrierEdit == /\ s.barrier.generation < 2 /\ ~s.barrier.repoLock
+    /\ s' = [s EXCEPT !.barrier.generation = @ + 1,
+        !.event = "QueueAutosave(acceptance only)"]
+BarrierRequest == /\ s.barrier.phase = "edit" /\ s.barrier.generation > 0
+    /\ s' = [s EXCEPT !.barrier.ticket = s.barrier.generation,
+        !.barrier.phase = "waiting", !.event = "FlushOffThread"]
+BarrierWriteStart == /\ s.barrier.phase = "waiting" /\ ~s.barrier.draftLock
+    /\ s' = [s EXCEPT !.barrier.draftLock = TRUE, !.barrier.phase = "writing",
+        !.event = "DraftLockAcquire"]
+BarrierWriteFinish == /\ s.barrier.phase = "writing"
+    /\ \E ok \in BOOLEAN :
+        s' = [s EXCEPT !.barrier.draftLock = FALSE,
+            !.barrier.durable = IF ok THEN s.barrier.ticket ELSE @,
+            !.barrier.failed = ~ok, !.barrier.phase = "returned",
+            !.event = IF ok THEN "FlushOk(lock released)" ELSE "FlushErr"]
+BarrierAccept == /\ s.barrier.phase = "returned"
+    /\ (Broken = "flushFailure" \/ ~s.barrier.failed)
+    /\ (Broken = "flushGeneration" \/ s.barrier.ticket = s.barrier.generation)
+    /\ s' = [s EXCEPT !.barrier.flushed = s.barrier.ticket,
+        !.barrier.phase = "approved",
+        !.barrier.badApproval = s.barrier.failed,
+        !.barrier.badGeneration = s.barrier.ticket # s.barrier.generation,
+        !.event = "ApproveCurrentGeneration"]
+BarrierClose == /\ s.barrier.phase \in {"waiting", "writing", "returned", "approved"}
+    /\ (Broken = "flushClose" \/ (s.barrier.phase = "approved"
+        /\ s.barrier.flushed = s.barrier.generation /\ ~s.barrier.failed))
+    /\ s' = [s EXCEPT !.barrier.badClose =
+        (s.barrier.durable # s.barrier.generation \/ s.barrier.failed),
+        !.barrier.phase = "closed", !.event = "CloseHostOrTab"]
+BarrierRepoLock == /\ ~s.barrier.repoLock
+    /\ (Broken = "flushLock" \/ (s.barrier.phase = "approved"
+        /\ s.barrier.flushed = s.barrier.generation /\ ~s.barrier.failed))
+    /\ s' = [s EXCEPT !.barrier.repoLock = TRUE,
+        !.event = "RepositoryAdmissionAfterFlush"]
+DraftBarrierNext == BarrierEdit \/ BarrierRequest \/ BarrierWriteStart
+    \/ BarrierWriteFinish \/ BarrierAccept \/ BarrierClose \/ BarrierRepoLock
+BarrierFailureNeverApproved == ~s.barrier.badApproval
+BarrierApprovalCurrentGeneration == ~s.barrier.badGeneration
+BarrierCloseDurable == ~s.barrier.badClose
+BarrierLocksNeverNested == ~(s.barrier.draftLock /\ s.barrier.repoLock)
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
@@ -399,7 +449,8 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
-Next == IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+Next == IF Scenario = "draftBarrier" THEN DraftBarrierNext
+    ELSE IF Scenario = "draftRecovery" THEN DraftRecoveryNext
     ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
         \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars

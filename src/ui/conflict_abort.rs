@@ -85,6 +85,41 @@ impl KagiApp {
         if !self.conflict_action_owner_on_screen(&owner) {
             return;
         }
+        let handle = window.window_handle();
+        self.flush_conflict_drafts(owner.clone(), "abort", cx, move |app, cx| {
+            let token = app
+                .ui()
+                .conflict
+                .as_ref()
+                .map(|pane| pane.read(cx).intent_token);
+            let this = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = this.update(cx, |app, cx| {
+                        let current = app
+                            .ui()
+                            .conflict
+                            .as_ref()
+                            .map(|pane| pane.read(cx).intent_token);
+                        if current != token {
+                            return;
+                        }
+                        app.open_conflict_abort_modal_flushed(owner, window, cx)
+                    });
+                });
+            });
+        });
+    }
+
+    fn open_conflict_abort_modal_flushed(
+        &mut self,
+        owner: crate::app::Attachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }
@@ -140,7 +175,7 @@ impl KagiApp {
 
     /// A disk-loaded preservation buffer cannot stand in for a newer failed
     /// live draft, even after filesystem permissions have recovered.
-    fn refuse_conflict_abort_for_failed_draft(
+    pub(crate) fn refuse_conflict_abort_for_failed_draft(
         &mut self,
         owner: &crate::app::Attachment,
         operation: &ObservedOperation,
@@ -194,6 +229,18 @@ impl KagiApp {
     /// handing the frozen request to the family, which owns writer admission,
     /// live repository preflight, execution, verification and the receipt.
     pub fn confirm_conflict_abort(&mut self, cx: &mut Context<Self>) {
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+        else {
+            return;
+        };
+        self.flush_conflict_drafts(owner, "abort", cx, |app, cx| {
+            app.confirm_conflict_abort_flushed(cx)
+        });
+    }
+
+    fn confirm_conflict_abort_flushed(&mut self, cx: &mut Context<Self>) {
         if !self
             .active_session()
             .is_some_and(|owner| self.pane_mutation_admitted(owner))

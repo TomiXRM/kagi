@@ -3242,6 +3242,10 @@ mod macos {
                 Box::new(crate::conflict_draft_persist_failure::scenario_conflict_draft_persist_failure),
             ),
             (
+                "conflict_draft_flush_boundaries",
+                Box::new(crate::conflict_draft_persist_failure::scenario_conflict_draft_flush_boundaries),
+            ),
+            (
                 "conflict_continue_presentation",
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_presentation),
             ),

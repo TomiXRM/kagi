@@ -27,6 +27,8 @@ use super::KagiApp;
 
 use super::{conflict_binary_view, e2e, ToastKind};
 
+static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
+
 mod actions;
 mod file_menu;
 mod saved;
@@ -158,6 +160,10 @@ pub struct ConflictView {
     /// Live decisions have not reached their recovery document; host close must ask.
     pub draft_persist_failed: Option<String>,
     draft_failure_pending: Option<String>,
+    draft_save: Option<kagi_git::resolution::DraftSave>,
+    draft_watch_running: bool,
+    draft_watched_generation: u64,
+    pub(crate) draft_flushes: usize,
     /// Presentation projection from the existing accepted-observation stale path.
     pub(crate) saved_review_needed: bool,
     sidebar: sidebar::SidebarState,
@@ -235,7 +241,6 @@ impl ConflictView {
         repo_path: PathBuf,
         owner: crate::app::Attachment,
     ) -> Self {
-        static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
             window_activation_subscription: None,
             operation_chrome_subscription: None,
@@ -254,6 +259,10 @@ impl ConflictView {
             save_attempt: None,
             draft_persist_failed: None,
             draft_failure_pending: None,
+            draft_save: None,
+            draft_watch_running: false,
+            draft_watched_generation: 0,
+            draft_flushes: 0,
             saved_review_needed: false,
             sidebar: Default::default(),
             saved_cache: HashMap::new(),

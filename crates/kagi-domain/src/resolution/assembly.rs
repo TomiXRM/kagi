@@ -1,7 +1,5 @@
 //! Borrowed traversal shared by assembly and Result comparison.
-use super::{
-    ConflictHunk, HunkChoice, HunkModel, LineOrder, LineOrigin, Region, ResolvedLine, SelectionSide,
-};
+use super::{ConflictHunk, HunkChoice, HunkModel, LineOrder, LineOrigin, Region, ResolvedLine};
 
 fn visit_group(
     lines: &[String],
@@ -9,6 +7,21 @@ fn visit_group(
     visit: &mut impl FnMut(&str, LineOrigin) -> bool,
 ) -> bool {
     lines.iter().all(|line| visit(line, origin))
+}
+
+fn visit_marker(
+    standard: &str,
+    width: usize,
+    buffer: &mut String,
+    visit: &mut impl FnMut(&str, LineOrigin) -> bool,
+) -> bool {
+    if width == 7 {
+        return visit(standard, LineOrigin::Manual);
+    }
+    buffer.clear();
+    buffer.extend(std::iter::repeat_n(standard.as_bytes()[0] as char, width));
+    buffer.push_str(&standard[7..]);
+    visit(buffer, LineOrigin::Manual)
 }
 
 impl ConflictHunk {
@@ -64,14 +77,21 @@ impl ConflictHunk {
                 .split_terminator('\n')
                 .all(|line| visit(line, LineOrigin::Manual)),
             HunkChoice::Unresolved => {
-                visit("<<<<<<< Current", LineOrigin::Manual)
+                // Reuse one marker buffer for wide materializations; the common
+                // seven-character case visits static strings without allocation.
+                let mut marker = if self.marker_width == 7 {
+                    String::new()
+                } else {
+                    String::with_capacity(self.marker_width + 9)
+                };
+                visit_marker("<<<<<<< Current", self.marker_width, &mut marker, visit)
                     && visit_group(&self.current, LineOrigin::Manual, visit)
                     && (self.base.is_empty()
-                        || (visit("||||||| Base", LineOrigin::Manual)
+                        || (visit_marker("||||||| Base", self.marker_width, &mut marker, visit)
                             && visit_group(&self.base, LineOrigin::Manual, visit)))
-                    && visit("=======", LineOrigin::Manual)
+                    && visit_marker("=======", self.marker_width, &mut marker, visit)
                     && visit_group(&self.incoming, LineOrigin::Manual, visit)
-                    && visit(">>>>>>> Incoming", LineOrigin::Manual)
+                    && visit_marker(">>>>>>> Incoming", self.marker_width, &mut marker, visit)
             }
         }
     }
@@ -88,33 +108,6 @@ impl HunkModel {
         })
     }
 
-    /// Verify parser attribution against a complete stage blob without
-    /// allocating a reconstructed file. Decisions and line masks are ignored:
-    /// passthrough plus each original side must reproduce the exact bytes,
-    /// including the newline that assembly emits after every line.
-    pub fn matches_source_text(&self, side: SelectionSide, text: &str) -> bool {
-        let mut remaining = text;
-        self.regions.iter().all(|region| {
-            let lines = match region {
-                Region::Passthrough(lines) => lines,
-                Region::Hunk(hunk) => match side {
-                    SelectionSide::Current => &hunk.current,
-                    SelectionSide::Incoming => &hunk.incoming,
-                },
-            };
-            lines.iter().all(|line| {
-                let Some(rest) = remaining
-                    .strip_prefix(line.as_str())
-                    .and_then(|rest| rest.strip_prefix('\n'))
-                else {
-                    return false;
-                };
-                remaining = rest;
-                true
-            })
-        }) && remaining.is_empty()
-    }
-
     /// Compare Result text without allocating an assembled file or comparing
     /// provenance: manually typing the same bytes is not a divergent Result.
     pub fn matches_result_text(&self, result: &[ResolvedLine]) -> bool {
@@ -127,31 +120,6 @@ impl HunkModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn source_verification_is_exact_and_ignores_resolution_decisions() {
-        let markers = "頭\r\n<<<<<<< Current\nc\n=======\ni\n>>>>>>> Incoming\n\n";
-        let mut model = HunkModel::from_marker_text(markers);
-        for choice in [
-            HunkChoice::Unresolved,
-            HunkChoice::AcceptCurrent,
-            HunkChoice::Manual("unrelated".into()),
-        ] {
-            model.set_choice(0, choice);
-            assert!(model.matches_source_text(SelectionSide::Current, "頭\r\nc\n\n"));
-            assert!(model.matches_source_text(SelectionSide::Incoming, "頭\r\ni\n\n"));
-            for wrong in [
-                "頭\r\nc\n",
-                "頭\nc\n\n",
-                "頭\r\nx\n\n",
-                "頭\r\nc\n\nextra\n",
-            ] {
-                assert!(!model.matches_source_text(SelectionSide::Current, wrong));
-            }
-        }
-        model.set_hunk_line(0, SelectionSide::Current, 0, false);
-        assert!(model.matches_source_text(SelectionSide::Current, "頭\r\nc\n\n"));
-    }
 
     #[test]
     fn manual_assembly_preserves_empty_blank_and_crlf_text() {

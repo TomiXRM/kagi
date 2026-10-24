@@ -7,6 +7,7 @@ fn hunk(current_len: usize, incoming_len: usize, choice: HunkChoice) -> Conflict
         base: Vec::new(),
         choice,
         line_select: None,
+        marker_width: 7,
     }
 }
 
@@ -183,13 +184,182 @@ fn deselecting_other_side_preserves_an_adopted_deletion() {
     assert!(!model.all_resolved());
 }
 
-/// Reproduction only: source literal marker parsing is separate from the
-/// provenance gate tested above. Materialization needs collision-free widths.
+/// A source opener inside Current must not restart the parser and erase text.
 #[test]
-#[ignore = "#1751: marker-width parser gap"]
 fn marker_parser_preserves_a_literal_source_opener() {
     let model = HunkModel::from_marker_text(
         "<<<<<<< Current\n<<<<<<< user\n=======\nincoming\n>>>>>>> Incoming\n",
     );
     assert_eq!(model.hunks()[0].current, vec!["<<<<<<< user"]);
+}
+
+#[test]
+fn wide_markers_preserve_shorter_source_runs_and_unresolved_width() {
+    for width in [10, 32] {
+        let current = "<<<<<<< literal\n||||||| literal\n=======\n>>>>>>>> literal\n=========\n";
+        let base = "<<<<<<<<< literal\n||||||||| literal\n=========\n>>>>>>>>> literal\n";
+        let incoming = "<<<<<<< literal\n||||||| literal\n=======\n>>>>>>> literal\n";
+        let markers = format!(
+            "before\n{} Current\n{current}{} Base\n{base}{}\n{incoming}{} Incoming\nafter\n",
+            "<".repeat(width),
+            "|".repeat(width),
+            "=".repeat(width),
+            ">".repeat(width),
+        );
+        let mut model = HunkModel::from_marker_text_with_width(&markers, width);
+        assert_eq!(model.hunk_count(), 1);
+        let hunk = model.hunks()[0];
+        assert_eq!(hunk.marker_width, width);
+        assert_eq!(
+            hunk.current,
+            current.split_terminator('\n').collect::<Vec<_>>()
+        );
+        assert_eq!(hunk.base, base.split_terminator('\n').collect::<Vec<_>>());
+        assert_eq!(
+            hunk.incoming,
+            incoming.split_terminator('\n').collect::<Vec<_>>()
+        );
+        assert_eq!(model.assembled_text(), markers);
+        assert_eq!(
+            HunkModel::from_marker_text_with_width(&model.assembled_text(), width),
+            model
+        );
+        assert!(resolved_lines_have_conflict_marker(&model.assemble()));
+        assert!(model.set_choice(0, HunkChoice::AcceptCurrent));
+        assert_eq!(model.assembled_text(), format!("before\n{current}after\n"));
+        assert!(!resolved_lines_have_conflict_marker(&model.assemble()));
+        assert!(model.set_choice(0, HunkChoice::AcceptIncoming));
+        assert_eq!(model.assembled_text(), format!("before\n{incoming}after\n"));
+    }
+}
+
+#[test]
+fn default_markers_only_transition_in_their_expected_states() {
+    let outside = "||||||| outside\n=======\n>>>>>>> outside\n";
+    let current = "<<<<<<< literal\n>>>>>>> literal\n";
+    let base = "<<<<<<< literal\n||||||| literal\n>>>>>>> literal\n";
+    let incoming = "<<<<<<< literal\n||||||| literal\n=======\n";
+    let text = format!(
+        "{outside}<<<<<<< Current\n{current}||||||| Base\n{base}=======\n{incoming}>>>>>>> Incoming\n{outside}"
+    );
+    let model = HunkModel::from_marker_text(&text);
+    assert_eq!(model.hunk_count(), 1);
+    assert_eq!(model.regions.len(), 3);
+    let hunk = model.hunks()[0];
+    assert_eq!(
+        hunk.current,
+        current.split_terminator('\n').collect::<Vec<_>>()
+    );
+    assert_eq!(hunk.base, base.split_terminator('\n').collect::<Vec<_>>());
+    assert_eq!(
+        hunk.incoming,
+        incoming.split_terminator('\n').collect::<Vec<_>>()
+    );
+    assert_eq!(model.assembled_text(), text);
+}
+
+#[test]
+fn marker_boundaries_reject_long_runs_and_unseparated_labels() {
+    for width in [7, 10] {
+        let open = "<".repeat(width);
+        let base = "|".repeat(width);
+        let separator = "=".repeat(width);
+        let close = ">".repeat(width);
+        let outside = format!("{open}< Current\n{open}not-a-label\n🦀\n");
+        let current = format!("{base}| Base\n{base}not-a-label\n{separator}=\n{separator} label\n");
+        let incoming = format!("{close}> Incoming\n{close}not-a-label\n");
+        let text = format!("{outside}{open}\n{current}{separator}\n{incoming}{close}\n");
+        let model = HunkModel::from_marker_text_with_width(&text, width);
+        assert_eq!(model.hunk_count(), 1);
+        let hunk = model.hunks()[0];
+        assert_eq!(
+            hunk.current,
+            current.split_terminator('\n').collect::<Vec<_>>()
+        );
+        assert!(hunk.base.is_empty());
+        assert_eq!(
+            hunk.incoming,
+            incoming.split_terminator('\n').collect::<Vec<_>>()
+        );
+        let Region::Passthrough(lines) = &model.regions[0] else {
+            panic!("invalid openers must remain passthrough");
+        };
+        assert_eq!(lines, &outside.split_terminator('\n').collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn truncated_hunks_retain_all_source_text_in_each_phase() {
+    for width in [7, 10] {
+        let open = "<".repeat(width);
+        let base = "|".repeat(width);
+        let separator = "=".repeat(width);
+        let close = ">".repeat(width);
+        let current = format!("current\n{open} literal\n{close} literal");
+        let ancestor = format!("base\n{open} literal\n{base} literal\n{close} literal");
+        let incoming = format!("incoming\n{open} literal\n{base} literal\n{separator}");
+        for (tail, expected_base, expected_incoming) in [
+            (String::new(), "", ""),
+            (format!("\n{base} Base\n{ancestor}"), ancestor.as_str(), ""),
+            (
+                format!("\n{base} Base\n{ancestor}\n{separator}\n{incoming}"),
+                ancestor.as_str(),
+                incoming.as_str(),
+            ),
+        ] {
+            let text = format!("context\n{open} Current\n{current}{tail}");
+            let model = HunkModel::from_marker_text_with_width(&text, width);
+            assert_eq!(model.hunk_count(), 1);
+            assert!(!model.all_resolved());
+            let hunk = model.hunks()[0];
+            assert_eq!(
+                hunk.current,
+                current.split_terminator('\n').collect::<Vec<_>>()
+            );
+            assert_eq!(
+                hunk.base,
+                expected_base.split_terminator('\n').collect::<Vec<_>>()
+            );
+            assert_eq!(
+                hunk.incoming,
+                expected_incoming.split_terminator('\n').collect::<Vec<_>>()
+            );
+            assert_eq!(
+                HunkModel::from_marker_text_with_width(&model.assembled_text(), width),
+                model
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_and_zero_width_input_remain_passthrough() {
+    assert!(HunkModel::from_marker_text("").regions.is_empty());
+    assert_eq!(HunkModel::from_marker_text("\n").assembled_text(), "\n");
+    let text = "<<<<<<< Current\ncurrent\n=======\nincoming\n>>>>>>> Incoming\n";
+    let model = HunkModel::from_marker_text_with_width(text, 0);
+    assert_eq!(model.hunk_count(), 0);
+    assert_eq!(model.assembled_text(), text);
+}
+
+#[test]
+fn chosen_seven_wide_literal_is_not_residue_but_unresolved_nine_wide_is() {
+    let mut chosen = HunkModel::from_marker_text_with_width(
+        "<<<<<<<<< Current\n<<<<<<< user\n=========\nincoming\n>>>>>>>>> Incoming\n",
+        9,
+    );
+    assert!(chosen.set_choice(0, HunkChoice::AcceptCurrent));
+    assert_eq!(chosen.assembled_text(), "<<<<<<< user\n");
+    assert!(!resolved_lines_have_conflict_marker(&chosen.assemble()));
+    let unresolved = HunkModel::from_marker_text_with_width(
+        "<<<<<<<<< Current\ncurrent\n=========\nincoming\n>>>>>>>>> Incoming\n",
+        9,
+    );
+    assert!(resolved_lines_have_conflict_marker(&unresolved.assemble()));
+    for marker in ["<<<<<<<<<", "========= ", ">>>>>>>>> Incoming"] {
+        assert!(resolution_text_has_conflict_marker(marker));
+    }
+    for content in ["<<<<<<", "=========literal", "x>>>>>>>>> label"] {
+        assert!(!resolution_text_has_conflict_marker(content));
+    }
 }

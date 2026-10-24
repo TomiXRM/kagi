@@ -75,6 +75,7 @@ impl ResolutionBuffer {
             if self.file_identity(path) != Some(&current) {
                 return Err(observation_changed());
             }
+            self.validate_worktree(repo, path)?;
         }
         Ok(())
     }
@@ -87,6 +88,7 @@ impl ResolutionBuffer {
         path: &Path,
         draft: &kagi_domain::conflict_family::ConflictDraft,
         expected: &BufferRevision,
+        worktree_fingerprint: Option<&str>,
     ) -> Result<SaveBinding, GitError> {
         let mut index = repo
             .index()
@@ -105,6 +107,12 @@ impl ResolutionBuffer {
         {
             return Err(observation_changed());
         }
+        super::worktree_state::validate(repo, path, worktree_fingerprint, || match draft {
+            kagi_domain::conflict_family::ConflictDraft::Text { bytes, .. } => {
+                Some(super::worktree_state::bytes_fingerprint(bytes))
+            }
+            _ => None,
+        })?;
         Ok(SaveBinding {
             identity,
             context,
@@ -166,6 +174,7 @@ impl ResolutionBuffer {
             path,
             draft,
             buffer_revision,
+            worktree_fingerprint,
             ..
         } = request
         else {
@@ -176,7 +185,13 @@ impl ResolutionBuffer {
         if &snapshot.observation.revision != request.revision() {
             return Err(observation_changed());
         }
-        let binding = Self::validate_save_binding(repo, path, draft, buffer_revision)?;
+        let binding = Self::validate_save_binding(
+            repo,
+            path,
+            draft,
+            buffer_revision,
+            worktree_fingerprint.as_deref(),
+        )?;
         let repo_path = repo
             .workdir()
             .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
@@ -184,6 +199,7 @@ impl ResolutionBuffer {
         buffer.live_context = Some((binding.context, binding.git_dir));
         let mut file = FileResolution::empty();
         file.identity = Some(binding.identity);
+        file.worktree_fingerprint = worktree_fingerprint.clone();
         file.draft_state = true;
         match draft {
             kagi_domain::conflict_family::ConflictDraft::Text { bytes, origins } => {

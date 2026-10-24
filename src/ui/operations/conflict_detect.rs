@@ -120,7 +120,7 @@ impl KagiApp {
                 if f.kind == kagi_git::ConflictKind::Content {
                     let path = f.path.clone();
                     if let Some(markers) = repo.materialized_markers(&buffer, &path) {
-                        buffer.ensure_hunks(&path, &markers);
+                        buffer.ensure_hunks(&path, &markers.text, markers.marker_width);
                     }
                     editing_path = Some(path);
                 }
@@ -332,11 +332,15 @@ impl KagiApp {
                     // the observed operation, so equality means the repository
                     // never moved. A changed one is folded in place below.
                     Some(entity)
-                        if entity
-                            .read(cx)
-                            .mode
-                            .as_ref()
-                            .is_some_and(|current| current.revision == mode.revision) =>
+                        if entity.read(cx).mode.as_ref().is_some_and(|current| {
+                            current.revision == mode.revision
+                                && current.session.files.iter().all(|file| {
+                                    current.buffer.worktree_fingerprint(&file.path)
+                                        == mode.buffer.worktree_fingerprint(&file.path)
+                                        && current.buffer.worktree_changed(&file.path)
+                                            == mode.buffer.worktree_changed(&file.path)
+                                })
+                        }) =>
                     {
                         entity.update(cx, |view, cx| {
                             view.current_commit = current_commit;

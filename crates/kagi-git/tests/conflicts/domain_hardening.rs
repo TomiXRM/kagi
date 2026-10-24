@@ -95,60 +95,292 @@ fn source_fixture(current: &str, base: &str, incoming: &str) -> (tempfile::TempD
     (tmp, repo)
 }
 
-fn assert_unverified_incoming_is_blocked(current: &str, incoming: &str, expect_empty: bool) {
-    let (tmp, repo) = source_fixture(current, "a\n", incoming);
+struct HunkCase<'a> {
+    current: &'a str,
+    base: &'a str,
+    incoming: &'a str,
+    choices: &'a [HunkChoice],
+    expected: &'a str,
+    width: usize,
+}
+
+fn assert_hunk_save(case: &HunkCase<'_>, recorded: bool) {
+    let (tmp, repo) = source_fixture(case.current, case.base, case.incoming);
     let path = Path::new("file.txt");
     let before_file = std::fs::read(tmp.path().join(path)).unwrap();
     let before_index = std::fs::read(repo.path().join("index")).unwrap();
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let markers = buffer.materialized_markers(&repo, path).unwrap();
-    assert!(buffer.ensure_hunks(path, &markers));
-    assert!(buffer.hunk_count(path) > 0);
-    if expect_empty {
-        assert!(
-            buffer
-                .hunk_model(path)
-                .unwrap()
-                .hunks()
-                .iter()
-                .all(|hunk| hunk.incoming.is_empty()),
-            "exercise a corrupt parse whose chosen side would emit no marker"
-        );
+    assert_eq!(markers.marker_width, case.width);
+    assert!(buffer.ensure_hunks(path, &markers.text, markers.marker_width));
+    assert_eq!(buffer.hunk_count(path), case.choices.len());
+    for (hunk, choice) in case.choices.iter().enumerate() {
+        assert!(buffer.apply_hunk_choice(path, hunk, choice.clone()));
+        if hunk + 1 < case.choices.len() {
+            assert!(
+                buffer.cached_marker_residue(path),
+                "unresolved hunks still block"
+            );
+        }
     }
-    for hunk in 0..buffer.hunk_count(path) {
-        assert!(buffer.apply_hunk_choice(path, hunk, HunkChoice::AcceptIncoming));
-    }
-    assert!(buffer.cached_marker_residue(path), "readiness must block");
-    assert_eq!(
-        buffer.resolved_text(path).as_deref(),
-        Some(markers.as_str())
-    );
-    assert!(buffer.has_marker_residue(path));
-    assert_eq!(buffer.files_with_marker_residue(), vec![path.to_path_buf()]);
+    assert_eq!(buffer.resolved_text(path).as_deref(), Some(case.expected));
+    assert!(buffer.has_resolution(path) && !buffer.cached_marker_residue(path));
+    assert!(!buffer.has_marker_residue(path));
     let mut refreshed = ResolutionBuffer::from_repo(&repo).unwrap();
     refreshed.retain_drafts(buffer);
     assert!(refreshed.hunk_model(path).is_some());
-    assert!(refreshed.apply_hunk_choice(path, 0, HunkChoice::AcceptIncoming));
-    assert_eq!(
-        refreshed.resolved_text(path).as_deref(),
-        Some(markers.as_str())
-    );
     refreshed.autosave().unwrap();
-    let mut buffer = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
-    assert!(buffer.ensure_hunks(path, &markers));
-    assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptIncoming));
+    let buffer = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    assert!(buffer.hunks_all_resolved(path));
+    assert_eq!(buffer.resolved_text(path).as_deref(), Some(case.expected));
+    assert!(!buffer.has_marker_residue(path));
+    assert!(buffer.files_with_marker_residue().is_empty());
+    assert_eq!(buffer.recovery_drafts().count(), 0);
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(continue_blockers(&repo, &session, &buffer)
+        .unwrap()
+        .is_empty());
+    assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), before_file);
     assert_eq!(
-        buffer.resolved_text(path).as_deref(),
-        Some(markers.as_str())
+        std::fs::read(repo.path().join("index")).unwrap(),
+        before_index
     );
+    if recorded {
+        let snapshot = Backend::open(tmp.path())
+            .unwrap()
+            .conflict_snapshot()
+            .unwrap()
+            .unwrap();
+        let request = Backend::conflict_save_request(
+            snapshot.observation.revision,
+            &buffer,
+            path,
+            snapshot.observation.kind,
+            "",
+        )
+        .unwrap();
+        let plan = Backend::plan_recorded_conflict(tmp.path(), request).unwrap();
+        let report = Backend::run_recorded_conflict(
+            &plan,
+            kagi_git::backend::ExecutionPolicy::human(false),
+            None,
+        );
+        assert_eq!(
+            report.evidence.progress,
+            kagi_domain::conflict_family::ConflictProgress::Verified
+        );
+    } else {
+        execute_conflict_save(&repo, &buffer, path).unwrap();
+    }
+    assert_eq!(
+        std::fs::read(tmp.path().join(path)).unwrap(),
+        case.expected.as_bytes()
+    );
+    let mut index = repo.index().unwrap();
+    index.read(true).unwrap();
+    assert!(!index.has_conflicts());
+    assert_eq!(
+        index.get_path(path, 0).unwrap().id,
+        repo.blob(case.expected.as_bytes()).unwrap()
+    );
+}
+
+#[test]
+fn literal_separator_source_is_content_in_both_hunk_save_paths() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let current = "b\n=======\nc\n";
+    for recorded in [false, true] {
+        for (choice, expected) in [
+            (HunkChoice::AcceptCurrent, current),
+            (HunkChoice::AcceptIncoming, "d\n"),
+        ] {
+            assert_hunk_save(
+                &HunkCase {
+                    current,
+                    base: "a\n",
+                    incoming: "d\n",
+                    choices: &[choice],
+                    expected,
+                    width: 8,
+                },
+                recorded,
+            );
+        }
+    }
+}
+
+#[test]
+fn literal_incoming_opener_is_content_in_both_hunk_save_paths() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let incoming = "<<<<<<< x\n";
+    for recorded in [false, true] {
+        for (choice, expected) in [
+            (HunkChoice::AcceptCurrent, "b\n"),
+            (HunkChoice::AcceptIncoming, incoming),
+        ] {
+            assert_hunk_save(
+                &HunkCase {
+                    current: "b\n",
+                    base: "a\n",
+                    incoming,
+                    choices: &[choice],
+                    expected,
+                    width: 8,
+                },
+                recorded,
+            );
+        }
+    }
+}
+
+#[test]
+fn literal_closer_source_is_content_in_both_hunk_save_paths() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let current = "b\n>>>>>>> literal\nc\n";
+    for recorded in [false, true] {
+        assert_hunk_save(
+            &HunkCase {
+                current,
+                base: "a\n",
+                incoming: "d\n",
+                choices: &[HunkChoice::AcceptCurrent],
+                expected: current,
+                width: 8,
+            },
+            recorded,
+        );
+    }
+}
+
+#[test]
+fn adjacent_changes_keep_libgit_hunk_grouping_and_save() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, repo) = source_fixture("a\nY\nb\n", "a\nX\nb\n", "a\nZ\nB\n");
+    let path = Path::new("file.txt");
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let markers = buffer.materialized_markers(&repo, path).unwrap();
+    assert!(buffer.ensure_hunks(path, &markers.text, markers.marker_width));
+    let hunks = buffer.hunk_model(path).unwrap().hunks();
+    assert_eq!(hunks.len(), 1);
+    assert_eq!(hunks[0].current, ["Y", "b"]);
+    assert_eq!(hunks[0].incoming, ["Z", "B"]);
+    for recorded in [false, true] {
+        for (choice, expected) in [
+            (HunkChoice::AcceptCurrent, "a\nY\nb\n"),
+            (HunkChoice::AcceptIncoming, "a\nZ\nB\n"),
+        ] {
+            assert_hunk_save(
+                &HunkCase {
+                    current: "a\nY\nb\n",
+                    base: "a\nX\nb\n",
+                    incoming: "a\nZ\nB\n",
+                    choices: &[choice],
+                    expected,
+                    width: 7,
+                },
+                recorded,
+            );
+        }
+    }
+}
+
+#[test]
+fn clean_changes_on_both_sides_survive_mixed_hunk_choices() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for recorded in [false, true] {
+        assert_hunk_save(
+            &HunkCase {
+                base: "left-base\nc1\nc2\nc3\nX\nm1\nm2\nm3\nQ\nr1\nr2\nr3\nright-base\n",
+                current: "left-current\nc1\nc2\nc3\nY\nm1\nm2\nm3\nR\nr1\nr2\nr3\nright-base\n",
+                incoming: "left-base\nc1\nc2\nc3\nZ\nm1\nm2\nm3\nS\nr1\nr2\nr3\nright-incoming\n",
+                choices: &[HunkChoice::AcceptCurrent, HunkChoice::AcceptIncoming],
+                expected:
+                    "left-current\nc1\nc2\nc3\nY\nm1\nm2\nm3\nS\nr1\nr2\nr3\nright-incoming\n",
+                width: 7,
+            },
+            recorded,
+        );
+    }
+}
+
+#[test]
+fn legacy_width_draft_is_preserved_as_recovery_not_live_resolution() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (tmp, repo) = source_fixture("b\n=======\nc\n", "a\n", "d\n");
+    let path = Path::new("file.txt");
+    let before_file = std::fs::read(tmp.path().join(path)).unwrap();
+    let before_index = std::fs::read(repo.path().join("index")).unwrap();
+    let mut legacy = ResolutionBuffer::from_repo(&repo).unwrap();
+    let old_markers =
+        "<<<<<<< Current\nb\n=======\nc\n||||||| Base\na\n=======\nd\n>>>>>>> Incoming\n";
+    assert!(legacy.ensure_hunks(path, old_markers, 7));
+    let body = "legacy draft 日本語\n";
+    legacy.set_manual_text(path, body).unwrap();
+    legacy.autosave().unwrap();
+    let fresh = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    assert!(!fresh.has_resolution(path));
+    assert!(!fresh.hunks_all_resolved(path));
+    let recovery: Vec<_> = fresh.recovery_drafts().collect();
+    assert_eq!(recovery.len(), 1);
+    assert_eq!(recovery[0].path, path);
+    assert_eq!(
+        kagi_domain::resolution::lines_to_text(recovery[0].result.unwrap()),
+        body
+    );
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(!continue_blockers(&repo, &session, &fresh)
+        .unwrap()
+        .is_empty());
+    assert!(execute_conflict_save(&repo, &fresh, path).is_err());
+    assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), before_file);
+    assert_eq!(
+        std::fs::read(repo.path().join("index")).unwrap(),
+        before_index
+    );
+}
+
+#[test]
+fn unresolved_wide_hunk_blocks_continue_direct_and_recorded_save() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (tmp, repo) = source_fixture(
+        "a\nY\n=========\nm1\nm2\nm3\nR\nz\n",
+        "a\nX\nm1\nm2\nm3\nQ\nz\n",
+        "a\nZ\nm1\nm2\nm3\nS\nz\n",
+    );
+    let path = Path::new("file.txt");
+    let before_file = std::fs::read(tmp.path().join(path)).unwrap();
+    let before_index = std::fs::read(repo.path().join("index")).unwrap();
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let markers = buffer.materialized_markers(&repo, path).unwrap();
+    assert_eq!(markers.marker_width, 10);
+    assert!(buffer.ensure_hunks(path, &markers.text, markers.marker_width));
+    assert_eq!(buffer.hunk_count(path), 2);
+    assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
+    assert!(!buffer.hunks_all_resolved(path));
     assert!(buffer.cached_marker_residue(path));
     assert!(buffer.has_marker_residue(path));
     let session = detect_conflict_session(&repo).unwrap();
     assert!(!continue_blockers(&repo, &session, &buffer)
         .unwrap()
         .is_empty());
-    let direct_error = execute_conflict_save(&repo, &buffer, path).unwrap_err();
-    assert!(direct_error.to_string().contains("conflict markers"));
+    assert!(execute_conflict_save(&repo, &buffer, path)
+        .unwrap_err()
+        .to_string()
+        .contains("conflict markers"));
     let snapshot = Backend::open(tmp.path())
         .unwrap()
         .conflict_snapshot()
@@ -162,118 +394,18 @@ fn assert_unverified_incoming_is_blocked(current: &str, incoming: &str, expect_e
         "",
     )
     .unwrap();
-    match &request {
-        kagi_domain::conflict_family::ConflictRequest::Save {
-            draft: kagi_domain::conflict_family::ConflictDraft::Text { bytes, origins },
-            ..
-        } => {
-            assert_eq!(bytes, markers.as_bytes());
-            assert!(origins.iter().all(|origin| *origin == LineOrigin::Manual));
-        }
-        _ => panic!("expected a text Save request"),
-    }
-    let recorded_error = Backend::plan_recorded_conflict(tmp.path(), request)
+    let error = Backend::plan_recorded_conflict(tmp.path(), request)
         .err()
-        .expect("unverified attribution must not authorize recorded Save");
+        .unwrap();
     assert!(matches!(
-        recorded_error,
-        kagi_git::GitError::Blocked(note)
-            if matches!(
-                *note,
-                kagi_domain::plan_note::PlanNote::Conflicts(
-                    kagi_domain::plan_note::ConflictsNote::ResolutionMarkers
-                )
-            )
+        error, kagi_git::GitError::Blocked(note)
+            if matches!(*note, kagi_domain::plan_note::PlanNote::Conflicts(
+                kagi_domain::plan_note::ConflictsNote::ResolutionMarkers
+            ))
     ));
     assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), before_file);
     assert_eq!(
         std::fs::read(repo.path().join("index")).unwrap(),
         before_index
     );
-    buffer
-        .apply_choice(path, ResolutionChoice::Incoming)
-        .unwrap();
-    assert_eq!(buffer.resolved_text(path).as_deref(), Some(incoming));
-    assert!(!buffer.cached_marker_residue(path));
-    assert!(!buffer.has_marker_residue(path));
-}
-
-#[test]
-fn corrupt_separator_attribution_blocks_readiness_continue_and_both_saves() {
-    if !test_support::run_isolated() {
-        return;
-    }
-    assert_unverified_incoming_is_blocked("b\n=======\nc\n", "d\n", false);
-}
-
-#[test]
-fn corrupt_incoming_opener_with_empty_parsed_side_still_blocks() {
-    if !test_support::run_isolated() {
-        return;
-    }
-    assert_unverified_incoming_is_blocked("b\n", "<<<<<<< x\n", true);
-}
-
-#[test]
-fn verified_hunk_literal_marker_saves_directly_and_recorded() {
-    if !test_support::run_isolated() {
-        return;
-    }
-    for recorded in [false, true] {
-        let literal = "b\n>>>>>>> literal\nc\n";
-        let (tmp, repo) = source_fixture(literal, "a\n", "d\n");
-        let path = Path::new("file.txt");
-        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-        let markers = buffer.materialized_markers(&repo, path).unwrap();
-        assert!(buffer.ensure_hunks(path, &markers));
-        assert!(buffer.hunk_count(path) > 0);
-        for hunk in 0..buffer.hunk_count(path) {
-            assert!(buffer.apply_hunk_choice(path, hunk, HunkChoice::AcceptCurrent));
-        }
-        assert!(buffer.has_resolution(path) && !buffer.cached_marker_residue(path));
-        assert!(!buffer.has_marker_residue(path));
-        assert!(buffer.files_with_marker_residue().is_empty());
-        let session = detect_conflict_session(&repo).unwrap();
-        assert!(continue_blockers(&repo, &session, &buffer)
-            .unwrap()
-            .is_empty());
-        if recorded {
-            let snapshot = Backend::open(tmp.path())
-                .unwrap()
-                .conflict_snapshot()
-                .unwrap()
-                .unwrap();
-            let request = Backend::conflict_save_request(
-                snapshot.observation.revision,
-                &buffer,
-                path,
-                snapshot.observation.kind,
-                "",
-            )
-            .unwrap();
-            let plan = Backend::plan_recorded_conflict(tmp.path(), request).unwrap();
-            let report = Backend::run_recorded_conflict(
-                &plan,
-                kagi_git::backend::ExecutionPolicy::human(false),
-                None,
-            );
-            assert_eq!(
-                report.evidence.progress,
-                kagi_domain::conflict_family::ConflictProgress::Verified
-            );
-        } else {
-            execute_conflict_save(&repo, &buffer, path).unwrap();
-        }
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join(path)).unwrap(),
-            literal
-        );
-        let mut index = repo.index().unwrap();
-        index.read(true).unwrap();
-        assert!(!index.has_conflicts());
-        assert_eq!(
-            index.get_path(path, 0).unwrap().id,
-            repo.blob(literal.as_bytes()).unwrap()
-        );
-    }
 }

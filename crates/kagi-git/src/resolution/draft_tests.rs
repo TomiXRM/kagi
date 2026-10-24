@@ -3,18 +3,8 @@ use super::*;
 fn text_buffer(markers: &str) -> (ResolutionBuffer, PathBuf) {
     let mut buffer = ResolutionBuffer::new(Path::new("/tmp/repo"));
     let path = PathBuf::from("file.txt");
-    let source = |choice: HunkChoice| {
-        let mut model = HunkModel::from_marker_text(markers);
-        for hunk in 0..model.hunk_count() {
-            model.set_choice(hunk, choice.clone());
-        }
-        model.assembled_text()
-    };
-    let mut file = FileResolution::empty();
-    file.current_text = Some(source(HunkChoice::AcceptCurrent));
-    file.incoming_text = Some(source(HunkChoice::AcceptIncoming));
-    buffer.files.insert(path.clone(), file);
-    assert!(buffer.ensure_hunks(&path, markers));
+    buffer.files.insert(path.clone(), FileResolution::empty());
+    assert!(buffer.ensure_hunks(&path, markers, 7));
     (buffer, path)
 }
 

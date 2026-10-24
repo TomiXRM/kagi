@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use git2::{FileMode, IndexEntry, MergeFileInput, MergeFileOptions, Repository};
+use git2::{IndexEntry, Repository};
 
 use super::GitError;
 use kagi_domain::conflict_family::ConflictRevision;
@@ -85,6 +85,10 @@ impl PendingEdit {
 struct FileResolution {
     /// Known operation + this file's exact unmerged stages, never path alone.
     identity: Option<ConflictRevision>,
+    /// Worktree bytes observed alongside this file's source materialization.
+    worktree_fingerprint: Option<String>,
+    /// Presentation only; live validation always re-reads the path.
+    worktree_changed: bool,
     /// Autosave producer provenance, never conflict identity or restore authority.
     /// A decoded origin belongs to a previous editor until the first live edit.
     editing_origin: Option<String>,
@@ -118,10 +122,6 @@ struct FileResolution {
     result: Option<Vec<ResolvedLine>>,
     /// Compact decisions retained with the draft across autosave and recovery.
     hunk_state: Option<hunk_state::HunkState>,
-    /// Original materialization when the parsed sides do not reconstruct both
-    /// stage blobs. Never publish source-attributed output from that model.
-    /// Runtime-only: restored hunk decisions must pass live verification again.
-    unverified_hunk_markers: Option<String>,
     /// Derived from this exact Result revision; not persisted or used by safety gates.
     marker_residue: bool,
     /// Undo stack: prior `result` states (most recent last).
@@ -134,6 +134,8 @@ impl FileResolution {
     fn empty() -> Self {
         FileResolution {
             identity: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             editing_origin: None,
             live_editing_origin: false,
             pending_edit: PendingEdit::default(),
@@ -147,11 +149,28 @@ impl FileResolution {
             raw_result: None,
             result: None,
             hunk_state: None,
-            unverified_hunk_markers: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
         }
+    }
+
+    /// Move the complete editing history into recovery, retaining only live
+    /// source/provenance facts on the current file. Draft bodies are not copied.
+    fn take_draft_for_recovery(&mut self, marker_count: &mut usize) -> Self {
+        let mut fresh = Self::empty();
+        fresh.identity = self.identity.clone();
+        fresh.worktree_fingerprint = self.worktree_fingerprint.clone();
+        fresh.worktree_changed = self.worktree_changed;
+        fresh.current_text = self.current_text.clone();
+        fresh.incoming_text = self.incoming_text.clone();
+        fresh.binary = self.binary;
+        fresh.raw = self.raw;
+        fresh.current_raw = self.current_raw;
+        fresh.incoming_raw = self.incoming_raw;
+        let saved = std::mem::replace(self, fresh);
+        *marker_count -= usize::from(saved.marker_residue);
+        saved
     }
 
     /// Start a new preservation boundary after loading, but reuse the same
@@ -232,8 +251,12 @@ impl Clone for ResolutionBuffer {
 mod conflict_boundary;
 mod drafts;
 mod hunk_state;
+mod materialize;
+use materialize::materialize_zdiff3;
+pub use materialize::ConflictMaterialization;
 #[cfg(test)]
 mod hunk_state_tests;
+mod worktree_state;
 use drafts::RecoveryEntry;
 pub use drafts::{OwnedRecoveryDraft, RecoveryDraft};
 
@@ -294,6 +317,7 @@ impl ResolutionBuffer {
             fr.identity = buffer.live_context.as_ref().map(|(context, git_dir)| {
                 drafts::file_identity(git_dir, context, &path, &conflict)
             });
+            fr.worktree_fingerprint = worktree_state::fingerprint(&workdir.join(&path)).ok();
             fr.current_text = blob_text(repo, conflict.our.as_ref());
             fr.incoming_text = blob_text(repo, conflict.their.as_ref());
             fr.binary = entry_is_binary(repo, conflict.our.as_ref())
@@ -328,6 +352,23 @@ impl ResolutionBuffer {
         let mut base = Self::from_repo(repo)?;
         if let Some(saved) = Self::load(&base.repo_path) {
             base.retain_drafts(saved);
+            // Validate saved hunk authority before publishing any restored
+            // resolution, including files the UI has not selected. The same
+            // loader powers Operation Log's preserved-draft inspection.
+            let paths: Vec<_> = base
+                .files
+                .iter()
+                .filter(|(_, file)| file.hunk_state.is_some())
+                .map(|(path, _)| path.clone())
+                .collect();
+            for path in paths {
+                if let Some(markers) = base.materialized_markers(repo, &path) {
+                    base.ensure_hunks(&path, &markers.text, markers.marker_width);
+                } else if let Some(file) = base.files.get_mut(&path) {
+                    let saved = file.take_draft_for_recovery(&mut base.marker_residue_count);
+                    base.preserve_recovery(path, saved);
+                }
+            }
         }
         Ok(base)
     }
@@ -335,7 +376,11 @@ impl ResolutionBuffer {
     /// Return the zdiff3 (or standard fallback) materialized marker text for a
     /// file, for the UI to show inside the 3-way view.  `None` when the file is
     /// not in the buffer or has no usable text merge.
-    pub fn materialized_markers(&self, repo: &Repository, path: &Path) -> Option<String> {
+    pub fn materialized_markers(
+        &self,
+        repo: &Repository,
+        path: &Path,
+    ) -> Option<ConflictMaterialization> {
         let fr = self.files.get(path)?;
         if fr.raw {
             return None;
@@ -473,34 +518,33 @@ impl ResolutionBuffer {
 
 impl ResolutionBuffer {
     /// Ensure a [`HunkModel`] exists for `path`, decomposing it from the supplied
-    /// `marker_text` (the zdiff3 / standard materialization) on first use.
+    /// `marker_text` and its collision-free `marker_width` on first use.
     ///
     /// Idempotent: if a model already exists (e.g. the user has been editing
     /// hunks), it is preserved so per-hunk choices are not lost.  Returns `false`
     /// if `path` is not a tracked text conflict.
-    pub fn ensure_hunks(&mut self, path: &Path, marker_text: &str) -> bool {
+    /// Mismatched saved hunk authority preserves the exact draft as recovery
+    /// and clears the live resolution before exposing the new source model.
+    pub fn ensure_hunks(&mut self, path: &Path, marker_text: &str, marker_width: usize) -> bool {
         let Some(file) = self.files.get_mut(path).filter(|file| !file.raw) else {
             return false;
         };
         if !self.hunks.contains_key(path) {
-            let mut model = HunkModel::from_marker_text(marker_text);
-            let sources_verified =
-                file.current_text
-                    .as_deref()
-                    .is_some_and(|text| model.matches_source_text(SelectionSide::Current, text))
-                    && file.incoming_text.as_deref().is_some_and(|text| {
-                        model.matches_source_text(SelectionSide::Incoming, text)
-                    });
-            file.unverified_hunk_markers = (!sources_verified).then(|| marker_text.to_owned());
+            let mut model = HunkModel::from_marker_text_with_width(marker_text, marker_width);
             // Decoding alone grants no authority. retain_drafts first binds the
             // decisions to a live file with the same known stage identity.
-            if self.live_context.is_some() {
-                if let Some(state) = &file.hunk_state {
-                    state.restore(marker_text, &mut model);
-                }
-            }
+            let restore_failed = self.live_context.is_some()
+                && file
+                    .hunk_state
+                    .as_ref()
+                    .is_some_and(|state| !state.restore(marker_text, &mut model));
+            let recovery = restore_failed
+                .then(|| file.take_draft_for_recovery(&mut self.marker_residue_count));
             file.hunk_state = Some(hunk_state::HunkState::new(marker_text, &model));
             self.hunks.insert(path.to_path_buf(), model);
+            if let Some(saved) = recovery {
+                self.preserve_recovery(path.to_path_buf(), saved);
+            }
         }
         true
     }
@@ -534,15 +578,8 @@ impl ResolutionBuffer {
         let Some(model) = self.hunks.get(path) else {
             return false;
         };
-        // A marker-width collision can both misattribute synthetic markers and
-        // erase the entire chosen side. Re-emit the original unresolved text as
-        // Manual on failed source verification, rather than trusting even an
-        // apparently marker-free (possibly empty) assembly from that parser.
+        let assembled = model.assemble();
         if let Some(fr) = self.files.get_mut(path) {
-            let assembled = match &fr.unverified_hunk_markers {
-                Some(markers) => text_to_lines(markers, LineOrigin::Manual),
-                None => model.assemble(),
-            };
             fr.checkpoint();
             if let Some(state) = &mut fr.hunk_state {
                 state.update(model);
@@ -906,116 +943,6 @@ impl ResolutionBuffer {
 }
 
 // ────────────────────────────────────────────────────────────
-// zdiff3 materialization
-// ────────────────────────────────────────────────────────────
-
-/// Materialize the conflict at `path` as a zdiff3-style marker string using
-/// git2's `merge_file_from_index`.  Falls back to standard markers if zdiff3
-/// fails, and returns `None` for single-sided / unreadable conflicts.
-fn materialize_zdiff3(repo: &Repository, path: &Path) -> Option<String> {
-    let index = repo.index().ok()?;
-    let conflicts = index.conflicts().ok()?;
-    for entry in conflicts.flatten() {
-        let p = conflict_path(&entry)?;
-        if p != path {
-            continue;
-        }
-        // merge_file_from_index needs all three index stages present.
-        let (ancestor, our, their) = match (entry.ancestor, entry.our, entry.their) {
-            (Some(a), Some(o), Some(t)) => (a, o, t),
-            // add/add: the file was added independently on both sides, so there
-            // is no common base. merge_file_from_index can't be used (no
-            // ancestor stage), but this is still a TEXT conflict — materialize it
-            // against an empty base so the editor shows both sides instead of
-            // wrongly falling back to the "binary / single-sided" message.
-            (None, Some(o), Some(t)) => {
-                return merge_addadd(repo, path, &o, &t, true)
-                    .or_else(|| merge_addadd(repo, path, &o, &t, false));
-            }
-            // modify/delete and other single-sided shapes have no text merge.
-            _ => return None,
-        };
-        // Try zdiff3 first, then standard.
-        if let Some(text) = merge_with_style(repo, &ancestor, &our, &their, true) {
-            return Some(text);
-        }
-        return merge_with_style(repo, &ancestor, &our, &their, false);
-    }
-    None
-}
-
-/// Run `merge_file_from_index` with either zdiff3 or standard marker style and
-/// return the marker text, or `None` on error.
-fn merge_with_style(
-    repo: &Repository,
-    ancestor: &IndexEntry,
-    our: &IndexEntry,
-    their: &IndexEntry,
-    zdiff3: bool,
-) -> Option<String> {
-    let mut opts = MergeFileOptions::new();
-    opts.ancestor_label("Base");
-    opts.our_label("Current");
-    opts.their_label("Incoming");
-    if zdiff3 {
-        opts.style_zdiff3(true);
-    } else {
-        opts.style_standard(true);
-    }
-    let result = repo
-        .merge_file_from_index(ancestor, our, their, Some(&mut opts))
-        .ok()?;
-    Some(String::from_utf8_lossy(result.content()).into_owned())
-}
-
-/// Materialize an **add/add** conflict (no common base): a content merge of
-/// `our` vs `their` against an empty ancestor via `git2::merge_file`. Returns
-/// `None` if either blob is unreadable or the merge errors. The whole file
-/// becomes a conflict region (both sides "added" everything), which is exactly
-/// what the 3-way editor needs to show. (Bug: add/add `.h` files were shown as
-/// "binary / single-sided" because `merge_file_from_index` requires a base.)
-fn merge_addadd(
-    repo: &Repository,
-    path: &Path,
-    our: &IndexEntry,
-    their: &IndexEntry,
-    zdiff3: bool,
-) -> Option<String> {
-    let our_blob = repo.find_blob(our.id).ok()?;
-    let their_blob = repo.find_blob(their.id).ok()?;
-    let path_str = path.to_string_lossy();
-
-    let mut ancestor_in = MergeFileInput::new();
-    ancestor_in
-        .content(b"")
-        .path(path_str.as_ref())
-        .mode(Some(FileMode::Blob));
-    let mut our_in = MergeFileInput::new();
-    our_in
-        .content(our_blob.content())
-        .path(path_str.as_ref())
-        .mode(Some(FileMode::Blob));
-    let mut their_in = MergeFileInput::new();
-    their_in
-        .content(their_blob.content())
-        .path(path_str.as_ref())
-        .mode(Some(FileMode::Blob));
-
-    let mut opts = MergeFileOptions::new();
-    opts.ancestor_label("Base");
-    opts.our_label("Current");
-    opts.their_label("Incoming");
-    if zdiff3 {
-        opts.style_zdiff3(true);
-    } else {
-        opts.style_standard(true);
-    }
-
-    let result = git2::merge_file(&ancestor_in, &our_in, &their_in, Some(&mut opts)).ok()?;
-    Some(String::from_utf8_lossy(result.content()).into_owned())
-}
-
-// ────────────────────────────────────────────────────────────
 // Index / blob helpers
 // ────────────────────────────────────────────────────────────
 
@@ -1206,6 +1133,7 @@ struct FileRecord<'a> {
     result: &'a Option<Vec<ResolvedLine>>,
     raw_result: Option<RawRecord<'a>>,
     hunk_state: &'a Option<hunk_state::HunkState>,
+    worktree_fingerprint: &'a Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1263,6 +1191,7 @@ fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
         incoming: fr.incoming_text.as_deref(),
         result: &fr.result,
         hunk_state: &fr.hunk_state,
+        worktree_fingerprint: &fr.worktree_fingerprint,
         raw_result: fr.raw_result.as_ref().map(|raw| RawRecord {
             oid: &raw.oid,
             mode: raw.mode,
@@ -1335,6 +1264,8 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         || raw_result.is_some();
     let mut resolution = FileResolution {
         identity: drafts::parse_identity(fields.remove("identity")),
+        worktree_fingerprint: json_string(fields.remove("worktree_fingerprint")),
+        worktree_changed: false,
         editing_origin: json_string(fields.remove("editing_origin"))
             .filter(|origin| !origin.is_empty()),
         live_editing_origin: false,
@@ -1350,7 +1281,6 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         hunk_state: fields
             .remove("hunk_state")
             .and_then(|value| serde_json::from_value(value).ok()),
-        unverified_hunk_markers: None,
         marker_residue: false,
         raw_result,
         raw: false,
@@ -1438,7 +1368,8 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
-            unverified_hunk_markers: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1543,7 +1474,8 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
-            unverified_hunk_markers: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1594,7 +1526,8 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
-            unverified_hunk_markers: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1686,7 +1619,7 @@ keep bottom
             "keep top\na-current\nkeep middle\nb-current\nkeep bottom\n",
             "keep top\na-incoming\nkeep middle\nb-incoming\nkeep bottom\n",
         );
-        assert!(b.ensure_hunks(&p, TWO_HUNK_ZDIFF3));
+        assert!(b.ensure_hunks(&p, TWO_HUNK_ZDIFF3, 7));
         assert_eq!(b.hunk_count(&p), 2);
 
         assert!(b.apply_hunk_choice(&p, 0, HunkChoice::AcceptCurrent));
@@ -1715,10 +1648,10 @@ keep bottom
             "keep top\na-current\nkeep middle\nb-current\nkeep bottom\n",
             "keep top\na-incoming\nkeep middle\nb-incoming\nkeep bottom\n",
         );
-        b.ensure_hunks(&p, TWO_HUNK_ZDIFF3);
+        b.ensure_hunks(&p, TWO_HUNK_ZDIFF3, 7);
         b.apply_hunk_choice(&p, 0, HunkChoice::AcceptCurrent);
         // A second ensure with different text must NOT clobber existing choices.
-        b.ensure_hunks(&p, "<<<<<<< Current\nz\n=======\nw\n>>>>>>> Incoming\n");
+        b.ensure_hunks(&p, "<<<<<<< Current\nz\n=======\nw\n>>>>>>> Incoming\n", 7);
         assert_eq!(b.hunk_count(&p), 2);
         assert_eq!(b.hunk_model(&p).unwrap().resolved_hunk_count(), 1);
     }

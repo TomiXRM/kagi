@@ -52,6 +52,7 @@ pub enum ConflictRequest {
         path: PathBuf,
         revision: ConflictRevision,
         buffer_revision: BufferRevision,
+        worktree_fingerprint: Option<String>,
         draft: ConflictDraft,
         kind: ConflictOperationKind,
         before_hash: String,

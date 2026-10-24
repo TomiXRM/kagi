@@ -29,6 +29,8 @@ pub(super) fn save_and_abort(cx: &mut VisualTestAppContext) {
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
         save(cx);
+        external_worktree(cx, false);
+        external_worktree(cx, true);
         abort(cx, false);
         abort(cx, true);
     }
@@ -378,4 +380,139 @@ pub(super) fn continue_result_owner(cx: &mut VisualTestAppContext) {
             unmount(cx, app, window);
         }
     }
+}
+
+fn external_worktree(cx: &mut VisualTestAppContext, before_first_choice: bool) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let original_bytes = std::fs::read(repo.join("file.txt")).unwrap();
+    let mut bytes = original_bytes.clone();
+    bytes.extend_from_slice(b"\n// EXTERNAL_WT_MUST_SURVIVE\n");
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    conflict.update(cx, |view, cx| {
+        view.conflict_open_editor(Path::new("file.txt"));
+        cx.notify();
+    });
+    cx.run_until_parked();
+    if before_first_choice {
+        std::fs::write(repo.join("file.txt"), &bytes).unwrap();
+        app.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+    }
+    conflict.update(cx, |view, cx| {
+        view.conflict_editor_set_hunk_side(
+            Path::new("file.txt"),
+            0,
+            kagi_git::resolution::SelectionSide::Incoming,
+            true,
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let draft = cx.read(|cx| {
+        conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .resolved_text(Path::new("file.txt"))
+            .unwrap()
+    });
+    if !before_first_choice {
+        std::fs::write(repo.join("file.txt"), &bytes).unwrap();
+    }
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    // Deliver the same refresh used by the worktree watcher's conflict branch.
+    app.update(cx, |app, cx| app.reload_external(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        let header = view.file_header_status_for_e2e();
+        assert!(header.contains(kagi::ui::i18n::Msg::ConflictWorktreeChanged.t()));
+        let mode = view.mode.as_ref().unwrap();
+        let path = Path::new("file.txt");
+        assert!(mode.buffer.worktree_changed(path));
+        assert!(
+            mode.buffer.has_resolution(path),
+            "the index materialization still matches"
+        );
+        assert_eq!(
+            mode.buffer.resolved_text(path).as_deref(),
+            Some(draft.as_str())
+        );
+        assert!(
+            !mode
+                .buffer
+                .hunk_model(path)
+                .unwrap()
+                .assembled_text()
+                .contains("EXTERNAL_WT_MUST_SURVIVE"),
+            "index hunks are not rebuilt from WT markers"
+        );
+    });
+    let save = e2e::control_bounds(window.window_id(), "conflict-save").unwrap();
+    cx.simulate_click(window, save.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(std::fs::read(repo.join("file.txt")).unwrap(), bytes);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert!(
+        read_oplog_tail_for_repo(&repo, 100)
+            .iter()
+            .all(|entry| entry.op != "conflict-save:merge"),
+        "disabled Save must not dispatch"
+    );
+    click_control(cx, window, "conflict-reload");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .worktree_changed(Path::new("file.txt"))),
+        "reload cannot bless changed bytes"
+    );
+    assert_eq!(std::fs::read(repo.join("file.txt")).unwrap(), bytes);
+    // The user restores the reviewed source externally; Reload may now clear
+    // the blocker without discarding the draft's matching hunk decisions.
+    std::fs::write(repo.join("file.txt"), &original_bytes).unwrap();
+    click_control(cx, window, "conflict-reload");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| {
+        let view = conflict.read(cx);
+        let buffer = &view.mode.as_ref().unwrap().buffer;
+        !buffer.worktree_changed(Path::new("file.txt"))
+            && buffer.resolved_text(Path::new("file.txt")).as_deref() == Some(draft.as_str())
+    }));
+    std::fs::write(
+        repo.join("file.txt"),
+        "resolved externally\n// EXTERNAL_WT_MUST_SURVIVE\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "file.txt"]);
+    app.update(cx, |app, cx| app.reload_external(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| {
+            let view = conflict.read(cx);
+            let mode = view.mode.as_ref().unwrap();
+            view.selected_saved.as_deref() == Some(Path::new("file.txt"))
+                && mode.session.files.is_empty()
+                && mode
+                    .session
+                    .resolved
+                    .iter()
+                    .any(|file| file.path == Path::new("file.txt"))
+        }),
+        "external staging moves the selected path to Saved"
+    );
+    drop(conflict);
+    unmount(cx, app, window);
 }

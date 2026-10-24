@@ -95,6 +95,10 @@ fn compatible(current: &FileResolution, saved: &FileResolution) -> bool {
     if !same_identity(current, saved) {
         return false;
     }
+    // Legacy source-unknown drafts remain inspectable, never re-authorized.
+    if saved.worktree_fingerprint.is_none() && current.worktree_fingerprint.is_some() {
+        return false;
+    }
     if current.raw {
         saved.result.is_none()
             && saved.raw_result.is_none_or(|raw| {
@@ -115,6 +119,7 @@ fn has_draft_state(file: &FileResolution) -> bool {
 
 fn same_draft(left: &FileResolution, right: &FileResolution) -> bool {
     left.identity == right.identity
+        && left.worktree_fingerprint == right.worktree_fingerprint
         && left.draft_state == right.draft_state
         && left.result == right.result
         && left.raw_result == right.raw_result
@@ -190,12 +195,12 @@ impl ResolutionBuffer {
                 .get_mut(&path)
                 .filter(|current| compatible(current, &saved))
             {
+                super::worktree_state::retain_provenance(current, &mut saved);
                 if has_draft_state(&saved) {
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();
                     self.hunks.remove(&path);
-                    current.unverified_hunk_markers = None;
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;
@@ -204,13 +209,13 @@ impl ResolutionBuffer {
                     current.redo = std::mem::take(&mut saved.redo);
                 }
                 if let Some(model) = hunks.remove(&path) {
-                    current.unverified_hunk_markers = saved.unverified_hunk_markers.take();
                     self.hunks.insert(path.clone(), model);
                 }
                 if has_draft_state(current) {
                     matched.insert(path);
                 }
             } else {
+                self.hunks.remove(&path);
                 recoveries.push(RecoveryEntry { path, file: saved });
             }
         }
@@ -222,11 +227,11 @@ impl ResolutionBuffer {
                     has_draft_state(&entry.file) && compatible(current, &entry.file)
                 }) {
                     let mut saved = entry.file;
+                    super::worktree_state::retain_provenance(current, &mut saved);
                     current.replace_result(saved.result.take(), &mut self.marker_residue_count);
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();
                     self.hunks.remove(&entry.path);
-                    current.unverified_hunk_markers = None;
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;

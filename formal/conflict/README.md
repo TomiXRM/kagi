@@ -122,14 +122,17 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `approved-revision` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
 | `approved-index-race` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
 | `approved-two-writers` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
-| `stale-worktree` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `stale-worktree` | `StaleSnapshotNeverWrites` | HOLD | none | #1733 fixed: captured WT provenance checked before mutation |
+| `stale-worktree-broken` | `StaleSnapshotNeverWrites` | REFUTE | worktree | Negative control; remove #1733 WT provenance guard |
+| `stale-worktree-before-choice` | `StaleSnapshotNeverWrites` | HOLD | none | #1733: watcher refresh before any choice retains original WT provenance |
+| `stale-worktree-before-choice-broken` | `StaleSnapshotNeverWrites` | REFUTE | materialization | Negative control; watcher adopts changed WT as fresh source |
 | `stale-index` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-index-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
 | `stale-head` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-head-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
 | `stale-metadata` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-metadata-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
-| `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | External CLI index-write TOCTOU after the last check; not closed by #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
 | `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
@@ -138,7 +141,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
-| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
 | `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
 | `receipt-skip` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
@@ -168,7 +171,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `predict_hunks` | `AssembleAllFourOrdersAndProvenance` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleBlockOrderStable` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleNoSyntheticMarkers` | HOLD | CONTRACT |
-| `predict_hunks` | `MarkerGateRespectsChosenSourceProvenance` | HOLD | #1746 C2 fixed: manual-only gate; parsed source origins require exact stage reconstruction (#1751) |
+| `predict_hunks` | `MarkerGateRespectsChosenSourceProvenance` | HOLD | #1746 C2 fixed: manual-only gate; collision-free materialization and width-aware parser (#1751) |
 | `predict_hunks` | `UndecideOnlyOnDeselect` | HOLD | CONTRACT |
 | `predict_hunks` | `OrderApplicability` | HOLD | CONTRACT |
 | `predict_hunks` | `InvalidLineFailureIsNoOp` | HOLD | #1746 C3 fixed: validate before materialization |
@@ -203,11 +206,12 @@ external drill artifacts; ordinary runs require no live app or external files.
 C2 replaces the mis-posed `AssembleNoMarkerLeak`: raw literal/manual marker text
 is intentionally preserved; blocking is a provenance decision. Manual markers
 still block, and the `plain-text-gate` mutant rejects chosen source literals.
-Parsed source origins are trusted only after reconstructing both complete sides
-and matching the stage blobs byte-for-byte. Failed reconstruction publishes the
-original materialization as Manual; even a corrupt empty chosen side stays
-blocked. These parser-boundary cases are Rust backend regressions, not a claim
-that the pure model repairs marker-width parsing (#1751).
+Parser attribution is protected by collision-free marker widths across all three
+source blobs and an exact-width, state-specific parser (#1751). Rust backend/UI
+regressions cover source marker literals, width 10, clean merged changes outside
+hunks, and inspection-only legacy drafts after the width fingerprint changes.
+Do not compare merged passthrough with either stage: clean changes from the
+other side belong in the Result by design.
 The C1/C3/C4 removed-guard mutants are `empty-adoption-lost`,
 `invalid-materializes`, and `malformed-index`; each must remain red.
 `undecide-empty-adoption` supersedes the now-redundant `undecide-on-select`:

@@ -228,7 +228,9 @@ fn skipping_the_last_rebase_step_records_the_branch_finishing() {
     let session = kagi_git::detect_conflict_session(&git2::Repository::open(&repo).unwrap())
         .expect("rebase in conflict");
     let buffer = b.resolution_buffer_from_repo().unwrap();
-    let (result, moves) = b.observe_ref_moves(|b| b.execute_conflict_skip(&session, &buffer));
+    let expected = b.conflict_snapshot().unwrap().unwrap().observation.revision;
+    let approved = b.plan_conflict_skip(&session, &expected).unwrap();
+    let (result, moves) = b.observe_ref_moves(|b| b.execute_conflict_skip(&approved, &buffer));
     result.expect("skip");
     // The only commit was skipped: side ends on main's tip, HEAD back on side.
     assert_eq!(tip(&repo, "side"), main);

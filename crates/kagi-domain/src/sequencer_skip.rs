@@ -113,8 +113,8 @@ pub enum SkipProgress {
     Advanced,
     /// Nothing moved: the same step is still the current one. A real failure.
     NoProgress,
-    /// The command reported an error and the state does not prove either
-    /// outcome. Never guess in this direction — the caller records `Unknown`.
+    /// The observed state does not prove either outcome, even if the command
+    /// exited zero. Never guess in this direction — the caller records `Unknown`.
     Unclear,
 }
 
@@ -134,7 +134,11 @@ pub fn classify_skip(o: SkipObservation) -> SkipProgress {
         };
     }
     if o.ok {
-        return SkipProgress::Advanced;
+        return if replay_advanced(&o) == Some(true) {
+            SkipProgress::Advanced
+        } else {
+            SkipProgress::Unclear
+        };
     }
     match replay_advanced(&o) {
         // Moved on and left a conflict behind: the #540 case.
@@ -212,6 +216,40 @@ mod tests {
             }),
             SkipProgress::Advanced
         );
+    }
+
+    #[test]
+    fn zero_exit_requires_observed_movement_while_operation_remains() {
+        for (before, after, expected) in [
+            (at(1, "aaa"), at(1, "aaa"), SkipProgress::Unclear),
+            (
+                ReplayPosition::default(),
+                ReplayPosition::default(),
+                SkipProgress::Unclear,
+            ),
+            (at(1, "aaa"), at(2, "aaa"), SkipProgress::Advanced),
+            (at(1, "aaa"), at(1, "bbb"), SkipProgress::Advanced),
+            (at(2, "aaa"), at(1, "bbb"), SkipProgress::Unclear),
+            (
+                at(1, "aaa"),
+                ReplayPosition::default(),
+                SkipProgress::Unclear,
+            ),
+        ] {
+            for unmerged in [false, true] {
+                assert_eq!(
+                    classify_skip(SkipObservation {
+                        ok: true,
+                        in_progress: true,
+                        unmerged,
+                        before: before.clone(),
+                        after: after.clone(),
+                    }),
+                    expected,
+                    "before={before:?}, after={after:?}, unmerged={unmerged}"
+                );
+            }
+        }
     }
 
     #[test]

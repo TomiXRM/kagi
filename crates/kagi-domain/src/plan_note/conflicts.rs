@@ -17,6 +17,8 @@ pub enum ConflictsNote {
     ObservationChanged,
     /// blocker (save/resolve/abort) — live preflight found a changed revision.
     PlanChanged,
+    /// blocker (skip) — the approved sequencer step or full revision changed.
+    SkipStepChanged,
     /// blocker (save/resolve/abort) — the repository or worktree identity changed.
     RepositoryIdentityChanged,
     /// blocker (save/resolve/abort) — the observed conflict ended before execution.
@@ -66,6 +68,9 @@ impl ConflictsNote {
                 crate::advice_template_en!(ConflictsObservationChanged).into()
             }
             ConflictsNote::PlanChanged => crate::advice_template_en!(ConflictsPlanChanged).into(),
+            ConflictsNote::SkipStepChanged => {
+                "The operation moved to another step; review the current state".into()
+            }
             ConflictsNote::RepositoryIdentityChanged => {
                 crate::advice_template_en!(ConflictsRepositoryIdentityChanged).into()
             }

@@ -33,6 +33,31 @@ fn skip_settlement(
     }
 }
 
+fn skip_outcome(outcome: kagi_git::SkipOutcome) -> (OpOutcome, Option<String>) {
+    let git_said = outcome.error.map(|e| e.to_string()).unwrap_or_default();
+    match outcome.progress {
+        SkipProgress::Finished | SkipProgress::Advanced => (
+            OpOutcome::Success {
+                after: outcome.after,
+            },
+            None,
+        ),
+        SkipProgress::NoProgress => (
+            OpOutcome::Failed {
+                error: git_said.clone(),
+            },
+            Some(git_said),
+        ),
+        SkipProgress::Unclear => (
+            OpOutcome::Unknown {
+                after: outcome.after,
+                evidence: git_said.clone(),
+            },
+            Some(git_said),
+        ),
+    }
+}
+
 impl KagiApp {
     /// Skip the current sequencer step (rebase / cherry-pick / revert) through
     /// the plan pipeline (T-042, ADR-0067): `plan_conflict_skip` → execute →
@@ -51,6 +76,9 @@ impl KagiApp {
         let Some(mode) = self.conflict_mode_snapshot(cx) else {
             return;
         };
+        let Some(expected) = mode.skip_approval.as_ref() else {
+            return;
+        };
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
@@ -65,9 +93,23 @@ impl KagiApp {
                 return;
             }
         };
-        let plan = match repo.plan_conflict_skip(&mode.session) {
+        let op_name = format!("{}-skip", mode.session.op.slug());
+        let plan = match repo.plan_conflict_skip(&mode.session, expected) {
             Ok(p) => p,
             Err(e) => {
+                if let kagi_git::GitError::Blocked(note) = &e {
+                    self.record_refused(
+                        &op_name,
+                        StateSummary {
+                            head: String::new(),
+                            dirty: String::new(),
+                        },
+                        std::slice::from_ref(note.as_ref()),
+                        &repo_path,
+                        cx,
+                    );
+                    return;
+                }
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Skip, e)),
@@ -76,16 +118,14 @@ impl KagiApp {
                 return;
             }
         };
-        let op_name = format!("{}-skip", mode.session.op.slug());
         let Some(guard) = self.reserve_write("conflict-skip", &repo_path, cx) else {
             return;
         };
 
         let owner = owner.session;
         let visit = self.app_sessions.visit(owner);
-        let session = mode.session.clone();
         let buffer = mode.buffer.clone();
-        let before = plan.current.clone();
+        let before = plan.plan.current.clone();
         let abandonment = guard.abandonment();
         let supervision = abandonment.supervision();
         let bg_path = repo_path.clone();
@@ -99,7 +139,7 @@ impl KagiApp {
             }
             let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
                 Ok(backend) => {
-                    backend.observe_ref_moves(|b| b.execute_conflict_skip(&session, &buffer))
+                    backend.observe_ref_moves(|b| b.execute_conflict_skip(&plan, &buffer))
                 }
                 Err(error) => (Err(error), None),
             };
@@ -125,17 +165,18 @@ impl KagiApp {
                 let current = app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
                 let (outcome, failure, ran) = match result {
                     Ok(o) => {
-                        let git_said = o.error.map(|e| format!("{}", e)).unwrap_or_default();
-                        let (outcome, failure) = match o.progress {
-                            SkipProgress::Finished | SkipProgress::Advanced => (OpOutcome::Success { after: o.after }, None),
-                            SkipProgress::NoProgress => (OpOutcome::Failed { error: git_said.clone() }, Some(git_said)),
-                            SkipProgress::Unclear => (OpOutcome::Unknown { after: o.after, evidence: git_said.clone() }, Some(git_said)),
-                        };
+                        let (outcome, failure) = skip_outcome(o);
                         (outcome, failure, true)
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);
-                        (unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }), Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
+                        let outcome = match &e {
+                            kagi_git::GitError::Blocked(note) => OpOutcome::Refused {
+                                blockers: vec![note.message_en()],
+                            },
+                            _ => unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }),
+                        };
+                        (outcome, Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
                     }
                 };
                 let termination_unknown_evidence = match &outcome {

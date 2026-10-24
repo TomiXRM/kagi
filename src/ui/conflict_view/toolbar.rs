@@ -244,7 +244,7 @@ impl ConflictView {
                 && !self.writer_busy
                 && !self.saved_review_needed,
             self.writer_busy,
-            mode.is_some_and(|m| m.skip_armed),
+            mode.is_some_and(|m| m.skip_approval.is_some()),
             blocker.map(|msg| msg.t()),
         )
     }
@@ -304,7 +304,7 @@ impl ConflictView {
                 el.child(
                     compact_button(
                         "conflict-skip",
-                        if mode.skip_armed {
+                        if mode.skip_approval.is_some() {
                             Msg::ConflictConfirmSkip.t()
                         } else {
                             Msg::ConflictSkip.t()

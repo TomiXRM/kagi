@@ -1405,6 +1405,9 @@ pub fn scenario_conflict_skip_panic(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
+    let pane = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    pane.update(cx, |view, _| assert!(!view.skip_request_arm()));
+    drop(pane);
     kagi::ui::KagiApp::panic_next_conflict_skip_for_e2e();
     app.update(cx, |app, cx| {
         let owner = app

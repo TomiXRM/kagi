@@ -742,16 +742,17 @@ impl Backend {
     pub fn plan_conflict_skip(
         &self,
         session: &conflicts::ConflictSession,
-    ) -> Result<OperationPlan, GitError> {
-        conflicts::plan_conflict_skip(&self.repo, session)
+        expected: &kagi_domain::conflict_family::ConflictRevision,
+    ) -> Result<conflicts::ConflictSkipPlan, GitError> {
+        conflicts::plan_conflict_skip(&self.repo, session, expected)
     }
 
     pub fn execute_conflict_skip(
         &self,
-        session: &conflicts::ConflictSession,
+        approved: &conflicts::ConflictSkipPlan,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::SkipOutcome, GitError> {
         self.require_trust()?;
-        conflicts::execute_conflict_skip(&self.repo, session, buffer)
+        conflicts::execute_conflict_skip(&self.repo, approved, buffer)
     }
 }

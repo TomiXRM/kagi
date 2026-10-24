@@ -969,6 +969,22 @@ impl Backend {
         ops::plan_commit(&self.repo, message)
     }
 
+    /// Read staged presentation and its approval identity as one accepted payload.
+    /// Separate Git reads are bracketed by content digests; drift refuses the read.
+    pub fn commit_panel_status(&self) -> Result<(WorkingTreeStatus, String), GitError> {
+        let before = ops::staged_set_digest(&self.repo)?;
+        let status = self.working_tree_status()?;
+        let after = ops::staged_set_digest(&self.repo)?;
+        if before != after {
+            return Err(GitError::Blocked(Box::new(
+                kagi_domain::plan_note::PlanNote::Commit(
+                    kagi_domain::plan_note::commit::CommitNote::StagedContentChanged,
+                ),
+            )));
+        }
+        Ok((status, after))
+    }
+
     pub(crate) fn execute_commit(
         &self,
         plan: &OperationPlan,

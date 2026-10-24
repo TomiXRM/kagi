@@ -122,14 +122,15 @@ Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
     /\ ~s.refreshPending
     /\ s' = [s EXCEPT !.approved[a] = Broken # "approval", !.lease[a] = TRUE,
         !.pc[a] = "preflight", !.event = <<"Approve(confirm)",a>>]
-\* ui/operations/commit.rs:1191-1209: silently renews shown merge plan at click.
+\* #1743: execute the approved merge plan; only the mutant silently replans.
 RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
-    /\ s' = [s EXCEPT !.planTree[a] = s.index[1], !.planRev[a] = Revision,
-        !.pc[a] = "mergePreflight", !.event = <<"RenewMergePlan",a>>]
+    /\ s' = [s EXCEPT !.planTree[a] = IF Broken = "mergePlan" THEN s.index[1] ELSE @,
+        !.planRev[a] = IF Broken = "mergePlan" THEN Revision ELSE @,
+        !.pc[a] = "mergePreflight", !.event = <<"BindApprovedMergePlan",a>>]
 \* conflict_ops.rs:419-425 and conflict_boundary.rs:170-181: full revision check.
 \* Per-file index/WT provenance is checked again by ValidateFile before WTWrite.
 \* #1746: conflicts.rs::preflight_skip_revision validates the frozen full revision.
-\* Commit index checked against the NEW plan (ops/commit.rs:38-44,74-83).
+\* Commit checks the frozen approved index, never a replacement plan.
 Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "preflight")
     /\ (s.metadataReadable \/ Broken = "metadata")
     /\ (s.planRev[a] = Revision \/ Broken = "revision"
@@ -140,6 +141,10 @@ Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "pre
         !.pc[a] = CASE Kind \in {"skip","abort","stashAbort","df"} -> "preserve"
                   [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wtValidate",
         !.event = <<"Preflight",a>>]
+MergeRefused(a) == /\ At(a, "mergePreflight") /\ Kind = "mergeCommit"
+    /\ (s.planRev[a] # Revision \/ s.planTree[a] # s.index[1])
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+        !.event = <<"MergeRefused(drift)",a>>]
 \* #1733 conflict_boundary.rs::validate_save_binding / validate_current_paths;
 \* worktree_state.rs::validate accepts only the original WT or exact frozen bytes.
 \* fresh file identity + captured WT hash immediately before the executor write.
@@ -182,9 +187,14 @@ WTWrite(a) == \E payload \in {s.frozen[a], "tampered"} :
 \* conflicts.rs:1650-1656 and :1406-1420; conflict_abort.rs:342-351,519-531;
 \* dir_file_conflict.rs:219-222. Each index flush is atomic, not whole lifecycle.
 IndexWrite(a) == /\ At(a, "index") /\ s.preflight[a]
-    \* conflicts.rs:1651,1407-1409: add_path reads CURRENT WT, not frozen bytes.
-    /\ s' = [s EXCEPT !.index[1] = CASE Kind = "stashAbort" -> "absent" [] Kind = "abort" -> "original" [] Kind = "df" -> s.frozen[a] [] OTHER -> s.wt[1],
-        !.stagedDifferent = @ \/ (Kind \in {"save","continue","mergeContinue"} /\ s.wt[1] # s.frozen[a]),
+    \* #1743 conflicts.rs::freeze_text_resolution captures blob/mode before WT write;
+    \* stage_raw_entry stages that approved blob. The mutant restores add_path.
+    /\ s' = [s EXCEPT !.index[1] = CASE Kind = "stashAbort" -> "absent"
+            [] Kind = "abort" -> "original"
+            [] Kind = "df" -> s.frozen[a]
+            [] OTHER -> IF Broken = "stagePayload" THEN s.wt[1] ELSE s.frozen[a],
+        !.stagedDifferent = @ \/ (Kind \in {"save","continue","mergeContinue"}
+            /\ Broken = "stagePayload" /\ s.wt[1] # s.frozen[a]),
         !.index[2] = IF Kind = "df" THEN "absent" ELSE @,
         !.indexRev = @ + 1, !.mutated[a] = TRUE, !.wroteUnapproved = @ \/ ~s.approved[a],
         !.destructiveAfterFailure = @ \/ s.preservationFailed[a],
@@ -335,7 +345,7 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
     \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
-    \/ ValidateFile(a) \/ FileRefused(a)
+    \/ ValidateFile(a) \/ FileRefused(a) \/ MergeRefused(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
@@ -347,7 +357,7 @@ FairSpec == Spec /\ (\A a \in Participants : WF_vars(ActorNext(a)))
 
 \* HOLD: GUI content mutations require an explicit confirmation (not external Git).
 NoWriteBeforeApproval == ~s.wroteUnapproved
-\* REFUTE globally: merge finalization renews the staged tree after it was shown.
+\* HOLD: merge retains approved tree; staging binds the approved payload.
 ApprovedRevisionFrozen == ~s.stagedDifferent /\ (s.committedTree = "none" \/ s.committedTree = s.shownTree[1])
 \* HOLD: Save's prepared payload is cloned; not the mutable UI buffer.
 ApprovedSavePayloadFrozen == \A a \in Participants : s.executed[a] = "none" \/ s.executed[a] = s.frozen[a]

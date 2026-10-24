@@ -10,6 +10,7 @@ fn empty_state() -> CommitPanelState {
     CommitPanelState {
         unstaged: Vec::new(),
         staged: Vec::new(),
+        displayed_index_digest: None,
         unstaged_stats: Vec::new(),
         staged_stats: Vec::new(),
         conflicted_paths: std::collections::HashSet::new(),

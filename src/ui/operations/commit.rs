@@ -963,7 +963,22 @@ impl KagiApp {
         if msg.trim().is_empty() {
             return;
         }
-        let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_commit(&msg)) {
+        let merge_pending = self.ui().conflict_merge_pending;
+        let displayed_index_digest = self
+            .ui()
+            .commit_panel
+            .as_ref()
+            .and_then(|panel| panel.read(cx).state.displayed_index_digest.clone());
+        let planned = match self.with_commit_panel_repo(cx, |repo| {
+            if merge_pending {
+                repo.plan_merge_commit(&msg).map(|mut plan| {
+                    plan.approved_index_digest = displayed_index_digest;
+                    plan
+                })
+            } else {
+                repo.plan_commit(&msg)
+            }
+        }) {
             Some(p) => p,
             None => {
                 klog!("plan_commit: repo open error: {}", "session unavailable");
@@ -986,25 +1001,28 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
+                let plan = std::sync::Arc::new(plan);
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     self.with_ui(|ui| ui.retire_issue_conversation_scope());
                     entity.update(cx, |v, _| {
                         v.state.plan_modal = Some(CommitPlanModal {
-                            plan: std::sync::Arc::new(plan),
+                            plan: plan.clone(),
                             error: None,
                         });
                     });
                 }
-                // Smooth commit (user request): with no blockers, commit immediately
-                // instead of showing a "commit?" confirmation popup. The pre-commit
-                // checklist blockers (conflict markers / secrets / large binaries)
-                // still surface the modal as a safety net. `start_commit` captures the
-                // plan synchronously, so we can drop the modal right after to suppress
-                // the popup; success/failure shows in the status footer.
+                // Smooth commit retains the staged panel's displayed index approval.
+                // Preflight refusal presents fresh staging for another explicit click.
                 if !has_blockers {
                     self.start_commit(cx);
                     if let Some(entity) = self.ui().commit_panel.clone() {
-                        entity.update(cx, |v, _| v.state.plan_modal = None);
+                        entity.update(cx, |v, _| {
+                            if v.state.plan_modal.as_ref().is_some_and(|modal| {
+                                std::sync::Arc::ptr_eq(&modal.plan, &plan) && modal.error.is_none()
+                            }) {
+                                v.state.plan_modal = None;
+                            }
+                        });
                     }
                 } else if self.compact.enabled && self.commit_plan_visible(cx) {
                     // The plan suspends the pinned composer, unmounting its
@@ -1094,7 +1112,7 @@ impl KagiApp {
             if busy {
                 self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             } else {
-                self.finish_merge_commit(&commit_message, cx);
+                self.finish_merge_commit(&plan, &commit_message, cx);
             }
             return;
         }
@@ -1195,7 +1213,12 @@ impl KagiApp {
     /// cleanup_state), then clear the merge-pending / commit-panel state, oplog,
     /// and reload (which clears Conflict Mode). Retain the revision-bound draft
     /// for inspection after completion, not as a fresh resolution.
-    fn finish_merge_commit(&mut self, message: &str, cx: &mut Context<Self>) {
+    fn finish_merge_commit(
+        &mut self,
+        plan: &kagi_git::OperationPlan,
+        message: &str,
+        cx: &mut Context<Self>,
+    ) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -1211,25 +1234,12 @@ impl KagiApp {
                 return;
             }
         };
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-        // MergeCommit has no user-facing plan modal (the conflict-resolution
-        // save IS the confirm step); we synthesize a plan via plan_merge_commit
-        // so run()'s preflight can gate on HEAD movement.
+        // Carry the approval through preflight and execution unchanged. Replanning
+        // here would authorize staging changes made after the user approved it.
         let merge_op = kagi_git::Operation::MergeCommit {
             message: message.to_string(),
         };
-        let merge_plan = match repo.plan(&merge_op) {
-            Ok(p) => p,
-            Err(e) => {
-                self.push_toast(
-                    ToastKind::Error,
-                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::MergeCommit, e)),
-                    cx,
-                );
-                return;
-            }
-        };
-        let report = repo.run_recorded(&merge_op, &merge_plan);
+        let report = repo.run_recorded(&merge_op, plan);
         match &report.result {
             Ok(kagi_git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
@@ -1268,6 +1278,16 @@ impl KagiApp {
                 let err_msg = format!("{}", e);
                 klog!("merge commit failed: {}", err_msg);
                 self.present_report("merge-commit", &report, &repo_path, cx);
+                if matches!(e, kagi_git::GitError::Preflight(_)) {
+                    // Retire stale approval and refresh the existing staged panel.
+                    // Only another ordinary Commit click may approve the new read.
+                    if let Some(entity) = self.ui().commit_panel.clone() {
+                        entity.update(cx, |v, _| {
+                            v.reload_status(&repo_path);
+                            v.state.plan_modal = None;
+                        });
+                    }
+                }
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         if let Some(modal) = v.state.plan_modal.as_mut() {

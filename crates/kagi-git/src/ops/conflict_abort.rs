@@ -83,6 +83,8 @@ pub struct AbortOutcome {
     pub restored_to: Option<String>,
     /// Path the resolution buffer was preserved at, if a buffer was saved.
     pub buffer_preserved_at: Option<PathBuf>,
+    /// Stash paths whose index and worktree must match the restored tree.
+    pub(crate) restored_paths: Vec<PathBuf>,
 }
 
 /// Plan an `abort`: restore the pre-operation state and preserve the buffer.
@@ -447,6 +449,7 @@ pub(crate) fn execute_conflict_abort_expecting(
     Ok(AbortOutcome {
         restored_to: orig_sha,
         buffer_preserved_at,
+        restored_paths: Vec::new(),
     })
 }
 
@@ -511,11 +514,7 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
         .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
 
     // 3. Conflicted paths only (pathspec-bounded restore).
-    let paths: Vec<String> = session
-        .files
-        .iter()
-        .filter_map(|f| f.path.to_str().map(str::to_string))
-        .collect();
+    let paths = stash_abort_paths(session.files.iter().map(|file| file.path.as_path()));
 
     // 4. Drop the stage 1/2/3 conflict entries so the paths are no longer
     //    unmerged; the checkout below repopulates them at stage 0 from HEAD.
@@ -543,7 +542,14 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     Ok(AbortOutcome {
         restored_to: Some(head_commit.id().to_string()),
         buffer_preserved_at,
+        restored_paths: paths,
     })
+}
+
+/// Keep checkout and its verification receipt byte-faithful, including paths
+/// that the host filesystem may not support creating in a test fixture.
+fn stash_abort_paths<'a>(paths: impl Iterator<Item = &'a Path>) -> Vec<PathBuf> {
+    paths.map(Path::to_path_buf).collect()
 }
 
 /// Stash application never moves HEAD or writes ORIG_HEAD. Both its preview
@@ -586,7 +592,7 @@ fn stash_abort_head(repo: &Repository) -> Result<git2::Commit<'_>, GitError> {
 fn checkout_paths_from_tree(
     repo: &Repository,
     tree: &git2::Tree<'_>,
-    paths: &[String],
+    paths: &[impl AsRef<Path>],
 ) -> Result<(), GitError> {
     if paths.is_empty() {
         return Ok(());
@@ -596,7 +602,7 @@ fn checkout_paths_from_tree(
     cb.remove_untracked(true);
     cb.disable_pathspec_match(true);
     for path in paths {
-        cb.path(path.as_str());
+        cb.path(path.as_ref());
     }
     repo.checkout_tree(tree.as_object(), Some(&mut cb))
         .map_err(|e| GitError::Other(format!("checkout_tree (abort) failed: {}", e.message())))
@@ -634,6 +640,20 @@ mod tests {
     use super::*;
     use std::process::Command;
     use std::sync::{Mutex, MutexGuard};
+
+    #[cfg(unix)]
+    #[test]
+    fn stash_abort_checkout_paths_preserve_non_utf8_bytes_without_filesystem() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let raw = Path::new(OsStr::from_bytes(b"conflict-\xff.txt"));
+        let unicode = Path::new("conflict-雪.txt");
+        let paths = stash_abort_paths([raw, unicode].into_iter());
+        assert_eq!(paths.len(), 2, "checkout must not drop non-UTF-8 paths");
+        assert_eq!(paths[0].as_os_str().as_bytes(), b"conflict-\xff.txt");
+        assert_eq!(paths[1], unicode);
+    }
 
     /// The resolution-buffer autosave directory is process-global, so these
     /// serialize and point it at their own tempdir (the convention the crate's

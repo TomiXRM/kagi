@@ -10,7 +10,7 @@ Concurrent == Scenario \in {"draftRace", "draftRaceLost", "saveRace"}
 Participants == IF Concurrent THEN Actors ELSE {1}
 Kind == CASE Scenario \in {"skip", "skipRefresh", "preserveSkip", "receiptSkip"} -> "skip"
           [] Scenario \in {"preserveAbort", "sibling"} -> "abort"
-          [] Scenario = "stashAbort" -> "stashAbort"
+          [] Scenario \in {"stashAbort", "stashVerify"} -> "stashAbort"
           [] Scenario = "preserveDF" -> "df"
           [] Scenario \in {"receiptContinue", "liveness", "metadataUnreadable"} -> "continue"
           [] Scenario = "receiptMerge" -> "mergeContinue"
@@ -169,13 +169,15 @@ Preserve(a) == /\ At(a, "preserve")
         !.pc[a] = CASE Kind = "skip" -> "skip" [] Kind \in {"abort","stashAbort"} -> "abort" [] OTHER -> "index",
         !.event = <<"Preserve",a,IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"} THEN "failed" ELSE "ok">>]
 \* conflicts.rs:1646-1648 Save; :1380-1404 Continue rename; dir_file_conflict.rs:315-324.
-\* Abort index precedes checkout (conflict_abort.rs:342-361); non-UTF8 stash path
-\* omitted at :513-517 and empty checkout is no-op at :582-583.
+\* #1745: stash checkout retains raw path authority, including non-UTF-8.
 WTWrite(a) == \E payload \in {s.frozen[a], "tampered"} :
     /\ At(a, "wt") /\ s.preflight[a]
     \* conflict_boundary.rs:103-107 binding guard; mutation removes this guard.
     /\ (payload = s.frozen[a] \/ Broken = "payload")
-    /\ s' = [s EXCEPT !.wt[1] = IF Kind = "stashAbort" THEN @ ELSE IF Kind = "abort" THEN "original" ELSE payload,
+    /\ s' = [s EXCEPT !.wt[1] = IF Kind = "stashAbort" THEN
+            (IF Broken = "stashRestore" THEN @ ELSE "original")
+            ELSE IF Kind = "abort" THEN "original" ELSE payload,
+        !.index[1] = IF Kind = "stashAbort" /\ Broken # "stashRestore" THEN "original" ELSE @,
         !.wt[2] = IF Kind = "df" THEN "absent" ELSE @,
         !.executed[a] = payload, !.mutated[a] = TRUE,
         !.wroteUnapproved = @ \/ ~s.approved[a],
@@ -227,9 +229,12 @@ MergeCommit(a) == /\ At(a, "commit")
     /\ s' = [s EXCEPT !.committedTree = s.planTree[a], !.executed[a] = s.planTree[a],
         !.mutated[a] = TRUE, !.wroteUnapproved = @ \/ ~s.approved[a],
         !.pc[a] = "verify", !.event = <<"MergeCommit",a>>]
+\* #1745: successful stash restoration requires both index and WT postconditions.
 \* #1740: verified mutation is accounted before worker lifetime ends or UI completion.
 Verify(a) == /\ At(a, "verify")
     /\ (Kind # "save" \/ (s.wt[1] = s.frozen[a] /\ s.index[1] = s.frozen[a]))
+    /\ (Kind # "stashAbort" \/ Broken \in {"stashRestore","stashVerify"}
+        \/ (s.wt[1] = "original" /\ s.index[1] = "original"))
     /\ s' = [s EXCEPT !.successful[a] = TRUE,
         !.pc[a] = IF DeferredReceipt THEN "release" ELSE "append",
         !.event = <<"Verify",a>>]
@@ -307,6 +312,12 @@ ExternalGit == /\ ~s.external /\ s.life[1] = "open"
           /\ s.pc[1] = "index"
           /\ s' = [s EXCEPT !.wt[1] = "external", !.external = TRUE,
               !.event = "ExternalGit(worktree before add_path)"]
+       [] Scenario = "stashVerify" ->
+          /\ s.pc[1] = "verify"
+          /\ \E target \in {"worktree", "index"} :
+              s' = [s EXCEPT !.wt[1] = IF target = "worktree" THEN "markers" ELSE @,
+                  !.index[1] = IF target = "index" THEN "unmerged" ELSE @,
+                  !.external = TRUE, !.event = <<"ExternalGit(stash restore drift)",target>>]
        [] OTHER -> FALSE
 \* drafts.rs::retain_drafts keeps WT provenance even for untouched files.
 \* Removing that carry reproduces drift + watcher refresh before the first choice.
@@ -387,9 +398,10 @@ SiblingWorktreesInvalidatedOnSharedRef ==
     (s.sharedMoved /\ s.pc[1] = "done") => s.siblingInvalidated
 \* REFUTE: leases are per application, not a repository-global lock.
 RepoHasAtMostOneLease == Cardinality({a \in Actors : s.lease[a]}) <= 1
-\* Additional map P1: non-UTF8 stash abort passes verification leaving conflict WT.
+\* HOLD: raw-path stash restoration is verified before success.
 StashAbortRestoresConflictedBytes ==
-    (Kind = "stashAbort" /\ s.successful[1]) => s.wt[1] = "original"
+    (Kind = "stashAbort" /\ s.successful[1]) =>
+        (s.wt[1] = "original" /\ s.index[1] = "original")
 \* HOLD: backend accounting outlives close; workerReceipt restores lost callbacks.
 ContinueEventuallyRecordedOrReported ==
     (s.successful[1] /\ Kind \in {"continue","mergeContinue"}) ~>

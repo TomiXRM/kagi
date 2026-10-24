@@ -232,5 +232,98 @@ fn abort_restores_head_and_keeps_stash() {
     );
 }
 
+/// #1745: dropping non-UTF-8 paths from checkout used to remove their index
+/// entries while leaving conflict markers in the worktree.
+#[cfg(unix)]
+#[test]
+fn stash_abort_restores_non_utf8_index_and_worktree_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    // Probe before isolated dispatch: successful child stderr is swallowed by
+    // the harness, so an unsupported filesystem must be reported by the parent.
+    let path = Path::new(std::ffi::OsStr::from_bytes(b"conflict-\xff.txt"));
+    let probe = TempDir::new().unwrap();
+    if let Err(error) = std::fs::write(probe.path().join(path), b"probe\n") {
+        if error.raw_os_error() == Some(libc::EILSEQ) {
+            eprintln!(
+                "skip: filesystem rejects non-UTF-8 filenames (EILSEQ); stash abort regression requires a supporting filesystem"
+            );
+            return;
+        }
+        panic!("cannot probe non-UTF-8 filename support: {error}");
+    }
+    drop(probe);
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    assert_stash_abort_restores_bytes(path);
+}
+
+#[cfg(unix)]
+#[test]
+fn stash_abort_restores_unicode_index_and_worktree_bytes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    assert_stash_abort_restores_bytes(Path::new("conflict-雪.txt"));
+}
+
+#[cfg(unix)]
+fn assert_stash_abort_restores_bytes(path: &Path) {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+    if let Err(error) = std::fs::write(dir.join(path), b"base\n") {
+        if path.to_str().is_none() && error.raw_os_error() == Some(libc::EILSEQ) {
+            eprintln!(
+                "skip: filesystem rejects non-UTF-8 filenames (EILSEQ); stash abort regression requires a supporting filesystem"
+            );
+            return;
+        }
+        panic!("cannot create non-UTF-8 stash fixture: {error}");
+    }
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+    std::fs::write(dir.join(path), b"stash\n").unwrap();
+    git(dir, &["stash", "push", "-q"]);
+    std::fs::write(dir.join(path), b"before pop\n").unwrap();
+    git(dir, &["commit", "-qam", "head change"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let before_entry = repo.index().unwrap().get_path(path, 0).unwrap();
+    let before_index_bytes = repo.find_blob(before_entry.id).unwrap().content().to_vec();
+    let before_worktree_bytes = std::fs::read(dir.join(path)).unwrap();
+    let before_head = git_output(dir, &["rev-parse", "HEAD"]);
+    let before_stash = git_output(dir, &["rev-parse", "refs/stash"]);
+    assert!(!git_succeeds(dir, &["stash", "pop"]));
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.op, ConflictOp::StashConflict);
+    assert_eq!(session.files[0].path, path);
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_stash_conflict_abort(&repo, &session, &buffer).unwrap();
+
+    let index = repo.index().unwrap();
+    assert!(!index.has_conflicts());
+    let restored = index
+        .get_path(path, 0)
+        .expect("raw path restored at stage 0");
+    assert_eq!(
+        (restored.id, restored.mode),
+        (before_entry.id, before_entry.mode)
+    );
+    assert_eq!(
+        repo.find_blob(restored.id).unwrap().content(),
+        before_index_bytes
+    );
+    assert_eq!(
+        std::fs::read(dir.join(path)).unwrap(),
+        before_worktree_bytes
+    );
+    assert_eq!(git_output(dir, &["rev-parse", "HEAD"]), before_head);
+    assert_eq!(git_output(dir, &["rev-parse", "refs/stash"]), before_stash);
+}
+
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;

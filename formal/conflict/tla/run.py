@@ -67,7 +67,10 @@ CHECKS = [
     ("merge-tree-broken", "merge", "MergeCommitTreeIsApprovedTree", "REFUTE", "mergePlan"),
     ("sibling-invalidation", "sibling", "SiblingWorktreesInvalidatedOnSharedRef", "HOLD", "none"),
     ("sibling-invalidation-broken", "sibling", "SiblingWorktreesInvalidatedOnSharedRef", "REFUTE", "sharedRef"),
-    ("stash-non-utf8", "stashAbort", "StashAbortRestoresConflictedBytes", "REFUTE", "none"),
+    ("stash-non-utf8", "stashAbort", "StashAbortRestoresConflictedBytes", "HOLD", "none"),
+    ("stash-non-utf8-broken", "stashAbort", "StashAbortRestoresConflictedBytes", "REFUTE", "stashRestore"),
+    ("stash-verify", "stashVerify", "StashAbortRestoresConflictedBytes", "HOLD", "none"),
+    ("stash-verify-broken", "stashVerify", "StashAbortRestoresConflictedBytes", "REFUTE", "stashVerify"),
     ("continue-liveness", "liveness", "ContinueEventuallyRecordedOrReported", "HOLD", "none"),
     ("continue-liveness-broken", "liveness", "ContinueEventuallyRecordedOrReported", "REFUTE", "workerReceipt"),
 ]

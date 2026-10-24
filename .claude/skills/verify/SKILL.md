@@ -963,6 +963,24 @@ leg recorded Terminal x=483.5..512 intersecting Graph x=495.5..524. Tier B shoul
 compare the real 700×500 JA toolbar with a long repository/branch identity at
 100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
 
+For #1742 step ① use `KAGI_GUI_E2E_ONLY='conflict_preview_'` for the focused
+preparation checks, then the complete ADR-0228 image/PDF/sync/focus/`conflict_`
+regression filter. `gui-e2e` forwards `kagi-git/gui-e2e` solely for the
+thread-local Backend-open witness: `conflict_preview_no_render_io` counts zero
+opens in ConflictView render from the first uncached frame, holds the real
+worker result to inspect header-only loading, then checks retained-image redraw
+with the repository poisoned. A warmed cache alone is not this proof.
+`conflict_preview_owner_transitions` holds actual completions across selection,
+revision and same-key retirement/re-admission; its feature-only detach bypasses
+task cancellation so the production generation/owner checks must reject each
+late result without replacing the shown pair. `conflict_preview_read_retry`
+checks terminal failure after two attempts, no repaint retry loop, and recovery
+on a fresh observation. Pair with `cargo test -p kagi-git --features gui-e2e
+render_probe` and `cargo test -p kagi-git --test file_reads_test`. The probe and
+scheduling seam compile out of ordinary binaries. Tier B compares the original
+merge-complex image/gitlink rows plus identical valid-PNG variants on isolated
+fixture copies; never mutate the source fixtures or infer native AX/IME evidence.
+
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
 `conflict_file_selection` enters the persistent `conflict-tree` ListBox through
 real Tab/Shift-Tab and its GUI-only F19 focus probe, rather than seeking a removed

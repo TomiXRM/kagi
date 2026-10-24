@@ -1018,24 +1018,26 @@ impl Backend {
     }
 
     /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
-    /// For a symlink the bytes ARE the link target; `None` for a submodule side
-    /// (no blob) or an absent side. UI-facing so the viewer never opens git2.
+    /// For a symlink the bytes ARE the link target; `Ok(None)` for a submodule
+    /// (no object lookup) or absent side. Read failures and size limits are errors.
     pub fn conflict_side_bytes(
         &self,
         buffer: &ResolutionBuffer,
         path: &Path,
         side: crate::resolution::SelectionSide,
-    ) -> Option<Vec<u8>> {
-        buffer.side_bytes(&self.repo, path, side)
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, GitError> {
+        buffer.side_bytes(&self.repo, path, side, max_bytes)
     }
 
     /// (short OID, mode, size) of one side of a raw conflict (#321 viewer).
+    /// Absent sides return `Ok(None)`; gitlinks have no size. Blob errors propagate.
     pub fn conflict_side_blob_info(
         &self,
         buffer: &ResolutionBuffer,
         path: &Path,
         side: crate::resolution::SelectionSide,
-    ) -> Option<crate::resolution::SideBlobInfo> {
+    ) -> Result<Option<crate::resolution::SideBlobInfo>, GitError> {
         buffer.side_blob_info(&self.repo, path, side)
     }
 

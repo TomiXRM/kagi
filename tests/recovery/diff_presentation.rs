@@ -199,6 +199,34 @@ pub fn scenario_conflict_image_zoom(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS conflict_image_zoom");
 }
 
+pub fn scenario_conflict_preview_no_render_io(cx: &mut VisualTestAppContext) {
+    let restore = GlobalSettings::capture();
+    theme::set_zoom(1.);
+    let fixture = conflict_image_fixture();
+    let repo = fixture.path();
+    let (app, win) = mount(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    conflict.update(cx, |view, cx| {
+        view.conflict_select_file(0);
+        cx.notify();
+    });
+    resize_image_frame(cx, win, (940., 660.));
+    assert!(e2e::control_bounds(win.window_id(), "conflict-image-current").is_some());
+    // Repaint consumes the accepted pair even when Backend cannot open its repo.
+    std::fs::rename(repo.join(".git"), repo.join(".git-held")).unwrap();
+    assert!(kagi_git::Backend::open(repo).is_err());
+    conflict.update(cx, |_, cx| cx.notify());
+    resize_image_frame(cx, win, (1392., 883.));
+    assert_image_geometry(win, "retained", 1., (1392., 883.));
+    std::fs::rename(repo.join(".git-held"), repo.join(".git")).unwrap();
+    drop(conflict);
+    unmount(cx, app, win);
+    drop(restore);
+    eprintln!("[gui-e2e] PASS conflict_preview_no_render_io");
+}
+
 fn conflict_image_fixture() -> tempfile::TempDir {
     let fixture = build_fixture();
     let repo = fixture.path();

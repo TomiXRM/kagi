@@ -18,7 +18,7 @@
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
 mod ownership;
-mod preparation;
+pub(crate) mod preparation;
 
 use super::tab_ui_state_ops::PaneRevalidation;
 use gpui::SharedString;

@@ -166,6 +166,7 @@ pub(super) fn render(
                 mode,
                 chrome.writer_busy,
                 &chrome.raw_preview_scroll,
+                chrome.raw_preview.as_deref(),
                 cx,
             ));
         }

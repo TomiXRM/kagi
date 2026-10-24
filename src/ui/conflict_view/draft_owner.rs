@@ -27,6 +27,7 @@ impl ConflictView {
         editing_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        self.retire_raw_preview();
         let mut previous = self.mode.take();
         if self.result_editing {
             if let (Some(previous), Some(path)) = (previous.as_mut(), self.editing.as_deref()) {

@@ -475,6 +475,9 @@ impl KagiApp {
                             }
                             entity.update(cx, |v, _| v.state.commit_msg = message.clone());
                         }
+                        if let Some(conflict) = app.ui().conflict.clone() {
+                            conflict.update(cx, |view, _| view.retire_raw_preview());
+                        }
                         if let Some(ui) = app.ui_mut() {
                             ui.conflict_merge_pending = true;
                         }

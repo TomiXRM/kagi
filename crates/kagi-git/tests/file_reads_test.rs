@@ -53,6 +53,113 @@ impl Fixture {
 }
 
 #[test]
+fn frozen_conflict_sources_are_bounded_and_never_reread_the_index() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let bytes = b"%PDF-frozen";
+    let oid = fixture.repo.blob(bytes).unwrap().to_string();
+    let empty_oid = fixture.repo.blob(b"").unwrap().to_string();
+    fixture.write("side", b"replacement");
+    fixture.stage("side");
+    std::fs::write(fixture.repo.path().join("index"), b"invalid index").unwrap();
+    let backend = fixture.backend();
+    for mode in [0o100644, 0o100755, 0o120000] {
+        let source = FileReadSource::ConflictStage { oid: &oid, mode };
+        for path in [Path::new("side"), Path::new("absent")] {
+            assert_eq!(
+                backend.file_size(source, path).unwrap(),
+                Some(bytes.len() as u64)
+            );
+            assert_eq!(
+                backend
+                    .file_bytes(source, path, bytes.len())
+                    .unwrap()
+                    .unwrap(),
+                bytes
+            );
+            assert!(backend.file_bytes(source, path, bytes.len() - 1).is_err());
+            for (prefix, expected) in [
+                (b"".as_slice(), true),
+                (b"%PDF-".as_slice(), true),
+                (bytes.as_slice(), true),
+                (b"%PDF-frozen-longer".as_slice(), false),
+                (b"other".as_slice(), false),
+            ] {
+                assert_eq!(
+                    backend.file_has_prefix(source, path, prefix).unwrap(),
+                    Some(expected)
+                );
+            }
+        }
+    }
+    let empty = FileReadSource::ConflictStage {
+        oid: &empty_oid,
+        mode: 0o100644,
+    };
+    assert_eq!(
+        backend.file_bytes(empty, Path::new("absent"), 0).unwrap(),
+        Some(vec![])
+    );
+    assert_eq!(
+        backend
+            .file_has_prefix(empty, Path::new("absent"), b"x")
+            .unwrap(),
+        Some(false)
+    );
+}
+
+#[test]
+fn frozen_present_object_errors_are_not_absence_and_gitlinks_skip_lookup() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    fixture.write("side", b"content");
+    fixture.stage("side");
+    let commit = fixture.commit();
+    let backend = fixture.backend();
+    let path = Path::new("absent");
+    assert_eq!(
+        backend
+            .file_bytes(FileReadSource::Index, path, LIMIT)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        backend.file_size(FileReadSource::Index, path).unwrap(),
+        None
+    );
+    assert_eq!(
+        backend
+            .file_has_prefix(FileReadSource::Index, path, b"x")
+            .unwrap(),
+        None
+    );
+    for oid in [
+        "not-an-oid",
+        "1111111111111111111111111111111111111111",
+        &commit.0,
+    ] {
+        let source = FileReadSource::ConflictStage {
+            oid,
+            mode: 0o100644,
+        };
+        assert!(backend.file_bytes(source, path, LIMIT).is_err());
+        assert!(backend.file_has_prefix(source, path, b"").is_err());
+        assert!(backend.file_size(source, path).is_err());
+        let gitlink = FileReadSource::ConflictStage {
+            oid,
+            mode: 0o160000,
+        };
+        assert_eq!(backend.file_bytes(gitlink, path, 0).unwrap(), None);
+        assert_eq!(backend.file_has_prefix(gitlink, path, b"").unwrap(), None);
+        assert_eq!(backend.file_size(gitlink, path).unwrap(), None);
+    }
+}
+
+#[test]
 fn historical_head_index_and_workdir_reads_do_not_substitute_each_other() {
     if !test_support::run_isolated() {
         return;

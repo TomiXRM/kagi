@@ -85,13 +85,17 @@ fn binary_conflict_side_bytes_are_exact_per_side() {
 
     assert_ne!(main_bytes, side_bytes, "fixture sides must differ");
     assert_eq!(
-        buffer.side_bytes(&repo, p, SelectionSide::Current).unwrap(),
+        buffer
+            .side_bytes(&repo, p, SelectionSide::Current, main_bytes.len())
+            .unwrap()
+            .unwrap(),
         main_bytes,
         "current side bytes must be the 'our' blob"
     );
     assert_eq!(
         buffer
-            .side_bytes(&repo, p, SelectionSide::Incoming)
+            .side_bytes(&repo, p, SelectionSide::Incoming, side_bytes.len())
+            .unwrap()
             .unwrap(),
         side_bytes,
         "incoming side bytes must be the 'their' blob"
@@ -99,6 +103,7 @@ fn binary_conflict_side_bytes_are_exact_per_side() {
 
     let ci = buffer
         .side_blob_info(&repo, p, SelectionSide::Current)
+        .unwrap()
         .unwrap();
     assert_eq!(ci.size, Some(main_bytes.len() as u64));
     assert_eq!(ci.oid_short.len(), 7);
@@ -140,12 +145,71 @@ fn symlink_conflict_side_bytes_are_link_targets() {
     let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let p = Path::new("link");
 
-    let cur = buffer.side_bytes(&repo, p, SelectionSide::Current).unwrap();
+    let cur = buffer
+        .side_bytes(&repo, p, SelectionSide::Current, 1024)
+        .unwrap()
+        .unwrap();
     let inc = buffer
-        .side_bytes(&repo, p, SelectionSide::Incoming)
+        .side_bytes(&repo, p, SelectionSide::Incoming, 1024)
+        .unwrap()
         .unwrap();
     assert_eq!(cur, b"current-target", "current symlink target verbatim");
     assert_eq!(inc, b"incoming-target", "incoming symlink target verbatim");
+}
+
+/// Frozen sides survive index replacement; lost objects are not absent sides.
+#[test]
+fn frozen_side_reads_preserve_bounds_identity_and_errors() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (tmp, current, _) = binary_conflict();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let path = Path::new("blob.bin");
+    let side = SelectionSide::Current;
+    let descriptor = buffer.side_raw_meta(path, side).unwrap();
+    let backend = kagi_git::Backend::open(tmp.path()).unwrap();
+    assert!(backend
+        .conflict_side_bytes(&buffer, path, side, current.len() - 1)
+        .is_err());
+    assert_eq!(
+        buffer
+            .side_bytes(&repo, Path::new("absent"), side, 0)
+            .unwrap(),
+        None
+    );
+    assert!(buffer
+        .side_blob_info(&repo, Path::new("absent"), side)
+        .unwrap()
+        .is_none());
+    std::fs::write(tmp.path().join(path), b"replacement").unwrap();
+    git(tmp.path(), &["add", "blob.bin"]);
+    assert_eq!(buffer.side_raw_meta(path, side).unwrap(), descriptor);
+    assert_eq!(
+        backend
+            .conflict_side_bytes(&buffer, path, side, current.len())
+            .unwrap()
+            .unwrap(),
+        current
+    );
+    let object = repo
+        .path()
+        .join("objects")
+        .join(&descriptor.0[..2])
+        .join(&descriptor.0[2..]);
+    std::fs::remove_file(object).unwrap();
+    // Fresh handles avoid libgit2's already-materialized object cache.
+    let repo = Repository::open(tmp.path()).unwrap();
+    let backend = kagi_git::Backend::open(tmp.path()).unwrap();
+    assert!(buffer.side_bytes(&repo, path, side, usize::MAX).is_err());
+    assert!(buffer.side_blob_info(&repo, path, side).is_err());
+    assert!(backend
+        .conflict_side_bytes(&buffer, path, side, usize::MAX)
+        .is_err());
+    assert!(backend
+        .conflict_side_blob_info(&buffer, path, side)
+        .is_err());
 }
 
 #[path = "../../../tests/support/isolated.rs"]

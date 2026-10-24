@@ -692,9 +692,9 @@ impl ResolutionBuffer {
         }
     }
 
-    /// (oid string, git mode) of one side of a raw conflict, WITHOUT touching
-    /// the repository — so the UI can build a content-addressed preview cache key
-    /// per frame and only open the backend on a cache miss (#321 viewer).
+    /// Frozen (OID string, Git mode) captured when this buffer was loaded.
+    /// No repository access: use with `FileReadSource::ConflictStage` for worker
+    /// preparation without rereading a subsequently changed conflict index.
     pub fn side_raw_meta(&self, path: &Path, side: SelectionSide) -> Option<(String, u32)> {
         let raw = self.side_raw_for(path, side)?;
         Some((raw.oid.to_string(), raw.mode))
@@ -703,17 +703,22 @@ impl ResolutionBuffer {
     /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
     ///
     /// For a symlink (mode 120000) the returned bytes ARE the link target path.
-    /// Returns `None` when the side is absent or its object is not a blob (a
-    /// submodule / gitlink side is a commit OID, which has no blob to read).
+    /// Returns `Ok(None)` for an absent side or gitlink (without object lookup).
+    /// Oversized, invalid or unreadable blobs return an error, never absence.
     pub fn side_bytes(
         &self,
         repo: &Repository,
         path: &Path,
         side: SelectionSide,
-    ) -> Option<Vec<u8>> {
-        let raw = self.side_raw_for(path, side)?;
-        let blob = repo.find_blob(raw.oid).ok()?;
-        Some(blob.content().to_vec())
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, GitError> {
+        let Some(raw) = self.side_raw_for(path, side) else {
+            return Ok(None);
+        };
+        if raw.mode == 0o160000 {
+            return Ok(None);
+        }
+        crate::backend::file_reads::blob_bytes(repo, raw.oid, max_bytes).map(Some)
     }
 
     /// (oid, mode, size) metadata of one side of a raw conflict (#321 viewer),
@@ -724,17 +729,23 @@ impl ResolutionBuffer {
         repo: &Repository,
         path: &Path,
         side: SelectionSide,
-    ) -> Option<SideBlobInfo> {
-        let raw = self.side_raw_for(path, side)?;
+    ) -> Result<Option<SideBlobInfo>, GitError> {
+        let Some(raw) = self.side_raw_for(path, side) else {
+            return Ok(None);
+        };
         let oid = raw.oid.to_string();
         let oid_short = oid.chars().take(7).collect();
-        let size = repo.find_blob(raw.oid).ok().map(|b| b.size() as u64);
-        Some(SideBlobInfo {
+        let size = if raw.mode == 0o160000 {
+            None
+        } else {
+            Some(crate::backend::file_reads::blob_size(repo, raw.oid)? as u64)
+        };
+        Ok(Some(SideBlobInfo {
             oid_short,
             oid,
             mode: raw.mode,
             size,
-        })
+        }))
     }
 
     /// The resolved text for `path` (lines joined with `\n`, trailing newline

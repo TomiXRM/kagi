@@ -3270,6 +3270,14 @@ mod macos {
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_fresh_restore_failure),
             ),
             (
+                "conflict_draft_continue_restore_admission",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_continue_restore_admission),
+            ),
+            (
+                "conflict_draft_stale_restore_success",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_success),
+            ),
+            (
                 "conflict_draft_inspection_empty_legacy",
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
             ),

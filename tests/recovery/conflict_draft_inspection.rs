@@ -17,11 +17,15 @@ mod git_fixture;
 #[path = "conflict_draft_inspection_hold.rs"]
 mod inspection_hold;
 
+#[path = "conflict_draft_continue_admission.rs"]
+mod continue_admission;
+pub use continue_admission::scenario_conflict_draft_continue_restore_admission;
+
 #[path = "conflict_draft_stale_failure.rs"]
 mod stale_failure;
 pub use stale_failure::{
     scenario_conflict_draft_fresh_restore_failure, scenario_conflict_draft_stale_restore_async,
-    scenario_conflict_draft_stale_restore_failure,
+    scenario_conflict_draft_stale_restore_failure, scenario_conflict_draft_stale_restore_success,
 };
 
 #[path = "conflict_draft_restore_io.rs"]

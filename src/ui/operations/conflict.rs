@@ -602,6 +602,14 @@ impl KagiApp {
     /// sequencer), record the oplog, and reload. Keep the revision-bound autosave
     /// available for recovery even if the UI never adopts the next observation.
     pub fn confirm_conflict_continue(&mut self, cx: &mut Context<Self>) {
+        if !self
+            .active_session()
+            .is_some_and(|owner| self.pane_mutation_admitted(owner))
+        {
+            self.clear_conflict_continue_modal();
+            cx.notify();
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,

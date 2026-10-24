@@ -1018,7 +1018,7 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
-For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_fresh_restore_failure,conflict_draft_stale_restore_failure,conflict_draft_stale_restore_async,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_fresh_restore_failure,conflict_draft_stale_restore_failure,conflict_draft_stale_restore_async,conflict_draft_stale_restore_success,conflict_draft_continue_restore_admission,conflict_draft_revision_same_revision,conflict_draft_revision_unrelated_index,conflict_draft_inspection,conflict_file_selection'`
 with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
 exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
@@ -1034,8 +1034,9 @@ both causes, with no ordinary preview. It keeps the editor fail-closed without
 per-frame re-detection and verifies unchanged Git/draft bytes plus only the exact
 asserted receipt append.
 `conflict_draft_stale_restore_failure` delivers an older real lock-timeout restore
-after a newer rebase conflict and a failed autosave: the exact pane, Result input,
-live text and pending revalidation gate must survive, without an obsolete notice.
+and older real successful detections after a newer rebase conflict and failed
+autosave. The exact pane, Result input, live text, run-once/review flags and pending
+revalidation gate must survive both rejected outcomes, without an obsolete notice.
 `conflict_draft_stale_restore_async` holds a real async error immediately before
 admission, accepts a newer read or detection of the same Git state, and checks
 that read keys and detector generations independently reject it. The hold is
@@ -1047,6 +1048,22 @@ the Failed receipt owns the full cause and the footer stays bounded. A real Save
 click must leave every Git field and complete log unchanged because the checked
 pane read remains refused. Repairing persistence and explicitly reloading settles
 that gate without replacing the editor.
+`conflict_draft_revision_unrelated_index` also fails autosave, makes the draft
+unreadable, stages an unrelated CLI file, and reloads in EN/JA. The changed global
+observation cannot discard the exact pane/input, pending body, selection or
+undo/redo; successful repair adopts the new revision without losing that history.
+`conflict_draft_continue_restore_admission` opens a real sequencer confirmation,
+then runs real graph paging and fails same-observation restore. Paging keeps the
+ReadKey and bypasses Reload's modal sweep, so only failed detection can invalidate
+the approval. The modal must close with the existing bounded failure preview.
+Reinstalling that genuine approval and clicking Confirm separately
+tests the consumer gate: no lease, staging, sequencer advance or receipt append.
+`conflict_draft_stale_restore_success` holds an older real successful detection,
+then applies a newer real failed restore with the same Git observation. ReadKey
+and detector-generation supersession are exercised independently; neither stale
+success may clear the failure, settle the gate, or admit Save/Continue. EN/JA cases
+also perform a real old-request corruption rescue: its bounded warning must still
+surface on stale completion, without changing the newer failed pane or receipt.
 The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated

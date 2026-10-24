@@ -15,6 +15,8 @@ mod completion;
 mod fixture_git;
 #[path = "../support/oplog.rs"]
 mod oplog;
+#[path = "conflict_draft_revision_failure.rs"]
+mod unrelated_failure;
 
 pub(super) const FILE: &str = "file.txt";
 pub(super) const FIRST: &str = "RESOLVED ONE\n";
@@ -513,6 +515,7 @@ pub fn scenario_conflict_draft_revision_unrelated_index(cx: &mut VisualTestAppCo
     assert_eq!(before, RepositoryState::read(&repo));
     drop(input);
     unmount(cx, app, window);
+    unrelated_failure::check_unrelated_restore_failure(cx);
 }
 
 fn append_lock() -> std::fs::File {

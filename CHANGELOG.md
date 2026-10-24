@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Honor the repository comment character, including Git's automatic choice, when listing saved conflicts. (4363857789)
 - Preserve leading and trailing spaces in conflict paths when identifying saved resolutions. (4361355977)
 - Use Finder's white-preferred 3:1 accent rule for checkbox/radio indicators and shared switch/slider thumbs, rather than the 4.5:1 text-label rule.
 - Keep untouched conflict hunks unresolved when changing line order. Reorder only already adopted content, preserve partial/manual/empty choices, and avoid adding no-op undo entries. Keep binary, symlink and submodule conflicts out of text hunk materialization. (#1728)

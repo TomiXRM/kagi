@@ -1213,6 +1213,29 @@ fn session_resolved_lists_saved_conflict_paths_only() {
     assert_ne!(moved.resolved[0].oid, after.resolved[0].oid);
 }
 
+#[test]
+fn session_resolved_respects_core_comment_char() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    git(dir, &["config", "core.commentChar", ";"]);
+    let message_path = dir.join(".git/MERGE_MSG");
+    let message = std::fs::read_to_string(&message_path).unwrap();
+    std::fs::write(&message_path, message.replace('#', ";")).unwrap();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    execute_conflict_save(&repo, &buffer, path).unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    assert_eq!(session.resolved.len(), 1);
+    assert_eq!(session.resolved[0].path, path);
+}
+
 /// Save refuses (blocks) when the resolved text still has conflict markers.
 #[test]
 fn save_resolution_blocks_on_marker_residue() {

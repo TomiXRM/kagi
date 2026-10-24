@@ -530,7 +530,16 @@ fn collect_resolved_files(
     let Some(raw) = read_regular_merge_msg(&repo.path().join("MERGE_MSG")) else {
         return Vec::new();
     };
-    let listed = kagi_domain::merge_msg::conflicted_paths(&raw);
+    let configured = repo
+        .config()
+        .ok()
+        .and_then(|config| config.get_string("core.commentChar").ok());
+    let comment_char = match configured.as_deref() {
+        Some("auto") => kagi_domain::merge_msg::auto_comment_char(&raw),
+        Some(value) => value.chars().next().unwrap_or('#'),
+        None => '#',
+    };
+    let listed = kagi_domain::merge_msg::conflicted_paths(&raw, comment_char);
     if listed.is_empty() {
         return Vec::new();
     }

@@ -199,6 +199,25 @@ jobs:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: uv run --frozen --project ci check-blocking-ci
 
+  # Historical model expectations are advisory, not a product equivalence proof.
+  formal-conflict:
+    name: formal conflict (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: formal/conflict/uv.lock
+      - name: Check conflict models and broken variants
+        run: uv run --frozen --project formal/conflict formal/conflict/run.sh
+
   # ── ADVISORY: Linux tests; conditional release artifact for blocking install ─
   test-linux:
     name: test (Linux, advisory)

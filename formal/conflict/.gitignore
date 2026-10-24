@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+summary*.json
+pure/results.json
+tla/results/
+tla/broken-results/
+*.jar

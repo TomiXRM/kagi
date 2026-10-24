@@ -1,0 +1,9 @@
+[project]
+name = "kagi-conflict-formal"
+version = "0.1.0"
+description = "Finite conflict lifecycle and pure-predicate regression guards"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false

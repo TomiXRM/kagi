@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Preserve conflict lifecycle and pure-predicate formal models as an advisory CI regression guard, with pinned TLC, explicit expected outcomes, red broken-variant checks, and runtime-reconciled ledgers. (#1731–#1738)
+
 ### Experimental — conflict-hunk branch
 
 - Present conflict resolution as a document workspace with borderless whole-file sources, one-click left/right hunk arrows and a More menu for both block orders and resets, previous/next hunk controls in the left commit footer, and directly editable Result with origin stripes. Remove detached adoption rows and Preview/Edit controls. Keep a collapsible 232px source list with top-down In progress/Saved groups, state letters, fill-only selection and a plain inline pending count when hidden. The file header owns one Save/Next file action; the unified toolbar retains Continue and its right icon group. This experiment is not yet approved for main. (#1729)

@@ -3,7 +3,7 @@
 use gpui::{div, prelude::*, rgb, ElementId, Hsla, Role, SharedString, Window};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _};
+use gpui_component::{ActiveTheme as _, Colorize as _, Disableable as _, Sizable as _};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
@@ -88,14 +88,29 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
 /// The pinned kit derives Custom ink from its background `color`, ignoring
 /// `foreground`; the explicit label keeps that neutral fill from changing the
 /// destructive role on hover/press. Disabled labels use the kit's muted ink.
-pub(super) fn conflict_abort_button(id: &'static str, disabled: bool, cx: &gpui::App) -> Button {
+pub(super) fn conflict_abort_button(
+    id: &'static str,
+    disabled: bool,
+    background: u32,
+    cx: &gpui::App,
+) -> Button {
     let palette = theme();
     let ink = if disabled {
         cx.theme().muted_foreground.opacity(0.5)
     } else {
-        rgb(palette.color_blocker).into()
+        let surface = Hsla::from(rgb(background));
+        let backgrounds = [0.2, 0.4].map(|amount| {
+            let fill = cx.theme().button.mix_oklab(cx.theme().transparent, amount);
+            u32::from(surface.blend(fill).to_rgb()) >> 8
+        });
+        rgb(palette.destructive_text_on(&backgrounds)).into()
     };
     let label = super::i18n::Msg::ConflictAbort.t();
+    let label_id = if id == "operation-strip-abort" {
+        "operation-strip-abort-label"
+    } else {
+        "conflict-abort-label"
+    };
     Button::new(id)
         .custom(
             ButtonCustomVariant::new(cx)
@@ -118,7 +133,7 @@ pub(super) fn conflict_abort_button(id: &'static str, disabled: bool, cx: &gpui:
                 .relative()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(ink)
-                .child(super::e2e::measure_inside("conflict-abort-label"))
+                .child(super::e2e::measure_inside(label_id))
                 .child(label),
         )
 }

@@ -264,7 +264,7 @@ impl ConflictView {
                         .px(theme::scaled_px(8.))
                         .border_b_1()
                         .border_color(rgb(theme().surface))
-                        .child(self.render_session_header(cx)),
+                        .child(self.render_session_header(window, cx)),
                 )
             })
             .child(

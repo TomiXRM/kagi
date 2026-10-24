@@ -6,7 +6,7 @@ use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::conflict_editor_a11y as ax;
 use kagi::ui::{conflict_view::ConflictView, e2e};
 use kagi_ui_core::{
-    i18n::{self, Lang},
+    i18n::{self, Lang, Msg},
     theme,
 };
 use std::path::Path;
@@ -248,11 +248,51 @@ fn assert_operation_placement(
             (f32::from(session.size.height - header.size.height)).abs() <= 1.,
             "session and file headers keep one aligned 36px row"
         );
-        let identity = e2e::control_paint(window.window_id(), "conflict-session-identity").unwrap();
-        assert!(
-            identity.middle_ellipsis,
-            "short identity space truncates in the middle"
-        );
+        let identity_paint =
+            e2e::control_paint(window.window_id(), "conflict-session-identity").unwrap();
+        assert!(!identity_paint.ellipsis && !identity_paint.middle_ellipsis);
+        cx.update_window(window, |_, window, _| {
+            let mut font = kagi_ui_core::fonts::ui_font();
+            font.weight = gpui::FontWeight::SEMIBOLD;
+            for text in [
+                identity.as_str(),
+                "cherry-pick 10/10",
+                if sequencer {
+                    Msg::ConflictSkip.t()
+                } else {
+                    identity.as_str()
+                },
+            ] {
+                let width = window
+                    .text_system()
+                    .shape_line(
+                        text.to_owned().into(),
+                        theme::scaled_px(12.),
+                        &[gpui::TextRun {
+                            len: text.len(),
+                            font: font.clone(),
+                            color: gpui::rgb(theme::theme().text_main).into(),
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width;
+                let available = if text == identity {
+                    identity_paint.bounds.size.width
+                } else if text == "cherry-pick 10/10" {
+                    session.size.width
+                        - bounds("conflict-abort").size.width
+                        - theme::scaled_px(if sequencer { 50. } else { 20. })
+                } else {
+                    bounds("conflict-skip-label").size.width
+                };
+                assert!(
+                    available >= width,
+                    "full operation/step fits before shrinking action labels: {text}"
+                );
+            }
+        })
+        .unwrap();
         assert!(
             session.right() <= header.left(),
             "Abort and Skip stay in the sidebar, apart from file actions and Continue"
@@ -300,56 +340,83 @@ fn assert_abort_interaction_ink(
     conflict: &Entity<ConflictView>,
 ) {
     use gpui::{Modifiers, MouseButton};
-    let button = e2e::control_bounds(window.window_id(), "conflict-abort").unwrap();
-    let outside = gpui::point(button.right() + gpui::px(12.), button.center().y);
-    cx.simulate_mouse_move(window, outside, None, Modifiers::none());
-    paint(cx, window);
-    assert_abort_paint(cx, window, "rest");
-    cx.simulate_mouse_move(window, button.center(), None, Modifiers::none());
-    paint(cx, window);
-    assert_abort_paint(cx, window, "hover");
-    cx.simulate_mouse_down(
-        window,
-        button.center(),
-        MouseButton::Left,
-        Modifiers::none(),
-    );
-    paint(cx, window);
-    assert_abort_paint(cx, window, "pressed");
-    // Release outside the button so this colour test never opens or confirms Abort.
-    cx.simulate_mouse_move(window, outside, MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_up(window, outside, MouseButton::Left, Modifiers::none());
+    for (hidden, control_id, label_id) in [
+        (false, "conflict-abort", "conflict-abort-label"),
+        (true, "operation-strip-abort", "operation-strip-abort-label"),
+    ] {
+        conflict.update(cx, |view, cx| {
+            view.sidebar_hidden = hidden;
+            cx.notify();
+        });
+        assert_operation_placement(cx, window, conflict);
+        let button = e2e::control_bounds(window.window_id(), control_id).unwrap();
+        let outside = gpui::point(button.right() + gpui::px(12.), button.center().y);
+        cx.simulate_mouse_move(window, outside, None, Modifiers::none());
+        paint(cx, window);
+        let ink = e2e::control_paint(window.window_id(), label_id)
+            .unwrap()
+            .text_color;
+        let base = gpui::Hsla::from(gpui::rgb(theme::theme().color_blocker));
+        assert!(
+            (ink.h - base.h).abs() < 0.015 && (ink.s - base.s).abs() < 0.02,
+            "contrast adjustment preserves destructive hue and saturation"
+        );
+        let ink = u32::from(ink.to_rgb()) >> 8;
+        assert_abort_paint(cx, window, control_id, label_id, ink, "rest");
+        cx.simulate_mouse_move(window, button.center(), None, Modifiers::none());
+        paint(cx, window);
+        assert_abort_paint(cx, window, control_id, label_id, ink, "hover");
+        cx.simulate_mouse_down(
+            window,
+            button.center(),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        paint(cx, window);
+        assert_abort_paint(cx, window, control_id, label_id, ink, "pressed");
+        // Release outside: this paint test never opens or confirms Abort.
+        cx.simulate_mouse_move(window, outside, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(window, outside, MouseButton::Left, Modifiers::none());
+        conflict.update(cx, |view, cx| {
+            view.writer_busy = true;
+            cx.notify();
+        });
+        paint(cx, window);
+        let disabled = e2e::control_paint(window.window_id(), label_id).unwrap();
+        assert_ne!(
+            u32::from(disabled.text_color.to_rgb()) >> 8,
+            ink,
+            "disabled Abort uses muted, not active destructive ink"
+        );
+        conflict.update(cx, |view, cx| {
+            view.writer_busy = false;
+            cx.notify();
+        });
+        paint(cx, window);
+    }
     conflict.update(cx, |view, cx| {
-        view.writer_busy = true;
+        view.sidebar_hidden = false;
         cx.notify();
     });
-    paint(cx, window);
-    let disabled = e2e::control_paint(window.window_id(), "conflict-abort-label").unwrap();
-    assert_ne!(
-        u32::from(disabled.text_color.to_rgb()) >> 8,
-        theme::theme().color_blocker,
-        "disabled Abort does not retain active destructive ink"
-    );
-    conflict.update(cx, |view, cx| {
-        view.writer_busy = false;
-        cx.notify();
-    });
-    paint(cx, window);
+    assert_operation_placement(cx, window, conflict);
 }
 
-fn assert_abort_paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, state: &str) {
-    let label = e2e::control_paint(window.window_id(), "conflict-abort-label").unwrap();
+fn assert_abort_paint(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    control_id: &str,
+    label_id: &str,
+    expected_ink: u32,
+    state: &str,
+) {
+    let label = e2e::control_paint(window.window_id(), label_id).unwrap();
     let ink = u32::from(label.text_color.to_rgb()) >> 8;
-    for shift in [0, 8, 16] {
-        let actual = ((ink >> shift) & 255) as u8;
-        let expected = ((theme::theme().color_blocker >> shift) & 255) as u8;
-        assert!(
-            actual.abs_diff(expected) <= 1,
-            "{state}: destructive ink stays red"
-        );
-    }
+    assert_eq!(
+        ink, expected_ink,
+        "{control_id} {state}: stable destructive ink"
+    );
     assert_eq!(label.font_weight, gpui::FontWeight::BOLD);
-    let button = e2e::control_bounds(window.window_id(), "conflict-abort").unwrap();
+    let button = e2e::control_bounds(window.window_id(), control_id).unwrap();
     cx.update_window(window, |_, window, _| {
         let image = window
             .render_to_image()
@@ -365,8 +432,9 @@ fn assert_abort_paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, st
             )
             .0);
         assert!(
-            theme::contrast_ratio(ink, background) >= 3.,
-            "{state}: bold Abort contrast"
+            theme::contrast_ratio(ink, background) >= 4.5,
+            "{control_id} {state}: Abort text contrast {:.3}:1",
+            theme::contrast_ratio(ink, background)
         );
         let mut strongest: f64 = 1.;
         for y in (f32::from(label.bounds.top()) * scale).ceil() as u32
@@ -382,8 +450,8 @@ fn assert_abort_paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle, st
             }
         }
         assert!(
-            strongest >= 3.,
-            "{state}: actual bold glyph contrast {strongest:.3}:1"
+            strongest >= 4.5,
+            "{control_id} {state}: actual glyph contrast {strongest:.3}:1"
         );
     })
     .unwrap();
@@ -1090,6 +1158,18 @@ fn assert_header_tab_order(
             before,
             repo_fingerprint(&repo),
             "the first menu Skip only arms"
+        );
+        click_control(cx, window, "conflict-sidebar-toggle");
+        assert_operation_placement(cx, window, conflict);
+        assert!(
+            cx.read(|cx| conflict
+                .read(cx)
+                .mode
+                .as_ref()
+                .unwrap()
+                .skip_approval
+                .is_some()),
+            "armed EN/JA identity is fully readable at the default sidebar width"
         );
     }
 }

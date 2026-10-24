@@ -358,13 +358,39 @@ impl ConflictView {
     }
 
     /// The sidebar owns session identity and discard-like actions.
-    pub(super) fn render_session_header(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_session_header(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let mode = self.mode.as_ref().expect("workspace mode");
         let label: SharedString = match &mode.session.op {
             kagi_git::conflicts::ConflictOp::Rebase { step, total, .. } => {
                 format!("{} {step}/{total}", mode.session.op.slug()).into()
             }
             op => op.slug().into(),
+        };
+        let mut font = kagi_ui_core::fonts::ui_font();
+        font.weight = gpui::FontWeight::SEMIBOLD;
+        let identity_width = window
+            .text_system()
+            .shape_line(
+                label.clone(),
+                theme::scaled_px(12.),
+                &[gpui::TextRun {
+                    len: label.len(),
+                    font,
+                    color: rgb(theme().text_main).into(),
+                    ..Default::default()
+                }],
+                None,
+            )
+            .width
+            .ceil();
+        let skip_label = if mode.skip_approval.is_some() {
+            Msg::ConflictConfirmSkip.t()
+        } else {
+            Msg::ConflictSkip.t()
         };
         #[cfg(feature = "gui-e2e")]
         SESSION_HEADER_LABEL.with(|value| {
@@ -403,25 +429,27 @@ impl ConflictView {
                     .aria_label(label.clone())
                     .relative()
                     .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
+                    .min_w(identity_width)
                     .whitespace_nowrap()
-                    .text_ellipsis_middle()
                     .child(e2e::measure_inside("conflict-session-identity"))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(label),
+                    .child(label.clone())
+                    .hover_tooltip("conflict-session-identity-help", label),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .flex_shrink_0()
+                    .flex_shrink(1.)
+                    .min_w(px(0.))
+                    .justify_end()
                     .gap(theme::scaled_px(6.))
                     .child(e2e::measure_control(
                         "conflict-abort",
                         crate::ui::button_style::conflict_abort_button(
                             "conflict-abort",
                             self.writer_busy,
+                            theme().sidebar,
                             cx,
                         )
                         .on_click(cx.listener(
@@ -438,22 +466,30 @@ impl ConflictView {
                         )),
                     ))
                     .when(mode.session.op.is_sequencer(), |el| {
-                        el.child(e2e::measure_control(
-                            "conflict-skip",
-                            compact_button(
+                        el.child(
+                            div().flex_1().min_w(px(0.)).child(e2e::measure_control(
                                 "conflict-skip",
-                                if mode.skip_approval.is_some() {
-                                    Msg::ConflictConfirmSkip.t()
-                                } else {
-                                    Msg::ConflictSkip.t()
-                                },
-                                ButtonRole::Secondary,
-                                cx,
-                            )
-                            .compact()
-                            .disabled(self.writer_busy)
-                            .on_click(cx.listener(
-                                |view, _: &gpui::ClickEvent, window, cx| {
+                                crate::ui::button_style::apply_role(
+                                    Button::new("conflict-skip").aria_label(skip_label).child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(0.))
+                                            .truncate()
+                                            .child(e2e::measure_inside("conflict-skip-label"))
+                                            .child(skip_label),
+                                    ),
+                                    ButtonRole::Secondary,
+                                    cx,
+                                )
+                                .small()
+                                .compact()
+                                .w_full()
+                                .min_w(px(0.))
+                                .h(theme::scaled_px(20.))
+                                .rounded(theme::scaled_px(5.))
+                                .text_size(theme::scaled_px(12.))
+                                .disabled(self.writer_busy)
+                                .on_click(cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
                                     if !view.skip_request_arm() {
                                         cx.notify();
                                         return;
@@ -466,9 +502,10 @@ impl ConflictView {
                                         });
                                     })
                                     .detach();
-                                },
+                                }))
+                                .hover_tooltip("conflict-skip-help", skip_label),
                             )),
-                        ))
+                        )
                     }),
             )
             .into_any_element()

@@ -91,6 +91,7 @@ impl KagiApp {
                             super::button_style::conflict_abort_button(
                                 "operation-strip-abort",
                                 abort_disabled,
+                                theme().surface,
                                 cx,
                             )
                             .on_click(cx.listener(

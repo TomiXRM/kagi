@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 48 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), nine TLC negative controls,
+No product code is imported or changed. There are 52 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), thirteen TLC negative controls,
 30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -64,7 +64,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
+holes/questions tracked by **#1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -82,7 +82,7 @@ model REFUTATIONS only within their isolated assumptions, not confirmed app bugs
 
 The TLC `*-broken.cfg` rows remove a known working guard. The ordinary table
 expects their counterexamples; a separate `--broken` pass retains the original
-HOLD expectations and must exit 1 for all nine, with actual violation witnesses.
+HOLD expectations and must exit 1 for all thirteen, with actual violation witnesses.
 Every pure `VARIANTS` entry similarly runs as a child that must exit 1 with a
 named mismatch. These expected red children are green only in the outer harness.
 
@@ -90,6 +90,18 @@ The refined `skip-replacement` guard HOLDs because an accepted changed revision
 disarms Skip; its removed-guard variant is red. The narrower
 `skip-confirm-cli-race` remains REFUTED. `continue-metadata-read` HOLDs under the
 full operation-metadata admission guard, with a separate red broken variant.
+
+#1731 makes `draft-io-quit` and the three `preserve-*` checks HOLD. The extracted
+close path retains the failed-autosave flag and live text while its sheet offers
+Retry or Cancel; a successful retry clears the hold. `DraftNeverLost` is unchanged:
+this no-discard safety scenario does not model a separately approved intentional
+discard. The native `conflict_draft_persist_failure` scenario covers both explicit
+discard confirmations, as well as retry/cancel and close/quit in EN/JA.
+Abort, Skip, and D/F preservation failures now reach a Refused state before any
+repository mutation. Four `*-broken` controls independently remove those guards
+and retain the original loss/destructive-progress counterexamples. Atomic draft
+replacement and interprocess serialization remain the separate #1732 properties;
+the pure hunk/draft compatibility predicates are intentionally unchanged.
 
 ### Saved runtime projections
 
@@ -133,7 +145,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
 | `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
-| `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
+| `draft-io-quit` | `DraftNeverLost` | HOLD | none | #1731 fixed (no explicit discard) |
+| `draft-io-quit-broken` | `DraftNeverLost` | REFUTE | draftClose | Negative control for #1731 |
 | `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
@@ -149,9 +162,12 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | REFUTE | none | #1746 (owner QUESTION) |
 | `continue-metadata-read` | `MetadataReadErrorNeverAdmitted` | HOLD | none | CONTRACT at runtime (metadata guard) |
 | `continue-metadata-read-broken` | `MetadataReadErrorNeverAdmitted` | REFUTE | metadata | Negative control; no product issue |
-| `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
-| `preserve-skip` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
-| `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
+| `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
+| `preserve-abort-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
+| `preserve-skip` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
+| `preserve-skip-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
+| `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
+| `preserve-dir-file-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none | #1743 |
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |

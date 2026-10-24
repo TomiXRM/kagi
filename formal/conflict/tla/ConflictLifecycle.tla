@@ -32,6 +32,8 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     captured |-> {}, disk |-> {}, diskValid |-> TRUE,
     pending |-> [a \in Actors |-> {}], committed |-> {}, restored |-> {},
     readCorrupt |-> FALSE, restarted |-> [a \in Actors |-> FALSE],
+    draftPersistFailed |-> [a \in Actors |-> FALSE],
+    closeSheet |-> [a \in Actors |-> FALSE],
     frozen |-> [a \in Actors |-> "none"], shownTree |-> [a \in Actors |-> "unmerged"],
     planTree |-> [a \in Actors |-> "unmerged"], planRev |-> [a \in Actors |-> <<0,0,0,0>>],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
@@ -93,10 +95,22 @@ AutosaveWriteStart(a) == /\ At(a, "autosaveStart")
 \* resolution.rs:800-814: mark_saved only after complete successful fs::write.
 AutosaveWrite(a) == /\ At(a, "autosaveFinish")
     /\ s' = [s EXCEPT !.diskValid = TRUE, !.disk = s.pending[a],
-        !.committed = @ \cup {Record(a)}, !.pc[a] = "ready", !.event = <<"AutosaveWrite",a>>]
-\* draft_owner.rs:233-236 logs failure; actions.rs:145 ignores it. No close flush.
+        !.committed = @ \cup {Record(a)}, !.draftPersistFailed[a] = FALSE,
+        !.closeSheet[a] = FALSE, !.pc[a] = "ready", !.event = <<"AutosaveWrite",a>>]
+\* #1731 draft_owner.rs: note_draft_result retains failure until autosave succeeds.
 AutosaveFailure(a) == /\ Scenario = "draftIO" /\ At(a, "autosaveStart")
-    /\ s' = [s EXCEPT !.pc[a] = "ready", !.event = <<"AutosaveFailure",a>>]
+    /\ s' = [s EXCEPT !.draftPersistFailed[a] = TRUE,
+        !.pc[a] = "ready", !.event = <<"AutosaveFailure",a>>]
+\* #1731 host_close.rs: hold_host_close/save_host_dirty_guard retain live text.
+\* This no-discard safety scenario excludes a separately approved intentional
+\* discard; the native conflict_draft_persist_failure test checks its two steps.
+OpenCloseSheet(a) == /\ Scenario = "draftIO" /\ At(a, "ready")
+    /\ s.draftPersistFailed[a] /\ ~s.closeSheet[a] /\ Broken # "draftClose"
+    /\ s' = [s EXCEPT !.closeSheet[a] = TRUE, !.event = <<"OpenCloseSheet",a>>]
+RetryDraft(a) == /\ At(a, "ready") /\ s.closeSheet[a] /\ s.draftPersistFailed[a]
+    /\ s' = [s EXCEPT !.pc[a] = "autosaveRead", !.event = <<"RetryDraft",a>>]
+CancelCloseSheet(a) == /\ At(a, "ready") /\ s.closeSheet[a]
+    /\ s' = [s EXCEPT !.closeSheet[a] = FALSE, !.event = <<"CancelCloseSheet",a>>]
 \* backend/conflict_ops.rs:195-218,244-288: revision/payload-bound immutable plan.
 \* merge panel's shown staged set: ui/operations/commit.rs:1054-1065.
 Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
@@ -133,16 +147,25 @@ Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "pre
         !.pc[a] = CASE Kind \in {"skip","abort","stashAbort","df"} -> "preserve"
                   [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wt",
         !.event = <<"Preflight",a>>]
-\* conflicts.rs:1880-1881; conflict_abort.rs:274-286,489-493; dir_file_conflict.rs:202-218.
-\* Preservation failure is ignored; failure schedules are explicit scenario inputs.
+\* #1731 conflict_abort.rs: execute_conflict_abort_expecting, conflicts.rs:
+\* execute_conflict_skip, dir_file_conflict.rs: apply_dir_file_resolution_with_progress.
+\* Required recovery failure returns Blocked before destructive repository work.
 Preserve(a) == /\ At(a, "preserve")
     /\ s' = [s EXCEPT !.preservationFailed[a] = Scenario \in {"preserveAbort","preserveSkip","preserveDF"},
         \* A possible fs::write error AFTER truncation destroys even an older save.
-        \* resolution.rs:800-806; abort/skip swallow the error at the sites above.
+        \* resolution.rs:800-806; atomic draft replacement is tracked by #1732.
         !.diskValid = IF Scenario \in {"preserveAbort","preserveSkip"} THEN FALSE ELSE @,
         !.disk = IF Scenario \in {"preserveAbort","preserveSkip"} THEN {} ELSE @,
-        !.pc[a] = CASE Kind = "skip" -> "skip" [] Kind \in {"abort","stashAbort"} -> "abort" [] OTHER -> "index",
+        !.pc[a] = CASE Scenario \in {"preserveAbort","preserveSkip","preserveDF"}
+                          /\ Broken # "preservation" -> "refused"
+                  [] Kind = "skip" -> "skip"
+                  [] Kind \in {"abort","stashAbort"} -> "abort" [] OTHER -> "index",
         !.event = <<"Preserve",a,IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"} THEN "failed" ELSE "ok">>]
+\* backend/conflict_ops.rs:562-581 and UI conflict_skip.rs:138-152 map errors
+\* to Refused; neither admission settlement nor presentation mutates the repo.
+RefusePreservation(a) == /\ At(a, "refused") /\ s.preservationFailed[a]
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.receipt[a] = TRUE,
+        !.reported[a] = TRUE, !.pc[a] = "done", !.event = <<"RefusePreservation",a>>]
 \* conflicts.rs:1646-1648 Save; :1380-1404 Continue rename; dir_file_conflict.rs:315-324.
 \* Abort index precedes checkout (conflict_abort.rs:342-361); non-UTF8 stash path
 \* omitted at :513-517 and empty checkout is no-op at :582-583.
@@ -224,10 +247,11 @@ Deliver(a) == /\ At(a, "deliver")
 Depart(a) == /\ a \in Participants /\ s.life[a] = "open" /\ s.attached[a]
     /\ s.pc[a] \in {"approve","preflight","append","deliver"}
     /\ s' = [s EXCEPT !.attached[a] = FALSE, !.event = <<"Depart(tab switch)",a>>]
-\* app_bridge.rs:751-758; host_close.rs:62-68,107-111: lease gate, no conflict dirty gate.
-\* Sync autosave callback cannot be interrupted by graceful close in same process.
+\* #1731 host_close.rs: failed conflict drafts join the existing host dirty gate.
+\* Broken="draftClose" removes only this new hold, leaving the lease gate intact.
 GracefulExit(a, reason) == /\ a \in Participants /\ s.life[a] = "open" /\ ~s.lease[a]
     /\ s.pc[a] \in {"ready","append","deliver","done"}
+    /\ (~s.draftPersistFailed[a] \/ Broken = "draftClose")
     /\ s' = [s EXCEPT !.life[a] = "closed", !.attached[a] = FALSE,
         !.text[a] = "none", !.abandoned = @ \/ (s.successful[a] /\ ~s.receipt[a]),
         !.event = <<reason,a>>]
@@ -301,7 +325,9 @@ MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
+    \/ OpenCloseSheet(a) \/ RetryDraft(a) \/ CancelCloseSheet(a)
     \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
+    \/ RefusePreservation(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)

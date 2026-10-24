@@ -29,6 +29,7 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     index |-> [f \in Files |-> IF Kind = "mergeCommit" THEN "shown" ELSE IF Kind = "df" /\ f = 2 THEN "child" ELSE IF f = 1 \/ Scenario \in {"draftRace","draftRaceLost"} THEN "unmerged" ELSE "absent"],
     observedIndex |-> ActorInit, observation |-> [a \in Actors |-> <<0,0,0,0>>],
     context |-> ActorInit, text |-> [a \in Actors |-> "none"],
+    materializedWT |-> [a \in Actors |-> "none"],
     captured |-> {}, disk |-> {}, diskValid |-> TRUE,
     pending |-> [a \in Actors |-> {}], committed |-> {}, restored |-> {},
     readCorrupt |-> FALSE, restarted |-> [a \in Actors |-> FALSE],
@@ -59,8 +60,11 @@ AcceptRead(a) == /\ At(a, "accept") /\ s.attached[a] /\ ~s.lease[a]
     \* commit.rs:1054-1065 resolved merge is already displaying the commit panel.
     /\ s' = [s EXCEPT !.pc[a] = IF Kind = "mergeCommit" THEN "ready" ELSE "openFile", !.event = <<"AcceptRead",a>>]
 \* ui/conflict_view/flow.rs:28-31: captures input before changing editing path.
+\* #1733 resolution.rs:295-301 captures WT provenance when the live file is built;
+\* OpenFile is the finite materialization boundary (external edits occur later).
 OpenFile(a) == /\ At(a, "openFile")
-    /\ s' = [s EXCEPT !.pc[a] = "edit", !.event = <<"OpenFile",a,File(a)>>]
+    /\ s' = [s EXCEPT !.materializedWT[a] = s.wt[File(a)],
+        !.pc[a] = "edit", !.event = <<"OpenFile",a,File(a)>>]
 \* flow.rs:42-50,90-95 and actions.rs:129-145: idle, no divergence, autosave.
 \* One hunk and one non-repeated source adoption are the finite edit quotient.
 Choose(a) == /\ At(a, "edit") /\ ~s.lease[a] /\ ~DraftScenario /\ Kind # "df"
@@ -120,8 +124,8 @@ Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
 RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
     /\ s' = [s EXCEPT !.planTree[a] = s.index[1], !.planRev[a] = Revision,
         !.pc[a] = "mergePreflight", !.event = <<"RenewMergePlan",a>>]
-\* conflict_ops.rs:419-425; conflict_boundary.rs:170-175; conflicts.rs:1261-1297:
-\* final full revision/binding/checklist check; WT content deliberately absent.
+\* conflict_ops.rs:419-425 and conflict_boundary.rs:170-181: full revision check.
+\* Per-file index/WT provenance is checked again by ValidateFile before WTWrite.
 \* Skip has no expected revision argument (conflicts.rs:1869-1894).
 \* Commit index checked against the NEW plan (ops/commit.rs:38-44,74-83).
 Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "preflight")
@@ -131,8 +135,20 @@ Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "pre
     /\ s' = [s EXCEPT !.preflight[a] = TRUE,
         !.metadataFailOpen = @ \/ (~s.metadataReadable /\ Kind = "continue"),
         !.pc[a] = CASE Kind \in {"skip","abort","stashAbort","df"} -> "preserve"
-                  [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wt",
+                  [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wtValidate",
         !.event = <<"Preflight",a>>]
+\* #1733 resolution/conflict_boundary.rs:73-78,104-110; worktree_state.rs:39-54:
+\* fresh file identity + captured WT hash immediately before the executor write.
+\* This is a separate read transition, NOT an atomic guard-and-write assumption.
+ValidateFile(a) == /\ At(a, "wtValidate")
+    /\ (s.planRev[a] = Revision \/ Broken = "revision")
+    /\ (s.materializedWT[a] = s.wt[File(a)] \/ Broken = "worktree")
+    /\ s' = [s EXCEPT !.pc[a] = "wt", !.event = <<"ValidateFile(index,WT)",a>>]
+FileRefused(a) == /\ At(a, "wtValidate")
+    /\ ((s.planRev[a] # Revision /\ Broken # "revision") \/
+        (s.materializedWT[a] # s.wt[File(a)] /\ Broken # "worktree"))
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+        !.event = <<"FileRefused",a>>]
 \* conflicts.rs:1880-1881; conflict_abort.rs:274-286,489-493; dir_file_conflict.rs:202-218.
 \* Preservation failure is ignored; failure schedules are explicit scenario inputs.
 Preserve(a) == /\ At(a, "preserve")
@@ -246,8 +262,8 @@ Restart(a) == /\ DraftScenario /\ a \in Participants /\ s.life[a] # "open" /\ ~s
     /\ s' = [s EXCEPT !.life[a] = "open", !.restarted[a] = TRUE, !.pc[a] = "done",
         !.restored = @ \cup (IF s.diskValid THEN {r \in s.disk : r[2] = s.operation} ELSE {}),
         !.readCorrupt = @ \/ ~s.diskValid, !.event = <<"Restart(restore draft)",a>>]
-\* Environmental CLI writes; observer includes index/HEAD/metadata but not WT:
-\* conflict_observe.rs:91-125,148-198; ui/tabs.rs:854-863 WT refreshes WIP only.
+\* Environmental CLI writes: the accepted observation remains index/metadata-only;
+\* #1733 additionally freezes each live draft's WT bytes at materialization.
 \* One external edit is the finite interference bound, not a production guard.
 ExternalGit == /\ ~s.external /\ s.life[1] = "open"
     /\ CASE Scenario = "staleWT" ->
@@ -302,6 +318,7 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
     \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
+    \/ ValidateFile(a) \/ FileRefused(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
@@ -317,7 +334,7 @@ NoWriteBeforeApproval == ~s.wroteUnapproved
 ApprovedRevisionFrozen == ~s.stagedDifferent /\ (s.committedTree = "none" \/ s.committedTree = s.shownTree[1])
 \* HOLD: Save's prepared payload is cloned; not the mutable UI buffer.
 ApprovedSavePayloadFrozen == \A a \in Participants : s.executed[a] = "none" \/ s.executed[a] = s.frozen[a]
-\* REFUTE: WT-only changes are not approval-revision drift; final check/write split.
+\* HOLD for pre-validation WT edits; REFUTE for the later CLI/concurrent window.
 StaleSnapshotNeverWrites == ~s.wroteStale
 \* REFUTE strong universal claim: captured edits may be lost on crash/I/O failure.
 DraftNeverLost == (\E a \in Participants : s.restarted[a]) => s.captured \subseteq s.restored

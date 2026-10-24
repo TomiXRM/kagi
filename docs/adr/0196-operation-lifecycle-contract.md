@@ -690,3 +690,32 @@ policies; this change does not rewrite Git configuration or their admission.
   and oplog append failure keep the one-request/result and inspect/ack contracts
   above. Natural completion retires the work; hiding is not completion evidence.
 
+
+## Repository-scoped conflict write admission (#1746)
+
+The process-local Sessions lease is not cross-process exclusion. Conflict Save,
+directory/file resolution, Continue (including merge staging), Abort, Skip and
+merge finalization additionally use the backend's repository advisory lock at
+`<common-gitdir>/kagi-write.lock`; linked worktrees share that repository scope.
+On Unix this is an fd-based `flock`, not `O_EXCL` or a PID marker. Never unlink
+the persistent sidecar. Closing the final descriptor (including process death)
+releases ownership in the kernel.
+
+Read-only plan and application admission probe the same lock with nonblocking
+attempts, retrying for at most 100 ms. The confirmation modal retains no lock.
+The mutation owner reacquires before final preflight and retains the descriptor
+through execution and verification; the approved full revision is checked again
+under that lock. Reads do not acquire it. Nested executor calls on the same
+thread reuse the descriptor; unrelated background writers do not share admission.
+
+Draft preservation is a preceding phase: complete and release `buffer.json.lock`
+before acquiring `kagi-write.lock`. Never hold both locks, in either order.
+After preservation, reacquire repository admission and repeat preflight; a changed
+approval refuses without mutation. This is advisory coordination among Kagi
+instances, not exclusion against arbitrary external Git/worktree writers.
+
+Contention is `Refused`, never `Failed` or `Unknown`: durable English blocker
+\"Another Kagi window is operating on this repository\" and Japanese presentation
+\"別の Kagi ウィンドウがこの repository を操作中です\" use existing plan/refusal,
+Operation Log and bounded-toast delivery. No new modal or retry queue is added.
+

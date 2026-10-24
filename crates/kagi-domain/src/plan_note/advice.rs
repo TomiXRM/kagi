@@ -265,6 +265,9 @@ macro_rules! advice_template_en {
     (HistorySoftMovePreservesChanges) => {
         "You have uncommitted changes. They will be preserved verbatim; only the branch ref moves (soft reset — index and working tree untouched)."
     };
+    (ConflictsRepositoryBusy) => {
+        "Another Kagi window is operating on this repository"
+    };
     (ConflictsObservationChanged) => {
         "conflict changed since it was observed — re-open the conflict"
     };

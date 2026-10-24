@@ -135,7 +135,8 @@ impl KagiApp {
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);
-                        (unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }), Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
+                        let refused = e.blocker().map(|note| OpOutcome::Refused { blockers: vec![note.message_en()] });
+                        (unknown.or(refused).unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }), Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
                     }
                 };
                 let termination_unknown_evidence = match &outcome {

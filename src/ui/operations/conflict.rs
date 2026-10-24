@@ -431,8 +431,16 @@ impl KagiApp {
                                     head: format!("op={}", session_op),
                                     dirty: "resolving".into(),
                                 },
-                                unknown.unwrap_or_else(|| OpOutcome::Failed {
-                                    error: e.to_string(),
+                                unknown.unwrap_or_else(|| {
+                                    if let Some(note) = e.blocker() {
+                                        OpOutcome::Refused {
+                                            blockers: vec![note.message_en()],
+                                        }
+                                    } else {
+                                        OpOutcome::Failed {
+                                            error: e.to_string(),
+                                        }
+                                    }
                                 }),
                                 None,
                                 &repo_path,
@@ -717,7 +725,15 @@ impl KagiApp {
                         app.record_operation_completion(
                             &op_name,
                             before,
-                            unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
+                            unknown.unwrap_or_else(|| {
+                                if let Some(note) = e.blocker() {
+                                    OpOutcome::Refused {
+                                        blockers: vec![note.message_en()],
+                                    }
+                                } else {
+                                    OpOutcome::Failed { error: err_msg }
+                                }
+                            }),
                             ref_moves,
                             &repo_path,
                             current,

@@ -1,0 +1,196 @@
+//! Repository-scoped conflict admission, using a real independent lock owner.
+#[path = "../../../tests/support/git_fixture.rs"]
+mod git_fixture;
+#[path = "../../../tests/support/isolated.rs"]
+mod isolated;
+use git_fixture::{commit_all, git, git_output, git_succeeds, init_repo, write_file};
+use kagi_domain::plan_note::{ConflictsNote, PlanNote};
+use kagi_git::backend::ExecutionPolicy;
+use kagi_git::oplog::OpOutcome;
+use kagi_git::{Backend, GitError, ResolutionChoice};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+
+#[test]
+fn independent_lock_owner() {
+    let Some(path) = std::env::var_os("KAGI_WRITE_LOCK_CHILD") else {
+        return;
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .unwrap();
+    file.try_lock().unwrap();
+    println!("LOCKED");
+    std::io::stdout().flush().unwrap();
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+}
+
+struct Owner(Child);
+impl Owner {
+    fn start(repo: &Path) -> Self {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "independent_lock_owner", "--nocapture"])
+            .env("KAGI_WRITE_LOCK_CHILD", repo.join(".git/kagi-write.lock"))
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(output.read_line(&mut line).unwrap(), 0, "lock child exited");
+            if line.trim() == "LOCKED" {
+                break;
+            }
+        }
+        Self(child)
+    }
+}
+impl Drop for Owner {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn conflict(root: &Path) -> PathBuf {
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo, "main");
+    write_file(&repo, "file.txt", "base\n");
+    commit_all(&repo, "base");
+    git(&repo, &["checkout", "-qb", "side"]);
+    write_file(&repo, "file.txt", "side\n");
+    commit_all(&repo, "side");
+    git(&repo, &["checkout", "-q", "main"]);
+    write_file(&repo, "file.txt", "main\n");
+    commit_all(&repo, "main");
+    assert!(!git_succeeds(&repo, &["merge", "side"]));
+    repo
+}
+
+fn witness(repo: &Path) -> (String, Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        git_output(repo, &["rev-parse", "HEAD"]),
+        std::fs::read(repo.join(".git/index")).unwrap(),
+        std::fs::read(repo.join("file.txt")).unwrap(),
+        std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
+    )
+}
+fn busy(error: &GitError) {
+    assert_eq!(
+        error.blocker(),
+        Some(&PlanNote::Conflicts(ConflictsNote::RepositoryBusy))
+    );
+    assert_eq!(
+        error.to_string(),
+        "Another Kagi window is operating on this repository"
+    );
+}
+
+#[test]
+fn child_lock_refuses_save_continue_abort_without_writes_and_death_releases_it() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for route in ["save", "continue", "abort"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = conflict(tmp.path());
+        let b = Backend::open(&repo).unwrap();
+        let snapshot = b.conflict_snapshot().unwrap().unwrap();
+        let mut buffer = b.resolution_buffer_from_repo().unwrap();
+        buffer
+            .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
+            .unwrap();
+        let request = if route == "abort" {
+            kagi_domain::conflict_family::ConflictRequest::Abort {
+                revision: snapshot.observation.revision.clone(),
+                kind: snapshot.observation.kind,
+            }
+        } else {
+            Backend::conflict_save_request(
+                snapshot.observation.revision.clone(),
+                &buffer,
+                Path::new("file.txt"),
+                snapshot.observation.kind,
+                "",
+            )
+            .unwrap()
+        };
+        let plan = Backend::plan_recorded_conflict(&repo, request.clone()).unwrap();
+        let before = witness(&repo);
+        let owner = Owner::start(&repo);
+        // Reads stay available while another process owns write admission.
+        assert!(b.conflict_snapshot().unwrap().is_some());
+        busy(&Backend::plan_recorded_conflict(&repo, request).unwrap_err());
+        if route == "continue" {
+            busy(
+                &b.plan_conflict_continue(
+                    &snapshot.session,
+                    &buffer,
+                    &snapshot.observation.revision,
+                )
+                .unwrap_err(),
+            );
+            busy(
+                &b.execute_conflict_continue(
+                    &snapshot.session,
+                    &buffer,
+                    &snapshot.observation.revision,
+                )
+                .unwrap_err(),
+            );
+        } else {
+            let report = Backend::run_recorded_conflict(&plan, ExecutionPolicy::human(false), None);
+            assert!(
+                matches!(report.recording.entry().outcome, OpOutcome::Refused { .. }),
+                "{route}: {:?}",
+                report.recording
+            );
+            assert_eq!(
+                report.blocker,
+                Some(PlanNote::Conflicts(ConflictsNote::RepositoryBusy))
+            );
+        }
+        assert_eq!(
+            witness(&repo),
+            before,
+            "{route} wrote while another process held admission"
+        );
+        drop(owner); // SIGKILL + wait: kernel releases the fd lock, no unlink.
+        if route == "continue" {
+            // Nested continue → stage admission shares one descriptor, not a
+            // second independently opened flock that would deadlock/refuse.
+            b.execute_conflict_continue(&snapshot.session, &buffer, &snapshot.observation.revision)
+                .unwrap();
+        } else {
+            let report = Backend::run_recorded_conflict(&plan, ExecutionPolicy::human(false), None);
+            assert!(
+                matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+                "{route}: {:?}",
+                report.recording
+            );
+        }
+        assert_ne!(
+            witness_after(&repo),
+            (before.0, before.1),
+            "{route} did not execute after owner death"
+        );
+        assert!(
+            repo.join(".git/kagi-write.lock").exists(),
+            "persistent sidecar must not be unlinked"
+        );
+    }
+}
+fn witness_after(repo: &Path) -> (String, Vec<u8>) {
+    (
+        git_output(repo, &["rev-parse", "HEAD"]),
+        std::fs::read(repo.join(".git/index")).unwrap(),
+    )
+}

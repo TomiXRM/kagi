@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Serialize conflict writes across Kagi processes using a repository advisory lock. Save, directory/file resolution, Continue, Abort, Skip and merge finalization refuse busy repositories without blocking reads; process death releases admission automatically. (#1746)
 - Show a saved submodule conflict's commit OID instead of trying to preview it as a blob. (4363857802)
 - Restore conflict hunk choices, selected lines and both ordering modes after restarting a partial resolution; older drafts remain readable. (4363162008)
 - Disable per-hunk Reset and Change for manually edited Results; only confirmed Reset all may discard those edits. (4363161991)

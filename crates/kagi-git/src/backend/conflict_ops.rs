@@ -238,6 +238,7 @@ impl Backend {
         request: ConflictRequest,
     ) -> Result<ConflictPlan, GitError> {
         let backend = Self::open(path)?;
+        let _lock = crate::write_lock::acquire(&backend.repo)?;
         let repo =
             std::fs::canonicalize(&backend.path).map_err(|e| GitError::Other(e.to_string()))?;
         let worktree = backend.write_worktree_id()?;
@@ -408,6 +409,22 @@ impl Backend {
         // HEAD back; a save moves nothing and records `Some(空)`).
         let (result, ref_moves) = backend.observe_ref_moves(|_| {
             (|| -> Result<(), GitError> {
+                // A busy repository refuses before even preserving a draft.
+                drop(crate::write_lock::acquire(&backend.repo)?);
+                let preserved = if let ConflictPreparedAction::Abort { session, .. } = &plan.action
+                {
+                    let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
+                    if session.files.is_empty() {
+                        None
+                    } else {
+                        Some(buffer.autosave()?)
+                    }
+                } else {
+                    None
+                };
+                // Never nest buffer.json.lock and kagi-write.lock. Revalidate
+                // the full approved revision only after preservation finishes.
+                let _lock = crate::write_lock::acquire(&backend.repo)?;
                 backend.require_trust()?;
                 if backend.write_worktree_id()? != plan.worktree
                     || backend.write_repo_id()? != plan.common_dir
@@ -467,31 +484,22 @@ impl Backend {
                         )?);
                         verify_dir_file(&backend.repo, dir_file)?;
                     }
-                    // #704: the partial resolution is preserved by the executor
-                    // (ADR-0057) from the buffer on disk — the editor autosaves
-                    // every edit, so this is the same bytes the UI held, and the
-                    // abort is admissible with no editor open at all.
+                    // Draft preservation finished before the repository lock.
                     ConflictPreparedAction::Abort { session, restore } => {
-                        // Not `unwrap_or_else(empty)`: a buffer we failed to read
-                        // is not an empty buffer, and treating it as one would
-                        // hand the executor something to save over the user's
-                        // drafts. Refusing before any mutation is the safe half of
-                        // that choice (#707 review).
-                        let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
                         let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
                         let restored = if stash {
-                            crate::ops::conflict_abort::execute_stash_conflict_abort_with_progress(
+                            crate::ops::conflict_abort::execute_stash_conflict_abort_preserved(
                                 &backend.repo,
                                 session,
-                                &buffer,
+                                preserved,
                                 |value| progress = value,
                             )?
                         } else {
-                            crate::ops::conflict_abort::execute_conflict_abort_expecting(
+                            crate::ops::conflict_abort::execute_conflict_abort_preserved(
                                 &backend.repo,
                                 session,
-                                &buffer,
                                 restore.as_ref(),
+                                preserved,
                                 |value| progress = value,
                             )?
                         };

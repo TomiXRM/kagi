@@ -560,7 +560,9 @@ impl IntentQueue {
                                 self.modal_busy = false;
                                 effects.push(QueueEffect::CloseConfirm(id));
                             }
-                            Ok(_) | Err(super::AdmissionError::Identity(_)) => {
+                            Ok(_)
+                            | Err(super::AdmissionError::Identity(_))
+                            | Err(super::AdmissionError::RepositoryBusy) => {
                                 self.cancel_head(
                                     session,
                                     CancelReason::IdentityChanged,
@@ -585,6 +587,7 @@ impl IntentQueue {
                                         WaitReason::NeedsReconcile
                                     }
                                     super::AdmissionError::Identity(_)
+                                    | super::AdmissionError::RepositoryBusy
                                     | super::AdmissionError::StaleApproval => unreachable!(),
                                 };
                                 self.per_session

@@ -44,6 +44,14 @@ impl KagiApp {
         error: app::AdmissionError,
         cx: &mut Context<Self>,
     ) {
+        if error == app::AdmissionError::RepositoryBusy {
+            let message = Msg::AdviceConflictsRepositoryBusy.t().to_string();
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(message.clone().into()));
+            self.push_toast(ToastKind::Error, message, cx);
+            cx.notify();
+            return;
+        }
         let blocking = self.app_sessions.blocking_reconcile();
         if error == app::AdmissionError::Busy && blocking.is_none() {
             self.status_footer = FooterStatus::Idle(Msg::OpInProgress.t().into());

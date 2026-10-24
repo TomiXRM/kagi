@@ -20,6 +20,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Animate the conflict file sidebar with the main sidebar's shared width reveal, clipping toward its toggle while keeping focus and button state immediate; Reduce Motion skips both transitions. (#1739)
+  - Return focus to the toggle if a closing sidebar row regains focus before the final exit frame, preserving keyboard activation after unmount.
 - Keep adopted empty conflict sides selected when materializing line choices; reject invalid line edits without resolving untouched hunks and safely ignore stale selection bits. Treat literal marker-looking source lines as content in readiness, Save and Continue, while unresolved and hand-typed markers still block. (#1746)
   - Materialize conflict markers wider than every source marker run and parse that exact width, preserving literal marker lines without blocking per-hunk choices after clean auto-merges. Keep incompatible older hunk drafts in preserved read-only recovery instead of authorizing them against the new materialization, including when saving another file triggers re-detection. (#1751)
 - Bind Skip confirmation to the approved operation step and full conflict revision; refuse a CLI-advanced or replaced step immediately before Git runs. Report a zero-exit Skip without observed movement as an uncertain warning, never success. (#1746)

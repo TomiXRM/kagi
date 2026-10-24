@@ -5118,6 +5118,10 @@ mod macos {
                 Box::new(crate::bottom_panel_divider_drag::scenario_bottom_panel_divider_drag),
             ),
             (
+                "sidebar_motion",
+                Box::new(crate::side_panel_motion::scenario_sidebar_motion),
+            ),
+            (
                 "side_panel_motion",
                 Box::new(crate::side_panel_motion::scenario_side_panel_motion),
             ),

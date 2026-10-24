@@ -362,7 +362,10 @@ impl KagiApp {
         };
 
         match route {
-            kagi_git::ContinueRoute::MergeCommitPanel { message } => {
+            kagi_git::ContinueRoute::MergeCommitPanel {
+                message,
+                comment_char,
+            } => {
                 // Transition to the commit message panel pre-filled with the merge
                 // message.  MERGE_HEAD stays present so the commit becomes a merge
                 // commit.  No commit is created here (ADR-0068).
@@ -473,7 +476,10 @@ impl KagiApp {
                             if let Some(input) = body_input {
                                 input.update(cx, |state, cx| state.set_value(body, window, cx));
                             }
-                            entity.update(cx, |v, _| v.state.commit_msg = message.clone());
+                            entity.update(cx, |v, _| {
+                                v.state.commit_msg = message.clone();
+                                v.merge_comment_char = comment_char;
+                            });
                         }
                         if let Some(ui) = app.ui_mut() {
                             ui.conflict_merge_pending = true;

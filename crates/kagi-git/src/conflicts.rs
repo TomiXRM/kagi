@@ -530,15 +530,7 @@ fn collect_resolved_files(
     let Some(raw) = read_regular_merge_msg(&repo.path().join("MERGE_MSG")) else {
         return Vec::new();
     };
-    let configured = repo
-        .config()
-        .ok()
-        .and_then(|config| config.get_string("core.commentChar").ok());
-    let comment_char = match configured.as_deref() {
-        Some("auto") => kagi_domain::merge_msg::auto_comment_char(&raw),
-        Some(value) => value.as_bytes().first().copied().unwrap_or(b'#'),
-        None => b'#',
-    };
+    let comment_char = merge_comment_char(repo, &raw);
     let listed = kagi_domain::merge_msg::conflicted_paths(&raw, comment_char);
     if listed.is_empty() {
         return Vec::new();
@@ -911,6 +903,15 @@ pub fn continue_blockers(
     Ok(out)
 }
 
+/// Share Git's effective comment character across Saved evidence and messages.
+fn merge_comment_char(repo: &Repository, raw: &[u8]) -> u8 {
+    let configured = repo
+        .config()
+        .ok()
+        .and_then(|config| config.get_string("core.commentChar").ok());
+    kagi_domain::merge_msg::effective_comment_char(configured.as_deref(), raw)
+}
+
 /// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.
 ///
 /// Git writes a default merge message to `MERGE_MSG`; an empty / comment-only
@@ -922,11 +923,10 @@ fn merge_message_is_empty(repo: &Repository) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let meaningful = raw
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .any(|l| !l.trim().is_empty());
-    !meaningful
+    let empty =
+        !kagi_domain::merge_msg::non_comment_lines(&raw, merge_comment_char(repo, raw.as_bytes()))
+            .any(|line| !line.trim().is_empty());
+    empty
 }
 
 /// Render a [`ContinueBlocker`] as a structured [`PlanNote`] for the plan
@@ -1019,6 +1019,8 @@ pub enum ContinueRoute {
     MergeCommitPanel {
         /// The pre-filled merge commit message ("Merge <incoming> into <current>").
         message: String,
+        /// Effective character resolved from repository config and the original MERGE_MSG.
+        comment_char: u8,
     },
     /// rebase / cherry-pick / revert: confirm this `<op> --continue` plan, then
     /// continue the sequencer.
@@ -1532,8 +1534,13 @@ fn create_merge_commit(
 
     let message = match message_override {
         Some(m) => m.to_string(),
-        None => std::fs::read_to_string(repo.path().join("MERGE_MSG"))
-            .unwrap_or_else(|_| format!("Merge commit {}", short_sha(&merge_head_oid.to_string()))),
+        None => match std::fs::read_to_string(repo.path().join("MERGE_MSG")) {
+            Ok(raw) => kagi_domain::merge_msg::strip_comments(
+                &raw,
+                merge_comment_char(repo, raw.as_bytes()),
+            ),
+            Err(_) => format!("Merge commit {}", short_sha(&merge_head_oid.to_string())),
+        },
     };
 
     crate::ops::execute_git_commit(
@@ -1705,8 +1712,12 @@ pub fn plan_conflict_continue_route(
 
     match &session.op {
         ConflictOp::Merge { .. } => {
-            let message = prefilled_merge_message(repo, &session.op, current_branch);
-            Ok(ContinueRoute::MergeCommitPanel { message })
+            let (message, comment_char) =
+                prefilled_merge_message(repo, &session.op, current_branch);
+            Ok(ContinueRoute::MergeCommitPanel {
+                message,
+                comment_char,
+            })
         }
         ConflictOp::StashConflict => {
             let plan = continue_plan_after_preflight(repo, session, &blockers)?;
@@ -1722,21 +1733,24 @@ pub fn plan_conflict_continue_route(
 /// The pre-filled merge commit message: `MERGE_MSG` (comment lines stripped) when
 /// it carries text, else a synthesized "Merge <incoming> into <current>" line
 /// using the ADR-0058 role labels (never ours/theirs).  `chars()`-safe joins.
-fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &str) -> String {
-    if let Ok(raw) = std::fs::read_to_string(repo.path().join("MERGE_MSG")) {
-        let meaningful: String = raw
-            .lines()
-            .filter(|l| !l.trim_start().starts_with('#'))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !meaningful.trim().is_empty() {
-            return meaningful.trim_end().to_string();
-        }
+fn prefilled_merge_message(
+    repo: &Repository,
+    op: &ConflictOp,
+    current_branch: &str,
+) -> (String, u8) {
+    let raw = std::fs::read_to_string(repo.path().join("MERGE_MSG")).unwrap_or_default();
+    let comment_char = merge_comment_char(repo, raw.as_bytes());
+    let meaningful = kagi_domain::merge_msg::strip_comments(&raw, comment_char);
+    if !meaningful.trim().is_empty() {
+        return (meaningful, comment_char);
     }
     let labels = side_labels(op, current_branch);
-    format!(
-        "Merge {} into {}",
-        labels.incoming.name, labels.current.name
+    (
+        format!(
+            "Merge {} into {}",
+            labels.incoming.name, labels.current.name
+        ),
+        comment_char,
     )
 }
 

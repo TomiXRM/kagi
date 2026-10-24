@@ -17,6 +17,8 @@ pub enum ConflictsNote {
     ObservationChanged,
     /// blocker (save/resolve/abort) — live preflight found a changed revision.
     PlanChanged,
+    /// The conflicted path changed outside Kagi after materialization.
+    WorktreeChanged,
     /// blocker (save/resolve/abort) — the repository or worktree identity changed.
     RepositoryIdentityChanged,
     /// blocker (save/resolve/abort) — the observed conflict ended before execution.
@@ -68,6 +70,7 @@ impl ConflictsNote {
                 crate::advice_template_en!(ConflictsObservationChanged).into()
             }
             ConflictsNote::PlanChanged => crate::advice_template_en!(ConflictsPlanChanged).into(),
+            ConflictsNote::WorktreeChanged => "File changed outside Kagi".into(),
             ConflictsNote::RepositoryIdentityChanged => {
                 crate::advice_template_en!(ConflictsRepositoryIdentityChanged).into()
             }
@@ -124,6 +127,7 @@ impl ConflictsNote {
     /// English UI copy; never serialize this text or use it for contract logs.
     pub fn message_display_en(&self) -> String {
         match self {
+            ConflictsNote::WorktreeChanged => "The file changed outside Kagi. Undo the external change and reload, or resolve and stage it outside; your draft is kept.".into(),
             ConflictsNote::ObservationChanged => {
                 crate::advice_template_display_en!(ConflictsObservationChanged).into()
             }

@@ -50,6 +50,33 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
   observation を旧 payload に添えても新 identity を無条件に与えない。
   無関係な index entry の更新は per-file identity を変えない。
 
+### Worktree-byte provenance for Save / Continue (#1733)
+
+- The revision stale check also includes the conflicted path's worktree bytes,
+  captured when the live file is built. This is a separate SHA-256 fingerprint
+  from the synthesized zdiff3 marker fingerprint used by #1730's hunk restore.
+  Save freezes it in the request and checks it at planning and immediately
+  before mutation; Continue checks every resolved path before staging.
+- A mismatch or unknown source refuses with `File changed outside Kagi` /
+  `ファイルが外部で変更されました`; neither worktree nor index is changed.
+  Watcher worktree events re-detect open conflicts even when the index is unchanged.
+  The original fingerprint is retained across watcher refreshes even before the
+  first hunk choice; an untouched file is not permission to rebase its source.
+  Current regular-file bytes exactly equal to the frozen Text draft are the
+  sole idempotent exception: Partial Save/Continue may have already written them
+  before staging failed. Retrying those identical bytes cannot overwrite an
+  external edit; differing bytes and symlinks remain refused.
+- Source hunks always remain index-derived, never parsed from arbitrary
+  worktree markers. Matching materializations retain the draft and its original
+  byte fingerprint, not fresh write authority; unknown/changed materializations
+  remain in backward-readable recovery inspection.
+- The header disables Save and offers `再読込` after the user deals with the
+  external edit. Reload re-detects from the index; it does not bless the changed
+  bytes or silently replace them. If the worktree still differs, Save stays
+  blocked. Restore the reviewed source or stage the externally reconciled
+  resolution explicitly. Showing the external diff in the source panes is not
+  part of this decision.
+
 ### 確認済み Continue の revision（#1721）
 
 - 同 file の編集を保持できることと、古い確認から書き込めることは別である。

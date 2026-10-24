@@ -862,7 +862,11 @@ impl KagiApp {
                                 app.refresh_working_tree_external(cx);
                             }
                         } else if saw_worktree {
-                            app.refresh_working_tree_external(cx);
+                            if app.ui().conflict.is_some() {
+                                app.reload_external(cx);
+                            } else {
+                                app.refresh_working_tree_external(cx);
+                            }
                         }
                     })
                 });

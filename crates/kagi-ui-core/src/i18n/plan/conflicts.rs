@@ -46,6 +46,7 @@ pub fn note_ja(note: &ConflictsNote) -> String {
             super::advice_text(Msg::AdviceConflictsObservationChanged, &[])
         }
         ConflictsNote::PlanChanged => super::advice_text(Msg::AdviceConflictsPlanChanged, &[]),
+        ConflictsNote::WorktreeChanged => Msg::ConflictWorktreeChangedHelp.t().into(),
         ConflictsNote::RepositoryIdentityChanged => {
             super::advice_text(Msg::AdviceConflictsRepositoryIdentityChanged, &[])
         }

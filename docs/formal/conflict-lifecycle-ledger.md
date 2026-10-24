@@ -47,8 +47,8 @@ Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
 
-#1731 validation: the maintained full harness passed **52/52** expected lifecycle
-verdicts (59,688 distinct states summed), all **13** removed-guard controls produced
+#1731/#1733 merge validation: the maintained full harness passed **55/55** expected lifecycle
+verdicts (85,344 distinct states summed), all **15** removed-guard controls produced
 their named counterexamples, all **38** pure properties / **30** pure mutants
 matched, and all **34** historical drill projections remained admitted with the
 forged-Skip projection rejected. Generated receipts under
@@ -64,7 +64,7 @@ remain explicitly historical, not claims that the repaired paths still fail.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **52** checks, including refreshed-Skip, unreadable-metadata, failed-draft close, and fail-closed recovery guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **55** checks, including refreshed-Skip, unreadable-metadata, failed-draft close, fail-closed recovery and per-file WT-validation guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
@@ -95,7 +95,9 @@ State counts separated by `/` follow the check/trace order in that row. CONTRACT
 | `NoWriteBeforeApproval` | HOLD | HELD | 34811 total (8 runs) | — | `app/flow.rs:261-347; app/session.rs:516-558` | CONTRACT | Retain confirmation/admission guards for all seven writer routes and both instances. |
 | `ApprovedRevisionFrozen (merge + staging races)` | REFUTE | REFUTED | 25 / 39 / 9754 | [approved-revision](#trace-approved-revision), [approved-index-race](#trace-approved-index-race), [approved-two-writers](#trace-approved-two-writers) | `ui/operations/commit.rs:1054-1076,1191-1209; conflicts.rs:1646-1656; ADR-0227:126-128` | BUG (merge); QUESTION (pre-verification stage race) | Execute the displayed merge plan; decide whether staging must bind blobs rather than reread mutable WT. |
 | `ApprovedSavePayloadFrozen (WT payload)` | HOLD | HELD | 65 | — | `backend/conflict_ops.rs:195-218,281-288; resolution/conflict_boundary.rs:103-107,170-195` | CONTRACT | Keep immutable payload binding; this is not a claim that concurrent add_path stages those bytes. |
-| `StaleSnapshotNeverWrites (WT / final-check gap / second instance)` | REFUTE | REFUTED | 43 / 35 / 9735 | [stale-worktree](#trace-stale-worktree), [stale-after-preflight](#trace-stale-after-preflight), [two-instance-stale-write](#trace-two-instance-stale-write) | `backend/conflict_observe.rs:91-125,148-198; conflicts.rs:1592,1646-1656` | QUESTION | Does an approved draft intentionally override later WT edits, and what external-writer exclusion is promised? |
+| `StaleSnapshotNeverWrites (WT edit before per-file validation)` | HOLD | HELD | 87 | — (historical [stale-worktree](#trace-stale-worktree)) | `resolution/conflict_boundary.rs::validate_save_binding, validate_current_paths; resolution/worktree_state.rs::validate` | CONTRACT (#1733) | Freeze the live draft's WT-byte fingerprint and refuse changed bytes before mutation; broken WT guard remains a negative control. |
+| `StaleSnapshotNeverWrites (WT edit + watcher before first choice)` | HOLD | HELD | See maintained TLC results | — | `resolution/drafts.rs::retain_drafts; resolution/worktree_state.rs::retain_provenance` | CONTRACT (#1733 review) | Untouched live files retain the original fingerprint too. `stale-worktree-before-choice-broken` removes only that carry and must REFUTE. Exact frozen-text rewrites remain idempotently retryable after Partial execution. |
+| `StaleSnapshotNeverWrites (final-check gap / second instance)` | REFUTE | REFUTED | See maintained TLC results | [stale-after-preflight](#trace-stale-after-preflight), [two-instance-stale-write](#trace-two-instance-stale-write) | `conflicts.rs::execute_conflict_save_with_progress; resolution/worktree_state.rs::validate` | QUESTION (CLI TOCTOU); #1746 D3 (instances) | Keep validation and write as distinct model transitions. A last-read fingerprint does not exclude arbitrary CLI writes or serialize independent instances. |
 | `StaleSnapshotNeverWrites (index/HEAD/MERGE_MSG drift before preflight)` | HOLD | HELD | 71 / 71 / 71 | — | `backend/conflict_ops.rs:419-425; resolution/conflict_boundary.rs:170-175; conflicts.rs:1261-1297` | CONTRACT | Retain full-revision refusal; it protects preflight-time drift, not the later write window. |
 | `DraftNeverLost (instant crash)` | REFUTE | historical REFUTED | historical: 11 | [draft-crash](#trace-draft-crash) | `resolution.rs:800-822` | QUESTION (instant crash) | Define the capture/durability boundary; #1731 does not promise crash durability. |
 | `DraftNeverLost (failed autosave + graceful close; no explicit discard)` | HOLD | HELD (TLC exit 0) | 21 | [historical draft-io-quit](#trace-draft-io-quit) | `ui/conflict_view/draft_owner.rs:note_draft_result; ui/editor_workspace/host_close.rs:hold_host_close,save_host_dirty_guard` | #1731 fixed | Keep the live buffer and sheet on failure; only successful Retry clears the hold. Native EN/JA tests additionally exercise the separately approved two-step intentional discard, outside this unchanged no-loss invariant. |
@@ -245,7 +247,7 @@ The values below are copied from TLC's `event` field without reordering. Each ev
 <a id="trace-stale-worktree"></a>
 ### stale-worktree
 
-`StaleSnapshotNeverWrites` — expected REFUTE; TLC REFUTED; 43 distinct / 52 generated; 0.436s; [full trace](../../formal/conflict/tla/results/stale-worktree.log); [cfg](../../formal/conflict/tla/stale-worktree.cfg).
+`StaleSnapshotNeverWrites` — current expectation **HOLD** after #1733's per-file WT provenance check. The steps below retain the historical `834a1796` counterexample (43 distinct / 52 generated). Removing the new WT guard is checked by `stale-worktree-broken`, which must still REFUTE.
 
 1. `"Init"` — Finite fixture: `backend/conflict_observe.rs:91-125`; operation in progress; two-path quotient (not a product transition).
 2. `<<"ObserveIndex", 1>>` — `crates/kagi-git/src/backend/conflict_observe.rs:91-101` — refresh/read index.

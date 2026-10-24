@@ -3199,6 +3199,10 @@ mod macos {
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
+                "conflict_manual_reset_guard",
+                Box::new(crate::conflict_controls::scenario_conflict_manual_reset_guard),
+            ),
+            (
                 "conflict_continue_approval_replacement_queued",
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_replacement_queued),
             ),

@@ -114,7 +114,7 @@ pub(super) fn side_row_list(
     let rows = Arc::new(build_side_rows(model, side));
     let highlights = side_highlights(chrome, path, model, side);
     let enabled = chrome.source_choices_enabled;
-    let reset_enabled = !chrome.writer_busy;
+    let reset_enabled = enabled;
     let bands: Arc<Vec<_>> = Arc::new(
         model
             .regions

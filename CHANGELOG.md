@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Disable per-hunk Reset and Change for manually edited Results; only confirmed Reset all may discard those edits. (4363161991)
 - Autosave direct Result edits immediately so quitting or restarting retains the latest text. (4361355968)
 - Keep non-UTF-8 conflict paths byte-faithful when recovering the Saved list on Unix. (4362562421)
 - Honor the repository comment character, including Git's automatic choice, when listing saved conflicts. (4363857789)

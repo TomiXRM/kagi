@@ -253,7 +253,13 @@ impl ConflictView {
     }
 
     pub fn conflict_editor_reset_hunk(&mut self, path: &std::path::Path, hunk: usize) {
-        if self.writer_busy || self.editing.as_deref() != Some(path) {
+        if self.writer_busy
+            || self.editing.as_deref() != Some(path)
+            || self
+                .mode
+                .as_ref()
+                .is_some_and(|mode| flow::manual_override(mode, path))
+        {
             return;
         }
         if let Some(mode) = self.mode.as_mut() {

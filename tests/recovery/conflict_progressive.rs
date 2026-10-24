@@ -145,15 +145,29 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
             "Both is one reversible choice and repeated Both adds no undo checkpoint"
         );
     });
-    // Result undo retains the source model's choice; Change explicitly returns
-    // that hunk to unresolved before selecting the opposite block order.
+    // Result undo can diverge from the source model. Only confirmed Reset all
+    // may discard that Result before selecting the opposite block order.
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
     })
     .unwrap();
-    click_control(cx, window, "conflict-hunk-0-current-change");
+    click_control(cx, window, "conflict-reset-all");
+    cx.read(|cx| {
+        assert_eq!(
+            conflict
+                .read(cx)
+                .mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .resolved_text(Path::new("added.txt")),
+            before_both,
+            "first Reset all only arms confirmation"
+        );
+    });
+    click_control(cx, window, "conflict-reset-all");
     click_control(cx, window, "conflict-hunk-0-incoming-both");
     cx.run_until_parked();
     cx.read(|cx| {

@@ -111,9 +111,9 @@ or mandatory introductory carousel.
   that difference from actual text, including empty results, without a shadow
   manual flag. A shared borrowed domain traversal compares without allocating
   an assembled file. Identical text with different provenance is not divergence.
-- While Result diverges, source adoption must not silently replace manual edits.
-  Comparison and navigation retain the Result; the existing guarded Reset is
-  the explicit discard route. Mutation handlers recheck this condition.
+- While Result diverges, source adoption and per-hunk Reset/Change are disabled,
+  including mutation-handler guards. Comparison and navigation retain Result;
+  only the existing confirmed Reset all is the explicit discard route.
 - The per-pane Both choices adopt both sides as a single draft checkpoint.
   Repeating the same choice is not an edit. Low-level order mutations still only
   reorder adopted content; focus and navigation do not adopt anything.

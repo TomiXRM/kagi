@@ -13,6 +13,9 @@ use std::path::Path;
 #[path = "conflict_progressive.rs"]
 mod progressive;
 pub use progressive::scenario_conflict_progressive_add_add;
+#[path = "conflict_manual_reset.rs"]
+mod manual_reset;
+pub use manual_reset::scenario_conflict_manual_reset_guard;
 
 fn fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();

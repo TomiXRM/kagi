@@ -158,7 +158,7 @@ pub(super) fn render_result_pane(
         Msg::ConflictResetFocused.t(),
         ButtonRole::NeutralTinted,
         None,
-        !chrome.writer_busy && focused_resolved,
+        chrome.source_choices_enabled && focused_resolved,
         &chrome.resolver_keyboard,
         cx.listener(move |view, _, _, cx| {
             view.conflict_editor_reset_hunk(&reset_path, view.selected_hunk);

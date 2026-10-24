@@ -1051,6 +1051,13 @@ The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated
 `KAGI_LOG_DIR`; restart must retain both independent same-file hunk decisions.
+For recovery-retention review, run `cargo test -p kagi-git --lib
+two_writer_recovery_survives_other_file_autosaves`: two real subprocesses collide
+on one Result, then the earlier writer repeatedly autosaves another file. Both
+commit orders and blocking/queued saves must retain the later primary and the
+earlier recovery's exact bytes/identity through the owned inspection API, in both
+the primary document and repeatedly rotated `.prev`. The formal
+`two-writer-recovery` check must HOLD; pre-merge-dedup controls must stay red.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation

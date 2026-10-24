@@ -3,9 +3,9 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 55 TLC configurations, 38 pure
-properties (1,695,579 input/property evaluations), 15 TLC negative controls,
-35 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+No product code is imported or changed. There are 57 TLC configurations, 39 pure
+properties (1,695,651 input/property evaluations), 16 TLC negative controls,
+36 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -148,6 +148,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-two-writers-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; unlocked read/merge/write |
 | `draft-lost-update` | `DraftWriteAtomic` | HOLD | none | #1732 |
 | `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
+| `two-writer-recovery` | `DraftWriteAtomic` | HOLD | none | #1732: retain an earlier body after stale-editor other-file autosave |
+| `two-writer-recovery-broken` | `DraftWriteAtomic` | REFUTE | preMergeRecovery | Negative control; deduplicate against the pre-merge editor |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
@@ -182,6 +184,16 @@ This is not a power-loss guarantee. The lock quotient models successful
 acquisition, not the timeout's UI presentation; backend child tests cover the
 two-second error and SIGKILL release. GUI consumers must await barriers off-thread
 and preserve pending/failed close gates; the backend API alone does not wire them.
+
+`two-writer-recovery` refines the successful locked transaction into distinct
+primary and recovery bodies: A saves file 1, B replaces it while preserving A,
+then A saves file 2 twice while its own file-1 body remains unchanged. Recovery
+deduplication compares the actual post-merge primary, not that stale local body.
+The pure `TwoWriterRecoveryRetained` property also covers assembled-hunk body/state
+overrides and both body orderings. The Rust subprocess regression exercises both
+blocking/queued writers and commit orders, checks exact bytes and identity through
+the read-only inspector's owned recovery API, and rotates `.prev` repeatedly.
+
 
 
 ### Pure table (`pure/predict_*.py`)
@@ -218,6 +230,7 @@ and preserve pending/failed close gates; the backend API alone does not wire the
 | `predict_drafts` | `UnknownOwnerCoalescenceIsFileOnly` | HOLD | CONTRACT |
 | `predict_drafts` | `OnlyPendingRecoveryOutranksDisk` | HOLD | CONTRACT |
 | `predict_drafts` | `DedupMovesLatestToTail` | HOLD | CONTRACT |
+| `predict_drafts` | `TwoWriterRecoveryRetained` | HOLD | #1732: post-merge recovery equality |
 | `predict_skip` | `SkipClassificationNoFalseSuccess` | HOLD | CONTRACT after #1746 C6 |
 | `predict_skip` | `BrokenSignalDominatesMovement` | HOLD | CONTRACT |
 | `predict_skip` | `NextConflictIsSuccessOnObservedMovement` | HOLD | CONTRACT |

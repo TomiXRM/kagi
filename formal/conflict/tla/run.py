@@ -44,6 +44,8 @@ CHECKS = [
     ("draft-two-writers-broken", "draftRace", "DraftWriteAtomic", "REFUTE", "draftLock"),
     ("draft-lost-update", "draftRaceLost", "DraftWriteAtomic", "HOLD", "none"),
     ("draft-lost-update-broken", "draftRaceLost", "DraftWriteAtomic", "REFUTE", "draftLock"),
+    ("two-writer-recovery", "draftRecovery", "DraftWriteAtomic", "HOLD", "none"),
+    ("two-writer-recovery-broken", "draftRecovery", "DraftWriteAtomic", "REFUTE", "preMergeRecovery"),
     ("two-instance-leases", "saveRace", "RepoHasAtMostOneLease", "REFUTE", "none"),
     ("two-instance-stale-write", "saveRace", "StaleSnapshotNeverWrites", "REFUTE", "none"),
     ("receipt-continue", "receiptContinue", "ReceiptFollowsMutation", "REFUTE", "none"),

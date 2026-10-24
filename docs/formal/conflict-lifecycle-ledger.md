@@ -77,6 +77,29 @@ run passes **55 expected outcomes / 52,280 summed distinct states**, with all
 **15** meaningful negative controls detected. The pure lane retains 38 properties
 (1,695,579 input/property evaluations) and now detects 35 mutants.
 
+### #1732 two-writer recovery-retention amendment — 2026-10-25
+
+The complete maintained run passes **57 expected outcomes / 52,289 summed
+distinct states**, detects all **16** meaningful TLC negative controls, and
+passes **39 pure properties / 1,695,651 evaluations / 36 detected mutants**.
+The new recovery check explores **5** states; its broken counterpart refutes
+in **4** states (exit 12): Init → A primary → B primary + A recovery →
+A other-file save adopts B but deletes A recovery.
+
+`two-writer-recovery` adds a successful-transaction refinement with explicit
+primary and recovery records. A and B load the same empty document, save different
+file-1 Results in order, and A then saves file 2 twice with its unchanged local
+file-1 body. `resolution/draft_merge.rs::matches_record` compares each recovery
+against exactly the disk-selected or body-overridden primary that `record` writes.
+The unchanged `DraftWriteAtomic` assertion includes acknowledged recovery bodies,
+not merely current primaries. The expected HOLD has a matching
+`preMergeRecovery` negative control that drops A at the first other-file save.
+The bounded refinement treats each successful advisory-locked transaction as one
+transition; it does not replace the separate torn-write/lock/crash interleavings.
+Backend subprocess tests cover both commit orders, blocking and queued writers,
+exact owned-inspector bytes/identity, and repeated `.prev` rotations.
+
+
 The reproducible 100-call, 3-file/5-hunk, 209,475-byte backend benchmark measured
 the repeat synchronous path at p50 **69.765 ms** / p95 **200.917 ms**, still
 above the owner's 4 ms UI budget (initial p95 **477.702 ms**). Ordered queue
@@ -147,6 +170,7 @@ State counts separated by `/` follow the check/trace order in that row. #1732 ro
 | `DraftNeverLost (captured but unacknowledged, same revision)` | REFUTE | REFUTED | 11 | [draft-crash](#trace-draft-crash) | `resolution/draft_writer.rs::{queue_autosave,flush}; resolution/draft_storage.rs::write_atomic` | EXPLICIT CRASH WINDOW (#1732) | Capture/queue acceptance is not durable; up to 250 ms coalescing plus in-flight I/O may be lost. Only successful flush acknowledges disk. |
 | `DraftNeverLost (failed I/O + graceful quit)` | REFUTE | REFUTED | 15 | [draft-io-quit](#trace-draft-io-quit) | `ui/conflict_view/draft_owner.rs:233-236; ui/editor_workspace/host_close.rs:62-68` | BUG (#1731) | Failed persistence must keep close blocked or visibly require recovery. |
 | `DraftWriteAtomic (torn / two writers / lost update)` | HOLD | HELD | 25 / 357 / 357 | — (historical traces below retained; broken controls refute) | `resolution/draft_storage.rs::{read,lock,replace,save}; resolution/draft_merge.rs::merge_file; resolution/draft_storage_tests.rs` | CONTRACT (#1732) | Atomic replacement, last-good backup, and interprocess locked read/CAS/merge retain acknowledged decisions. |
+| `DraftWriteAtomic (two-writer-recovery)` | HOLD | HELD | 5 | —; `two-writer-recovery-broken` retains the lost-body witness | `resolution/drafts.rs::autosave_json; resolution/draft_merge.rs::{record,matches_record}; resolution/draft_storage_tests.rs::two_writer_recovery_survives_other_file_autosaves` | CONTRACT (#1732 P1) | Compare recovered bodies with the serialized post-merge primary, never the stale in-memory editor record. |
 | `ManualCapturePersisted (fault-free durable writer completion)` | HOLD | HELD | 14 | — | `resolution/draft_writer.rs::{DraftSave::wait,flush}; resolution/draft_storage.rs::write_atomic` | CONTRACT; map P1 DISPROVED | The writer's successful completion, not queue acceptance, acknowledges the captured body. |
 | `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | REFUTE | REFUTED | 44 / 44 / 40 | [receipt-continue](#trace-receipt-continue), [receipt-merge](#trace-receipt-merge), [receipt-skip](#trace-receipt-skip) | `ui/operations/conflict.rs:404-448,653-698; ui/operations/conflict_skip.rs:100-149; app/session.rs:760-776` | BUG | Append/retain accounting in the mutation-owning worker before releasing its close gate. |
 | `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 65 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
@@ -173,6 +197,7 @@ These cfg files set `Broken` in the same source model; they are deliberate model
 | `DraftWriteAtomic (torn)` | [`draft-torn-broken.cfg`](../../formal/conflict/tla/draft-torn-broken.cfg) | Restore truncation of the primary before write completion | REFUTE (exit 12) | 20 |
 | `DraftWriteAtomic (two writers)` | [`draft-two-writers-broken.cfg`](../../formal/conflict/tla/draft-two-writers-broken.cfg) | Remove serialization of load/merge/write | REFUTE (exit 12) | 253 |
 | `DraftWriteAtomic (lost update)` | [`draft-lost-update-broken.cfg`](../../formal/conflict/tla/draft-lost-update-broken.cfg) | Remove serialization while requiring complete JSON reads | REFUTE (exit 12) | 253 |
+| `DraftWriteAtomic (two-writer recovery)` | [`two-writer-recovery-broken.cfg`](../../formal/conflict/tla/two-writer-recovery-broken.cfg) | Compare recovery equality against the editor's pre-merge body | REFUTE (exit 12) | 4 |
 | `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 41 |
 
 The source has several repeated validation reads; the model deliberately consolidates the *last* full-revision/binding guard. The broken revision variant removes that consolidated check, not a claim that deleting only one of several Rust checks would suffice. The payload negative variant admits a non-frozen token at the write boundary to exercise the binding assertion. MergeCommit's modeled lease represents its synchronous busy UI interval, not a claim that its legacy synchronous path allocates a Sessions lease.

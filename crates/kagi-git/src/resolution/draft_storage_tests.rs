@@ -4,6 +4,7 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 const MARKERS: &str = "<<<<<<< Current\na\n=======\nb\n>>>>>>> Incoming\ncontext\n<<<<<<< Current\nc\n=======\nd\n>>>>>>> Incoming\n";
+const WRITER_BODIES: [&str; 2] = ["first Result 日本語  \n\nA\n", "second Result 日本語\nB\n"];
 
 fn live(repo: &Path) -> ResolutionBuffer {
     let mut buffer = ResolutionBuffer::new(repo);
@@ -135,6 +136,128 @@ fn concurrent_processes_preserve_distinct_file_decisions() {
 #[test]
 fn concurrent_processes_preserve_same_file_independent_hunks() {
     two_writers(true);
+}
+
+#[test]
+fn recovery_writer_child() {
+    let Some(root) = std::env::var_os("KAGI_DRAFT_RECOVERY_CHILD") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let index: usize = std::env::var("KAGI_DRAFT_WRITER").unwrap().parse().unwrap();
+    let first: usize = std::env::var("KAGI_DRAFT_RECOVERY_FIRST")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let queued = std::env::var("KAGI_DRAFT_RECOVERY_QUEUED").unwrap() == "true";
+    let store = buffer_file_path(&root).unwrap();
+    let mut buffer = restored(&root, &store);
+    buffer
+        .set_manual_text(Path::new("a.txt"), WRITER_BODIES[index])
+        .unwrap();
+    let save = |buffer: &ResolutionBuffer| {
+        if queued {
+            let ticket = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            assert_eq!(ticket.wait().unwrap(), store);
+        } else {
+            assert_eq!(buffer.autosave().unwrap(), store);
+        }
+        assert!(!buffer.has_unflushed_drafts());
+    };
+    std::fs::write(root.join(format!("recovery-ready-{index}")), b"ready").unwrap();
+    wait_for(&root.join(format!("recovery-go-{index}")));
+    save(&buffer);
+    assert!(!buffer.files[Path::new("a.txt")].pending_edit.is_pending());
+    std::fs::write(root.join(format!("recovery-saved-{index}")), b"saved").unwrap();
+    if index == first {
+        for pass in 0..3 {
+            wait_for(&root.join(format!("recovery-again-{pass}")));
+            buffer
+                .set_manual_text(Path::new("b.txt"), &format!("other file edit {pass}\n"))
+                .unwrap();
+            save(&buffer);
+            // The writer still owns its original, unmerged live target body.
+            assert_eq!(
+                buffer.resolved_text(Path::new("a.txt")).unwrap().as_bytes(),
+                WRITER_BODIES[first].as_bytes()
+            );
+            std::fs::write(root.join(format!("recovery-finished-{pass}")), b"saved").unwrap();
+        }
+    }
+}
+
+#[test]
+fn two_writer_recovery_survives_other_file_autosaves() {
+    isolated_async_test(
+        "two_writer_recovery_survives_other_file_autosaves",
+        |base| {
+            for queued in [false, true] {
+                for first in [0, 1] {
+                    let root = tempfile::tempdir_in(base).unwrap();
+                    let root = root.path();
+                    let store = live(root).autosave().unwrap();
+                    let mut children = [0, 1].map(|index| {
+                        Command::new(std::env::current_exe().unwrap())
+                            .args([
+                                "--exact",
+                                "resolution::draft_storage_tests::recovery_writer_child",
+                                "--nocapture",
+                            ])
+                            .env("KAGI_DRAFT_RECOVERY_CHILD", root)
+                            .env("KAGI_DRAFT_WRITER", index.to_string())
+                            .env("KAGI_DRAFT_RECOVERY_FIRST", first.to_string())
+                            .env("KAGI_DRAFT_RECOVERY_QUEUED", queued.to_string())
+                            .spawn()
+                            .unwrap()
+                    });
+                    for index in [0, 1] {
+                        wait_for(&root.join(format!("recovery-ready-{index}")));
+                    }
+                    for index in [first, 1 - first] {
+                        std::fs::write(root.join(format!("recovery-go-{index}")), b"go").unwrap();
+                        wait_for(&root.join(format!("recovery-saved-{index}")));
+                    }
+                    // Rotate .prev more than once: keeping the lost body only in an
+                    // older backup must not make this regression pass.
+                    for pass in 0..3 {
+                        std::fs::write(root.join(format!("recovery-again-{pass}")), b"go").unwrap();
+                        wait_for(&root.join(format!("recovery-finished-{pass}")));
+                        for document in [&store, &sibling(&store, ".prev")] {
+                            let loaded = restored(root, document);
+                            let target = Path::new("a.txt");
+                            assert_eq!(
+                                loaded.resolved_text(target).unwrap().as_bytes(),
+                                WRITER_BODIES[1 - first].as_bytes()
+                            );
+                            let identity = loaded.file_identity(target).unwrap().clone();
+                            assert_eq!(
+                                loaded
+                                    .recovery_drafts()
+                                    .filter(|draft| draft.path == target)
+                                    .count(),
+                                1
+                            );
+                            // Consume the exact API that supplies the read-only
+                            // recovery inspector; no fallback to .prev is involved.
+                            let inspected = loaded
+                                .into_recovery_drafts()
+                                .find(|draft| draft.path == target)
+                                .unwrap();
+                            assert_eq!(inspected.identity, Some(identity));
+                            assert_eq!(
+                                lines_to_text(inspected.result.as_deref().unwrap()).as_bytes(),
+                                WRITER_BODIES[first].as_bytes()
+                            );
+                        }
+                    }
+                    for child in &mut children {
+                        assert!(child.wait().unwrap().success());
+                    }
+                }
+            }
+        },
+    );
 }
 
 #[test]
@@ -313,8 +436,20 @@ fn independent_hunk_merge_is_order_independent() {
         assert!(b.set_hunk_line_selection(path, 1, SelectionSide::Current, 0, true));
         let (first, later) = if reverse { (&b, &a) } else { (&a, &b) };
         first.save_draft_document(&store).unwrap();
+        let disk = read(root.path(), &store).unwrap().unwrap().buffer;
+        let snapshot = later
+            .disk_snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let merged = later.merge_draft_files(Some(&disk), &snapshot, true);
+        assert!(
+            !merged.matches_record(path, &later.files[path], &later.files[path]),
+            "a recovery equal to the pre-merge editor is not the assembled record"
+        );
         later.save_draft_document(&store).unwrap();
         let saved = read(root.path(), &store).unwrap().unwrap().buffer;
+        assert!(merged.matches_record(path, &later.files[path], &saved.files[path]));
         let mut record = serde_json::to_value(file_record(path, &saved.files[path])).unwrap();
         // This is writer bookkeeping, not conflict content or a decision.
         record.as_object_mut().unwrap().remove("editing_origin");

@@ -38,6 +38,7 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
     lease |-> [a \in Actors |-> FALSE], preflight |-> [a \in Actors |-> FALSE],
     draftOwner |-> 0,
+    recoveryStep |-> 0, recoveryPrimary |-> "none", recoveryHistory |-> {},
     executed |-> [a \in Actors |-> "none"], successful |-> [a \in Actors |-> FALSE],
     receipt |-> [a \in Actors |-> FALSE], released |-> [a \in Actors |-> FALSE],
     reported |-> [a \in Actors |-> FALSE], mutated |-> [a \in Actors |-> FALSE],
@@ -336,6 +337,35 @@ MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "
     /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"MetadataRefused",a>>]
 
+\* #1732 drafts.rs::autosave_json + draft_merge.rs::matches_record.
+\* Quotient four successful, lock-serialized transactions after both editors
+\* loaded the same empty baseline. A and B collide on file 1; A then saves
+\* file 2 twice without changing its stale in-memory file-1 body.
+\* Disk includes both the primary and inspection-only recovery bodies.
+RecoveryA == <<1, 0, "A">>
+RecoveryB == <<1, 0, "B">>
+RecoveryOther == <<2, 0, "other">>
+DraftRecoveryNext ==
+    /\ Scenario = "draftRecovery"
+    /\ CASE s.recoveryStep = 0 ->
+          s' = [s EXCEPT !.recoveryPrimary = RecoveryA, !.disk = {RecoveryA},
+              !.committed = {RecoveryA}, !.recoveryStep = 1,
+              !.event = "RecoverySave(A primary)"]
+       [] s.recoveryStep = 1 ->
+          s' = [s EXCEPT !.recoveryPrimary = RecoveryB,
+              !.recoveryHistory = {RecoveryA}, !.disk = {RecoveryA, RecoveryB},
+              !.committed = {RecoveryA, RecoveryB}, !.recoveryStep = 2,
+              !.event = "RecoverySave(B primary, A recovery)"]
+       [] s.recoveryStep \in 2..3 ->
+          LET compared == IF Broken = "preMergeRecovery"
+                          THEN RecoveryA ELSE s.recoveryPrimary
+              kept == {r \in s.recoveryHistory : r # compared}
+          IN s' = [s EXCEPT !.recoveryHistory = kept,
+              !.disk = kept \cup {s.recoveryPrimary, RecoveryOther},
+              !.committed = @ \cup {RecoveryOther}, !.recoveryStep = @ + 1,
+              !.event = "RecoverySave(A other file, adopt B primary, dedup recoveries)"]
+       [] OTHER -> FALSE
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
@@ -344,8 +374,9 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
-Next == (\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
-    \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure
+Next == IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+    ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
+        \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars
 \* Fair scheduling cannot save a callback whose weak owner has been destroyed.
 FairSpec == Spec /\ (\A a \in Participants : WF_vars(ActorNext(a)))

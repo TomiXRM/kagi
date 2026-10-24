@@ -20,6 +20,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Animate the conflict file sidebar with the main sidebar's shared width reveal, clipping toward its toggle while keeping focus and button state immediate; Reduce Motion skips both transitions. (#1739)
 - Bind Skip confirmation to the approved operation step and full conflict revision; refuse a CLI-advanced or replaced step immediately before Git runs. Report a zero-exit Skip without observed movement as an uncertain warning, never success. (#1746)
   - Keep execution-time stale-step refusals localized in the EN/JA footer and unattended notification, while retaining the English durable blocker and log contract.
 - Refuse conflict Save and Continue after an external worktree edit, preserving the file and index. Show an explanatory header, disable Save, and offer index re-detection without discarding the matching draft or granting it fresh write authority. (#1733)

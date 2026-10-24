@@ -1023,10 +1023,9 @@ pub enum ContinueRoute {
     /// rebase / cherry-pick / revert: confirm this `<op> --continue` plan, then
     /// continue the sequencer.
     SequencerPlan(Box<OperationPlan>),
-    /// #309 stash conflict: staging the resolved paths is the whole "continue"
-    /// (no commit, no `<op> --continue`). After staging, the UI offers to drop
-    /// the kept stash. The resolution is staged by [`execute_conflict_continue`].
-    StashComplete,
+    /// Stash: confirm staging the resolution without creating a commit.
+    /// After staging, the UI offers to drop the kept stash separately.
+    StashPlan(Box<OperationPlan>),
 }
 
 /// Outcome of saving a single file's resolution (ADR-0068 Save resolution).
@@ -1709,8 +1708,10 @@ pub fn plan_conflict_continue_route(
             let message = prefilled_merge_message(repo, &session.op, current_branch);
             Ok(ContinueRoute::MergeCommitPanel { message })
         }
-        // #309: staging is the whole continue for a stash conflict.
-        ConflictOp::StashConflict => Ok(ContinueRoute::StashComplete),
+        ConflictOp::StashConflict => {
+            let plan = continue_plan_after_preflight(repo, session, &blockers)?;
+            Ok(ContinueRoute::StashPlan(Box::new(plan)))
+        }
         _ => {
             let plan = continue_plan_after_preflight(repo, session, &blockers)?;
             Ok(ContinueRoute::SequencerPlan(Box::new(plan)))

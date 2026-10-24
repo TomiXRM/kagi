@@ -90,7 +90,12 @@ pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
         std::fs::write(repo.join("new"), "keep\n").unwrap();
         let before_head = std::fs::read(repo.join(".git/HEAD")).unwrap();
         let (app, window) = mount(cx, &repo);
-        app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+        app.update(cx, |app, cx| {
+            // #1698 puts an inactive window's result in a notification instead.
+            // This scenario verifies the active window's exact footer preview.
+            app.set_window_active_for_e2e(true, cx);
+            app.open_stash_push_modal(cx);
+        });
         wait(cx, &app, |app| {
             app.stash_push_modal().is_some_and(|m| m.plan.is_some())
         });
@@ -128,13 +133,21 @@ pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
         wait(cx, &app, |app| {
             !app.app_sessions.has_leases() && app.stash_push_modal().is_none()
         });
-        assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
-            FooterStatus::Failed(text) if text.contains(reason))));
+        // #1698 intentionally bounds the result preview; the complete blocker
+        // remains on the plan/disabled action above and in the durable receipt.
+        let expected_footer = match lang {
+            i18n::Lang::En => "Save changes to stash: The operation could not be completed. Review its details before continuing. See the Operation Log for details.",
+            i18n::Lang::Ja => "変更を stash に保存: 操作を完了できませんでした。続行する前に詳細を確認してください。 詳しくは操作ログを確認してください。",
+        };
+        cx.read(|cx| match &app.read(cx).status_footer {
+            FooterStatus::Failed(text) => assert_eq!(text.as_ref(), expected_footer),
+            other => panic!("expected the failed stash preview, got {other:?}"),
+        });
         let entries = read_oplog_tail_for_repo(&repo, 100);
         assert_eq!(entries.len(), 1);
         assert!(
             matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
-            if blockers.iter().any(|b| b.contains("HEAD commit")))
+            if blockers == &["Stash push requires a HEAD commit. Create an initial commit before stashing."])
         );
         assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), before_head);
         assert_eq!(std::fs::read_to_string(repo.join("new")).unwrap(), "keep\n");

@@ -26,6 +26,9 @@ use super::conflict_view::ConflictView;
 use super::i18n::Msg;
 use super::theme::{self, theme};
 
+#[cfg(feature = "gui-e2e")]
+mod test_support;
+
 /// Decode budget: images larger than this are not decoded inline (shown as a
 /// binary side with an "open externally" affordance instead). Keeps a huge blob
 /// from being handed to the image decoder every session.
@@ -95,6 +98,34 @@ impl SideData {
     }
 }
 
+#[derive(Clone, Default)]
+pub(crate) enum PreviewState {
+    #[default]
+    Loading,
+    Ready(Arc<[SideData; 2]>),
+    Failed(Arc<str>),
+}
+
+/// One attachment's accepted presentation and cancellable preparation lifetime.
+#[derive(Default)]
+pub(crate) struct RawPreview {
+    pub(crate) state: PreviewState,
+    key: Option<PreviewKey>,
+    task: Option<gpui::Task<()>>,
+    generation: u64,
+    failed: Option<(PreviewKey, u8)>,
+}
+
+impl RawPreview {
+    pub(crate) fn retire(&mut self) {
+        self.generation += 1;
+        self.task = None;
+        self.key = None;
+        self.failed = None;
+        self.state = PreviewState::Loading;
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PreviewKey {
     path: PathBuf,
@@ -105,9 +136,7 @@ pub(crate) struct PreviewKey {
 
 impl ConflictView {
     pub(crate) fn retire_raw_preview(&mut self) {
-        self.raw_preview_task = None;
-        self.raw_preview_key = None;
-        self.raw_preview = None;
+        self.raw_preview.retire();
     }
 
     fn selected_raw_key(&self) -> Option<PreviewKey> {
@@ -139,16 +168,39 @@ impl ConflictView {
     /// Frame admission only freezes descriptors; all Backend access is in the worker.
     pub(crate) fn sync_raw_preview(&mut self, cx: &mut Context<Self>) {
         if self
-            .raw_preview_key
+            .raw_preview
+            .key
             .as_ref()
             .is_some_and(|key| self.raw_preview_matches(key))
         {
             return;
         }
+        // At most one retry per accepted observation/selection lifetime. Failed
+        // requests relinquish their active key, but a repaint cannot hot-loop.
+        if self
+            .raw_preview
+            .failed
+            .as_ref()
+            .is_some_and(|(key, failures)| *failures >= 2 && self.raw_preview_matches(key))
+        {
+            return;
+        }
         let key = self.selected_raw_key();
+        let failures = self
+            .raw_preview
+            .failed
+            .as_ref()
+            .map_or(0, |(failed, count)| {
+                if Some(failed) == key.as_ref() {
+                    *count
+                } else {
+                    0
+                }
+            });
         self.retire_raw_preview();
         let Some(key) = key else { return };
-        self.raw_preview_key = Some(key.clone());
+        self.raw_preview.key = Some(key.clone());
+        let generation = self.raw_preview.generation;
         let repo = self.repo_path.clone();
         let owner = self.owner.clone();
         let input = key.clone();
@@ -166,21 +218,41 @@ impl ConflictView {
                 None => MediaSide::Absent,
             });
             Ok::<_, kagi_git::GitError>(
-                prepare_side_pair(&backend, sides, PreparationPolicy::Conflict(input.kind)).raw,
+                prepare_side_pair(&backend, sides, PreparationPolicy::Conflict(input.kind))
+                    .raw
+                    .expect("conflict preparation returns a raw pair"),
             )
         });
-        self.raw_preview_task = Some(cx.spawn(async move |view, cx| {
+        #[cfg(feature = "gui-e2e")]
+        let hold = test_support::take_hold();
+        self.raw_preview.task = Some(cx.spawn(async move |view, cx| {
             let result = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = &hold {
+                hold.reached();
+            }
+            #[cfg(feature = "gui-e2e")]
+            let completion = match hold {
+                Some(hold) => Some(hold.wait().await),
+                None => None,
+            };
             let _ = view.update(cx, |view, cx| {
-                if view.owner != owner
-                    || view.raw_preview_key.as_ref() != Some(&key)
-                    || !view.raw_preview_matches(&key)
-                {
+                let accepted = view.owner == owner
+                    && view.raw_preview.generation == generation
+                    && view.raw_preview.key.as_ref() == Some(&key)
+                    && view.raw_preview_matches(&key);
+                #[cfg(feature = "gui-e2e")]
+                test_support::record_completion(completion, accepted);
+                if !accepted {
                     return;
                 }
                 match result {
-                    Ok(pair) => view.raw_preview = pair.map(Arc::new),
-                    Err(error) => eprintln!("conflict preview preparation failed: {error}"),
+                    Ok(pair) => view.raw_preview.state = PreviewState::Ready(Arc::new(pair)),
+                    Err(error) => {
+                        view.raw_preview.key = None;
+                        view.raw_preview.failed = Some((key, failures + 1));
+                        view.raw_preview.state = PreviewState::Failed(error.to_string().into());
+                    }
                 }
                 cx.notify();
             });
@@ -195,19 +267,24 @@ impl ConflictView {
 /// The side-by-side viewer for a raw (binary / symlink / submodule) conflict.
 /// Rendered below the unchanged take-current / take-incoming buttons.
 pub(crate) fn render_raw_preview(
-    pair: Option<&[SideData; 2]>,
+    state: &PreviewState,
     path: &Path,
     labels: &SideLabels,
     scroll: &gpui::ScrollHandle,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let Some([current, incoming]) = pair else {
-        return raw_error_box();
+    let (pair, failure) = match state {
+        PreviewState::Loading => (None, None),
+        PreviewState::Ready(pair) => (Some(pair.as_ref()), None),
+        PreviewState::Failed(error) => (None, Some(error.as_ref())),
     };
-
-    // Any non-image binary side offers the external-compare action.
+    let current = pair.map(|pair| &pair[0]);
+    let incoming = pair.map(|pair| &pair[1]);
+    // Loading retains the two headers without claiming absence or failure.
+    let image_layout = pair.is_none()
+        || pair.is_some_and(|pair| pair.iter().any(|side| side.mode == BinaryViewMode::Image));
     let show_external =
-        current.mode == BinaryViewMode::Binary || incoming.mode == BinaryViewMode::Binary;
+        pair.is_some_and(|pair| pair.iter().any(|side| side.mode == BinaryViewMode::Binary));
 
     #[cfg(feature = "gui-e2e")]
     super::e2e::diff_presentation::record_conflict_scroll(scroll.clone());
@@ -226,16 +303,14 @@ pub(crate) fn render_raw_preview(
             div()
                 .flex()
                 .flex_row()
-                .when(
-                    current.mode == BinaryViewMode::Image || incoming.mode == BinaryViewMode::Image,
-                    |row| row.flex_1().min_h(px(0.)),
-                )
+                .when(image_layout, |row| row.flex_1().min_h(px(0.)))
                 .self_stretch()
                 .justify_center()
                 .gap(theme::scaled_px(12.))
                 .child(side_column(
                     &format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
                     current,
+                    failure,
                     "conflict-image-current",
                 ))
                 .child(side_column(
@@ -245,6 +320,7 @@ pub(crate) fn render_raw_preview(
                         labels.incoming.name
                     ),
                     incoming,
+                    failure,
                     "conflict-image-incoming",
                 )),
         );
@@ -273,6 +349,9 @@ pub(crate) fn render_raw_preview(
 }
 
 fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
+    if let Some(error) = &data.error {
+        return read_error(error);
+    }
     if !data.present {
         muted(Msg::ConflictBinaryNoPreview.t())
     } else {
@@ -339,8 +418,17 @@ fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
 }
 
 /// One side's column: header + mode-specific body.
-fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyElement {
-    let body = side_body(data, probe);
+fn side_column(
+    header: &str,
+    data: Option<&SideData>,
+    failure: Option<&str>,
+    probe: &'static str,
+) -> gpui::AnyElement {
+    let body = match (data, failure) {
+        (Some(data), _) => side_body(data, probe),
+        (None, Some(error)) => read_error(error),
+        (None, None) => div().into_any_element(),
+    };
 
     // Keep adjacent preferred-width columns, shrinking both equally at high
     // zoom rather than allowing the pair to overflow the available pane.
@@ -357,7 +445,10 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
         .flex_col()
         .w(theme::scaled_px(IMAGE_MAX_PX))
         .flex_shrink(1.)
-        .when(data.mode == BinaryViewMode::Image, |column| column.h_full())
+        .when(
+            data.is_none_or(|data| data.mode == BinaryViewMode::Image),
+            |column| column.h_full(),
+        )
         .min_h(px(0.))
         .min_w(px(0.))
         .gap(theme::scaled_px(4.))
@@ -376,13 +467,17 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
                 .child(SharedString::from(header.to_string())),
         )
         .child(body)
-        .when_some(data.image.clone(), |column, image| {
-            column.child(ImageMetadata {
-                image,
-                size: data.size,
-                probe,
-            })
-        })
+        .when_some(
+            data.and_then(|data| data.image.as_ref()),
+            |column, image| {
+                let data = data.expect("image belongs to a prepared side");
+                column.child(ImageMetadata {
+                    image: image.clone(),
+                    size: data.size,
+                    probe,
+                })
+            },
+        )
         .into_any_element()
 }
 
@@ -458,11 +553,12 @@ fn muted(text: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-fn raw_error_box() -> gpui::AnyElement {
+fn read_error(error: &str) -> gpui::AnyElement {
     div()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .child(muted(Msg::ConflictBinaryNoPreview.t()))
+        .flex()
+        .flex_col()
+        .child(muted(Msg::DiffPdfReadFailed.t()))
+        .child(muted(error))
         .into_any_element()
 }
 

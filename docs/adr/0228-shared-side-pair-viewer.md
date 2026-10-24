@@ -80,6 +80,11 @@ in the local object database, and read symlink link bytes rather than targets.
 A byte cap is a bound on application copies/decode input, not total process
 memory or hostile-document sandboxing.
 
+The obsolete `ResolutionBuffer::{side_bytes, side_blob_info}` and Backend
+facades are removed after caller migration. Tests exercise the live
+`FileReadSource::ConflictStage` boundary directly, including exact binary
+bytes, symlink targets, absence, typed errors and frozen-stage bounds.
+
 ## Explicit policy decision and rollout
 
 | Policy | Step ①: preserve behavior | Step ②: shared renderer policy |
@@ -142,6 +147,21 @@ when an old frame finally releases its entity. Retire PDF subscriptions at that
 edge, preserve the focused body's identity for the existing host focus handoff,
 and avoid stealing focus from unrelated input. Reuse immutable accepted content
 only when source identity and compatible side shapes agree.
+
+Preparation has distinct Loading, Ready and Failed presentation states.
+Loading keeps the two role headers without an absence/error caption or
+external-compare action. A failed Backend open relinquishes the active key
+and permits one retry; a second failure stays Failed until observation,
+selection or attachment retirement changes that lifetime. Repaints cannot
+produce a retry loop. Absent sides and failed reads remain distinct.
+
+Retirement advances a request generation even when the same file/revision is
+immediately selected again. Cancellation is an optimization, not the stale
+completion proof: publication checks the generation as well as owner, key and
+current selection. Feature-only tests hold genuine worker completions and
+deliberately let retired tasks finish to exercise those checks independently.
+The first uncached render is also guarded by a thread-local Backend-open
+counter; a cached second-frame repaint alone cannot establish off-thread I/O.
 
 Choices remain derived from `ResolutionBuffer`; no viewer-side `chosen_side`
 flag. Save continues to freeze revision-bound intent and stage the chosen raw
@@ -212,12 +232,16 @@ reference beside them. Exercise narrow/zoom-risk layouts and real keyboard,
 focus, AX and relevant IME paths in Tier B; deterministic Tier A geometry alone
 is not evidence for these. Record unobserved cases explicitly.
 
-Step-① verification (2026-10-24): all 79 scenarios selected by the image/PDF/
-sync/focus/`conflict_` regression filter passed with existing assertions unchanged,
-including the new poisoned-Backend repaint scenario. `commit_diff_off_thread`
-also passed separately. Workspace tests passed (3,777 tests, 48 ignored);
+Step-① verification after review (2026-10-24): all 82 scenarios selected by
+the image/PDF/sync/focus/`conflict_` plus `commit_diff_off_thread` filter passed,
+with existing regression assertions unchanged. The preview scenarios cover
+first-render Backend I/O, loading, poisoned-backend repaint, stale selection/
+revision/retirement completions and bounded read retries. Both feature-only
+render-probe unit tests passed. Workspace tests passed (3,776 tests, 48 ignored);
 formatting, build, Clippy (only existing unrelated warnings), and repository
-invariant gates passed.
+invariant gates passed. The two initial new refresh scenarios incorrectly
+called the once-per-cycle detector; they now exercise real external reload
+before asserting the changed observation, and the full filter was rerun green.
 
 Tier B used the supplied plain `kagi-main` baseline and a fresh plain cutover
 build, isolated copies of `merge-complex`, EN/Catppuccin/100% at 1392×883 logical

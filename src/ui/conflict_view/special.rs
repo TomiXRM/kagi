@@ -96,7 +96,7 @@ pub(super) fn render_center(
     mode: &ConflictMode,
     writer_busy: bool,
     raw_preview_scroll: &gpui::ScrollHandle,
-    raw_preview: Option<&[conflict_binary_view::SideData; 2]>,
+    raw_preview: &conflict_binary_view::PreviewState,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
@@ -242,7 +242,7 @@ fn render_preview(
     kind: ConflictKind,
     labels: &SideLabels,
     raw_preview_scroll: &gpui::ScrollHandle,
-    raw_preview: Option<&[conflict_binary_view::SideData; 2]>,
+    raw_preview: &conflict_binary_view::PreviewState,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // #321: binary / symlink / submodule get an informative side-by-side viewer.

@@ -103,7 +103,7 @@ pub struct EditorChrome {
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     pub raw_preview_scroll: gpui::ScrollHandle,
-    pub(crate) raw_preview: Option<std::sync::Arc<[conflict_binary_view::SideData; 2]>>,
+    pub(crate) raw_preview: conflict_binary_view::PreviewState,
     /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
     /// Interior-mutable so the render path can fill it lazily; keyed by
     /// (path, theme slug) — row TEXT never changes within a session, only the
@@ -185,9 +185,7 @@ pub struct ConflictView {
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Stable raw-preview scroll owner, shared by production and E2E renders.
     pub raw_preview_scroll: gpui::ScrollHandle,
-    pub(crate) raw_preview: Option<std::sync::Arc<[conflict_binary_view::SideData; 2]>>,
-    pub(crate) raw_preview_key: Option<conflict_binary_view::PreviewKey>,
-    pub(crate) raw_preview_task: Option<gpui::Task<()>>,
+    pub(crate) raw_preview: conflict_binary_view::RawPreview,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk
     /// in the per-hunk Conflict Editor.
     pub selected_hunk: usize,
@@ -267,9 +265,7 @@ impl ConflictView {
             ab_split: super::CONFLICT_AB_DEFAULT,
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             raw_preview_scroll: gpui::ScrollHandle::new(),
-            raw_preview: None,
-            raw_preview_key: None,
-            raw_preview_task: None,
+            raw_preview: Default::default(),
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
@@ -440,6 +436,8 @@ pub fn blocker_msg(b: &kagi_git::ContinueBlocker) -> Msg {
 
 impl Render for ConflictView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "gui-e2e")]
+        let _render_io = kagi_git::backend::render_probe::enter();
         self.sync_editor_inputs(window, cx);
         self.sync_raw_preview(cx);
         #[cfg(feature = "gui-e2e")]
@@ -583,7 +581,7 @@ impl ConflictView {
             selected_hunk: self.selected_hunk,
             ab_geom: self.ab_geom.clone(),
             raw_preview_scroll: self.raw_preview_scroll.clone(),
-            raw_preview: self.raw_preview.clone(),
+            raw_preview: self.raw_preview.state.clone(),
             hl_cache: self.hl_cache.clone(),
         }
     }

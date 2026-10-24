@@ -331,9 +331,7 @@ impl ConflictView {
             return;
         };
         if mode.selected_file != Some(idx) {
-            self.raw_preview = None;
-            self.raw_preview_key = None;
-            self.raw_preview_task = None;
+            self.raw_preview.retire();
         }
         let open_path = matches!(file.kind, ConflictKind::Content | ConflictKind::AddAdd)
             .then(|| file.path.clone());

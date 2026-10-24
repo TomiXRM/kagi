@@ -3432,6 +3432,14 @@ mod macos {
                 Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_no_render_io),
             ),
             (
+                "conflict_preview_owner_transitions",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_owner_transitions),
+            ),
+            (
+                "conflict_preview_read_retry",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_read_retry),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),

@@ -190,8 +190,8 @@ impl Backend {
     }
 }
 
-/// Shared bounded blob read for live file sources and frozen resolution sides.
-pub(crate) fn blob_bytes(
+/// Bounded blob read for live file sources and frozen conflict stages.
+fn blob_bytes(
     repo: &git2::Repository,
     oid: git2::Oid,
     max_bytes: usize,
@@ -208,7 +208,7 @@ pub(crate) fn blob_bytes(
     Ok(blob.content().to_vec())
 }
 
-pub(crate) fn blob_size(repo: &git2::Repository, oid: git2::Oid) -> Result<usize, GitError> {
+fn blob_size(repo: &git2::Repository, oid: git2::Oid) -> Result<usize, GitError> {
     let odb = repo.odb().map_err(git_error)?;
     let (size, kind) = odb.read_header(oid).map_err(git_error)?;
     if kind != git2::ObjectType::Blob {

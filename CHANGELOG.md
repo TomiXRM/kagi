@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Internal
 
 - Record the shared side-pair preparation and ownership contract in ADR-0228: bounded frozen-side backend reads, one off-thread preparation entry and host-owned accepted previews, with rendering and conflict decisions kept separate. Step ① preserves existing image caps/classification and visible controls; the decided shared 8 MiB image policy, renderer cutover, conflict PDF/actions and deletion acceptance belong to later steps. No later-step completion or verification is claimed. (#1742)
+- Harden the preparation cutover with header-only loading, distinct read failures, one bounded retry per accepted observation and generation-checked retirement. Remove obsolete conflict byte-read facades; cover first-render Backend I/O, late selection/revision/retirement completions and failure recovery with deterministic native tests. (#1742)
 
 ### Experimental — conflict-hunk branch
 

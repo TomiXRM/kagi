@@ -37,21 +37,6 @@ pub struct RawResolution {
     pub mode: u32,
 }
 
-/// Per-side blob metadata for the binary/symlink/gitlink conflict viewer
-/// (#321): enough to label a side (short OID, git mode, byte size) without
-/// carrying the whole blob.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SideBlobInfo {
-    /// Short (7-char) object id of the side's blob or gitlink commit.
-    pub oid_short: String,
-    /// Full object id string.
-    pub oid: String,
-    /// The side's git file mode (0o100644, 0o120000 symlink, 0o160000 gitlink).
-    pub mode: u32,
-    /// Blob size in bytes. `None` for a submodule / gitlink (no blob).
-    pub size: Option<u64>,
-}
-
 /// Recency belongs to an actual unsaved edit, not to a long-lived producer.
 /// The atomic preserves `Sync` for immutable backend execution snapshots while
 /// allowing `autosave(&self)` to acknowledge only a successful disk write.
@@ -698,54 +683,6 @@ impl ResolutionBuffer {
     pub fn side_raw_meta(&self, path: &Path, side: SelectionSide) -> Option<(String, u32)> {
         let raw = self.side_raw_for(path, side)?;
         Some((raw.oid.to_string(), raw.mode))
-    }
-
-    /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
-    ///
-    /// For a symlink (mode 120000) the returned bytes ARE the link target path.
-    /// Returns `Ok(None)` for an absent side or gitlink (without object lookup).
-    /// Oversized, invalid or unreadable blobs return an error, never absence.
-    pub fn side_bytes(
-        &self,
-        repo: &Repository,
-        path: &Path,
-        side: SelectionSide,
-        max_bytes: usize,
-    ) -> Result<Option<Vec<u8>>, GitError> {
-        let Some(raw) = self.side_raw_for(path, side) else {
-            return Ok(None);
-        };
-        if raw.mode == 0o160000 {
-            return Ok(None);
-        }
-        crate::backend::file_reads::blob_bytes(repo, raw.oid, max_bytes).map(Some)
-    }
-
-    /// (oid, mode, size) metadata of one side of a raw conflict (#321 viewer),
-    /// so the UI can label a side (short OID / mode / byte size) without holding
-    /// the whole blob. `size` is `None` for a submodule / gitlink (no blob).
-    pub fn side_blob_info(
-        &self,
-        repo: &Repository,
-        path: &Path,
-        side: SelectionSide,
-    ) -> Result<Option<SideBlobInfo>, GitError> {
-        let Some(raw) = self.side_raw_for(path, side) else {
-            return Ok(None);
-        };
-        let oid = raw.oid.to_string();
-        let oid_short = oid.chars().take(7).collect();
-        let size = if raw.mode == 0o160000 {
-            None
-        } else {
-            Some(crate::backend::file_reads::blob_size(repo, raw.oid)? as u64)
-        };
-        Ok(Some(SideBlobInfo {
-            oid_short,
-            oid,
-            mode: raw.mode,
-            size,
-        }))
     }
 
     /// The resolved text for `path` (lines joined with `\n`, trailing newline

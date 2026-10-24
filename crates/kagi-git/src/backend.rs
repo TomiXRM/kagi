@@ -25,6 +25,8 @@ mod reflog;
 pub(crate) mod remote_identity;
 pub mod remote_ref;
 pub mod remove;
+#[cfg(feature = "gui-e2e")]
+pub mod render_probe;
 mod repo_health;
 mod run;
 pub mod stash;
@@ -84,6 +86,8 @@ impl Backend {
 
     /// Open the repository at `path`.
     pub fn open(path: &Path) -> Result<Self, GitError> {
+        #[cfg(feature = "gui-e2e")]
+        render_probe::record_open();
         let path_str = path.display().to_string();
 
         if !path.exists() {
@@ -1015,30 +1019,6 @@ impl Backend {
 
     pub fn materialized_markers(&self, buffer: &ResolutionBuffer, path: &Path) -> Option<String> {
         buffer.materialized_markers(&self.repo, path)
-    }
-
-    /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
-    /// For a symlink the bytes ARE the link target; `Ok(None)` for a submodule
-    /// (no object lookup) or absent side. Read failures and size limits are errors.
-    pub fn conflict_side_bytes(
-        &self,
-        buffer: &ResolutionBuffer,
-        path: &Path,
-        side: crate::resolution::SelectionSide,
-        max_bytes: usize,
-    ) -> Result<Option<Vec<u8>>, GitError> {
-        buffer.side_bytes(&self.repo, path, side, max_bytes)
-    }
-
-    /// (short OID, mode, size) of one side of a raw conflict (#321 viewer).
-    /// Absent sides return `Ok(None)`; gitlinks have no size. Blob errors propagate.
-    pub fn conflict_side_blob_info(
-        &self,
-        buffer: &ResolutionBuffer,
-        path: &Path,
-        side: crate::resolution::SelectionSide,
-    ) -> Result<Option<crate::resolution::SideBlobInfo>, GitError> {
-        buffer.side_blob_info(&self.repo, path, side)
     }
 
     pub fn create_branch_name_errors(&self, name: &str) -> Vec<ops::BranchNameError> {

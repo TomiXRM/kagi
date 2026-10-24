@@ -5,6 +5,7 @@
 // /tmp/pidclick windows --pid <pid>
 // /tmp/pidclick --pid <pid> --window-id <id> move <x> <y>
 // /tmp/pidclick --pid <pid> --window-id <id> click <x> <y>
+// /tmp/pidclick --pid <pid> --window-id <id> drag <x1> <y1> <x2> <y2>
 // /tmp/pidclick --pid <pid> --window-id <id> rclick <x> <y>
 // /tmp/pidclick --pid <pid> --window-id <id> scroll <x> <y> <lines>
 // /tmp/pidclick --pid <pid> --window-id <id> key <keycode> [cmd] [shift] [alt] [ctrl]
@@ -31,11 +32,11 @@ func warn(_ message: String) {
 }
 
 func usage() -> Never {
-    fail("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> [--no-cursor] move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+    fail("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> [--no-cursor] move|click|rclick <x> <y> | drag <x1> <y1> <x2> <y2> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
 }
 
 func printUsage() {
-    print("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> [--no-cursor] move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+    print("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> [--no-cursor] move|click|rclick <x> <y> | drag <x1> <y1> <x2> <y2> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
 }
 
 // MARK: - The cursor daemon's socket (keep in step with pidcursor.swift)
@@ -284,6 +285,8 @@ func mouse(_ type: CGEventType, at point: CGPoint, button: CGMouseButton) -> CGE
         mouseCursorPosition: point,
         mouseButton: button
     ) else { fail("could not create mouse event") }
+    // Stuck HID Control makes GPUI map Ctrl+Left to Right; mouse actions have no modifiers.
+    event.flags = []
     event.setIntegerValueField(.mouseEventClickState, value: 1)
     return event
 }
@@ -353,6 +356,24 @@ case "click", "rclick":
     post(mouse(.mouseMoved, at: location, button: .left)) // GPUI needs hover before a click.
     post(mouse(button == .right ? .rightMouseDown : .leftMouseDown, at: location, button: button))
     post(mouse(button == .right ? .rightMouseUp : .leftMouseUp, at: location, button: button))
+case "drag":
+    guard values.count == 4 else { fail("drag takes <x1> <y1> <x2> <y2>") }
+    let start = point(from: values.prefix(2))
+    let end = point(from: values.suffix(2))
+    cursor("move", at: start)
+    post(mouse(.mouseMoved, at: start, button: .left))
+    post(mouse(.leftMouseDown, at: start, button: .left))
+    let steps = max(2, Int(ceil(hypot(end.x - start.x, end.y - start.y) / 4.0)))
+    for step in 1...steps {
+        let fraction = CGFloat(step) / CGFloat(steps)
+        let location = CGPoint(
+            x: start.x + (end.x - start.x) * fraction,
+            y: start.y + (end.y - start.y) * fraction
+        )
+        post(mouse(.leftMouseDragged, at: location, button: .left))
+    }
+    post(mouse(.leftMouseUp, at: end, button: .left))
+    cursor("move", at: end)
 case "scroll":
     // A list long enough to scroll is the only place some per-tab state shows
     // up at all (#737). Negative lines scroll down, matching a trackpad's
@@ -370,6 +391,7 @@ case "scroll":
         wheel2: 0,
         wheel3: 0
     ) else { fail("could not create a scroll event") }
+    wheel.flags = []
     wheel.location = location
     post(wheel)
 case "key":

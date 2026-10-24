@@ -187,7 +187,7 @@ pub(super) fn pr_card_legs(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
-pub(super) fn conflict_segment_legs(cx: &mut VisualTestAppContext) {
+pub(super) fn conflict_result_legs(cx: &mut VisualTestAppContext) {
     let fixture = crate::app_conflict::content_fixture();
     let (app, window) = mount(cx, fixture.path());
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
@@ -203,20 +203,11 @@ pub(super) fn conflict_segment_legs(cx: &mut VisualTestAppContext) {
         for active in [true, false] {
             app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
             draw(cx, window);
-            assert_neutral_segment(
-                cx,
-                window,
-                "conflict-result-preview",
-                "conflict-result-preview",
-            );
-            let edit = bounds(window, "conflict-result-edit");
-            cx.simulate_click(window, edit.center(), Modifiers::none());
+            let editor = bounds(window, "conflict-result-editor");
+            cx.simulate_click(window, editor.center(), Modifiers::none());
             cx.run_until_parked();
             draw(cx, window);
-            assert_neutral_segment(cx, window, "conflict-result-edit", "conflict-result-edit");
-            let preview = bounds(window, "conflict-result-preview");
-            cx.simulate_click(window, preview.center(), Modifiers::none());
-            cx.run_until_parked();
+            assert!(cx.read(|cx| conflict.read(cx).result_editing));
         }
     }
     drop(conflict);

@@ -69,6 +69,15 @@ impl KagiApp {
             )
         });
         let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+        if action == kagi_domain::conflict_family::ConflictAction::Save {
+            if let Some(conflict) = self.ui.get(&owner).and_then(|ui| ui.conflict.as_ref()) {
+                conflict.update(cx, |view, cx| {
+                    let attempted = view.save_attempt.take();
+                    view.save_refused = if success { None } else { attempted };
+                    cx.notify();
+                });
+            }
+        }
         if self.active_session() == Some(owner) {
             let contract =
                 Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);

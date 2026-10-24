@@ -71,7 +71,7 @@ fn dir_file_fixture() -> tempfile::TempDir {
 pub(crate) fn click_control(
     cx: &mut VisualTestAppContext,
     window: gpui::AnyWindowHandle,
-    name: &'static str,
+    name: &str,
 ) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -80,6 +80,7 @@ pub(crate) fn click_control(
     cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
 }
 
 pub(crate) fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {
@@ -111,7 +112,7 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
             kagi_git::resolution::SelectionSide::Current,
             true,
         );
-        view.result_editing = true;
+        view.conflict_editor_set_result_mode(true);
         cx.notify();
     });
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
@@ -157,6 +158,7 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
     let conflict = cx
         .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("D/F conflict view");
+    click_control(cx, window, "conflict-row-0");
 
     let guard = app.update(cx, |app, _| {
         app.app_sessions.write_lease(Path::new(&repo)).unwrap()
@@ -194,9 +196,8 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
 
 /// The #704 dead end, built the way the GUI walks into it: a conflicting
 /// merge, the resolution staged (what Continue does), then the commit panel's
-/// Unstage and Discard all. The repository is left `MERGING` with a clean
-/// index and nothing unmerged — no conflict, no `ConflictView`, and before
-/// this no way out but the CLI.
+/// Unstage and Discard all can leave MERGING with no unmerged entries.
+/// The accepted observation still owns Continue and Abort in that state.
 fn stuck_merging_fixture() -> tempfile::TempDir {
     let fixture = content_fixture();
     let repo = fixture.path();
@@ -212,28 +213,38 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
-    // No `detect_conflict_mode` call: the strip comes from the tab's first
-    // accepted read, which is the whole ownership fix.
+    // No explicit detection: the first accepted read creates the staged
+    // overview, while operation admission stays in the session read model.
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    assert!(
-        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
-        "there is no conflict editor to hang the abort off"
-    );
+    cx.read(|cx| {
+        let entity = app
+            .read(cx)
+            .ui()
+            .conflict
+            .as_ref()
+            .expect("staged overview from first read");
+        assert!(entity
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .session
+            .files
+            .is_empty());
+    });
     assert!(
         cx.read(|cx| app.read(cx).view().operation.is_some()),
         "the read model knows the merge is still in progress"
     );
+    assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_some());
     assert!(
-        e2e::control_bounds(window.window_id(), "operation-strip").is_some(),
-        "the operation strip is on screen from the first frame"
-    );
-    assert!(
-        e2e::control_bounds(window.window_id(), "operation-strip-abort").is_some(),
-        "and it offers the way out"
+        e2e::control_bounds(window.window_id(), "operation-strip").is_none(),
+        "the overview and operation strip never compete"
     );
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS operation strip visible at startup on a stuck MERGING repo");
+    eprintln!("[gui-e2e] PASS staged overview visible at startup on a stuck MERGING repo");
 }
 
 /// The owner ruling on top of #707: while the conflict editor is mounted the
@@ -330,7 +341,7 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     );
 
     // …and Abort still goes through, which is what the erasure used to break.
-    click_control(cx, window, "operation-strip-abort");
+    click_control(cx, window, "conflict-abort");
     cx.run_until_parked();
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
     wait_idle(cx, &app);
@@ -392,11 +403,19 @@ pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppCon
             .as_ref()
             .and_then(|view| view.read(cx).mode.as_ref().map(|m| m.revision.clone()))
     });
-    assert_ne!(
-        mode_revision.as_ref(),
-        Some(&r2_revision),
-        "a stale payload must not be given the accepted read's revision"
-    );
+    assert_eq!(mode_revision.as_ref(), Some(&r2_revision));
+    cx.read(|cx| {
+        let view = app.read(cx).ui().conflict.as_ref().unwrap().read(cx);
+        let mode = view.mode.as_ref().unwrap();
+        assert!(
+            mode.session.files.is_empty(),
+            "the accepted staged read must not regain R1's unmerged files"
+        );
+        assert!(
+            !mode.buffer.has_resolution(Path::new("file.txt")),
+            "a late R1 payload cannot supply a draft under R2's authority"
+        );
+    });
     let observed = cx.read(|cx| {
         let app = app.read(cx);
         app.active_session()
@@ -577,10 +596,8 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
 /// #707 re-review P2: a stale "there is no conflict" answer must not tear down
 /// the projection the accepted read still says exists.
 ///
-/// Only `Detected` was compared against the accepted observation, so a late
-/// `Cleared` / `MergeResolvedReady` / `OpenFailed` from the same owner dropped
-/// the live `ConflictView` (and, for `OpenFailed`, the stash identity) and left
-/// nothing until the next reload — with the detector not even re-armed.
+/// Every stale detection outcome must preserve the accepted conflict projection.
+/// A staged snapshot is not authoritative merely because its file list is empty.
 pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppContext) {
     use kagi::ui::e2e::ConflictDetectOutcome;
 
@@ -607,25 +624,22 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
                 .and_then(|session| app.app_sessions.attachment(session))
         })
         .expect("attached");
-    let observation = cx
-        .read(|cx| app.read(cx).view().operation.clone())
-        .map(|op| op.observation)
-        .expect("the accepted read says an operation is in progress");
-
-    // `Cleared` / `OpenFailed` carry no observation: they disagree with an
-    // accepted read that says an operation is in progress, full stop. A
-    // `MergeResolvedReady` is stale when its own observation is not the
-    // accepted one.
-    let older = kagi_domain::conflict_family::ConflictObservation {
-        revision: kagi_domain::conflict_family::ConflictRevision::from_fingerprint(
-            "an-older-observation".to_string(),
-        ),
-        ..observation.clone()
-    };
+    // Capture a real fully staged snapshot, then restore the accepted unmerged
+    // state before yielding to the UI. This completion is now stale, just like
+    // a background read overtaken by another index observation.
+    let index_path = repo.join(".git/index");
+    let file_path = repo.join("file.txt");
+    let original_index = std::fs::read(&index_path).unwrap();
+    let original_text = std::fs::read(&file_path).unwrap();
+    std::fs::write(&file_path, "resolved\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    let staged = kagi::ui::KagiApp::detect_conflict_payload(&repo, None, None, "main".into());
+    std::fs::write(&index_path, original_index).unwrap();
+    std::fs::write(&file_path, original_text).unwrap();
     for stale in [
         ConflictDetectOutcome::Cleared,
         ConflictDetectOutcome::OpenFailed,
-        ConflictDetectOutcome::MergeResolvedReady(older),
+        staged,
     ] {
         app.update(cx, |app, cx| {
             app.ui_mut().expect("active session").conflict_detected = true;
@@ -654,17 +668,33 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
         );
     }
 
-    // The same `MergeResolvedReady` is applied once the read agrees with it:
-    // the guard is about disagreement, not about the variant.
+    // Once the accepted read agrees, the same producer now installs a fresh
+    // empty-session Staged page, not an old editable conflict buffer.
     std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
     git(&repo, &["add", "file.txt"]);
     app.update(cx, |app, cx| app.reload(cx));
     wait_idle(cx, &app);
     cx.run_until_parked();
-    assert!(
-        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
-        "an agreeing outcome still applies"
-    );
+    cx.read(|cx| {
+        let entity = app
+            .read(cx)
+            .ui()
+            .conflict
+            .as_ref()
+            .expect("staged workspace");
+        let view = entity.read(cx);
+        assert!(
+            view.editing.is_none(),
+            "staged workspace has no editable draft"
+        );
+        let mode = view.mode.as_ref().unwrap();
+        assert!(mode.session.files.is_empty());
+        assert!(
+            !mode.buffer.has_resolution(Path::new("file.txt")),
+            "staged projection owns no old active resolution"
+        );
+        assert!(mode.can_continue());
+    });
     drop(view);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS a stale no-conflict outcome keeps the projection (#707)");
@@ -675,6 +705,10 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+    click_control(cx, window, "conflict-continue");
+    wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
+    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.
@@ -1427,6 +1461,10 @@ pub fn scenario_conflict_family_result_owner(cx: &mut VisualTestAppContext) {
                             let expected =
                                 mode.buffer.resolved_text(Path::new("file.txt")).unwrap();
                             view.conflict_open_editor(&PathBuf::from("file.txt"));
+                            view.conflict_show_page(
+                                kagi::ui::conflict_view::ConflictPage::Review,
+                                cx,
+                            );
                             cx.notify();
                             expected
                         }))
@@ -1452,6 +1490,7 @@ pub fn scenario_conflict_family_result_owner(cx: &mut VisualTestAppContext) {
                             "conflict-save:merge"
                         }
                         "directory" => {
+                            click_control(cx, window, "conflict-row-0");
                             click_control(cx, window, "conflict-keep-directory");
                             "conflict-dir-file:keep-directory"
                         }

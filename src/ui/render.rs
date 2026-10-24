@@ -964,10 +964,9 @@ impl Render for KagiApp {
                 el.children(self.render_operation_strip(cx))
             })
             // ── Body slot: in Conflict Mode the conflict resolution pane
-            //    replaces the normal sidebar | list | panel body. The center is
-            //    the A/B hunk editor + Result Preview; the right is always the
-            //    Conflict Dashboard (GitKraken-style — see render_body). The
-            //    `ConflictView` entity renders its own body.
+            //    replaces the normal sidebar | list | panel body. `ConflictView`
+            //    owns the collapsible conflict tree and the selected file's
+            //    editor or read-only saved inspection.
             .when(conflict_body_visible, |el| {
                 if let Some(entity) = conflict_entity.clone() {
                     let visible = self

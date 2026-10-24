@@ -3199,6 +3199,14 @@ mod macos {
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
+                "conflict_manual_reset_guard",
+                Box::new(crate::conflict_controls::scenario_conflict_manual_reset_guard),
+            ),
+            (
+                "conflict_partial_resume",
+                Box::new(crate::conflict_controls::scenario_conflict_partial_resume),
+            ),
+            (
                 "conflict_continue_approval_replacement_queued",
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_replacement_queued),
             ),
@@ -3259,8 +3267,16 @@ mod macos {
                 Box::new(crate::conflict_controls::scenario_conflict_reset_disarm),
             ),
             (
+                "conflict_arrow_checkboxes",
+                Box::new(crate::conflict_controls::scenario_conflict_arrow_checkboxes),
+            ),
+            (
                 "conflict_result_segment",
                 Box::new(crate::conflict_controls::scenario_conflict_result_segment),
+            ),
+            (
+                "conflict_progressive_add_add",
+                Box::new(crate::conflict_controls::scenario_conflict_progressive_add_add),
             ),
             (
                 "conflict_file_selection",

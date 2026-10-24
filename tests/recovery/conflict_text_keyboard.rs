@@ -56,6 +56,145 @@ fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     })
     .unwrap();
 }
+
+fn assert_source_hunk_visible(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hunk: usize) {
+    for side in ["current", "incoming"] {
+        e2e::clear_control_bounds(
+            window.window_id(),
+            &format!("resolver-hunk-{hunk}-{side}-line-0"),
+        );
+    }
+    paint(cx, window);
+    let dimensions = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    for side in ["current", "incoming"] {
+        let line = e2e::control_bounds(
+            window.window_id(),
+            &format!("resolver-hunk-{hunk}-{side}-line-0"),
+        )
+        .expect("selected hunk's first source line is rendered");
+        let viewport =
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-viewport")).unwrap();
+        assert!(
+            line.top() >= viewport.top() && line.bottom() <= viewport.bottom(),
+            "{side}: navigation brings hunk {hunk} inside the whole-file viewport; line={line:?}, viewport={viewport:?}, zoom={}, dimensions={dimensions:?}, lang={:?}",
+            theme::zoom(), i18n::lang()
+        );
+    }
+    assert_row_alignment(cx, window);
+    for side in ["current", "incoming"] {
+        let viewport =
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-viewport")).unwrap();
+        for delta in [-48., 48.] {
+            cx.simulate_event(
+                window,
+                gpui::ScrollWheelEvent {
+                    position: viewport.center(),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(
+                        gpui::px(0.),
+                        theme::scaled_px(delta),
+                    )),
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            paint(cx, window);
+            assert_row_alignment(cx, window);
+        }
+    }
+}
+
+fn assert_row_alignment(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let counts = ax::row_counts();
+    assert!(counts[0] > 0);
+    assert_eq!(
+        counts, [counts[0]; 3],
+        "both source panes and gutter have equal row counts"
+    );
+    for index in 0..counts[0] {
+        for side in ["current", "incoming", "gutter"] {
+            e2e::clear_control_bounds(window.window_id(), &format!("resolver-{side}-row-{index}"));
+        }
+    }
+    paint(cx, window);
+    let mut aligned = 0;
+    for index in 0..counts[0] {
+        let rows = ["current", "incoming", "gutter"].map(|side| {
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-row-{index}"))
+        });
+        if rows.iter().all(Option::is_none) {
+            continue;
+        }
+        let rows = rows.map(|row| row.expect("same-index row is rendered in all three panes"));
+        for row in &rows[1..] {
+            assert!(
+                (f32::from(row.top() - rows[0].top())).abs() <= 1.,
+                "same-index row {index} is y-aligned after navigation/scroll"
+            );
+            assert!(
+                (f32::from(row.size.height) - f32::from(theme::scaled_px(24.))).abs() <= 1.,
+                "action, source and gutter rows share uniform 24px height"
+            );
+        }
+        aligned += 1;
+    }
+    assert!(
+        aligned > 0,
+        "alignment measures visible rows, not an empty probe"
+    );
+}
+
+fn assert_operation_strip(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let ids = [
+        "toolbar-row",
+        "tb-repo-actions",
+        "conflict-operation-strip",
+        "tb-graph-mode",
+        "tb-pr-mode",
+        "tb-editor-ws",
+        "tb-ecosystem",
+        "tb-settings",
+    ];
+    for id in ids {
+        e2e::clear_control_bounds(window.window_id(), id);
+    }
+    paint(cx, window);
+    let bounds = |id| {
+        e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| {
+            panic!(
+                "missing toolbar control {id}: {:?} zoom={} toolbar={:?}",
+                i18n::lang(),
+                theme::zoom(),
+                e2e::control_bounds(window.window_id(), "toolbar-row")
+            )
+        })
+    };
+    let toolbar = bounds("toolbar-row");
+    let operation = bounds("conflict-operation-strip");
+    assert!(operation.size.width > gpui::px(0.));
+    assert!(operation.left() >= toolbar.left() && operation.right() <= toolbar.right());
+    assert!(operation.top() >= toolbar.top() && operation.bottom() <= toolbar.bottom());
+    // Repository commands legitimately migrate to overflow at compact widths.
+    if let Some(commands) = e2e::control_bounds(window.window_id(), "tb-repo-actions") {
+        assert!(
+            commands.right() <= operation.left(),
+            "repository commands do not overlap conflict operations"
+        );
+    }
+    for id in &ids[3..] {
+        let mode = bounds(id).dilate(gpui::px(kagi_ui_core::keyboard_nav::RING));
+        assert!(
+            mode.size.width > gpui::px(0.),
+            "right toolbar group remains visible: {id}"
+        );
+        assert!(
+            operation.right() <= mode.left(),
+            "conflict operations precede {id}"
+        );
+        assert!(mode.right() <= toolbar.right(), "{id} fits the toolbar");
+    }
+}
 fn probe(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> Option<String> {
     ax::take_focus_probe();
     cx.simulate_keystrokes(window, "f19");
@@ -87,37 +226,25 @@ fn horizontal_controls(
     conflict: &Entity<ConflictView>,
     lang: Lang,
 ) {
-    let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
-    let incoming = format!("{} ({})", labels.incoming.role, labels.incoming.name);
-    keys(cx, window, "left");
-    keys(cx, window, "space");
-    assert_eq!(ax::control("resolver-hunk-1-current").unwrap().2, "all");
-    keys(cx, window, "right right");
-    assert_eq!(
-        probe(cx, window).as_deref(),
-        Some("resolver-hunk-1-current-first")
-    );
-    keys(cx, window, "enter");
+    choose(cx, window, 1, "current");
     let ours_first = assembled(cx, conflict);
     assert!(ours_first.find("ours 17").unwrap() < ours_first.find("theirs 17").unwrap());
-    keys(cx, window, "right");
-    assert_eq!(
-        probe(cx, window).as_deref(),
-        Some("resolver-hunk-1-incoming-first")
-    );
-    assert_eq!(
-        ax::control("resolver-hunk-1-incoming-first").unwrap().1,
-        if lang == Lang::En {
-            format!("Order: {incoming} first")
-        } else {
-            format!("順序: {incoming} を先に")
-        }
-    );
-    keys(cx, window, "space");
+    choose(cx, window, 1, "incoming");
     let theirs_first = assembled(cx, conflict);
     assert!(theirs_first.find("theirs 17").unwrap() < theirs_first.find("ours 17").unwrap());
-    keys(cx, window, "right");
     let line = "resolver-hunk-1-current-line-0";
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some("conflict-hunk-1-incoming-change"),
+        "choosing ordered Both focuses the replacement Change action"
+    );
+    // Horizontal movement stays within this hunk's action row and lines.
+    keys(cx, window, "left");
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some("conflict-hunk-1-current-change")
+    );
+    keys(cx, window, "right right");
     assert_eq!(probe(cx, window).as_deref(), Some(line));
     assert_eq!(
         ax::control(line).unwrap().1,
@@ -128,7 +255,20 @@ fn horizontal_controls(
         }
     );
     keys(cx, window, "enter");
-    assert_eq!(ax::control("resolver-hunk-1-current").unwrap().2, "partial");
+    cx.read(|cx| {
+        assert_eq!(
+            conflict
+                .read(cx)
+                .mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .hunk_model(Path::new("notes.txt"))
+                .unwrap()
+                .file_side_state(kagi_git::resolution::SelectionSide::Current),
+            kagi_git::resolution::TriState::Partial
+        );
+    });
     assert!(!assembled(cx, conflict).contains("ours 17"));
     let bounds = e2e::control_bounds(window.window_id(), line).unwrap();
     let viewport = e2e::control_bounds(window.window_id(), "resolver-current-viewport").unwrap();
@@ -148,17 +288,54 @@ fn horizontal_controls(
     keys(cx, window, "up");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("resolver-hunk-0-current")
+        Some("conflict-hunk-1-current-change"),
+        "line editing and undo/redo retain the same hunk's keyboard owner"
     );
 }
+
+fn choose(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hunk: usize, side: &str) {
+    let change = format!("conflict-hunk-{hunk}-current-change");
+    if ax::control(&change).is_some() {
+        if probe(cx, window).as_deref()
+            == Some(format!("conflict-hunk-{hunk}-incoming-change").as_str())
+        {
+            keys(cx, window, "left");
+        }
+        tab_to(cx, window, &change);
+        keys(cx, window, "enter");
+    }
+    tab_to(cx, window, &format!("conflict-hunk-{hunk}-{side}-use"));
+    keys(cx, window, "right");
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some(format!("conflict-hunk-{hunk}-{side}-both").as_str()),
+        "Both is keyboard-reachable beside this pane's Use action"
+    );
+    keys(cx, window, "enter");
+}
+#[track_caller]
 fn tab_to(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+    // Activation retains the row's real focus handle.
+    let initial = probe(cx, window);
+    if initial.as_deref() == Some(id) {
+        return;
+    }
+    let mut focus_sequence = vec![initial];
     for _ in 0..100 {
         keys(cx, window, "tab");
-        if probe(cx, window).as_deref() == Some(id) {
+        let focused = probe(cx, window);
+        if focused.as_deref() == Some(id) {
             return;
         }
+        focus_sequence.push(focused);
     }
-    panic!("Tab must reach the resolver adoption controls: {id}");
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    panic!(
+        "Tab must reach the resolver adoption controls: {id}; lang={:?}, zoom={}, viewport={viewport:?}, focus_sequence={focus_sequence:?}",
+        i18n::lang(), theme::zoom(),
+    );
 }
 
 fn hunk_adoption(
@@ -167,41 +344,92 @@ fn hunk_adoption(
     conflict: &Entity<ConflictView>,
     lang: Lang,
 ) {
-    tab_to(cx, window, "resolver-hunk-0-current");
+    tab_to(cx, window, "conflict-hunk-0-current-use");
     keys(cx, window, "down");
     assert_eq!(
         probe(cx, window).as_deref(),
-        Some("resolver-hunk-1-current")
+        Some("conflict-hunk-1-current-use"),
+        "whole-file roving focus reaches the next hunk"
     );
-    keys(cx, window, "right");
-    let id = "resolver-hunk-1-incoming";
-    assert_eq!(probe(cx, window).as_deref(), Some(id));
-    let (role, name, state) = ax::control(id).expect("named adoption Button");
-    assert_eq!(role, gpui::Role::Button);
-    let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
-    let incoming = format!("{} ({})", labels.incoming.role, labels.incoming.name);
     assert_eq!(
-        name,
-        if lang == Lang::En {
-            format!("Use {incoming} for hunk 2")
-        } else {
-            format!("hunk 2 に {incoming} を採用")
-        }
+        cx.read(|cx| conflict.read(cx).selected_hunk),
+        0,
+        "keyboard focus does not change the selected decision hunk"
     );
+    click_control(cx, window, "conflict-next-hunk");
+    paint(cx, window);
+    assert_source_hunk_visible(cx, window, 1);
+    cx.read(|cx| {
+        let view = conflict.read(cx);
+        assert_eq!(view.selected_hunk, 1);
+    });
+    tab_to(cx, window, "conflict-hunk-1-current-use");
+    keys(cx, window, "right right");
+    let (role, name, state) =
+        ax::control("conflict-hunk-1-incoming-use").expect("named incoming Use");
+    assert_eq!(role, gpui::Role::Button);
+    assert_eq!(name, i18n::Msg::ConflictUseThisSideAccessible.t());
     assert_eq!(state, "none");
     keys(cx, window, "enter");
     let text = assembled(cx, conflict);
     assert!(text.contains("theirs 17"));
-    assert_eq!(ax::control(id).unwrap().2, "all");
+    assert_eq!(
+        ax::control("conflict-hunk-1-incoming-state").unwrap().1,
+        i18n::Msg::ConflictUsed.t()
+    );
     conflict.update(cx, |view, cx| {
         view.conflict_editor_reset_all(Path::new("notes.txt"));
         cx.notify();
     });
     paint(cx, window);
-    click_control(cx, window, id);
-    paint(cx, window);
+    click_control(cx, window, "conflict-hunk-1-incoming-use");
     assert_eq!(text, assembled(cx, conflict));
     horizontal_controls(cx, window, conflict, lang);
+    line_range_keyboard(cx, window, conflict);
+}
+
+fn line_range_keyboard(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    conflict: &Entity<ConflictView>,
+) {
+    keys(cx, window, "right enter");
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some("conflict-hunk-1-incoming-use"),
+        "Change restores this pane's Use action in the roving group"
+    );
+    keys(cx, window, "enter");
+    keys(cx, window, "right");
+    let line = |index| format!("resolver-hunk-1-current-line-{index}");
+    assert_eq!(probe(cx, window).as_deref(), Some(line(0).as_str()));
+    assert_eq!(ax::control(&line(0)).unwrap().2, "none");
+    keys(cx, window, "space");
+    assert_eq!(ax::control(&line(0)).unwrap().2, "all");
+    assert_eq!(probe(cx, window).as_deref(), Some(line(0).as_str()));
+    for index in 1..=2 {
+        keys(cx, window, "shift-down");
+        assert_eq!(probe(cx, window).as_deref(), Some(line(index).as_str()));
+        assert_eq!(ax::control(&line(index)).unwrap().2, "all");
+        assert_eq!(
+            ax::control(&format!("resolver-hunk-1-incoming-line-{index}"))
+                .unwrap()
+                .2,
+            "all",
+            "range painting does not clear the opposite pane"
+        );
+    }
+    keys(cx, window, "space");
+    assert_eq!(ax::control(&line(2)).unwrap().2, "none");
+    for index in [1, 0] {
+        keys(cx, window, "shift-up");
+        assert_eq!(probe(cx, window).as_deref(), Some(line(index).as_str()));
+        assert_eq!(ax::control(&line(index)).unwrap().2, "none");
+    }
+    assert!(!assembled(cx, conflict).contains("ours 17"));
+    assert!(!assembled(cx, conflict).contains("ours 18"));
+    assert!(!assembled(cx, conflict).contains("ours 19"));
+    assert!(assembled(cx, conflict).contains("theirs 17"));
 }
 
 fn matrix_leg(
@@ -223,11 +451,48 @@ fn matrix_leg(
     crate::pr_detail_adaptive::resize(cx, window, dimensions);
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    conflict.update(cx, |view, cx| {
-        view.conflict_open_editor(Path::new("notes.txt"));
-        cx.notify();
-    });
+    assert_eq!(
+        cx.read(|cx| conflict.read(cx).page),
+        kagi::ui::conflict_view::ConflictPage::Hunk,
+        "first file opens directly at every language, zoom and window size"
+    );
     paint(cx, window);
+    assert_operation_strip(cx, window);
+    assert_source_hunk_visible(cx, window, 0);
+    let row_height = f32::from(theme::scaled_px(24.));
+    for side in ["current", "incoming"] {
+        let viewport =
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-viewport")).unwrap();
+        let line = e2e::control_bounds(
+            window.window_id(),
+            &format!("resolver-hunk-0-{side}-line-0"),
+        )
+        .unwrap()
+        .dilate(gpui::px(kagi_ui_core::keyboard_nav::RING));
+        assert!(
+            (f32::from(line.size.height) - row_height).abs() <= 1.,
+            "{side}: source row including fixed focus border is 24 scaled px: actual={:?}, expected={row_height}, zoom={zoom}",
+            line.size.height
+        );
+        let height = f32::from(viewport.size.height);
+        assert!(
+            height >= row_height,
+            "{side}: responsive viewport retains visible code"
+        );
+        let footer =
+            e2e::control_bounds(window.window_id(), &format!("resolver-{side}-footer")).unwrap();
+        assert!(
+            footer.top() >= viewport.bottom(),
+            "{side}: commit footer follows source"
+        );
+        if side == "current" {
+            for id in ["conflict-prev-hunk", "conflict-next-hunk"] {
+                let button = e2e::control_bounds(window.window_id(), id).unwrap();
+                assert!(button.left() >= footer.left() && button.right() <= footer.right());
+                assert!(button.top() >= footer.top() && button.bottom() <= footer.bottom());
+            }
+        }
+    }
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
@@ -237,9 +502,15 @@ fn matrix_leg(
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-file-current");
+    click_control(cx, window, "conflict-prev-hunk");
+    paint(cx, window);
+    assert_source_hunk_visible(cx, window, 0);
+    tab_to(cx, window, "conflict-hunk-0-current-use");
     keys(cx, window, "space");
-    assert_eq!(ax::control("resolver-file-current").unwrap().2, "all");
+    assert_eq!(
+        ax::control("conflict-hunk-0-current-state").unwrap().1,
+        i18n::Msg::ConflictUsed.t()
+    );
     assert!(
         kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 20).is_empty(),
         "adoption emits no Git receipt"
@@ -305,29 +576,24 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-    conflict.update(cx, |view, cx| {
-        view.conflict_open_editor(Path::new("notes.txt"));
-        cx.notify();
-    });
+    click_control(cx, window, "conflict-row-0");
     paint(cx, window);
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-hunk-0-current");
+    tab_to(cx, window, "conflict-hunk-0-current-use");
     replace_model(cx, &conflict, fixture.path(), 3, 1);
     paint(cx, window);
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-hunk-0-current");
-    keys(cx, window, "end right");
-    assert_eq!(
-        probe(cx, window).as_deref(),
-        Some("resolver-hunk-2-incoming")
-    );
-    keys(cx, window, "enter");
+    click_control(cx, window, "conflict-next-hunk");
+    click_control(cx, window, "conflict-next-hunk");
+    paint(cx, window);
+    tab_to(cx, window, "conflict-hunk-2-current-use");
+    keys(cx, window, "right right enter");
     assert!(assembled(cx, &conflict).contains("incoming 2 0"));
     replace_model(cx, &conflict, fixture.path(), 3, 4);
     paint(cx, window);
@@ -335,8 +601,8 @@ pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
     })
     .unwrap();
-    tab_to(cx, window, "resolver-hunk-0-current");
-    keys(cx, window, "end right right right right right right right");
+    tab_to(cx, window, "conflict-hunk-2-current-use");
+    keys(cx, window, "right right right right right right right");
     assert_eq!(
         probe(cx, window).as_deref(),
         Some("resolver-hunk-2-current-line-3")
@@ -360,10 +626,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
             });
             cx.run_until_parked();
             let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
-            conflict.update(cx, |view, cx| {
-                view.conflict_open_editor(Path::new("notes.txt"));
-                cx.notify();
-            });
+            click_control(cx, window, "conflict-row-0");
             paint(cx, window);
             let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
             assert_eq!(
@@ -378,46 +641,49 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                     "Merging in"
                 }
             );
-            for (side, label) in [("current", &labels.current), ("incoming", &labels.incoming)] {
-                let identity = format!("{} ({})", label.role, label.name);
-                let name = ax::control(&format!("resolver-hunk-0-{side}")).unwrap().1;
-                assert_eq!(
-                    name,
-                    if lang == Lang::En {
-                        format!("Use {identity} for hunk 1")
-                    } else {
-                        format!("hunk 1 に {identity} を採用")
-                    }
-                );
-                assert_eq!(
-                    ax::control(&format!("resolver-hunk-0-{side}")).unwrap().2,
-                    "none"
-                );
-                let order = format!("resolver-hunk-0-{side}-first");
-                assert_eq!(
-                    ax::control(&order).unwrap().2,
-                    if side == "current" {
-                        "selected"
-                    } else {
-                        "unselected"
-                    }
-                );
-                let selected = format!("{} ({})", labels.current.role, labels.current.name);
-                assert_eq!(
-                    ax::description(&order).unwrap(),
-                    if lang == Lang::En {
-                        format!("Selected output order: {selected} first")
-                    } else {
-                        format!("選択中の出力順序: {selected} を先に")
-                    }
+            crate::native_ax::activate(cx);
+            paint(cx, window);
+            let tree = crate::native_ax::tree(cx, window);
+            for message in [
+                i18n::Msg::ConflictBothCurrentFirst,
+                i18n::Msg::ConflictBothIncomingFirst,
+                i18n::Msg::ConflictResetFocusedAccessible,
+                i18n::Msg::EditorReset,
+            ] {
+                let expected = message.t();
+                assert!(
+                    tree["nodes"].as_object().unwrap().values().any(|node| {
+                        node["aria"]["role"] == "Button" && node["aria"]["label"] == expected
+                    }),
+                    "action rows and Result reset expose their localized choices: {expected}"
                 );
             }
-            assert_order_only(
-                cx,
-                window,
-                lang,
-                &format!("{} ({})", labels.incoming.role, labels.incoming.name),
+            for id in [
+                "conflict-hunk-0-current-both",
+                "conflict-hunk-0-incoming-both",
+                "conflict-reset-hunk",
+                "conflict-reset-all",
+            ] {
+                assert!(e2e::control_bounds(window.window_id(), id).is_some());
+            }
+            assert_eq!(
+                ax::control("conflict-hunk-0-current-use").unwrap().2,
+                "none"
             );
+            for (side, label) in [("current", &labels.current), ("incoming", &labels.incoming)] {
+                let identity = format!("{} ({})", label.role, label.name);
+                let line = format!("resolver-hunk-0-{side}-line-0");
+                assert_eq!(
+                    ax::control(&line).unwrap().1,
+                    if lang == Lang::En {
+                        format!("Use {identity} line 2")
+                    } else {
+                        format!("{identity} の 2 行目を採用")
+                    },
+                    "source line accessible names retain operation-specific side identity"
+                );
+            }
+            assert_order_only(cx, window, &conflict);
             drop(conflict);
             unmount(cx, app, window);
         }
@@ -428,27 +694,33 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
 fn assert_order_only(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
-    lang: Lang,
-    incoming: &str,
+    conflict: &Entity<ConflictView>,
 ) {
-    click_control(cx, window, "resolver-hunk-0-incoming-first");
+    let before = assembled(cx, conflict);
+    conflict.update(cx, |view, cx| {
+        view.conflict_editor_set_hunk_order(
+            Path::new("notes.txt"),
+            0,
+            kagi_git::resolution::LineOrder::IncomingFirst,
+        );
+        cx.notify();
+    });
     paint(cx, window);
-    assert_eq!(ax::control("resolver-hunk-0-current").unwrap().2, "none");
-    assert_eq!(ax::control("resolver-hunk-0-incoming").unwrap().2, "none");
+    assert_eq!(assembled(cx, conflict), before);
+    cx.read(|cx| {
+        assert!(
+            !conflict
+                .read(cx)
+                .mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .has_resolution(Path::new("notes.txt")),
+            "ordering an untouched hunk must not adopt an empty resolution"
+        );
+    });
     assert_eq!(
-        ax::control("resolver-hunk-0-incoming-first").unwrap().2,
-        "selected"
-    );
-    assert_eq!(
-        ax::control("resolver-hunk-0-current-first").unwrap().2,
-        "unselected"
-    );
-    assert_eq!(
-        ax::description("resolver-hunk-0-current-first").unwrap(),
-        if lang == Lang::En {
-            format!("Selected output order: {incoming} first")
-        } else {
-            format!("選択中の出力順序: {incoming} を先に")
-        }
+        ax::control("conflict-hunk-0-current-use").unwrap().2,
+        "none"
     );
 }

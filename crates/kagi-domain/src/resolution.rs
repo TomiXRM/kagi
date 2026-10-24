@@ -3,6 +3,9 @@
 //! The git2-backed `ResolutionBuffer` lives in the git-backend layer
 //! (`kagi::git::resolution`) and re-exports these models.
 
+#[path = "resolution/assembly.rs"]
+mod assembly;
+
 /// Which side(s) a per-file choice adopts (ADR-0057 / ADR-0058 §hunk buttons).
 ///
 /// `Both*` variants make the ordering explicit (Combination current-first /
@@ -57,22 +60,29 @@ pub enum LineOrigin {
     Context,
 }
 
-/// Tie-breaker order for line-level selections: results are assembled by line
-/// POSITION (see `ConflictHunk::resolved_lines`); `order` only decides which side
-/// comes first when BOTH sides are selected at the *same* position.
+/// Output ordering for line-level selections: either by position with a
+/// same-position tie-breaker, or grouped by side to preserve a hunk-level Both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineOrder {
     /// At a shared position, emit the Current line before the Incoming line.
     CurrentFirst,
     /// At a shared position, emit the Incoming line before the Current line.
     IncomingFirst,
+    /// Emit all taken Current lines, then all taken Incoming lines.
+    CurrentBlockFirst,
+    /// Emit all taken Incoming lines, then all taken Current lines.
+    IncomingBlockFirst,
 }
 
 impl LineOrder {
     fn from_choice(choice: &HunkChoice) -> LineOrder {
         match choice {
-            HunkChoice::BothIncomingFirst => LineOrder::IncomingFirst,
-            _ => LineOrder::CurrentFirst,
+            HunkChoice::BothCurrentFirst => LineOrder::CurrentBlockFirst,
+            HunkChoice::BothIncomingFirst => LineOrder::IncomingBlockFirst,
+            HunkChoice::AcceptCurrent
+            | HunkChoice::AcceptIncoming
+            | HunkChoice::Manual(_)
+            | HunkChoice::Unresolved => LineOrder::CurrentFirst,
         }
     }
 }
@@ -345,97 +355,16 @@ impl ConflictHunk {
     /// provenance.  An [`HunkChoice::Unresolved`] hunk re-emits the conflict
     /// markers (so an unresolved Result is recognizably unfinished and the
     /// marker gate still trips), tagged [`LineOrigin::Manual`].
-    fn resolved_lines(&self) -> Vec<ResolvedLine> {
-        let cur = |g: &[String]| {
-            g.iter()
-                .map(|t| ResolvedLine {
-                    text: t.clone(),
-                    origin: LineOrigin::Current,
-                })
-                .collect::<Vec<_>>()
-        };
-        let inc = |g: &[String]| {
-            g.iter()
-                .map(|t| ResolvedLine {
-                    text: t.clone(),
-                    origin: LineOrigin::Incoming,
-                })
-                .collect::<Vec<_>>()
-        };
-        if let Some(selection) = &self.line_select {
-            // Interleave by LINE POSITION, not grouped by side: the two panes are
-            // displayed row-aligned (the shorter side blank-padded to
-            // max(current, incoming) lines), so a checked line must land at its own
-            // position. Grouping by side put a single checked current line at the
-            // top/bottom of the hunk instead of in place. `order` only breaks the
-            // tie when BOTH sides are checked at the same position (uncommon).
-            let take_cur = |i: usize| -> Option<ResolvedLine> {
-                selection.current_taken.get(i).copied().and_then(|t| {
-                    t.then(|| ResolvedLine {
-                        text: self.current[i].clone(),
-                        origin: LineOrigin::Current,
-                    })
-                })
-            };
-            let take_inc = |i: usize| -> Option<ResolvedLine> {
-                selection.incoming_taken.get(i).copied().and_then(|t| {
-                    t.then(|| ResolvedLine {
-                        text: self.incoming[i].clone(),
-                        origin: LineOrigin::Incoming,
-                    })
-                })
-            };
-            let n = self.current.len().max(self.incoming.len());
-            let mut v = Vec::new();
-            for i in 0..n {
-                match selection.order {
-                    LineOrder::CurrentFirst => {
-                        v.extend(take_cur(i));
-                        v.extend(take_inc(i));
-                    }
-                    LineOrder::IncomingFirst => {
-                        v.extend(take_inc(i));
-                        v.extend(take_cur(i));
-                    }
-                }
-            }
-            return v;
-        }
-        match &self.choice {
-            HunkChoice::AcceptCurrent => cur(&self.current),
-            HunkChoice::AcceptIncoming => inc(&self.incoming),
-            HunkChoice::BothCurrentFirst => {
-                let mut v = cur(&self.current);
-                v.extend(inc(&self.incoming));
-                v
-            }
-            HunkChoice::BothIncomingFirst => {
-                let mut v = inc(&self.incoming);
-                v.extend(cur(&self.current));
-                v
-            }
-            HunkChoice::Manual(text) => text_to_lines(text, LineOrigin::Manual),
-            HunkChoice::Unresolved => self.marker_lines(),
-        }
-    }
-
-    /// Re-emit the conflict markers for an unresolved hunk (so the assembled
-    /// Result is recognizably unfinished and trips the marker-residue gate).
-    fn marker_lines(&self) -> Vec<ResolvedLine> {
-        let m = |s: String| ResolvedLine {
-            text: s,
-            origin: LineOrigin::Manual,
-        };
-        let mut v = vec![m("<<<<<<< Current".to_string())];
-        v.extend(self.current.iter().cloned().map(m));
-        if !self.base.is_empty() {
-            v.push(m("||||||| Base".to_string()));
-            v.extend(self.base.iter().cloned().map(m));
-        }
-        v.push(m("=======".to_string()));
-        v.extend(self.incoming.iter().cloned().map(m));
-        v.push(m(">>>>>>> Incoming".to_string()));
-        v
+    pub fn resolved_lines(&self) -> Vec<ResolvedLine> {
+        let mut lines = Vec::new();
+        self.visit_resolved_lines(&mut |text, origin| {
+            lines.push(ResolvedLine {
+                text: text.to_owned(),
+                origin,
+            });
+            true
+        });
+        lines
     }
 }
 
@@ -648,31 +577,68 @@ impl HunkModel {
         }) && changed
     }
 
-    /// Set the output order for one hunk's line-level selection.
+    /// Reorder already adopted lines without making a resolution choice.
+    /// Returns `false` for unchanged or inapplicable orders (including unresolved,
+    /// manual, empty and one-sided choices), so callers need not record an edit.
+    /// Positional orders require a same-position tie; block orders apply whenever
+    /// both sides have taken lines, even without a same-position tie.
     pub fn set_hunk_line_order(&mut self, hunk_index: usize, order: LineOrder) -> bool {
+        let mut changed = false;
         self.with_hunk_mut(hunk_index, |h| {
-            h.ensure_line_selection().order = order;
-        })
+            let current_first = match order {
+                LineOrder::CurrentFirst | LineOrder::CurrentBlockFirst => true,
+                LineOrder::IncomingFirst | LineOrder::IncomingBlockFirst => false,
+            };
+            if let Some(selection) = &mut h.line_select {
+                let applicable = match order {
+                    LineOrder::CurrentFirst | LineOrder::IncomingFirst => selection
+                        .current_taken
+                        .iter()
+                        .zip(&selection.incoming_taken)
+                        .any(|(current, incoming)| *current && *incoming),
+                    LineOrder::CurrentBlockFirst | LineOrder::IncomingBlockFirst => {
+                        selection.current_taken.contains(&true)
+                            && selection.incoming_taken.contains(&true)
+                    }
+                };
+                if !applicable || selection.order == order {
+                    return;
+                }
+                selection.order = order;
+                changed = true;
+            } else if h.current.is_empty() || h.incoming.is_empty() {
+                return;
+            }
+            match h.choice {
+                HunkChoice::BothCurrentFirst | HunkChoice::BothIncomingFirst => {
+                    let choice = if current_first {
+                        HunkChoice::BothCurrentFirst
+                    } else {
+                        HunkChoice::BothIncomingFirst
+                    };
+                    changed |= h.choice != choice;
+                    h.choice = choice;
+                }
+                HunkChoice::AcceptCurrent
+                | HunkChoice::AcceptIncoming
+                | HunkChoice::Manual(_)
+                | HunkChoice::Unresolved => {}
+            }
+        }) && changed
     }
 
     /// Assemble the file Result lines from all regions, in order, tracking
     /// per-line provenance.  Passthrough lines are [`LineOrigin::Context`].
     pub fn assemble(&self) -> Vec<ResolvedLine> {
-        let mut out: Vec<ResolvedLine> = Vec::new();
-        for r in &self.regions {
-            match r {
-                Region::Passthrough(lines) => {
-                    for l in lines {
-                        out.push(ResolvedLine {
-                            text: l.clone(),
-                            origin: LineOrigin::Context,
-                        });
-                    }
-                }
-                Region::Hunk(h) => out.extend(h.resolved_lines()),
-            }
-        }
-        out
+        let mut lines = Vec::new();
+        self.visit_resolved_lines(&mut |text, origin| {
+            lines.push(ResolvedLine {
+                text: text.to_owned(),
+                origin,
+            });
+            true
+        });
+        lines
     }
 
     /// The assembled Result text (lines joined with `\n`, single trailing
@@ -722,6 +688,10 @@ pub fn lines_to_text(lines: &[ResolvedLine]) -> String {
 // ────────────────────────────────────────────────────────────
 // Unit tests (pure hunk model / line conversion)
 // ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "resolution/order_tests.rs"]
+mod order_tests;
 
 #[cfg(test)]
 mod tests {
@@ -914,7 +884,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![true, true],
-                order: LineOrder::CurrentFirst,
+                order: LineOrder::CurrentBlockFirst,
             }
         );
         assert_eq!(
@@ -922,7 +892,7 @@ keep bottom
             LineSelection {
                 current_taken: vec![true, true],
                 incoming_taken: vec![true, true],
-                order: LineOrder::IncomingFirst,
+                order: LineOrder::IncomingBlockFirst,
             }
         );
         for empty in [HunkChoice::Unresolved, HunkChoice::Manual(String::new())] {

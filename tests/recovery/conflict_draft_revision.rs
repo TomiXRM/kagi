@@ -4,7 +4,7 @@ use crate::macos::{mount, unmount};
 use crate::repository_state::RepositoryState;
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use gpui_component::input::InputState;
-use kagi::ui::{conflict_view::ConflictView, KagiApp};
+use kagi::ui::{conflict_view::ConflictView, e2e, KagiApp};
 use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use std::path::{Path, PathBuf};
@@ -265,9 +265,15 @@ fn stable_second_conflict(
         assert_unresolved(cx, app);
         detect(cx, app, window);
         assert_unresolved(cx, app);
-        // Exercise the actual disabled control, not just its computed verdict.
+        // Continue remains visible but secondary and guarded while files remain.
+        e2e::clear_control_bounds(window.window_id(), "conflict-continue");
+        paint(cx, app, window);
+        assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_some());
+        assert_eq!(
+            kagi::ui::conflict_view::continue_primary_for_e2e(),
+            Some(false)
+        );
         click_control(cx, window, "conflict-continue");
-        cx.run_until_parked();
         assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_none()));
         assert_eq!(before, RepositoryState::read(repo));
         assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
@@ -347,6 +353,8 @@ pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppCont
     let original = cx.read(|cx| input.read(cx).value().to_string());
     let file = Path::new(FILE);
     replace_result(cx, &app, window, &input, FIRST);
+    let saved = ResolutionBuffer::load(&repo).expect("Change autosaves the Result draft");
+    assert_eq!(saved.resolved_text(file).as_deref(), Some(FIRST));
     input.update(cx, |input, cx| input.set_selected_range(2..8, cx));
     let revision = cx.read(|cx| {
         conflict_read(&app, cx)

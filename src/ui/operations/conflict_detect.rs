@@ -21,14 +21,8 @@ pub enum ConflictDetectOutcome {
     /// No conflict session — clear Conflict Mode (emits `conflict-mode: cleared`
     /// only when a mode was previously open).
     Cleared,
-    /// A merge with MERGE_HEAD but no unmerged entries — resolved, ready to
-    /// commit. Only the *editor* has nothing left to show: the merge itself
-    /// lives on in the read model, which is what the abort is admitted from
-    /// (#704). Carries the observation so a stale one can be told from the
-    /// accepted read, like `Detected` (#707 re-review).
-    MergeResolvedReady(kagi_domain::conflict_family::ConflictObservation),
-    /// An active conflict/merge with files to resolve.  Boxed: the session +
-    /// resolution buffer are large, and this variant is the rare case.
+    /// An active conflict/merge, including a fully staged operation awaiting
+    /// Continue. The payload always owns a fresh snapshot and resolution buffer.
     Detected(Box<ConflictDetected>),
 }
 
@@ -80,12 +74,6 @@ impl KagiApp {
             Err(_) => return ConflictDetectOutcome::OpenFailed,
         };
         let session = snapshot.session;
-
-        // A merge with MERGE_HEAD present but no remaining unmerged index entries
-        // is not a conflict to resolve — it is a resolved merge ready to commit.
-        if matches!(session.op, kagi_git::ConflictOp::Merge { .. }) && session.files.is_empty() {
-            return ConflictDetectOutcome::MergeResolvedReady(snapshot.observation);
-        }
 
         // Live index sides remain authoritative (#297). Restore only drafts
         // bound to this operation and file's stages; old/legacy drafts stay
@@ -161,7 +149,7 @@ impl KagiApp {
     /// implementation. ADR-0118: this is the single point that builds / updates /
     /// drops the `Entity<ConflictView>` — `Detected` updates an existing entity in
     /// place (preserving its splits / editor inputs / before-text) or creates a
-    /// new one; `Cleared` / `MergeResolvedReady` / `OpenFailed` drop it. The
+    /// new one; `Cleared` / `OpenFailed` drop it.
     /// "was a conflict open?" (Cleared) and editor-close (Detected) checks read
     /// the entity here because they must reflect the current UI state at apply
     /// time. Needs `cx` (entity create / read / update).
@@ -210,16 +198,26 @@ impl KagiApp {
         let accepted = accepted_operation.as_ref();
         let stale = match (&outcome, accepted) {
             (ConflictDetectOutcome::Detected(d), Some(op)) => op.observation != d.observation,
-            (ConflictDetectOutcome::MergeResolvedReady(o), Some(op)) => &op.observation != o,
-            (
-                ConflictDetectOutcome::Detected(_) | ConflictDetectOutcome::MergeResolvedReady(_),
-                None,
-            ) => false,
+            (ConflictDetectOutcome::Detected(_), None) => false,
             (ConflictDetectOutcome::Cleared | ConflictDetectOutcome::OpenFailed, accepted) => {
                 accepted.is_some()
             }
         };
         if stale {
+            if let Some(entity) = self
+                .ui
+                .get(&owner.session)
+                .and_then(|ui| ui.conflict.clone())
+            {
+                entity.update(cx, |view, cx| {
+                    view.saved_review_needed = accepted.is_some_and(|op| {
+                        view.mode
+                            .as_ref()
+                            .is_some_and(|mode| mode.revision != op.observation.revision)
+                    });
+                    cx.notify();
+                });
+            }
             // The read that superseded it re-detects on its own; this re-arm
             // covers the commit points that do not.
             if let Some(state) = self.ui.get_mut(&owner.session) {
@@ -274,13 +272,14 @@ impl KagiApp {
                     ui.conflict = None;
                 }
             }
-            ConflictDetectOutcome::MergeResolvedReady(_) => {
-                klog!("conflict-mode: merge resolved — ready to commit");
-                if let Some(ui) = self.ui.get_mut(&owner.session) {
-                    ui.conflict = None;
-                }
-            }
             ConflictDetectOutcome::Detected(detected) => {
+                let accepted_view = self.reads.get(Some(owner.session));
+                let current_commit = accepted_view
+                    .head_oid
+                    .as_ref()
+                    .and_then(|head| accepted_view.rows.iter().find(|row| &row.id.0 == head))
+                    .map(|row| format!("{} · {}", row.short_id, row.summary))
+                    .unwrap_or_default();
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
                     ui.retire_issue_conversation_scope();
                 }
@@ -294,14 +293,17 @@ impl KagiApp {
                     editing_file,
                     editing_path,
                 } = *detected;
-                // Same bytes as the `eprintln!` it replaces — `klog!` adds the
-                // `[kagi] ` prefix (ADR-0096); moving the file made the raw
-                // form a new ratchet entry, and converting is the fix.
-                klog!(
-                    "conflict-mode: {} {} file(s)",
-                    session.op.slug(),
-                    session.files.len()
-                );
+                if matches!(session.op, kagi_git::ConflictOp::Merge { .. })
+                    && session.files.is_empty()
+                {
+                    klog!("conflict-mode: merge resolved — ready to commit");
+                } else {
+                    klog!(
+                        "conflict-mode: {} {} file(s)",
+                        session.op.slug(),
+                        session.files.len()
+                    );
+                }
 
                 // This session and buffer were read at `observation`, so that
                 // is the revision they get. The guard above already proved it
@@ -322,7 +324,7 @@ impl KagiApp {
                     .and_then(|ui| ui.conflict.clone())
                 {
                     // Re-detect against a retained pane. An **unchanged**
-                    // observation must change nothing at all (#722 P2): the
+                    // observation must retain draft owners untouched (#722 P2):
                     // resolution buffer carries the undo/redo stack, and the
                     // entity carries the selected file/hunk and scroll, so
                     // swapping in a freshly read `mode` would silently discard
@@ -336,10 +338,14 @@ impl KagiApp {
                             .as_ref()
                             .is_some_and(|current| current.revision == mode.revision) =>
                     {
-                        let _ = entity;
+                        entity.update(cx, |view, cx| {
+                            view.current_commit = current_commit;
+                            view.refresh_saved_reads(cx);
+                        });
                     }
                     Some(entity) => {
                         entity.update(cx, |view, cx| {
+                            view.current_commit = current_commit;
                             view.adopt_detected(mode, editing_path, cx);
                         });
                     }
@@ -348,14 +354,14 @@ impl KagiApp {
                     None => {
                         let weak_app = cx.weak_entity();
                         let repo_path = owner.path.clone();
-                        let entity = cx.new(|_| {
+                        let entity = cx.new(|cx| {
                             let mut view = conflict_view::ConflictView::new(
                                 weak_app,
                                 repo_path,
                                 owner.clone(),
                             );
-                            view.mode = Some(mode);
-                            view.editing = editing_path;
+                            view.current_commit = current_commit;
+                            view.adopt_detected(mode, editing_path, cx);
                             view
                         });
                         if let Some(ui) = self.ui.get_mut(&owner.session) {

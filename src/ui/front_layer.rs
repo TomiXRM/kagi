@@ -310,6 +310,7 @@ impl KagiApp {
                 if let Some(entity) = self.ui().conflict.clone() {
                     entity.update(cx, |view, cx| {
                         view.file_menu = None;
+                        view.reset_all_target = None;
                         cx.notify();
                     });
                 }

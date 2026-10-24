@@ -265,29 +265,6 @@ impl KagiApp {
                     }
                 }
             }
-            DividerKind::ConflictResult => {
-                // T-CONFLICT-UI-003: A·B / Result horizontal divider — ratio
-                // of the measured editor split region given to the A·B row.
-                // The previous separate hunk-control strip is gone; chunk
-                // controls live inside the A/B lists, so this measured
-                // region now matches the rendered split exactly.
-                // ADR-0118: `geom` cell + `result_split` live on the entity now.
-                let cursor_y = f32::from(event.event.position.y);
-                let Some(entity) = self.ui().conflict.clone() else {
-                    return;
-                };
-                let (top, bottom) = entity.read(cx).geom.get();
-                if let Some(ratio) = conflict_split_ratio_from_cursor(
-                    cursor_y,
-                    top,
-                    bottom,
-                    CONFLICT_SPLIT_DIVIDER * z,
-                    CONFLICT_RESULT_MIN,
-                    CONFLICT_RESULT_MAX,
-                ) {
-                    entity.update(cx, |v, cx| v.set_result_split(ratio, cx));
-                }
-            }
             DividerKind::EditorTree => {
                 // Fit and input share the actual Editor body, whose left edge
                 // can sit after the host's Compact rail.

@@ -2,7 +2,7 @@
 
 use super::{ConflictMode, ConflictView};
 use crate::ui::ConflictEditorInputs;
-use gpui::{AppContext, Context, Window};
+use gpui::{AppContext, Context, Focusable, Window};
 use gpui_component::input::InputState;
 use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::conflicts::ConflictStatus;
@@ -10,6 +10,15 @@ use kagi_git::resolution::ResolutionBuffer;
 use std::path::{Path, PathBuf};
 
 impl ConflictView {
+    pub(super) fn capture_result_for_navigation(&mut self, cx: &Context<Self>) {
+        if self.result_editing {
+            if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
+                if pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) == Some(true) {
+                    autosave_drafts(&mode.buffer);
+                }
+            }
+        }
+    }
     /// Adopt a changed observation without granting its predecessor's text
     /// resolution authority. Unchanged observations never enter this path.
     pub(crate) fn adopt_detected(
@@ -19,27 +28,47 @@ impl ConflictView {
         cx: &mut Context<Self>,
     ) {
         let mut previous = self.mode.take();
-        // A keystroke may precede the paint that normally pulls it. Capture it
-        // only against its original owner, before retaining that old draft.
         if self.result_editing {
             if let (Some(previous), Some(path)) = (previous.as_mut(), self.editing.as_deref()) {
                 let _ = pull_owned_editor(self.editor_inputs.as_ref(), previous, path, cx);
             }
         }
-        let same_path = editing_path
+        let selected = self
+            .selected_saved
+            .clone()
+            .or_else(|| {
+                previous.as_ref().and_then(|old| {
+                    old.selected_file
+                        .and_then(|i| old.session.files.get(i).map(|f| f.path.clone()))
+                })
+            })
+            .or_else(|| self.editing.clone())
+            .or(editing_path);
+        let saved = selected
             .as_ref()
-            .is_none_or(|path| self.editing.as_ref() == Some(path));
-        let next_editing = editing_path.or_else(|| {
-            self.editing
-                .take()
-                .filter(|path| mode.session.files.iter().any(|file| file.path == *path))
+            .and_then(|path| mode.session.resolved.iter().position(|f| &f.path == path));
+        let pending = selected
+            .as_ref()
+            .and_then(|path| mode.session.files.iter().position(|f| &f.path == path))
+            .or_else(|| (saved.is_none() && !mode.session.files.is_empty()).then_some(0));
+        let saved =
+            saved.or_else(|| (pending.is_none() && !mode.session.resolved.is_empty()).then_some(0));
+        mode.selected_file = pending;
+        mode.editing_file = pending.filter(|&i| {
+            matches!(
+                mode.session.files[i].kind,
+                kagi_git::ConflictKind::Content | kagi_git::ConflictKind::AddAdd
+            )
         });
-        let same_context = same_path
-            && next_editing.as_deref().is_some_and(|path| {
-                previous
+        let next_editing = mode
+            .editing_file
+            .map(|i| mode.session.files[i].path.clone());
+        let same_context = next_editing.as_deref().is_some_and(|path| {
+            self.editing.as_deref() == Some(path)
+                && previous
                     .as_ref()
                     .is_some_and(|old| same_file_context(old, &mode, path))
-            });
+        });
         let retain_input = same_context
             && self.editor_inputs.as_ref().is_some_and(|inputs| {
                 next_editing.as_ref() == Some(&inputs.path)
@@ -52,6 +81,7 @@ impl ConflictView {
                 .as_ref()
                 .is_some_and(|old| same_file_context(old, &mode, path))
         });
+        let first_detection = previous.is_none();
         if let Some(previous) = previous {
             mode.buffer.retain_drafts(previous.buffer);
             mode.refresh_file_statuses();
@@ -67,6 +97,7 @@ impl ConflictView {
             self.editor_inputs = None;
         }
         if !same_context {
+            self.page = super::ConflictPage::Hunk;
             self.selected_hunk = 0;
             self.reset_all_target = None;
             self.file_menu = None;
@@ -75,7 +106,21 @@ impl ConflictView {
             self.hl_cache.borrow_mut().take();
         }
         self.editing = next_editing;
+        self.selected_saved = saved.map(|i| mode.session.resolved[i].path.clone());
+        self.saved_review_needed = false;
+        self.clear_saved_reads();
         self.mode = Some(mode);
+        self.rebuild_tree();
+        if first_detection {
+            self.initialize_tree_expansion();
+        }
+        if let Some(saved) = saved {
+            self.conflict_open_saved(saved, cx);
+        } else if !same_context {
+            if let Some(pending) = pending {
+                self.conflict_select_file(pending);
+            }
+        }
         cx.notify();
     }
 
@@ -86,6 +131,14 @@ impl ConflictView {
             inputs.result.update(cx, |state, cx| {
                 state.set_search_labels(kagi_ui_core::find::labels(), cx);
             });
+        }
+        if !self.writer_busy
+            && self
+                .editor_inputs
+                .as_ref()
+                .is_some_and(|inputs| inputs.result.read(cx).focus_handle(cx).is_focused(window))
+        {
+            self.result_editing = true;
         }
         let Some(path) = self.editing.as_deref() else {
             self.editor_inputs = None;
@@ -107,13 +160,10 @@ impl ConflictView {
             self.editor_inputs = None;
             return;
         };
-        let result_text = if self.result_editing {
-            mode.buffer
-                .resolved_text(path)
-                .unwrap_or_else(|| model.assembled_text())
-        } else {
-            model.assembled_text()
-        };
+        let result_text = mode
+            .buffer
+            .resolved_text(path)
+            .unwrap_or_else(|| model.assembled_text());
         let sig = crate::ui::conflict_content_sig(path, &result_text, self.result_editing);
         if self.editor_inputs.as_ref().is_some_and(|inputs| {
             inputs.path == path && inputs.revision == mode.revision && inputs.content_sig == sig
@@ -125,7 +175,19 @@ impl ConflictView {
             .as_ref()
             .is_none_or(|inputs| inputs.path != path || inputs.revision != mode.revision)
         {
-            self.editor_inputs = Some(new_editor_inputs(path, &mode.revision, window, cx));
+            let inputs = new_editor_inputs(path, &mode.revision, window, cx);
+            self.result_subscription = Some(cx.subscribe(&inputs.result, |view, _, event, cx| {
+                use gpui_component::input::InputEvent;
+                if !view.writer_busy && matches!(event, InputEvent::Focus | InputEvent::Change) {
+                    view.result_editing = true;
+                    view.reset_all_target = None;
+                    if matches!(event, InputEvent::Change) {
+                        view.capture_result_for_navigation(cx);
+                    }
+                    cx.notify();
+                }
+            }));
+            self.editor_inputs = Some(inputs);
         }
         if let Some(inputs) = self.editor_inputs.as_mut() {
             inputs

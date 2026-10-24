@@ -853,21 +853,58 @@ not native VoiceOver evidence.
 
 For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
 `conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
-Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,
-and compares Enter adoption with the measured pointer control. It exercises
-Space, both orders, line-level Partial state, file-side Use all, Result
-undo/redo, viewport containment and zero repository writes/receipts at
-940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
-The F19 probe observes only the actual focused owner; AX metadata records
-renderer-supplied role/name/state, not native VoiceOver delivery.
-`conflict_resolver_rebuild` replaces a retained path's model with changed hunk
-and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
-checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
-operation, and order selection is announced independently of adoption.
-Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
-the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
-and read live EN/JA adoption names in Accessibility Inspector. Do not Save
-while comparing buffer-only adoption with pointer behavior.
+Tabs to the production per-pane action rows, roves across hunks without selecting them,
+and compares keyboard Use/Both adoption with measured pointer selection. It retains
+line-level Partial state, Result undo/redo, left-footer Prev/Next reveal and
+responsive source viewports with 24px uniform rows at 940×660 / 1392×883,
+100%/167%, EN/JA, Apple Light/Dark, with zero repository writes or receipts.
+The F19 probe observes the actual focused owner; renderer AX metadata is not
+native VoiceOver evidence. `conflict_resolver_rebuild` replaces a retained path's
+hunk/line counts and activates rebuilt controls. `conflict_resolver_roles` checks
+real merge/rebase side identities and distinguishes adoption from low-level order.
+
+On `feature/conflict-hunk` (ADR-0227), keep the 57 conflict registrations.
+`conflict_progressive_add_add` covers the four adoption choices, decided reopening,
+Both as one undo checkpoint, exact partial add/add bytes, protected empty manual
+Result, real Save and the fresh fully staged merge handoff. `conflict_reset_disarm`
+uses the Result-header Reset all button and retains two-step confirmation,
+file/hunk/blur disarming and writer-busy refusal through pointer and Enter/Space.
+`conflict_result_segment` retains its registration name but now covers direct
+Result input, repeated focus, hunk/file navigation and writer-busy refusal,
+not removed Preview/Edit segments. `conflict_file_selection` checks the source
+list, hidden count, single header action, saved navigation and no Git receipts.
+Its native row-fill sample is window-local logical x=left+4, y=vertical centre,
+converted once by `window.scale_factor()`: outside icons, text, badges and rounded
+corners, not the old right/top sample. `conflict_continue_cache` still requires
+explicit Reset before replacing a divergent manual Result.
+
+Run the existing scoped selection with isolated logs:
+```sh
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 \
+  KAGI_GUI_E2E_ONLY='conflict_' KAGI_GUI_E2E_KEEP_GOING=1 \
+  cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+```
+Read existing `target/gui-e2e/<scenario>/panic.txt` and screenshots before a
+rerun. Never repair a product focus failure by focusing a hidden test owner,
+or relax exact bytes to make a failed line adoption pass.
+
+Tier B compares the real window against H1–H7 from
+`docs/ui/conflict-sidebar/build-hifi.js` and the FRD Visual design pass as superseded
+by FRD A+C, using the same fixture, viewport, language, zoom and theme before/after.
+Capture unresolved Use/Both rows, resolved state/Change rows, reopened, ready-unsaved,
+locked Saved, hidden sidebar, dark and narrow/high-zoom states. Require borderless
+source documents, aligned 24px action rows, a control-free 12px gutter band,
+Result-header focused Reset and confirmed Reset all, total/resolved header counts,
+left-footer navigation,
+direct Result input/origin stripes, top-down unpinned sections, fill-only rows,
+plain hidden count, one header Save/Next file action and retained toolbar icons.
+Exercise pointer and keyboard choices, direct typing, IME, focus return and AX
+in the live window; probes and screenshots alone do not prove those behaviors.
+Inspect accepted Saved evidence excluding unrelated staged files, stale reads
+losing Saved claims and stash having no saved entries. Independently check actual
+Save/Continue/Commit bytes. Navigation must preserve Git and emit no receipts.
+Use goal-only independent trials as additional evidence, not proof of human
+novice or cross-language usability.
 For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
 `graph_columns_fit` uses an isolated 40rem threshold to retain desktop
 1000×660/167% and compact 940×660/167%, requiring a scaled 120px subject minimum, contained author/time,
@@ -927,11 +964,14 @@ compare the real 700×500 JA toolbar with a long repository/branch identity at
 100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
 
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
-`conflict_file_selection` finds the actual dashboard Next button through real
-Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard
-owns the window's last Tab stop (#1222 added status-bar stops). Space and Enter
-must paint the same inactive `#d3d3d3` selection and selected AX option; pointer,
-hover, editor navigation, binary cleanup and draft-resolution assertions remain.
+`conflict_file_selection` enters the persistent `conflict-tree` ListBox through
+real Tab/Shift-Tab and its GUI-only F19 focus probe, rather than seeking a removed
+overview Open button or assuming the tree owns the window's last Tab stop
+(#1222 added status-bar stops). Arrows rove focus across pending and saved rows;
+Enter/Space opens the focused path. After pointer navigation, the product itself
+must preserve keyboard entry; the test does not refocus the root. Cover the first
+raw file, ready unsaved drafts, saved read-only inspection, and sidebar hide/show
+without selection loss. Inactive fill and selected AX option must agree.
 The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
 for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
 checks that the retained stash has no write lease before explicit approval,
@@ -3513,6 +3553,12 @@ PID=$!
 WID=12345 # Replace with the selected window ID from the listing.
 ```
 
+`pidclick drag <x1> <y1> <x2> <y2>` posts a left-button down, interpolated
+held-button moves (at most 4 logical pixels apart), and mouse-up to that same
+PID/window without moving the user's pointer. Use this for the conflict-line
+checkbox paint gesture: start at the first checkbox centre and end at the third;
+repeat from a checked checkbox to paint the same range clear.
+
 For #1721, use independent EN/JA two-conflict repositories and a preserved
 default-feature binary; record its source SHA, SHA-256 and actual `features=[]`
 fingerprint separately from the GUI runner. Type the first Result and actually
@@ -3609,6 +3655,8 @@ and `rclick` include a hover primer. `type` derives virtual key codes from the
 active keyboard layout, so it is unsuitable for IME, dead keys, unsupported
 characters, newline, or Tab input. Screenshots are physical pixels; do not mix
 them with pidclick's logical coordinates.
+Mouse events use explicit empty flags: stuck HID Control otherwise makes GPUI treat Left as Right.
+Check suspected inheritance with `CGEventSource.flagsState(.hidSystemState)` (`maskControl` is 262144).
 
 ```bash
 /tmp/pidclick --pid "$PID" --window-id "$WID" move 120 80

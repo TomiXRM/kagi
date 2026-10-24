@@ -6,6 +6,15 @@ impl Msg {
     pub fn conflict_stopped(count: Option<usize>) -> String {
         stopped_for(lang(), count)
     }
+    pub fn conflict_counts(total: usize, resolved: usize) -> String {
+        match lang() {
+            Lang::En => format!(
+                "{total} {} · {resolved} resolved",
+                if total == 1 { "conflict" } else { "conflicts" }
+            ),
+            Lang::Ja => format!("conflict {total} 件 · {resolved} 解決済み"),
+        }
+    }
 
     pub fn conflict_side(role: &str, name: &str) -> String {
         format!(

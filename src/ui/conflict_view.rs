@@ -1,47 +1,23 @@
-//! W30/W33-CONFLICT-UI: Conflict Mode UI — persistent banner + Conflict
-//! Dashboard (right panel) + per-file choose / preview center.
-//!
-//! This module is the **UI half** of the conflict feature.  All git logic lives
-//! in the `kagi_git::conflicts` / `resolution` backend (W26): this file only
-//! *renders* a [`ConflictMode`] snapshot and wires its buttons to the `KagiApp`
-//! handlers (which in turn call the backend `plan_*` / `ResolutionBuffer` API).
-//! No `git2` calls happen here.
-//!
-//! # W33 scope (this lane)
-//!
-//! - **Conflict Dashboard** (ADR-0063 / T-CONFLICT-DASH-021/022): the right panel
-//!   in Conflict Mode, ordered state → next action → files:
-//!   - state: op header + direction summary + Current/Incoming role badges +
-//!     conflicted/resolved counts (with prev/next nav),
-//!   - next action: Continue (filled, gated on `can_continue`) and Abort (danger,
-//!     two-stage) side by side, the blocker/ready note, and a *secondary*
-//!     Next-conflict / Skip row,
-//!   - files: Conflicted / Resolved cards; each card carries icon buttons
-//!     (open externally, copy path) plus a "…" overflow menu (the full action
-//!     set) rendered via the shared `menu_overlay` (so it clamps on-screen).
-//! - Activating a Conflicted row sets `editing_file` (W32's Conflict Editor lane
-//!   reads it); this lane does not implement the editor.
-//!
-//! Terminology (ADR-0058): every side label comes from `side_labels` — the words
-//! "ours"/"theirs" never appear in any user-facing string.
+//! Session-owned conflict workspace: file tree, one hunk, and Result inspection.
+//! Git mutation stays behind the existing frozen intent/application boundary.
+//! ResolutionBuffer owns every choice and manual draft; pages are view-only.
 
 use kagi_ui_core::tooltip::HoverTooltip as _;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{
-    div, prelude::*, px, rgb, Context, Entity, MouseButton, SharedString, UniformListScrollHandle,
-    WeakEntity, Window,
+    div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle, WeakEntity,
+    Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::Button;
 use gpui_component::input::InputState;
-use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::conflicts::{ConflictKind, ConflictStatus, SideLabels};
 
-use super::button_style::{apply_role, ButtonRole, KagiButton};
+use super::button_style::{ButtonRole, KagiButton};
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
 use super::i18n::Msg;
 use super::menu_overlay;
@@ -49,7 +25,23 @@ use super::theme::{self, theme};
 use super::ConflictEditorInputs;
 use super::KagiApp;
 
+use super::{conflict_binary_view, e2e, ToastKind};
+
+mod actions;
+mod file_menu;
+mod saved;
+mod sidebar;
+mod special;
+mod toolbar;
+pub use file_menu::render_file_menu;
+pub use saved::SavedPreview;
+#[cfg(test)]
+mod tests;
+#[cfg(feature = "gui-e2e")]
+pub use toolbar::continue_primary_for_e2e;
 mod draft_owner;
+pub(super) mod flow;
+pub use flow::ConflictPage;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
@@ -69,7 +61,7 @@ pub fn take_next_conflict_focus_probe() -> bool {
 pub struct EditorInputs {
     /// The conflicting file these inputs are bound to.
     pub path: PathBuf,
-    /// Result editor (read-only in Preview, editable in Edit).
+    /// Directly editable Result; the Input is disabled while its writer is busy.
     pub result: Entity<InputState>,
 }
 
@@ -78,8 +70,17 @@ pub struct EditorInputs {
 /// on [`KagiApp`], not on the cloned [`ConflictMode`]).
 #[derive(Clone)]
 pub struct EditorChrome {
+    pub current_commit: String,
     /// Presentation-only projection of the authoritative Sessions writer lease.
     pub writer_busy: bool,
+    pub save_refused: bool,
+    pub source_choices_enabled: bool,
+    pub manual_override: bool,
+    pub page: ConflictPage,
+    pub navigation_focus: Option<gpui::FocusHandle>,
+    pub show_tools: bool,
+    pub reset_all_armed: bool,
+    pub reset_all_focus: Option<gpui::FocusHandle>,
     /// The Result pane `InputState`, when present for the edited content file.
     pub inputs: Option<EditorInputs>,
     /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
@@ -94,19 +95,11 @@ pub struct EditorChrome {
         std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::ResultHlCache>>>,
     /// Whether the Result pane is in Edit mode (UX-015).
     pub result_editing: bool,
-    /// Whether the destructive "Reset all" is armed (POLISH-042).
-    pub reset_all_armed: bool,
-    pub reset_focus: Option<gpui::FocusHandle>,
-    pub result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
-    /// A·B / Result vertical split ratio (fraction given to the A·B row).
-    pub result_split: f32,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk,
     /// for the selected-hunk highlight in the per-hunk accept list.
     pub selected_hunk: usize,
-    /// Measured (top, bottom) screen-px bounds of the editor split region.
-    pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     pub raw_preview_scroll: gpui::ScrollHandle,
@@ -142,6 +135,7 @@ pub struct EditorChrome {
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
     window_activation_subscription: Option<gpui::Subscription>,
+    pub(crate) operation_chrome_subscription: Option<gpui::Subscription>,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// `Some(_)` while a conflict/merge is in progress (set by
@@ -149,35 +143,44 @@ pub struct ConflictView {
     /// untouched until Continue / Abort execute through the existing plan
     /// pipeline.
     pub mode: Option<ConflictMode>,
-    /// W32: `Some(path)` while the dedicated hunk-level Conflict Editor is open
-    /// for that conflicting file. `None` shows the Dashboard.
+    pub current_commit: String,
+    /// Retained editor owner; saved inspection never owns an editable draft.
     pub editing: Option<PathBuf>,
+    pub page: ConflictPage,
+    pub sidebar_hidden: bool,
+    pub sidebar_expanded: HashSet<PathBuf>,
+    pub selected_saved: Option<PathBuf>,
+    pub saved_preview: Option<SavedPreview>,
+    pub save_refused: Option<PathBuf>,
+    pub(crate) save_attempt: Option<PathBuf>,
+    /// Presentation projection from the existing accepted-observation stale path.
+    pub(crate) saved_review_needed: bool,
+    sidebar: sidebar::SidebarState,
+    saved_cache: HashMap<(PathBuf, String), SavedPreview>,
+    saved_read: Option<(PathBuf, String)>,
+    saved_error: bool,
+    sidebar_toggle_focus: Option<gpui::FocusHandle>,
+    navigation_focus: Option<gpui::FocusHandle>,
+    pub show_tools: bool,
+    reset_all_focus: Option<gpui::FocusHandle>,
+    /// Same-pane checkbox painting; resolution state stays in `line_select`.
+    pub(crate) line_paint: Option<(kagi_git::resolution::SelectionSide, bool)>,
     /// W32: last-saved resolved text per file, so a Save can log a before→after
     /// file-content hash pair (T-035) without re-reading the working tree.
     pub editing_before_text: HashMap<PathBuf, String>,
     /// T-CONFLICT-UI-001/005: the three CodeEditor `InputState`s backing the
     /// A / B / Result panes (ADR-0069). Lazily created in a `Window` context.
     pub editor_inputs: Option<ConflictEditorInputs>,
+    result_subscription: Option<gpui::Subscription>,
     /// T-CONFLICT-UX-015: whether the Result pane is in Edit mode (editable)
     /// rather than Preview (read-only).
     pub result_editing: bool,
     /// The edited path whose first-stage Reset all approval is still current.
     pub reset_all_target: Option<PathBuf>,
-    reset_focus: Option<gpui::FocusHandle>,
-    reset_blur_subscription: Option<gpui::Subscription>,
-    result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// T-CONFLICT-UI-003: A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
-    /// T-CONFLICT-UI-003: A·B / Result vertical split ratio (fraction to A·B).
-    pub result_split: f32,
-    /// T-CONFLICT-UI-003: measured (top, bottom) screen-px bounds of the
-    /// editor's split region, for absolute-coordinate divider dragging. Shared
-    /// with `KagiApp` (the *same* `Rc<Cell>`): the render writes the measured
-    /// bounds; the root `on_drag_move` handler (on `KagiApp`) reads them and
-    /// updates the split via `entity.update`. Mirrors FileHistory `geom` sharing.
-    pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
-    /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
-    /// row, for the vertical A|B divider drag. Shared with `KagiApp` as above.
+    /// Measured (left, right) screen-px bounds for A|B divider dragging.
+    /// Shared with `KagiApp`: render writes bounds, the root drag handler reads.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Stable raw-preview scroll owner, shared by production and E2E renders.
     pub raw_preview_scroll: gpui::ScrollHandle,
@@ -229,20 +232,35 @@ impl ConflictView {
         static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
             window_activation_subscription: None,
+            operation_chrome_subscription: None,
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             mode: None,
+            current_commit: String::new(),
             editing: None,
+            page: ConflictPage::Hunk,
+            sidebar_hidden: false,
+            sidebar_expanded: HashSet::new(),
+            selected_saved: None,
+            saved_preview: None,
+            save_refused: None,
+            save_attempt: None,
+            saved_review_needed: false,
+            sidebar: Default::default(),
+            saved_cache: HashMap::new(),
+            saved_read: None,
+            saved_error: false,
+            sidebar_toggle_focus: None,
+            navigation_focus: None,
+            show_tools: false,
+            reset_all_focus: None,
+            line_paint: None,
             editing_before_text: HashMap::new(),
             editor_inputs: None,
+            result_subscription: None,
             result_editing: false,
             reset_all_target: None,
-            reset_focus: None,
-            reset_blur_subscription: None,
-            result_mode_focus: Default::default(),
             ab_split: super::CONFLICT_AB_DEFAULT,
-            result_split: super::CONFLICT_RESULT_DEFAULT,
-            geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             raw_preview_scroll: gpui::ScrollHandle::new(),
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -270,133 +288,6 @@ impl ConflictView {
             cx.notify();
         }
     }
-
-    /// Update the A·B / Result split ratio from the root divider-drag handler.
-    pub fn set_result_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
-        if (ratio - self.result_split).abs() > 0.001 {
-            self.result_split = ratio;
-            cx.notify();
-        }
-    }
-
-    /// Apply a per-file side choice to the in-memory resolution buffer, then
-    /// recompute that file's status.  The repository is untouched (in-memory
-    /// first); the buffer is autosaved so the partial resolution survives.
-    ///
-    /// On success this refreshes the file's status and autosaves; logging /
-    /// toasting is the caller's responsibility (the `KagiApp` wrapper).
-    ///
-    /// Returns `None` when there is no active conflict mode — a no-op the caller
-    /// must NOT log (mirrors the original early-return-without-logging path);
-    /// `Some(Ok(()))` on apply, `Some(Err(_))` on buffer failure.
-    pub fn apply_choice(
-        &mut self,
-        path: &std::path::Path,
-        choice: kagi_git::ResolutionChoice,
-    ) -> Option<Result<(), kagi_git::GitError>> {
-        if self.writer_busy {
-            return None;
-        }
-        let c = self.mode.as_mut()?;
-        if let Err(e) = c.buffer.apply_choice(path, choice) {
-            return Some(Err(e));
-        }
-        // Refresh status for this file from the buffer.
-        c.refresh_file_status(path);
-        // Autosave (ADR-0057): never lose a partial resolution.
-        let _ = c.buffer.autosave();
-        Some(Ok(()))
-    }
-
-    pub fn set_file_side(
-        &mut self,
-        path: &std::path::Path,
-        side: kagi_git::resolution::SelectionSide,
-        taken: bool,
-    ) {
-        if self.writer_busy {
-            return;
-        }
-        let Some(c) = self.mode.as_mut() else {
-            return;
-        };
-        if c.buffer.set_file_side_selection(path, side, taken) {
-            self.after_selection_change(path, None);
-        }
-    }
-
-    pub fn set_hunk_side(
-        &mut self,
-        path: &std::path::Path,
-        hunk_index: usize,
-        side: kagi_git::resolution::SelectionSide,
-        taken: bool,
-    ) {
-        if self.writer_busy {
-            return;
-        }
-        let Some(c) = self.mode.as_mut() else {
-            return;
-        };
-        if c.buffer
-            .set_hunk_side_selection(path, hunk_index, side, taken)
-        {
-            self.after_selection_change(path, Some(hunk_index));
-        }
-    }
-
-    pub fn set_hunk_line(
-        &mut self,
-        path: &std::path::Path,
-        hunk_index: usize,
-        side: kagi_git::resolution::SelectionSide,
-        line_index: usize,
-        taken: bool,
-    ) {
-        if self.writer_busy {
-            return;
-        }
-        let Some(c) = self.mode.as_mut() else {
-            return;
-        };
-        if c.buffer
-            .set_hunk_line_selection(path, hunk_index, side, line_index, taken)
-        {
-            self.after_selection_change(path, Some(hunk_index));
-        }
-    }
-
-    pub fn set_hunk_order(
-        &mut self,
-        path: &std::path::Path,
-        hunk_index: usize,
-        order: kagi_git::resolution::LineOrder,
-    ) {
-        if self.writer_busy {
-            return;
-        }
-        let Some(c) = self.mode.as_mut() else {
-            return;
-        };
-        if c.buffer.set_hunk_line_order(path, hunk_index, order) {
-            self.after_selection_change(path, Some(hunk_index));
-        }
-    }
-
-    fn after_selection_change(&mut self, path: &std::path::Path, selected_hunk: Option<usize>) {
-        self.reset_all_target = None;
-        if let Some(hunk) = selected_hunk {
-            self.selected_hunk = hunk;
-        }
-        if let Some(i) = self.editor_inputs.as_mut() {
-            i.content_sig = 0;
-        }
-        let Some(c) = self.mode.as_mut() else {
-            return;
-        };
-        c.refresh_file_status(path);
-        let _ = c.buffer.autosave();
-    }
 }
 
 /// Pure UI-side data: the `ConflictSession` describes the in-progress operation
@@ -419,9 +310,8 @@ pub struct ConflictMode {
     pub current_branch: String,
     /// Index into `session.files` of the file whose detail/preview is open.
     pub selected_file: Option<usize>,
-    /// Index into `session.files` of the file currently open in the Conflict
-    /// Editor (W32 lane reads/owns this; the dashboard only *sets* it when a
-    /// Conflicted row is activated).  `None` when no editor file is open.
+    /// Index into `session.files` of the text file open in the Conflict Editor.
+    /// `None` for a whole-file conflict or saved-file inspection.
     pub editing_file: Option<usize>,
     /// Two-stage Abort used to be armed here (#704 removed it): the arming
     /// belonged to the entity, so an abort was only reachable while the entity
@@ -532,20 +422,6 @@ pub fn blocker_msg(b: &kagi_git::ContinueBlocker) -> Msg {
     }
 }
 
-/// Translated tag text for a conflict kind.
-fn kind_tag(kind: ConflictKind) -> &'static str {
-    match kind {
-        ConflictKind::Content => Msg::ConflictKindContent.t(),
-        ConflictKind::RenameDelete => Msg::ConflictKindRenameDelete.t(),
-        ConflictKind::ModifyDelete => Msg::ConflictKindModifyDelete.t(),
-        ConflictKind::AddAdd => Msg::ConflictKindAddAdd.t(),
-        ConflictKind::Submodule => Msg::ConflictKindSubmodule.t(),
-        ConflictKind::Symlink => Msg::ConflictKindSymlink.t(),
-        ConflictKind::Binary => Msg::ConflictKindBinary.t(),
-        ConflictKind::DirFile => Msg::ConflictKindDirFile.t(),
-    }
-}
-
 // ────────────────────────────────────────────────────────────
 // Banner (persistent, under the header)
 // ────────────────────────────────────────────────────────────
@@ -553,30 +429,28 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 // ────────────────────────────────────────────────────────────
 // ADR-0118 / T-ENTITY-CONFLICT-001: ConflictView entity render + listeners.
 //
-// The entity renders the conflict BODY (center 3-pane editor + right Dashboard).
-// The old persistent banner under the header was removed (ADR-0135): it
-// repeated the operation summary and n/m that the Dashboard header and the
-// editor toolbar already show.
+// The entity renders exactly one presentation page at a time.
 // ────────────────────────────────────────────────────────────
 
 impl Render for ConflictView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.reset_focus.is_none() {
-            let focus = cx.focus_handle().tab_stop(false);
-            self.reset_blur_subscription =
-                Some(cx.on_focus_out(&focus, window, |view, _, _, cx| {
-                    view.reset_all_target = None;
-                    cx.notify();
-                }));
-            self.reset_focus = Some(focus);
+        self.sync_editor_inputs(window, cx);
+        #[cfg(feature = "gui-e2e")]
+        super::conflict_editor_a11y::begin_frame();
+        if self.reset_all_focus.is_none() {
+            self.reset_all_focus = Some(cx.focus_handle());
         }
-        // Reconcile logical focus as well as native focus-out: inactive windows
-        // retain logical focus, but GPUI suppresses their native focus events.
+        if self.navigation_focus.is_none() {
+            self.navigation_focus = Some(cx.focus_handle().tab_stop(false));
+        }
+        if self.sidebar_toggle_focus.is_none() {
+            self.sidebar_toggle_focus = Some(cx.focus_handle());
+        }
         if self.reset_all_target.is_some()
-            && self
-                .reset_focus
+            && !self
+                .reset_all_focus
                 .as_ref()
-                .is_some_and(|focus| !focus.contains_focused(window, cx))
+                .is_some_and(|handle| handle.is_focused(window))
         {
             self.reset_all_target = None;
         }
@@ -585,6 +459,7 @@ impl Render for ConflictView {
                 Some(cx.observe_window_activation(window, |view, window, cx| {
                     if !window.is_window_active() {
                         view.reset_all_target = None;
+                        view.line_paint = None;
                     }
                     cx.notify();
                 }));
@@ -605,16 +480,14 @@ impl Render for ConflictView {
             let file = mode.selected_file.and_then(|i| mode.session.files.get(i))?;
             Some((file.path.as_path(), mode.buffer.hunk_model(&file.path)?))
         });
-        self.resolver_keyboard
-            .borrow_mut()
-            .prepare(resolver, &self.ab_scroll_handle, window, cx);
-        match self.mode.as_ref() {
-            Some(mode) => {
-                let chrome = self.editor_chrome();
-                render_body(mode, &chrome, window_active, cx)
-            }
-            None => div().into_any_element(),
-        }
+        self.resolver_keyboard.borrow_mut().prepare(
+            resolver,
+            self.selected_hunk,
+            &self.ab_scroll_handle,
+            window,
+            cx,
+        );
+        self.render_workspace(window_active, window, cx)
     }
 }
 
@@ -674,8 +547,22 @@ impl ConflictView {
     /// entity's own fields (the editors + split ratios + Result mode + geometry
     /// all live on the entity now).
     fn editor_chrome(&self) -> EditorChrome {
+        let manual_override = self.editing.as_deref().is_some_and(|path| {
+            self.mode
+                .as_ref()
+                .is_some_and(|mode| flow::manual_override(mode, path))
+        });
         EditorChrome {
+            current_commit: self.current_commit.clone(),
             writer_busy: self.writer_busy,
+            save_refused: self.save_refused.is_some() && self.save_refused == self.editing,
+            source_choices_enabled: !self.writer_busy && !manual_override,
+            manual_override,
+            page: self.page,
+            navigation_focus: self.navigation_focus.clone(),
+            show_tools: self.show_tools,
+            reset_all_armed: self.reset_all_target.is_some(),
+            reset_all_focus: self.reset_all_focus.clone(),
             inputs: self.editor_inputs.as_ref().map(|i| EditorInputs {
                 path: i.path.clone(),
                 result: i.result.clone(),
@@ -685,14 +572,8 @@ impl ConflictView {
             result_scroll: self.result_scroll_handle.clone(),
             result_hl: self.result_hl.clone(),
             result_editing: self.result_editing,
-            reset_all_armed: self.reset_all_target.as_ref() == self.editing.as_ref()
-                && self.reset_all_target.is_some(),
-            reset_focus: self.reset_focus.clone(),
-            result_mode_focus: self.result_mode_focus.clone(),
             ab_split: self.ab_split,
-            result_split: self.result_split,
             selected_hunk: self.selected_hunk,
-            geom: self.geom.clone(),
             ab_geom: self.ab_geom.clone(),
             raw_preview_scroll: self.raw_preview_scroll.clone(),
             hl_cache: self.hl_cache.clone(),
@@ -724,1536 +605,3 @@ pub(crate) enum FrozenConflictIntent {
 // `app.conflict`, so they are safe to call synchronously from a leased listener.
 // Toasts (rare error paths) marshal to the parent via the weak handle.
 // ────────────────────────────────────────────────────────────
-
-impl ConflictView {
-    /// Open the dedicated Conflict Editor for the conflicting file at `path`.
-    /// Builds (idempotently) the per-file `HunkModel` from the repo's zdiff3
-    /// materialization, then sets `editing`. Read-only repo open via `repo_path`.
-    /// (Moved from `KagiApp::conflict_open_editor`, sourcing `repo_path` from self.)
-    pub fn conflict_open_editor(&mut self, path: &std::path::Path) {
-        if self.editing.as_deref() != Some(path) {
-            self.reset_all_target = None;
-        }
-        // Materialize the markers (needs the repo) and build the hunk model.
-        if let Ok(repo) = kagi_git::Backend::open(&self.repo_path) {
-            if let Some(c) = self.mode.as_mut() {
-                if let Some(markers) = repo.materialized_markers(&c.buffer, path) {
-                    c.buffer.ensure_hunks(path, &markers);
-                }
-            }
-        }
-        // Keep the Dashboard selection in sync so back/forth is coherent.
-        if let Some(c) = self.mode.as_mut() {
-            if let Some(idx) = c.session.files.iter().position(|f| f.path == path) {
-                c.selected_file = Some(idx);
-                c.editing_file = Some(idx);
-            }
-        }
-        self.editing = Some(path.to_path_buf());
-    }
-
-    /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
-    pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
-        self.reset_all_target = None;
-        self.selected_hunk = hunk_index;
-    }
-
-    pub fn conflict_editor_set_file_side(
-        &mut self,
-        path: &std::path::Path,
-        side: kagi_git::resolution::SelectionSide,
-        taken: bool,
-    ) {
-        self.set_file_side(path, side, taken);
-    }
-
-    pub fn conflict_editor_set_hunk_side(
-        &mut self,
-        path: &std::path::Path,
-        hunk_index: usize,
-        side: kagi_git::resolution::SelectionSide,
-        taken: bool,
-    ) {
-        self.set_hunk_side(path, hunk_index, side, taken);
-    }
-
-    pub fn conflict_editor_set_hunk_line(
-        &mut self,
-        path: &std::path::Path,
-        hunk_index: usize,
-        side: kagi_git::resolution::SelectionSide,
-        line_index: usize,
-        taken: bool,
-    ) {
-        self.set_hunk_line(path, hunk_index, side, line_index, taken);
-    }
-
-    pub fn conflict_editor_set_hunk_order(
-        &mut self,
-        path: &std::path::Path,
-        hunk_index: usize,
-        order: kagi_git::resolution::LineOrder,
-    ) {
-        self.set_hunk_order(path, hunk_index, order);
-    }
-
-    /// T-CONFLICT-POLISH-042: "Reset all" two-stage confirm. First click arms,
-    /// second performs the reset. (Moved from `KagiApp`.)
-    pub fn conflict_editor_reset_all_request(&mut self, path: &std::path::Path) {
-        if self.writer_busy || self.editing.as_deref() != Some(path) {
-            return;
-        }
-        if self.reset_all_target.as_deref() == Some(path) {
-            self.reset_all_target = None;
-            self.conflict_editor_reset_all(path);
-        } else {
-            self.reset_all_target = Some(path.to_path_buf());
-        }
-    }
-
-    /// Explicitly select Preview / Edit; reactivation preserves manual input.
-    pub fn conflict_editor_set_result_mode(&mut self, editing: bool) {
-        if self.writer_busy || self.result_editing == editing {
-            return;
-        }
-        self.reset_all_target = None;
-        self.result_editing = editing;
-        // Force the inputs to re-sync (mode is part of the content signature).
-        if let Some(i) = self.editor_inputs.as_mut() {
-            i.content_sig = 0;
-        }
-    }
-
-    #[cfg(feature = "gui-e2e")]
-    pub fn result_mode_tabs_for_e2e(&self) -> Vec<(gpui::Role, String, bool, bool)> {
-        self.result_mode_focus.recorded_tabs()
-    }
-
-    /// Reset every hunk of `path` to unresolved (toolbar "Reset all").
-    pub fn conflict_editor_reset_all(&mut self, path: &std::path::Path) {
-        if self.writer_busy {
-            return;
-        }
-        // Force the editor inputs to re-sync after the reset.
-        if let Some(i) = self.editor_inputs.as_mut() {
-            i.content_sig = 0;
-        }
-        let Some(c) = self.mode.as_mut() else {
-            return;
-        };
-        let n = c.buffer.hunk_count(path);
-        for i in 0..n {
-            c.buffer.reset_hunk(path, i);
-        }
-        // Reset leaves marker residue → status becomes NeedsReview (still has a
-        // result draft, but unresolved markers remain).
-        c.refresh_file_status(path);
-        let _ = c.buffer.autosave();
-    }
-
-    /// Select a file and open its matching content editor (or binary preview).
-    /// All row and navigation activations use this path.
-    pub fn conflict_select_file(&mut self, idx: usize) {
-        let Some(mode) = self.mode.as_mut() else {
-            return;
-        };
-        let Some(file) = mode.session.files.get(idx) else {
-            return;
-        };
-        let open_path = (file.kind == ConflictKind::Content).then(|| file.path.clone());
-        self.reset_all_target = None;
-        mode.selected_file = Some(idx);
-        mode.editing_file = open_path.as_ref().map(|_| idx);
-        if let Some(p) = open_path {
-            self.conflict_open_editor(&p);
-        } else {
-            self.editing = None;
-            self.editor_inputs = None;
-        }
-    }
-
-    /// Move the selection to the previous / next unresolved file, wrapping.
-    pub fn conflict_nav_unresolved(&mut self, dir: i32) {
-        let Some(c) = self.mode.as_ref() else {
-            return;
-        };
-        let n = c.session.files.len();
-        if n == 0 {
-            return;
-        }
-        let start = c.selected_file.unwrap_or(0);
-        let next = (1..=n)
-            .map(|step| {
-                if dir >= 0 {
-                    (start + step) % n
-                } else {
-                    (start + n - (step % n)) % n
-                }
-            })
-            .find(|&i| c.session.files[i].status == ConflictStatus::Unresolved)
-            .unwrap_or_else(|| {
-                if dir >= 0 {
-                    (start + 1) % n
-                } else {
-                    (start + n - 1) % n
-                }
-            });
-        self.conflict_select_file(next);
-    }
-
-    /// Apply a per-file side choice to the in-memory resolution buffer, emit the
-    /// `[kagi]` contract line, and (on a buffer error) marshal an error toast to
-    /// the parent. The buffer work itself touches no parent state, so it stays
-    /// synchronous; only the rare error toast defers.
-    pub fn conflict_apply_choice(
-        &mut self,
-        path: &std::path::Path,
-        choice: kagi_git::ResolutionChoice,
-        cx: &mut Context<Self>,
-    ) {
-        match self.apply_choice(path, choice) {
-            // No active conflict mode — no-op, no `[kagi]` line (matches original).
-            None => {}
-            Some(Ok(())) => {
-                eprintln!(
-                    "[kagi] conflict-mode: choice {} for {}",
-                    match choice {
-                        kagi_git::ResolutionChoice::Current => "current",
-                        kagi_git::ResolutionChoice::Incoming => "incoming",
-                        kagi_git::ResolutionChoice::BothCurrentFirst => "both(current-first)",
-                        kagi_git::ResolutionChoice::BothIncomingFirst => "both(incoming-first)",
-                    },
-                    path.display()
-                );
-            }
-            Some(Err(e)) => {
-                eprintln!(
-                    "[kagi] conflict-mode: choice failed for {}: {}",
-                    path.display(),
-                    e
-                );
-                self.marshal_error_toast(format!("{}", e), cx);
-            }
-        }
-    }
-
-    /// Entry point for "Open external tool" toolbar button (launch is W33). Emits
-    /// the contract `eprintln!` line and marshals the info toast to the parent.
-    pub fn conflict_editor_open_external(
-        &mut self,
-        path: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) {
-        eprintln!(
-            "[kagi] conflict-editor: external tool requested for {} (launch is W33)",
-            path.display()
-        );
-        let msg = format!(
-            "External merge tool launch is not wired yet ({}).",
-            path.display()
-        );
-        self.marshal_info_toast(msg, cx);
-    }
-
-    /// Two-stage Skip arming — the same shape as `abort_request_arm`. Returns
-    /// `true` when already armed (the caller should EXECUTE the skip, which
-    /// reloads, so it must defer to the parent); `false` when this click only
-    /// ARMED it.
-    pub fn skip_request_arm(&mut self) -> bool {
-        let armed = self.mode.as_ref().map(|c| c.skip_armed).unwrap_or(false);
-        if !armed {
-            if let Some(c) = self.mode.as_mut() {
-                c.skip_armed = true;
-            }
-            klog!("conflict-mode: skip armed (second confirm required)");
-            false
-        } else {
-            true
-        }
-    }
-
-    /// Marshal an error toast to the parent (deferred — `push_toast` lives on
-    /// `KagiApp`; this may run from a leased listener so it must not touch the
-    /// parent synchronously).
-    fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        let owner = self.owner.clone();
-        cx.spawn(async move |_view, acx| {
-            let _ = weak_app.update(acx, |app, cx| {
-                app.push_conflict_owner_toast(&owner, super::ToastKind::Error, msg, cx);
-            });
-        })
-        .detach();
-    }
-
-    /// Marshal an info toast to the parent (deferred — see `marshal_error_toast`).
-    fn marshal_info_toast(&self, msg: String, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        let owner = self.owner.clone();
-        cx.spawn(async move |_view, acx| {
-            let _ = weak_app.update(acx, |app, cx| {
-                app.push_conflict_owner_toast(&owner, super::ToastKind::Info, msg, cx);
-            });
-        })
-        .detach();
-    }
-}
-
-// ────────────────────────────────────────────────────────────
-// Body: center (file preview / choose) | right (Conflict Dashboard)
-// ────────────────────────────────────────────────────────────
-
-/// Render the Conflict Mode main pane.  Center = per-file choose + Result
-/// preview (the W32 Conflict Editor lane replaces this center by reading
-/// `editing_file`); right = the Conflict Dashboard (ADR-0063).
-pub fn render_body(
-    mode: &ConflictMode,
-    chrome: &EditorChrome,
-    window_active: bool,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    // GitKraken-style layout: the CENTER is the main 3-pane Conflict Editor
-    // (A | B on top, Result below), and the Conflict Dashboard is always on the
-    // RIGHT (info + navigation + continue/abort/skip + escape hatch — no
-    // resolution actions live there, T-CONFLICT-DASH-020).  For a content
-    // conflict we render the hunk-level 3-pane editor; binary / single-sided
-    // files (no hunk model) fall back to the simple choose surface.
-    let center = match mode.selected_file.and_then(|i| mode.session.files.get(i)) {
-        Some(file) if file.kind == ConflictKind::Content => {
-            let path = file.path.clone();
-            super::conflict_editor::render_editor(mode, chrome, &path, cx)
-        }
-        _ => render_center(mode, chrome.writer_busy, &chrome.raw_preview_scroll, cx),
-    };
-    // flex_1 + min_h(0) (NOT size_full): in the root flex_col the conflict body
-    // must share height with the bottom panel + status bar, not take 100% and
-    // push the terminal off-screen (user-reported terminal-position bug).
-    div()
-        .flex()
-        .flex_row()
-        .flex_1()
-        .min_h(px(0.))
-        .bg(rgb(theme().bg_base))
-        .child(center)
-        .child(render_dashboard(mode, window_active, cx))
-        .into_any_element()
-}
-
-// ────────────────────────────────────────────────────────────
-// Right panel: Conflict Dashboard (ADR-0063)
-// ────────────────────────────────────────────────────────────
-
-fn render_dashboard(
-    mode: &ConflictMode,
-    window_active: bool,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    // T-CONFLICT-DASH-021/022: information hierarchy is state → next action →
-    // files. The right sidebar shows what's left and the next steps (Continue
-    // and Abort side by side); each file card carries its own actions (open
-    // externally / copy path as icon buttons, plus a "…" overflow menu), so
-    // utilities never crowd the top-level layout.
-    div()
-        .id("conflict-dashboard")
-        .flex()
-        .flex_col()
-        .w(theme::scaled_px(238.))
-        .h_full()
-        .border_l_1()
-        .border_color(rgb(theme().surface))
-        .bg(rgb(theme().sidebar))
-        .overflow_y_scroll()
-        // ── State (ADR-0135: one compact block — the old header / role-badge
-        // boxes / counts stack said "merge conflict" three ways) ──
-        .child(dash_state(mode, cx))
-        // ── Next action (Continue + Abort side by side) ──
-        .child(dash_primary(mode, cx))
-        // ── Files (per-card actions: icons + "…" overflow menu) ──
-        .child(dash_sections(mode, window_active, cx))
-        .into_any_element()
-}
-
-/// Compact state block: operation summary, the two side chips (colour-keyed to
-/// the editor's bands), and the conflicted/resolved counts with prev/next nav.
-fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
-    let labels = mode.labels();
-    let conflicted = mode.conflicted_count();
-    let resolved = mode.resolved_count();
-
-    let prev = cx.listener(|view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-        view.conflict_nav_unresolved(-1);
-        cx.notify();
-    });
-    let next = cx.listener(|view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-        view.conflict_nav_unresolved(1);
-        cx.notify();
-    });
-
-    // A side chip: coloured dot + real name; the role word lives in the tooltip.
-    let chip = |id: &'static str, role: String, name: &str, accent: u32| {
-        div()
-            .id(id)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px(theme::scaled_px(6.))
-            .py(theme::scaled_px(2.))
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(accent))
-            .child(
-                div()
-                    .text_size(theme::scaled_px(10.))
-                    .text_color(rgb(accent))
-                    .child(SharedString::from("●")),
-            )
-            .child(
-                div()
-                    .text_size(theme::scaled_px(11.))
-                    .text_color(rgb(theme().text_main))
-                    .truncate()
-                    .child(SharedString::from(name.to_string())),
-            )
-            .hover_tooltip_builder((id, 0usize), move |window, cx| {
-                Tooltip::new(format!("{} — {}", role, Msg::ConflictGitTermHint.t()))
-                    .build(window, cx)
-            })
-    };
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(10.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .text_size(theme::scaled_px(13.))
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(Msg::ConflictDashHeader.t())),
-        )
-        .children(match &mode.session.op {
-            kagi_git::ConflictOp::Rebase { step, total, .. } => Some(
-                div()
-                    .text_size(theme::scaled_px(11.))
-                    .text_color(rgb(theme().text_sub))
-                    .child(format!(
-                        "{} {step} / {total} {}",
-                        Msg::ConflictRebaseApplying.t(),
-                        Msg::ConflictRebaseCommits.t()
-                    )),
-            ),
-            _ => None,
-        })
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .child(chip(
-                    "conflict-chip-current",
-                    format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.role),
-                    &labels.current.name,
-                    theme().color_branch,
-                ))
-                .child(chip(
-                    "conflict-chip-incoming",
-                    format!(
-                        "{} · {}",
-                        Msg::ConflictRoleIncoming.t(),
-                        labels.incoming.role
-                    ),
-                    &labels.incoming.name,
-                    theme().color_remote,
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_4()
-                .child(
-                    div()
-                        .text_size(theme::scaled_px(11.))
-                        .text_color(rgb(if conflicted == 0 {
-                            theme().text_sub
-                        } else {
-                            theme().color_blocker
-                        }))
-                        .child(SharedString::from(format!(
-                            "{} {}",
-                            conflicted,
-                            Msg::ConflictConflictedCount.t()
-                        ))),
-                )
-                .child(
-                    div()
-                        .flex_grow(1.)
-                        .text_size(theme::scaled_px(11.))
-                        .text_color(rgb(theme().color_success))
-                        .child(SharedString::from(format!(
-                            "{} {}",
-                            resolved,
-                            Msg::ConflictResolvedCount.t()
-                        ))),
-                )
-                .child(nav_button("‹", prev))
-                .child(nav_button("›", next)),
-        )
-        .into_any_element()
-}
-
-/// Small prev/next unresolved-file nav button.
-fn nav_button<H>(label: &str, handler: H) -> Button
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    Button::new(SharedString::from(format!("conflict-nav-{}", label)))
-        .label(SharedString::from(label.to_string()))
-        .ghost()
-        .small()
-        .on_click(handler)
-}
-
-/// The "next step" actions (T-CONFLICT-DASH-021): Continue and Abort side by
-/// side. Continue is the filled success action, gated on `can_continue` (all
-/// conflicts resolved); Abort is the danger action with a two-stage confirm. A
-/// status note (ready / specific blocker) sits below, and — for sequencer ops or
-/// while blocked — a secondary row offers Next-conflict / Skip.
-fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
-    let blocker = mode.continue_blocker();
-    let can_continue = blocker.is_none();
-    let is_sequencer = mode.session.op.is_sequencer();
-
-    // Continue reloads (merge → commit panel / sequencer → confirm modal), so
-    // it defers to the parent to avoid re-leasing this leased entity.
-    let continue_handler = cx.listener(
-        |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-            let weak_app = view.app.clone();
-            let owner = view.owner.clone();
-            cx.spawn_in(window, async move |_view, acx| {
-                let _ = weak_app.update_in(acx, |app, window, cx| {
-                    app.conflict_continue(owner, window, cx)
-                });
-            })
-            .detach();
-        },
-    );
-    // Abort defers `open_conflict_abort_modal` — the same action the header
-    // strip dispatches (#704); the two-stage confirm lives on the plan modal,
-    // not on this entity surviving.
-    let abort_handler = cx.listener(
-        |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-            let weak_app = view.app.clone();
-            let owner = view.owner.clone();
-            cx.spawn_in(window, async move |_view, acx| {
-                let _ = weak_app.update_in(acx, |app, window, cx| {
-                    app.open_conflict_abort_modal(owner, window, cx)
-                });
-            })
-            .detach();
-        },
-    );
-
-    // Continue (filled, gated) + Abort (danger) on one row; buttons wrap rather
-    // than overflow the fixed-width dashboard (T-CONFLICT-DASH-023).
-    let primary_row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap_2()
-        .child(super::e2e::measure_control(
-            "conflict-continue",
-            action_button(
-                Msg::ConflictContinue.t(),
-                ButtonRole::Success,
-                can_continue,
-                if can_continue {
-                    Some(continue_handler)
-                } else {
-                    None
-                },
-                cx,
-            ),
-        ))
-        .child(super::e2e::measure_control(
-            "conflict-abort",
-            action_button(
-                Msg::ConflictAbort.t(),
-                ButtonRole::Danger,
-                true,
-                Some(abort_handler),
-                cx,
-            ),
-        ));
-
-    let mut col = div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(primary_row);
-
-    // Status note: the specific blocker reason, or the ready confirmation.
-    let (note, note_color) = match blocker {
-        Some(msg) => (msg.t(), theme().color_blocker),
-        None => (Msg::ConflictContinueReady.t(), theme().color_success),
-    };
-    col = col.child(dash_note(note, note_color));
-    if mode.skip_armed {
-        col = col.child(dash_note(
-            Msg::ConflictConfirmSkipHint.t(),
-            theme().color_warning,
-        ));
-    }
-
-    // Secondary row: Next-conflict (while blocked) and Skip (sequencer ops).
-    let mut row = div().flex().flex_row().flex_wrap().gap_2();
-    let mut has_secondary = false;
-    if !can_continue {
-        let next = cx.listener(|view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-            view.conflict_nav_unresolved(1);
-            cx.notify();
-        });
-        let next_button = secondary_button(
-            "conflict-next".to_string(),
-            Msg::ConflictNextConflict.t(),
-            true,
-            Some(next),
-        );
-        #[cfg(feature = "gui-e2e")]
-        let next_button = next_button.on_key_down(|event, _, _| {
-            if event.keystroke.key == "f19" {
-                NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
-            }
-        });
-        row = row.child(super::e2e::measure_control("conflict-next", next_button));
-        has_secondary = true;
-    }
-    if is_sequencer {
-        // Skip reloads → defer to the parent.
-        let skip = cx.listener(
-            |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-                if !view.skip_request_arm() {
-                    cx.notify();
-                    return;
-                }
-                let weak_app = view.app.clone();
-                let owner = view.owner.clone();
-                cx.spawn_in(window, async move |_view, acx| {
-                    let _ =
-                        weak_app.update_in(acx, |app, _window, cx| app.conflict_skip(owner, cx));
-                })
-                .detach();
-            },
-        );
-        row = row.child(secondary_button(
-            "conflict-skip".to_string(),
-            if mode.skip_armed {
-                Msg::ConflictConfirmSkip.t()
-            } else {
-                Msg::ConflictSkip.t()
-            },
-            true,
-            Some(skip),
-        ));
-        has_secondary = true;
-    }
-    if has_secondary {
-        col = col.child(row);
-    }
-
-    col.into_any_element()
-}
-
-/// A small status line used throughout the dashboard.
-fn dash_note(text: &str, color: u32) -> gpui::AnyElement {
-    div()
-        .text_size(theme::scaled_px(10.))
-        .text_color(rgb(color))
-        .child(SharedString::from(text.to_string()))
-        .into_any_element()
-}
-
-/// A Keynote-style icon button for a file card: an icon-only, rounded, hover-lit
-/// hit target. `on_down` fires on mouse-down (use a `cx.listener` that calls
-/// `cx.stop_propagation()` so the card's row-select doesn't also run).
-fn card_icon<H>(
-    id: String,
-    icon: gpui_component::IconName,
-    tip: &'static str,
-    on_down: H,
-    selected_active: Option<bool>,
-) -> impl IntoElement
-where
-    H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let foreground = if theme()
-        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
-    {
-        theme().selection_secondary_foreground(true)
-    } else {
-        rgb(theme().text_sub).into()
-    };
-    let id = SharedString::from(id);
-    div()
-        .id(id.clone())
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(theme::scaled_px(22.))
-        .h(theme::scaled_px(22.))
-        .rounded_md()
-        .text_color(foreground)
-        .cursor_pointer()
-        .when(selected_active.is_none(), |el| {
-            el.hover(|s| {
-                s.bg(rgb(theme().bg_row_alt))
-                    .text_color(rgb(theme().text_main))
-            })
-        })
-        .on_mouse_down(MouseButton::Left, on_down)
-        .child(
-            gpui_component::Icon::new(icon)
-                .with_size(gpui_component::Size::Size(theme::scaled_px(14.))),
-        )
-        .hover_tooltip_builder((id, 0usize), move |window, cx| {
-            Tooltip::new(tip).build(window, cx)
-        })
-}
-
-/// Actions for the per-file "…" overflow menu.
-#[derive(Clone)]
-enum ConflictFileAction {
-    OpenExternally,
-    CopyPath,
-    CopyGitCommand,
-    OpenTerminal,
-}
-
-/// The per-file "…" overflow menu (T-CONFLICT-DASH-022): the full set of
-/// file/repo actions (the card icons are quick shortcuts for the top two).
-/// Rendered with the shared `menu_overlay` machinery so it gets the same
-/// viewport clamping (stays on-screen near the right edge) and styling as the
-/// commit / branch / stash context menus, anchored at the click position.
-///
-/// ADR-0118: rendered as a TOP-LEVEL overlay on the `KagiApp` context (a sibling
-/// of the body in `render.rs`, never inside the `ConflictView` entity render), so
-/// its `on_select` may call the parent's conflict actions directly without
-/// leasing the entity. The owning `file_menu` state lives on the entity, so the
-/// dismiss/select close over the entity handle to clear it via `entity.update`.
-#[allow(clippy::too_many_arguments)]
-pub fn render_file_menu(
-    entity: &Entity<ConflictView>,
-    mode: &ConflictMode,
-    idx: usize,
-    pos: gpui::Point<gpui::Pixels>,
-    window_active: bool,
-    window: &mut Window,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    // Header = the file the menu acts on.
-    let header = mode
-        .session
-        .files
-        .get(idx)
-        .map(|f| SharedString::from(f.path.to_string_lossy().into_owned()))
-        .unwrap_or_default();
-
-    let item = |action: ConflictFileAction, label: &str| {
-        MenuItem::command(
-            action,
-            SharedString::from(label.to_string()),
-            ItemState::Enabled,
-            false,
-        )
-    };
-    let groups = vec![
-        MenuGroup {
-            title: None,
-            items: vec![
-                item(
-                    ConflictFileAction::OpenExternally,
-                    Msg::ConflictExternalTool.t(),
-                ),
-                item(ConflictFileAction::CopyPath, Msg::ConflictCopyPath.t()),
-            ],
-        },
-        MenuGroup {
-            title: None,
-            items: vec![
-                item(
-                    ConflictFileAction::CopyGitCommand,
-                    Msg::ConflictCopyGitCommand.t(),
-                ),
-                item(
-                    ConflictFileAction::OpenTerminal,
-                    Msg::ConflictOpenTerminal.t(),
-                ),
-            ],
-        },
-    ];
-
-    let dismiss_entity = entity.clone();
-    let on_dismiss = move |_this: &mut KagiApp, _w: &mut Window, cx: &mut Context<KagiApp>| {
-        dismiss_entity.update(cx, |v, _| v.file_menu = None);
-    };
-    let select_entity = entity.clone();
-    let on_select = move |this: &mut KagiApp,
-                          action: ConflictFileAction,
-                          window: &mut Window,
-                          cx: &mut Context<KagiApp>| {
-        // This runs on the `KagiApp` context (top-level overlay), so the entity
-        // is NOT leased — clearing `file_menu` via `update` and calling the parent
-        // conflict actions directly is safe here.
-        select_entity.update(cx, |v, _| v.file_menu = None);
-        match action {
-            ConflictFileAction::OpenExternally => this.conflict_open_external_tool(idx, cx),
-            ConflictFileAction::CopyPath => this.conflict_copy_path(idx, cx),
-            ConflictFileAction::CopyGitCommand => this.conflict_copy_git_command(cx),
-            ConflictFileAction::OpenTerminal => this.conflict_open_terminal(window, cx),
-        }
-    };
-
-    menu_overlay::render_menu_overlay(
-        "conflict-file-context-menu",
-        "conflict-file-menu-item",
-        220.0,
-        "Danger",
-        pos,
-        header,
-        groups,
-        on_dismiss,
-        on_select,
-        None,
-        window_active,
-        window,
-        cx,
-    )
-}
-
-/// A left-aligned secondary (utility / navigation) button with clear button
-/// affordance — outlined rather than ghost so it never reads as plain text.
-fn secondary_button<H>(id: String, label: &str, enabled: bool, handler: Option<H>) -> Button
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let mut btn = Button::new(SharedString::from(id))
-        .label(SharedString::from(label.to_string()))
-        .outline()
-        .small()
-        .disabled(!enabled);
-    if enabled {
-        if let Some(h) = handler {
-            btn = btn.on_click(h);
-        }
-    }
-    btn
-}
-
-/// Two sections: Conflicted Files and Resolved Files, each row with a kind badge.
-fn dash_sections(
-    mode: &ConflictMode,
-    window_active: bool,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    let conflicted: Vec<usize> = mode
-        .session
-        .files
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| f.status == ConflictStatus::Unresolved)
-        .map(|(i, _)| i)
-        .collect();
-    let resolved: Vec<usize> = mode
-        .session
-        .files
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| f.status != ConflictStatus::Unresolved)
-        .map(|(i, _)| i)
-        .collect();
-
-    div()
-        .flex()
-        .flex_col()
-        .child(section(
-            mode,
-            Msg::ConflictSectionConflicted.t(),
-            &conflicted,
-            Msg::ConflictNoConflictedFiles.t(),
-            true,
-            window_active,
-            cx,
-        ))
-        .child(section(
-            mode,
-            Msg::ConflictSectionResolved.t(),
-            &resolved,
-            Msg::ConflictNoResolvedFiles.t(),
-            false,
-            window_active,
-            cx,
-        ))
-        .into_any_element()
-}
-
-/// A labelled selectable file list. Both sections preview the selected file.
-fn section(
-    mode: &ConflictMode,
-    title: &'static str,
-    indices: &[usize],
-    empty_msg: &str,
-    is_conflicted: bool,
-    window_active: bool,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    let list_id = if is_conflicted {
-        "conflict-files"
-    } else {
-        "conflict-resolved-files"
-    };
-    let mut col = super::list_a11y::list_box(list_id, div().id(list_id), title)
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(6.))
-                .text_size(theme::scaled_px(10.))
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(format!("{} ({})", title, indices.len()))),
-        );
-
-    if indices.is_empty() {
-        col = col.child(
-            div()
-                .px(theme::scaled_px(12.))
-                .py(theme::scaled_px(4.))
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(empty_msg.to_string())),
-        );
-        return col.into_any_element();
-    }
-
-    for (position, &idx) in indices.iter().enumerate() {
-        let file = &mode.session.files[idx];
-        let selected = mode.selected_file == Some(idx);
-        let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
-        let path_str = SharedString::from(file.path.to_string_lossy().into_owned());
-        let kind = file.kind;
-        let (status_color, status_text) = match file.status {
-            ConflictStatus::Unresolved => (theme().color_blocker, Msg::ConflictUnresolved.t()),
-            ConflictStatus::Resolved => (theme().color_success, Msg::ConflictResolvedShort.t()),
-            ConflictStatus::NeedsReview => (theme().color_warning, Msg::ConflictNeedsReview.t()),
-        };
-
-        // Row click → select; for content conflicts conflict_select_file also
-        // opens the hunk-level Conflict Editor (W32). Resolved rows just preview.
-        // Entity-internal (buffer + repo-relative marker build); mutates self.
-        let row_click = cx.listener(
-            move |view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-                view.conflict_select_file(idx);
-                cx.notify();
-            },
-        );
-
-        // Per-card actions (T-CONFLICT-DASH-022). Each acts on THIS row's file
-        // (not the selected one) and stops propagation so the row-select / editor
-        // open doesn't also fire. "…" opens the overflow menu at the cursor
-        // (entity-internal state); the ext/copy shortcuts read the conflict
-        // snapshot on the parent → defer (would re-lease this leased entity).
-        let more = cx.listener(
-            move |view: &mut ConflictView, e: &gpui::MouseDownEvent, _w, cx| {
-                cx.stop_propagation();
-                view.file_menu = Some((idx, e.position));
-                cx.notify();
-            },
-        );
-        let row_el = div()
-            .id(SharedString::from(format!("conflict-row-{}", idx)))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .mx(theme::scaled_px(6.))
-            .px(theme::scaled_px(6.))
-            .py(theme::scaled_px(6.))
-            .rounded_md()
-            .cursor_pointer()
-            .when(selected, |s| {
-                s.bg(theme().selected_for_window(window_active))
-            })
-            .when(selection_on_accent, |s| {
-                s.text_color(theme().selection_foreground(window_active))
-            })
-            .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
-            .on_click(row_click)
-            // Left: file name + status/kind (flex-shrinks; name truncates).
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_size(theme::scaled_px(12.))
-                            .text_color(if selection_on_accent {
-                                theme().selection_foreground(window_active)
-                            } else {
-                                rgb(theme().text_main).into()
-                            })
-                            .truncate()
-                            .child(path_str.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_size(theme::scaled_px(10.))
-                                    .text_color(if selection_on_accent {
-                                        theme().selection_secondary_foreground(window_active)
-                                    } else {
-                                        rgb(status_color).into()
-                                    })
-                                    .child(SharedString::from(status_text)),
-                            )
-                            .child(kind_badge(kind, selected.then_some(window_active))),
-                    ),
-            )
-            // Right: Keynote-style icon group — "…" / open externally / copy path.
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme::scaled_px(1.))
-                    .flex_shrink_0()
-                    // ADR-0135: "…" only — open-externally / copy-path lived
-                    // here AND in this menu AND (open) in the editor toolbar.
-                    .child(card_icon(
-                        format!("conflict-more-{}", idx),
-                        gpui_component::IconName::Ellipsis,
-                        Msg::ConflictMore.t(),
-                        more,
-                        selected.then_some(window_active),
-                    )),
-            );
-        let row_el = super::list_a11y::list_option(
-            list_id,
-            row_el,
-            position,
-            indices.len(),
-            path_str,
-            selected,
-        );
-        #[cfg(feature = "gui-e2e")]
-        let row_el = row_el
-            .relative()
-            .child(super::e2e::measure_inside(format!("conflict-row-{idx}")));
-
-        col = col.child(row_el);
-    }
-
-    col.into_any_element()
-}
-
-/// A conflict-type badge (ADR-0065): both modified / rename-delete / etc.
-fn kind_badge(kind: ConflictKind, selected_active: Option<bool>) -> gpui::AnyElement {
-    let foreground = if theme()
-        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
-    {
-        theme().selection_secondary_foreground(true)
-    } else {
-        rgb(theme().text_muted).into()
-    };
-    div()
-        .px(theme::scaled_px(5.))
-        .py(px(1.))
-        .rounded_md()
-        .border_1()
-        .border_color(foreground)
-        .text_size(theme::scaled_px(9.))
-        .text_color(foreground)
-        .child(SharedString::from(kind_tag(kind)))
-        .into_any_element()
-}
-
-/// A dashboard action button.  `enabled == false` renders muted and attaches no
-/// click handler (e.g. the Continue gate).
-fn action_button<H>(
-    label: &str,
-    role: ButtonRole,
-    enabled: bool,
-    handler: Option<H>,
-    cx: &gpui::App,
-) -> Button
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let label = label.to_string();
-    let mut btn = Button::new(SharedString::from(format!("conflict-act-{}", label)))
-        .label(SharedString::from(label))
-        .small()
-        .disabled(!enabled);
-    btn = apply_role(btn, role, cx);
-    if enabled {
-        if let Some(h) = handler {
-            btn = btn.on_click(h);
-        }
-    }
-    btn
-}
-
-// ────────────────────────────────────────────────────────────
-// Center pane: per-file choose + Result preview (W30; W32 supersedes)
-// ────────────────────────────────────────────────────────────
-
-/// The center pane: the selected file's choose buttons + Result preview.  When
-/// the W32 Conflict Editor lands it renders here for `editing_file`; until then
-/// this MVP keeps the file-granularity choose + preview.
-/// Center pane for a directory/file conflict (#320): a hint plus the two keep
-/// buttons. Each defers to the parent `KagiApp::resolve_dir_file`, which runs the
-/// git-layer plan/execute (index stage + oplog) and re-detects — the reload
-/// pattern is why this must go through the parent, not the leased entity.
-fn render_dir_file_center(
-    path: &std::path::Path,
-    writer_busy: bool,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    use kagi_git::DirFileChoice;
-
-    let keep_dir = {
-        let path = path.to_path_buf();
-        cx.listener(
-            move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-                let weak_app = view.app.clone();
-                let intent = view.freeze_dir_file_intent(&path, DirFileChoice::KeepDirectory);
-                cx.spawn_in(window, async move |_view, acx| {
-                    let _ = weak_app.update_in(acx, |app, _window, cx| {
-                        app.accept_conflict_intent(intent, cx)
-                    });
-                })
-                .detach();
-            },
-        )
-    };
-    let keep_file = {
-        let path = path.to_path_buf();
-        cx.listener(
-            move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-                let weak_app = view.app.clone();
-                let intent = view.freeze_dir_file_intent(&path, DirFileChoice::KeepFile);
-                cx.spawn_in(window, async move |_view, acx| {
-                    let _ = weak_app.update_in(acx, |app, _window, cx| {
-                        app.accept_conflict_intent(intent, cx)
-                    });
-                })
-                .detach();
-            },
-        )
-    };
-
-    let choose_row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(super::e2e::measure_control(
-            "conflict-keep-directory",
-            choose_button(
-                Msg::ConflictKeepDirectory.t().to_string(),
-                ButtonRole::SideCurrent,
-                keep_dir,
-                cx,
-            )
-            .disabled(writer_busy),
-        ))
-        .child(super::e2e::measure_control(
-            "conflict-keep-file",
-            choose_button(
-                Msg::ConflictKeepFile.t().to_string(),
-                ButtonRole::SideIncoming,
-                keep_file,
-                cx,
-            )
-            .disabled(writer_busy),
-        ));
-
-    div()
-        .flex()
-        .flex_col()
-        .flex_grow(1.)
-        .h_full()
-        .child(choose_row)
-        .child(
-            div()
-                .p(theme::scaled_px(12.))
-                .text_size(theme::scaled_px(13.))
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::ConflictDirFileHint.t())),
-        )
-        .into_any_element()
-}
-
-fn render_center(
-    mode: &ConflictMode,
-    writer_busy: bool,
-    raw_preview_scroll: &gpui::ScrollHandle,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    let Some(idx) = mode.selected_file else {
-        return div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .flex_grow(1.)
-            .h_full()
-            .child(
-                div()
-                    .text_size(theme::scaled_px(13.))
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::ConflictSelectFile.t())),
-            )
-            .into_any_element();
-    };
-    let Some(file) = mode.session.files.get(idx) else {
-        return div().flex_grow(1.).h_full().into_any_element();
-    };
-
-    let labels = mode.labels();
-    let kind = file.kind;
-    let path = file.path.clone();
-
-    // #320 directory/file conflict: no text merge / buffer choice — it is a single
-    // keep-directory-vs-keep-file decision that stages straight into the index via
-    // the parent app (`resolve_dir_file`), then re-detects (like conflict-save).
-    if kind == ConflictKind::DirFile {
-        return render_dir_file_center(&path, writer_busy, cx);
-    }
-
-    let keep_current_label = format!("{} ({})", Msg::ConflictKeepCurrent.t(), labels.current.name);
-    let take_incoming_label = format!(
-        "{} ({})",
-        Msg::ConflictTakeIncoming.t(),
-        labels.incoming.name
-    );
-    let keep_both_label = Msg::ConflictKeepBoth.t().to_string();
-
-    let p1 = path.clone();
-    let keep_current = cx.listener(
-        move |view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-            view.conflict_apply_choice(&p1, kagi_git::resolution::ResolutionChoice::Current, cx);
-            cx.notify();
-        },
-    );
-    let p2 = path.clone();
-    let take_incoming = cx.listener(
-        move |view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-            view.conflict_apply_choice(&p2, kagi_git::resolution::ResolutionChoice::Incoming, cx);
-            cx.notify();
-        },
-    );
-    let p3 = path.clone();
-    let keep_both = cx.listener(
-        move |view: &mut ConflictView, _e: &gpui::ClickEvent, _w, cx| {
-            view.conflict_apply_choice(
-                &p3,
-                kagi_git::resolution::ResolutionChoice::BothCurrentFirst,
-                cx,
-            );
-            cx.notify();
-        },
-    );
-
-    let mut choose_row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap_2()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(choose_button(
-            keep_current_label,
-            ButtonRole::SideCurrent,
-            keep_current,
-            cx,
-        ))
-        .child(choose_button(
-            take_incoming_label,
-            ButtonRole::SideIncoming,
-            take_incoming,
-            cx,
-        ));
-
-    if kind == ConflictKind::Content {
-        choose_row = choose_row.child(choose_button(
-            keep_both_label,
-            ButtonRole::Neutral,
-            keep_both,
-            cx,
-        ));
-    }
-
-    let preview = render_preview(mode, &path, kind, &labels, raw_preview_scroll, cx);
-
-    div()
-        .flex()
-        .flex_col()
-        .flex_grow(1.)
-        .h_full()
-        .child(choose_row)
-        .child(preview)
-        .into_any_element()
-}
-
-fn choose_button<H>(label: String, role: ButtonRole, handler: H, cx: &gpui::App) -> Button
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    KagiButton::styled(
-        SharedString::from(format!("conflict-choose-{}", label)),
-        SharedString::from(label),
-        role,
-        cx,
-    )
-    .small()
-    .on_click(handler)
-}
-
-/// Result preview scroll box (MVP: plain text, no syntax / diff coloring).
-fn render_preview(
-    mode: &ConflictMode,
-    path: &std::path::Path,
-    kind: ConflictKind,
-    labels: &SideLabels,
-    raw_preview_scroll: &gpui::ScrollHandle,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    // #321: binary / symlink / submodule get an informative side-by-side viewer.
-    if kind.is_raw() {
-        return super::conflict_binary_view::render_raw_preview(
-            mode,
-            path,
-            kind,
-            labels,
-            raw_preview_scroll,
-            cx,
-        );
-    }
-    let body: gpui::AnyElement = if let Some(text) = mode.buffer.resolved_text(path) {
-        let mut col = div().flex().flex_col();
-        for line in text.split('\n') {
-            col = col.child(
-                div()
-                    .text_size(theme::scaled_px(12.))
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(line.to_string())),
-            );
-        }
-        col.into_any_element()
-    } else {
-        div()
-            .text_size(theme::scaled_px(12.))
-            .text_color(rgb(theme().text_sub))
-            .child(SharedString::from(Msg::ConflictPreviewHint.t()))
-            .into_any_element()
-    };
-
-    div()
-        .id("conflict-preview")
-        .flex()
-        .flex_col()
-        .flex_grow(1.)
-        .w_full()
-        .overflow_y_scroll()
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
-        .child(
-            div()
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_label))
-                .pb(px(4.))
-                .child(SharedString::from(Msg::ConflictResultPreview.t())),
-        )
-        .child(body)
-        .into_any_element()
-}
-
-// ────────────────────────────────────────────────────────────
-// Unit tests — the pure Conflict Mode gate / status / heading logic.
-// (The render functions need a gpui window and are exercised manually.)
-// ────────────────────────────────────────────────────────────
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    fn git(dir: &std::path::Path, args: &[&str]) {
-        let ok = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .expect("git runs")
-            .success();
-        assert!(ok, "git {:?} failed", args);
-    }
-
-    /// `git merge` is allowed to exit non-zero (the conflict).
-    fn git_allow_fail(dir: &std::path::Path, args: &[&str]) {
-        let _ = Command::new("git").args(args).current_dir(dir).status();
-    }
-
-    /// Build a real merge-conflict repo and return its TempDir.
-    fn merge_conflict_repo() -> TempDir {
-        let td = TempDir::new().unwrap();
-        let p = td.path();
-        git(p, &["init", "-q", "-b", "main"]);
-        git(p, &["config", "user.email", "t@e.com"]);
-        git(p, &["config", "user.name", "t"]);
-        std::fs::write(p.join("f.txt"), "line1\nline2\nline3\n").unwrap();
-        git(p, &["add", "f.txt"]);
-        git(p, &["commit", "-qm", "base"]);
-        git(p, &["checkout", "-q", "-b", "feature"]);
-        std::fs::write(p.join("f.txt"), "line1\nFEATURE\nline3\n").unwrap();
-        git(p, &["commit", "-qam", "feature"]);
-        git(p, &["checkout", "-q", "main"]);
-        std::fs::write(p.join("f.txt"), "line1\nMAIN\nline3\n").unwrap();
-        git(p, &["commit", "-qam", "main"]);
-        git_allow_fail(p, &["merge", "feature"]);
-        td
-    }
-
-    /// Build a ConflictMode from a repo path, mirroring `detect_conflict_mode`.
-    fn detect(repo_path: &std::path::Path, branch: &str) -> ConflictMode {
-        let backend = kagi_git::Backend::open(repo_path).unwrap();
-        let snapshot = backend
-            .conflict_snapshot()
-            .unwrap()
-            .expect("conflict session");
-        let mut session = snapshot.session;
-        let buffer = backend.resolution_buffer_from_repo().unwrap();
-        let residue = buffer.files_with_marker_residue();
-        for f in &mut session.files {
-            f.status = if buffer.has_resolution(&f.path) {
-                if residue.contains(&f.path) {
-                    ConflictStatus::NeedsReview
-                } else {
-                    ConflictStatus::Resolved
-                }
-            } else {
-                ConflictStatus::Unresolved
-            };
-        }
-        ConflictMode {
-            revision: snapshot.observation.revision,
-            session,
-            buffer,
-            current_branch: branch.to_string(),
-            selected_file: Some(0),
-            editing_file: None,
-            skip_armed: false,
-        }
-    }
-
-    #[test]
-    fn continue_gate_blocks_until_resolved() {
-        let td = merge_conflict_repo();
-        let mut mode = detect(td.path(), "main");
-
-        // Detected: one unresolved content conflict → continue is blocked.
-        assert_eq!(mode.session.total_count(), 1);
-        assert_eq!(mode.resolved_count(), 0);
-        assert_eq!(mode.conflicted_count(), 1);
-        assert!(!mode.can_continue(), "gate must block while unresolved");
-        assert_eq!(
-            mode.continue_blocker(),
-            Some(Msg::ConflictBlockerUnresolved)
-        );
-
-        // Apply a side choice → resolved, no marker residue → gate opens.
-        let path = mode.session.files[0].path.clone();
-        mode.buffer
-            .apply_choice(&path, kagi_git::ResolutionChoice::Current)
-            .unwrap();
-        // Recompute status as the UI handler does.
-        let residue = mode.buffer.files_with_marker_residue();
-        mode.session.files[0].status = if residue.contains(&path) {
-            ConflictStatus::NeedsReview
-        } else {
-            ConflictStatus::Resolved
-        };
-
-        assert_eq!(mode.resolved_count(), 1);
-        assert!(
-            mode.can_continue(),
-            "gate must open once all files resolved"
-        );
-        assert_eq!(mode.continue_blocker(), None);
-    }
-
-    #[test]
-    fn marker_residue_keeps_gate_closed() {
-        let td = merge_conflict_repo();
-        let mut mode = detect(td.path(), "main");
-        let path = mode.session.files[0].path.clone();
-
-        // A manual edit that still contains conflict markers is residue.
-        mode.buffer
-            .set_manual_text(
-                &path,
-                "<<<<<<< HEAD\nMAIN\n=======\nFEATURE\n>>>>>>> feature\n",
-            )
-            .unwrap();
-        assert!(mode.buffer.has_resolution(&path));
-        assert!(
-            !mode.can_continue(),
-            "marker residue must keep the continue gate closed"
-        );
-        assert_eq!(mode.continue_blocker(), Some(Msg::ConflictBlockerMarker));
-    }
-
-    /// ADR-0058 guard, retargeted: the op-summary banner is gone (ADR-0135),
-    /// so the words the dashboard actually shows now come from `mode.labels()`
-    /// — assert THOSE never leak ours/theirs and name the branch verbatim.
-    #[test]
-    fn side_labels_use_roles_not_ours_theirs() {
-        let td = merge_conflict_repo();
-        let mode = detect(td.path(), "main");
-        let labels = mode.labels();
-        for text in [
-            &labels.current.role,
-            &labels.current.name,
-            &labels.incoming.role,
-            &labels.incoming.name,
-        ] {
-            let lower = text.to_lowercase();
-            assert!(!lower.contains("ours"), "label leaked 'ours': {}", text);
-            assert!(!lower.contains("theirs"), "label leaked 'theirs': {}", text);
-        }
-        assert_eq!(labels.current.name, "main", "current side names the branch");
-    }
-}

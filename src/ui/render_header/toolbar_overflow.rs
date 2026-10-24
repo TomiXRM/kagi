@@ -31,12 +31,28 @@ pub(super) const ICON_IDENTITY_MIN_WIDTH: f32 = 96.;
 #[derive(Default)]
 pub(crate) struct Layout {
     available: f32,
-    widths: [f32; 17],
+    widths: [f32; 18],
+    pub(super) operation_visible: bool,
     key: Option<StyleKey>,
     last_hidden: u16,
 }
 
 impl Layout {
+    fn operation_width(&self, key: StyleKey) -> f32 {
+        if self.operation_visible {
+            self.widths[17] * f32::from_bits(key.2)
+        } else {
+            0.
+        }
+    }
+    pub(super) fn icon_identity_width(&self, key: StyleKey) -> f32 {
+        let width = if self.operation_visible {
+            40.
+        } else {
+            ICON_IDENTITY_MIN_WIDTH
+        };
+        width * (theme::BASE_REM_PX / 16.) * f32::from_bits(key.2)
+    }
     pub(super) fn sidebar_width(&self, visible: bool, key: StyleKey) -> f32 {
         if visible {
             self.widths[16] * f32::from_bits(key.2)
@@ -51,7 +67,9 @@ impl Layout {
     pub(super) fn workspace_width(&self, visible: u16, hidden: u16, key: StyleKey) -> f32 {
         let scale = f32::from_bits(key.2);
         self.widths[8..IDS.len()].iter().enumerate().fold(
-            spacing(visible, scale).1 + if hidden != 0 { 36. * scale } else { 0. },
+            self.operation_width(key)
+                + spacing(visible, scale).1
+                + if hidden != 0 { 36. * scale } else { 0. },
             |width, (index, natural)| {
                 width
                     + if visible & (1 << (index + 8)) != 0 {
@@ -131,6 +149,7 @@ impl Layout {
         }
         // Budget each side column's minimum and only the gaps actually drawn.
         let required = |repo: f32, workspace: f32, hidden: u16| {
+            let workspace = workspace + self.operation_width(key);
             let visible = present & !hidden;
             let (repo_spacing, workspace_spacing) = spacing(visible, scale);
             let overflow = if hidden != 0 { 36. * scale } else { 0. };
@@ -157,10 +176,16 @@ impl Layout {
             // Refresh/repository/branch summary's readable minimum.
             repo + repo_spacing
                 + side
-                + side.max(
-                    ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale
-                        + self.sidebar_width(sidebar, key),
-                )
+                + if self.operation_visible {
+                    // The operation strip grows only the right column; its
+                    // minimum must not also reserve empty space on the left.
+                    self.icon_identity_width(key) + self.sidebar_width(sidebar, key)
+                } else {
+                    side.max(
+                        ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale
+                            + self.sidebar_width(sidebar, key),
+                    )
+                }
                 // Symmetric toolbar padding; native lights and + are above.
                 + 24. * scale
         };
@@ -169,9 +194,14 @@ impl Layout {
             return 0;
         }
         let mut hidden = 0;
-        // Git commands outlast preferences and inactive workspace modes; only
-        // the selected workspace mode remains after Pull has overflowed.
-        for i in [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0] {
+        // During conflict resolution the operation and right-hand mode controls
+        // take priority over the repository commands in the center cluster.
+        let order = if self.operation_visible {
+            [6, 5, 4, 3, 2, 1, 0, 7, 13, 11, 9, 10, 12, 8]
+        } else {
+            [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+        };
+        for i in order {
             if i == selected || present & (1 << i) == 0 {
                 continue;
             }
@@ -722,6 +752,24 @@ mod tests {
             layout.hidden(0x3fff, 8, false, key),
             0x3e00,
             "once only selected Graph remains, every Git command fits without the 100px side reservation"
+        );
+    }
+
+    #[test]
+    fn conflict_strip_reserves_only_its_actual_right_column() {
+        let key = (true, i18n::Lang::En, 1_f32.to_bits());
+        let mut layout = Layout::default();
+        layout.measure(None, 700., key);
+        for index in 0..IDS.len() {
+            layout.measure(Some(index), 36., key);
+        }
+        layout.measure(Some(17), 300., key);
+        layout.operation_visible = true;
+        let present = 0x1f00;
+        assert_eq!(
+            layout.hidden(present, usize::MAX, false, key),
+            0,
+            "operation strip plus all five mode/settings controls fit beside the identity"
         );
     }
 

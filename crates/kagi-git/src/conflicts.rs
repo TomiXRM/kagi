@@ -235,6 +235,18 @@ pub struct ConflictFile {
 // Public types — session
 // ────────────────────────────────────────────────────────────
 
+/// A path this operation conflicted on that the index now carries as a single
+/// stage-0 entry: the repository's own evidence that the file was resolved
+/// and staged, whoever staged it. Derived on every detection from Git's
+/// `MERGE_MSG` `# Conflicts:` block ∩ the live index; never remembered by the UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedConflictFile {
+    /// Repository-relative path.
+    pub path: PathBuf,
+    /// The staged blob (stage 0) at detection time, hex OID.
+    pub oid: String,
+}
+
 /// A first-class snapshot of the repository's conflict state (ADR-0056).
 ///
 /// Pure data, UI-free.  Produced by [`detect_conflict_session`]; consumed by the
@@ -245,6 +257,9 @@ pub struct ConflictSession {
     pub op: ConflictOp,
     /// The conflicting files (sorted by path for deterministic display).
     pub files: Vec<ConflictFile>,
+    /// Originally conflicted paths now staged as resolved (sorted by path).
+    /// Empty when Git keeps no conflict list for the operation (stash apply).
+    pub resolved: Vec<ResolvedConflictFile>,
 }
 
 impl ConflictSession {
@@ -299,13 +314,21 @@ pub fn detect_conflict_session(repo: &Repository) -> Option<ConflictSession> {
     let state = repo.state();
     let op = classify_op(repo, state)?;
 
-    let files = repo
+    let (files, resolved) = repo
         .index()
         .ok()
-        .and_then(|index| collect_conflict_files(repo, &index).ok())
+        .and_then(|index| {
+            let files = collect_conflict_files(repo, &index).ok()?;
+            let resolved = collect_resolved_files(repo, &index, &files);
+            Some((files, resolved))
+        })
         .unwrap_or_default();
 
-    Some(ConflictSession { op, files })
+    Some(ConflictSession {
+        op,
+        files,
+        resolved,
+    })
 }
 
 /// Detect against the caller's refreshed index without hiding collection errors.
@@ -317,7 +340,12 @@ pub(crate) fn detect_conflict_session_from_index(
         return Ok(None);
     };
     let files = collect_conflict_files(repo, index)?;
-    Ok(Some(ConflictSession { op, files }))
+    let resolved = collect_resolved_files(repo, index, &files);
+    Ok(Some(ConflictSession {
+        op,
+        files,
+        resolved,
+    }))
 }
 
 /// Map a [`RepositoryState`] to a [`ConflictOp`], reading the `.git/` state
@@ -486,6 +514,72 @@ fn collect_conflict_files(
     // their-target); a same-path but different-kind pair (rare) also stays.
     files.dedup_by(|a, b| a.path == b.path && a.kind == b.kind);
     Ok(files)
+}
+
+/// Originally conflicted paths (Git's `MERGE_MSG` `# Conflicts:` block) that the
+/// index now holds as exactly one stage-0 entry and that are not still unmerged.
+/// Best effort: a missing, non-regular (symlink / FIFO / directory), oversized
+/// or unparsable `MERGE_MSG` yields an empty list rather than an error or a
+/// blocking read, because detection must never fail or stall over presentation
+/// evidence. The strict metadata checks stay with the approval digest.
+fn collect_resolved_files(
+    repo: &Repository,
+    index: &git2::Index,
+    unmerged: &[ConflictFile],
+) -> Vec<ResolvedConflictFile> {
+    let Some(raw) = read_regular_merge_msg(&repo.path().join("MERGE_MSG")) else {
+        return Vec::new();
+    };
+    let configured = repo
+        .config()
+        .ok()
+        .and_then(|config| config.get_string("core.commentChar").ok());
+    let comment_char = match configured.as_deref() {
+        Some("auto") => kagi_domain::merge_msg::auto_comment_char(&raw),
+        Some(value) => value.as_bytes().first().copied().unwrap_or(b'#'),
+        None => b'#',
+    };
+    let listed = kagi_domain::merge_msg::conflicted_paths(&raw, comment_char);
+    if listed.is_empty() {
+        return Vec::new();
+    }
+    let mut resolved: Vec<ResolvedConflictFile> = listed
+        .iter()
+        .filter_map(|listed_path| {
+            let path = bytes_to_pathbuf(listed_path)?;
+            if unmerged.iter().any(|file| file.path == path) {
+                return None;
+            }
+            // `get_path(path, 0)` is the stage-0 entry only; an unmerged path has
+            // no stage 0 and an untracked/deleted path has no entry at all.
+            let entry = index.get_path(&path, 0)?;
+            Some(ResolvedConflictFile {
+                path,
+                oid: entry.id.to_string(),
+            })
+        })
+        .collect();
+    resolved.sort_by(|a, b| a.path.cmp(&b.path));
+    resolved.dedup_by(|a, b| a.path == b.path);
+    resolved
+}
+
+/// Bounded read of `MERGE_MSG` only when it is a regular file: a FIFO would
+/// block the detector and a symlink could point outside `.git`.
+fn read_regular_merge_msg(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    const MAX_MERGE_MSG_BYTES: u64 = 1 << 20;
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_MERGE_MSG_BYTES {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut raw = Vec::new();
+    file.take(MAX_MERGE_MSG_BYTES).read_to_end(&mut raw).ok()?;
+    Some(raw)
 }
 
 /// Extract the path of a conflict from whichever stage entry is present.

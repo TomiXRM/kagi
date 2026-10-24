@@ -1,0 +1,394 @@
+# Conflict sidebar — research, hypotheses and FRD
+
+Status: design experiment for `feature/conflict-hunk`; not implemented or approved for main.
+Date: 2026-10-23. Baseline: PR #1730, `81a5973b` (ADR-0227 R2).
+
+## Requested change and process gate
+
+Replace the Files-page round trip with a collapsible left file tree. Split that
+sidebar vertically: work remaining above, saved resolutions below. Keep the
+right side focused on one hunk or full Result, not every comparison at once.
+Do not explain the workflow with paragraphs or a mandatory tutorial.
+
+Required sequence: linked literature research → hypotheses/FRD → editable
+OpenPencil design → Fable cross-review and revision → interaction experiment on
+the reviewed design → GPUI implementation and real native verification.
+Neither a screenshot nor a review alone permits skipping the later gates.
+The existing R2 implementation is retained until this design passes them.
+
+## Linked literature trail
+
+| Source and followed connection | Evidence | Design consequence / limit |
+| --- | --- | --- |
+| [Apple Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars) → Split views / Layout / Disclosure controls | A leading sidebar supports navigation; grouping and hiding reduce space costs. Keep labels succinct; avoid critical actions at its bottom. | Show the file navigator initially, give it a persistent toolbar toggle and View-menu command; do not bury Continue below a long file list. |
+| [Apple Split views](https://developer.apple.com/design/human-interface-guidelines/split-views) → Sidebars | Persistently highlight selection, constrain resizable panes, offer multiple ways to reveal hidden panes. | Selected file remains visible as selected while its content is on the right. A divider resizes the sidebar and its two sections. |
+| [Apple Disclosure controls](https://developer.apple.com/design/human-interface-guidelines/disclosure-controls) → Outline views | Keep frequent actions exposed; use disclosure for related details. | File switching is frequent, so it should not be hidden behind Files. Hunk context remains optional. |
+| [Apple Outline views](https://developer.apple.com/design/human-interface-guidelines/outline-views) → Split views / Search fields | Hierarchical files fit a scrolling outline; retain expansion, support column resizing and centered truncation. | Use an actual folder/file hierarchy; compact single-child folder chains, retain expansions, expose full paths. Do not build decorative indentation without tree behavior. |
+| [NN/g Recognition and Recall](https://www.nngroup.com/articles/recognition-and-recall/) → Progressive Disclosure | Visible context helps recognition; unexplained icons and tutorial memorization are weak substitutes. | Keep pending and saved work locatable; short section labels plus file/status icons, not color alone. |
+| [NN/g Progressive Disclosure](https://www.nngroup.com/articles/progressive-disclosure/) → staged disclosure | Staged disclosure is problematic when users must repeatedly alternate between interdependent steps. | Keep file navigation alongside editing; separate final review/commit, not the frequently reused navigator. This is a hypothesis for Kagi, not a measured improvement. |
+| [VS Code merge conflicts](https://code.visualstudio.com/docs/sourcecontrol/merge-conflicts) → staging / operation completion | Merge Changes becomes Staged Changes after staging. Complete Merge handles one file, not the whole repository operation. | Distinguish draft completion, saved resolution, and operation completion structurally. Do not copy the ambiguous Complete Merge label. |
+| [WAI-ARIA Tree View Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/treeview/) → focus versus selection | Arrow navigation, expansion and selection have distinct semantics; Enter can select when loading should not follow focus. | One Tab stop per tree, arrows navigate, Enter opens; explicit selected/focus states. Web APG informs interaction, not proof of native VoiceOver behavior. |
+
+The earlier [actual Fork / GitButler / VS Code comparison](https://github.com/TomiXRM/kagi/issues/1729)
+is runtime evidence. Its finding that saved Kagi files disappear motivates the
+lower section. GitKraken hands-on use remains user-approved deferred; the three
+GitKraken screenshots the user supplied on 2026-10-23 are the only reference:
+its merge tool groups `Conflicted Files (n)` above `Resolved Files (n)` in one
+pane, navigates `conflict k of n` over an Output pane, saves per file with
+`Save and mark resolved`, and keeps the commit message with `Commit and Merge`
+/ `Abort Merge` beneath the file groups. Taken: the two-group split with a
+per-file save that moves a row, and output-centred `k of n` hunk navigation.
+Not taken: `Mark all resolved` (marks without a verified save); commit message
+and Abort at the bottom of the file pane (Apple Sidebars: bottom-of-sidebar
+actions get hidden by window placement — Kagi keeps the commit hand-off and
+Abort in the toolbar); per-line checkboxes replacing adoption buttons (adopted
+on 2026-10-24 — see the decision section at the end). Apple guidance
+does not prescribe two equal-height file groups, and its usual two-level
+sidebar advice needs care with deep paths.
+
+## Hypotheses and disconfirming observations
+
+- H1: Persistent file navigation reduces repeated Files → Open detours. Reject if
+  users still cannot locate another file or the sidebar consumes essential code space.
+- H2: Moving a file below only after verified Save communicates completed file work
+  without suggesting the merge is committed. Reject if users stop at all-saved or
+  interpret a ready unsaved draft as saved.
+- H3: One compact hide/show control makes the same layout usable with a terminal
+  and narrow/high-zoom windows. Reject if restoring the tree is undiscoverable or
+  hiding it changes the selected file, edits, or scroll state.
+- H4: Stable path hierarchy and selected-row continuity reduce disorientation
+  during Save. Reject if a row moves and users lose the file or act on another one.
+
+These are design hypotheses, not empirical results. Model reviews are not human
+novice tests, and multilingual models cannot establish cross-language usability.
+
+## Information architecture and state meanings
+
+Two sidebar sections, not three pages or three file groups:
+
+| Internal condition | Sidebar placement | Short proposed JA / EN label | Right-side behavior |
+| --- | --- | --- | --- |
+| Untouched or partial draft; markers remain | Upper | 作業中 / In progress | Existing hunk choices or manual Result editor |
+| Ready Result, not saved | Upper, small unsaved indicator | 未保存 / Unsaved | Review and explicit Save available; no completed checkmark |
+| Save executing or verification/read acceptance pending | Upper | 保存中 / Saving | Retain exact Result; no optimistic move below |
+| Accepted save for this operation/path identity and current staged resolution | Lower | 保存済み / Saved | Inspect the accepted saved Result; never mount stale editable source hunks |
+| Save refused or failed | Upper | 未保存 / Unsaved | Preserve draft/selection; bounded error and durable Operation Log |
+| External change makes saved evidence stale | Never claim current saved resolution | 要確認 / Review needed | Reconcile against current accepted read before enabling a write |
+
+Section headers: `作業中 (n)` / `保存済み (n)`; EN `In progress (n)` / `Saved (n)`.
+A file can have a ready unsaved draft without being an unresolved text conflict;
+the upper section must therefore not label every child as an unresolved hunk.
+A source-hunk count is not authoritative after manual editing or recovery.
+
+The third boundary is operation-level, not a third file group: merge proceeds to
+existing commit review, then explicit Commit. Rebase/cherry-pick Continue can
+encounter another conflict; stash restore does not manufacture a merge commit.
+Counts reaching zero must not by themselves authorize Continue.
+
+## Layout and interactions
+
+- Dense navigation, readable editing surface. Initial sidebar width hypothesis:
+  248 logical px at 100%; resizable with bounded width. Do not change global density.
+- Upper and lower groups have independently scrollable content and a thin resize
+  divider. Start near 60/40 when both contain files, not mandatory equal halves.
+  An empty lower group consumes its header plus a quiet dash, not half the window.
+- Nested folders have disclosure controls and state counts only where useful.
+  Single-child folder chains can be compacted; basename remains readable and the
+  full path is available through tooltip/AX and the right-hand document header.
+- Do not show unrelated automatically merged or pre-existing staged files as
+  saved conflict resolutions. Keep stable path ordering within each section.
+- Click/Enter opens a file in the right pane. It captures pending editor input
+  through the existing navigation owner and never saves, stages, or commits.
+- Save keeps the current file selected as it moves below; the right pane becomes
+  a current saved-result inspection. Do not auto-open a different file underneath
+  the pointer. The user chooses the next upper file explicitly.
+- Lower files are inspectable. Re-editing saved content must use an existing
+  supported edit/write route with a fresh approval; it must not resurrect retired
+  conflict stages or be simulated by moving a row back up.
+- Sidebar toggle remains in the workspace toolbar, outside the hidden region.
+  Tooltip and AX names identify show/hide. View-menu/keyboard access provides an
+  alternative. Hiding a focused tree returns focus to the toggle; editor focus
+  stays with the editor when it owns focus. Selection/expansion/scroll survive.
+- On compact windows, hiding is available without disabling file navigation.
+  Keep a visible restore control and current path; do not introduce an invisible
+  edge gesture as the only route. Mock both shown and hidden 940×660 states.
+- Right-side hunk navigation remains local to the current file. Whole Result
+  review/edit is still separate from the source-choice surface. Do not restore
+  the old all-files × all-panes dashboard.
+- Final operation action belongs above the right pane and hands off to existing
+  operation/commit review. It does not live below the saved tree or run on Enter
+  from a file row. At all-saved, right-side review remains meaningful, not a dead end.
+- Terminal visibility is preserved; the sidebar toggle never closes it.
+- No drag-and-drop between groups: it would incorrectly imply a visual move is
+  sufficient to resolve/stage a file.
+
+## State and ownership contract for implementation review
+
+Existing evidence: `src/ui/conflict_view/flow.rs:20-33` captures pending Result on
+navigation; `:119-145` derives readiness/manual divergence; `:147-181` routes
+Overview/Hunk/Review. ADR-0227 currently removes saved paths after accepted read.
+
+Extend `ConflictView` presentation and the existing session-owned accepted read;
+keep `ResolutionBuffer` as the draft owner. Do not add a second `resolved: bool`
+or a UI-only saved-file ledger. The saved tree requires evidence retained by the
+operation/read lifecycle, scoped to operation incarnation and path identity,
+with reconciliation after external changes and process restart. A historical
+successful receipt alone does not prove today's staged bytes still match.
+
+Before GPUI coding, identify which existing operation/read owner can supply the
+current operation's conflict path set plus accepted staged-resolution identities.
+If that information is absent, extend that owner and document the minimal contract;
+do not infer completion from disappearance, marker absence, or an unrelated index
+entry. Unknown recovery identity must remain explicit rather than falsely saved.
+A current operation with zero remaining conflicts must retain no stale writable
+buffer merely to keep the lower tree populated.
+
+Required states: rest, hover, pressed, selected, focus-visible, disabled with
+reachable reason, loading, empty, error, and stale/replaced operation. File-row
+focus and selection are separate. Folder arrows never mutate content. Save and
+Continue retain plan → confirm → preflight → execute → verify → oplog, writer
+admission, revision checks, one-modal ownership, and IME Enter/Escape protection.
+
+## OpenPencil boards and review protocol
+
+Build editable layers, not a flattened screenshot. Include named boards:
+
+1. Mixed state: three upper files, one lower; selected partial text conflict.
+2. Ready unsaved: same selected file in upper, full Result review and Save.
+3. Save accepted: file moves below, remains selected, saved Result inspection.
+4. All saved: upper empty, lower contains files, operation review is reachable.
+5. Sidebar hidden: unchanged file/content, explicit restore control.
+6. Narrow Apple Dark: shown and hidden, terminal open, no unreachable actions.
+7. Failure/stale: unsaved draft retained, no false lower-section success.
+8. Many/deep paths: scroll, compact chains, same basename in distinct folders.
+
+Fable cross-review must inspect the actual OpenPencil document/exports and the
+FRD. Review information hierarchy, file/draft/save/commit confusion, compact
+layout, selected-row continuity and keyboard discoverability. Record findings,
+change the design, and resolve findings before interaction trials. Do not silently
+substitute another model if Fable cannot be selected.
+
+Then run goal-only mock tasks: switch files without losing a draft; find the file
+just saved; hide/reveal the navigator; find another same-named file; distinguish
+all-saved from committed; recover from failed Save. Log intended target, actual
+hit, selected path, group membership and next action. Input-coordinate errors
+are separate from UX interpretation errors. Mock transitions do not prove Git
+writes, persistence, safety, rendering performance or native accessibility.
+
+## GPUI acceptance gate after mock review/trials
+
+- Retain drafts, selection and tree expansion through switches, hide/show, Save,
+  refresh and operation replacement. No mutation from navigation or folder controls.
+- Partial/ready-unsaved stay above. Only current verified saved resolutions appear
+  below; external changes and unrelated staged files cannot fake completion.
+- Save refusal preserves data and position. Empty manual result is intentional,
+  not equivalent to missing draft; special kinds remain on safe existing routes.
+- Saved selection opens current saved bytes. Last Save reaches existing merge
+  commit review; no auto-commit, no stale-buffer recreation, no wrong-operation write.
+- Keyboard tree/toolbar/editor ownership, EN/JA, Apple Light/Dark, 100%/167%,
+  normal/narrow windows, long paths and many rows are exercised in native GUI.
+- Real Save/Continue/Commit output is independently checked against exact bytes,
+  index stages, parents and active operation. Measure navigation/list behavior
+  before making performance claims. Attach before/reference/after screenshots.
+
+OpenPencil review and mock experiments are prerequisites, not substitutes for
+these native acceptance checks. Main stays unchanged throughout this experiment.
+
+## Record: OpenPencil design, Fable review, mock trials (2026-10-23)
+
+Design source: `docs/ui/conflict-sidebar/build-boards.js` (run through
+`openpencil import` + `eval`, see `rebuild.sh`). Fonts: Noto Sans JP, JetBrains
+Mono, Noto Sans Symbols 2 fetched by OpenPencil; Inter alone drops CJK glyphs.
+Thirteen boards: 01 mixed, 02 ready-unsaved, 03 save-accepted, 04 all-saved,
+05 hidden, 06a/b narrow dark, 07/11 save-refused EN/JA, 08 deep paths, 09/10
+other files opened, 12 commit review hand-off.
+
+Fable cross-review (P1/P2/P3) changed the design before any trial:
+
+- One primary per screen: toolbar Continue is outline while 作業中 > 0 and the
+  only primary on the all-saved board. Next-file after Save is a secondary
+  control beside the title, never under the pointer position of the Save button.
+- No banners. All-saved state is carried by `作業中 (0)`, `保存済み (n)`, the
+  `未コミット` chip beside the operation and `コミットを確認`.
+- Stale evidence after an external change renders as `要確認` with `保存済み (0)`
+  and an unavailable Continue; no green chip survives a changed index.
+- Empty group collapses to header + dash; the lower group is content-sized up
+  to 40 %; an explicit scroller thumb marks clipped rows; folder counts only
+  when collapsed; neutral chips at 11 px with ≥4.5:1 ink; tree rows at the
+  existing 20 px; focus ring distinct from selection; `すべてリセット`.
+- Narrow JA adoption keeps the verb: `● 採用` / `○ 採用`; narrow toolbar keeps
+  その他; toggle shown = grey wash, hidden = surface + count badge; tooltip layer
+  `サイドバーを表示 ⌘⌥B`.
+
+Click-through trials (goal-only, Vietnamese goals, Haiku 4.5 / Sonnet 5.5 /
+GPT-6 Luna, hit regions from the actual node geometry):
+
+| Observation | Round 1 | Round 2 (after revision) |
+| --- | --- | --- |
+| Recovered a refused Save without losing the draft | 0/3 (Reload avoided: "might discard the draft") | Haiku ✓, Luna ✓, Sonnet named `もう一度保存` as the retry but stopped on two prototype no-ops |
+| Located the just-saved file before clicking | 3/3 | 3/3 |
+| Stated "no commit yet" with on-screen evidence | 3/3 (`未コミット`, lists, `コミットを確認`) | 3/3 |
+| Revealed hidden sidebar and opened another file | reveal 3/3; open blocked by missing boards | Sonnet ✓, Luna ✓ (Haiku did not run D2) |
+| Out-of-range / off-target clicks | Haiku 19/37, Luna 1/8, Sonnet 1/10 | Haiku 3/17, Luna 0/7, Sonnet 1/8 |
+
+Design consequence adopted: after a refused Save the screen keeps one primary
+`もう一度保存` / `Save again` (Save already re-reads inside plan → preflight) and
+a secondary `操作ログ`; the separate Reload control is removed. Prototype
+artifacts, not design findings: inert Operation Log affordances, an END state
+without a screen, and (round 1) missing boards for other files. Aim errors
+stay separate from UX interpretation; they motivate the harness driver, not
+larger controls. Model trials are not novice-human evidence.
+
+### Correction after user review of the boards (2026-10-23)
+
+The user rejected `前後の行`, `● 採用` / `○ 採用` and `両方` as meaningless in
+isolation. The shortened labels came from over-applying the narrow-width
+suggestion to every board. Decision, following Xcode's conflict resolution:
+
+- No context toggle. Each source pane shows the whole file in a fixed-height
+  scrollable pane (12 rows; 8 below 1000 px wide), scrolled to the current hunk
+  with the hunk highlighted; Prev/Next re-scroll both panes.
+- Adoption controls are `左を使う` / `右を使う` / `両方を使う ▾`
+  (`両方を使う（左→右）`, `両方を使う（右→左）`); EN `Use Left` / `Use Right` /
+  `Use Both ▾`. The pane headers carry the identity (`● 現在の側 — <branch>`,
+  `○ 取り込む側 — <sha> <subject>`); AX names append it. No glyph-only labels.
+
+## Visual design pass (2026-10-23, after the user rejected the wireframes)
+
+The earlier boards were wireframes (boxes and a detached button row) presented
+as a design. The visual design now follows Apple's own Xcode merge sheet
+(`docs/ui/conflict-sidebar/build-hifi.js`, reference image kept beside the
+exports) and the Finder/Mail source list, with Kagi's `theme_apple_light` /
+`theme_apple_dark` tokens and Kagi's shipped fonts (Inter + JetBrains Mono,
+Noto Sans JP for CJK runs):
+
+- **Document, not controls.** Two borderless whole-file panes with a jump bar
+  (side identity) and a commit footer each; the conflict band (`diff_removed_bg`,
+  3 px blocker stripe) runs continuously across both panes and the gutter.
+  *Superseded 2026-10-24:* the gutter originally carried one `? ⌄` pull-down
+  pill per conflict with a `左を使う / 右を使う / 左、次に右を使う / 右、次に左を使う`
+  menu (Xcode: Choose Left / Right / Left Then Right / Right Then Left); the
+  user rejected it and it is replaced by `← … →` plus per-line checkboxes (see
+  the decision section). `‹ 1/3 ›` sits at the trailing end of the left
+  footer. No adoption button row, no context toggle.
+- **Result** is a directly editable pane below the files with origin stripes
+  per line (`color_branch` left, `color_remote` right, warning for manual);
+  no Edit button. Whole rows only; an overlay scroller when clipped.
+- **Sidebar** is a source list: 232 px, sections top-down (`作業中` / `保存済み`
+  with the count at the trailing edge), 24 px rows, SF-style folder/doc icons,
+  Xcode letter badges (`C` conflicted on `color_blocker`, `M` unsaved draft on
+  `change_modified`, `!` review needed), selection fill only (`selected` when
+  the list owns focus, `inactive_selected` otherwise), no focus ring. An empty
+  section is just its header.
+- **Chrome.** Kagi's unified toolbar keeps its right icon group; the operation
+  strip (`● merge · 中止 · 確認へ進む`) sits left of it in the same 20 px row.
+  The conflict header is a `panel` bar: sidebar toggle (grey wash when shown,
+  inline count when hidden — no badge), jump bar `src › pricing › checkout.ts`,
+  status text, and the single file action (`保存` primary only when the draft
+  is ready; `次の作業中ファイル` after a save) right-aligned to the toolbar
+  buttons at a 16 px margin. Push buttons are 20 px, radius 5, 12 px labels.
+- **Saved inspection** uses a lock icon in the jump bar and the same code
+  layout, read-only.
+
+Fable's visual review (FableVisualReviewHifi) drove the second revision: vector
+icons instead of glyph placeholders, the Help-button-shaped pill replaced by the
+wide pull-down, focus ring removed, sections no longer pinned, the iOS-style
+badge removed, AppKit menu metrics and elevated dark menu border/shadow,
+terminal tokens, consistent 12/16 px insets. These screens are the visual
+contract for the GPUI implementation; the functional contract (two groups,
+evidence rule, Save/Continue safety) is unchanged.
+
+## Decision after user review of the live build (2026-10-24)
+
+The user watched the implemented workspace (HEAD 554a283a, visible Tier B
+replay) and rejected the hunk control as shipped:
+
+- `左` / `右` are visually similar kanji; the pull-down costs two clicks per
+  hunk; `右、次に左を使う` reads as a per-line sequence ("with three lines does
+  it become 右、次に左、次に左?"). It is in fact the concatenation order of the
+  two side blocks (`HunkChoice::BothIncomingFirst`) and never grows with line
+  count, but a label that can be read that way is wrong regardless.
+- GitKraken's per-line checkboxes are the preferred fine-grained control;
+  hunk-level buttons are the coarse control.
+
+Replacement contract (supersedes the `? ⌄` pill and its four-item menu):
+
+- **Gutter per hunk: three buttons `←` `…` `→`.** *Superseded the same day by
+  "A+C" below (the three buttons cost gutter width the code needs).* `←` took
+  every line of the left (current) side only; `→` the right (incoming) side;
+  `…` opened `両方を使う(← → の順)` / `両方を使う(→ ← の順)` /
+  `この hunk をリセット` / `すべてリセット`. No "then" wording anywhere — that
+  rule stays.
+- **Per-line checkboxes** at the leading edge of every conflict line in both
+  source panes (GitKraken). A checked line is in the Result; the hunk buttons
+  are just "check all of this side / uncheck the other". Per-line state is the
+  existing `line_select` (`conflict_editor_set_hunk_line`); nothing new in the
+  domain.
+- **Drag to range-select** (Excel): mouse-down on a checkbox fixes the target
+  state (the opposite of that checkbox); dragging over further checkboxes in
+  the same pane paints them to that state; mouse-up ends. Context lines have
+  no checkbox and are skipped. Keyboard: Space toggles the focused line,
+  Shift+↑/↓ extends.
+- AX: `←` "左の内容を使う" / "Use left side", `→` "右の内容を使う" / "Use right
+  side", `…` "その他の選択肢" / "More choices"; each checkbox is named by side
+  and line number (existing `Msg::conflict_line`) with checked state.
+
+Functional contract (two groups, evidence rule, Save/Continue safety, no write
+from navigation) is unchanged.
+
+## A+C: per-pane action rows (2026-10-24, owner mock `ConflictAC.dc.html`)
+
+The owner supplied a mock ("A+C 統合 — 2ハンク、1つ解決済み、1つフォーカス中",
+1200×600, light) after seeing `← … →` in the live build: three buttons between
+the panes eat horizontal space the code needs. Controls move *into* each pane,
+directly above the hunk they act on; the gutter becomes a band only.
+
+- **Gutter: 12 px, no controls.** It carries the hunk band colour (resolved →
+  `diff_added_bg` tint, unresolved → `diff_removed_bg`) and a 2 px `ui_accent`
+  left edge on the focused hunk.
+- **Action row above every hunk, in both panes.** Height **24 px** (the mock
+  says 26; the panes and the gutter are `uniform_list`s that give every row the
+  same measured height and stay aligned only by equal row count × row height,
+  so the row is a `SideRow::Action` at the same index in both panes and the
+  gutter), text 11.5 px, buttons 20 px tall, leading edge aligned with the
+  code column (44 px at 100 %), background = the hunk band of that side, 1 px
+  top rule.
+  - Unresolved: `Conflict N` (`text_sub`) · **採用** (filled `ui_accent`,
+    `on_accent` ink, 20 px tall, radius 5) · **両方（現在 → 取り込み）** on the
+    left pane / **両方（取り込み → 現在）** on the right pane (outline button).
+    EN: `Use this side` / `Both (current → incoming)` / `Both (incoming →
+    current)`. 採用 on a pane = take every line of that side only
+    (`AcceptCurrent` / `AcceptIncoming`); 両方 = `BothCurrentFirst` /
+    `BothIncomingFirst` (block order, see `LineOrder::*BlockFirst`).
+  - Resolved: `Conflict N` · state word — **採用** (`color_success`, bold) on
+    the side whose lines are in the Result, **不採用** (`color_blocker`, bold)
+    on the other; a partial/manual hunk shows **一部採用** on a side with some
+    lines taken · **変更** (outline). EN: `Used` / `Not used` / `Partly used` /
+    `Change`. 変更 on either side returns the hunk to unresolved
+    (`reset_hunk`), so the 採用/両方 buttons reappear; it is the same action on
+    both sides.
+- **Per-line checkboxes stay as built** (square `gpui_component` Checkbox,
+  white tick on the accent; `Role::CheckBox` with checked state; drag-paint,
+  Space, Shift+↑/↓ unchanged). The owner withdrew the mock's round 12 px
+  indicators ("チェックボックスは前のやつ採用でいい").
+- **Hunk bands.** Unresolved: `diff_removed_bg` on both sides. Resolved: the
+  side with lines in the Result keeps `diff_added_bg`; a side with no line
+  taken is `surface` with its code at `text_sub` opacity. Focused hunk rows
+  carry the existing 3 px `ui_accent` left stripe.
+- **Result header acts on the focused hunk** ("結果ヘッダーはフォーカス中の
+  ハンクに効く"): trailing end of the Result header gets `リセット` (reset the
+  focused hunk, enabled only when it is resolved) and `すべてリセット` (existing
+  reset-all with its confirmation). The `…` menu is gone.
+- **File header** reads `checkout.ts  conflict 2 件 · 1 解決済み`
+  (EN `2 conflicts · 1 resolved`), replacing `conflict 1/2`; the `‹ 1/3 ›`
+  footer navigation stays.
+- Colours: the mock's hex values map to tokens — `#2f6fed` → `ui_accent`,
+  `#eaf6ec` → `diff_added_bg`, `#fdecec` → `diff_removed_bg`, `#f3f3f3` →
+  `surface`, `#2a7d3f` → `color_success`, `#98312C` → `color_blocker`,
+  `#6e6e73`/`#9a9aa0` → `text_sub`. No new constants; Apple Dark follows the
+  tokens and is captured in Tier B even though the mock is light-only.
+- AX: 採用 "この側を使う" / "Use this side", 両方 as labelled, 変更 "選び直す"
+  / "Change", リセット "この conflict をリセット" / "Reset this conflict"; the
+  action row is a toolbar-like group per hunk with the `Conflict N` name.
+
+Functional contract unchanged.

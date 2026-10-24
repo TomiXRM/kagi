@@ -3,6 +3,12 @@
 - Status: Accepted
 - Date: 2026-07-29
 
+Experimental amendment: [ADR-0227](0227-progressive-conflict-resolution.md) on
+`feature/conflict-hunk` separates Files, one-hunk decisions, and full Result
+review. It retains the source adoption bands but replaces the simultaneous
+dashboard/full-source layout and adds direct Both/Edit actions. It is not a
+mainline approval of that experiment.
+
 ## Context
 
 User verdict on the hunk-level Conflict Editor: "かっこよくない". Specifically:

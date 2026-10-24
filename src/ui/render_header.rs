@@ -5,6 +5,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+pub(super) mod count_badge;
 pub(super) mod overflow_trigger;
 #[cfg_attr(not(feature = "gui-e2e"), allow(dead_code))]
 pub(super) mod toolbar_a11y;
@@ -355,6 +356,28 @@ impl KagiApp {
         // neither said which one you'd land in — user report.)
         let pr_mode_on = self.repo_path.is_some() && kagi_git::github::gh_available();
         let mode = self.workspace_mode();
+        let conflict_strip = if self.conflict_body_visible() {
+            self.ui().conflict.clone().map(|view| {
+                if view.read(cx).operation_chrome_subscription.is_none() {
+                    let mut previous = view.read(cx).operation_chrome_state();
+                    let subscription = cx.observe(&view, move |app, view, cx| {
+                        let current = view.read(cx).operation_chrome_state();
+                        if current != previous {
+                            previous = current;
+                            if app.ui().conflict.as_ref() == Some(&view) {
+                                cx.notify();
+                            }
+                        }
+                    });
+                    view.update(cx, |view, _| {
+                        view.operation_chrome_subscription = Some(subscription);
+                    });
+                }
+                view.update(cx, |view, cx| view.render_operation_strip(cx))
+            })
+        } else {
+            None
+        };
         let graph_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.activate_toolbar(8, None, window, cx);
         });
@@ -457,6 +480,7 @@ impl KagiApp {
             _ => usize::MAX,
         };
         let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
+        self.toolbar_layout.operation_visible = conflict_strip.is_some();
         let pending_widths = self.toolbar_layout.pending(present, style_key);
         let show_sidebar_toggle = mode == WorkspaceMode::Prs && !super::compact::for_window(window);
         let hidden = self
@@ -546,7 +570,6 @@ impl KagiApp {
             } else {
                 theme().text_muted
             });
-            let chip_bg = theme().ui_accent();
 
             // The count is an overlay on the icon cell. Native probes stay
             // inside that cell so they do not change the toolbar's layout.
@@ -567,41 +590,7 @@ impl KagiApp {
                     el.child(super::e2e::measure_inside(format!("{id}-icon")))
                 });
             if count > 0 {
-                let chip_text = if count > 99 {
-                    "99+".to_string()
-                } else {
-                    count.to_string()
-                };
-                let chip_label = SharedString::from(chip_text).into_any_element();
-                #[cfg(feature = "gui-e2e")]
-                let chip_label =
-                    super::e2e::measure_control(format!("{id}-count-text"), chip_label);
-                icon_cell = icon_cell.child(
-                    div()
-                        .absolute()
-                        // Grow towards the outside, never left across the arrow.
-                        .top(theme::scaled_px(
-                            -2.0 - (theme::TOOLBAR_COUNT_HEIGHT - 14.0) / 2.0,
-                        ))
-                        .left(theme::scaled_px(22.0 - theme::TOOLBAR_COUNT_ICON_OVERLAP))
-                        .min_w(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
-                        .h(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
-                        .px(theme::scaled_px(3.0))
-                        .rounded_full()
-                        .bg(rgb(chip_bg))
-                        .when(!enabled, |el| el.opacity(0.5))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(rgb(*chip_fg))
-                        .text_size(theme::scaled_px(theme::TOOLBAR_COUNT_TEXT))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(theme::scaled_px(theme::TOOLBAR_COUNT_LINE_HEIGHT))
-                        .child(chip_label)
-                        .when(cfg!(feature = "gui-e2e"), |el| {
-                            el.child(super::e2e::measure_inside(format!("{id}-count")))
-                        }),
-                );
+                icon_cell = icon_cell.child(count_badge::render(id, count, enabled, *chip_fg));
             }
 
             let btn = div()
@@ -766,10 +755,9 @@ impl KagiApp {
                     .flex_1()
                     .min_w_0()
                     .when(icon_only, |el| {
-                        el.min_w(
-                            theme::scaled_px(toolbar_overflow::ICON_IDENTITY_MIN_WIDTH)
-                                + px(sidebar_width),
-                        )
+                        el.min_w(px(
+                            self.toolbar_layout.icon_identity_width(style_key) + sidebar_width
+                        ))
                     })
                     .when(!icon_only, |el| el.min_w(px(identity_width)))
                     .when(show_sidebar_toggle, |el| {
@@ -873,7 +861,11 @@ impl KagiApp {
                             .w(theme::scaled_px(180.))
                             .min_w_0()
                             .when(icon_only, |el| {
-                                el.flex_shrink(1.).min_w(theme::scaled_px(40.))
+                                el.flex_shrink(1.).min_w(if conflict_strip.is_some() {
+                                    px(0.)
+                                } else {
+                                    theme::scaled_px(40.)
+                                })
                             })
                             .relative()
                             .when(!icon_only, |el| {
@@ -1058,6 +1050,18 @@ impl KagiApp {
                     .justify_end()
                     .flex_1()
                     .min_w(px(workspace_width))
+                    .children(conflict_strip.map(|strip| {
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_shrink_0()
+                            .child(toolbar_overflow::probe(
+                                layout_app.clone(),
+                                Some(17),
+                                style_key,
+                            ))
+                            .child(strip)
+                    }))
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(

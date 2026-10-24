@@ -5,8 +5,25 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Experimental — conflict-hunk branch
+
+- Present conflict resolution as a document workspace with borderless whole-file sources, one-click left/right hunk arrows and a More menu for both block orders and resets, previous/next hunk controls in the left commit footer, and directly editable Result with origin stripes. Remove detached adoption rows and Preview/Edit controls. Keep a collapsible 232px source list with top-down In progress/Saved groups, state letters, fill-only selection and a plain inline pending count when hidden. The file header owns one Save/Next file action; the unified toolbar retains Continue and its right icon group. This experiment is not yet approved for main. (#1729)
+  - Preserve choices and manual text across navigation and hide/show, protect divergent manual Results until explicit Reset, and retain accepted saved selections for locked, read-only inspection without auto-advancing. Saved membership comes from the current operation's accepted conflict-path/index read, never unrelated staged files or a UI success ledger; stash has no saved entries. Navigation does not write Git, and Save/Continue keep the existing revision, lease and guarded CommitPanel handoff.
+  - Replace the choice pill with `←` / `…` / `→`, showing whole-side and mixed adoption state. Source conflict lines have checkboxes with same-pane drag painting; Space toggles the focused line and Shift+Up/Down paints the neighbouring conflict line across hunks. More offers Use both, left first / Use both, right first, Reset this hunk and the existing confirmed Reset all, with localized accessible control names.
+  - Keep whole-side block order after Use both when individual source lines are unchecked; selections built from scratch still assemble by position.
+  - Replace the gutter arrows/More menu with per-pane Use/Both action rows and resolved-state Change controls (FRD A+C): action rows share the 24px uniform-list height, the gutter is a control-free 12px band, Result owns focused-hunk Reset and confirmed Reset all, and the file header shows total conflicts and resolved count.
+
 ### Fixed
 
+- Show a saved submodule conflict's commit OID instead of trying to preview it as a blob. (4363857802)
+- Restore conflict hunk choices, selected lines and both ordering modes after restarting a partial resolution; older drafts remain readable. (4363162008)
+- Disable per-hunk Reset and Change for manually edited Results; only confirmed Reset all may discard those edits. (4363161991)
+- Autosave direct Result edits immediately so quitting or restarting retains the latest text. (4361355968)
+- Keep non-UTF-8 conflict paths byte-faithful when recovering the Saved list on Unix. (4362562421)
+- Honor the repository comment character, including Git's automatic choice, when listing saved conflicts. (4363857789)
+- Preserve leading and trailing spaces in conflict paths when identifying saved resolutions. (4361355977)
+- Use Finder's white-preferred 3:1 accent rule for checkbox/radio indicators and shared switch/slider thumbs, rather than the 4.5:1 text-label rule.
+- Keep untouched conflict hunks unresolved when changing line order. Reorder only already adopted content, preserve partial/manual/empty choices, and avoid adding no-op undo entries. Keep binary, symlink and submodule conflicts out of text hunk materialization. (#1728)
 - Bind conflict Result inputs and saved drafts to their owning operation and file-stage identity. A later rebase conflict at the same path starts unresolved instead of inheriting the previous Result; unchanged reads preserve live editing, selection and undo. Keep older and identity-unknown drafts available through read-only Operation Log inspection, even without a recorded operation, without changing ordinary receipt Copy. (#1721)
   - Preserve the newest actual edit, including undo to unresolved, without letting an older live buffer or a decoded/cloned draft outrank a later saved result. Keep recovery history in the existing draft document.
   - Restore the shared Operation Log, Terminal and Activity panel slot during Conflict Mode. Reload the real index for Continue planning and both execution/staging routes; unreadable indexes fail before working-tree or index writes, while a separately saved resolution can continue on the same long-lived backend.

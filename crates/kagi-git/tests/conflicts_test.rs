@@ -299,6 +299,25 @@ fn add_add_text_conflict_materializes_as_text() {
         buffer.hunk_model(path).is_some(),
         "a hunk model must exist for an add/add text conflict"
     );
+    assert!(!buffer.has_resolution(path));
+    for hunk in 0..buffer.hunk_count(path) {
+        assert!(buffer.apply_hunk_choice(path, hunk, kagi_git::HunkChoice::AcceptCurrent));
+    }
+    assert!(buffer.hunks_all_resolved(path));
+    assert_eq!(
+        buffer.resolved_text(path).unwrap().as_bytes(),
+        b"#ifndef H\n#define H\nint main_fn(void);\n#endif\n"
+    );
+    buffer.set_manual_text(path, "manually merged\n").unwrap();
+    assert_eq!(
+        buffer.resolved_text(path).unwrap().as_bytes(),
+        b"manually merged\n"
+    );
+    assert!(buffer.undo(path));
+    assert_eq!(
+        buffer.resolved_text(path).unwrap().as_bytes(),
+        b"#ifndef H\n#define H\nint main_fn(void);\n#endif\n"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1134,6 +1153,117 @@ fn save_resolution_stages_file_to_stage_zero() {
         wt
     );
     assert!(!kagi_git::text_has_conflict_marker(&wt));
+}
+
+/// The session's `resolved` list is Git's own evidence (`MERGE_MSG` conflicts ∩
+/// index stage 0): empty while unmerged, the saved path with its staged OID
+/// after Save, and never an unrelated staged file (ADR-0227 sidebar).
+#[test]
+fn session_resolved_lists_saved_conflict_paths_only() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+
+    let before = detect_conflict_session(&repo).expect("merge in progress");
+    assert_eq!(before.files.len(), 1);
+    assert!(before.resolved.is_empty(), "nothing resolved before Save");
+
+    // An unrelated staged file must never read as a resolved conflict.
+    write_file(dir, "other.txt", "unrelated\n");
+    git(dir, &["add", "other.txt"]);
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    execute_conflict_save(&repo, &buffer, path).expect("save");
+
+    let repo2 = Repository::open(dir).unwrap();
+    let after = detect_conflict_session(&repo2).expect("merge still in progress");
+    assert!(
+        after.files.is_empty(),
+        "saved path leaves the unmerged list"
+    );
+    let staged = repo2
+        .index()
+        .unwrap()
+        .get_path(path, 0)
+        .unwrap()
+        .id
+        .to_string();
+    assert_eq!(
+        after
+            .resolved
+            .iter()
+            .map(|file| (file.path.clone(), file.oid.clone()))
+            .collect::<Vec<_>>(),
+        vec![(path.to_path_buf(), staged)]
+    );
+
+    // A later external change to the staged blob is reflected, not remembered.
+    write_file(dir, "file.txt", "line one\nEXTERNAL\nline three\n");
+    git(dir, &["add", "file.txt"]);
+    let repo3 = Repository::open(dir).unwrap();
+    let moved = detect_conflict_session(&repo3).unwrap();
+    assert_eq!(moved.resolved.len(), 1);
+    assert_ne!(moved.resolved[0].oid, after.resolved[0].oid);
+}
+
+#[test]
+fn session_resolved_respects_core_comment_char() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    git(dir, &["config", "core.commentChar", ";"]);
+    let message_path = dir.join(".git/MERGE_MSG");
+    let message = std::fs::read_to_string(&message_path).unwrap();
+    std::fs::write(&message_path, message.replace('#', ";")).unwrap();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    execute_conflict_save(&repo, &buffer, path).unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    assert_eq!(session.resolved.len(), 1);
+    assert_eq!(session.resolved[0].path, path);
+}
+
+#[cfg(unix)]
+#[test]
+fn session_resolved_preserves_non_utf8_path() {
+    use std::os::unix::ffi::OsStrExt;
+    if !test_support::run_isolated() {
+        return;
+    }
+    // APFS rejects non-UTF-8 working-tree names, so build Git's byte-faithful
+    // stage-0 evidence directly; this also runs on Unix filesystems that do
+    // support those names without depending on host filename normalization.
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let path = Path::new(std::ffi::OsStr::from_bytes(b"file-\xff.txt"));
+    let repo = Repository::open(dir).unwrap();
+    let mut index = repo.index().unwrap();
+    let mut entry = index.get_path(Path::new("file.txt"), 2).unwrap();
+    entry.path = b"file-\xff.txt".to_vec();
+    entry.flags &= !0x3000;
+    index.add(&entry).unwrap();
+    index.write().unwrap();
+    std::fs::write(
+        dir.join(".git/MERGE_MSG"),
+        b"Merge\n\n# Conflicts:\n#\tfile-\xff.txt\n",
+    )
+    .unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    assert_eq!(session.resolved.len(), 1);
+    assert_eq!(session.resolved[0].path, path);
 }
 
 /// Save refuses (blocks) when the resolved text still has conflict markers.
@@ -2247,3 +2377,6 @@ mod continue_autostash;
 
 #[path = "conflicts/draft_completion.rs"]
 mod draft_completion;
+
+#[path = "conflicts/materialization.rs"]
+mod materialization;

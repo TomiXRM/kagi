@@ -4,6 +4,7 @@ thread_local! {
     static CONTROLS: std::cell::RefCell<std::collections::HashMap<String, (gpui::Role, String, String)>> = Default::default();
     static FOCUSED: std::cell::RefCell<Option<String>> = Default::default();
     static DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, String>> = Default::default();
+    static ROW_COUNTS: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record(id: &str, name: &str, state: &str, description: &str) {
@@ -11,6 +12,23 @@ pub(crate) fn record(id: &str, name: &str, state: &str, description: &str) {
         controls
             .borrow_mut()
             .insert(id.into(), (gpui::Role::Button, name.into(), state.into()));
+    });
+    DESCRIPTIONS.with(|values| {
+        values.borrow_mut().insert(id.into(), description.into());
+    });
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_checkbox(id: &str, name: &str, taken: bool) {
+    use super::i18n::Msg;
+    let (state, description) = if taken {
+        ("all", Msg::EditorSelectionAll.t())
+    } else {
+        ("none", Msg::EditorSelectionNone.t())
+    };
+    CONTROLS.with(|controls| {
+        controls
+            .borrow_mut()
+            .insert(id.into(), (gpui::Role::CheckBox, name.into(), state.into()));
     });
     DESCRIPTIONS.with(|values| {
         values.borrow_mut().insert(id.into(), description.into());
@@ -31,4 +49,34 @@ pub(crate) fn focus(id: &str) {
 #[cfg(feature = "gui-e2e")]
 pub fn take_focus_probe() -> Option<String> {
     FOCUSED.with(|focused| focused.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn begin_frame() {
+    CONTROLS.with(|values| values.borrow_mut().clear());
+    DESCRIPTIONS.with(|values| values.borrow_mut().clear());
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status(id: &str, name: &str) {
+    CONTROLS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(id.into(), (gpui::Role::Status, name.into(), String::new()));
+    });
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_row_count(side: &str, count: usize) {
+    ROW_COUNTS.with(|values| {
+        let mut counts = values.get();
+        counts[match side {
+            "current" => 0,
+            "incoming" => 1,
+            _ => 2,
+        }] = count;
+        values.set(counts);
+    });
+}
+#[cfg(feature = "gui-e2e")]
+pub fn row_counts() -> [usize; 3] {
+    ROW_COUNTS.with(std::cell::Cell::get)
 }

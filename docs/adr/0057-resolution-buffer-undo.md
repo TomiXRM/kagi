@@ -11,6 +11,7 @@
   **abort してもバッファは oplog 参照付きで退避**
   (jj の「部分解決を失わせない」の git 互換実装)。
 - 行ごとの採用元(current/incoming/manual)を保持し UI で出所可視化(BC/KDiff3 流)
+- `LineOrder::CurrentBlockFirst` / `IncomingBlockFirst` preserve hunk-level Both as all taken lines of one side followed by all taken lines of the other after checkbox edits; fresh line selections retain positional `CurrentFirst` / `IncomingFirst` tie-breaking.
 
 ## JSON codec（#513 resolution slice）
 
@@ -26,7 +27,9 @@
   surrogate pair は Unicode 文字として復元し、再保存しても脱落させない。
 - live index 由来の raw metadata は再検出する。保存済みの選択を適用するには、
   以下の既知かつ一致する file identity と text/raw の互換性を要求する。
-  undo/redo・hunk model は JSON に保存しない。保存先と oplog は維持する。
+  undo/redo・source hunk data は JSON に保存しない。hunk choices・line selections・
+  positional/block の全 LineOrder と materialization fingerprint は保存し、
+  既知かつ一致する live file identity と materialization にだけ復元する。保存先と oplog は維持する。
 
 ## 描画用 marker 派生状態（#497）
 

@@ -1388,8 +1388,8 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // ── Primary / accent (Checkbox checked, focus ring) ────────
     gc.colors.primary = to_hsla(k.ui_accent());
     let primary_foreground = primary_button_foreground(k);
-    // Radio/checkbox indicator contrast is independent of Finder-style labels.
-    gc.colors.primary_foreground = to_hsla(filled_button_foreground(k.ui_accent(), k));
+    // Indicators follow Finder's accent rule (3:1 UI components), like primary buttons.
+    gc.colors.primary_foreground = to_hsla(on_accent_foreground(k.ui_accent()));
     // Keep these generic tokens unchanged: outline Primary uses their tint;
     // filled Primary has its own interaction tokens below.
     gc.colors.primary_hover = to_hsla(k.ui_accent());
@@ -2826,6 +2826,42 @@ mod registry_tests {
         );
         assert!(take_theme_load_errors().is_empty(), "errors are taken once");
         std::env::remove_var("KAGI_LOG_DIR");
+    }
+}
+
+#[cfg(test)]
+mod accent_indicator_tests {
+    use super::*;
+
+    #[test]
+    fn component_indicators_prefer_white_at_three_to_one() {
+        for theme in THEMES {
+            let accent = theme.ui_accent();
+            let expected = if contrast_ratio(accent, 0xffffff) >= 3.0 {
+                0xffffff
+            } else {
+                0x000000
+            };
+            let mut component = gpui_component::Theme::default();
+            apply_gpui_component_theme(theme, &mut component);
+            assert_eq!(
+                component.colors.primary_foreground,
+                to_hsla(expected),
+                "{}",
+                theme.slug
+            );
+            assert!(contrast_ratio(accent, expected) >= 3.0, "{}", theme.slug);
+            if matches!(&*theme.slug, "nagi-light" | "nagi-dark") {
+                for foreground in [
+                    component.colors.switch_thumb,
+                    component.colors.slider_thumb,
+                    component.colors.sidebar_primary_foreground,
+                    component.colors.info_foreground,
+                ] {
+                    assert_eq!(foreground, to_hsla(expected), "{}", theme.slug);
+                }
+            }
+        }
     }
 }
 

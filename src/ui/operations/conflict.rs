@@ -169,6 +169,22 @@ impl KagiApp {
             self.push_toast(ToastKind::Error, "stale conflict action was ignored", cx);
             return;
         }
+        let save_path = match &intent {
+            conflict_view::FrozenConflictIntent::Request { request, .. } => {
+                match &request.request {
+                    kagi_domain::conflict_family::ConflictRequest::Save { path, .. } => {
+                        Some(path.clone())
+                    }
+                    _ => None,
+                }
+            }
+            conflict_view::FrozenConflictIntent::SaveRefusal { path, .. } => Some(path.clone()),
+        };
+        if let Some(path) = save_path {
+            if let Some(view) = self.ui().conflict.as_ref() {
+                view.update(cx, |view, _| view.save_attempt = Some(path));
+            }
+        }
         match intent {
             conflict_view::FrozenConflictIntent::Request { request, .. } => {
                 let _ = self.start_conflict_request(request, cx);

@@ -309,7 +309,7 @@ pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
         let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
         conflict.update(cx, |view, cx| {
             view.conflict_open_editor(std::path::Path::new("file.txt"));
-            view.result_editing = true;
+            view.conflict_editor_set_result_mode(true);
             cx.notify();
         });
         check(

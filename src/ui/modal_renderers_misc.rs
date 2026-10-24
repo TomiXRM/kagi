@@ -581,7 +581,7 @@ pub(crate) fn render_editor_dirty_guard_modal(
                             cx,
                         ),
                     ))
-                    .when(host_close && !restart_waiting, |row| {
+                    .when((host_close || conflict_failed) && !restart_waiting, |row| {
                         row.child(super::e2e::measure_control(
                             "editor-dirty-guard-save",
                             modal_button(

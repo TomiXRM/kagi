@@ -1,21 +1,22 @@
 //! #1731: a real autosave I/O failure must not silently lose a live Result draft.
-use crate::app_conflict::{click_control, content_fixture};
+use crate::app_conflict::{click_control, content_fixture, wait_idle};
 use crate::conflict_draft_revision::{
-    conflict_read, detect, paint, replace_result, result_input, FILE,
+    conflict_read, detect, paint, replace_result, result_input, RebaseFixture, FILE,
 };
-use crate::host_dirty_guard::{alive, cleanup, request, Entry};
+use crate::host_dirty_guard::{alive, cleanup, request as request_host, Entry};
 use crate::macos::mount;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{
     e2e,
     i18n::{Lang, Msg},
-    KagiApp, ToastKind,
+    FooterStatus, KagiApp, ToastKind,
 };
 use kagi_git::{
     oplog::{read_oplog_tail_for_repo, OpOutcome},
     resolution::ResolutionBuffer,
 };
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     fs::Permissions,
     os::unix::fs::PermissionsExt,
@@ -174,7 +175,22 @@ fn assert_error_toast(cx: &VisualTestAppContext, app: &Entity<KagiApp>, repo: &P
     });
 }
 
-fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Entry, discard: bool) {
+fn request_close(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    entry: Option<Entry>,
+) {
+    if let Some(entry) = entry {
+        request_host(cx, app, window, entry);
+    } else {
+        // Exercise the real root shortcut, including the last-tab → Welcome path.
+        cx.simulate_keystrokes(window, "cmd-w");
+        cx.run_until_parked();
+    }
+}
+
+fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>, discard: bool) {
     let isolated = IsolatedLog::new();
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -199,13 +215,13 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Entry, discard: bo
     );
     assert_error_toast(cx, &app, &repo);
 
-    request(cx, &app, window, entry);
+    request_close(cx, &app, window, entry);
     assert_guard(cx, &app, window, lang);
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
     click_control(cx, window, "editor-dirty-guard-cancel");
     assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
     assert_live(cx, &app, window);
-    request(cx, &app, window, entry);
+    request_close(cx, &app, window, entry);
     assert_guard(cx, &app, window, lang);
 
     if discard {
@@ -245,8 +261,16 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Entry, discard: bo
         );
     }
     match entry {
-        Entry::Quit => assert!(cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested)),
-        Entry::Close => assert!(!alive(cx, window), "approved close removes the window"),
+        Some(Entry::Quit) => assert!(cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested)),
+        Some(Entry::Close) => assert!(!alive(cx, window), "approved close removes the window"),
+        None => {
+            assert!(alive(cx, window), "Cmd-W closes the tab, not the host");
+            cx.read(|cx| {
+                assert!(app.read(cx).tabs.is_empty(), "last tab closes to Welcome");
+                assert!(app.read(cx).ui().conflict.is_none());
+                assert!(!cx.global::<e2e::QuitForE2e>().requested);
+            });
+        }
         _ => unreachable!(),
     }
     assert_eq!(
@@ -259,15 +283,170 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Entry, discard: bo
     cleanup(cx, app, window);
 }
 
+fn repository_bytes(repo: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, path: &Path, bytes: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                visit(root, &path, bytes);
+            } else {
+                bytes.insert(
+                    path.strip_prefix(root).unwrap().to_owned(),
+                    std::fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut bytes = BTreeMap::new();
+    visit(repo, repo, &mut bytes);
+    bytes
+}
+
+fn assert_refused(
+    cx: &VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    repo: &Path,
+    op: &str,
+    announced: bool,
+) {
+    let entries = read_oplog_tail_for_repo(repo, 1000);
+    let receipt = entries.iter().rev().find(|entry| entry.op == op).unwrap();
+    let reason = kagi_domain::plan_note::PlanNote::Conflicts(
+        kagi_domain::plan_note::ConflictsNote::DraftPreservationFailed,
+    );
+    assert!(matches!(&receipt.outcome, OpOutcome::Refused { blockers }
+        if blockers == &[reason.message_en()]));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let reason = Msg::AdviceConflictsDraftPreservationFailed.t();
+        if announced {
+            // The existing result policy deliberately clears the footer when
+            // its single presentation owner is a notification.
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Idle(message) if message.is_empty())
+            );
+            let stack = app.toast_stack.as_ref().unwrap().read(cx);
+            let toast = stack.toasts().last().unwrap();
+            assert_eq!(toast.kind, ToastKind::Error);
+            let first_sentence = reason.split(['。', '.']).next().unwrap();
+            assert!(toast.message.contains(first_sentence), "{}", toast.message);
+            assert!(!toast.message.contains('\n'));
+            assert!(!toast.message.contains(repo.to_str().unwrap()));
+        } else {
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Failed(message)
+                if message.contains(reason)),
+                "localized typed blocker must reach the foreground footer"
+            );
+        }
+    });
+}
+
+fn run_abort_case(cx: &mut VisualTestAppContext, lang: Lang, at_confirm: bool) {
+    let isolated = IsolatedLog::new();
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_lang(lang, cx));
+    detect(cx, &app, window);
+    let input = result_input(cx, &app, window);
+    replace_result(cx, &app, window, &input, "OLDER DURABLE DRAFT\n");
+    let frozen = if at_confirm {
+        click_control(cx, window, "conflict-abort");
+        Some(app.update(cx, |app, _| {
+            let frozen = app
+                .conflict_abort_modal()
+                .cloned()
+                .expect("real abort plan");
+            app.cancel_conflict_abort();
+            frozen
+        }))
+    } else {
+        None
+    };
+    let denied = UnwritableDirectory::new(isolated.directory.path().join("conflicts"));
+    replace_result(cx, &app, window, &input, DRAFT);
+    assert_live(cx, &app, window);
+    denied.restore();
+    // Storage is usable again, but Abort's disk-loaded buffer is stale until
+    // the live view has successfully retried its own autosave.
+    assert_eq!(
+        ResolutionBuffer::load(&repo)
+            .unwrap()
+            .resolved_text(Path::new(FILE))
+            .as_deref(),
+        Some("OLDER DURABLE DRAFT\n")
+    );
+    let before = repository_bytes(&repo);
+    if let Some(frozen) = frozen {
+        // Replay a genuinely computed confirmation at the app boundary after
+        // real native editing failed; a visible modal correctly traps typing.
+        app.update(cx, |app, cx| {
+            app.set_conflict_abort_modal(frozen);
+            app.confirm_conflict_abort(cx);
+        });
+    } else {
+        click_control(cx, window, "conflict-abort");
+    }
+    wait_idle(cx, &app);
+    assert_eq!(
+        repository_bytes(&repo),
+        before,
+        "refused Abort is byte-exact no-write"
+    );
+    assert_refused(cx, &app, &repo, "merge-abort", true);
+    assert_live(cx, &app, window);
+    assert!(cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()));
+    assert!(repo.join(".git/MERGE_HEAD").exists());
+    drop(input);
+    cleanup(cx, app, window);
+}
+
+fn run_skip_case(cx: &mut VisualTestAppContext, lang: Lang, active: bool) {
+    let isolated = IsolatedLog::new();
+    let fixture = RebaseFixture::new();
+    let repo = fixture.path();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        app.set_window_active_for_e2e(active, cx);
+    });
+    detect(cx, &app, window);
+    let input = result_input(cx, &app, window);
+    let _denied = UnwritableDirectory::new(isolated.directory.path().join("conflicts"));
+    replace_result(cx, &app, window, &input, DRAFT);
+    let before = repository_bytes(&repo);
+    app.update(cx, |app, cx| {
+        let owner = app
+            .app_sessions
+            .attachment(app.active_session().unwrap())
+            .unwrap();
+        app.conflict_skip(owner, cx);
+    });
+    wait_idle(cx, &app);
+    assert_eq!(repository_bytes(&repo), before);
+    assert_refused(cx, &app, &repo, "rebase-skip", !active);
+    assert_live(cx, &app, window);
+    drop(input);
+    cleanup(cx, app, window);
+}
+
 pub fn scenario_conflict_draft_persist_failure(cx: &mut VisualTestAppContext) {
     let _presentation = crate::presentation_support::Presentation::keep();
     cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
     for lang in [Lang::En, Lang::Ja] {
-        for entry in [Entry::Quit, Entry::Close] {
+        for entry in [Some(Entry::Quit), Some(Entry::Close), None] {
             for discard in [false, true] {
                 cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
                 run_case(cx, lang, entry, discard);
             }
+        }
+        for at_confirm in [false, true] {
+            run_abort_case(cx, lang, at_confirm);
+        }
+        for active in [false, true] {
+            run_skip_case(cx, lang, active);
         }
     }
     cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);

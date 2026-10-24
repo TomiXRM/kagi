@@ -18,7 +18,7 @@ pub(crate) const ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE: &str =
 pub(crate) const ADVICE_CONFLICTS_ABORT_HEAD_MOVED: &str =
     "中止できませんでした: 操作開始後に HEAD が移動したため、戻すと作業が失われる可能性があります。何も変更していません。";
 pub(crate) const ADVICE_CONFLICTS_DRAFT_PRESERVATION_FAILED: &str =
-    "下書きを保持できないため中止できません。リポジトリは変更していません。保存先のアクセス権を確認して再試行してください。";
+    "下書きを保持できないため実行できません。リポジトリを変更する処理は行っていません。保存先のアクセス権を確認して再試行してください。";
 pub(crate) const ADVICE_CONFLICTS_RESOLUTION_MARKERS: &str =
     "解決結果に conflict marker が残っています。削除してから保存してください。";
 pub(crate) const ADVICE_CONFLICTS_UNRESOLVED_FILES: &str =

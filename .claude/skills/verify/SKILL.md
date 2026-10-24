@@ -61,11 +61,16 @@ For #1731 use `KAGI_GUI_E2E_ONLY='conflict_draft_persist_failure,conflict_abort'
 with KEEP_GOING. The draft failure scenario makes the real conflicts directory
 unwritable, edits the native Result, and checks the durable Failed receipt,
 bounded Error toast even in the active Graph workspace, and EN/JA host-close/quit
-sheet. Its active-window seam prevents ordinary short-operation toast suppression
+and Cmd+W last-tab-close sheets. Its active-window seam prevents ordinary short-operation toast suppression
 from hiding mandatory autosave errors. Renderer-fed guard labels
 are observed through `record_conflict_draft_guard`; this is not OS accessibility
 evidence. Retry must retain the sheet while writes fail, then save exact live
 text after permissions recover; discard must require a second explicit action.
+Abort is refused at both plan opening and confirmation while the live failure
+flag remains set, even if permissions recover and an older on-disk draft can be
+saved again. These cases compare every repository file byte, including `.git`,
+and retain the newer live text. The real rebase Skip failure also checks that
+the same operation-neutral typed blocker reaches the EN/JA footer and toast.
 Tier B repeats DrillLeaveResume §1c and DrillSequencers §1 on private fixture
 copies with chmod 000, comparing the plain binary before/after and capturing
 the close sheet and refused abort without changing the repository.

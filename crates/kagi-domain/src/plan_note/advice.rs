@@ -284,7 +284,7 @@ macro_rules! advice_template_en {
         "abort refused: HEAD moved since the sequence started; not rewinding. The current HEAD no longer matches the sequencer's safe rollback tip. No repository state was changed."
     };
     (ConflictsDraftPreservationFailed) => {
-        "Cannot proceed because the draft recovery copy could not be preserved. No destructive repository step was performed."
+        "Cannot proceed because the draft recovery copy could not be preserved. No destructive repository step was performed. Check the save location's access permissions and retry."
     };
     (ConflictsResolutionMarkers) => {
         "conflict markers remain in the resolution buffer"

@@ -438,6 +438,7 @@ impl KagiApp {
                                 &repo_path,
                                 current,
                                 false,
+                                None,
                                 cx,
                             );
                         }
@@ -556,6 +557,7 @@ impl KagiApp {
                                     &repo_path,
                                     current,
                                     false,
+                                    None,
                                     cx,
                                 );
                                 if current {
@@ -574,6 +576,7 @@ impl KagiApp {
                                     &repo_path,
                                     current,
                                     false,
+                                    None,
                                     cx,
                                 );
                             }
@@ -694,6 +697,7 @@ impl KagiApp {
                             &repo_path,
                             current,
                             stopped,
+                            None,
                             cx,
                         );
                         if modal_matches {
@@ -722,6 +726,7 @@ impl KagiApp {
                             &repo_path,
                             current,
                             false,
+                            None,
                             cx,
                         );
                         if modal_matches {

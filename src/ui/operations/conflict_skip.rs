@@ -123,6 +123,10 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| {
                 app.refresh_write_busy();
                 let current = app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
+                let display = match &result {
+                    Err(kagi_git::GitError::Blocked(note)) => Some(i18n::plan_note_text(note)),
+                    _ => None,
+                };
                 let (outcome, failure, ran) = match result {
                     Ok(o) => {
                         let git_said = o.error.map(|e| format!("{}", e)).unwrap_or_default();
@@ -149,7 +153,7 @@ impl KagiApp {
                     None => klog!("executed: {}", op_name),
                     Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
                 }
-                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, false, cx);
+                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, false, display, cx);
                 if current {
                     if let Some(evidence) = termination_unknown_evidence {
                         app.report_unknown_notice(&repo_path, evidence);

@@ -677,7 +677,9 @@ impl KagiApp {
             return;
         }
         let closing_session = self.tabs[index].session;
-        if self.editor_dirty_for(closing_session, cx) {
+        if self.editor_dirty_for(closing_session, cx)
+            || self.failed_conflict_draft_for(closing_session, cx)
+        {
             self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closing_session), cx);
             return;
         }

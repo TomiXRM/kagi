@@ -91,6 +91,9 @@ impl KagiApp {
         let Some(operation) = self.view().operation.clone() else {
             return;
         };
+        if self.refuse_conflict_abort_for_failed_draft(&owner, &operation, cx) {
+            return;
+        }
         let repo_session = self.ui().repo_session.clone();
         let Some(repo) = repo_session.as_ref().map(|session| session.backend()) else {
             self.push_toast(
@@ -135,13 +138,61 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// A disk-loaded preservation buffer cannot stand in for a newer failed
+    /// live draft, even after filesystem permissions have recovered.
+    fn refuse_conflict_abort_for_failed_draft(
+        &mut self,
+        owner: &crate::app::Attachment,
+        operation: &ObservedOperation,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.failed_conflict_draft_for(owner.session, cx) {
+            return false;
+        }
+        let Some(repo_path) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.session == owner.session)
+            .map(|tab| tab.path.clone())
+        else {
+            return false;
+        };
+        let blocker = kagi_domain::plan_note::PlanNote::Conflicts(
+            kagi_domain::plan_note::ConflictsNote::DraftPreservationFailed,
+        );
+        let message = super::i18n::plan_note_text(&blocker);
+        let entry = Self::refused_entry(
+            &format!("{}-abort", operation.kind().slug()),
+            kagi_domain::plan::StateSummary {
+                head: format!("op={}", operation.kind().slug()),
+                dirty: "unsaved decisions".into(),
+            },
+            &[blocker],
+            &repo_path,
+        );
+        self.record_op_result(
+            entry,
+            cx,
+            true,
+            None,
+            Some((ToastKind::Error, message.into())),
+            true,
+            true,
+            None,
+            false,
+            None,
+            None,
+        );
+        true
+    }
+
     pub fn cancel_conflict_abort(&mut self) {
         self.clear_conflict_abort_modal();
     }
 
-    /// Stage two: hand the frozen request to the conflict family. The family
-    /// owns admission (`begin_write`), the live preflight, execution,
-    /// verification and the receipt — this method decides nothing.
+    /// Stage two: recheck live draft preservation before handing the frozen
+    /// request to the conflict family, which owns admission (`begin_write`),
+    /// live repository preflight, execution, verification and the receipt.
     pub fn confirm_conflict_abort(&mut self, cx: &mut Context<Self>) {
         let Some(modal) = self.conflict_abort_modal().cloned() else {
             return;
@@ -152,6 +203,11 @@ impl KagiApp {
         else {
             return;
         };
+        if self.refuse_conflict_abort_for_failed_draft(&owner, &modal.operation, cx) {
+            self.clear_conflict_abort_modal();
+            cx.notify();
+            return;
+        }
         let request = app::ConflictAppRequest {
             owner,
             request: kagi_git::Backend::conflict_abort_request(&modal.operation),

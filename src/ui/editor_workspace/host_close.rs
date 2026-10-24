@@ -78,6 +78,30 @@ impl KagiApp {
             .count()
     }
 
+    pub(crate) fn failed_conflict_draft_for(
+        &self,
+        session: crate::app::SessionId,
+        cx: &App,
+    ) -> bool {
+        self.ui
+            .get(&session)
+            .and_then(|ui| ui.conflict.as_ref())
+            .is_some_and(|pane| pane.read(cx).draft_persist_failed.is_some())
+    }
+
+    pub(crate) fn dirty_guard_has_failed_conflict_draft(&self, cx: &App) -> bool {
+        self.editor_dirty_guard_modal()
+            .is_some_and(|modal| match &modal.intent {
+                EditorPendingIntent::CloseRepoTab(session) => {
+                    self.failed_conflict_draft_for(*session, cx)
+                }
+                EditorPendingIntent::Quit
+                | EditorPendingIntent::CloseWindow(_)
+                | EditorPendingIntent::Relaunch => self.failed_conflict_draft_count(cx) > 0,
+                _ => false,
+            })
+    }
+
     pub(crate) fn host_dirty_guard_open(&self) -> bool {
         self.editor_dirty_guard_modal().is_some_and(|modal| {
             matches!(
@@ -195,6 +219,27 @@ impl KagiApp {
     /// or externally changed file leaves the guard and its original intent intact.
     /// Cancel retires the intent; an already admitted save may finish but cannot exit.
     pub fn save_host_dirty_guard(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = self.editor_dirty_guard_modal().and_then(|modal| {
+            if modal.saving.is_none() {
+                if let EditorPendingIntent::CloseRepoTab(session) = modal.intent {
+                    return Some(session);
+                }
+            }
+            None
+        }) {
+            if let Some(modal) = self.editor_dirty_guard_modal_mut() {
+                modal.conflict_discard_armed = false;
+            }
+            if let Some(conflict) = self.ui.get(&session).and_then(|ui| ui.conflict.clone()) {
+                conflict.update(cx, |view, cx| view.retry_draft_autosave(cx));
+            }
+            if !self.failed_conflict_draft_for(session, cx) && !self.editor_dirty_for(session, cx) {
+                self.clear_editor_dirty_guard_modal();
+                self.close_tab_by_session(session, cx);
+            }
+            cx.notify();
+            return;
+        }
         if !self.host_dirty_guard_open()
             || self
                 .editor_dirty_guard_modal()

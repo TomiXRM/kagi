@@ -783,8 +783,7 @@ impl KagiApp {
             self.explain_host_save_wait(cx);
             return;
         }
-        if self.host_dirty_guard_open()
-            && self.failed_conflict_draft_count(cx) > 0
+        if self.dirty_guard_has_failed_conflict_draft(cx)
             && self
                 .editor_dirty_guard_modal()
                 .is_some_and(|modal| !modal.conflict_discard_armed)
@@ -822,6 +821,7 @@ impl KagiApp {
                 // active tab's) so the close does not re-prompt, then close it.
                 if let Some(ui) = self.ui.get_mut(&session) {
                     ui.editor_workspace = None;
+                    ui.conflict = None;
                 }
                 self.close_tab_by_session(session, cx);
             }

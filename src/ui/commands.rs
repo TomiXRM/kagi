@@ -103,6 +103,9 @@ actions!(
         Push,
         // ADR-0154 / #335: capture the working tree as a savepoint snapshot.
         CreateSnapshot,
+        ConflictAbort,
+        ConflictSkip,
+        ConflictContinue,
         OpenInFinder,
         // Branch
         NewBranch,
@@ -402,6 +405,10 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("repo.push"),
             MenuNode::Separator,
             MenuNode::Command("repo.createSnapshot"),
+            MenuNode::Separator,
+            MenuNode::Command("repo.conflictAbort"),
+            MenuNode::Command("repo.conflictSkip"),
+            MenuNode::Command("repo.conflictContinue"),
             MenuNode::Separator,
             MenuNode::Command("repo.openInFinder"),
             MenuNode::Command("file.openInTerminal"),
@@ -707,6 +714,24 @@ pub const COMMANDS: &[Command] = &[
         dangerous: false,
     },
     Command {
+        id: "repo.conflictAbort",
+        label: "Abort merge…",
+        keystroke: None,
+        dangerous: true,
+    },
+    Command {
+        id: "repo.conflictSkip",
+        label: "Skip this step…",
+        keystroke: None,
+        dangerous: true,
+    },
+    Command {
+        id: "repo.conflictContinue",
+        label: "Continue",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
         // ADR-0154 / #335: capture a working-tree savepoint under
         // `refs/kagi/snapshots/`. Non-destructive (only adds a ref).
         id: "repo.createSnapshot",
@@ -944,6 +969,9 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     let diff_open = app.ui().main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
+        "repo.conflictAbort" | "repo.conflictSkip" | "repo.conflictContinue" => {
+            Disabled(Msg::ConflictReviewNeeded.t())
+        }
         "file.cloneRepository" if app.has_active_modal() && app.clone_modal().is_none() => {
             Disabled(Msg::FinishDialogFirst.t())
         }
@@ -1108,8 +1136,31 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
 }
 
 /// Convenience: is this command currently enabled?
-pub(crate) fn is_enabled(app: &KagiApp, id: &str) -> bool {
-    matches!(command_state(app, id), CommandState::Enabled)
+pub(crate) fn is_enabled(app: &KagiApp, id: &str, cx: &App) -> bool {
+    matches!(command_state_in(app, id, cx), CommandState::Enabled)
+}
+
+/// Entity-backed conflict admission; never cache editor readiness on KagiApp.
+pub(crate) fn command_state_in(app: &KagiApp, id: &str, cx: &App) -> CommandState {
+    if !matches!(
+        id,
+        "repo.conflictAbort" | "repo.conflictSkip" | "repo.conflictContinue"
+    ) {
+        return command_state(app, id);
+    }
+    if app.home_in_front() || app.repo_path.is_none() {
+        return CommandState::Disabled(Msg::NoRepoOpen.t());
+    }
+    if app.has_active_modal() {
+        return CommandState::Disabled(Msg::FinishDialogFirst.t());
+    }
+    if app.op_latched() {
+        return CommandState::Disabled(Msg::OpInProgress.t());
+    }
+    app.ui().conflict.as_ref().map_or(
+        CommandState::Disabled(Msg::ConflictReviewNeeded.t()),
+        |view| view.read(cx).menu_command_state(id),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1183,6 +1234,9 @@ fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> Menu
         "repo.pull" => MenuItem::action(label, Pull),
         "repo.push" => MenuItem::action(label, Push),
         "repo.createSnapshot" => MenuItem::action(label, CreateSnapshot),
+        "repo.conflictAbort" => MenuItem::action(label, ConflictAbort),
+        "repo.conflictSkip" => MenuItem::action(label, ConflictSkip),
+        "repo.conflictContinue" => MenuItem::action(label, ConflictContinue),
         "repo.openInFinder" => MenuItem::action(label, OpenInFinder),
         // Branch
         "branch.new" => MenuItem::action(label, NewBranch),
@@ -2209,6 +2263,30 @@ impl KagiApp {
             "file.cloneRepository" => self.open_clone_picker(window, cx),
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
             "repo.createSnapshot" => self.create_snapshot_now(cx),
+            "repo.conflictAbort" | "repo.conflictSkip" | "repo.conflictContinue" => {
+                if !is_enabled(self, id, cx) {
+                    return;
+                }
+                let Some(view) = self.ui().conflict.clone() else {
+                    return;
+                };
+                let owner = view.read(cx).owner.clone();
+                match id {
+                    "repo.conflictAbort" => self.open_conflict_abort_modal(owner, window, cx),
+                    "repo.conflictSkip" => {
+                        let execute = view.update(cx, |view, cx| {
+                            let execute = view.skip_request_arm();
+                            cx.notify();
+                            execute
+                        });
+                        if execute {
+                            self.conflict_skip(owner, cx);
+                        }
+                    }
+                    _ => self.conflict_continue(owner, window, cx),
+                }
+                cx.notify();
+            }
             "file.connectRemote" => self.open_remote_browse(cx),
             "file.refresh" => {
                 // ADR-0089 Phase 2b: a remote read-only view re-snapshots over
@@ -2320,7 +2398,7 @@ impl KagiApp {
             "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete, window, cx),
             "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename, window, cx),
             "branch.copySelectedName" => {
-                if is_enabled(self, id) {
+                if is_enabled(self, id, cx) {
                     if let Some(name) = selected_branch_name(self).map(str::to_owned) {
                         super::branch_menu::copy_branch_name(self, name, cx);
                     }

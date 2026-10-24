@@ -145,11 +145,26 @@ fn assert_row_alignment(cx: &mut VisualTestAppContext, window: AnyWindowHandle) 
     );
 }
 
-fn assert_operation_strip(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+fn assert_operation_placement(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    conflict: &Entity<ConflictView>,
+) {
     let ids = [
         "toolbar-row",
-        "tb-repo-actions",
         "conflict-operation-strip",
+        "operation-strip",
+        "operation-strip-abort",
+        "conflict-session-header",
+        "conflict-sidebar-clip",
+        "conflict-file-header",
+        "conflict-sidebar-toggle",
+        "conflict-operation-actions",
+        "conflict-file-session-separator",
+        "conflict-abort",
+        "conflict-save",
+        "conflict-skip",
+        "conflict-continue",
         "tb-graph-mode",
         "tb-pr-mode",
         "tb-editor-ws",
@@ -163,36 +178,99 @@ fn assert_operation_strip(cx: &mut VisualTestAppContext, window: AnyWindowHandle
     let bounds = |id| {
         e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| {
             panic!(
-                "missing toolbar control {id}: {:?} zoom={} toolbar={:?}",
+                "missing control {id}: {:?} zoom={}",
                 i18n::lang(),
-                theme::zoom(),
-                e2e::control_bounds(window.window_id(), "toolbar-row")
+                theme::zoom()
             )
         })
     };
+    let contains = |outer: gpui::Bounds<gpui::Pixels>, inner: gpui::Bounds<gpui::Pixels>| {
+        inner.left() >= outer.left()
+            && inner.right() <= outer.right()
+            && inner.top() >= outer.top()
+            && inner.bottom() <= outer.bottom()
+    };
+    let (hidden, sequencer, identity) = cx.read(|cx| {
+        let view = conflict.read(cx);
+        let op = &view.mode.as_ref().unwrap().session.op;
+        let identity = match op {
+            kagi_git::conflicts::ConflictOp::Rebase { step, total, .. } => {
+                assert!(*step > 0 && *total >= *step);
+                format!("{} {step}/{total}", op.slug())
+            }
+            op => op.slug().to_owned(),
+        };
+        (view.sidebar_hidden, op.is_sequencer(), identity)
+    });
     let toolbar = bounds("toolbar-row");
-    let operation = bounds("conflict-operation-strip");
-    assert!(operation.size.width > gpui::px(0.));
-    assert!(operation.left() >= toolbar.left() && operation.right() <= toolbar.right());
-    assert!(operation.top() >= toolbar.top() && operation.bottom() <= toolbar.bottom());
-    // Repository commands legitimately migrate to overflow at compact widths.
-    if let Some(commands) = e2e::control_bounds(window.window_id(), "tb-repo-actions") {
+    let header = bounds("conflict-file-header");
+    let actions = bounds("conflict-operation-actions");
+    let separator = bounds("conflict-file-session-separator");
+    assert!(e2e::control_bounds(window.window_id(), "conflict-operation-strip").is_none());
+    assert!(
+        contains(header, actions),
+        "header={header:?}, actions={actions:?}, hidden={hidden}, zoom={}",
+        theme::zoom()
+    );
+    assert!(contains(header, separator));
+    assert!(bounds("conflict-save").right() <= separator.left());
+    assert!(separator.right() <= actions.left());
+    assert!(contains(actions, bounds("conflict-continue")));
+    if hidden {
+        for id in ["conflict-session-header", "conflict-abort", "conflict-skip"] {
+            assert!(
+                e2e::control_bounds(window.window_id(), id).is_none(),
+                "{id} is not moved into the file header when the sidebar is hidden"
+            );
+        }
+        let strip = bounds("operation-strip");
+        assert!(strip.top() >= toolbar.bottom());
+        assert!(strip.bottom() <= header.top());
+        let abort = bounds("operation-strip-abort");
+        assert!(contains(strip, abort));
+        assert!(abort.size.width > gpui::px(0.) && abort.size.height > gpui::px(0.));
+    } else {
+        assert_eq!(ConflictView::session_header_label_for_e2e(), identity);
+        assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_none());
+        assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
+        let session = bounds("conflict-session-header");
+        assert!(contains(session, bounds("conflict-abort")));
+        assert!(contains(bounds("conflict-sidebar-clip"), session));
+        assert!(session.top() >= toolbar.bottom());
         assert!(
-            commands.right() <= operation.left(),
-            "repository commands do not overlap conflict operations"
+            session.right() <= header.left(),
+            "Abort and Skip stay in the sidebar, apart from file actions and Continue"
+        );
+        if sequencer {
+            assert!(contains(session, bounds("conflict-skip")));
+            assert!(bounds("conflict-abort").right() <= bounds("conflict-skip").left());
+        } else {
+            assert!(e2e::control_bounds(window.window_id(), "conflict-skip").is_none());
+        }
+    }
+    for id in ["conflict-save", "conflict-continue"] {
+        assert!(
+            bounds(id).top() >= toolbar.bottom(),
+            "{id} is outside the main toolbar"
         );
     }
-    for id in &ids[3..] {
-        let mode = bounds(id).dilate(gpui::px(kagi_ui_core::keyboard_nav::RING));
-        assert!(
-            mode.size.width > gpui::px(0.),
-            "right toolbar group remains visible: {id}"
-        );
-        assert!(
-            operation.right() <= mode.left(),
-            "conflict operations precede {id}"
-        );
-        assert!(mode.right() <= toolbar.right(), "{id} fits the toolbar");
+    for id in [
+        "tb-graph-mode",
+        "tb-pr-mode",
+        "tb-editor-ws",
+        "tb-ecosystem",
+        "tb-settings",
+    ] {
+        if let Some(mode) = e2e::control_bounds(window.window_id(), id) {
+            let mode = mode.dilate(gpui::px(kagi_ui_core::keyboard_nav::RING));
+            assert!(mode.size.width > gpui::px(0.), "{id} remains visible");
+            assert!(mode.right() <= toolbar.right(), "{id} fits the toolbar");
+        } else {
+            assert!(
+                e2e::control_bounds(window.window_id(), "tb-overflow").is_some(),
+                "ordinary toolbar overflow retains hidden navigation: {id}"
+            );
+        }
     }
 }
 fn probe(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> Option<String> {
@@ -457,7 +535,7 @@ fn matrix_leg(
         "first file opens directly at every language, zoom and window size"
     );
     paint(cx, window);
-    assert_operation_strip(cx, window);
+    assert_operation_placement(cx, window, &conflict);
     assert_source_hunk_visible(cx, window, 0);
     let row_height = f32::from(theme::scaled_px(24.));
     for side in ["current", "incoming"] {
@@ -684,6 +762,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
                 );
             }
             assert_order_only(cx, window, &conflict);
+            assert_header_tab_order(cx, window, &conflict);
             drop(conflict);
             unmount(cx, app, window);
         }
@@ -723,4 +802,102 @@ fn assert_order_only(
         ax::control("conflict-hunk-0-current-use").unwrap().2,
         "none"
     );
+}
+
+fn assert_header_tab_order(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    conflict: &Entity<ConflictView>,
+) {
+    // Enable Save and Continue through real buffer-only adoption, without Git writes.
+    for hunk in 0..2 {
+        if hunk > 0 {
+            click_control(cx, window, "conflict-next-hunk");
+            paint(cx, window);
+        }
+        click_control(cx, window, &format!("conflict-hunk-{hunk}-current-use"));
+        paint(cx, window);
+    }
+    assert!(cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().can_continue()));
+    let sequencer = cx.read(|cx| {
+        conflict
+            .read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .session
+            .op
+            .is_sequencer()
+    });
+    for hidden in [false, true] {
+        if cx.read(|cx| conflict.read(cx).sidebar_hidden) != hidden {
+            click_control(cx, window, "conflict-sidebar-toggle");
+        }
+        assert_operation_placement(cx, window, conflict);
+        let toggle = crate::native_ax::node(cx, window, "conflict-sidebar-toggle".into());
+        crate::native_ax::focus_named(
+            cx,
+            window,
+            "Button",
+            toggle["aria"]["label"].as_str().unwrap(),
+        );
+        // Abort and Skip never interrupt the file-header traversal, even with
+        // the sidebar hidden and the legacy operation strip mounted.
+        // Path navigation may intervene, but progression cannot precede Save.
+        let mut reached_save = false;
+        for _ in 0..20 {
+            keys(cx, window, "tab");
+            let node = crate::native_ax::focused(cx, window);
+            let label = node["aria"]["label"].as_str().unwrap_or_default();
+            assert_ne!(label, i18n::Msg::ConflictSkip.t());
+            assert_ne!(label, i18n::Msg::ConflictReviewContinue.t());
+            assert_ne!(label, i18n::Msg::ConflictAbort.t());
+            if label == i18n::Msg::EditorSave.t() {
+                reached_save = true;
+                break;
+            }
+        }
+        assert!(
+            reached_save,
+            "Tab from the header toggle reaches Save before progression"
+        );
+        keys(cx, window, "tab");
+        assert_eq!(
+            crate::native_ax::focused(cx, window)["aria"]["label"],
+            i18n::Msg::ConflictReviewContinue.t(),
+            "Continue alone follows Save across the file/session separator"
+        );
+        if !hidden {
+            crate::native_ax::focus_named(
+                cx,
+                window,
+                "Button",
+                toggle["aria"]["label"].as_str().unwrap(),
+            );
+            let mut reached_abort = false;
+            // Walk backward from the header: forward Tab legitimately enters
+            // the Result text input, where Tab is an editing command.
+            for _ in 0..10 {
+                keys(cx, window, "shift-tab");
+                if crate::native_ax::focused(cx, window)["aria"]["label"]
+                    == i18n::Msg::ConflictAbort.t()
+                {
+                    reached_abort = true;
+                    break;
+                }
+            }
+            assert!(
+                reached_abort,
+                "Tab reaches Abort in the sidebar session header"
+            );
+            if sequencer {
+                keys(cx, window, "tab");
+                assert_eq!(
+                    crate::native_ax::focused(cx, window)["aria"]["label"],
+                    i18n::Msg::ConflictSkip.t(),
+                    "Skip follows Abort in the sidebar, not Save in the file header"
+                );
+            }
+        }
+    }
 }

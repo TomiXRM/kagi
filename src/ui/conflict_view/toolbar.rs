@@ -1,4 +1,4 @@
-//! File jump bar and unified-toolbar operation controls; neither owns a draft.
+//! File header and session controls; neither owns a draft.
 use super::*;
 use crate::ui::{commands, keyboard_nav};
 
@@ -14,10 +14,20 @@ thread_local! {
     static FILE_HEADER_STATUS: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SESSION_HEADER_LABEL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 impl ConflictView {
     #[cfg(feature = "gui-e2e")]
     pub fn file_header_status_for_e2e(&self) -> String {
         FILE_HEADER_STATUS.with(|status| status.borrow().clone())
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn session_header_label_for_e2e() -> String {
+        SESSION_HEADER_LABEL.with(|value| value.borrow().clone())
     }
 
     pub(super) fn render_workspace(
@@ -152,6 +162,11 @@ impl ConflictView {
                 div()
                     .id("conflict-file-count")
                     .role(gpui::Role::Status)
+                    .w(theme::scaled_px(200.))
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .aria_label(SharedString::from(status.clone()))
                     .text_size(theme::scaled_px(11.))
                     .text_color(rgb(
@@ -224,7 +239,20 @@ impl ConflictView {
             .flex()
             .flex_col()
             .flex_shrink_0()
-            .child(header)
+            .child(
+                header
+                    .child(
+                        div()
+                            .relative()
+                            .flex_shrink_0()
+                            .w(px(1.))
+                            .h(theme::scaled_px(16.))
+                            .mx(theme::scaled_px(8.))
+                            .bg(rgb(theme().surface))
+                            .child(e2e::measure_inside("conflict-file-session-separator")),
+                    )
+                    .child(self.render_operation_actions(cx)),
+            )
             .when(external, |column| {
                 column.child(
                     div()
@@ -249,9 +277,15 @@ impl ConflictView {
             .unwrap_or_default();
         let tip = SharedString::from(format!("{tip} {shortcut}").trim_end().to_owned());
         keyboard_nav::with_ring(
-            div()
-                .id("conflict-sidebar-toggle")
-                .track_focus(self.sidebar_toggle_focus.as_ref().expect("toggle focus")),
+            div().id("conflict-sidebar-toggle").track_focus(
+                &self
+                    .sidebar_toggle_focus
+                    .as_ref()
+                    .expect("toggle focus")
+                    .clone()
+                    .tab_index(0)
+                    .tab_stop(true),
+            ),
         )
         .role(gpui::Role::Button)
         .aria_label(tip.clone())
@@ -301,8 +335,10 @@ impl ConflictView {
         .into_any_element()
     }
 
-    /// Only strip-visible changes invalidate the parent, not every editor keystroke.
-    pub(crate) fn operation_chrome_state(&self) -> (bool, bool, bool, bool, Option<&'static str>) {
+    /// Only operation-visible changes invalidate the parent, not editor keystrokes.
+    pub(crate) fn operation_chrome_state(
+        &self,
+    ) -> (bool, bool, bool, bool, bool, Option<&'static str>) {
         let mode = self.mode.as_ref();
         let blocker = if self.saved_review_needed {
             Some(Msg::ConflictReviewNeeded)
@@ -316,15 +352,119 @@ impl ConflictView {
                 && !self.saved_review_needed,
             self.writer_busy,
             mode.is_some_and(|m| m.skip_approval.is_some()),
+            self.sidebar_hidden,
             blocker.map(|msg| msg.t()),
         )
     }
 
-    /// Rendered by the app's unified toolbar, but callbacks remain session-bound.
-    pub(in crate::ui) fn render_operation_strip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(mode) = &self.mode else {
-            return div().into_any_element();
+    /// The sidebar owns session identity and discard-like actions.
+    pub(super) fn render_session_header(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let mode = self.mode.as_ref().expect("workspace mode");
+        let label: SharedString = match &mode.session.op {
+            kagi_git::conflicts::ConflictOp::Rebase { step, total, .. } => {
+                format!("{} {step}/{total}", mode.session.op.slug()).into()
+            }
+            op => op.slug().into(),
         };
+        #[cfg(feature = "gui-e2e")]
+        SESSION_HEADER_LABEL.with(|value| {
+            let mut value = value.borrow_mut();
+            value.clear();
+            value.push_str(&label);
+        });
+        div()
+            .relative()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .flex_shrink_0()
+            .flex_1()
+            .gap(theme::scaled_px(8.))
+            .text_size(theme::scaled_px(12.))
+            .text_color(rgb(theme().text_main))
+            .child(e2e::measure_inside("conflict-session-header"))
+            .child(
+                div()
+                    .size(theme::scaled_px(8.))
+                    .rounded_full()
+                    .bg(rgb(theme().color_warning)),
+            )
+            .child(
+                div()
+                    .id("conflict-session-identity")
+                    .role(gpui::Role::Status)
+                    .aria_label(label.clone())
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(label),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .gap(theme::scaled_px(8.))
+                    .child(e2e::measure_control(
+                        "conflict-abort",
+                        compact_button(
+                            "conflict-abort",
+                            Msg::ConflictAbort.t(),
+                            ButtonRole::Secondary,
+                            cx,
+                        )
+                        .text_color(rgb(theme().color_blocker))
+                        .disabled(self.writer_busy)
+                        .on_click(cx.listener(
+                            |view, _: &gpui::ClickEvent, window, cx| {
+                                let app = view.app.clone();
+                                let owner = view.owner.clone();
+                                cx.spawn_in(window, async move |_, cx| {
+                                    let _ = app.update_in(cx, |app, window, cx| {
+                                        app.open_conflict_abort_modal(owner, window, cx)
+                                    });
+                                })
+                                .detach();
+                            },
+                        )),
+                    ))
+                    .when(mode.session.op.is_sequencer(), |el| {
+                        el.child(e2e::measure_control(
+                            "conflict-skip",
+                            compact_button(
+                                "conflict-skip",
+                                if mode.skip_approval.is_some() {
+                                    Msg::ConflictConfirmSkip.t()
+                                } else {
+                                    Msg::ConflictSkip.t()
+                                },
+                                ButtonRole::Secondary,
+                                cx,
+                            )
+                            .disabled(self.writer_busy)
+                            .on_click(cx.listener(
+                                |view, _: &gpui::ClickEvent, window, cx| {
+                                    if !view.skip_request_arm() {
+                                        cx.notify();
+                                        return;
+                                    }
+                                    let app = view.app.clone();
+                                    let owner = view.owner.clone();
+                                    cx.spawn_in(window, async move |_, cx| {
+                                        let _ = app.update_in(cx, |app, _, cx| {
+                                            app.conflict_skip(owner, cx)
+                                        });
+                                    })
+                                    .detach();
+                                },
+                            )),
+                        ))
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_operation_actions(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let mode = self.mode.as_ref().expect("workspace mode");
         let all_saved = mode.session.files.is_empty();
         #[cfg(feature = "gui-e2e")]
         CONTINUE_PRIMARY.with(|value| value.set(Some(all_saved)));
@@ -340,67 +480,10 @@ impl ConflictView {
             .items_center()
             .flex_shrink_0()
             .gap(theme::scaled_px(8.))
-            .mr(theme::scaled_px(16.))
+            .id("conflict-operation-actions")
             .text_size(theme::scaled_px(12.))
             .text_color(rgb(theme().text_sub))
-            .child(e2e::measure_inside("conflict-operation-strip"))
-            .child(
-                div()
-                    .size(theme::scaled_px(8.))
-                    .rounded_full()
-                    .bg(rgb(theme().color_warning)),
-            )
-            .child(SharedString::from(mode.session.op.slug()))
-            .child(e2e::measure_control(
-                "conflict-abort",
-                compact_button(
-                    "conflict-abort",
-                    Msg::ConflictAbort.t(),
-                    ButtonRole::Secondary,
-                    cx,
-                )
-                .disabled(self.writer_busy)
-                .on_click(cx.listener(|view, _: &gpui::ClickEvent, window, cx| {
-                    let app = view.app.clone();
-                    let owner = view.owner.clone();
-                    cx.spawn_in(window, async move |_, cx| {
-                        let _ = app.update_in(cx, |app, window, cx| {
-                            app.open_conflict_abort_modal(owner, window, cx)
-                        });
-                    })
-                    .detach();
-                })),
-            ))
-            .when(mode.session.op.is_sequencer(), |el| {
-                el.child(
-                    compact_button(
-                        "conflict-skip",
-                        if mode.skip_approval.is_some() {
-                            Msg::ConflictConfirmSkip.t()
-                        } else {
-                            Msg::ConflictSkip.t()
-                        },
-                        ButtonRole::Secondary,
-                        cx,
-                    )
-                    .disabled(self.writer_busy)
-                    .on_click(cx.listener(
-                        |view, _: &gpui::ClickEvent, window, cx| {
-                            if !view.skip_request_arm() {
-                                cx.notify();
-                                return;
-                            }
-                            let app = view.app.clone();
-                            let owner = view.owner.clone();
-                            cx.spawn_in(window, async move |_, cx| {
-                                let _ =
-                                    app.update_in(cx, |app, _, cx| app.conflict_skip(owner, cx));
-                            })
-                            .detach();
-                        },
-                    )),
-                )
-            })
+            .child(e2e::measure_inside("conflict-operation-actions"))
             .child(e2e::measure_control(
                 "conflict-continue",
                 compact_button(
@@ -464,7 +547,8 @@ fn jump_path(path: &std::path::Path) -> gpui::Div {
     let mut bar = div()
         .flex()
         .items_center()
-        .flex_shrink_0()
+        .flex_shrink(1.)
+        .min_w(px(0.))
         .max_w(theme::scaled_px(380.))
         .overflow_hidden()
         .gap(theme::scaled_px(6.))

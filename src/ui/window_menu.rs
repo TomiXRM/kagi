@@ -18,6 +18,7 @@ pub struct ViewMenuState {
     pub find_sidebar: bool,
     pub undo_summary: Option<gpui::SharedString>,
     pub redo_summary: Option<gpui::SharedString>,
+    pub conflict_skip_armed: bool,
 }
 impl Default for ViewMenuState {
     fn default() -> Self {
@@ -31,6 +32,7 @@ impl Default for ViewMenuState {
             find_sidebar: false,
             undo_summary: None,
             redo_summary: None,
+            conflict_skip_armed: false,
         }
     }
 }
@@ -100,6 +102,7 @@ pub(super) fn publish_settings_edit_state(window: &mut Window, cx: &mut App) {
 /// Used by both native menus and the in-app dropdown; IDs and bindings do not vary.
 pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
     let msg = match id {
+        "repo.conflictSkip" if state.conflict_skip_armed => Msg::ConflictConfirmSkip,
         "view.toggleSidebar" if state.sidebar_visible => Msg::MenuHideSidebar,
         "view.toggleSidebar" => Msg::MenuShowSidebar,
         "view.toggleEditorDetails" if state.editor_details_visible => Msg::EditorDetailsHide,
@@ -240,6 +243,7 @@ impl KagiApp {
             input_focused,
             workspace_mode: (!self.home_in_front()).then(|| self.workspace_mode()),
             editor_details_visible: previous.editor_details_visible,
+            conflict_skip_armed: false,
             find_input: false,
             find_sidebar: false,
             undo_summary: history
@@ -318,6 +322,13 @@ impl KagiApp {
             input,
             history_target,
         );
+        state.conflict_skip_armed = !self.home_in_front()
+            && self.ui().conflict.as_ref().is_some_and(|view| {
+                view.read(cx)
+                    .mode
+                    .as_ref()
+                    .is_some_and(|mode| mode.skip_approval.is_some())
+            });
         state.editor_details_visible = state.workspace_mode
             == Some(super::workspace_mode::WorkspaceMode::Editor)
             && self

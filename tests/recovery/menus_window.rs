@@ -5,6 +5,9 @@ use gpui::{AnyWindowHandle, Entity, MenuItem, Role, VisualTestAppContext};
 use kagi::ui::{commands, dialog_a11y, e2e, window_menu, KagiApp};
 use kagi_ui_core::i18n::{self, Lang};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+
 fn mount_short(
     cx: &mut VisualTestAppContext,
     repo: &std::path::Path,
@@ -63,6 +66,95 @@ fn title(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> String {
 }
 fn repo_title(repo: &std::path::Path, branch: &str) -> String {
     format!("{} — {branch}", repo.file_name().unwrap().to_string_lossy())
+}
+
+pub fn scenario_conflict_repository_menu(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let old_lang = i18n::lang();
+    let fixture = crate::app_conflict::content_fixture();
+    let repo = fixture.path();
+    let (app, win) = mount_short(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    draw(cx, win);
+    let available = |cx: &mut VisualTestAppContext, action: &dyn gpui::Action| {
+        cx.update_window(win, |_, window, cx| window.is_action_available(action, cx))
+            .unwrap()
+    };
+    for (lang, expected) in [
+        (Lang::En, ["Abort merge…", "Skip this step…", "Continue"]),
+        (
+            Lang::Ja,
+            ["merge を中止…", "このステップをスキップ…", "続行"],
+        ),
+    ] {
+        i18n::set_lang(lang);
+        draw(cx, win);
+        let repository = labels(cx, "Repository");
+        assert!(repository
+            .windows(3)
+            .any(|items| items.iter().map(String::as_str).eq(expected)));
+    }
+    assert!(available(cx, &commands::ConflictAbort));
+    assert!(!available(cx, &commands::ConflictSkip), "merge has no Skip");
+    assert!(
+        !available(cx, &commands::ConflictContinue),
+        "unresolved files block Continue"
+    );
+    let before = crate::macos::repo_fingerprint(repo);
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));
+    assert!(
+        !available(cx, &commands::ConflictAbort),
+        "modal blocks a second action"
+    );
+    assert_eq!(
+        crate::macos::repo_fingerprint(repo),
+        before,
+        "Abort only opens the existing confirmation"
+    );
+    app.update(cx, |app, cx| {
+        app.cancel_conflict_abort();
+        cx.notify();
+    });
+    invoke(cx, &app, win, "file.newTab");
+    for action in [
+        commands::ConflictAbort.boxed_clone(),
+        commands::ConflictSkip.boxed_clone(),
+        commands::ConflictContinue.boxed_clone(),
+    ] {
+        assert!(
+            !available(cx, action.as_ref()),
+            "Home has no mounted conflict menu actions"
+        );
+    }
+    unmount(cx, app, win);
+
+    git(repo, &["merge", "--abort"]);
+    assert!(!git_fixture::git_succeeds(
+        repo,
+        &["cherry-pick", "feature"]
+    ));
+    let (app, win) = mount_short(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    draw(cx, win);
+    assert!(cx
+        .update_window(win, |_, window, cx| window
+            .is_action_available(&commands::ConflictSkip, cx))
+        .unwrap());
+    let before = crate::macos::repo_fingerprint(repo);
+    invoke(cx, &app, win, "repo.conflictSkip");
+    assert_eq!(
+        crate::macos::repo_fingerprint(repo),
+        before,
+        "first Skip only arms existing confirmation"
+    );
+    assert!(labels(cx, "Repository")
+        .iter()
+        .any(|label| label == kagi_ui_core::i18n::Msg::ConflictConfirmSkip.t()));
+    unmount(cx, app, win);
+    i18n::set_lang(old_lang);
 }
 pub fn scenario_window_title_identity(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
@@ -199,7 +291,13 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
                 "active workspace {id} is checked"
             );
             assert_eq!(
-                view.items.iter().filter(|item| item.is_checked()).count(),
+                view.items
+                    .iter()
+                    .filter(|item| matches!(
+                        item, MenuItem::Action { name, checked: true, .. }
+                            if [graph, prs, editor].contains(&name.as_ref())
+                    ))
+                    .count(),
                 1,
                 "workspace selection is exclusive"
             );

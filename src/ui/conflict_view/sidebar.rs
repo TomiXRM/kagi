@@ -242,6 +242,20 @@ impl ConflictView {
         .border_r_1()
         .border_color(rgb(theme().surface))
         .relative()
+        .when(!self.sidebar_hidden, |el| {
+            el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .min_h(theme::scaled_px(36.))
+                    .py(theme::scaled_px(4.))
+                    .px(theme::scaled_px(12.))
+                    .border_b_1()
+                    .border_color(rgb(theme().surface))
+                    .child(self.render_session_header(cx)),
+            )
+        })
         .child(
             div()
                 .id("conflict-tree-scroll")

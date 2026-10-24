@@ -9,12 +9,18 @@
 //! this is not that banner back, it is the operation's own row and it exists
 //! only while an operation does.
 //!
-//! The one place it is not drawn is while the conflict editor is mounted
-//! (owner ruling on top of #707): there the dashboard's own Abort sits with
-//! Continue / Next conflict and dispatches `open_conflict_abort_modal` — this
-//! module's action, unchanged. Admission never moves: it is
-//! `TabViewState::operation` in both placements, so an abort is reachable
-//! whether or not a `ConflictView` exists, which is what #704 was about.
+//! The strip is omitted only while `ConflictView` and its sidebar are shown.
+//! Revised owner/HIG placement (#1764) groups Skip and Abort with the operation
+//! name/step in the leading sidebar header. Abort is framed Secondary with a red
+//! label. Only Continue follows the file actions/Save, separated by a line or gap.
+//! A hidden sidebar uses this unchanged #704 strip under the main toolbar, not
+//! an inline file-header session group; an unmounted `ConflictView` retains it
+//! too, including at startup. The main toolbar has no conflict-session controls.
+//! Localized Repository menu commands Abort merge…, Skip this step… and Continue
+//! dispatch the existing paths only for mounted, admitted conflict actions.
+//! Abort still dispatches `open_conflict_abort_modal`; admission from
+//! `TabViewState::operation`, confirmations, revision/lease guards and execution
+//! safety remain unchanged.
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 

@@ -2043,6 +2043,10 @@ mod macos {
                 Box::new(crate::menus_window::scenario_view_menu_state_labels),
             ),
             (
+                "conflict_repository_menu",
+                Box::new(crate::menus_window::scenario_conflict_repository_menu),
+            ),
+            (
                 "window_menu_items",
                 Box::new(crate::menus_window::scenario_window_menu_items),
             ),

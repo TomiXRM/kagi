@@ -174,7 +174,7 @@ pub fn build_rows(
         // The static `theme.*` / `lang.*` commands only cover a subset of the
         // built-in themes; the palette lists them dynamically below (issue
         // #373) so skip them here to avoid duplicate rows.
-        if is_dynamic_command(cmd.id) {
+        if is_dynamic_command(cmd.id) || cmd.id.starts_with("repo.conflict") {
             continue;
         }
         let label = label_of(cmd.id);

@@ -55,19 +55,21 @@ fn build_rows_empty_query_enumerates_all_commands() {
     // per theme and per language.
     let static_cmds = COMMANDS
         .iter()
-        .filter(|c| !is_dynamic_command(c.id))
+        .filter(|c| !is_dynamic_command(c.id) && !c.id.starts_with("repo.conflict"))
         .count();
     assert_eq!(
         rows.len(),
         static_cmds + theme::all_themes().len() + Lang::ALL.len()
     );
     // Registry order is preserved for the static-command prefix.
-    for (row, cmd) in rows
-        .iter()
-        .zip(COMMANDS.iter().filter(|c| !is_dynamic_command(c.id)))
-    {
+    for (row, cmd) in rows.iter().zip(
+        COMMANDS
+            .iter()
+            .filter(|c| !is_dynamic_command(c.id) && !c.id.starts_with("repo.conflict")),
+    ) {
         assert_eq!(row.id, cmd.id);
     }
+    assert!(!rows.iter().any(|row| row.id.starts_with("repo.conflict")));
 }
 
 #[test]

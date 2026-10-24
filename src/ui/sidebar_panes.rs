@@ -276,6 +276,10 @@ pub(super) fn render_pane(
                             SidebarRow::Worktree { .. } => this.remote_view.is_none(),
                             _ => false,
                         };
+                        // Peek inspects without leaving the stash tree; keyboard
+                        // users must retain its OID-keyed row focus.
+                        let dismiss_keyboard_selection =
+                            compact && leaf && !matches!(&row, SidebarRow::Stash { .. });
                         let worktree =
                             (compact && leaf && matches!(&row, SidebarRow::Worktree { .. }))
                                 .then(|| row.clone());
@@ -453,7 +457,7 @@ pub(super) fn render_pane(
                             ),
                             None => slot.child(el),
                         };
-                        let slot = if compact && leaf {
+                        let slot = if dismiss_keyboard_selection {
                             slot.on_click(cx.listener(
                                 move |_this, event: &gpui::ClickEvent, window, cx| {
                                     if event.is_keyboard() {

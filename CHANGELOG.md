@@ -25,6 +25,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Preserve the focused stash row after keyboard Peek in the compact navigator, including Enter, Space and context-menu focus return after stash indices shift. Align the unborn-HEAD stash regression with the exact English/Japanese bounded result preview while retaining the full plan, disabled-action and durable refusal reasons. (#1761)
 - Animate the conflict file sidebar with the main sidebar's shared width reveal, clipping toward its toggle while keeping focus and button state immediate; Reduce Motion skips both transitions. (#1739)
   - Return focus to the toggle if a closing sidebar row regains focus before the final exit frame, preserving keyboard activation after unmount.
 - Keep adopted empty conflict sides selected when materializing line choices; reject invalid line edits without resolving untouched hunks and safely ignore stale selection bits. Treat literal marker-looking source lines as content in readiness, Save and Continue, while unresolved and hand-typed markers still block. (#1746)

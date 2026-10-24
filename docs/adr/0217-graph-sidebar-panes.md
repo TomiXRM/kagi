@@ -154,3 +154,14 @@ localized reason, children/chevron/AX agreement and clear restoration.
 Both use real Git fixtures and assert zero Git writes across 940×660 and
 1392×883, 100%/167%, EN/JA. These renderer/input assertions are not native
 VoiceOver, Full Keyboard Access or Tier B evidence.
+
+## Amendment — 2026-10-25: retain keyboard stash inspection focus (#1761)
+
+Stash Peek is read-only inspection, not navigation away from the stash tree.
+Enter/Space therefore retain the focused stash's OID-keyed row in both the inline
+sidebar and compact navigator Popover; keyboard context-menu Peek returns to that
+same row. Keep the compact stash Popover open for those keyboard activations.
+Pointer leaf selection and other compact navigation actions retain their existing
+dismissal behavior. The `stash_row_identity` matrix checks Enter, Space and menu
+Peek after an external stash shifts the displayed indices, without Git writes.
+

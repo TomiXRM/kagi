@@ -127,6 +127,7 @@ fn menu_peek(
     paint(cx, app, window);
     assert!(app.read_with(cx, |app, _| app.stash_menu.is_none()));
     assert_peek(cx, app, oid);
+    assert_eq!(focused(cx, app, window), Some((STASHES, key.to_owned())));
 }
 
 fn stash_cell(cx: &mut VisualTestAppContext, language: Lang, slug: &str, zoom: f32) {
@@ -162,6 +163,15 @@ fn stash_cell(cx: &mut VisualTestAppContext, language: Lang, slug: &str, zoom: f
         Witness::read(repo),
         before,
         "Enter peek never consumes or writes"
+    );
+    keys(cx, window, "space");
+    paint(cx, &app, window);
+    assert_peek(cx, &app, &original);
+    assert_eq!(focused(cx, &app, window), Some((STASHES, key.clone())));
+    assert_eq!(
+        Witness::read(repo),
+        before,
+        "Space peek never consumes or writes"
     );
     menu_peek(cx, &app, window, &key, &original);
     assert_eq!(

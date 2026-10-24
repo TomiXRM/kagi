@@ -705,6 +705,8 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
     click_control(cx, window, "conflict-continue");
     wait_idle(cx, &app);
     crate::busy_dismiss::ready(cx, &app);

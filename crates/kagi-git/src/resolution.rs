@@ -199,6 +199,8 @@ pub struct ResolutionBuffer {
     hunks: BTreeMap<PathBuf, HunkModel>,
     /// Older, unbound or incompatible drafts in the same autosave document.
     recoveries: Vec<RecoveryEntry>,
+    /// Last observed document and this owner's baseline for three-way draft merging.
+    disk_snapshot: std::sync::Mutex<draft_storage::Snapshot>,
 }
 
 impl Clone for ResolutionBuffer {
@@ -220,11 +222,21 @@ impl Clone for ResolutionBuffer {
             marker_residue_count: self.marker_residue_count,
             hunks: self.hunks.clone(),
             recoveries,
+            disk_snapshot: std::sync::Mutex::new(
+                self.disk_snapshot
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            ),
         }
     }
 }
 
 mod conflict_boundary;
+mod draft_merge;
+mod draft_storage;
+#[cfg(test)]
+mod draft_storage_tests;
 mod drafts;
 mod hunk_state;
 #[cfg(test)]
@@ -246,6 +258,7 @@ impl ResolutionBuffer {
             marker_residue_count: 0,
             hunks: BTreeMap::new(),
             recoveries: Vec::new(),
+            disk_snapshot: std::sync::Mutex::default(),
         }
     }
 
@@ -321,8 +334,10 @@ impl ResolutionBuffer {
     /// remain inspectable recovery entries, never current resolutions.
     pub fn from_repo_with_autosave(repo: &Repository) -> Result<Self, GitError> {
         let mut base = Self::from_repo(repo)?;
-        if let Some(saved) = Self::load(&base.repo_path) {
-            base.retain_drafts(saved);
+        if let Some(path) = buffer_file_path(&base.repo_path) {
+            if let Some(saved) = draft_storage::read(&base.repo_path, &path)? {
+                base.retain_drafts(saved.buffer);
+            }
         }
         Ok(base)
     }
@@ -794,16 +809,7 @@ impl ResolutionBuffer {
                 ))
             })?;
         }
-        let json = self
-            .autosave_json()
-            .map_err(|e| GitError::Other(format!("serialize conflict buffer: {e}")))?;
-        std::fs::write(&path, json.as_bytes()).map_err(|e| {
-            GitError::Other(format!(
-                "conflicts: write failed for {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
+        self.save_draft_document(&path)?;
         for file in self
             .files
             .values()
@@ -814,12 +820,16 @@ impl ResolutionBuffer {
         Ok(path)
     }
 
-    /// Load a previously autosaved buffer for the repository at `repo_path`,
-    /// or `None` when none exists / the file is corrupt (lenient, like drafts).
+    /// Load a previously autosaved buffer, recovering a torn document from `.prev`.
+    /// Compatibility inspection accessor: unrecoverable errors return `None`.
+    /// Production restore and all writers use the checked reader and propagate
+    /// errors instead of treating an undecodable document as an empty merge base.
     pub fn load(repo_path: &Path) -> Option<ResolutionBuffer> {
         let path = buffer_file_path(repo_path)?;
-        let content = std::fs::read_to_string(&path).ok()?;
-        parse_buffer_json(repo_path, &content)
+        draft_storage::read(repo_path, &path)
+            .ok()
+            .flatten()
+            .map(|disk| disk.buffer)
     }
 
     /// Explicitly discard current drafts, retaining older recovery bodies.
@@ -831,7 +841,13 @@ impl ResolutionBuffer {
             Some(p) => p,
             None => return Ok(()),
         };
-        if let Some(mut saved) = Self::load(repo_path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| GitError::Other(format!("conflicts: draft directory: {e}")))?;
+        }
+        let _lock = draft_storage::lock(&path)?;
+        if let Some(disk) = draft_storage::read(repo_path, &path)? {
+            let mut saved = disk.buffer;
             if !saved.recoveries.is_empty() {
                 // Discarding current drafts must not let an older preserved body
                 // override a previously explicit undo-to-null.
@@ -845,10 +861,14 @@ impl ResolutionBuffer {
                 let json = saved
                     .to_json()
                     .map_err(|e| GitError::Other(format!("serialize conflict recovery: {e}")))?;
-                return std::fs::write(&path, json).map_err(|e| {
-                    GitError::Other(format!("conflicts: preserve recovery failed: {e}"))
-                });
+                return draft_storage::replace(&path, json.as_bytes(), None);
             }
+        }
+        let previous = draft_storage::sibling(&path, ".prev");
+        match std::fs::remove_file(&previous) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(GitError::Other(format!("conflicts: delete backup: {e}"))),
         }
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),

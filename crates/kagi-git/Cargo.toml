@@ -34,6 +34,10 @@ toml = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 
+[target.'cfg(unix)'.dependencies]
+# Already locked transitively; advisory draft locks must survive process crashes.
+rustix = { version = "1.1.4", features = ["fs"] }
+
 # Windows-only: job objects are the platform's process group (#703b / ADR-0196).
 # `CreateJobObject` + `AssignProcessToJobObject` bind a spawned child and its
 # descendants, and `QueryInformationJobObject` answers "is anything still

@@ -250,6 +250,8 @@ impl FileResolution {
         // the current one. Keep the captured edit generation, not Clone's new owner.
         Self {
             identity: self.identity.clone(),
+            worktree_fingerprint: self.worktree_fingerprint.clone(),
+            worktree_changed: self.worktree_changed,
             editing_origin: self.editing_origin.clone(),
             live_editing_origin: self.live_editing_origin,
             pending_edit: self.pending_edit.for_autosave(),

@@ -475,6 +475,108 @@ pub fn scenario_conflict_draft_corrupt_restore(cx: &mut VisualTestAppContext) {
     }
 }
 
+pub fn scenario_conflict_draft_restore_io_failure(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::{detect_payload_for_test, ConflictDetectOutcome};
+    use std::os::unix::fs::PermissionsExt;
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for language in [Lang::En, Lang::Ja] {
+        for failure in [
+            "unreadable",
+            "lock-directory",
+            "lock-timeout",
+            "reserved-names",
+        ] {
+            let _isolated = IsolatedLog::new();
+            let fixture = content_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| app.set_lang(language, cx));
+            let store = kagi_git::Backend::open(&repo)
+                .unwrap()
+                .resolution_buffer_from_repo()
+                .unwrap()
+                .autosave()
+                .unwrap();
+            std::fs::remove_file(store.with_file_name("buffer.json.prev")).unwrap();
+            let torn = b"{\"files\":[damaged legacy draft";
+            std::fs::write(&store, torn).unwrap();
+            let lock_path = store.with_file_name("buffer.json.lock");
+            let mut lock = None;
+            match failure {
+                "unreadable" => {
+                    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap()
+                }
+                "lock-directory" => {
+                    std::fs::remove_file(&lock_path).unwrap();
+                    std::fs::create_dir(&lock_path).unwrap();
+                }
+                "lock-timeout" => {
+                    lock = Some(
+                        kagi_git::advisory_lock::lock_exclusive(
+                            &lock_path,
+                            std::time::Duration::ZERO,
+                        )
+                        .unwrap(),
+                    )
+                }
+                "reserved-names" => {
+                    for index in 0..100 {
+                        let name = if index == 0 {
+                            "buffer.json.corrupt".into()
+                        } else {
+                            format!("buffer.json.corrupt.{index}")
+                        };
+                        std::fs::write(store.with_file_name(name), b"already preserved").unwrap();
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let before = RepositoryState::read(&repo);
+            let payload = detect_payload_for_test(&repo, "main");
+            let cause = match &payload {
+                ConflictDetectOutcome::OpenFailed(Some(cause)) => cause.clone(),
+                _ => panic!("restore failure was lost: {failure}"),
+            };
+            let owner = cx.read(|cx| {
+                let state = app.read(cx);
+                state
+                    .app_sessions
+                    .attachment(state.active_session().unwrap())
+                    .unwrap()
+            });
+            app.update(cx, |app, cx| app.apply_conflict_detect(owner, payload, cx));
+            paint(cx, &app, window);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert_eq!(
+                    e2e::app_notice_message(state).unwrap(),
+                    kagi_ui_core::i18n::Msg::conflict_draft_restore_failed(&cause)
+                );
+                assert!(state.ui().conflict.is_none());
+                assert!(
+                    state.ui().conflict_detected,
+                    "failure must not re-arm per-render retries"
+                );
+            });
+            app.update(cx, |app, cx| {
+                app.confirm_app_notice(cx);
+                app.detect_conflict_mode(cx);
+            });
+            assert!(
+                cx.read(|cx| app.read(cx).app_notice().is_none()),
+                "run-once guard must retain the failure until explicit reload"
+            );
+            assert_eq!(before, RepositoryState::read(&repo));
+            if failure == "unreadable" {
+                std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            assert_eq!(std::fs::read(&store).unwrap(), torn);
+            drop(lock.take());
+            unmount(cx, app, window);
+        }
+    }
+}
+
 pub fn scenario_conflict_draft_inspection_empty_legacy(cx: &mut VisualTestAppContext) {
     let _isolated = IsolatedLog::new();
     let fixture = content_fixture(); // Real CLI merge: no Kagi operation or receipt.

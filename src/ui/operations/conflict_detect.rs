@@ -16,8 +16,9 @@ use crate::ui::*;
 /// same detection run either synchronously (`reload`) or off the UI thread
 /// (`detect_conflict_mode_async`) without changing the emitted `[kagi]` lines.
 pub enum ConflictDetectOutcome {
-    /// `Backend::open` failed — clear mode and leave the read model alone.
-    OpenFailed,
+    /// Repo/snapshot open failed, or saved edits could not be restored. Retain
+    /// restore failures for a mandatory notice instead of silently retrying.
+    OpenFailed(Option<String>),
     /// No conflict session — clear Conflict Mode (emits `conflict-mode: cleared`
     /// only when a mode was previously open).
     Cleared,
@@ -67,13 +68,13 @@ impl KagiApp {
     ) -> ConflictDetectOutcome {
         let repo = match crate::ui::blocking_ops::open_backend(repo_path) {
             Ok(r) => r,
-            Err(_) => return ConflictDetectOutcome::OpenFailed,
+            Err(_) => return ConflictDetectOutcome::OpenFailed(None),
         };
 
         let snapshot = match repo.conflict_snapshot() {
             Ok(Some(snapshot)) => snapshot,
             Ok(None) => return ConflictDetectOutcome::Cleared,
-            Err(_) => return ConflictDetectOutcome::OpenFailed,
+            Err(_) => return ConflictDetectOutcome::OpenFailed(None),
         };
         let session = snapshot.session;
 
@@ -81,8 +82,9 @@ impl KagiApp {
         // bound to this operation and file's stages; old/legacy drafts stay
         // recoverable without marking the current conflict resolved. Saved
         // data never replaces the raw metadata rebuilt from the index.
-        let Ok(mut buffer) = repo.resolution_buffer_from_repo_with_autosave() else {
-            return ConflictDetectOutcome::OpenFailed;
+        let mut buffer = match repo.resolution_buffer_from_repo_with_autosave() {
+            Ok(buffer) => buffer,
+            Err(error) => return ConflictDetectOutcome::OpenFailed(Some(error.to_string())),
         };
         let draft_restore_warnings = buffer.take_draft_restore_warnings();
 
@@ -224,9 +226,11 @@ impl KagiApp {
         let stale = match (&outcome, accepted) {
             (ConflictDetectOutcome::Detected(d), Some(op)) => op.observation != d.observation,
             (ConflictDetectOutcome::Detected(_), None) => false,
-            (ConflictDetectOutcome::Cleared | ConflictDetectOutcome::OpenFailed, accepted) => {
-                accepted.is_some()
-            }
+            (ConflictDetectOutcome::OpenFailed(Some(_)), _) => false,
+            (
+                ConflictDetectOutcome::Cleared | ConflictDetectOutcome::OpenFailed(None),
+                accepted,
+            ) => accepted.is_some(),
         };
         if stale {
             if let Some(entity) = self
@@ -271,7 +275,7 @@ impl KagiApp {
                 ConflictDetectOutcome::Detected(d) => d.stash_identity.as_slice(),
                 _ => &[],
             };
-            if matches!(outcome, ConflictDetectOutcome::OpenFailed) {
+            if matches!(outcome, ConflictDetectOutcome::OpenFailed(_)) {
                 self.app_sessions.clear_stash_conflict(owner.session);
             } else {
                 self.app_sessions
@@ -279,7 +283,18 @@ impl KagiApp {
             }
         }
         match outcome {
-            ConflictDetectOutcome::OpenFailed => {
+            ConflictDetectOutcome::OpenFailed(error) => {
+                if let Some(error) = error {
+                    self.app_notices
+                        .push_back(Msg::conflict_draft_restore_failed(&error).into());
+                    self.present_app_notice();
+                }
+                // A concrete restore failure is not an obsolete observation:
+                // retain the run-once guard until an explicit reload/revalidation.
+                if let Some(ui) = self.ui.get_mut(&owner.session) {
+                    ui.conflict_detected = true;
+                    ui.pane_revalidation = PaneRevalidation::Settled;
+                }
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
                     ui.conflict = None;
                 }

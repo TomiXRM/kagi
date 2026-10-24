@@ -85,6 +85,10 @@ impl PendingEdit {
 struct FileResolution {
     /// Known operation + this file's exact unmerged stages, never path alone.
     identity: Option<ConflictRevision>,
+    /// Worktree bytes observed alongside this file's source materialization.
+    worktree_fingerprint: Option<String>,
+    /// Presentation only; live validation always re-reads the path.
+    worktree_changed: bool,
     /// Autosave producer provenance, never conflict identity or restore authority.
     /// A decoded origin belongs to a previous editor until the first live edit.
     editing_origin: Option<String>,
@@ -130,6 +134,8 @@ impl FileResolution {
     fn empty() -> Self {
         FileResolution {
             identity: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             editing_origin: None,
             live_editing_origin: false,
             pending_edit: PendingEdit::default(),
@@ -229,6 +235,7 @@ mod drafts;
 mod hunk_state;
 #[cfg(test)]
 mod hunk_state_tests;
+mod worktree_state;
 use drafts::RecoveryEntry;
 pub use drafts::{OwnedRecoveryDraft, RecoveryDraft};
 
@@ -289,6 +296,7 @@ impl ResolutionBuffer {
             fr.identity = buffer.live_context.as_ref().map(|(context, git_dir)| {
                 drafts::file_identity(git_dir, context, &path, &conflict)
             });
+            fr.worktree_fingerprint = worktree_state::fingerprint(&workdir.join(&path)).ok();
             fr.current_text = blob_text(repo, conflict.our.as_ref());
             fr.incoming_text = blob_text(repo, conflict.their.as_ref());
             fr.binary = entry_is_binary(repo, conflict.our.as_ref())
@@ -1179,6 +1187,7 @@ struct FileRecord<'a> {
     result: &'a Option<Vec<ResolvedLine>>,
     raw_result: Option<RawRecord<'a>>,
     hunk_state: &'a Option<hunk_state::HunkState>,
+    worktree_fingerprint: &'a Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1236,6 +1245,7 @@ fn file_record<'a>(path: &'a Path, fr: &'a FileResolution) -> FileRecord<'a> {
         incoming: fr.incoming_text.as_deref(),
         result: &fr.result,
         hunk_state: &fr.hunk_state,
+        worktree_fingerprint: &fr.worktree_fingerprint,
         raw_result: fr.raw_result.as_ref().map(|raw| RawRecord {
             oid: &raw.oid,
             mode: raw.mode,
@@ -1308,6 +1318,8 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         || raw_result.is_some();
     let mut resolution = FileResolution {
         identity: drafts::parse_identity(fields.remove("identity")),
+        worktree_fingerprint: json_string(fields.remove("worktree_fingerprint")),
+        worktree_changed: false,
         editing_origin: json_string(fields.remove("editing_origin"))
             .filter(|origin| !origin.is_empty()),
         live_editing_origin: false,
@@ -1410,6 +1422,8 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1514,6 +1528,8 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1564,6 +1580,8 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
+            worktree_fingerprint: None,
+            worktree_changed: false,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),

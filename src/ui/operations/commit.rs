@@ -46,12 +46,25 @@ impl KagiApp {
         match self.ui().commit_panel.as_ref() {
             Some(e) if self.ui().conflict_merge_pending => {
                 let panel = e.read(cx);
-                let message = if panel.title_input.is_some() {
-                    panel.effective_commit_message(cx)
+                let title = panel
+                    .title_input
+                    .as_ref()
+                    .map(|input| input.read(cx).value());
+                let body = panel
+                    .body_input
+                    .as_ref()
+                    .map(|input| input.read(cx).value());
+                let (subject, body) = if let Some(subject) = title.as_deref() {
+                    (subject, body.as_deref().unwrap_or_default())
                 } else {
-                    panel.state.commit_msg.clone()
+                    panel
+                        .state
+                        .commit_msg
+                        .split_once('\n')
+                        .unwrap_or((&panel.state.commit_msg, ""))
                 };
-                kagi_domain::merge_msg::strip_comments(&message, panel.merge_comment_char)
+                let body = kagi_domain::merge_msg::strip_comments(body, panel.merge_comment_char);
+                kagi_git::join_title_body(subject, &body)
             }
             Some(e) => e.read(cx).committable_message(cx),
             None => String::new(),

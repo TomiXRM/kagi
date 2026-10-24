@@ -518,18 +518,25 @@ fn progressive_add_add_with_comments(
     );
     assert!(repo.join(".git/MERGE_HEAD").exists());
     let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+    let title_input = cx.read(|cx| panel.read(cx).title_input.clone().unwrap());
     let body_input = cx.read(|cx| panel.read(cx).body_input.clone().unwrap());
+    let edited_title = if comment_char == '#' {
+        "#1738 の修正"
+    } else {
+        "; note"
+    };
     let edited_body = format!(
         "# Edited heading\nKeep edited body; punctuation.\n{comment_char} Editor-only comment"
     );
     cx.update_window(window, |_, window, cx| {
+        title_input.update(cx, |input, cx| input.set_value(edited_title, window, cx));
         body_input.update(cx, |input, cx| input.set_value(edited_body, window, cx));
     })
     .unwrap();
     let expected_message = if comment_char == '#' {
-        "Merge feature\n\nKeep edited body; punctuation."
+        format!("{edited_title}\n\nKeep edited body; punctuation.")
     } else {
-        "Merge feature\n\n# Edited heading\nKeep edited body; punctuation."
+        format!("{edited_title}\n\n# Edited heading\nKeep edited body; punctuation.")
     };
     app.update(cx, |app, cx| {
         let owner = app.active_session().expect("merge commit owner");
@@ -540,6 +547,11 @@ fn progressive_add_add_with_comments(
     let commit = repository.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(commit.parent_count(), 2, "the actual merge-commit path ran");
     assert_eq!(commit.parent_id(0).unwrap(), head);
+    assert_eq!(
+        commit.summary().unwrap(),
+        Some(edited_title),
+        "{comment_setting}: a typed subject is never a template comment"
+    );
     assert_eq!(
         commit.message().unwrap().trim_end(),
         expected_message,

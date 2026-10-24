@@ -27,8 +27,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Keep Continue confirmations free of command disclosures, consistent with Abort, and distinguish a resolved rebase step from completion when more steps remain. (#1736)
 - Preview the same pre-apply restore target used by stash-conflict Abort, and require explicit confirmation before Continue stages its resolution. (#1737)
-- Honor the effective repository comment character, including automatic selection, when preparing merge commit messages; preserve user text using other punctuation. (#1738)
-- Honor the effective repository comment character, including automatic selection, when preparing and submitting merge commit messages; strip configured comments while preserving user text using other punctuation. (#1738)
+- Honor the effective repository comment character, including automatic selection, when preparing and submitting merge commit messages; strip comments from the body while preserving typed subjects even when they begin with the comment character. (#1738)
 - Reset create-branch editor ownership on reopen and initialize its visible value from the current modal model, so cancelled names cannot leak into later typing. (#1749)
 - Use shared, counted conflict-resolution advice to explain why Discard all is unavailable instead of claiming that no files exist, including when other changed files are present. (#1750)
 - Share extra-small control height and radius across Commit Panel Stage, Unstage and inert status badges; keep Conflict and convention badges fully opaque, contrast-checked and accessible as status text rather than disabled actions. (#1752)

@@ -161,7 +161,7 @@ impl KagiApp {
         let sidebar_fraction = if compact {
             0.
         } else {
-            self.panel_motion.sidebar.visible(motion_now)
+            self.panel_motion.left.visible(motion_now)
         };
         let right_fraction = if compact {
             0.

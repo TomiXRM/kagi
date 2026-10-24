@@ -191,7 +191,7 @@ pub use refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Work
 #[allow(unused_imports)]
 pub use resolution::{
     ConflictHunk, HunkChoice, HunkModel, LineOrigin, RawResolution, Region, ResolutionBuffer,
-    ResolutionChoice, ResolvedLine, SelectionSide, SideBlobInfo,
+    ResolutionChoice, ResolvedLine, SelectionSide,
 };
 #[allow(unused_imports)]
 pub use snapshot::{

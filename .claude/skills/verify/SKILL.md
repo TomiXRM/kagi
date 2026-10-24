@@ -963,6 +963,24 @@ leg recorded Terminal x=483.5..512 intersecting Graph x=495.5..524. Tier B shoul
 compare the real 700×500 JA toolbar with a long repository/branch identity at
 100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
 
+For #1742 step ① use `KAGI_GUI_E2E_ONLY='conflict_preview_'` for the focused
+preparation checks, then the complete ADR-0228 image/PDF/sync/focus/`conflict_`
+regression filter. `gui-e2e` forwards `kagi-git/gui-e2e` solely for the
+thread-local Backend-open witness: `conflict_preview_no_render_io` counts zero
+opens in ConflictView render from the first uncached frame, holds the real
+worker result to inspect header-only loading, then checks retained-image redraw
+with the repository poisoned. A warmed cache alone is not this proof.
+`conflict_preview_owner_transitions` holds actual completions across selection,
+revision and same-key retirement/re-admission; its feature-only detach bypasses
+task cancellation so the production generation/owner checks must reject each
+late result without replacing the shown pair. `conflict_preview_read_retry`
+checks terminal failure after two attempts, no repaint retry loop, and recovery
+on a fresh observation. Pair with `cargo test -p kagi-git --features gui-e2e
+render_probe` and `cargo test -p kagi-git --test file_reads_test`. The probe and
+scheduling seam compile out of ordinary binaries. Tier B compares the original
+merge-complex image/gitlink rows plus identical valid-PNG variants on isolated
+fixture copies; never mutate the source fixtures or infer native AX/IME evidence.
+
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
 `conflict_file_selection` enters the persistent `conflict-tree` ListBox through
 real Tab/Shift-Tab and its GUI-only F19 focus probe, rather than seeking a removed
@@ -1000,13 +1018,14 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
-For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_stale_restore_failure,conflict_draft_stale_restore_async,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_fresh_restore_failure,conflict_draft_stale_restore_failure,conflict_draft_stale_restore_async,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
 with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
 exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
 canonical receipt append; it still compares every Git field and complete log
 byte-for-byte rather than dropping the log from the no-write witness.
-`conflict_draft_restore_io_failure` covers unreadable saved edits (including a
+`conflict_draft_restore_io_failure` covers first-open failures with no retained
+pane: unreadable saved edits (including a
 readable older `.prev`), an unopenable lock, bounded lock contention and exhausted
 rescue names in EN/JA. A successful append preserves the exact cause in one Failed
 receipt and presents only one bounded, path-free footer or notification, never a
@@ -1021,6 +1040,13 @@ live text and pending revalidation gate must survive, without an obsolete notice
 admission, accepts a newer read or detection of the same Git state, and checks
 that read keys and detector generations independently reject it. The hold is
 GUI-feature-only and releases even on unwinding; it never substitutes a result.
+`conflict_draft_fresh_restore_failure` types a manual Result while autosave fails,
+then makes the draft unreadable and invokes quiet, manual and external production
+Reload in EN/JA without changing Git. The exact pane, editor entity and pending body remain;
+the Failed receipt owns the full cause and the footer stays bounded. A real Save
+click must leave every Git field and complete log unchanged because the checked
+pane read remains refused. Repairing persistence and explicitly reloading settles
+that gate without replacing the editor.
 The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated

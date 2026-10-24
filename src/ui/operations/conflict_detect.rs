@@ -334,8 +334,23 @@ impl KagiApp {
                     .observe_stash_conflict(owner.session, identity);
             }
         }
+        if let Some(ui) = self.ui.get_mut(&owner.session) {
+            ui.conflict_restore_failed =
+                matches!(&outcome, ConflictDetectOutcome::OpenFailed(Some(_)));
+        }
         match outcome {
             ConflictDetectOutcome::OpenFailed(error) => {
+                let retain = error.as_ref().is_some_and(|failure| {
+                    self.ui
+                        .get(&owner.session)
+                        .and_then(|ui| ui.conflict.as_ref())
+                        .is_some_and(|entity| {
+                            entity.read(cx).mode.as_ref().is_some_and(|mode| {
+                                mode.revision == failure.observation.revision
+                                    && mode.session.op.kind() == failure.observation.kind
+                            })
+                        })
+                });
                 if let Some(error) = error {
                     self.record_operation_completion(
                         "conflict-draft-restore",
@@ -356,10 +371,20 @@ impl KagiApp {
                 // Keep the run-once guard until explicit reload/revalidation.
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
                     ui.conflict_detected = true;
-                    ui.pane_revalidation = PaneRevalidation::Settled;
+                    if retain {
+                        // A failed disk read cannot replace an already-owned
+                        // Result. Keep the exact entity/input and its unsaved
+                        // body, but do not acknowledge this checked pane read.
+                        ui.pane_revalidation = PaneRevalidation::AwaitingConflict;
+                    } else {
+                        ui.pane_revalidation = PaneRevalidation::Settled;
+                        ui.conflict = None;
+                    }
                 }
-                if let Some(ui) = self.ui.get_mut(&owner.session) {
-                    ui.conflict = None;
+                if retain {
+                    // Only a successful explicit re-detection may settle the
+                    // existing mutation gate; the common tail must not do so.
+                    return;
                 }
             }
             ConflictDetectOutcome::Cleared => {

@@ -228,8 +228,11 @@ impl KagiApp {
     /// and keeps its incarnation, but the visit ends: a pending stash follow-up
     /// proposal is discarded and a completion landing afterwards cannot create a
     /// new one. Returning re-observes the real conflict state instead.
-    pub(crate) fn depart_active_tab(&mut self) {
+    pub(crate) fn depart_active_tab(&mut self, cx: &mut Context<Self>) {
         self.close_departing_screen_overlays();
+        if let Some(conflict) = self.ui().conflict.clone() {
+            conflict.update(cx, |view, _| view.retire_raw_preview());
+        }
         if let Some(session) = self.active_session() {
             super::diff_selection::retire_session(session);
             self.app_sessions.depart(session);
@@ -291,7 +294,7 @@ impl KagiApp {
         // The dirty guard stays only on owner-destroying paths (close / reopen).
         // A different session's Inspector cannot finish this tab's slide.
         self.panel_motion.reset_right();
-        self.depart_active_tab();
+        self.depart_active_tab(cx);
         self.active_tab = index;
         // Re-enter the retained final list without replaying another visit's
         // presentation; neither row membership nor scroll position changes.
@@ -433,7 +436,7 @@ impl KagiApp {
         // Entering a remote session is a tab transition even when it reuses
         // an existing slot; a previous Inspector exit must not cross it.
         self.panel_motion.reset_right();
-        self.depart_active_tab();
+        self.depart_active_tab(cx);
         self.repo_path = None;
         // No repo_session write here (P1-a): the departing local owner keeps its
         // retained session, the remote owner attached below has none by default,

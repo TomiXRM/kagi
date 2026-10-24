@@ -101,7 +101,11 @@ fn check_failure(
             PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap()).join("operations.jsonl.lock");
         kagi_git::advisory_lock::lock_exclusive(&path, std::time::Duration::ZERO).unwrap()
     });
-    app.update(cx, |app, cx| app.apply_conflict_detect(owner, payload, cx));
+    app.update(cx, |app, cx| {
+        // These cases cover first-open failure, not a retained live editor.
+        app.ui_mut().unwrap().conflict = None;
+        app.apply_conflict_detect(owner, payload, cx);
+    });
     paint(cx, &app, window);
     let receipts = read_oplog_tail_for_repo(&repo, 100)
         .into_iter()

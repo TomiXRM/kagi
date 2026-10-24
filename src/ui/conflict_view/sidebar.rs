@@ -136,11 +136,15 @@ impl ConflictView {
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_hidden = !self.sidebar_hidden;
         if self.sidebar_hidden {
-            self.sidebar
-                .focus
-                .yield_focus(self.sidebar_toggle_focus.as_ref(), window, cx);
+            self.yield_sidebar_focus(window, cx);
         }
         cx.notify();
+    }
+
+    pub(super) fn yield_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar
+            .focus
+            .yield_focus(self.sidebar_toggle_focus.as_ref(), window, cx);
     }
 
     pub(super) fn render_sidebar(

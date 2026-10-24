@@ -20,7 +20,8 @@ mod inspection_hold;
 #[path = "conflict_draft_stale_failure.rs"]
 mod stale_failure;
 pub use stale_failure::{
-    scenario_conflict_draft_stale_restore_async, scenario_conflict_draft_stale_restore_failure,
+    scenario_conflict_draft_fresh_restore_failure, scenario_conflict_draft_stale_restore_async,
+    scenario_conflict_draft_stale_restore_failure,
 };
 
 #[path = "conflict_draft_restore_io.rs"]

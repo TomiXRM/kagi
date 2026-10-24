@@ -3266,6 +3266,10 @@ mod macos {
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_async),
             ),
             (
+                "conflict_draft_fresh_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_fresh_restore_failure),
+            ),
+            (
                 "conflict_draft_inspection_empty_legacy",
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
             ),
@@ -3463,6 +3467,18 @@ mod macos {
             (
                 "pdf_media_symlink",
                 Box::new(crate::pdf_media_bounds::scenario_pdf_media_symlink),
+            ),
+            (
+                "conflict_preview_no_render_io",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_no_render_io),
+            ),
+            (
+                "conflict_preview_owner_transitions",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_owner_transitions),
+            ),
+            (
+                "conflict_preview_read_retry",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_read_retry),
             ),
             (
                 "conflict_save_boundary",
@@ -5132,6 +5148,10 @@ mod macos {
             (
                 "bottom_panel_divider_drag",
                 Box::new(crate::bottom_panel_divider_drag::scenario_bottom_panel_divider_drag),
+            ),
+            (
+                "sidebar_motion",
+                Box::new(crate::side_panel_motion::scenario_sidebar_motion),
             ),
             (
                 "side_panel_motion",

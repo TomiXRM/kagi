@@ -1,7 +1,8 @@
-//! A failed, superseded restore cannot erase a newer Result owner (#1732).
+//! Failed draft restores cannot erase a retained live Result owner (#1732).
 use super::*;
 use crate::conflict_draft_revision::{conflict_read, result_input};
 use kagi::ui::e2e::{detect_payload_for_test, ConflictDetectOutcome};
+use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 const UNSAVED: &str = "NEWER RESULT; AUTOSAVE FAILED\n";
@@ -282,5 +283,153 @@ pub fn scenario_conflict_draft_stale_restore_async(cx: &mut VisualTestAppContext
         drop(input);
         drop(view);
         unmount(cx, app, window);
+    }
+}
+
+pub fn scenario_conflict_draft_fresh_restore_failure(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for language in [Lang::En, Lang::Ja] {
+        for reload in ["quiet", "manual", "external"] {
+            let _isolated = IsolatedLog::new();
+            let fixture = content_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let (app, window) = mount(cx, &repo);
+            detect(cx, &app, window);
+            app.update(cx, |app, cx| {
+                app.set_lang(language, cx);
+                app.set_window_active_for_e2e(true, cx);
+            });
+            let input = result_input(cx, &app, window);
+            let view = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
+            let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+            let revision = cx.read(|cx| view.read(cx).mode.as_ref().unwrap().revision.clone());
+            let store = cx.read(|cx| {
+                view.read(cx)
+                    .mode
+                    .as_ref()
+                    .unwrap()
+                    .buffer
+                    .autosave()
+                    .unwrap()
+            });
+            let primary = std::fs::read(&store).unwrap();
+            let lock = kagi_git::advisory_lock::lock_exclusive(
+                &store.with_file_name("buffer.json.lock"),
+                Duration::ZERO,
+            )
+            .unwrap();
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |input, cx| input.set_value(UNSAVED, window, cx));
+                app.update(cx, |_, cx| cx.notify());
+            })
+            .unwrap();
+            paint(cx, &app, window);
+            cx.read(|cx| {
+                let buffer = &view.read(cx).mode.as_ref().unwrap().buffer;
+                assert_eq!(
+                    buffer.resolved_text(Path::new(FILE)).as_deref(),
+                    Some(UNSAVED)
+                );
+                assert!(buffer.queue_autosave().unwrap().wait().is_err());
+                assert!(buffer.has_unflushed_drafts());
+            });
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+            assert_eq!(
+                std::fs::read(&store).unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+            drop(lock);
+            let before = RepositoryState::read(&repo);
+            let read_key = cx.read(|cx| app.read(cx).reads.current_key(owner));
+            // Exercise the ordinary production reload, not a forged failure payload.
+            app.update(cx, |app, cx| match reload {
+                "quiet" => app.reload(cx),
+                "manual" => app.reload_manual(cx),
+                "external" => app.reload_external(cx),
+                _ => unreachable!(),
+            });
+            crate::busy_dismiss::wait(cx, &app, "fresh unreadable draft reload", |state| {
+                state.reads.current_key(owner) != read_key && !state.reads.is_loading(owner)
+            });
+            paint(cx, &app, window);
+            cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(
+                state.ui().conflict.as_ref().map(|entity| entity.entity_id()),
+                Some(view.entity_id()),
+                "a fresh restore failure must retain the current pane"
+            );
+            let retained = view.read(cx);
+            let mode = retained.mode.as_ref().unwrap();
+            assert_eq!(mode.revision, revision);
+            assert_eq!(
+                retained.editor_inputs.as_ref().unwrap().result.entity_id(),
+                input.entity_id()
+            );
+            assert_eq!(input.read(cx).value().as_ref(), UNSAVED);
+            assert_eq!(mode.buffer.resolved_text(Path::new(FILE)).as_deref(), Some(UNSAVED));
+            assert!(mode.buffer.has_unflushed_drafts());
+            assert!(state.ui().panes_revalidating(), "failed checked read stays closed");
+            assert!(state.ui().conflict_detected, "no per-frame restore retries");
+            assert!(state.ui().conflict_restore_failed);
+            assert!(state.app_notice().is_none(), "recorded failure is not a modal");
+            let preview = kagi_ui_core::i18n::Msg::conflict_draft_restore_failed();
+            assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message) if message == &preview));
+            assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty());
+            assert!(!preview.contains('/') && preview.chars().count() < 100);
+        });
+            let receipts = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
+            assert_eq!(receipts.len(), 1);
+            assert_eq!(receipts[0].op, "conflict-draft-restore");
+            assert!(
+                matches!(&receipts[0].outcome, kagi_git::oplog::OpOutcome::Failed { error }
+            if error.contains(store.to_str().unwrap()) && error.contains("Permission denied"))
+            );
+            let expected = before.with_appended_oplog(&receipts[0]);
+            assert_eq!(expected, RepositoryState::read(&repo));
+            click_control(cx, window, "conflict-save");
+            cx.run_until_parked();
+            assert_eq!(
+                expected,
+                RepositoryState::read(&repo),
+                "Save cannot dispatch a write from the failed checked read"
+            );
+            assert_eq!(cx.read(|cx| input.read(cx).value().to_string()), UNSAVED);
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(std::fs::read(&store).unwrap(), primary);
+            retry_autosave(cx, &app);
+            let read_key = cx.read(|cx| app.read(cx).reads.current_key(owner));
+            app.update(cx, |app, cx| match reload {
+                "quiet" => app.reload(cx),
+                "manual" => app.reload_manual(cx),
+                "external" => app.reload_external(cx),
+                _ => unreachable!(),
+            });
+            crate::busy_dismiss::wait(cx, &app, "successful draft revalidation", |state| {
+                state.reads.current_key(owner) != read_key
+                    && !state.reads.is_loading(owner)
+                    && !state.ui().panes_revalidating()
+            });
+            assert_eq!(
+                cx.read(|cx| app.read(cx).ui().conflict.as_ref().unwrap().entity_id()),
+                view.entity_id()
+            );
+            cx.read(|cx| {
+                assert!(!app.read(cx).ui().conflict_restore_failed);
+                assert_eq!(
+                    view.read(cx)
+                        .editor_inputs
+                        .as_ref()
+                        .unwrap()
+                        .result
+                        .entity_id(),
+                    input.entity_id()
+                );
+            });
+            assert_eq!(cx.read(|cx| input.read(cx).value().to_string()), UNSAVED);
+            drop(input);
+            drop(view);
+            unmount(cx, app, window);
+        }
     }
 }

@@ -6,9 +6,19 @@ static PANIC_NEXT_CONFLICT_SKIP: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CONFLICT_SKIP_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
 impl KagiApp {
     pub fn panic_next_conflict_skip_for_e2e() {
         PANIC_NEXT_CONFLICT_SKIP.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn hold_next_conflict_skip_for_e2e(hold: gpui::Task<()>) {
+        CONFLICT_SKIP_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
     }
 }
 
@@ -130,8 +140,14 @@ impl KagiApp {
         let supervision = abandonment.supervision();
         let bg_path = repo_path.clone();
         let bg_before = before.clone();
+        #[cfg(feature = "gui-e2e")]
+        let hold = CONFLICT_SKIP_HOLD.with(|slot| slot.borrow_mut().take());
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             #[cfg(feature = "gui-e2e")]
             if PANIC_NEXT_CONFLICT_SKIP.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 let _ = std::panic::catch_unwind(|| panic!("injected conflict skip panic"));
@@ -163,6 +179,11 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| {
                 app.refresh_write_busy();
                 let current = app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
+                let refusal_display = match &result {
+                    Err(kagi_git::GitError::Blocked(note)) =>
+                        Some(i18n::plan_note_text(note)),
+                    _ => None,
+                };
                 let (outcome, failure, ran) = match result {
                     Ok(o) => {
                         let (outcome, failure) = skip_outcome(o);
@@ -187,7 +208,7 @@ impl KagiApp {
                     None => klog!("executed: {}", op_name),
                     Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
                 }
-                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, false, cx);
+                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, false, refusal_display, cx);
                 if current {
                     if let Some(evidence) = termination_unknown_evidence {
                         app.report_unknown_notice(&repo_path, evidence);

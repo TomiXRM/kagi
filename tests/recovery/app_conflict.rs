@@ -9,6 +9,13 @@ use std::time::Duration;
 #[path = "conflict_refusal.rs"]
 mod refusal;
 
+#[path = "conflict_skip_race.rs"]
+mod skip_race;
+
+pub fn scenario_conflict_skip_step_race(cx: &mut VisualTestAppContext) {
+    skip_race::run(cx);
+}
+
 pub fn scenario_conflict_continue_refusal_result_owner(cx: &mut VisualTestAppContext) {
     refusal::continue_result_owner(cx);
 }

@@ -130,6 +130,8 @@ checkout・index 復元・ref CAS と buffer 退避・receipt を共有し、適
   refresh 時の disarm は維持し、plan 時・buffer 保全前と `git <op> --skip` spawn
   直前にも同じ revision を確認する。別 step / revision は `SkipStepChanged` として
   mutation 前に拒否し、Refused receipt と EN/JA の最新状態確認案内へ渡す。（#1746）
+  実行時の拒否でも typed blocker を表示経路へ保持し、英語の durable receipt と
+  log contract とは別に footer / unattended toast を EN/JA で案内する。
 - exit 0 だけでは進捗の証拠としない。operation / unmerged index が残るときは、
   前後で観測した marker / counter の移動が必要で、不変・欠損・矛盾は `Unclear`。
   UI は既存 Unknown の warning / partially-applied footer と照合保持を使い、

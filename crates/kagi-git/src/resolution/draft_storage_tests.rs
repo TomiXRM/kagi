@@ -15,7 +15,7 @@ fn live(repo: &Path) -> ResolutionBuffer {
         let mut file = FileResolution::empty();
         file.identity = Some(ConflictRevision::from_fingerprint("a".repeat(64)));
         buffer.files.insert(path.into(), file);
-        assert!(buffer.ensure_hunks(Path::new(path), MARKERS));
+        assert!(buffer.ensure_hunks(Path::new(path), MARKERS, 7));
     }
     buffer
 }
@@ -24,7 +24,7 @@ fn restored(repo: &Path, path: &Path) -> ResolutionBuffer {
     let mut buffer = live(repo);
     buffer.retain_drafts(read(repo, path).unwrap().unwrap().buffer);
     for file in ["a.txt", "b.txt"] {
-        assert!(buffer.ensure_hunks(Path::new(file), MARKERS));
+        assert!(buffer.ensure_hunks(Path::new(file), MARKERS, 7));
     }
     buffer
 }
@@ -399,7 +399,7 @@ fn autosave_latency_three_files_five_hunks_200kb() {
         let markers =
             "<<<<<<< Current\ncurrent\n=======\nincoming\n>>>>>>> Incoming\nunchanged context\n"
                 .repeat(hunk_count);
-        assert!(buffer.ensure_hunks(&path, &markers));
+        assert!(buffer.ensure_hunks(&path, &markers, 7));
         assert_eq!(buffer.hunk_model(&path).unwrap().hunks().len(), hunk_count);
         buffer.set_manual_text(&path, &result).unwrap();
         result_bytes += result.len();
@@ -584,6 +584,42 @@ fn queued_autosave_restore_retains_worktree_fingerprint() {
             );
             assert!(restored.worktree_changed(path));
             assert_eq!(restored.resolved_text(path), buffer.resolved_text(path));
+        },
+    );
+}
+
+#[test]
+fn queued_hunk_recovery_remains_inspection_only_after_reload() {
+    isolated_async_test(
+        "queued_hunk_recovery_remains_inspection_only_after_reload",
+        |root| {
+            let mut buffer = live(root);
+            let file = Path::new("a.txt");
+            assert!(buffer.apply_hunk_choice(file, 0, HunkChoice::AcceptIncoming));
+            let body = buffer.resolved_text(file).unwrap();
+            buffer.autosave().unwrap();
+            // A changed materialization invalidates old hunk authority and moves
+            // the complete body into D1's explicitly non-readoptable recovery.
+            buffer.hunks.remove(file);
+            assert!(buffer.ensure_hunks(file, &MARKERS.replace("a\n", "changed\n"), 7));
+            assert!(!buffer.has_resolution(file));
+            assert_eq!(buffer.recovery_drafts().count(), 1);
+            let saved = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            let path = saved.wait().unwrap();
+            let decoded = read(root, &path).unwrap().unwrap().buffer;
+            assert!(decoded.recoveries[0].file.recovery_only);
+            // Even returning to the original markers/identity cannot promote
+            // this recovery after it crosses the queued persistence boundary.
+            let loaded = restored(root, &path);
+            assert!(!loaded.has_resolution(file));
+            let recoveries: Vec<_> = loaded.recovery_drafts().collect();
+            assert_eq!(recoveries.len(), 1);
+            assert_eq!(recoveries[0].path, file);
+            assert_eq!(
+                kagi_domain::resolution::lines_to_text(recoveries[0].result.unwrap()),
+                body
+            );
         },
     );
 }

@@ -47,6 +47,55 @@
 - cache は表示専用。`files_with_marker_residue` と Save/Continue の実データに対する
   fresh validation は維持し、cache を書き込みの安全ゲートにしない。
 
+## Pure selection and provenance gates（#1746）
+
+- A chosen zero-line side represents an adopted deletion: its side state is
+  `All`, not `None`, before and after line-selection materialization. Persist
+  explicit empty-side adoption alongside the masks; older drafts derive it from
+  their hunk choice. Parent deselection respects adopted empty sides.
+- Selection masks are immutable in size outside their validated constructors.
+  Restoring a draft rejects either mismatched dimension before changing any
+  hunk. Assembly also bounds-checks source lines so a stale in-memory selection
+  cannot panic or invent content. An invalid line edit is a complete no-op.
+- Readiness, fresh Save and Continue marker checks inspect each `ResolvedLine`:
+  only `Manual` lines can contain blocking residue. Unresolved hunks re-emit
+  markers with that origin. Literal marker-looking text from an adopted Current
+  or Incoming side, and shared Context, is source content, not residue.
+  Provenance-absent manual overrides use a plain-text resolution detector:
+  complete `<`, `=` or `>` runs of at least seven characters, followed by space
+  or end-of-line, block even when the synthetic delimiters are wider than seven.
+  The independent staged-blob checklist's existing detector is unchanged.
+- Recorded Save freezes and hashes provenance together with text and file
+  identity, and restores those exact origins after preflight. Dropping origins
+  at the request boundary must not turn a chosen literal into a manual marker;
+  changing only provenance invalidates the prepared payload binding.
+- Marker provenance is established by unambiguous materialization, not by
+  reconstructing stage blobs: zdiff3 passthrough deliberately includes the other
+  side's clean changes. For base, Current and Incoming, find the longest
+  line-start run of `<`, `=`, `>` or `|`; choose `max(7, longest + 1)` and give
+  that width to libgit2 for either marker style. Unrepresentable widths refuse
+  materialization rather than wrapping.
+- Materialization carries its text and chosen width together. The parser accepts
+  only that exact width and the state sequence opener → optional base →
+  separator → closer. Marker-looking source lines therefore keep their source
+  origin, including literal openers, separators and wider runs; unresolved
+  re-emission retains the chosen width and `Manual` origin. Whole-side choices
+  continue to read the stage blobs directly. This closes the parser collision
+  in #1751 without blocking normal per-hunk choices after clean auto-merges.
+- The #1730 hunk-state fingerprint already covers the delimiters in materialized
+  text. A width-7 draft whose sources require wider markers cannot restore that
+  authority: preserve its exact body in recoveries and clear the live
+  resolution. Validate all saved hunk models during live restoration, not only
+  the selected file, so Save/Continue cannot consume an unvalidated old body.
+  Materialization-rejected drafts carry a persisted `recovery_only` flag:
+  matching file/worktree identities retain inspection context but never restore
+  their write authority. Every post-detection `retain_drafts` revalidates all
+  retained hunk states against fresh materialization, including cached models and
+  unselected files; saving another file cannot revive an incompatible body.
+  Operation Log's existing preserved-draft inspection uses the same loader and
+  shows that body read-only, never applying it to the fresh conflict.
+
+
 ## Result input と永続 draft の適用権限（#1721）
 
 - Result の `InputState` は path だけでなく、受理した `ConflictRevision` と

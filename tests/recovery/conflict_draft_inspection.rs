@@ -74,7 +74,11 @@ fn panel(
     cx.read(|cx| app.read(cx).op_log.clone().unwrap())
 }
 
-fn show_log(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn show_log(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     if cx.read(|cx| app.read(cx).bottom_panel_open) {
         cx.simulate_keystrokes(window, "cmd-j");
         paint(cx, app, window);
@@ -107,7 +111,7 @@ fn draft_text(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<St
     })
 }
 
-fn open_drafts(
+pub(super) fn open_drafts(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,

@@ -9,6 +9,21 @@ fn visit_group(
     lines.iter().all(|line| visit(line, origin))
 }
 
+fn visit_marker(
+    standard: &str,
+    width: usize,
+    buffer: &mut String,
+    visit: &mut impl FnMut(&str, LineOrigin) -> bool,
+) -> bool {
+    if width == 7 {
+        return visit(standard, LineOrigin::Manual);
+    }
+    buffer.clear();
+    buffer.extend(std::iter::repeat_n(standard.as_bytes()[0] as char, width));
+    buffer.push_str(&standard[7..]);
+    visit(buffer, LineOrigin::Manual)
+}
+
 impl ConflictHunk {
     pub(super) fn visit_resolved_lines(
         &self,
@@ -38,7 +53,9 @@ impl ConflictHunk {
             }
             for index in 0..self.current.len().max(self.incoming.len()) {
                 for (lines, taken, origin) in sides {
-                    if taken.get(index) == Some(&true) && !visit(&lines[index], origin) {
+                    if taken.get(index) == Some(&true)
+                        && lines.get(index).is_some_and(|line| !visit(line, origin))
+                    {
                         return false;
                     }
                 }
@@ -60,14 +77,21 @@ impl ConflictHunk {
                 .split_terminator('\n')
                 .all(|line| visit(line, LineOrigin::Manual)),
             HunkChoice::Unresolved => {
-                visit("<<<<<<< Current", LineOrigin::Manual)
+                // Reuse one marker buffer for wide materializations; the common
+                // seven-character case visits static strings without allocation.
+                let mut marker = if self.marker_width == 7 {
+                    String::new()
+                } else {
+                    String::with_capacity(self.marker_width + 9)
+                };
+                visit_marker("<<<<<<< Current", self.marker_width, &mut marker, visit)
                     && visit_group(&self.current, LineOrigin::Manual, visit)
                     && (self.base.is_empty()
-                        || (visit("||||||| Base", LineOrigin::Manual)
+                        || (visit_marker("||||||| Base", self.marker_width, &mut marker, visit)
                             && visit_group(&self.base, LineOrigin::Manual, visit)))
-                    && visit("=======", LineOrigin::Manual)
+                    && visit_marker("=======", self.marker_width, &mut marker, visit)
                     && visit_group(&self.incoming, LineOrigin::Manual, visit)
-                    && visit(">>>>>>> Incoming", LineOrigin::Manual)
+                    && visit_marker(">>>>>>> Incoming", self.marker_width, &mut marker, visit)
             }
         }
     }

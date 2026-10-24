@@ -256,6 +256,7 @@ impl FileResolution {
             live_editing_origin: self.live_editing_origin,
             pending_edit: self.pending_edit.for_autosave(),
             draft_state: self.draft_state,
+            recovery_only: self.recovery_only,
             current_text: self.current_text.clone(),
             incoming_text: self.incoming_text.clone(),
             binary: self.binary,

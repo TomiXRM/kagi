@@ -1612,9 +1612,9 @@ pub(crate) fn execute_conflict_save_with_progress(
         ))
     })?;
 
-    // Marker-residue check: a Save that still has markers is blocked (ADR-0066 /
-    // ADR-0068).  Reuse the checklist detector so the gate and Save agree.
-    if super::checklist::text_has_conflict_marker(&text) {
+    // Fresh Result validation includes provenance: literal source lines are not
+    // synthetic or hand-typed conflict markers (ADR-0057).
+    if buffer.has_marker_residue(path) {
         return Err(GitError::Other(format!(
             "Cannot save {}: conflict markers (<<<<<<< ======= >>>>>>>) remain. Remove them first.",
             path.display()

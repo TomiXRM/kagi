@@ -164,7 +164,9 @@ impl ConflictView {
         if let Ok(repo) = kagi_git::Backend::open(&self.repo_path) {
             if let Some(c) = self.mode.as_mut() {
                 if let Some(markers) = repo.materialized_markers(&c.buffer, path) {
-                    c.buffer.ensure_hunks(path, &markers);
+                    c.buffer
+                        .ensure_hunks(path, &markers.text, markers.marker_width);
+                    c.refresh_file_status(path);
                 }
             }
         }

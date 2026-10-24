@@ -71,10 +71,11 @@ against an already-refuted baseline; that control and its count are removed.
 After merging #1733 and removing that control, the earlier run passed
 **54 expected outcomes / 52,223 summed distinct states**, with all **14**
 remaining negative controls detected against baseline-HOLD properties.
-Integrating #1746 D1/D2 preserves those draft guards and adds the frozen Skip
-revision/prewrite defence: the maintained run passes **55 expected outcomes /
-52,280 summed distinct states**, with all **15** meaningful negative controls
-detected. The pure lane retains 38 properties and now detects 31 mutants.
+Integrating #1746 D1/D2 and #1757's width-aware materialization preserves those
+draft guards and adds the frozen Skip revision/prewrite defence: the maintained
+run passes **55 expected outcomes / 52,280 summed distinct states**, with all
+**15** meaningful negative controls detected. The pure lane retains 38 properties
+(1,695,579 input/property evaluations) and now detects 35 mutants.
 
 The reproducible 100-call, 3-file/5-hunk, 209,475-byte backend benchmark measured
 the repeat synchronous path at p50 **69.765 ms** / p95 **200.917 ms**, still

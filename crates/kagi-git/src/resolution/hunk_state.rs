@@ -29,6 +29,8 @@ struct Selection {
     current: Vec<bool>,
     incoming: Vec<bool>,
     order: Order,
+    #[serde(default)]
+    empty_taken: Option<[bool; 2]>,
 }
 
 // Mirror LineOrder's names; these spellings also define the persisted codec.
@@ -83,9 +85,15 @@ impl HunkState {
                     current: Vec::new(),
                     incoming: Vec::new(),
                     order: Order::CurrentFirst,
+                    empty_taken: None,
                 });
-                saved.current.clone_from(&selection.current_taken);
-                saved.incoming.clone_from(&selection.incoming_taken);
+                selection
+                    .taken(SelectionSide::Current)
+                    .clone_into(&mut saved.current);
+                selection
+                    .taken(SelectionSide::Incoming)
+                    .clone_into(&mut saved.incoming);
+                saved.empty_taken = Some(selection.empty_taken());
                 saved.order = match selection.order {
                     LineOrder::CurrentFirst => Order::CurrentFirst,
                     LineOrder::IncomingFirst => Order::IncomingFirst,
@@ -177,17 +185,89 @@ impl HunkState {
                 Choice::Manual(text) => HunkChoice::Manual(text.clone()),
                 Choice::Unresolved => HunkChoice::Unresolved,
             };
-            hunk.line_select = decision.selection.as_ref().map(|selection| LineSelection {
-                current_taken: selection.current.clone(),
-                incoming_taken: selection.incoming.clone(),
-                order: match selection.order {
+            hunk.line_select = if let Some(selection) = decision.selection.as_ref() {
+                let order = match selection.order {
                     Order::CurrentFirst => LineOrder::CurrentFirst,
                     Order::IncomingFirst => LineOrder::IncomingFirst,
                     Order::CurrentBlockFirst => LineOrder::CurrentBlockFirst,
                     Order::IncomingBlockFirst => LineOrder::IncomingBlockFirst,
-                },
-            });
+                };
+                let empty_taken = selection.empty_taken.unwrap_or_else(|| {
+                    [
+                        hunk.current.is_empty() && hunk.choice.takes_side(SelectionSide::Current),
+                        hunk.incoming.is_empty() && hunk.choice.takes_side(SelectionSide::Incoming),
+                    ]
+                });
+                let Ok(restored) = LineSelection::new(
+                    hunk.current.len(),
+                    hunk.incoming.len(),
+                    selection.current.clone(),
+                    selection.incoming.clone(),
+                    order,
+                    empty_taken,
+                ) else {
+                    return false;
+                };
+                Some(restored)
+            } else {
+                None
+            };
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_rejects_malformed_masks_without_partial_adoption() {
+        let markers = "<<<<<<< Current\nc\n=======\ni\n>>>>>>> Incoming\n";
+        let mut chosen = HunkModel::from_marker_text(markers);
+        chosen.set_hunk_side(0, SelectionSide::Current, true);
+        let mut state = HunkState::new(markers, &chosen);
+        state.decisions[0]
+            .selection
+            .as_mut()
+            .unwrap()
+            .incoming
+            .push(true);
+        let mut unresolved = HunkModel::from_marker_text(markers);
+        let before = unresolved.clone();
+        assert!(!state.restore(markers, &mut unresolved));
+        assert_eq!(unresolved, before);
+    }
+
+    #[test]
+    fn empty_side_adoption_survives_codec_round_trip() {
+        let markers = "<<<<<<< Current\n=======\ni\n>>>>>>> Incoming\n";
+        let mut model = HunkModel::from_marker_text(markers);
+        assert!(model.set_hunk_side(0, SelectionSide::Current, true));
+        let state = HunkState::new(markers, &model);
+        let encoded = serde_json::to_string(&state).unwrap();
+        let decoded: HunkState = serde_json::from_str(&encoded).unwrap();
+        let mut restored = HunkModel::from_marker_text(markers);
+        assert!(decoded.restore(markers, &mut restored));
+        assert_eq!(model, restored);
+        assert_eq!(
+            restored.hunk_side_state(0, SelectionSide::Current),
+            Some(TriState::All)
+        );
+
+        // Pre-amendment drafts have no explicit empty-side metadata.
+        model.set_choice(0, HunkChoice::AcceptCurrent);
+        model.regions.iter_mut().for_each(|region| {
+            if let Region::Hunk(hunk) = region {
+                hunk.ensure_line_selection();
+            }
+        });
+        let mut legacy = HunkState::new(markers, &model);
+        legacy.decisions[0].selection.as_mut().unwrap().empty_taken = None;
+        assert!(legacy.restore(markers, &mut restored));
+        assert_eq!(
+            restored.hunk_side_state(0, SelectionSide::Current),
+            Some(TriState::All)
+        );
     }
 }

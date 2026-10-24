@@ -134,6 +134,7 @@ fn pane(
 pub(super) fn save_button(
     path: &std::path::Path,
     writer_busy: bool,
+    external_change: bool,
     refused: bool,
     ready: bool,
     cx: &mut Context<ConflictView>,
@@ -176,8 +177,10 @@ pub(super) fn save_button(
             save,
             cx,
         )
-        .disabled(writer_busy || (!ready && !refused))
-        .aria_description(if writer_busy {
+        .disabled(writer_busy || external_change || (!ready && !refused))
+        .aria_description(if external_change {
+            Msg::ConflictWorktreeChangedHelp.t()
+        } else if writer_busy {
             Msg::OpInProgress.t()
         } else if !ready {
             Msg::ConflictBlockerUnresolved.t()

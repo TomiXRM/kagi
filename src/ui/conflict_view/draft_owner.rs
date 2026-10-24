@@ -262,6 +262,7 @@ fn same_file_context(previous: &ConflictMode, next: &ConflictMode, path: &Path) 
         .buffer
         .file_identity(path)
         .is_some_and(|identity| next.buffer.file_identity(path) == Some(identity))
+        && previous.buffer.worktree_fingerprint(path) == next.buffer.worktree_fingerprint(path)
 }
 
 impl ConflictMode {

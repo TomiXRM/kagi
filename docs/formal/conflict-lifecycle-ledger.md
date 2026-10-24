@@ -56,7 +56,7 @@ never weaken an assertion just to restore green.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **49** checks, including refreshed-Skip, unreadable-metadata and repository-lock guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **52** checks, including refreshed-Skip, unreadable-metadata, WT-provenance and repository-lock guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
@@ -80,16 +80,18 @@ never weaken an assertion just to restore green.
 
 ## Ledger table
 
-State counts separated by `/` follow the check/trace order in that row. CONTRACT rows are bounded holds, not global proofs. BUG/QUESTION classifications apply to the corresponding implementation interpretation, not to artificial broken variants.
+State counts separated by `/` follow the check/trace order in that row. Unchanged rows retain the historical investigation counts; the maintained runner's complete current counts live in `formal/conflict/tla/results/summary.json`. CONTRACT rows are bounded holds, not global proofs. BUG/QUESTION classifications apply to the corresponding implementation interpretation, not to artificial broken variants.
 
 | Invariant | Expectation | Result | States explored | Trace (if refuted) | Code lines | Classification | Owner question / fix sketch |
 |---|---|---|---:|---|---|---|---|
-| `NoWriteBeforeApproval` | HOLD | HELD | 34811 total (8 runs) | — | `app/flow.rs:261-347; app/session.rs:516-558` | CONTRACT | Retain confirmation/admission guards for all seven writer routes and both instances. |
+| `NoWriteBeforeApproval` | HOLD | HELD | 22167 total (8 runs) | — | `app/flow.rs:261-347; app/session.rs:516-558` | CONTRACT | Retain confirmation/admission guards for all seven writer routes and both instances. |
 | `ApprovedRevisionFrozen (merge + external staging races)` | REFUTE | REFUTED | historical 25 / 39 | [approved-revision](#trace-approved-revision), [approved-index-race](#trace-approved-index-race) | `ui/operations/commit.rs:1054-1076,1191-1209; conflicts.rs:1646-1656` | #1743 residual: external CLI | The two-instance case is now HOLD via #1746 D3; merge renewal and arbitrary external staging remain separate. |
-| `ApprovedRevisionFrozen (approved-two-writers)` | HOLD | HELD | 18053 | historical [approved-two-writers](#trace-approved-two-writers) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | HOLD via #1746 D3 (lock) | #1743 residual = external CLI; final approved revision is checked under exclusive kernel admission. |
+| `ApprovedRevisionFrozen (approved-two-writers)` | HOLD | HELD | 21709 | historical [approved-two-writers](#trace-approved-two-writers) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | HOLD via #1746 D3 (lock) | #1743 residual = external CLI; final approved revision is checked under exclusive kernel admission. |
 | `ApprovedSavePayloadFrozen (WT payload)` | HOLD | HELD | 65 | — | `backend/conflict_ops.rs:195-218,281-288; resolution/conflict_boundary.rs:103-107,170-195` | CONTRACT | Keep immutable payload binding; this is not a claim that concurrent add_path stages those bytes. |
-| `StaleSnapshotNeverWrites (WT / final-check gap)` | REFUTE | REFUTED | historical 43 / 35 | [stale-worktree](#trace-stale-worktree), [stale-after-preflight](#trace-stale-after-preflight) | `backend/conflict_observe.rs:91-125,148-198; conflicts.rs:1592,1646-1656` | #1733 residual: external CLI | Advisory locking excludes Kagi writers, not arbitrary external Git or worktree changes. |
-| `StaleSnapshotNeverWrites (two-instance-stale-write)` | HOLD | HELD | 18053 | historical [two-instance-stale-write](#trace-two-instance-stale-write) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | HOLD via #1746 D3 (lock) | #1733 residual = external CLI. |
+| `StaleSnapshotNeverWrites (WT edit before per-file validation)` | HOLD | HELD | 89 | — (historical [stale-worktree](#trace-stale-worktree)) | `resolution/conflict_boundary.rs::validate_save_binding, validate_current_paths; resolution/worktree_state.rs::validate` | CONTRACT (#1733) | Freeze the live draft's WT-byte fingerprint and refuse changed bytes before mutation; broken WT guard remains a negative control. |
+| `StaleSnapshotNeverWrites (WT edit + watcher before first choice)` | HOLD | HELD | 145 | — | `resolution/drafts.rs::retain_drafts; resolution/worktree_state.rs::retain_provenance` | CONTRACT (#1733 review) | Untouched live files retain the original fingerprint too. `stale-worktree-before-choice-broken` removes only that carry and must REFUTE. Exact frozen-text rewrites remain idempotently retryable after Partial execution. |
+| `StaleSnapshotNeverWrites (final-check gap)` | REFUTE | REFUTED | See maintained TLC results | [stale-after-preflight](#trace-stale-after-preflight) | `conflicts.rs::execute_conflict_save_with_progress; resolution/worktree_state.rs::validate` | QUESTION (CLI TOCTOU) | Keep validation and write as distinct model transitions. A last-read fingerprint does not exclude arbitrary CLI writes; the two-instance case is separately protected by #1746 D3. |
+| `StaleSnapshotNeverWrites (two-instance-stale-write)` | HOLD | HELD | 21709 | historical [two-instance-stale-write](#trace-two-instance-stale-write) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | HOLD via #1746 D3 (lock) | #1733 residual = external CLI. |
 | `StaleSnapshotNeverWrites (index/HEAD/MERGE_MSG drift before preflight)` | HOLD | HELD | 71 / 71 / 71 | — | `backend/conflict_ops.rs:419-425; resolution/conflict_boundary.rs:170-175; conflicts.rs:1261-1297` | CONTRACT | Retain full-revision refusal; it protects preflight-time drift, not the later write window. |
 | `DraftNeverLost (captured edit, same revision)` | REFUTE | REFUTED | 11 / 15 | [draft-crash](#trace-draft-crash), [draft-io-quit](#trace-draft-io-quit) | `ui/conflict_view/draft_owner.rs:13-18,233-236; resolution.rs:800-822; ui/editor_workspace/host_close.rs:62-68` | QUESTION (instant crash); BUG (silent I/O failure + close) | Define the capture/durability boundary; failed persistence must keep close blocked or visibly require recovery. |
 | `DraftWriteAtomic` | REFUTE | REFUTED | 20 / 178 / 251 | [draft-torn](#trace-draft-torn), [draft-two-writers](#trace-draft-two-writers), [draft-lost-update](#trace-draft-lost-update) | `resolution.rs:800-822; resolution/drafts.rs:253-301; conflicts.rs:27-33` | BUG | Use atomic replacement plus interprocess serialization/CAS of the load-merge-write document. |
@@ -101,7 +103,7 @@ State counts separated by `/` follow the check/trace order in that row. CONTRACT
 | `MergeCommitTreeIsApprovedTree` | REFUTE | REFUTED | 25 | [merge-tree](#trace-merge-tree) | `ui/operations/commit.rs:1054-1076,1191-1209; backend.rs:979-998; ops/commit.rs:38-44,74-83` | BUG | Pass the displayed approved index digest through merge finalization instead of silently replanning. |
 | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | REFUTED | 62 | [sibling-invalidation](#trace-sibling-invalidation) | `ops/conflict_abort.rs:367-400; app/flow.rs:78; app/settle.rs:272-300` | BUG | Mark ref-moving Abort as shared-ref-changing so retained sibling worktree views are invalidated. |
 | `ContinueEventuallyRecordedOrReported` | REFUTE | REFUTED | 73 | [continue-liveness](#trace-continue-liveness) | `ui/operations/conflict.rs:659-698; ui/operations/app_bridge.rs:751-758; ui/mod.rs:3661-3669` | BUG | Keep accounting alive beyond weak UI-owner destruction; fairness cannot revive a closed owner. |
-| `RepoHasAtMostOneLease (two independent apps)` | HOLD | HELD | 18053 | historical [two-instance-leases](#trace-two-instance-leases) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | #1746 D3 fixed | Kernel ownership spans final preflight→execute→verify; approval probes do not retain it through confirmation. |
+| `RepoHasAtMostOneLease (two independent apps)` | HOLD | HELD | 21709 | historical [two-instance-leases](#trace-two-instance-leases) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | #1746 D3 fixed | Kernel ownership spans final preflight→execute→verify; approval probes do not retain it through confirmation. |
 | `StashAbortRestoresConflictedBytes (non-UTF-8)` | REFUTE | REFUTED | 44 | [stash-non-utf8](#trace-stash-non-utf8) | `ops/conflict_abort.rs:513-537,582-583; backend/conflict_observe.rs:443-467` | BUG | Keep raw path authority through checkout; verify restored WT/index bytes, not only HEAD/operation absence. |
 
 ## Load-bearing negative controls
@@ -117,7 +119,7 @@ These cfg files set `Broken` in the same source model; they are deliberate model
 | `StaleSnapshotNeverWrites (MERGE_MSG)` | [`stale-metadata-broken.cfg`](../../formal/conflict/tla/stale-metadata-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 43 |
 | `ManualCapturePersisted` | [`manual-capture-broken.cfg`](../../formal/conflict/tla/manual-capture-broken.cfg) | Remove persistence on changed captured input | REFUTE (exit 12) | 6 |
 | `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 41 |
-| `RepoHasAtMostOneLease` | [`two-instance-leases-broken.cfg`](../../formal/conflict/tla/two-instance-leases-broken.cfg) | Remove repository-level lock exclusion only | REFUTE (exit 12) | 4746 |
+| `RepoHasAtMostOneLease` | [`two-instance-leases-broken.cfg`](../../formal/conflict/tla/two-instance-leases-broken.cfg) | Remove repository-level lock exclusion only | REFUTE (exit 12) | 4758 |
 
 The source has several repeated validation reads; the model deliberately consolidates the *last* full-revision/binding guard. The broken revision variant removes that consolidated check, not a claim that deleting only one of several Rust checks would suffice. The payload negative variant admits a non-frozen token at the write boundary to exercise the binding assertion. MergeCommit's modeled lease represents its synchronous busy UI interval, not a claim that its legacy synchronous path allocates a Sessions lease.
 
@@ -128,8 +130,8 @@ The values below are copied from TLC's `event` field without reordering. Each ev
 The lease, approved-two-writer and two-instance-stale-write traces below are
 historical pre-#1746 counterexamples. Current expectations/results are HOLD;
 the broken-lock variant retains the cross-process counterexample. On 2026-10-24,
-the maintained runner passed 49/49 expected outcomes (79,458 summed states),
-all ten broken controls remained red, and the complete top-level formal guard
+the maintained runner passed 52/52 expected outcomes (94,556 summed states),
+all twelve broken controls remained red, and the complete top-level formal guard
 exited 0. Per-instance Sessions lease state remains in the model separately from
 the actual repository writer lease; no arbitrary-CLI exclusion is assumed.
 
@@ -243,7 +245,7 @@ the actual repository writer lease; no arbitrary-CLI exclusion is assumed.
 <a id="trace-stale-worktree"></a>
 ### stale-worktree
 
-`StaleSnapshotNeverWrites` — expected REFUTE; TLC REFUTED; 43 distinct / 52 generated; 0.436s; [full trace](../../formal/conflict/tla/results/stale-worktree.log); [cfg](../../formal/conflict/tla/stale-worktree.cfg).
+`StaleSnapshotNeverWrites` — current expectation **HOLD** after #1733's per-file WT provenance check. The steps below retain the historical `834a1796` counterexample (43 distinct / 52 generated). Removing the new WT guard is checked by `stale-worktree-broken`, which must still REFUTE.
 
 1. `"Init"` — Finite fixture: `backend/conflict_observe.rs:91-125`; operation in progress; two-path quotient (not a product transition).
 2. `<<"ObserveIndex", 1>>` — `crates/kagi-git/src/backend/conflict_observe.rs:91-101` — refresh/read index.

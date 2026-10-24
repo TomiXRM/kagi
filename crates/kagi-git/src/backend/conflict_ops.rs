@@ -211,6 +211,7 @@ impl Backend {
             path: path.to_path_buf(),
             revision,
             buffer_revision: buffer_revision(path, &draft, identity),
+            worktree_fingerprint: buffer.worktree_fingerprint(path).map(str::to_owned),
             draft,
             kind,
             before_hash: short_text_hash(before_text.as_bytes()),
@@ -254,6 +255,7 @@ impl Backend {
                 path,
                 buffer_revision: expected,
                 draft,
+                worktree_fingerprint,
                 kind,
                 ..
             } => {
@@ -262,7 +264,13 @@ impl Backend {
                         "conflict operation changed since it was observed".into(),
                     ));
                 }
-                ResolutionBuffer::validate_save_binding(&backend.repo, path, draft, expected)?;
+                ResolutionBuffer::validate_save_binding(
+                    &backend.repo,
+                    path,
+                    draft,
+                    expected,
+                    worktree_fingerprint.as_deref(),
+                )?;
                 if !snapshot.session.files.iter().any(|file| &file.path == path) {
                     return Err(GitError::Other(format!(
                         "{} is not in the observed conflict",
@@ -450,6 +458,8 @@ impl Backend {
                         draft,
                         expected_mode,
                     } => {
+                        let buffer =
+                            ResolutionBuffer::from_conflict_save(&backend.repo, &plan.request)?;
                         if fault == Some(ConflictFaultPoint::AfterWorktreeWrite) {
                             let ConflictDraft::Text(bytes) = draft else {
                                 return Err(GitError::Other(
@@ -466,8 +476,6 @@ impl Backend {
                                 "injected index failure after worktree write".into(),
                             ));
                         }
-                        let buffer =
-                            ResolutionBuffer::from_conflict_save(&backend.repo, &plan.request)?;
                         conflicts::execute_conflict_save_with_progress(
                             &backend.repo,
                             &buffer,

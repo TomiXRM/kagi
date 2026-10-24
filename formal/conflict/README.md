@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed by the guard. There are 49 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), ten TLC negative controls,
+No product code is imported or changed by the guard. There are 52 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), twelve TLC negative controls,
 30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -122,14 +122,17 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `approved-revision` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
 | `approved-index-race` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
 | `approved-two-writers` | `ApprovedRevisionFrozen` | HOLD | none | HOLD via #1746 D3 (lock); #1743 residual = external CLI |
-| `stale-worktree` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `stale-worktree` | `StaleSnapshotNeverWrites` | HOLD | none | #1733 fixed: captured WT provenance checked before mutation |
+| `stale-worktree-broken` | `StaleSnapshotNeverWrites` | REFUTE | worktree | Negative control; remove #1733 WT provenance guard |
+| `stale-worktree-before-choice` | `StaleSnapshotNeverWrites` | HOLD | none | #1733: watcher refresh before any choice retains original WT provenance |
+| `stale-worktree-before-choice-broken` | `StaleSnapshotNeverWrites` | REFUTE | materialization | Negative control; watcher adopts changed WT as fresh source |
 | `stale-index` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-index-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
 | `stale-head` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-head-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
 | `stale-metadata` | `StaleSnapshotNeverWrites` | HOLD | none | CONTRACT |
 | `stale-metadata-broken` | `StaleSnapshotNeverWrites` | REFUTE | revision | Negative control; no product issue |
-| `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
+| `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | External CLI index-write TOCTOU after the last check; not closed by #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
 | `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |

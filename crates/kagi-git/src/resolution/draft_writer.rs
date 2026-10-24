@@ -209,6 +209,9 @@ impl ResolutionBuffer {
         self.draft_writer.wait(generation, true).map(|_| ())
     }
 
+    /// Includes live edits not yet captured by the queued writer, including a
+    /// failed synchronous autosave. Queue those edits before using `flush` as
+    /// a durability barrier; `flush` alone never captures a new snapshot.
     pub fn has_unflushed_drafts(&self) -> bool {
         let state = self
             .draft_writer
@@ -216,6 +219,11 @@ impl ResolutionBuffer {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         state.generation > state.saved
+            || self
+                .files
+                .values()
+                .chain(self.recoveries.iter().map(|entry| &entry.file))
+                .any(|file| file.pending_edit.is_pending())
     }
 
     fn autosave_snapshot(&self) -> Self {

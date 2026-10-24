@@ -217,13 +217,16 @@ impl KagiApp {
     }
 
     /// Plan → approve → dispatch one conflict-family request. `false` = the
-    /// request never became a job (a refused plan, a stale approval); its
-    /// recording has already been presented.
+    /// request never became a job (closed pane admission, refused plan, stale
+    /// approval). A closed pane gate retains its already-presented failure.
     pub(crate) fn start_conflict_request(
         &mut self,
         request: app::ConflictAppRequest,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.pane_mutation_admitted(request.owner.session) {
+            return false;
+        }
         let policy = crate::ui::blocking_ops::execution_policy();
         let owner = request.owner.session;
         let action = request.request.action();

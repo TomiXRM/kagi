@@ -1018,7 +1018,7 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
-For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_fresh_restore_failure,conflict_draft_stale_restore_failure,conflict_draft_stale_restore_async,conflict_draft_stale_restore_success,conflict_draft_continue_restore_admission,conflict_draft_revision_same_revision,conflict_draft_revision_unrelated_index,conflict_draft_inspection,conflict_file_selection'`
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft,conflict_open,conflict_launch,conflict_file_selection'`
 with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
 exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
@@ -1064,6 +1064,27 @@ and detector-generation supersession are exercised independently; neither stale
 success may clear the failure, settle the gate, or admit Save/Continue. EN/JA cases
 also perform a real old-request corruption rescue: its bounded warning must still
 surface on stale completion, without changing the newer failed pane or receipt.
+`conflict_draft_abort_restore_admission` applies the same real paging failure to
+an existing Abort approval, then reinstalls the genuine approval and confirms:
+producer dismissal and consumer admission must independently prevent Git work,
+leases and duplicate receipts; repaired Abort remains usable in EN/JA.
+`conflict_draft_cleared_handoff` fails real autosave, externally aborts or completes
+the sequencer, and requires the exact Result/input/selection/history to remain
+until an explicit repaired Reload durably preserves it for restart inspection.
+Its failed receipt owns the full cause and the bounded EN/JA save preview tells
+the user to keep the window open; no render-frame retry may append another receipt.
+`conflict_draft_stale_handoff` withholds a real durable writer completion, makes a
+newer edit fail, and proves the older ticket cannot remove that newer live owner.
+The hold is GUI-only and never replaces a writer result. Backend assertions also
+require `has_unflushed_drafts` after a synchronous save failure with no queued ticket.
+`conflict_open_fresh`, `conflict_open_second_tab` and `conflict_launch` exercise
+production native-picker completion/CLI startup and real asynchronous accepted
+reads in EN/JA, without corrective Reload or synthetic detector results.
+The first workspace must belong to the accepted revision and have a rendered
+Result with checked-pane admission settled. Tier B launches a plain binary into
+Home with restore disabled, delivers a real Finder Open Documents event to that
+PID, then opens a distinct conflicted copy as its second tab. Capture each real
+window without Reload and compare the missing-workspace before screenshots.
 The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated

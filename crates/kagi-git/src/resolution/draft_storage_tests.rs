@@ -384,12 +384,17 @@ fn failed_autosave_then_preservation_clone_keeps_the_newest_edit() {
     let path = Path::new("a.txt");
     let mut buffer = live(root.path());
     buffer.save_draft_document(&store).unwrap();
+    assert!(!buffer.has_unflushed_drafts());
     buffer
         .set_manual_text(path, "newest unsaved Result\n")
         .unwrap();
     let held = draft_storage::lock(&store).unwrap();
     let error = buffer.save_draft_document(&store).unwrap_err();
     assert!(error.to_string().contains("timed out after 2 s"));
+    assert!(
+        buffer.has_unflushed_drafts(),
+        "failed synchronous saves still own live edits"
+    );
     let preserved = buffer.clone();
     assert!(!preserved.files[path].pending_edit.is_pending());
     drop(held);

@@ -9,6 +9,10 @@ impl Msg {
         draft_restore_failed_for(lang()).into()
     }
 
+    pub fn conflict_draft_preserve_failed() -> String {
+        draft_preserve_failed_for(lang()).into()
+    }
+
     /// A stopped merge/rebase is not a completed operation. A failed status
     /// read must not invent a conflict count.
     pub fn conflict_stopped(count: Option<usize>) -> String {
@@ -96,6 +100,13 @@ fn draft_restore_failed_for(language: Lang) -> &'static str {
     }
 }
 
+fn draft_preserve_failed_for(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "Could not save conflict edits. Keep this window open; see Operation Log, then reload.",
+        Lang::Ja => "conflict の編集内容を保存できませんでした。このウィンドウを閉じず、Operation Log を確認して再読み込みしてください。",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +119,18 @@ mod tests {
             assert!(preview.chars().count() < 100);
             assert!(!preview.contains('/') && !preview.contains('\n'));
         }
+    }
+
+    #[test]
+    fn failed_draft_preservation_preview_is_bounded_in_both_languages() {
+        for language in [Lang::En, Lang::Ja] {
+            let preview = draft_preserve_failed_for(language);
+            assert!(preview.contains("Operation Log"));
+            assert!(preview.chars().count() < 100);
+            assert!(!preview.contains('/') && !preview.contains('\n'));
+        }
+        assert!(draft_preserve_failed_for(Lang::En).contains("Keep this window open"));
+        assert!(draft_preserve_failed_for(Lang::Ja).contains("閉じず"));
     }
 
     #[test]

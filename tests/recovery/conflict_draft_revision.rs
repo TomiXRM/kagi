@@ -9,6 +9,8 @@ use kagi_domain::conflict_family::ConflictRevision;
 use kagi_git::resolution::{lines_to_text, ResolutionBuffer};
 use std::path::{Path, PathBuf};
 
+#[path = "conflict_draft_cleared_handoff.rs"]
+mod cleared_handoff;
 #[path = "conflict_draft_completion.rs"]
 mod completion;
 #[path = "../support/git_fixture.rs"]
@@ -353,6 +355,14 @@ fn finish_second(
     assert_eq!(repository.state(), git2::RepositoryState::Clean);
     assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
     drop(input);
+}
+
+pub fn scenario_conflict_draft_cleared_handoff(cx: &mut VisualTestAppContext) {
+    cleared_handoff::check_cleared_handoff(cx);
+}
+
+pub fn scenario_conflict_draft_stale_handoff(cx: &mut VisualTestAppContext) {
+    cleared_handoff::check_stale_handoff(cx);
 }
 
 pub fn scenario_conflict_draft_revision_same_revision(cx: &mut VisualTestAppContext) {

@@ -21,6 +21,10 @@ mod inspection_hold;
 mod continue_admission;
 pub use continue_admission::scenario_conflict_draft_continue_restore_admission;
 
+#[path = "conflict_draft_abort_admission.rs"]
+mod abort_admission;
+pub use abort_admission::scenario_conflict_draft_abort_restore_admission;
+
 #[path = "conflict_draft_stale_failure.rs"]
 mod stale_failure;
 pub use stale_failure::{

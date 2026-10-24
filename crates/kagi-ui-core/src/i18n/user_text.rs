@@ -179,6 +179,7 @@ pub fn operation_label(op: &str) -> Cow<'_, str> {
         }
         "conflict-save" => ("Save resolution", "解決内容を保存"),
         "conflict-draft-restore" => ("Read conflict draft", "conflict の下書きを読み込み"),
+        "conflict-draft-preserve" => ("Preserve conflict edits", "conflict の編集内容を保全"),
         "conflict-continue" => ("Continue conflict resolution", "conflict の解決を続行"),
         "conflict-skip" => ("Skip commit", "commit をスキップ"),
         "conflict-abort" => ("Abort conflict resolution", "conflict の解決を中止"),

@@ -376,6 +376,7 @@ impl KagiApp {
                     // A prior approval cannot outlive the failed checked read.
                     // The recorded failure already owns the bounded preview.
                     self.clear_conflict_continue_modal();
+                    self.clear_conflict_abort_modal();
                 }
                 // This failure passed the observation/request freshness checks.
                 // Keep the run-once guard until explicit reload/revalidation.
@@ -398,6 +399,9 @@ impl KagiApp {
                 }
             }
             ConflictDetectOutcome::Cleared => {
+                if self.clear_conflict_after_draft_handoff(owner.clone(), cx) {
+                    return;
+                }
                 if self
                     .ui
                     .get(&owner.session)

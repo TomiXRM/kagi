@@ -1037,6 +1037,8 @@ pub struct SaveOutcome {
     pub path: PathBuf,
     /// Short hash of the resolved text that was written (for the oplog).
     pub after_short: String,
+    /// Blob identity frozen before materialization, after path-specific clean filters.
+    pub(crate) staged_oid: git2::Oid,
 }
 
 /// Plan a `continue`: validate that every file is resolved and free of marker
@@ -1442,6 +1444,29 @@ fn freeze_text_resolution(
     text: &str,
     mode: Option<u32>,
 ) -> Result<super::resolution::RawResolution, GitError> {
+    use std::io::Write;
+
+    let mode = text_resolution_mode(repo, index, path, mode)?;
+    // The path is a filter hint, not a source: libgit2 cleans the supplied frozen
+    // stream for the ODB without rereading the mutable worktree.
+    let mut writer = repo
+        .blob_writer(Some(path))
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    writer
+        .write_all(text.as_bytes())
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let oid = writer
+        .commit()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    Ok(super::resolution::RawResolution { oid, mode })
+}
+
+pub(crate) fn text_resolution_mode(
+    repo: &Repository,
+    index: &git2::Index,
+    path: &Path,
+    worktree_mode: Option<u32>,
+) -> Result<u32, GitError> {
     let trust_filemode = match repo
         .config()
         .map_err(|error| GitError::Other(error.message().to_owned()))?
@@ -1451,26 +1476,17 @@ fn freeze_text_resolution(
         Err(error) if error.code() == git2::ErrorCode::NotFound => true,
         Err(error) => return Err(GitError::Other(error.message().to_owned())),
     };
-    // Match index.add_path's mode policy without rereading the approved bytes.
-    // On filesystems without trustworthy executable bits, preserve the conflict
-    // side's mode (ours before theirs), or the existing resolved entry on Save.
-    let staged_mode = if !trust_filemode {
+    // Planning and execution must agree on index.add_path's executable policy.
+    Ok(if !trust_filemode {
         index
             .get_path(path, 2)
             .or_else(|| index.get_path(path, 3))
             .or_else(|| index.get_path(path, 0))
             .map_or(0o100644, |entry| entry.mode)
-    } else if mode.unwrap_or(0o644) & 0o111 != 0 {
+    } else if worktree_mode.unwrap_or(0o644) & 0o111 != 0 {
         0o100755
     } else {
         0o100644
-    };
-    let oid = repo
-        .blob(text.as_bytes())
-        .map_err(|error| GitError::Other(error.message().to_owned()))?;
-    Ok(super::resolution::RawResolution {
-        oid,
-        mode: staged_mode,
     })
 }
 
@@ -1535,7 +1551,7 @@ pub(crate) fn path_to_index_bytes(rel: &Path) -> Option<Vec<u8>> {
 
 /// The current git file mode of a working-tree path, if it exists as a regular
 /// file (`symlink_metadata` — never follows a symlink). `None` when absent.
-fn original_file_mode(abs: &Path) -> Option<u32> {
+pub(crate) fn original_file_mode(abs: &Path) -> Option<u32> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1660,6 +1676,7 @@ pub(crate) fn execute_conflict_save_with_progress(
         return Ok(SaveOutcome {
             path: path.to_path_buf(),
             after_short: short_sha(&raw.oid.to_string()),
+            staged_oid: raw.oid,
         });
     }
 
@@ -1716,6 +1733,7 @@ pub(crate) fn execute_conflict_save_with_progress(
     Ok(SaveOutcome {
         path: path.to_path_buf(),
         after_short: short_text_hash(&text),
+        staged_oid: frozen.oid,
     })
 }
 

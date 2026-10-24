@@ -315,7 +315,7 @@ impl Backend {
                     draft: draft.clone(),
                     expected_mode: match draft {
                         ConflictDraft::Raw { mode, .. } => *mode,
-                        ConflictDraft::Text { .. } => text_mode(&backend.repo, path),
+                        ConflictDraft::Text { .. } => text_mode(&backend.repo, path)?,
                     },
                 }
             }
@@ -483,13 +483,13 @@ impl Backend {
                                 "injected index failure after worktree write".into(),
                             ));
                         }
-                        conflicts::execute_conflict_save_with_progress(
+                        let saved = conflicts::execute_conflict_save_with_progress(
                             &backend.repo,
                             &buffer,
                             path,
                             |value| progress = value,
                         )?;
-                        verify_save(&backend.repo, path, draft, *expected_mode)?;
+                        verify_save(&backend.repo, path, draft, *expected_mode, saved.staged_oid)?;
                     }
                     ConflictPreparedAction::DirFile(dir_file) => {
                         recovery = Some(ops::apply_dir_file_resolution_with_progress(

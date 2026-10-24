@@ -324,28 +324,14 @@ fn draft_metadata_known(
         }
     }
 }
-pub(crate) fn text_mode(repo: &Repository, path: &Path) -> u32 {
-    let executable = repo
+pub(crate) fn text_mode(repo: &Repository, path: &Path) -> Result<u32, GitError> {
+    let index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    let worktree_mode = repo
         .workdir()
-        .and_then(|root| std::fs::symlink_metadata(root.join(path)).ok())
-        .map(|metadata| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = metadata;
-                false
-            }
-        })
-        .unwrap_or(false);
-    if executable {
-        0o100755
-    } else {
-        0o100644
-    }
+        .and_then(|root| conflicts::original_file_mode(&root.join(path)));
+    conflicts::text_resolution_mode(repo, &index, path, worktree_mode)
 }
 
 pub(crate) fn verify_save(
@@ -353,6 +339,7 @@ pub(crate) fn verify_save(
     path: &Path,
     draft: &ConflictDraft,
     expected_mode: u32,
+    expected_oid: git2::Oid,
 ) -> Result<(), GitError> {
     let index = repo
         .index()
@@ -376,8 +363,6 @@ pub(crate) fn verify_save(
                 .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
             let actual = std::fs::read(root.join(path))
                 .map_err(|e| GitError::Other(format!("verify {} failed: {e}", path.display())))?;
-            let expected_oid = git2::Oid::hash_object(git2::ObjectType::Blob, bytes)
-                .map_err(|e| GitError::Other(e.to_string()))?;
             if actual != *bytes || entry.id != expected_oid || entry.mode != expected_mode {
                 return Err(GitError::Other(format!(
                     "{} bytes, blob, or mode differ after save",

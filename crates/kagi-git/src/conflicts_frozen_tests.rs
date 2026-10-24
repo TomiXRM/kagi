@@ -167,3 +167,74 @@ fn frozen_result_uses_theirs_mode_when_ours_is_absent_and_filemode_is_untrusted(
     assert_eq!(frozen.mode, 0o100755);
     assert_eq!(repo.find_blob(frozen.oid).unwrap().content(), b"APPROVED\n");
 }
+
+fn assert_frozen_clean_filters(continue_all: bool) {
+    for (attributes, autocrlf, expected) in [
+        (None, false, b"APPROVED\r\n".as_slice()),
+        (Some("* text=auto\n"), false, b"APPROVED\n".as_slice()),
+        (Some("* text eol=lf\n"), false, b"APPROVED\n".as_slice()),
+        (None, true, b"APPROVED\n".as_slice()),
+    ] {
+        let dir = fixture();
+        let path = dir.path();
+        let repo = Repository::open(path).unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("core.autocrlf", autocrlf)
+            .unwrap();
+        if let Some(attributes) = attributes {
+            write_file(path, ".gitattributes", attributes);
+        }
+        let revision = crate::Backend::open(path)
+            .unwrap()
+            .conflict_snapshot()
+            .unwrap()
+            .unwrap()
+            .observation
+            .revision;
+        let session = detect_conflict_session(&repo).unwrap();
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        buffer
+            .set_manual_text(Path::new("file.txt"), "APPROVED\r\n")
+            .unwrap();
+        let interfere = || write_file(path, "file.txt", "UNAPPROVED\r\n");
+        if continue_all {
+            stage_conflict_resolution_with_worktree_hook(
+                &repo, &session, &buffer, &revision, interfere,
+            )
+            .unwrap();
+        } else {
+            execute_conflict_save_with_progress(
+                &repo,
+                &buffer,
+                Path::new("file.txt"),
+                |progress| {
+                    if progress == kagi_domain::conflict_family::ConflictProgress::WorktreeWritten {
+                        interfere();
+                    }
+                },
+            )
+            .unwrap();
+        }
+        let entry = repo
+            .index()
+            .unwrap()
+            .get_path(Path::new("file.txt"), 0)
+            .unwrap();
+        assert_eq!(repo.find_blob(entry.id).unwrap().content(), expected);
+        assert_eq!(
+            std::fs::read(path.join("file.txt")).unwrap(),
+            b"UNAPPROVED\r\n"
+        );
+    }
+}
+
+#[test]
+fn save_cleans_frozen_bytes_without_rereading_external_worktree_edits() {
+    assert_frozen_clean_filters(false);
+}
+
+#[test]
+fn continue_cleans_frozen_bytes_without_rereading_external_worktree_edits() {
+    assert_frozen_clean_filters(true);
+}

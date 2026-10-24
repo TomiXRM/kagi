@@ -63,9 +63,14 @@ does not weaken `DraftNeverLost`. The preceding acknowledged document remains
 readable; power-loss/directory-fsync durability is not promised. GUI consumers
 must await barriers off-thread and retain #1731's pending/failed refusal gates.
 
-The queued-boundary model run passes **52 expected outcomes / 33,865 summed
-distinct states**; all **13** broken variants remain detected. The strong
-`draft-crash` counterexample is unchanged: capture → crash → restart.
+The earlier queued-boundary run passed **52 expected outcomes / 33,865 summed
+distinct states**. Its claimed 13 controls included a redundant crash control
+against an already-refuted baseline; that control and its count are removed.
+`draft-crash` still exposes capture → crash → restart without weakening it.
+
+After merging #1733 and removing that control, the maintained run passes
+**54 expected outcomes / 52,223 summed distinct states**, with all **14**
+remaining negative controls detected against baseline-HOLD properties.
 
 The reproducible 100-call, 3-file/5-hunk, 209,475-byte backend benchmark measured
 the repeat synchronous path at p50 **69.765 ms** / p95 **200.917 ms**, still
@@ -75,7 +80,7 @@ its final flush completed successfully. These measure the backend API, not
 GUI consumer integration.
 
 The earlier synchronous implementation passed **52 expected outcomes / 33,868
-summed distinct states**, with all **13** broken variants detected. Its native
+summed distinct states**; its then-13 controls included the now-removed crash variant. Its native
 `conflict_draft_revision_same_revision` test observed disk immediately after
 Change; the queued backend instead acknowledges only durable completion.
 Backend regressions exercise two real writer processes (distinct paths and same-file independent
@@ -99,7 +104,7 @@ the original fixture exactly (`after/index-stat-reconciliation.json`).
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **56** checks, including refreshed-Skip, unreadable-metadata, WT-provenance, draft-atomicity and repository-lock guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **55** checks and **15** negative controls after #1733's WT-provenance guards, #1732's draft guards and #1746 D3's repository lock; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
@@ -162,7 +167,6 @@ These cfg files set `Broken` in the same source model; they are deliberate model
 | `StaleSnapshotNeverWrites (HEAD)` | [`stale-head-broken.cfg`](../../formal/conflict/tla/stale-head-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 43 |
 | `StaleSnapshotNeverWrites (MERGE_MSG)` | [`stale-metadata-broken.cfg`](../../formal/conflict/tla/stale-metadata-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 43 |
 | `ManualCapturePersisted` | [`manual-capture-broken.cfg`](../../formal/conflict/tla/manual-capture-broken.cfg) | Remove persistence on changed captured input | REFUTE (exit 12) | 6 |
-| `DraftNeverLost (captured but unacknowledged)` | [`draft-crash-broken.cfg`](../../formal/conflict/tla/draft-crash-broken.cfg) | Omit commit of the captured body entirely | REFUTE (exit 12) | 10 |
 | `DraftWriteAtomic (torn)` | [`draft-torn-broken.cfg`](../../formal/conflict/tla/draft-torn-broken.cfg) | Restore truncation of the primary before write completion | REFUTE (exit 12) | 20 |
 | `DraftWriteAtomic (two writers)` | [`draft-two-writers-broken.cfg`](../../formal/conflict/tla/draft-two-writers-broken.cfg) | Remove serialization of load/merge/write | REFUTE (exit 12) | 253 |
 | `DraftWriteAtomic (lost update)` | [`draft-lost-update-broken.cfg`](../../formal/conflict/tla/draft-lost-update-broken.cfg) | Remove serialization while requiring complete JSON reads | REFUTE (exit 12) | 253 |

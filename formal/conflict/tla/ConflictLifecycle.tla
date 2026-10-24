@@ -82,7 +82,7 @@ ChooseNamespace(a) == /\ At(a, "edit") /\ Kind = "df" /\ ~s.lease[a]
 \* #1732 draft_writer.rs: queue_autosave captures immediately, not durably.
 \* Only the completed autosave/flush acknowledges the primary rename.
 ManualEdit(a) == /\ At(a, "edit") /\ ~s.lease[a] /\ DraftScenario
-    /\ s' = [s EXCEPT !.text[a] = "manual", !.pc[a] = IF Broken \in {"capture","draftSync"} THEN "ready" ELSE "autosaveRead",
+    /\ s' = [s EXCEPT !.text[a] = "manual", !.pc[a] = IF Broken = "capture" THEN "ready" ELSE "autosaveRead",
         !.captured = @ \cup {<<File(a),s.context[a],"manual">>}, !.event = <<"ManualEdit",a>>]
 \* #1732 draft_storage.rs::save_draft_document: acquire the OS sidecar lock
 \* before the checked content-CAS read/merge. This read observes the latest

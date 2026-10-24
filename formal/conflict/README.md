@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed by the guard. There are 56 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), 16 TLC negative controls,
+No product code is imported or changed by the guard. There are 55 TLC configurations, 38 pure
+properties (1,695,574 input/property evaluations), 15 TLC negative controls,
 30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -136,7 +136,6 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
 | `draft-crash` | `DraftNeverLost` | REFUTE | none | #1732; capture before acknowledged flush can be lost |
-| `draft-crash-broken` | `DraftNeverLost` | REFUTE | draftSync | Negative control; omit the captured edit's commit |
 | `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
 | `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
 | `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |

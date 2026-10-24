@@ -1000,12 +1000,16 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
-For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_restore_io_failure,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
 with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
 exclusive `.corrupt` preservation, editable index-backed content and resumed
 autosave. `RepositoryState::with_appended_oplog` constructs the expected single
 canonical receipt append; it still compares every Git field and complete log
 byte-for-byte rather than dropping the log from the no-write witness.
+`conflict_draft_restore_io_failure` covers EN/JA acknowledgment of unreadable
+saved edits, an unopenable lock, bounded lock contention and exhausted rescue
+names. It preserves the exact cause, keeps the editor fail-closed without
+per-frame re-detection, and verifies unchanged Git state and damaged bytes.
 The backend suite also covers failed autosave → preservation clone → save,
 both concurrent merge orders, torn-temp/backup recovery, lock timeout and
 SIGKILL release. Tier B uses two plain-binary instances sharing one isolated

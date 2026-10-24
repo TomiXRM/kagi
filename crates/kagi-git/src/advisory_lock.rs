@@ -19,22 +19,21 @@ pub fn lock_exclusive(path: &Path, timeout: Duration) -> io::Result<File> {
         .open(path)?;
     let deadline = Instant::now() + timeout;
     loop {
-        #[cfg(unix)]
-        let acquired =
-            rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-                .map_err(io::Error::from);
-        #[cfg(not(unix))]
-        let acquired = file.try_lock().map_err(io::Error::from);
-        match acquired {
+        match file.try_lock() {
             Ok(()) => return Ok(file),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            Err(std::fs::TryLockError::WouldBlock) => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
-                    return Err(error);
+                    // Retain the established append/retirement diagnostic and
+                    // a typed WouldBlock, allocating only on the final refusal.
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        std::fs::TryLockError::WouldBlock,
+                    ));
                 }
                 std::thread::sleep(remaining.min(Duration::from_millis(10)));
             }
-            Err(error) => return Err(error),
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
         }
     }
 }

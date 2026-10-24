@@ -489,3 +489,28 @@ fn older_durable_completion_does_not_acknowledge_a_newer_memory_edit() {
         },
     );
 }
+
+#[test]
+fn queued_autosave_restore_retains_worktree_fingerprint() {
+    isolated_async_test(
+        "queued_autosave_restore_retains_worktree_fingerprint",
+        |root| {
+            let mut buffer = live(root);
+            let path = Path::new("a.txt");
+            std::fs::write(root.join(path), MARKERS).unwrap();
+            let fingerprint = worktree_state::fingerprint(&root.join(path)).unwrap();
+            buffer.files.get_mut(path).unwrap().worktree_fingerprint = Some(fingerprint.clone());
+            buffer.files.get_mut(path).unwrap().worktree_changed = true;
+            buffer.set_manual_text(path, "captured Result\n").unwrap();
+            let saved = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            let restored = restored(root, &saved.wait().unwrap());
+            assert_eq!(
+                restored.worktree_fingerprint(path),
+                Some(fingerprint.as_str())
+            );
+            assert!(restored.worktree_changed(path));
+            assert_eq!(restored.resolved_text(path), buffer.resolved_text(path));
+        },
+    );
+}

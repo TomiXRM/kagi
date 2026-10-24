@@ -331,7 +331,7 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
         app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::Cleared, cx)
     });
     app.update(cx, |app, cx| {
-        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed, cx)
+        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed(None), cx)
     });
     cx.run_until_parked();
     assert_eq!(
@@ -638,7 +638,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
     std::fs::write(&file_path, original_text).unwrap();
     for stale in [
         ConflictDetectOutcome::Cleared,
-        ConflictDetectOutcome::OpenFailed,
+        ConflictDetectOutcome::OpenFailed(None),
         staged,
     ] {
         app.update(cx, |app, cx| {
@@ -1030,7 +1030,7 @@ pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppC
             app.ui().panes_revalidating(),
             "precondition: awaiting detection"
         );
-        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed, cx);
+        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed(None), cx);
     });
     cx.read(|cx| {
         let app = app.read(cx);

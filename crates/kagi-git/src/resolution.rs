@@ -7,7 +7,8 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{IndexEntry, Repository};
@@ -37,30 +38,51 @@ pub struct RawResolution {
     pub mode: u32,
 }
 
-/// Recency belongs to an actual unsaved edit, not to a long-lived producer.
-/// The atomic preserves `Sync` for immutable backend execution snapshots while
-/// allowing `autosave(&self)` to acknowledge only a successful disk write.
+/// A successful older snapshot must never acknowledge a newer keystroke.
 #[derive(Debug, Default)]
-struct PendingEdit(AtomicBool);
+struct EditGeneration {
+    edited: AtomicU64,
+    saved: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct PendingEdit {
+    generation: Arc<EditGeneration>,
+    captured: Option<u64>,
+}
 
 impl Clone for PendingEdit {
     fn clone(&self) -> Self {
-        // Copying a snapshot is not a new user edit.
+        // An independent preservation clone is not a new user edit.
         Self::default()
     }
 }
 
 impl PendingEdit {
     fn mark(&self) {
-        self.0.store(true, Ordering::Relaxed);
+        self.generation.edited.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn revision(&self) -> u64 {
+        self.captured
+            .unwrap_or_else(|| self.generation.edited.load(Ordering::Relaxed))
+    }
+
+    fn for_autosave(&self) -> Self {
+        Self {
+            generation: self.generation.clone(),
+            captured: Some(self.revision()),
+        }
     }
 
     fn mark_saved(&self) {
-        self.0.store(false, Ordering::Relaxed);
+        self.generation
+            .saved
+            .fetch_max(self.revision(), Ordering::Relaxed);
     }
 
     fn is_pending(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+        self.revision() > self.generation.saved.load(Ordering::Relaxed)
     }
 }
 
@@ -194,6 +216,14 @@ impl FileResolution {
     }
 }
 
+/// A damaged draft rescued during restore. The preserved bytes remain available
+/// for manual recovery; the UI must announce this even though the base loaded.
+#[derive(Debug)]
+pub struct DraftRestoreWarning {
+    pub rescued_path: PathBuf,
+    pub recording_error: Option<String>,
+}
+
 /// The whole resolution buffer for one repository's conflict session.
 ///
 /// Keyed by repository-relative path; serialized per ADR-0057 to
@@ -213,6 +243,12 @@ pub struct ResolutionBuffer {
     hunks: BTreeMap<PathBuf, HunkModel>,
     /// Older, unbound or incompatible drafts in the same autosave document.
     recoveries: Vec<RecoveryEntry>,
+    /// Last observed document and this owner's baseline for three-way draft merging.
+    disk_snapshot: Arc<Mutex<Arc<draft_storage::Snapshot>>>,
+    /// Preservation clones drain the same ordered background queue.
+    draft_writer: Arc<draft_writer::Writer>,
+    /// One-shot restore diagnostics, not inherited by preservation clones.
+    draft_restore_warnings: Vec<DraftRestoreWarning>,
 }
 
 impl Clone for ResolutionBuffer {
@@ -234,11 +270,25 @@ impl Clone for ResolutionBuffer {
             marker_residue_count: self.marker_residue_count,
             hunks: self.hunks.clone(),
             recoveries,
+            disk_snapshot: Arc::new(Mutex::new(
+                self.disk_snapshot
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            )),
+            draft_writer: self.draft_writer.clone(),
+            draft_restore_warnings: Vec::new(),
         }
     }
 }
 
 mod conflict_boundary;
+mod draft_merge;
+mod draft_storage;
+mod draft_writer;
+pub use draft_writer::DraftSave;
+#[cfg(test)]
+mod draft_storage_tests;
 mod drafts;
 mod hunk_state;
 mod materialize;
@@ -264,6 +314,9 @@ impl ResolutionBuffer {
             marker_residue_count: 0,
             hunks: BTreeMap::new(),
             recoveries: Vec::new(),
+            disk_snapshot: Arc::default(),
+            draft_writer: Arc::default(),
+            draft_restore_warnings: Vec::new(),
         }
     }
 
@@ -340,11 +393,26 @@ impl ResolutionBuffer {
     /// remain inspectable recovery entries, never current resolutions.
     pub fn from_repo_with_autosave(repo: &Repository) -> Result<Self, GitError> {
         let mut base = Self::from_repo(repo)?;
-        if let Some(saved) = Self::load(&base.repo_path) {
-            base.retain_drafts(saved);
-            base.validate_hunk_states(Some(repo));
+        if let Some(path) = buffer_file_path(&base.repo_path) {
+            let (saved, warnings) = draft_storage::read_for_restore(&base.repo_path, &path)?;
+            base.draft_restore_warnings = warnings;
+            if let Some(saved) = saved {
+                base.retain_drafts(saved.buffer);
+                base.validate_hunk_states(Some(repo));
+            }
+        }
+        {
+            let mut snapshot = base.disk_snapshot.lock().unwrap_or_else(|e| e.into_inner());
+            if snapshot.hash.is_none() {
+                *snapshot = Arc::new(draft_storage::Snapshot::capture(&base, None));
+            }
         }
         Ok(base)
+    }
+
+    /// Consume restore diagnostics once; snapshot clones never replay notices.
+    pub fn take_draft_restore_warnings(&mut self) -> Vec<DraftRestoreWarning> {
+        std::mem::take(&mut self.draft_restore_warnings)
     }
 
     /// Revalidate every retained hunk draft before publishing file readiness.
@@ -809,6 +877,11 @@ impl ResolutionBuffer {
     /// Files with no Result draft are still recorded (so their materialized side
     /// texts survive a restart), but the format is compact.
     pub fn autosave(&self) -> Result<PathBuf, GitError> {
+        self.draft_writer.autosave(self)
+    }
+
+    /// The writer's actual durable transaction, never queued recursively.
+    fn autosave_now(&self) -> Result<PathBuf, GitError> {
         let path = buffer_file_path(&self.repo_path).ok_or_else(|| {
             GitError::Other(
                 "conflicts: could not determine autosave dir (no HOME or KAGI_LOG_DIR)".to_string(),
@@ -823,16 +896,7 @@ impl ResolutionBuffer {
                 ))
             })?;
         }
-        let json = self
-            .autosave_json()
-            .map_err(|e| GitError::Other(format!("serialize conflict buffer: {e}")))?;
-        std::fs::write(&path, json.as_bytes()).map_err(|e| {
-            GitError::Other(format!(
-                "conflicts: write failed for {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
+        self.save_draft_document(&path)?;
         for file in self
             .files
             .values()
@@ -843,12 +907,16 @@ impl ResolutionBuffer {
         Ok(path)
     }
 
-    /// Load a previously autosaved buffer for the repository at `repo_path`,
-    /// or `None` when none exists / the file is corrupt (lenient, like drafts).
+    /// Load a previously autosaved buffer, recovering a torn document from `.prev`.
+    /// Compatibility inspection accessor: unrecoverable errors return `None`.
+    /// Production restore and all writers use the checked reader and propagate
+    /// errors instead of treating an undecodable document as an empty merge base.
     pub fn load(repo_path: &Path) -> Option<ResolutionBuffer> {
         let path = buffer_file_path(repo_path)?;
-        let content = std::fs::read_to_string(&path).ok()?;
-        parse_buffer_json(repo_path, &content)
+        draft_storage::read(repo_path, &path)
+            .ok()
+            .flatten()
+            .map(|disk| disk.buffer)
     }
 
     /// Explicitly discard current drafts, retaining older recovery bodies.
@@ -860,7 +928,13 @@ impl ResolutionBuffer {
             Some(p) => p,
             None => return Ok(()),
         };
-        if let Some(mut saved) = Self::load(repo_path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| GitError::Other(format!("conflicts: draft directory: {e}")))?;
+        }
+        let _lock = draft_storage::lock(&path)?;
+        if let Some(disk) = draft_storage::read(repo_path, &path)? {
+            let mut saved = disk.buffer;
             if !saved.recoveries.is_empty() {
                 // Discarding current drafts must not let an older preserved body
                 // override a previously explicit undo-to-null.
@@ -874,10 +948,14 @@ impl ResolutionBuffer {
                 let json = saved
                     .to_json()
                     .map_err(|e| GitError::Other(format!("serialize conflict recovery: {e}")))?;
-                return std::fs::write(&path, json).map_err(|e| {
-                    GitError::Other(format!("conflicts: preserve recovery failed: {e}"))
-                });
+                return draft_storage::replace(&path, json.as_bytes(), None);
             }
+        }
+        let previous = draft_storage::sibling(&path, ".prev");
+        match std::fs::remove_file(&previous) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(GitError::Other(format!("conflicts: delete backup: {e}"))),
         }
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),

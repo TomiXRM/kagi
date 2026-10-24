@@ -8,6 +8,7 @@ use std::{cell::RefCell, rc::Rc};
 
 pub fn scenario(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
+    conflict_control_geometry(cx);
     let fixture = build_fixture();
     // Do not let a machine-global template consume the geometry fixture's lists.
     git(fixture.path(), &["config", "commit.template", "/dev/null"]);
@@ -243,4 +244,180 @@ fn check_focus_ring(
         );
     })
     .unwrap();
+}
+
+/// #1752: readable, inert Conflict status shares Stage/Unstage's control frame.
+fn conflict_control_geometry(cx: &mut VisualTestAppContext) {
+    use gpui_component::ActiveTheme as _;
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["config", "commit.template", "/dev/null"]);
+    git(repo, &["checkout", "-qb", "row-main"]);
+    std::fs::write(repo.join("conflict.txt"), "base\n").unwrap();
+    git(repo, &["add", "conflict.txt"]);
+    git(repo, &["commit", "-qm", "row base"]);
+    git(repo, &["checkout", "-qb", "row-incoming"]);
+    std::fs::write(repo.join("conflict.txt"), "incoming\n").unwrap();
+    git(repo, &["commit", "-qam", "row incoming"]);
+    git(repo, &["checkout", "-q", "row-main"]);
+    std::fs::write(repo.join("conflict.txt"), "current\n").unwrap();
+    git(repo, &["commit", "-qam", "row current"]);
+    let merge = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(["merge", "row-incoming"])
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "fixture must conflict");
+    std::fs::write(repo.join("stage.txt"), "stage\n").unwrap();
+    std::fs::write(repo.join("unstage.txt"), "unstage\n").unwrap();
+    git(repo, &["add", "unstage.txt"]);
+    std::fs::write(repo.join("AGENTS.md"), "Repository conventions\n").unwrap();
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let conflict = std::fs::read(repo.join("conflict.txt")).unwrap();
+    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "accent_source", "accent"]);
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        for zoom in [1., 1.67] {
+            for tree in [false, true] {
+                for slug in ["apple-light", "apple-dark"] {
+                    i18n::set_lang(lang);
+                    theme::set_zoom(zoom);
+                    e2e::commit_panel_labels::clear();
+                    let (app, window) = crate::macos::mount(cx, repo);
+                    cx.update_window(window, |_, window, cx| {
+                        app.update(cx, |app, cx| {
+                            app.set_theme(slug, cx);
+                            app.open_commit_panel(window, cx);
+                        });
+                        app.read(cx)
+                            .ui()
+                            .commit_panel
+                            .clone()
+                            .unwrap()
+                            .update(cx, |panel, cx| {
+                                panel.state.tree_view = tree;
+                                cx.notify();
+                            });
+                    })
+                    .unwrap();
+                    for _ in 0..4 {
+                        cx.run_until_parked();
+                        draw(cx, window, (1440., 900.));
+                    }
+                    let bounds = |id| {
+                        e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| {
+                            panic!("missing {id}: {lang:?}/{zoom}/{tree}/{slug}")
+                        })
+                    };
+                    let unavailable = bounds("cp-row-conflict");
+                    let radius = cx.read(|cx| cx.theme().radius);
+                    for id in [
+                        "cp-row-conflict",
+                        "cp-row-stage",
+                        "cp-row-unstage",
+                        "cp-row-convention",
+                    ] {
+                        let control = bounds(id);
+                        assert!(
+                            (control.size.height - theme::scaled_px(20.).max(px(20.))).abs()
+                                <= px(0.5),
+                            "{id} must retain the 20px minimum: {control:?}"
+                        );
+                        assert!(
+                            (control.size.height - unavailable.size.height).abs() <= px(0.5),
+                            "{id} must match Conflict height"
+                        );
+                        assert_eq!(
+                            e2e::commit_panel_labels::rendered_radius(id),
+                            Some(radius),
+                            "{id} must use the shared Button medium radius token"
+                        );
+                    }
+                    assert_eq!(
+                        e2e::commit_panel_labels::rendered("cp-row-conflict").as_deref(),
+                        Some(i18n::Msg::CommitPanelConflict.t())
+                    );
+                    for id in ["cp-row-conflict", "cp-row-convention"] {
+                        assert_eq!(
+                            e2e::commit_panel_labels::accessible_role(id),
+                            Some(gpui::Role::Label),
+                            "{id} is status text, not an unavailable action"
+                        );
+                        assert_eq!(
+                            e2e::commit_panel_labels::accessible_name(id),
+                            e2e::commit_panel_labels::rendered(id)
+                        );
+                        assert_ne!(
+                            e2e::commit_panel_labels::accessible_disabled(id),
+                            Some(true),
+                            "status badges must not acquire disabled-action semantics"
+                        );
+                        let (fill, ink) = e2e::commit_panel_labels::rendered_badge_colors(id)
+                            .expect("renderer-supplied opaque status colors");
+                        assert!(
+                            theme::contrast_ratio(fill, ink) >= 3.,
+                            "{id} must remain readable in {slug}: {fill:06x}/{ink:06x}"
+                        );
+                        cx.update_window(window, |_, window, _| {
+                            let image = window.render_to_image().expect("status badge paint");
+                            let scale = window.scale_factor();
+                            let badge = bounds(id);
+                            let pixel = image.get_pixel(
+                                (f32::from(badge.left() + px(3.)) * scale) as u32,
+                                (f32::from(badge.center().y) * scale) as u32,
+                            ).0;
+                            let expected = [(fill >> 16) as u8, (fill >> 8) as u8, fill as u8];
+                            assert!(
+                                (0..3).all(|channel| pixel[channel].abs_diff(expected[channel]) <= 2),
+                                "{id} status fill must be opaque, not disabled: {pixel:?}/{expected:?}"
+                            );
+                        }).unwrap();
+                    }
+                    let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+                    let selected = cx.read(|cx| panel.read(cx).state.selected_file.clone());
+                    cx.simulate_click(window, unavailable.center(), gpui::Modifiers::none());
+                    cx.run_until_parked();
+                    draw(cx, window, (1440., 900.));
+                    cx.read(|cx| {
+                        assert_eq!(panel.read(cx).state.selected_file, selected);
+                        assert!(panel
+                            .read(cx)
+                            .state
+                            .conflicted_paths
+                            .contains(std::path::Path::new("conflict.txt")));
+                    });
+                    cx.simulate_click(
+                        window,
+                        bounds("cp-row-convention").center(),
+                        gpui::Modifiers::none(),
+                    );
+                    for _ in 0..4 {
+                        cx.run_until_parked();
+                        draw(cx, window, (1440., 900.));
+                    }
+                    cx.read(|cx| {
+                        // Desktop rows highlight the active WIP diff; selected_file
+                        // retains selection only on the compact Changes surface.
+                        assert_eq!(
+                            panel.read(cx).active_wip,
+                            Some((false, std::path::PathBuf::from("AGENTS.md"))),
+                            "the convention badge must select its containing file row"
+                        );
+                        let app = app.read(cx);
+                        let pane = app.ui().main_diff.as_ref().expect("convention file diff");
+                        let kagi::ui::MainDiffSource::Unstaged { path } =
+                            &pane.read(cx).view.source
+                        else {
+                            panic!("convention badge must open the unstaged file diff");
+                        };
+                        assert_eq!(path, std::path::Path::new("AGENTS.md"));
+                    });
+                    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+                    assert_eq!(std::fs::read(repo.join("conflict.txt")).unwrap(), conflict);
+                    drop(panel);
+                    unmount(cx, app, window);
+                }
+            }
+        }
+    }
 }

@@ -419,6 +419,9 @@ impl CommitPanelState {
 pub struct CommitPanelView {
     /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
+    /// Merge cleanup uses the character resolved from the original MERGE_MSG,
+    /// never a new auto-detection against the user's edited message.
+    pub(crate) merge_comment_char: u8,
     pub(crate) status_request: kagi_domain::load_request::RequestSlot<u64>,
     pub(crate) status_revision: u64,
     pub(crate) view_focus: super::keyboard_nav::TabFocus,
@@ -528,6 +531,7 @@ impl CommitPanelView {
     ) -> Self {
         Self {
             state,
+            merge_comment_char: b'#',
             status_request: Default::default(),
             status_revision: 0,
             view_focus: super::keyboard_nav::TabFocus::default(),

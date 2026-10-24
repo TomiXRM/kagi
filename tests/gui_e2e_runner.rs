@@ -261,6 +261,10 @@ mod update_notice;
 mod create_branch_warnings;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_cancel_reopen.rs"]
+mod create_branch_cancel_reopen;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
 mod smart_picker;
 
@@ -3226,6 +3230,10 @@ mod macos {
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_unrelated_replan),
             ),
             (
+                "conflict_continue_presentation",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_presentation),
+            ),
+            (
                 "conflict_draft_revision_audit",
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_audit),
             ),
@@ -4023,6 +4031,10 @@ mod macos {
             (
                 "create_branch_warnings",
                 Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
+            ),
+            (
+                "create_branch_cancel_reopen",
+                Box::new(crate::create_branch_cancel_reopen::scenario_create_branch_cancel_reopen),
             ),
             (
                 "stash_push_stacked_preview",

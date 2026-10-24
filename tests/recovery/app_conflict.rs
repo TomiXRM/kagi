@@ -310,6 +310,16 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    // Match the neighboring mounted-editor scenario: finish the initial
+    // detector before injecting obsolete results, rather than racing startup.
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: the staged overview is mounted before stale results land"
+    );
     let observed = |cx: &mut VisualTestAppContext| {
         cx.read(|cx| {
             let app = app.read(cx);

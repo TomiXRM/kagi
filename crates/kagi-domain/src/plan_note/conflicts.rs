@@ -17,6 +17,8 @@ pub enum ConflictsNote {
     ObservationChanged,
     /// blocker (save/resolve/abort) — live preflight found a changed revision.
     PlanChanged,
+    /// blocker (skip) — the approved sequencer step or full revision changed.
+    SkipStepChanged,
     /// The conflicted path changed outside Kagi after materialization.
     WorktreeChanged,
     /// blocker (save/resolve/abort) — the repository or worktree identity changed.
@@ -54,6 +56,8 @@ pub enum ConflictsNote {
     /// warning (continue) — no conflicting files were detected; continue will
     /// finish the operation as-is.
     NoConflictingFilesDetected,
+    /// warning (continue) — the current step is resolved, but replay has more steps.
+    ContinuesToNextStep { remaining: usize },
     /// warning (abort) — a recovery copy of the live buffer is required before
     /// restoring the operation's working-tree changes.
     PartialResolutionsPreserved,
@@ -70,6 +74,9 @@ impl ConflictsNote {
                 crate::advice_template_en!(ConflictsObservationChanged).into()
             }
             ConflictsNote::PlanChanged => crate::advice_template_en!(ConflictsPlanChanged).into(),
+            ConflictsNote::SkipStepChanged => {
+                "The operation moved to another step; review the current state".into()
+            }
             ConflictsNote::WorktreeChanged => "File changed outside Kagi".into(),
             ConflictsNote::RepositoryIdentityChanged => {
                 crate::advice_template_en!(ConflictsRepositoryIdentityChanged).into()
@@ -114,6 +121,9 @@ impl ConflictsNote {
             ConflictsNote::ChecklistBlocker { message } => message.clone(),
             ConflictsNote::NoConflictingFilesDetected => {
                 crate::advice_template_en!(ConflictsNoConflictingFilesDetected).to_string()
+            }
+            ConflictsNote::ContinuesToNextStep { remaining } => {
+                format!("Continues to the next step ({remaining} remaining)")
             }
             ConflictsNote::PartialResolutionsPreserved => {
                 crate::advice_template_en!(ConflictsPartialResolutionsPreserved).to_string()

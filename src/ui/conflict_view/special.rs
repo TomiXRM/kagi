@@ -96,6 +96,7 @@ pub(super) fn render_center(
     mode: &ConflictMode,
     writer_busy: bool,
     raw_preview_scroll: &gpui::ScrollHandle,
+    raw_preview: &conflict_binary_view::PreviewState,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
@@ -200,7 +201,15 @@ pub(super) fn render_center(
         ));
     }
 
-    let preview = render_preview(mode, &path, kind, &labels, raw_preview_scroll, cx);
+    let preview = render_preview(
+        mode,
+        &path,
+        kind,
+        &labels,
+        raw_preview_scroll,
+        raw_preview,
+        cx,
+    );
 
     div()
         .flex()
@@ -233,14 +242,14 @@ fn render_preview(
     kind: ConflictKind,
     labels: &SideLabels,
     raw_preview_scroll: &gpui::ScrollHandle,
+    raw_preview: &conflict_binary_view::PreviewState,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // #321: binary / symlink / submodule get an informative side-by-side viewer.
     if kind.is_raw() {
         return super::conflict_binary_view::render_raw_preview(
-            mode,
+            raw_preview,
             path,
-            kind,
             labels,
             raw_preview_scroll,
             cx,

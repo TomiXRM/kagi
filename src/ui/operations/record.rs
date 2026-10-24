@@ -113,6 +113,8 @@ impl KagiApp {
     /// adding its own result cannot overwrite the required acknowledgement.
     /// `stopped` comes from the typed sequencer result for this request; it
     /// changes only the success presentation, never the recorded outcome.
+    /// `display` carries a typed backend refusal's localized preview separately
+    /// from the receipt's stable English blocker.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn record_operation_completion(
         &mut self,

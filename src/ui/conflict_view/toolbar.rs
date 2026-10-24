@@ -29,7 +29,28 @@ impl ConflictView {
         if self.mode.is_none() {
             return div().into_any_element();
         }
-        let tree = (!self.sidebar_hidden).then(|| self.render_sidebar(active, window, cx));
+        let now = kagi_ui_core::motion::now();
+        let shown = !self.sidebar_hidden;
+        self.panel_motion
+            .sync_sidebar(shown, shown, now, kagi_ui_core::motion::instant());
+        let fraction = self.panel_motion.left.visible(now);
+        kagi_ui_core::motion::request_frame(window, self.panel_motion.left.animating(now));
+        // A closing row can regain focus before its clip disappears.
+        // Hand it back at the actual unmount boundary as well as on toggle.
+        if fraction == 0. {
+            self.yield_sidebar_focus(window, cx);
+        }
+        let tree = (fraction > 0.).then(|| {
+            kagi_ui_core::motion::clip(
+                "conflict-sidebar-clip",
+                kagi_ui_core::motion::Axis::Horizontal,
+                kagi_ui_core::motion::Anchor::End,
+                theme::scaled_px(232.),
+                fraction,
+                self.render_sidebar(active, window, cx),
+            )
+            .child(e2e::measure_inside("conflict-sidebar-clip"))
+        });
         let header = self.render_file_header(cx);
         let chrome = self.editor_chrome();
         let body = if self.selected_saved.is_some() {
@@ -294,7 +315,7 @@ impl ConflictView {
                 && !self.writer_busy
                 && !self.saved_review_needed,
             self.writer_busy,
-            mode.is_some_and(|m| m.skip_armed),
+            mode.is_some_and(|m| m.skip_approval.is_some()),
             blocker.map(|msg| msg.t()),
         )
     }
@@ -354,7 +375,7 @@ impl ConflictView {
                 el.child(
                     compact_button(
                         "conflict-skip",
-                        if mode.skip_armed {
+                        if mode.skip_approval.is_some() {
                             Msg::ConflictConfirmSkip.t()
                         } else {
                             Msg::ConflictSkip.t()

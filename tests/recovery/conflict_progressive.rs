@@ -2,6 +2,19 @@
 use super::*;
 use kagi::ui::conflict_editor_a11y as ax;
 fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
+    let comment_setting = if lang == Lang::En { ";" } else { "auto" };
+    progressive_add_add_with_comments(cx, lang, zoom, comment_setting);
+    if lang == Lang::En && zoom == 1. {
+        progressive_add_add_with_comments(cx, lang, zoom, "#");
+    }
+}
+
+fn progressive_add_add_with_comments(
+    cx: &mut VisualTestAppContext,
+    lang: Lang,
+    zoom: f32,
+    comment_setting: &str,
+) {
     use kagi::ui::conflict_view::ConflictPage;
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
@@ -32,6 +45,20 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         .unwrap()
         .status
         .success());
+    // Keep default '#' coverage alongside configured and Git-selected comments.
+    if comment_setting != "#" {
+        git(repo, &["config", "core.commentChar", comment_setting]);
+    }
+    let comment_char = if comment_setting == "#" { '#' } else { ';' };
+    let merge_template = format!(
+        "Merge feature\n\n# User heading\nKeep this body; punctuation.\n\n{comment_char} Conflicts:\n{comment_char}\tadded.txt\n"
+    );
+    let expected_template = if comment_char == '#' {
+        "Merge feature\n\nKeep this body; punctuation."
+    } else {
+        "Merge feature\n\n# User heading\nKeep this body; punctuation."
+    };
+    std::fs::write(repo.join(".git/MERGE_MSG"), merge_template).unwrap();
     let before = repo_fingerprint(repo);
     let index_before = std::fs::read(repo.join(".git/index")).unwrap();
     let head = git2::Repository::open(repo)
@@ -450,6 +477,17 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
     assert!(cx.read(|cx| app.read(cx).ui().conflict_merge_pending));
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let panel = state.ui().commit_panel.as_ref().unwrap().read(cx);
+        assert_eq!(
+            panel.effective_commit_message(cx),
+            expected_template,
+            "{comment_setting}: actual CommitPanel inputs strip generated merge comments only"
+        );
+    });
     app.update(cx, |app, cx| app.reload(cx));
     wait_idle(cx, &app);
     cx.run_until_parked();
@@ -457,6 +495,17 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         let state = app.read(cx);
         assert!(state.ui().commit_panel_open);
         assert!(state.ui().conflict_merge_pending);
+        assert_eq!(
+            state
+                .ui()
+                .commit_panel
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .effective_commit_message(cx),
+            expected_template,
+            "reload preserves the stripped merge template and user body"
+        );
         assert!(
             state.ui().conflict.is_none(),
             "an accepted reload must not repaint the saved workspace over CommitPanel"
@@ -468,6 +517,47 @@ fn progressive_add_add_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32)
         "Continue opens merge commit review, not a commit"
     );
     assert!(repo.join(".git/MERGE_HEAD").exists());
+    let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+    let title_input = cx.read(|cx| panel.read(cx).title_input.clone().unwrap());
+    let body_input = cx.read(|cx| panel.read(cx).body_input.clone().unwrap());
+    let edited_title = if comment_char == '#' {
+        "#1738 の修正"
+    } else {
+        "; note"
+    };
+    let edited_body = format!(
+        "# Edited heading\nKeep edited body; punctuation.\n{comment_char} Editor-only comment"
+    );
+    cx.update_window(window, |_, window, cx| {
+        title_input.update(cx, |input, cx| input.set_value(edited_title, window, cx));
+        body_input.update(cx, |input, cx| input.set_value(edited_body, window, cx));
+    })
+    .unwrap();
+    let expected_message = if comment_char == '#' {
+        format!("{edited_title}\n\nKeep edited body; punctuation.")
+    } else {
+        format!("{edited_title}\n\n# Edited heading\nKeep edited body; punctuation.")
+    };
+    app.update(cx, |app, cx| {
+        let owner = app.active_session().expect("merge commit owner");
+        app.open_commit_plan_modal(owner, cx);
+    });
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    let commit = repository.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(commit.parent_count(), 2, "the actual merge-commit path ran");
+    assert_eq!(commit.parent_id(0).unwrap(), head);
+    assert_eq!(
+        commit.summary().unwrap(),
+        Some(edited_title),
+        "{comment_setting}: a typed subject is never a template comment"
+    );
+    assert_eq!(
+        commit.message().unwrap().trim_end(),
+        expected_message,
+        "{comment_setting}: created commit strips only the original effective comment character"
+    );
+    assert!(!repo.join(".git/MERGE_HEAD").exists());
     drop(input);
     drop(conflict);
     unmount(cx, app, window);

@@ -4,6 +4,9 @@ version = "0.1.0"
 license = "MIT"
 edition = "2021"
 
+[features]
+gui-e2e = []
+
 # kagi-git is the Git backend layer (ADR-0072 / Phase E): the ONLY crate that
 # opens `git2::Repository`. It depends on the pure `kagi-domain` layer for the
 # model types and re-exports them so callers keep using `kagi_git::Head` etc.

@@ -4,7 +4,7 @@ fn text_buffer(markers: &str) -> (ResolutionBuffer, PathBuf) {
     let mut buffer = ResolutionBuffer::new(Path::new("/tmp/repo"));
     let path = PathBuf::from("file.txt");
     buffer.files.insert(path.clone(), FileResolution::empty());
-    assert!(buffer.ensure_hunks(&path, markers));
+    assert!(buffer.ensure_hunks(&path, markers, 7));
     (buffer, path)
 }
 

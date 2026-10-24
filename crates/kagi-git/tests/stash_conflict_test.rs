@@ -184,6 +184,11 @@ fn abort_restores_head_and_keeps_stash() {
     let session = detect_conflict_session(&repo).unwrap();
 
     let head = git_output(dir, &["rev-parse", "HEAD"]);
+    let stale = git_output(dir, &["rev-parse", "HEAD^"]);
+    assert_ne!(stale, head);
+    git(dir, &["update-ref", "ORIG_HEAD", &stale]);
+    let plan = kagi_git::plan_conflict_abort(&repo, &session).unwrap();
+    assert_eq!(plan.predicted.head, format!("restored to {}", &head[..8]));
     let stash_count_before = git_output(dir, &["stash", "list"]).lines().count();
     assert_eq!(stash_count_before, 1, "the conflicting stash must be kept");
 

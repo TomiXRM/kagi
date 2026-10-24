@@ -25,6 +25,8 @@ mod reflog;
 pub(crate) mod remote_identity;
 pub mod remote_ref;
 pub mod remove;
+#[cfg(feature = "gui-e2e")]
+pub mod render_probe;
 mod repo_health;
 mod run;
 pub mod stash;
@@ -84,6 +86,8 @@ impl Backend {
 
     /// Open the repository at `path`.
     pub fn open(path: &Path) -> Result<Self, GitError> {
+        #[cfg(feature = "gui-e2e")]
+        render_probe::record_open();
         let path_str = path.display().to_string();
 
         if !path.exists() {
@@ -1013,30 +1017,12 @@ impl Backend {
         ResolutionBuffer::from_repo_with_autosave(&self.repo)
     }
 
-    pub fn materialized_markers(&self, buffer: &ResolutionBuffer, path: &Path) -> Option<String> {
+    pub fn materialized_markers(
+        &self,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+    ) -> Option<crate::resolution::ConflictMaterialization> {
         buffer.materialized_markers(&self.repo, path)
-    }
-
-    /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
-    /// For a symlink the bytes ARE the link target; `None` for a submodule side
-    /// (no blob) or an absent side. UI-facing so the viewer never opens git2.
-    pub fn conflict_side_bytes(
-        &self,
-        buffer: &ResolutionBuffer,
-        path: &Path,
-        side: crate::resolution::SelectionSide,
-    ) -> Option<Vec<u8>> {
-        buffer.side_bytes(&self.repo, path, side)
-    }
-
-    /// (short OID, mode, size) of one side of a raw conflict (#321 viewer).
-    pub fn conflict_side_blob_info(
-        &self,
-        buffer: &ResolutionBuffer,
-        path: &Path,
-        side: crate::resolution::SelectionSide,
-    ) -> Option<crate::resolution::SideBlobInfo> {
-        buffer.side_blob_info(&self.repo, path, side)
     }
 
     pub fn create_branch_name_errors(&self, name: &str) -> Vec<ops::BranchNameError> {

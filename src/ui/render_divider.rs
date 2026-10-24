@@ -39,7 +39,7 @@ impl KagiApp {
         // so they can follow the pointer while the sidebar is moving (#1011).
         let now = kagi_ui_core::motion::now();
         let sliding = match drag.kind {
-            DividerKind::Sidebar => self.panel_motion.sidebar.animating(now),
+            DividerKind::Sidebar => self.panel_motion.left.animating(now),
             DividerKind::Panel => self.panel_motion.right.animating(now),
             DividerKind::BottomPanel => self.panel_motion.bottom.animating(now),
             _ => false,

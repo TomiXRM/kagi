@@ -157,6 +157,8 @@ impl TabUiState {
             cleanup_prs: _,
             cleanup_prs_stale: _,
             conflict_detected: _,
+            conflict_restore_failed: _,
+            conflict_detect_generation: _,
             pane_revalidation: _,
             ecosystem_cache,
             ecosystem_inflight,

@@ -82,7 +82,7 @@ impl KagiApp {
             Some(home) if home.front => home.left,
             _ => {
                 let left = self.active_session();
-                self.depart_active_tab();
+                self.depart_active_tab(cx);
                 left
             }
         };
@@ -108,7 +108,7 @@ impl KagiApp {
             return;
         }
         if self.tabs.is_empty() && self.remote_view.is_some() {
-            self.depart_active_tab();
+            self.depart_active_tab(cx);
             self.remote_view = None;
         }
         self.open_home_tab(window, cx);

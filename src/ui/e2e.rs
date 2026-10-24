@@ -161,6 +161,18 @@ pub fn await_conflict_revalidation(app: &mut KagiApp) {
         ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::AwaitingConflict;
     }
 }
+
+/// Read-only witnesses for superseded restore admission, without exposing the
+/// production fields or manufacturing detector outcomes.
+#[cfg(feature = "gui-e2e")]
+pub fn conflict_detector_generation(app: &KagiApp) -> u64 {
+    app.ui().conflict_detect_generation
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn conflict_saved_review_needed(view: &super::conflict_view::ConflictView) -> bool {
+    view.saved_review_needed
+}
 use std::rc::Rc;
 use std::sync::Arc;
 

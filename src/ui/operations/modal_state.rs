@@ -870,7 +870,12 @@ impl KagiApp {
         // ── Create-branch ───────────────────────────────────
         if let Some(m) = self.create_branch_modal_mut() {
             if m.input_state.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
+                let initial = m.input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("branch-name")
+                        .default_value(initial)
+                });
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }

@@ -34,6 +34,9 @@ use kagi_git::{
     SkipProgress,
 };
 
+#[path = "conflicts/domain_hardening.rs"]
+mod domain_hardening;
+
 fn write_binary(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(dir.join(name), content).expect("write_binary failed");
 }
@@ -286,13 +289,13 @@ fn add_add_text_conflict_materializes_as_text() {
         .materialized_markers(&repo, path)
         .expect("add/add text conflict must materialize markers (regression: was None)");
     assert!(
-        markers.contains("feature_fn(void)") && markers.contains("main_fn(void)"),
-        "markers must show both sides:\n{markers}"
+        markers.text.contains("feature_fn(void)") && markers.text.contains("main_fn(void)"),
+        "markers must show both sides:\n{markers:?}"
     );
 
     // And a hunk model builds from those markers (so the editor shows hunks).
     assert!(
-        buffer.ensure_hunks(path, &markers),
+        buffer.ensure_hunks(path, &markers.text, markers.marker_width),
         "ensure_hunks should succeed"
     );
     assert!(
@@ -819,7 +822,7 @@ fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
     let markers = buffer
         .materialized_markers(&repo, path)
         .expect("zdiff3 materialization");
-    assert!(buffer.ensure_hunks(path, &markers));
+    assert!(buffer.ensure_hunks(path, &markers.text, markers.marker_width));
     assert_eq!(buffer.hunk_count(path), 2, "two separate conflict hunks");
 
     // Resolve hunk 0 → current, hunk 1 → incoming.
@@ -870,7 +873,7 @@ fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let path = Path::new("file.txt");
     let markers = buffer.materialized_markers(&repo, path).unwrap();
-    buffer.ensure_hunks(path, &markers);
+    buffer.ensure_hunks(path, &markers.text, markers.marker_width);
 
     buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent);
     buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming);
@@ -1040,7 +1043,18 @@ fn skip_is_rejected_for_merge() {
     let session = detect_conflict_session(&repo).unwrap();
     assert!(matches!(session.op, ConflictOp::Merge { .. }));
     assert!(
-        plan_conflict_skip(&repo, &session).is_err(),
+        plan_conflict_skip(
+            &repo,
+            &session,
+            &kagi_git::Backend::open(tmp.path())
+                .unwrap()
+                .conflict_snapshot()
+                .unwrap()
+                .unwrap()
+                .observation
+                .revision,
+        )
+        .is_err(),
         "merge has no skip — plan must error"
     );
 }
@@ -1058,8 +1072,15 @@ fn skip_cherry_pick_drops_current_step() {
     assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
 
     // Plan is always available (no blockers).
-    let plan = plan_conflict_skip(&repo, &session).expect("skip plan");
-    assert!(plan.blockers.is_empty());
+    let expected = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
+    let plan = plan_conflict_skip(&repo, &session, &expected).expect("skip plan");
+    assert!(plan.plan.blockers.is_empty());
 
     // Partial resolution so the buffer is preserved.
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -1325,7 +1346,11 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
     let route =
         plan_conflict_continue_route(&repo, &session, &buffer, "main", &expected).expect("route");
     match route {
-        ContinueRoute::MergeCommitPanel { message } => {
+        ContinueRoute::MergeCommitPanel {
+            message,
+            comment_char,
+        } => {
+            assert_eq!(comment_char, b'#');
             assert!(
                 message.to_lowercase().contains("merge"),
                 "merge message prefilled: {:?}",
@@ -1462,7 +1487,7 @@ fn per_hunk_accept_is_independent() {
 
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
     let markers = buffer.materialized_markers(&repo, path).unwrap();
-    buffer.ensure_hunks(path, &markers);
+    buffer.ensure_hunks(path, &markers.text, markers.marker_width);
     assert_eq!(buffer.hunk_count(path), 2);
 
     // Hunk 0 → current, hunk 1 left unresolved.
@@ -2182,6 +2207,55 @@ fn rebase_two_conflicting_steps_repo() -> TempDir {
     git(dir, &["checkout", "-q", "side"]);
     git_allow_fail(dir, &["rebase", "main"]);
     tmp
+}
+
+#[test]
+fn skip_refuses_replaced_approved_step_and_preserves_the_next_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = rebase_two_conflicting_steps_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let backend =
+        kagi_git::Backend::open_with_policy(dir, kagi_git::backend::ExecutionPolicy::human(false))
+            .unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
+    let plan = backend.plan_conflict_skip(&session, &expected).unwrap();
+    let first = git_output(dir, &["rev-parse", "REBASE_HEAD"]);
+    git_allow_fail(dir, &["rebase", "--skip"]);
+    let second = git_output(dir, &["rev-parse", "REBASE_HEAD"]);
+    assert_ne!(
+        first, second,
+        "external skip must replace the approved step"
+    );
+    let index_before = std::fs::read(dir.join(".git/index")).unwrap();
+    let worktree_before = std::fs::read(dir.join("file.txt")).unwrap();
+    let result = backend.execute_conflict_skip(&plan, &buffer);
+    assert!(
+        matches!(
+            &result,
+            Err(kagi_git::GitError::Blocked(note))
+                if **note == kagi_domain::plan_note::PlanNote::Conflicts(
+                    kagi_domain::plan_note::ConflictsNote::SkipStepChanged
+                )
+        ),
+        "stale approval must refuse, not drop step 2: {result:?}"
+    );
+    assert_eq!(git_output(dir, &["rev-parse", "REBASE_HEAD"]), second);
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index_before);
+    assert_eq!(
+        std::fs::read(dir.join("file.txt")).unwrap(),
+        worktree_before
+    );
+    assert!(detect_conflict_session(&Repository::open(dir).unwrap()).is_some());
 }
 
 /// #540: `git rebase --skip` that drops the current step and then stops at the

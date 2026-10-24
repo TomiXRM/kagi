@@ -127,7 +127,7 @@ fn same_context_restores_disk_provenance_and_moves_latest_live_undo() {
         .iter()
         .all(|origin| *origin == LineOrigin::Incoming));
     let markers = previous.materialized_markers(&repo, path).unwrap();
-    previous.ensure_hunks(path, &markers);
+    previous.ensure_hunks(path, &markers.text, markers.marker_width);
     previous.set_manual_text(path, "latest unsaved\n").unwrap();
     restored.retain_drafts(previous);
     assert_eq!(

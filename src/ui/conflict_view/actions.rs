@@ -164,7 +164,9 @@ impl ConflictView {
         if let Ok(repo) = kagi_git::Backend::open(&self.repo_path) {
             if let Some(c) = self.mode.as_mut() {
                 if let Some(markers) = repo.materialized_markers(&c.buffer, path) {
-                    c.buffer.ensure_hunks(path, &markers);
+                    c.buffer
+                        .ensure_hunks(path, &markers.text, markers.marker_width);
+                    c.refresh_file_status(path);
                 }
             }
         }
@@ -330,6 +332,9 @@ impl ConflictView {
         let Some(file) = mode.session.files.get(idx) else {
             return;
         };
+        if mode.selected_file != Some(idx) {
+            self.raw_preview.retire();
+        }
         let open_path = matches!(file.kind, ConflictKind::Content | ConflictKind::AddAdd)
             .then(|| file.path.clone());
         self.reset_all_target = None;
@@ -430,10 +435,13 @@ impl ConflictView {
     /// reloads, so it must defer to the parent); `false` when this click only
     /// ARMED it.
     pub fn skip_request_arm(&mut self) -> bool {
-        let armed = self.mode.as_ref().map(|c| c.skip_armed).unwrap_or(false);
+        let armed = self
+            .mode
+            .as_ref()
+            .is_some_and(|c| c.skip_approval.is_some());
         if !armed {
             if let Some(c) = self.mode.as_mut() {
-                c.skip_armed = true;
+                c.skip_approval = Some(c.revision.clone());
             }
             klog!("conflict-mode: skip armed (second confirm required)");
             false
@@ -445,7 +453,7 @@ impl ConflictView {
     /// Marshal an error toast to the parent (deferred — `push_toast` lives on
     /// `KagiApp`; this may run from a leased listener so it must not touch the
     /// parent synchronously).
-    fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
         let weak_app = self.app.clone();
         let owner = self.owner.clone();
         cx.spawn(async move |_view, acx| {

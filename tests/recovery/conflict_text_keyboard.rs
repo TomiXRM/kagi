@@ -563,7 +563,7 @@ fn replace_model(
         }
         markers.push_str(">>>>>>> Incoming\n");
     }
-    assert!(buffer.ensure_hunks(Path::new("notes.txt"), &markers));
+    assert!(buffer.ensure_hunks(Path::new("notes.txt"), &markers, 7));
     conflict.update(cx, |view, cx| {
         view.mode.as_mut().unwrap().buffer = buffer;
         cx.notify();

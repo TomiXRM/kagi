@@ -160,6 +160,9 @@ pub(crate) fn preflight_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
 ) -> Result<Option<String>, GitError> {
+    if matches!(session.op, ConflictOp::StashConflict) {
+        return stash_abort_head(repo).map(|commit| Some(commit.id().to_string()));
+    }
     if !matches!(
         session.op,
         ConflictOp::CherryPick { .. } | ConflictOp::Revert { .. }
@@ -506,12 +509,7 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     }
 
     // 2. Resolve the HEAD commit + tree (the pre-apply state).
-    let head_commit = repo
-        .head()
-        .ok()
-        .and_then(|h| h.target())
-        .and_then(|oid| repo.find_commit(oid).ok())
-        .ok_or_else(|| GitError::Other("HEAD commit lookup failed".to_string()))?;
+    let head_commit = stash_abort_head(repo)?;
     let tree = head_commit
         .tree()
         .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
@@ -550,6 +548,14 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
         restored_to: Some(head_commit.id().to_string()),
         buffer_preserved_at,
     })
+}
+
+/// Stash application never moves HEAD or writes ORIG_HEAD. Both its preview
+/// and bounded executor restore this same pre-apply commit.
+fn stash_abort_head(repo: &Repository) -> Result<git2::Commit<'_>, GitError> {
+    repo.head()
+        .and_then(|head| head.peel_to_commit())
+        .map_err(|_| GitError::Other("HEAD commit lookup failed".to_string()))
 }
 
 /// Check `tree` out over exactly `paths` (and nothing else), removing paths the

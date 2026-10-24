@@ -3,9 +3,9 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 55 TLC configurations, 38 pure
-properties (1,695,574 input/property evaluations), fifteen TLC negative controls,
-30 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+No product code is imported or changed. There are 61 TLC configurations, 39 pure
+properties (1,695,651 input/property evaluations), 20 TLC negative controls,
+36 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -82,14 +82,19 @@ model REFUTATIONS only within their isolated assumptions, not confirmed app bugs
 
 The TLC `*-broken.cfg` rows remove a known working guard. The ordinary table
 expects their counterexamples; a separate `--broken` pass retains the original
-HOLD expectations and must exit 1 for all thirteen, with actual violation witnesses.
+HOLD expectations and must exit 1 for every guard mutation, with actual violation witnesses.
 Every pure `VARIANTS` entry similarly runs as a child that must exit 1 with a
 named mismatch. These expected red children are green only in the outer harness.
 
 The refined `skip-replacement` guard HOLDs because an accepted changed revision
-disarms Skip; its removed-guard variant is red. The narrower
-`skip-confirm-cli-race` remains REFUTED. `continue-metadata-read` HOLDs under the
-full operation-metadata admission guard, with a separate red broken variant.
+disarms Skip. #1746 D2 also makes `skip-confirm-cli-race` HOLD: the plan carries
+the original full conflict revision, rechecked immediately before CLI execution.
+`skip-refresh-broken` now checks the first-line disarm invariant independently
+of that backend defence; `skip-prewrite-broken` removes revision checks and is red.
+`SkipClassificationNoFalseSuccess` HOLDs after C6 requires observed movement on
+zero exit; `zero-exit-advanced` restores the old classifier and is red.
+`continue-metadata-read` HOLDs under the full operation-metadata admission guard,
+with a separate red broken variant.
 
 #1731 makes `draft-io-quit` and the three `preserve-*` checks HOLD. The extracted
 close path retains the failed-autosave flag and live text while its sheet offers
@@ -147,12 +152,17 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | External CLI index-write TOCTOU after the last check; not closed by #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
-| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
+| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1732; capture before acknowledged flush can be lost |
 | `draft-io-quit` | `DraftNeverLost` | HOLD | none | #1731 fixed (no explicit discard) |
 | `draft-io-quit-broken` | `DraftNeverLost` | REFUTE | draftClose | Negative control for #1731 |
-| `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |
+| `draft-two-writers` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-two-writers-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; unlocked read/merge/write |
+| `draft-lost-update` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
+| `two-writer-recovery` | `DraftWriteAtomic` | HOLD | none | #1732: retain an earlier body after stale-editor other-file autosave |
+| `two-writer-recovery-broken` | `DraftWriteAtomic` | REFUTE | preMergeRecovery | Negative control; deduplicate against the pre-merge editor |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
@@ -161,8 +171,9 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `receipt-save` | `ReceiptFollowsMutation` | HOLD | none | CONTRACT |
 | `receipt-save-broken` | `ReceiptFollowsMutation` | REFUTE | receipt | Negative control; no product issue |
 | `skip-replacement` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT |
-| `skip-refresh-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipReset | Negative control; no product issue |
-| `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | REFUTE | none | #1746 (owner QUESTION) |
+| `skip-refresh-broken` | `SkipRefreshDisarmsChangedStep` | REFUTE | skipReset | Negative control; no product issue |
+| `skip-confirm-cli-race` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT after #1746 D2 |
+| `skip-prewrite-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipRevision | Negative control for #1746 D2 |
 | `continue-metadata-read` | `MetadataReadErrorNeverAdmitted` | HOLD | none | CONTRACT at runtime (metadata guard) |
 | `continue-metadata-read-broken` | `MetadataReadErrorNeverAdmitted` | REFUTE | metadata | Negative control; no product issue |
 | `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
@@ -176,22 +187,47 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
 | `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
 
+The #1732 draft guards cite `resolution/draft_storage.rs`'s OS lock, checked
+content-CAS read, and ADR-0191 atomic temp/sync/rename writer. Its backend
+`draft_writer.rs` captures memory immediately and offers one ordered background
+writer with latest-snapshot coalescing for at most 250 ms before starting.
+An in-flight fsync can extend that window. Queue acceptance is **not** a durable
+acknowledgment: `DraftSave::wait()` / blocking `flush()` must return `Ok`.
+Consequently the unchanged strong `draft-crash` capture invariant remains
+REFUTE; the model retains the real pre-commit crash transition rather than
+quotienting it away. The preceding acknowledged document remains valid.
+This is not a power-loss guarantee. The lock quotient models successful
+acquisition, not the timeout's UI presentation; backend child tests cover the
+two-second error and SIGKILL release. GUI consumers must await barriers off-thread
+and preserve pending/failed close gates; the backend API alone does not wire them.
+
+`two-writer-recovery` refines the successful locked transaction into distinct
+primary and recovery bodies: A saves file 1, B replaces it while preserving A,
+then A saves file 2 twice while its own file-1 body remains unchanged. Recovery
+deduplication compares the actual post-merge primary, not that stale local body.
+The pure `TwoWriterRecoveryRetained` property also covers assembled-hunk body/state
+overrides and both body orderings. The Rust subprocess regression exercises both
+blocking/queued writers and commit orders, checks exact bytes and identity through
+the read-only inspector's owned recovery API, and rotates `.prev` repeatedly.
+
+
+
 ### Pure table (`pure/predict_*.py`)
 
 | Model | Property | Expected | Issue |
 |---|---|---|---|
 | `predict_hunks` | `SideStateConsistent` | HOLD | CONTRACT |
-| `predict_hunks` | `SideStateChoiceMaskEquivalentIncludingEmpty` | REFUTE | #1746 (C1; owner QUESTION) |
+| `predict_hunks` | `SideStateChoiceMaskEquivalentIncludingEmpty` | HOLD | #1746 C1 fixed: explicit empty-side adoption |
 | `predict_hunks` | `SelectionPresenceResolvesEvenEmpty` | HOLD | CONTRACT |
 | `predict_hunks` | `ChildTriStateAggregation` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleAllFourOrdersAndProvenance` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleBlockOrderStable` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleNoSyntheticMarkers` | HOLD | CONTRACT |
-| `predict_hunks` | `AssembleNoMarkerLeak` | REFUTE | #1746 (C2; owner QUESTION) |
+| `predict_hunks` | `MarkerGateRespectsChosenSourceProvenance` | HOLD | #1746 C2 fixed: manual-only gate; collision-free materialization and width-aware parser (#1751) |
 | `predict_hunks` | `UndecideOnlyOnDeselect` | HOLD | CONTRACT |
 | `predict_hunks` | `OrderApplicability` | HOLD | CONTRACT |
-| `predict_hunks` | `InvalidLineFailureIsNoOp` | REFUTE | #1746 (C3; owner QUESTION) |
-| `predict_hunks` | `MalformedSelectionNeverPanics` | REFUTE | #1746 (C4; owner QUESTION) |
+| `predict_hunks` | `InvalidLineFailureIsNoOp` | HOLD | #1746 C3 fixed: validate before materialization |
+| `predict_hunks` | `MalformedSelectionNeverPanics` | HOLD | #1746 C4 fixed: validated dimensions and checked source lookup |
 | `predict_hunks` | `ChoiceSelectionPreservesSourceChoices` | HOLD | CONTRACT |
 | `predict_hunks` | `RegionAssemblyPreservesOrder` | HOLD | CONTRACT |
 | `predict_ready` | `ReadyImpliesNoMarkers` | HOLD | CONTRACT |
@@ -210,7 +246,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `predict_drafts` | `UnknownOwnerCoalescenceIsFileOnly` | HOLD | CONTRACT |
 | `predict_drafts` | `OnlyPendingRecoveryOutranksDisk` | HOLD | CONTRACT |
 | `predict_drafts` | `DedupMovesLatestToTail` | HOLD | CONTRACT |
-| `predict_skip` | `SkipClassificationNoFalseSuccess` | REFUTE | #1746 (C6; owner QUESTION) |
+| `predict_drafts` | `TwoWriterRecoveryRetained` | HOLD | #1732: post-merge recovery equality |
+| `predict_skip` | `SkipClassificationNoFalseSuccess` | HOLD | CONTRACT after #1746 C6 |
 | `predict_skip` | `BrokenSignalDominatesMovement` | HOLD | CONTRACT |
 | `predict_skip` | `NextConflictIsSuccessOnObservedMovement` | HOLD | CONTRACT |
 | `predict_skip` | `FinishedRequiresCleanRepository` | HOLD | CONTRACT |
@@ -218,6 +255,23 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `predict_intent` | `IntentAdmissionConjunctive` | HOLD | CONTRACT |
 | `predict_intent` | `PlanApprovalConjunctive` | HOLD | CONTRACT |
 | `predict_intent` | `BeginWriteConjunctive` | HOLD | CONTRACT |
+
+C2 replaces the mis-posed `AssembleNoMarkerLeak`: raw literal/manual marker text
+is intentionally preserved; blocking is a provenance decision. Manual markers
+still block, and the `plain-text-gate` mutant rejects chosen source literals.
+Parser attribution is protected by collision-free marker widths across all three
+source blobs and an exact-width, state-specific parser (#1751). Rust backend/UI
+regressions cover source marker literals, width 10, clean merged changes outside
+hunks, and inspection-only legacy drafts after the width fingerprint changes.
+Do not compare merged passthrough with either stage: clean changes from the
+other side belong in the Result by design.
+The C1/C3/C4 removed-guard mutants are `empty-adoption-lost`,
+`invalid-materializes`, and `malformed-index`; each must remain red.
+`undecide-empty-adoption` supersedes the now-redundant `undecide-on-select`:
+explicit adoption means selecting a zero-line side no longer looks empty even
+if the deselect-only call guard is removed. The new mutant clears an adopted
+deletion when deselecting the other side, and must be detected.
+
 
 ## Runtime reconciliation and limits
 

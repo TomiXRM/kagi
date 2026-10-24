@@ -36,8 +36,14 @@ impl BufferRevision {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConflictDraft {
-    Text(Vec<u8>),
-    Raw { oid: String, mode: u32 },
+    Text {
+        bytes: Vec<u8>,
+        origins: Vec<crate::resolution::LineOrigin>,
+    },
+    Raw {
+        oid: String,
+        mode: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

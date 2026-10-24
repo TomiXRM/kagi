@@ -17,6 +17,8 @@ thread_local! {
     static DISABLED: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
     static PRESSED: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
     static FOCUS: RefCell<HashMap<String, gpui::FocusHandle>> = RefCell::new(HashMap::new());
+    static RADII: RefCell<HashMap<&'static str, gpui::Pixels>> = RefCell::new(HashMap::new());
+    static BADGE_COLORS: RefCell<HashMap<&'static str, (u32, u32)>> = RefCell::new(HashMap::new());
 }
 
 pub(crate) fn name(id: &str, text: impl Into<SharedString>) -> SharedString {
@@ -130,6 +132,34 @@ pub fn accessible_description(id: &str) -> Option<SharedString> {
     DESCRIPTIONS.with(|values| values.borrow().get(id).cloned())
 }
 
+/// The radius passed to the shared dense row Button, not a pixel sample.
+pub(crate) fn radius(id: &'static str, value: gpui::Pixels) -> gpui::Pixels {
+    #[cfg(feature = "gui-e2e")]
+    RADII.with(|values| values.borrow_mut().insert(id, value));
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = id;
+    value
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn rendered_radius(id: &str) -> Option<gpui::Pixels> {
+    RADII.with(|values| values.borrow().get(id).copied())
+}
+
+/// The actual opaque fill and ink passed to the shared status renderer.
+pub(crate) fn badge_colors(id: &'static str, fill: u32, ink: u32) -> (u32, u32) {
+    #[cfg(feature = "gui-e2e")]
+    BADGE_COLORS.with(|values| values.borrow_mut().insert(id, (fill, ink)));
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = id;
+    (fill, ink)
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn rendered_badge_colors(id: &str) -> Option<(u32, u32)> {
+    BADGE_COLORS.with(|values| values.borrow().get(id).copied())
+}
+
 /// Clear renderer-fed observations before mounting another window.
 #[cfg(feature = "gui-e2e")]
 pub fn clear() {
@@ -141,6 +171,8 @@ pub fn clear() {
     DISABLED.with(|values| values.borrow_mut().clear());
     PRESSED.with(|values| values.borrow_mut().clear());
     FOCUS.with(|values| values.borrow_mut().clear());
+    RADII.with(|values| values.borrow_mut().clear());
+    BADGE_COLORS.with(|values| values.borrow_mut().clear());
 }
 
 /// Measure the real absolute focus target, including its out-of-flow ring.

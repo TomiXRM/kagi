@@ -53,6 +53,10 @@ mod time_locale;
 mod open_picker;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_open.rs"]
+mod conflict_open;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/ref_validation.rs"]
 mod ref_validation;
 
@@ -259,6 +263,10 @@ mod update_notice;
 #[cfg(target_os = "macos")]
 #[path = "recovery/create_branch_warnings.rs"]
 mod create_branch_warnings;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_cancel_reopen.rs"]
+mod create_branch_cancel_reopen;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
@@ -538,6 +546,9 @@ mod conflict_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_file_selection.rs"]
 mod conflict_file_selection;
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_marker_width.rs"]
+mod conflict_marker_width;
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_text_keyboard.rs"]
 mod conflict_text_keyboard;
@@ -3231,6 +3242,10 @@ mod macos {
                 Box::new(crate::conflict_draft_persist_failure::scenario_conflict_draft_persist_failure),
             ),
             (
+                "conflict_continue_presentation",
+                Box::new(crate::conflict_continue_approval::scenario_conflict_continue_presentation),
+            ),
+            (
                 "conflict_draft_revision_audit",
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_audit),
             ),
@@ -3255,6 +3270,58 @@ mod macos {
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
             ),
             (
+                "conflict_draft_corrupt_restore",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_corrupt_restore),
+            ),
+            (
+                "conflict_draft_restore_io_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_restore_io_failure),
+            ),
+            (
+                "conflict_draft_stale_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_failure),
+            ),
+            (
+                "conflict_draft_stale_restore_async",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_async),
+            ),
+            (
+                "conflict_draft_fresh_restore_failure",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_fresh_restore_failure),
+            ),
+            (
+                "conflict_draft_continue_restore_admission",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_continue_restore_admission),
+            ),
+            (
+                "conflict_draft_stale_restore_success",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_success),
+            ),
+            (
+                "conflict_draft_abort_restore_admission",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_abort_restore_admission),
+            ),
+            (
+                "conflict_draft_cleared_handoff",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_cleared_handoff),
+            ),
+            (
+                "conflict_draft_stale_handoff",
+                Box::new(crate::conflict_draft_revision::scenario_conflict_draft_stale_handoff),
+            ),
+            (
+                "conflict_open_fresh",
+                Box::new(crate::conflict_open::scenario_conflict_open_fresh),
+            ),
+            (
+                "conflict_open_second_tab",
+                Box::new(crate::conflict_open::scenario_conflict_open_second_tab),
+            ),
+            (
+                "conflict_launch",
+                Box::new(crate::conflict_open::scenario_conflict_launch),
+            ),
+            (
                 "conflict_draft_inspection_empty_legacy",
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
             ),
@@ -3277,6 +3344,24 @@ mod macos {
             (
                 "conflict_arrow_checkboxes",
                 Box::new(crate::conflict_controls::scenario_conflict_arrow_checkboxes),
+            ),
+            (
+                "conflict_merged_passthrough",
+                Box::new(crate::conflict_marker_width::scenario_conflict_merged_passthrough),
+            ),
+            (
+                "conflict_marker_width",
+                Box::new(crate::conflict_marker_width::scenario_conflict_marker_width),
+            ),
+            (
+                "conflict_width_draft_recovery",
+                Box::new(crate::conflict_marker_width::scenario_conflict_width_draft_recovery),
+            ),
+            (
+                "conflict_width_recovery_survives_other_file_save",
+                Box::new(
+                    crate::conflict_marker_width::scenario_conflict_width_recovery_survives_other_file_save,
+                ),
             ),
             (
                 "conflict_result_segment",
@@ -3434,6 +3519,18 @@ mod macos {
             (
                 "pdf_media_symlink",
                 Box::new(crate::pdf_media_bounds::scenario_pdf_media_symlink),
+            ),
+            (
+                "conflict_preview_no_render_io",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_no_render_io),
+            ),
+            (
+                "conflict_preview_owner_transitions",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_owner_transitions),
+            ),
+            (
+                "conflict_preview_read_retry",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_read_retry),
             ),
             (
                 "conflict_save_boundary",
@@ -3998,6 +4095,10 @@ mod macos {
             (
                 "create_branch_warnings",
                 Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
+            ),
+            (
+                "create_branch_cancel_reopen",
+                Box::new(crate::create_branch_cancel_reopen::scenario_create_branch_cancel_reopen),
             ),
             (
                 "stash_push_stacked_preview",
@@ -4626,6 +4727,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_skip_panic),
             ),
             (
+                "conflict_skip_step_race",
+                Box::new(crate::app_conflict::scenario_conflict_skip_step_race),
+            ),
+            (
                 "stash_continue_panic",
                 Box::new(crate::app_stash::scenario_stash_continue_panic),
             ),
@@ -5099,6 +5204,10 @@ mod macos {
             (
                 "bottom_panel_divider_drag",
                 Box::new(crate::bottom_panel_divider_drag::scenario_bottom_panel_divider_drag),
+            ),
+            (
+                "sidebar_motion",
+                Box::new(crate::side_panel_motion::scenario_sidebar_motion),
             ),
             (
                 "side_panel_motion",

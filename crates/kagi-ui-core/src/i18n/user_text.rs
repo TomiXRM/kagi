@@ -61,6 +61,11 @@ pub fn branch_tip_not_loaded(branch: &str) -> String {
 
 /// Translate known diagnostic formats, not arbitrary words in paths or Git output.
 pub fn diagnostic(value: &str) -> Cow<'_, str> {
+    if let Some(name) =
+        value.strip_prefix("Draft could not be read; the damaged file was moved aside as ")
+    {
+        return Cow::Owned(crate::i18n::Msg::conflict_draft_rescued(name));
+    }
     if let Some(result) = ui::diagnostic(value)
         .or_else(|| github::diagnostic(value))
         .or_else(|| state::state_text(value))
@@ -174,6 +179,8 @@ pub fn operation_label(op: &str) -> Cow<'_, str> {
             ("Redo", "やり直す")
         }
         "conflict-save" => ("Save resolution", "解決内容を保存"),
+        "conflict-draft-restore" => ("Read conflict draft", "conflict の下書きを読み込み"),
+        "conflict-draft-preserve" => ("Preserve conflict edits", "conflict の編集内容を保全"),
         "conflict-continue" => ("Continue conflict resolution", "conflict の解決を続行"),
         "conflict-skip" => ("Skip commit", "commit をスキップ"),
         "conflict-abort" => ("Abort conflict resolution", "conflict の解決を中止"),
@@ -370,6 +377,7 @@ mod tests {
                 "create-branch",
                 "checkout-tracking",
                 "conflict-save:merge",
+                "conflict-draft-restore",
                 "reconcile-release-unobservable",
                 "auto-lock-worktree",
                 "op-revert",
@@ -389,6 +397,11 @@ mod tests {
             for internal in ["Preflight", "repo.index", "plan failed"] {
                 assert!(!shown.contains(internal), "{shown}");
             }
+            let draft = "Draft could not be read; the damaged file was moved aside as buffer.json.corrupt.1";
+            assert_eq!(
+                diagnostic(draft),
+                crate::i18n::Msg::conflict_draft_rescued("buffer.json.corrupt.1")
+            );
             let user_data = "feature_repo.index()_session=branch";
             assert!(matches!(diagnostic(user_data), Cow::Borrowed(value) if value == user_data));
         }

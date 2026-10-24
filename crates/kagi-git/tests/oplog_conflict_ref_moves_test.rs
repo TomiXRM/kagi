@@ -228,7 +228,9 @@ fn skipping_the_last_rebase_step_records_the_branch_finishing() {
     let session = kagi_git::detect_conflict_session(&git2::Repository::open(&repo).unwrap())
         .expect("rebase in conflict");
     let buffer = b.resolution_buffer_from_repo().unwrap();
-    let (result, moves) = b.observe_ref_moves(|b| b.execute_conflict_skip(&session, &buffer));
+    let expected = b.conflict_snapshot().unwrap().unwrap().observation.revision;
+    let approved = b.plan_conflict_skip(&session, &expected).unwrap();
+    let (result, moves) = b.observe_ref_moves(|b| b.execute_conflict_skip(&approved, &buffer));
     result.expect("skip");
     // The only commit was skipped: side ends on main's tip, HEAD back on side.
     assert_eq!(tip(&repo, "side"), main);
@@ -277,7 +279,7 @@ fn external_worktree_append_refuses_save_and_continue_without_mutation() {
         let mut buffer = b.resolution_buffer_from_repo().unwrap();
         let path = Path::new("file.txt");
         let markers = b.materialized_markers(&buffer, path).unwrap();
-        buffer.ensure_hunks(path, &markers);
+        buffer.ensure_hunks(path, &markers.text, markers.marker_width);
         buffer.apply_hunk_choice(path, 0, kagi_git::resolution::HunkChoice::AcceptIncoming);
         buffer.autosave().unwrap();
         let request = Backend::conflict_save_request(
@@ -328,10 +330,10 @@ fn external_worktree_append_refuses_save_and_continue_without_mutation() {
         assert_eq!(fresh.recovery_drafts().count(), 0);
         let markers = b.materialized_markers(&fresh, path).unwrap();
         assert!(
-            !markers.contains("EXTERNAL_WT_MUST_SURVIVE"),
+            !markers.text.contains("EXTERNAL_WT_MUST_SURVIVE"),
             "source hunks remain index-derived"
         );
-        fresh.ensure_hunks(path, &markers);
+        fresh.ensure_hunks(path, &markers.text, markers.marker_width);
         assert!(fresh
             .hunk_model(path)
             .unwrap()
@@ -362,7 +364,7 @@ fn external_append_before_first_choice_keeps_materialization_provenance() {
     assert_eq!(refreshed.worktree_fingerprint(path), Some(origin.as_str()));
     assert!(refreshed.worktree_changed(path));
     let markers = backend.materialized_markers(&refreshed, path).unwrap();
-    refreshed.ensure_hunks(path, &markers);
+    refreshed.ensure_hunks(path, &markers.text, markers.marker_width);
     refreshed.apply_hunk_choice(path, 0, kagi_git::resolution::HunkChoice::AcceptIncoming);
     let request = Backend::conflict_save_request(
         snapshot.observation.revision,

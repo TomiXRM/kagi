@@ -190,10 +190,18 @@ impl KagiApp {
         self.clear_conflict_abort_modal();
     }
 
-    /// Stage two: recheck live draft preservation before handing the frozen
-    /// request to the conflict family, which owns admission (`begin_write`),
+    /// Stage two: require the checked pane and recheck draft preservation before
+    /// handing the frozen request to the family, which owns writer admission,
     /// live repository preflight, execution, verification and the receipt.
     pub fn confirm_conflict_abort(&mut self, cx: &mut Context<Self>) {
+        if !self
+            .active_session()
+            .is_some_and(|owner| self.pane_mutation_admitted(owner))
+        {
+            self.clear_conflict_abort_modal();
+            cx.notify();
+            return;
+        }
         let Some(modal) = self.conflict_abort_modal().cloned() else {
             return;
         };

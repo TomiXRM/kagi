@@ -18,7 +18,7 @@
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
 mod ownership;
-mod preparation;
+pub(crate) mod preparation;
 
 use super::tab_ui_state_ops::PaneRevalidation;
 use gpui::SharedString;
@@ -35,6 +35,13 @@ use super::render_helpers::{
     header_button, new_diff_list_state, render_diff_list, DiffHeader, HeaderFit,
 };
 use super::KagiApp;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DRAFT_HANDOFF_HOLD: std::cell::RefCell<Option<(
+        gpui::Task<()>, std::sync::Arc<std::sync::atomic::AtomicBool>,
+    )>> = const { std::cell::RefCell::new(None) };
+}
 
 /// Fat entity for the standalone (center-slot) main diff.
 pub struct MainDiffPane {
@@ -797,6 +804,137 @@ impl KagiApp {
         self.pending_headless_diff = None;
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_draft_handoff_for_e2e(
+        hold: gpui::Task<()>,
+    ) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        let reached = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        DRAFT_HANDOFF_HOLD.with(|slot| {
+            assert!(slot.borrow_mut().replace((hold, reached.clone())).is_none());
+        });
+        reached
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn clear_draft_handoff_hold_for_e2e() {
+        DRAFT_HANDOFF_HOLD.with(|slot| drop(slot.borrow_mut().take()));
+    }
+
+    /// Returns true when the retained owner must not be removed by the caller.
+    /// Operation disappearance is not proof that its last Result reached disk.
+    pub(crate) fn clear_conflict_after_draft_handoff(
+        &mut self,
+        owner: crate::app::Attachment,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(pane) = self
+            .ui
+            .get(&owner.session)
+            .and_then(|ui| ui.conflict.clone())
+        else {
+            return false;
+        };
+        let save = pane.update(cx, |view, cx| {
+            view.capture_result_for_handoff(cx);
+            view.mode.as_ref().and_then(|mode| {
+                mode.buffer
+                    .has_unflushed_drafts()
+                    .then(|| mode.buffer.queue_autosave())
+            })
+        });
+        let Some(save) = save else {
+            return false;
+        };
+        let Some(ui) = self.ui.get_mut(&owner.session) else {
+            return true;
+        };
+        ui.pane_revalidation = PaneRevalidation::AwaitingConflict;
+        ui.conflict_detected = true;
+        ui.conflict_detect_generation = ui.conflict_detect_generation.wrapping_add(1);
+        let generation = ui.conflict_detect_generation;
+        let read_key = self.reads.current_key(owner.session);
+        if self.active_session() == Some(owner.session) {
+            self.clear_conflict_continue_modal();
+            self.clear_conflict_abort_modal();
+        }
+        let task = cx.background_spawn(async move {
+            match save {
+                Ok(ticket) => (ticket.wait(), Some(ticket)),
+                Err(error) => (Err(error), None),
+            }
+        });
+        #[cfg(feature = "gui-e2e")]
+        let hold = DRAFT_HANDOFF_HOLD.with(|slot| slot.borrow_mut().take());
+        cx.spawn(async move |this, acx| {
+            let (result, ticket) = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some((hold, reached)) = hold {
+                reached.store(true, std::sync::atomic::Ordering::Release);
+                hold.await;
+            }
+            let _ = this.update(acx, |app, cx| {
+                if !app.reads.is_fresh(read_key)
+                    || app
+                        .app_sessions
+                        .attachment(owner.session)
+                        .is_none_or(|current| {
+                            current.visit != owner.visit
+                                || current.path != owner.path
+                                || current.worktree != owner.worktree
+                        })
+                    || app.ui.get(&owner.session).is_none_or(|ui| {
+                        ui.conflict_detect_generation != generation
+                            || ui.conflict.as_ref() != Some(&pane)
+                    })
+                    || app.reads.get(Some(owner.session)).operation.is_some()
+                {
+                    return;
+                }
+                if let Err(error) = result {
+                    app.record_operation_completion(
+                        "conflict-draft-preserve",
+                        kagi_git::ops::StateSummary {
+                            head: "unobserved".into(),
+                            dirty: "unobserved".into(),
+                        },
+                        kagi_git::oplog::OpOutcome::Failed {
+                            error: error.to_string(),
+                        },
+                        Some(Vec::new()),
+                        &owner.path,
+                        app.active_session() == Some(owner.session),
+                        false,
+                        Some(super::i18n::Msg::conflict_draft_preserve_failed()),
+                        cx,
+                    );
+                    if let Some(ui) = app.ui.get_mut(&owner.session) {
+                        ui.conflict_restore_failed = true;
+                    }
+                } else {
+                    // A newer edit or queued snapshot cannot be acknowledged by
+                    // this ticket. Keep its exact input/history for explicit retry.
+                    let pending = pane.update(cx, |view, cx| {
+                        view.capture_result_for_handoff(cx);
+                        view.mode
+                            .as_ref()
+                            .is_some_and(|mode| mode.buffer.has_unflushed_drafts())
+                    });
+                    if pending || ticket.as_ref().is_none_or(|ticket| !ticket.is_current()) {
+                        return;
+                    }
+                    if let Some(ui) = app.ui.get_mut(&owner.session) {
+                        ui.conflict = None;
+                        ui.conflict_restore_failed = false;
+                        ui.pane_revalidation = PaneRevalidation::Settled;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        true
+    }
+
     /// Revalidate **every** retained pane of the tab on screen against the
     /// read that was just published, then re-admit their mutations. `render`
     /// calls this every frame and it runs only for [`PaneRevalidation::Queued`],
@@ -825,13 +963,20 @@ impl KagiApp {
         // Conflict is the one pane whose check is asynchronous: the read model
         // says whether an operation is in progress, but only a detector run
         // against *this* read can say whether it is still the same conflict.
-        if self.ui().conflict.is_none() {
-            // No retained conflict pane: nothing to re-check.
+        if self.ui().conflict.is_none() && self.view().operation.is_none() {
+            // No retained pane or accepted operation: nothing to re-check.
+            // A fresh conflicted read must re-arm detection under its own key,
+            // even when an earlier speculative detection was superseded.
             self.with_ui(|ui| ui.pane_revalidation = PaneRevalidation::Settled);
         } else if self.view().operation.is_none() {
-            // Resolved or aborted while the tab was away — the pane goes.
+            if let Some(owner) = self.detect_owner() {
+                if self.clear_conflict_after_draft_handoff(owner, cx) {
+                    return;
+                }
+            }
             self.with_ui(|ui| {
                 ui.conflict = None;
+                ui.conflict_restore_failed = false;
                 ui.pane_revalidation = PaneRevalidation::Settled;
             });
         } else {

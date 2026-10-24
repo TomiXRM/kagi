@@ -276,11 +276,25 @@ impl Backend {
                         path.display()
                     )));
                 }
-                if let ConflictDraft::Text(bytes) = draft {
+                if let ConflictDraft::Text { bytes, origins } = draft {
                     let text = std::str::from_utf8(bytes).map_err(|_| {
                         GitError::Other("text resolution is not valid UTF-8".into())
                     })?;
-                    if crate::checklist::text_has_conflict_marker(text) {
+                    if text.split_terminator('\n').count() != origins.len() {
+                        return Err(GitError::Other(
+                            "resolution provenance dimensions do not match".into(),
+                        ));
+                    }
+                    if text
+                        .split_terminator('\n')
+                        .zip(origins)
+                        .any(|(line, origin)| {
+                            *origin == kagi_domain::resolution::LineOrigin::Manual
+                                && kagi_domain::resolution::resolution_text_has_conflict_marker(
+                                    line,
+                                )
+                        })
+                    {
                         return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
                             ConflictsNote::ResolutionMarkers,
                         ))));
@@ -291,7 +305,7 @@ impl Backend {
                     draft: draft.clone(),
                     expected_mode: match draft {
                         ConflictDraft::Raw { mode, .. } => *mode,
-                        ConflictDraft::Text(_) => text_mode(&backend.repo, path),
+                        ConflictDraft::Text { .. } => text_mode(&backend.repo, path),
                     },
                 }
             }
@@ -444,7 +458,7 @@ impl Backend {
                         let buffer =
                             ResolutionBuffer::from_conflict_save(&backend.repo, &plan.request)?;
                         if fault == Some(ConflictFaultPoint::AfterWorktreeWrite) {
-                            let ConflictDraft::Text(bytes) = draft else {
+                            let ConflictDraft::Text { bytes, .. } = draft else {
                                 return Err(GitError::Other(
                                     "after-worktree fault requires a text draft".into(),
                                 ));
@@ -543,7 +557,7 @@ impl Backend {
                 head: format!(
                     "staged (stage 0) before={before_hash} after={}",
                     match draft {
-                        ConflictDraft::Text(bytes) => short_text_hash(bytes),
+                        ConflictDraft::Text { bytes, .. } => short_text_hash(bytes),
                         ConflictDraft::Raw { oid, .. } => oid.chars().take(16).collect(),
                     }
                 ),
@@ -752,16 +766,17 @@ impl Backend {
     pub fn plan_conflict_skip(
         &self,
         session: &conflicts::ConflictSession,
-    ) -> Result<OperationPlan, GitError> {
-        conflicts::plan_conflict_skip(&self.repo, session)
+        expected: &kagi_domain::conflict_family::ConflictRevision,
+    ) -> Result<conflicts::ConflictSkipPlan, GitError> {
+        conflicts::plan_conflict_skip(&self.repo, session, expected)
     }
 
     pub fn execute_conflict_skip(
         &self,
-        session: &conflicts::ConflictSession,
+        approved: &conflicts::ConflictSkipPlan,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::SkipOutcome, GitError> {
         self.require_trust()?;
-        conflicts::execute_conflict_skip(&self.repo, session, buffer)
+        conflicts::execute_conflict_skip(&self.repo, approved, buffer)
     }
 }

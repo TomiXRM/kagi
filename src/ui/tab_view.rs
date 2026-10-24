@@ -477,6 +477,10 @@ pub struct TabUiState {
     pub cleanup_prs_stale: bool,
     /// Re-armed when retained conflict authority is invalidated or its read changes.
     pub conflict_detected: bool,
+    /// Last accepted detection failed to read drafts; owns reload error feedback.
+    pub conflict_restore_failed: bool,
+    /// New detections supersede older restore failures even at the same read.
+    pub(super) conflict_detect_generation: u64,
     /// Where the retained panes are in being re-checked against the read. Not
     /// [`PaneRevalidation::Settled`] = on screen but **not authoritative**: the
     /// entities (undo stacks, selection, scroll) stay, every mutation they
@@ -616,6 +620,8 @@ impl Default for TabUiState {
             cleanup_prs: Vec::new(),
             cleanup_prs_stale: false,
             conflict_detected: false,
+            conflict_restore_failed: false,
+            conflict_detect_generation: 0,
             pane_revalidation: Default::default(),
             ecosystem_cache: None,
             ecosystem_inflight: false,

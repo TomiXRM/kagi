@@ -108,7 +108,7 @@ impl ResolutionBuffer {
             return Err(observation_changed());
         }
         super::worktree_state::validate(repo, path, worktree_fingerprint, || match draft {
-            kagi_domain::conflict_family::ConflictDraft::Text(bytes) => {
+            kagi_domain::conflict_family::ConflictDraft::Text { bytes, .. } => {
                 Some(super::worktree_state::bytes_fingerprint(bytes))
             }
             _ => None,
@@ -156,8 +156,12 @@ impl ResolutionBuffer {
                 mode: raw.mode,
             });
         }
-        self.resolved_text(path)
-            .map(|text| kagi_domain::conflict_family::ConflictDraft::Text(text.into_bytes()))
+        let file = self.files.get(path)?;
+        let lines = file.result.as_ref()?;
+        Some(kagi_domain::conflict_family::ConflictDraft::Text {
+            bytes: lines_to_text(lines).into_bytes(),
+            origins: lines.iter().map(|line| line.origin).collect(),
+        })
     }
 
     /// Rebuild the minimum Save buffer only after the global preflight and the
@@ -198,17 +202,23 @@ impl ResolutionBuffer {
         file.worktree_fingerprint = worktree_fingerprint.clone();
         file.draft_state = true;
         match draft {
-            kagi_domain::conflict_family::ConflictDraft::Text(bytes) => {
+            kagi_domain::conflict_family::ConflictDraft::Text { bytes, origins } => {
                 let text = std::str::from_utf8(bytes).map_err(|_| {
                     GitError::Other(format!(
                         "resolution for {} is not UTF-8 text",
                         path.display()
                     ))
                 })?;
-                file.replace_result(
-                    Some(text_to_lines(text, LineOrigin::Manual)),
-                    &mut buffer.marker_residue_count,
-                );
+                let mut lines = text_to_lines(text, LineOrigin::Manual);
+                if lines.len() != origins.len() {
+                    return Err(GitError::Other(
+                        "resolution provenance dimensions do not match".into(),
+                    ));
+                }
+                for (line, origin) in lines.iter_mut().zip(origins) {
+                    line.origin = *origin;
+                }
+                file.replace_result(Some(lines), &mut buffer.marker_residue_count);
             }
             kagi_domain::conflict_family::ConflictDraft::Raw { oid, mode } => {
                 file.raw = true;

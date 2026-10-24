@@ -51,7 +51,7 @@ fn marker_draft_refusal_preserves_the_session_suffix_in_the_recording() {
     let markers = backend
         .materialized_markers(&buffer, Path::new("file.txt"))
         .expect("text conflict markers");
-    assert!(buffer.ensure_hunks(Path::new("file.txt"), &markers));
+    assert!(buffer.ensure_hunks(Path::new("file.txt"), &markers.text, markers.marker_width));
     assert!(buffer.reset_hunk(Path::new("file.txt"), 0));
     let request = Backend::conflict_save_request(
         snapshot.observation.revision,
@@ -64,7 +64,7 @@ fn marker_draft_refusal_preserves_the_session_suffix_in_the_recording() {
     assert!(matches!(
         &request,
         ConflictRequest::Save {
-            draft: ConflictDraft::Text(bytes),
+            draft: ConflictDraft::Text { bytes, .. },
             ..
         } if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
     ));

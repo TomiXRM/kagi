@@ -120,7 +120,7 @@ impl KagiApp {
                 if f.kind == kagi_git::ConflictKind::Content {
                     let path = f.path.clone();
                     if let Some(markers) = repo.materialized_markers(&buffer, &path) {
-                        buffer.ensure_hunks(&path, &markers);
+                        buffer.ensure_hunks(&path, &markers.text, markers.marker_width);
                     }
                     editing_path = Some(path);
                 }

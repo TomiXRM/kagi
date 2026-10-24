@@ -35,9 +35,9 @@ pub(super) fn file_hash(path: &Path, file: &FileResolution) -> [u8; 32] {
 }
 
 impl Snapshot {
-    pub fn capture(buffer: &ResolutionBuffer, hash: [u8; 32]) -> Self {
+    pub fn capture(buffer: &ResolutionBuffer, hash: Option<[u8; 32]>) -> Self {
         Self {
-            hash: Some(hash),
+            hash,
             files: buffer
                 .files
                 .iter()
@@ -101,7 +101,7 @@ pub(super) fn read(repo: &Path, path: &Path) -> Result<Option<Disk>, GitError> {
     *buffer
         .disk_snapshot
         .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Snapshot::capture(&buffer, hash);
+        .unwrap_or_else(|e| e.into_inner()) = Arc::new(Snapshot::capture(&buffer, Some(hash)));
     Ok(Some(Disk {
         buffer,
         content,
@@ -109,40 +109,108 @@ pub(super) fn read(repo: &Path, path: &Path) -> Result<Option<Disk>, GitError> {
     }))
 }
 
+/// Restore-time upgrade recovery only: ordinary writers still refuse corrupt
+/// input. Re-read under the same writer lock before moving any damaged bytes.
+pub(super) fn read_for_restore(
+    repo: &Path,
+    path: &Path,
+) -> Result<(Option<Disk>, Vec<DraftRestoreWarning>), GitError> {
+    if let Ok(disk) = read(repo, path) {
+        return Ok((disk, Vec::new()));
+    }
+    let _lock = lock(path)?;
+    let cause = match read(repo, path) {
+        Ok(disk) => return Ok((disk, Vec::new())),
+        Err(error) => error,
+    };
+    let previous = sibling(path, ".prev");
+    let mut warnings = Vec::new();
+    for source in [path, previous.as_path()] {
+        let bytes = match std::fs::read(source) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(error(source, e)),
+        };
+        // A permission/read failure is not evidence of damaged JSON. Only
+        // positively invalid documents are quarantined, never a good backup.
+        if std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| parse_buffer_json(repo, text))
+            .is_some()
+        {
+            return Err(cause);
+        }
+        let aside = rescue(source)?;
+        let entry = crate::oplog::OpLogEntry::new(
+            "conflict-draft-restore",
+            repo.display().to_string(),
+            crate::ops::StateSummary {
+                head: "unobserved".into(),
+                dirty: "unobserved".into(),
+            },
+            crate::oplog::OpOutcome::Failed {
+                error: format!(
+                    "Draft could not be read; the damaged file was moved aside as {}",
+                    aside.display()
+                ),
+            },
+        )
+        .with_nothing_moved();
+        let recording_error = match crate::backend::recording::finalize(entry) {
+            crate::backend::recording::Recording::Failed { error, .. } => Some(error.to_string()),
+            _ => None,
+        };
+        warnings.push(DraftRestoreWarning {
+            rescued_path: aside,
+            recording_error,
+        });
+    }
+    if warnings.is_empty() {
+        return Err(cause);
+    }
+    Ok((None, warnings))
+}
+
+/// ADR-0191 settings/store.rs via ui-core/src/atomic_file.rs::rescue: reserve
+/// `.corrupt[.N]` exclusively, then rename over only our empty reservation.
+fn rescue(path: &Path) -> Result<PathBuf, GitError> {
+    let base = path.file_name().unwrap_or_default();
+    for n in 0..100u32 {
+        let mut name = base.to_os_string();
+        name.push(if n == 0 {
+            ".corrupt".to_string()
+        } else {
+            format!(".corrupt.{n}")
+        });
+        let aside = path.with_file_name(name);
+        match OpenOptions::new().write(true).create_new(true).open(&aside) {
+            Ok(_) => match std::fs::rename(path, &aside) {
+                Ok(()) => return Ok(aside),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&aside);
+                    return Err(error(path, e));
+                }
+            },
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(error(&aside, e)),
+        }
+    }
+    Err(error(path, "all reserved .corrupt names are occupied"))
+}
+
 /// Never unlink the sidecar: every process must lock the same inode. Closing the
 /// File (also on panic or process death) releases the OS advisory lock.
 pub(super) fn lock(path: &Path) -> Result<File, GitError> {
     let lock_path = sibling(path, ".lock");
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|e| error(&lock_path, e))?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        #[cfg(unix)]
-        let acquired =
-            rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-                .map_err(io::Error::from);
-        #[cfg(not(unix))]
-        let acquired = file.try_lock().map_err(io::Error::from);
-        match acquired {
-            Ok(()) => break,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                if std::time::Instant::now() >= deadline {
-                    return Err(error(
-                        &lock_path,
-                        "timed out after 2 s waiting for draft writer",
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
+    crate::advisory_lock::lock_exclusive(&lock_path, std::time::Duration::from_secs(2)).map_err(
+        |e| {
+            if e.kind() == io::ErrorKind::WouldBlock {
+                error(&lock_path, "timed out after 2 s waiting for draft writer")
+            } else {
+                error(&lock_path, e)
             }
-            Err(e) => return Err(error(&lock_path, e)),
-        }
-    }
-    Ok(file)
+        },
+    )
 }
 
 /// Deliberately duplicated across the crate boundary: the byte-for-byte algorithm
@@ -183,8 +251,14 @@ pub(super) fn replace(path: &Path, bytes: &[u8], disk: Option<&Disk>) -> Result<
 
 impl ResolutionBuffer {
     pub(super) fn save_draft_document(&self, path: &Path) -> Result<(), GitError> {
-        let mut snapshot = self.disk_snapshot.lock().unwrap_or_else(|e| e.into_inner());
         let _lock = lock(path)?;
+        // Never hold the memory-baseline mutex across file I/O: UI capture and
+        // preservation clones only copy this immutable Arc.
+        let snapshot = self
+            .disk_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let disk = read(&self.repo_path, path)?;
         // Content CAS, not stat/mtime: a writer that committed since load forces
         // a fresh per-file/per-hunk merge under the interprocess lock.
@@ -193,7 +267,9 @@ impl ResolutionBuffer {
             .autosave_json(disk.as_ref().map(|disk| &disk.buffer), &snapshot, changed)
             .map_err(|e| error(path, e))?;
         replace(path, json.as_bytes(), disk.as_ref())?;
-        *snapshot = Snapshot::capture(self, Sha256::digest(json.as_bytes()).into());
+        *self.disk_snapshot.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(
+            Snapshot::capture(self, Some(Sha256::digest(json.as_bytes()).into())),
+        );
         Ok(())
     }
 }

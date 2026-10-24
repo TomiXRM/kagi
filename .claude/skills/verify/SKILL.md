@@ -1000,6 +1000,17 @@ The persistent-error host-handle unit uses opt-in GPUI test support, without
 launching the native runner:
 `cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
+For #1732 use `KAGI_GUI_E2E_ONLY='conflict_draft_corrupt_restore,conflict_draft_revision_same_revision,conflict_draft_inspection,conflict_file_selection'`
+with KEEP_GOING. Corrupt restore covers EN/JA notices, exactly one Failed receipt,
+exclusive `.corrupt` preservation, editable index-backed content and resumed
+autosave. `RepositoryState::with_appended_oplog` constructs the expected single
+canonical receipt append; it still compares every Git field and complete log
+byte-for-byte rather than dropping the log from the no-write witness.
+The backend suite also covers failed autosave → preservation clone → save,
+both concurrent merge orders, torn-temp/backup recovery, lock timeout and
+SIGKILL release. Tier B uses two plain-binary instances sharing one isolated
+`KAGI_LOG_DIR`; restart must retain both independent same-file hunk decisions.
+
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
 cleanup. Owner-release coverage starts a real fetch ticker, closes its repository

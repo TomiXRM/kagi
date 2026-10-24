@@ -39,6 +39,8 @@ pub struct ConflictDetected {
     /// Selected content file whose hunks were materialized; set as the open
     /// editor file on apply.
     editing_path: Option<PathBuf>,
+    /// Damaged local documents were preserved under reserved names by restore.
+    draft_restore_warnings: Vec<kagi_git::resolution::DraftRestoreWarning>,
 }
 
 impl KagiApp {
@@ -79,9 +81,10 @@ impl KagiApp {
         // bound to this operation and file's stages; old/legacy drafts stay
         // recoverable without marking the current conflict resolved. Saved
         // data never replaces the raw metadata rebuilt from the index.
-        let mut buffer = repo
-            .resolution_buffer_from_repo_with_autosave()
-            .unwrap_or_else(|_| kagi_git::ResolutionBuffer::new(repo_path));
+        let Ok(mut buffer) = repo.resolution_buffer_from_repo_with_autosave() else {
+            return ConflictDetectOutcome::OpenFailed;
+        };
+        let draft_restore_warnings = buffer.take_draft_restore_warnings();
 
         // Recompute per-file status from the buffer (detection seeds Unresolved).
         let mut session = session;
@@ -136,6 +139,7 @@ impl KagiApp {
             session,
             observation: snapshot.observation,
             buffer,
+            draft_restore_warnings,
             current_branch,
             selected_file,
             editing_file,
@@ -156,9 +160,30 @@ impl KagiApp {
     pub fn apply_conflict_detect(
         &mut self,
         owner: crate::app::Attachment,
-        outcome: ConflictDetectOutcome,
+        mut outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
+        // Rescue already happened in background I/O and was recorded there.
+        // Announce it even if the originating pane/observation was superseded:
+        // dropping a stale payload must not silently drop a recovery warning.
+        if let ConflictDetectOutcome::Detected(detected) = &mut outcome {
+            for warning in std::mem::take(&mut detected.draft_restore_warnings) {
+                let name = warning.rescued_path.file_name().unwrap_or_default();
+                let message = Msg::conflict_draft_rescued(&name.to_string_lossy());
+                if let Some(error) = warning.recording_error {
+                    self.app_notices.push_back(
+                        format!(
+                            "{message}\n\n{}",
+                            i18n::op_failed(i18n::Op::RecordOperation, error)
+                        )
+                        .into(),
+                    );
+                    self.present_app_notice();
+                    continue;
+                }
+                self.push_toast(ToastKind::Error, SharedString::from(message), cx);
+            }
+        }
         // The result belongs to its frozen attachment. A completion from the
         // visit that just departed may refresh its inactive owner's retained
         // pane, but it cannot become authoritative after that owner is active
@@ -292,6 +317,7 @@ impl KagiApp {
                     selected_file,
                     editing_file,
                     editing_path,
+                    draft_restore_warnings: _,
                 } = *detected;
                 if matches!(session.op, kagi_git::ConflictOp::Merge { .. })
                     && session.files.is_empty()

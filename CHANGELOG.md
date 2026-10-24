@@ -21,7 +21,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Preserve concurrent conflict-draft decisions across Kagi processes with an interprocess lock and content-based three-way hunk merge. Atomically sync and replace drafts, retain colliding/manual bodies for inspection, and recover torn documents from the last good `.prev` without treating corruption as an empty draft. (#1732)
-  - Keep successful Result Change persistence synchronous: the captured edit is already on disk without a deferred task. The single primary rename is the atomic commit boundary; an interruption before it leaves the previous acknowledged document intact (`DraftNeverLost` / `draft-crash`).
+  - Expose an ordered background draft writer with latest-snapshot coalescing (up to 250 ms before starting), generation-aware completion and explicit durable flush barriers; keep blocking `autosave()` durable for preservation callers. Queue acceptance is not durability: an unacknowledged captured edit can still be lost on abrupt exit.
+  - Keep newer in-memory edits when preserving a clone after failed autosave. On upgrade, quarantine a damaged draft without a usable backup under an exclusively reserved `.corrupt[.N]` name, record the failure, and show an EN/JA recovery notice while loading the editable index-backed buffer.
 - Show a saved submodule conflict's commit OID instead of trying to preview it as a blob. (4363857802)
 - Restore conflict hunk choices, selected lines and both ordering modes after restarting a partial resolution; older drafts remain readable. (4363162008)
 - Disable per-hunk Reset and Change for manually edited Results; only confirmed Reset all may discard those edits. (4363161991)

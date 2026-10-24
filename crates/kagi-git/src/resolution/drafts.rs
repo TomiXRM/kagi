@@ -182,10 +182,12 @@ impl ResolutionBuffer {
             mut hunks,
             mut recoveries,
             disk_snapshot,
+            draft_writer,
             ..
         } = previous;
         let mut matched = std::collections::BTreeSet::new();
         self.disk_snapshot = disk_snapshot;
+        self.draft_writer = draft_writer;
         for (path, mut saved) in files {
             if let Some(current) = self
                 .files

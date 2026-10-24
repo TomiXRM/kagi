@@ -3247,6 +3247,10 @@ mod macos {
                 Box::new(crate::conflict_draft_revision::scenario_conflict_draft_revision_saved_legacy),
             ),
             (
+                "conflict_draft_corrupt_restore",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_corrupt_restore),
+            ),
+            (
                 "conflict_draft_inspection_empty_legacy",
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_inspection_empty_legacy),
             ),

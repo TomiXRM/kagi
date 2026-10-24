@@ -74,25 +74,11 @@ LineToggle(a) == /\ At(a, "edit") /\ ~s.lease[a] /\ ~DraftScenario /\ Kind # "df
 \* ui/conflict_view/special.rs:125-129: D/F is a namespace decision, no text/hunks.
 ChooseNamespace(a) == /\ At(a, "edit") /\ Kind = "df" /\ ~s.lease[a]
     /\ s' = [s EXCEPT !.text[a] = "file", !.pc[a] = "ready", !.event = <<"ChooseNamespace",a>>]
-\* draft_owner.rs:13-18,180-187,210-230: Change captures AND autosaves now.
-\* Broken="capture": remove the changed-capture persistence call (old map bug).
+\* #1732 draft_writer.rs: queue_autosave captures immediately, not durably.
+\* Only the completed autosave/flush acknowledges the primary rename.
 ManualEdit(a) == /\ At(a, "edit") /\ ~s.lease[a] /\ DraftScenario
-    /\ ~(Scenario = "draftCrash" /\ Broken # "draftSync")
-    /\ s' = [s EXCEPT !.text[a] = "manual", !.pc[a] = IF Broken = "capture" THEN "ready" ELSE "autosaveRead",
+    /\ s' = [s EXCEPT !.text[a] = "manual", !.pc[a] = IF Broken \in {"capture","draftSync"} THEN "ready" ELSE "autosaveRead",
         !.captured = @ \cup {<<File(a),s.context[a],"manual">>}, !.event = <<"ManualEdit",a>>]
-\* #1732: draft_owner.rs:13-18,184-185 and draft_storage.rs::write_atomic.
-\* This action observes a RETURNED successful Change callback at its primary
-\* rename linearization point, not an unacknowledged in-flight memory edit.
-\* draftAtomic separately explores crashes while a temp write is in flight.
-\* tests/recovery/conflict_draft_revision.rs asserts disk before draining tasks.
-\* Broken="draftSync" exposes capture before synchronous commit, as a red control.
-ManualCaptureCommit(a) == /\ At(a, "edit") /\ ~s.lease[a]
-    /\ Scenario = "draftCrash" /\ Broken # "draftSync"
-    /\ s' = [s EXCEPT !.text[a] = "manual", !.pc[a] = "ready",
-        !.captured = @ \cup {<<File(a),s.context[a],"manual">>},
-        !.disk = @ \cup {<<File(a),s.context[a],"manual">>},
-        !.committed = @ \cup {<<File(a),s.context[a],"manual">>},
-        !.event = <<"ManualCaptureCommit(returned callback)",a>>]
 \* #1732 draft_storage.rs::save_draft_document: acquire the OS sidecar lock
 \* before the checked content-CAS read/merge. This read observes the latest
 \* complete document, including any commit since this editor's original load.
@@ -321,7 +307,7 @@ MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "
         !.event = <<"MetadataRefused",a>>]
 
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
-    \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ ManualCaptureCommit(a) \/ AutosaveRead(a)
+    \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
     \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
@@ -341,12 +327,12 @@ ApprovedRevisionFrozen == ~s.stagedDifferent /\ (s.committedTree = "none" \/ s.c
 ApprovedSavePayloadFrozen == \A a \in Participants : s.executed[a] = "none" \/ s.executed[a] = s.frozen[a]
 \* REFUTE: WT-only changes are not approval-revision drift; final check/write split.
 StaleSnapshotNeverWrites == ~s.wroteStale
-\* HOLD at the returned synchronous capture boundary; I/O/quit remains #1731.
+\* REFUTE: abrupt death can interrupt coalescing/in-flight unacknowledged capture.
 DraftNeverLost == (\E a \in Participants : s.restarted[a]) => s.captured \subseteq s.restored
 \* HOLD with atomic replacement and the full read/merge/write sidecar lock;
 \* draftAtomic/draftLock negative controls retain the old corrupt/lost updates.
 DraftWriteAtomic == ~s.readCorrupt /\ (s.diskValid => s.committed \subseteq s.disk)
-\* HOLD in fault-free single-writer callback completion; obsolete map P1 is guarded.
+\* HOLD at fault-free writer completion, not at asynchronous queue acceptance.
 ManualCapturePersisted == s.pc[1] = "ready" => s.captured \subseteq s.disk
 \* REFUTE for Continue/Skip, HOLD for Save when append succeeds and no crash.
 ReceiptFollowsMutation == \A a \in Participants :

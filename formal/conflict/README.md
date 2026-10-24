@@ -132,8 +132,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
-| `draft-crash` | `DraftNeverLost` | HOLD | none | #1732; returned synchronous capture boundary |
-| `draft-crash-broken` | `DraftNeverLost` | REFUTE | draftSync | Negative control; expose capture before commit |
+| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1732; capture before acknowledged flush can be lost |
+| `draft-crash-broken` | `DraftNeverLost` | REFUTE | draftSync | Negative control; omit the captured edit's commit |
 | `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
 | `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
 | `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |
@@ -162,15 +162,18 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
 
 The #1732 draft guards cite `resolution/draft_storage.rs`'s OS lock, checked
-content-CAS read, and ADR-0191 atomic temp/sync/rename writer. The synchronous
-capture action represents a **returned successful Change callback** at the
-primary rename linearization point (`draft_owner.rs:13-18,184-185`), exercised
-by `conflict_draft_revision_same_revision` before any task drain or paint.
-`draft-torn` still explores a crash during the temp-write microsteps: the old
-committed document remains valid. An unacknowledged in-flight new edit may be
-lost before the primary rename; this is not a power-loss guarantee. The lock
-quotient models successful acquisition, not the bounded timeout's UI error
-presentation; backend child tests cover the two-second error and SIGKILL release.
+content-CAS read, and ADR-0191 atomic temp/sync/rename writer. Its backend
+`draft_writer.rs` captures memory immediately and offers one ordered background
+writer with latest-snapshot coalescing for at most 250 ms before starting.
+An in-flight fsync can extend that window. Queue acceptance is **not** a durable
+acknowledgment: `DraftSave::wait()` / blocking `flush()` must return `Ok`.
+Consequently the unchanged strong `draft-crash` capture invariant remains
+REFUTE; the model retains the real pre-commit crash transition rather than
+quotienting it away. The preceding acknowledged document remains valid.
+This is not a power-loss guarantee. The lock quotient models successful
+acquisition, not the timeout's UI presentation; backend child tests cover the
+two-second error and SIGKILL release. GUI consumers must await barriers off-thread
+and preserve pending/failed close gates; the backend API alone does not wire them.
 
 
 ### Pure table (`pure/predict_*.py`)

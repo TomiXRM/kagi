@@ -51,3 +51,74 @@ fn saved_live_recovery_cannot_outrank_later_fork_body() {
         }
     }
 }
+
+#[test]
+fn corrupt_draft_upgrade_restores_base_and_reserves_each_damaged_file() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+    let base = ResolutionBuffer::from_repo(&repo).unwrap();
+    let store = base.autosave().unwrap();
+    let index_before = std::fs::read(tmp.path().join(".git/index")).unwrap();
+    let worktree_before = std::fs::read(tmp.path().join(path)).unwrap();
+    for (suffix, torn) in [
+        (".corrupt", "{\"files\":[first damaged document"),
+        (".corrupt.1", "{\"files\":[second damaged document"),
+    ] {
+        std::fs::remove_file(store.with_file_name("buffer.json.prev")).unwrap();
+        std::fs::write(&store, torn).unwrap();
+        let mut restored = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+        assert!(!restored.has_resolution(path));
+        let notices = restored.take_draft_restore_warnings();
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].recording_error.is_none());
+        assert_eq!(
+            notices[0].rescued_path,
+            store.with_file_name(format!("buffer.json{suffix}"))
+        );
+        assert_eq!(
+            std::fs::read_to_string(&notices[0].rescued_path).unwrap(),
+            torn
+        );
+        assert!(!store.exists());
+        assert!(restored.take_draft_restore_warnings().is_empty());
+        restored
+            .set_manual_text(path, "new editable base\n")
+            .unwrap();
+        restored.autosave().unwrap();
+        assert_eq!(
+            ResolutionBuffer::from_repo_with_autosave(&repo)
+                .unwrap()
+                .resolved_text(path)
+                .as_deref(),
+            Some("new editable base\n")
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(store.with_file_name("buffer.json.corrupt")).unwrap(),
+        "{\"files\":[first damaged document",
+        "the second rescue must not overwrite the first"
+    );
+    let entries = kagi_git::oplog::read_oplog_tail(100);
+    let rescues: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.op == "conflict-draft-restore")
+        .collect();
+    assert_eq!(rescues.len(), 2);
+    assert!(rescues.iter().all(|entry| matches!(
+        &entry.outcome,
+        kagi_git::oplog::OpOutcome::Failed { error }
+            if error.contains("damaged file was moved aside as")
+    )));
+    assert_eq!(
+        index_before,
+        std::fs::read(tmp.path().join(".git/index")).unwrap()
+    );
+    assert_eq!(
+        worktree_before,
+        std::fs::read(tmp.path().join(path)).unwrap()
+    );
+}

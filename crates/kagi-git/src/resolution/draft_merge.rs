@@ -66,7 +66,14 @@ impl ResolutionBuffer {
             else {
                 continue;
             };
-            if !current.pending_edit.is_pending() {
+            // A preservation clone clears PendingEdit without committing its
+            // body. Only an unchanged loaded baseline may defer to disk.
+            if !current.pending_edit.is_pending()
+                && snapshot
+                    .files
+                    .get(path)
+                    .is_some_and(|base| base.hash == draft_storage::file_hash(path, current))
+            {
                 merged.disk.insert(path.as_path(), saved);
                 continue;
             }

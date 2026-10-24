@@ -182,6 +182,30 @@ fn corrupt_document_without_good_backup_refuses_overwrite() {
 }
 
 #[test]
+fn failed_autosave_then_preservation_clone_keeps_the_newest_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("buffer.json");
+    let path = Path::new("a.txt");
+    let mut buffer = live(root.path());
+    buffer.save_draft_document(&store).unwrap();
+    buffer
+        .set_manual_text(path, "newest unsaved Result\n")
+        .unwrap();
+    let held = draft_storage::lock(&store).unwrap();
+    let error = buffer.save_draft_document(&store).unwrap_err();
+    assert!(error.to_string().contains("timed out after 2 s"));
+    let preserved = buffer.clone();
+    assert!(!preserved.files[path].pending_edit.is_pending());
+    drop(held);
+    preserved.save_draft_document(&store).unwrap();
+    assert_eq!(
+        restored(root.path(), &store).resolved_text(path),
+        Some("newest unsaved Result\n".to_string()),
+        "a preservation clone discarded the edit whose prior autosave failed"
+    );
+}
+
+#[test]
 fn same_hunk_collision_retains_both_complete_drafts() {
     let root = tempfile::tempdir().unwrap();
     let store = root.path().join("buffer.json");
@@ -283,4 +307,185 @@ fn killed_writer_releases_advisory_lock_without_sidecar_cleanup() {
     assert!(sibling(&store, ".lock").exists());
     live(root.path()).save_draft_document(&store).unwrap();
     assert!(read(root.path(), &store).unwrap().is_some());
+}
+
+#[test]
+#[ignore = "machine-local autosave latency measurement; requires isolated KAGI_LOG_DIR"]
+fn autosave_latency_three_files_five_hunks_200kb() {
+    assert!(
+        std::env::var_os("KAGI_LOG_DIR").is_some(),
+        "use isolated KAGI_LOG_DIR"
+    );
+    let root = tempfile::tempdir().unwrap();
+    let mut buffer = ResolutionBuffer::new(root.path());
+    let result = "a realistic resolved line with enough content to represent a source file and preserve its text\n".repeat(735);
+    let mut result_bytes = 0;
+    for (index, hunk_count) in [2, 2, 1].into_iter().enumerate() {
+        let path = PathBuf::from(format!("source-{index}.txt"));
+        buffer.files.insert(path.clone(), FileResolution::empty());
+        let markers =
+            "<<<<<<< Current\ncurrent\n=======\nincoming\n>>>>>>> Incoming\nunchanged context\n"
+                .repeat(hunk_count);
+        assert!(buffer.ensure_hunks(&path, &markers));
+        assert_eq!(buffer.hunk_model(&path).unwrap().hunks().len(), hunk_count);
+        buffer.set_manual_text(&path, &result).unwrap();
+        result_bytes += result.len();
+    }
+    buffer.autosave().unwrap();
+    let mut milliseconds = [0.0_f64; 100];
+    for elapsed in &mut milliseconds {
+        let start = Instant::now();
+        buffer.autosave().unwrap();
+        *elapsed = start.elapsed().as_secs_f64() * 1000.0;
+    }
+    milliseconds.sort_by(f64::total_cmp);
+    eprintln!(
+        "AUTOSAVE_LATENCY files=3 hunks=5 result_bytes={result_bytes} n=100 p50_ms={:.3} p95_ms={:.3} min_ms={:.3} max_ms={:.3}",
+        milliseconds[49], milliseconds[94], milliseconds[0], milliseconds[99]
+    );
+    let mut capture_ms = [0.0_f64; 100];
+    for elapsed in &mut capture_ms {
+        let start = Instant::now();
+        buffer.queue_autosave().unwrap();
+        *elapsed = start.elapsed().as_secs_f64() * 1000.0;
+    }
+    buffer.flush().unwrap();
+    capture_ms.sort_by(f64::total_cmp);
+    eprintln!(
+        "AUTOSAVE_CAPTURE_LATENCY files=3 hunks=5 result_bytes={result_bytes} n=100 p50_ms={:.3} p95_ms={:.3} min_ms={:.3} max_ms={:.3}",
+        capture_ms[49], capture_ms[94], capture_ms[0], capture_ms[99]
+    );
+}
+
+fn isolated_async_test(name: &str, run: impl FnOnce(&Path)) {
+    if let Some(root) = std::env::var_os("KAGI_DRAFT_ASYNC_TEST_ROOT") {
+        run(Path::new(&root));
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("resolution::draft_storage_tests::{name}"),
+            "--nocapture",
+        ])
+        .env("KAGI_DRAFT_ASYNC_TEST_ROOT", root.path())
+        .env("KAGI_LOG_DIR", root.path().join("logs"))
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "{name} failed in its isolated draft store"
+    );
+}
+
+#[test]
+fn queued_latest_snapshot_and_clone_flush_share_one_generation() {
+    isolated_async_test(
+        "queued_latest_snapshot_and_clone_flush_share_one_generation",
+        |root| {
+            let mut buffer = live(root);
+            let operation = buffer.clone();
+            let file = Path::new("a.txt");
+            assert!(buffer.apply_hunk_choice(file, 0, HunkChoice::AcceptIncoming));
+            let first = buffer.queue_autosave().unwrap();
+            assert!(buffer.apply_hunk_choice(file, 1, HunkChoice::AcceptIncoming));
+            let last = buffer.queue_autosave().unwrap();
+            assert_eq!(last.generation(), first.generation() + 1);
+            assert!(!first.is_current());
+            assert!(last.is_current());
+            assert!(operation.has_unflushed_drafts());
+            operation.flush().unwrap();
+            let path = last.wait().unwrap();
+            assert_eq!(first.wait().unwrap(), path);
+            assert!(!buffer.has_unflushed_drafts());
+            assert!(!buffer.files[file].pending_edit.is_pending());
+            let loaded = restored(root, &path);
+            assert_eq!(
+                loaded.hunk_model(file).unwrap().hunks()[0].choice,
+                HunkChoice::AcceptIncoming
+            );
+            assert_eq!(
+                loaded.hunk_model(file).unwrap().hunks()[1].choice,
+                HunkChoice::AcceptIncoming
+            );
+            // A stale operation clone drains the same queue and cannot revive its
+            // old unresolved body after the latest acknowledged edit.
+            operation.autosave().unwrap();
+            let disk = restored(root, &path);
+            assert_eq!(disk.resolved_text(file), buffer.resolved_text(file));
+        },
+    );
+}
+
+#[test]
+fn queued_failure_stays_unflushed_until_a_successful_retry() {
+    isolated_async_test(
+        "queued_failure_stays_unflushed_until_a_successful_retry",
+        |root| {
+            let mut buffer = live(root);
+            let stale_operation = buffer.clone();
+            let file = Path::new("a.txt");
+            buffer
+                .set_manual_text(file, "newest manual body\n")
+                .unwrap();
+            let path = buffer_file_path(root).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let lock = draft_storage::lock(&path).unwrap();
+            let failed = buffer.queue_autosave().unwrap();
+            let error = buffer.flush().unwrap_err().to_string();
+            assert!(error.contains("lock"), "{error}");
+            assert!(failed.wait().is_err());
+            assert!(buffer.has_unflushed_drafts());
+            assert!(buffer.files[file].pending_edit.is_pending());
+            drop(lock);
+            assert!(
+                stale_operation.autosave().is_err(),
+                "an old operation clone must not acknowledge the failed live edit"
+            );
+            assert!(!path.exists());
+            assert!(
+                buffer.flush().is_err(),
+                "failure is retained, not mistaken for no pending write"
+            );
+            let retry = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            retry.wait().unwrap();
+            assert!(!buffer.has_unflushed_drafts());
+            assert!(!buffer.files[file].pending_edit.is_pending());
+            let disk = restored(root, &path);
+            assert_eq!(disk.resolved_text(file), buffer.resolved_text(file));
+        },
+    );
+}
+
+#[test]
+fn older_durable_completion_does_not_acknowledge_a_newer_memory_edit() {
+    isolated_async_test(
+        "older_durable_completion_does_not_acknowledge_a_newer_memory_edit",
+        |root| {
+            let mut buffer = live(root);
+            let file = Path::new("a.txt");
+            buffer
+                .set_manual_text(file, "first captured body\n")
+                .unwrap();
+            let first = buffer.queue_autosave().unwrap();
+            buffer.set_manual_text(file, "newer memory body\n").unwrap();
+            let path = first.wait().unwrap();
+            assert!(buffer.files[file].pending_edit.is_pending());
+            assert_ne!(
+                restored(root, &path).resolved_text(file),
+                buffer.resolved_text(file)
+            );
+            let last = buffer.queue_autosave().unwrap();
+            buffer.flush().unwrap();
+            assert!(!first.is_current());
+            assert!(last.is_current());
+            assert!(!buffer.files[file].pending_edit.is_pending());
+            assert_eq!(
+                restored(root, &path).resolved_text(file),
+                buffer.resolved_text(file)
+            );
+        },
+    );
 }

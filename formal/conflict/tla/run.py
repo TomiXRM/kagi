@@ -33,7 +33,7 @@ CHECKS = [
     ("stale-after-preflight", "raceIndex", "StaleSnapshotNeverWrites", "REFUTE", "none"),
     ("manual-capture", "manual", "ManualCapturePersisted", "HOLD", "none"),
     ("manual-capture-broken", "manual", "ManualCapturePersisted", "REFUTE", "capture"),
-    ("draft-crash", "draftCrash", "DraftNeverLost", "HOLD", "none"),
+    ("draft-crash", "draftCrash", "DraftNeverLost", "REFUTE", "none"),
     ("draft-crash-broken", "draftCrash", "DraftNeverLost", "REFUTE", "draftSync"),
     ("draft-io-quit", "draftIO", "DraftNeverLost", "REFUTE", "none"),
     ("draft-torn", "draftAtomic", "DraftWriteAtomic", "HOLD", "none"),

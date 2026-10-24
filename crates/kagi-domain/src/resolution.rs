@@ -316,7 +316,8 @@ pub enum HunkChoice {
 }
 
 impl HunkChoice {
-    fn takes_side(&self, side: SelectionSide) -> bool {
+    /// Whether this whole-hunk choice adopts a side, including an empty one.
+    pub fn takes_side(&self, side: SelectionSide) -> bool {
         matches!(
             (self, side),
             (Self::AcceptCurrent, SelectionSide::Current)

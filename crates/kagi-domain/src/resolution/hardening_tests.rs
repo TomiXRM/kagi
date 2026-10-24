@@ -182,3 +182,14 @@ fn deselecting_other_side_preserves_an_adopted_deletion() {
     assert!(model.set_hunk_side(0, SelectionSide::Current, false));
     assert!(!model.all_resolved());
 }
+
+/// Reproduction only: source literal marker parsing is separate from the
+/// provenance gate tested above. Materialization needs collision-free widths.
+#[test]
+#[ignore = "#1751: marker-width parser gap"]
+fn marker_parser_preserves_a_literal_source_opener() {
+    let model = HunkModel::from_marker_text(
+        "<<<<<<< Current\n<<<<<<< user\n=======\nincoming\n>>>>>>> Incoming\n",
+    );
+    assert_eq!(model.hunks()[0].current, vec!["<<<<<<< user"]);
+}

@@ -151,12 +151,10 @@ impl HunkState {
                     Order::IncomingBlockFirst => LineOrder::IncomingBlockFirst,
                 };
                 let empty_taken = selection.empty_taken.unwrap_or_else(|| {
-                    LineSelection::from_choice(
-                        hunk.current.len(),
-                        hunk.incoming.len(),
-                        &hunk.choice,
-                    )
-                    .empty_taken()
+                    [
+                        hunk.current.is_empty() && hunk.choice.takes_side(SelectionSide::Current),
+                        hunk.incoming.is_empty() && hunk.choice.takes_side(SelectionSide::Incoming),
+                    ]
                 });
                 let Ok(restored) = LineSelection::new(
                     hunk.current.len(),

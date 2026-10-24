@@ -67,6 +67,9 @@
   identity, and restores those exact origins after preflight. Dropping origins
   at the request boundary must not turn a chosen literal into a manual marker;
   changing only provenance invalidates the prepared payload binding.
+- Marker parsing/materialization collisions are tracked separately by #1751.
+  The provenance gate is proven on constructed hunks and full-side backend
+  choices; it does not claim a literal opener survives the existing parser.
 
 
 ## Result input と永続 draft の適用権限（#1721）

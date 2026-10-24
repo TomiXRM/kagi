@@ -40,13 +40,45 @@ Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
 REFUTATIONS remain harness-green while tracked by #1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
-The maintained expected-outcome tables linked above map C1–C4 and C6 to
-#1746 (owner QUESTION); C5 is CONTRACT at runtime (metadata guard,
+The maintained tables now mark C1–C4 fixed by #1746; C6 remains an owner
+QUESTION. C5 is CONTRACT at runtime (metadata guard,
 `continue-metadata-read` HOLD), not an end-to-end fail-open issue.
-The historical ledger below retains its original isolated-predicate classifications.
+Unless explicitly amended below, the historical evidence keeps its original classifications.
 Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
+
+### #1746 C1–C4 amendment
+
+C1 persists adopted zero-line sides; C3 checks bounds before materialization;
+C4 validates restored mask dimensions and bounds-checks source assembly.
+C2's old `AssembleNoMarkerLeak` was mis-posed: raw literal/manual marker text
+is emitted by design; blocking is a provenance decision. Its replacement
+`MarkerGateRespectsChosenSourceProvenance` checks both unblocked source literals
+and blocked manual markers. Rust regressions live in
+`crates/kagi-domain/src/resolution/hardening_tests.rs`; backend coverage in
+`crates/kagi-git/tests/conflicts/domain_hardening.rs` exercises readiness,
+Continue blockers, direct Save, recorded Save and provenance-only tampering.
+The independent marker-width parser gap is tracked by #1751, with an ignored
+reproduction `marker_parser_preserves_a_literal_source_opener`. C2 proves the
+gate on constructed hunks and backend full-side choices, not parser round-trip.
+New removed-guard mutants: `empty-adoption-lost`, `invalid-materializes`,
+`malformed-index`, `plain-text-gate`. The historical mechanisms and original
+mutant witnesses below describe the pre-fix extraction, not current defects.
+
+The superseded `undecide-on-select` mutant is no longer load-bearing once empty
+adoption is explicit; `undecide-empty-adoption` instead discards a chosen deletion
+when the opposite side is deselected. All five amended negative controls exit 1:
+
+| Mutant | First red property | Witness |
+|---|---|---|
+| empty-adoption-lost | SideStateChoiceMaskEquivalentIncludingEmpty | lengths 0/0, Current: All → None |
+| invalid-materializes | InvalidLineFailureIsNoOp | unresolved 0/0, index 0 returns false but creates masks |
+| malformed-index | MalformedSelectionNeverPanics | source lengths 0/1, masks `[true]`/`[]`, positional CurrentFirst |
+| plain-text-gate | MarkerGateRespectsChosenSourceProvenance | chosen Current literal `<<<<<<< user` is incorrectly blocked |
+| undecide-empty-adoption | UndecideOnlyOnDeselect | chosen empty Current, deselect empty Incoming incorrectly resets |
+
+
 
 ---
 
@@ -62,24 +94,24 @@ Readiness takes a supplied cached marker verdict: `ReadyImpliesNoMarkers` means 
 
 From the repository root: `uv run --project formal/conflict formal/conflict/run.sh --suite pure` (omit `--suite pure` for both model families). Dependencies are declared in `formal/conflict/pyproject.toml` and `uv.lock`: Python >=3.11, standard library only. Individual models: `uv run --project formal/conflict python formal/conflict/pure/predict_hunks.py --self-check`; all support `--broken NAME`. Exit 0 = every named expected HOLD/REFUTE matches, exit 1 = mismatch, exit 2 = invalid CLI/tooling. Suite exits 0 only if all baselines exit 0 and every broken variant exits exactly 1 with a named mismatch. Refuted expectations are green only with a concrete witness. Full normal and mutant witnesses: `formal/conflict/pure/results.json`.
 
-Observed: **38 properties; 1,695,574 baseline property/input evaluations; 30 deliberate mutants**. These are property evaluations, not deduplicated concrete repository states. Per-property domain size below counts every evaluated input (conditional properties count their antecedent domain only).
+Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property/input evaluations; 34 deliberate mutants**. These are property evaluations, not deduplicated concrete repository states. Per-property domain size below counts every evaluated input (conditional properties count their antecedent domain only).
 
 ## Ledger
 
 | predicate | property (expected) | method | domain size | result | counterexample | Rust lines | classification | existing Rust test? |
 |---|---|---|---:|---|---|---|---|---|
 | hunk/assembly | SideStateConsistent (HOLD) | exhaustive | 10800 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:110-131,174-181,306-321 | CONTRACT | crates/kagi-domain/src/resolution.rs:972 |
-| hunk/assembly | SideStateChoiceMaskEquivalentIncludingEmpty (REFUTE) | exhaustive | 192 | REFUTE | {"after":"None","before":"All","choice":"C","lengths":[0,0],"side":0} | crates/kagi-domain/src/resolution.rs:157-181,306-321 | QUESTION | None found for exact property |
+| hunk/assembly | SideStateChoiceMaskEquivalentIncludingEmpty (HOLD) | exhaustive | 192 | HOLD | none in domain | resolution.rs::LineSelection::side_state/from_choice | CONTRACT (#1746 C1 fixed) | hardening_tests.rs::empty_side_state_survives_choice_materialization |
 | hunk/assembly | SelectionPresenceResolvesEvenEmpty (HOLD) | exhaustive | 5400 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:297-301 | CONTRACT | crates/kagi-domain/src/resolution/order_tests.rs:28-62 |
 | hunk/assembly | ChildTriStateAggregation (HOLD) | exhaustive | 40 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:124-131,536-538 | CONTRACT | crates/kagi-domain/src/resolution.rs:972 |
 | hunk/assembly | AssembleAllFourOrdersAndProvenance (HOLD) | exhaustive | 5400 | HOLD | none in domain | crates/kagi-domain/src/resolution/assembly.rs:17-46 | CONTRACT | crates/kagi-domain/src/resolution/order_tests.rs:86-113,140-178 |
 | hunk/assembly | AssembleBlockOrderStable (HOLD) | exhaustive | 92 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:78-85,157-173,564-577; crates/kagi-domain/src/resolution/assembly.rs:17-46 | CONTRACT | crates/kagi-domain/src/resolution/order_tests.rs:116,128 |
 | hunk/assembly | AssembleNoSyntheticMarkers (HOLD) | exhaustive | 5480 | HOLD | none in domain | crates/kagi-domain/src/resolution/assembly.rs:48-70 | CONTRACT | crates/kagi-domain/src/resolution.rs:1023 |
-| hunk/assembly | AssembleNoMarkerLeak (REFUTE) | exhaustive | 25 | REFUTE | {"actual":[["<<<<<<< user","c"]],"choice":"C","resolved":true,"text":"<<<<<<< user"} | crates/kagi-domain/src/resolution/assembly.rs:49-61; crates/kagi-domain/src/resolution.rs:297-301 | QUESTION | crates/kagi-domain/src/resolution.rs:1023 (ordinary source only) |
+| hunk/assembly | MarkerGateRespectsChosenSourceProvenance (HOLD) | exhaustive | 30 | HOLD | none in domain | resolution.rs::resolved_lines_have_conflict_marker | CONTRACT (#1746 C2 fixed) | hardening_tests.rs::marker_gate_respects_chosen_source_provenance |
 | hunk/assembly | UndecideOnlyOnDeselect (HOLD) | exhaustive | 92544 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:334-351,554-577 | CONTRACT | crates/kagi-domain/src/resolution.rs:723,750; crates/kagi-domain/src/resolution/order_tests.rs:54-61 |
 | hunk/assembly | OrderApplicability (HOLD) | exhaustive | 21984 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:580-627 | CONTRACT | crates/kagi-domain/src/resolution/order_tests.rs:7,28,86,171 |
-| hunk/assembly | InvalidLineFailureIsNoOp (REFUTE) | exhaustive | 64 | REFUTE | {"after":["U",[[],[],"CF"]],"choice":"U","events":["unresolved hunk with no line_select","set_hunk_line(side,index=len,taken=true) returns false"],"lengths":[0,0],"resolved_after":true,"side":0} | crates/kagi-domain/src/resolution.rs:326-331,564-577 | QUESTION | None found for exact property |
-| hunk/assembly | MalformedSelectionNeverPanics (REFUTE) | exhaustive | 61504 | REFUTE | {"lengths":[0,1],"masks":[[true],[]],"order":"CF","outcome":"Rust positional lines[index] panics"} | crates/kagi-domain/src/resolution/assembly.rs:29-41 | QUESTION | None found for exact property |
+| hunk/assembly | InvalidLineFailureIsNoOp (HOLD) | exhaustive | 64 | HOLD | none in domain | resolution.rs::HunkModel::set_hunk_line | CONTRACT (#1746 C3 fixed) | hardening_tests.rs::invalid_hunk_line_edit_is_a_complete_noop |
+| hunk/assembly | MalformedSelectionNeverPanics (HOLD) | exhaustive | 61504 | HOLD | none in domain | resolution/assembly.rs::ConflictHunk::visit_resolved_lines | CONTRACT (#1746 C4 fixed) | hardening_tests.rs::stale_selection_dimensions_never_panic_or_emit_missing_lines |
 | hunk/assembly | ChoiceSelectionPreservesSourceChoices (HOLD) | exhaustive | 64 | HOLD | none in domain | crates/kagi-domain/src/resolution.rs:157-173; crates/kagi-domain/src/resolution/assembly.rs:17-58 | CONTRACT | crates/kagi-domain/src/resolution.rs:863; crates/kagi-domain/src/resolution/order_tests.rs:116,128 |
 | hunk/assembly | RegionAssemblyPreservesOrder (HOLD) | exhaustive | 14425 | HOLD | none in domain | crates/kagi-domain/src/resolution/assembly.rs:76-84 | CONTRACT | crates/kagi-domain/src/resolution.rs:789 |
 | ready | ReadyImpliesNoMarkers (HOLD) | exhaustive | 21904 | HOLD | none in domain | src/ui/conflict_view/flow.rs:115-122; crates/kagi-git/src/resolution.rs:627-656; crates/kagi-domain/src/resolution/assembly.rs:87-92 | CONTRACT | crates/kagi-git/tests/conflicts_test.rs:440,2254 |

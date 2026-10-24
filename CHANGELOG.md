@@ -21,6 +21,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Keep adopted empty conflict sides selected when materializing line choices; reject invalid line edits without resolving untouched hunks and safely ignore stale selection bits. Treat literal marker-looking source lines as content in readiness, Save and Continue, while unresolved and hand-typed markers still block. (#1746)
+  - Verify parsed hunk attribution against both exact stage blobs before trusting source origins; on mismatch preserve the original materialization as manual marker residue, including corrupt parses with an empty chosen side. Whole-side choices remain available. (#1751)
 - Show a saved submodule conflict's commit OID instead of trying to preview it as a blob. (4363857802)
 - Restore conflict hunk choices, selected lines and both ordering modes after restarting a partial resolution; older drafts remain readable. (4363162008)
 - Disable per-hunk Reset and Change for manually edited Results; only confirmed Reset all may discard those edits. (4363161991)

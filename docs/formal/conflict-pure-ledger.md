@@ -59,9 +59,13 @@ and blocked manual markers. Rust regressions live in
 `crates/kagi-domain/src/resolution/hardening_tests.rs`; backend coverage in
 `crates/kagi-git/tests/conflicts/domain_hardening.rs` exercises readiness,
 Continue blockers, direct Save, recorded Save and provenance-only tampering.
-The independent marker-width parser gap is tracked by #1751, with an ignored
-reproduction `marker_parser_preserves_a_literal_source_opener`. C2 proves the
-gate on constructed hunks and backend full-side choices, not parser round-trip.
+The marker-width parser gap is tracked by #1751, with an ignored reproduction
+`marker_parser_preserves_a_literal_source_opener`. Parser round-trip remains
+outside this pure predicate: backend publication verifies both reconstructed
+source streams against the exact stage blobs, otherwise re-emits the original
+materialization as Manual. Runtime regressions cover misattributed separators,
+an incoming opener yielding an empty parsed side, and a verified literal marker
+that remains savable through both paths.
 New removed-guard mutants: `empty-adoption-lost`, `invalid-materializes`,
 `malformed-index`, `plain-text-gate`. The historical mechanisms and original
 mutant witnesses below describe the pre-fix extraction, not current defects.

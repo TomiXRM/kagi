@@ -6,7 +6,10 @@ const MARKERS: &str =
 fn buffer() -> (ResolutionBuffer, PathBuf) {
     let mut buffer = ResolutionBuffer::new(Path::new("/tmp/repo"));
     let path = PathBuf::from("file.txt");
-    buffer.files.insert(path.clone(), FileResolution::empty());
+    let mut file = FileResolution::empty();
+    file.current_text = Some("top\nc1\nc2\nc3\nbottom\n".into());
+    file.incoming_text = Some("top\ni1\ni2\ni3\nbottom\n".into());
+    buffer.files.insert(path.clone(), file);
     assert!(buffer.ensure_hunks(&path, MARKERS));
     (buffer, path)
 }

@@ -6,6 +6,8 @@ fn live(identity: char) -> (ResolutionBuffer, PathBuf) {
     let mut buffer = ResolutionBuffer::new(Path::new("/unused/resume-codec"));
     let path = PathBuf::from("a.txt");
     let mut file = FileResolution::empty();
+    file.current_text = Some("before\na1\na2\nafter\n".into());
+    file.incoming_text = Some("before\nb1\nb2\nafter\n".into());
     file.identity = Some(ConflictRevision::from_fingerprint(
         identity.to_string().repeat(64),
     ));

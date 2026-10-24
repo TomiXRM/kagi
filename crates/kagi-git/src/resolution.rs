@@ -118,6 +118,10 @@ struct FileResolution {
     result: Option<Vec<ResolvedLine>>,
     /// Compact decisions retained with the draft across autosave and recovery.
     hunk_state: Option<hunk_state::HunkState>,
+    /// Original materialization when the parsed sides do not reconstruct both
+    /// stage blobs. Never publish source-attributed output from that model.
+    /// Runtime-only: restored hunk decisions must pass live verification again.
+    unverified_hunk_markers: Option<String>,
     /// Derived from this exact Result revision; not persisted or used by safety gates.
     marker_residue: bool,
     /// Undo stack: prior `result` states (most recent last).
@@ -143,6 +147,7 @@ impl FileResolution {
             raw_result: None,
             result: None,
             hunk_state: None,
+            unverified_hunk_markers: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -479,6 +484,14 @@ impl ResolutionBuffer {
         };
         if !self.hunks.contains_key(path) {
             let mut model = HunkModel::from_marker_text(marker_text);
+            let sources_verified =
+                file.current_text
+                    .as_deref()
+                    .is_some_and(|text| model.matches_source_text(SelectionSide::Current, text))
+                    && file.incoming_text.as_deref().is_some_and(|text| {
+                        model.matches_source_text(SelectionSide::Incoming, text)
+                    });
+            file.unverified_hunk_markers = (!sources_verified).then(|| marker_text.to_owned());
             // Decoding alone grants no authority. retain_drafts first binds the
             // decisions to a live file with the same known stage identity.
             if self.live_context.is_some() {
@@ -521,8 +534,15 @@ impl ResolutionBuffer {
         let Some(model) = self.hunks.get(path) else {
             return false;
         };
-        let assembled = model.assemble();
+        // A marker-width collision can both misattribute synthetic markers and
+        // erase the entire chosen side. Re-emit the original unresolved text as
+        // Manual on failed source verification, rather than trusting even an
+        // apparently marker-free (possibly empty) assembly from that parser.
         if let Some(fr) = self.files.get_mut(path) {
+            let assembled = match &fr.unverified_hunk_markers {
+                Some(markers) => text_to_lines(markers, LineOrigin::Manual),
+                None => model.assemble(),
+            };
             fr.checkpoint();
             if let Some(state) = &mut fr.hunk_state {
                 state.update(model);
@@ -1330,6 +1350,7 @@ fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf,
         hunk_state: fields
             .remove("hunk_state")
             .and_then(|value| serde_json::from_value(value).ok()),
+        unverified_hunk_markers: None,
         marker_residue: false,
         raw_result,
         raw: false,
@@ -1417,6 +1438,7 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
+            unverified_hunk_markers: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1521,6 +1543,7 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
+            unverified_hunk_markers: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1571,6 +1594,7 @@ mod tests {
             raw_result: None,
             result: None,
             hunk_state: None,
+            unverified_hunk_markers: None,
             marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1658,7 +1682,10 @@ keep bottom
 
     #[test]
     fn buffer_apply_hunk_choice_updates_result_and_undo() {
-        let (mut b, p) = buf_with_sides("x\n", "y\n");
+        let (mut b, p) = buf_with_sides(
+            "keep top\na-current\nkeep middle\nb-current\nkeep bottom\n",
+            "keep top\na-incoming\nkeep middle\nb-incoming\nkeep bottom\n",
+        );
         assert!(b.ensure_hunks(&p, TWO_HUNK_ZDIFF3));
         assert_eq!(b.hunk_count(&p), 2);
 
@@ -1684,7 +1711,10 @@ keep bottom
 
     #[test]
     fn ensure_hunks_is_idempotent() {
-        let (mut b, p) = buf_with_sides("x\n", "y\n");
+        let (mut b, p) = buf_with_sides(
+            "keep top\na-current\nkeep middle\nb-current\nkeep bottom\n",
+            "keep top\na-incoming\nkeep middle\nb-incoming\nkeep bottom\n",
+        );
         b.ensure_hunks(&p, TWO_HUNK_ZDIFF3);
         b.apply_hunk_choice(&p, 0, HunkChoice::AcceptCurrent);
         // A second ensure with different text must NOT clobber existing choices.

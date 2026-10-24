@@ -168,7 +168,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `predict_hunks` | `AssembleAllFourOrdersAndProvenance` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleBlockOrderStable` | HOLD | CONTRACT |
 | `predict_hunks` | `AssembleNoSyntheticMarkers` | HOLD | CONTRACT |
-| `predict_hunks` | `MarkerGateRespectsChosenSourceProvenance` | HOLD | #1746 C2 fixed: manual-only marker gate |
+| `predict_hunks` | `MarkerGateRespectsChosenSourceProvenance` | HOLD | #1746 C2 fixed: manual-only gate; parsed source origins require exact stage reconstruction (#1751) |
 | `predict_hunks` | `UndecideOnlyOnDeselect` | HOLD | CONTRACT |
 | `predict_hunks` | `OrderApplicability` | HOLD | CONTRACT |
 | `predict_hunks` | `InvalidLineFailureIsNoOp` | HOLD | #1746 C3 fixed: validate before materialization |
@@ -203,6 +203,11 @@ external drill artifacts; ordinary runs require no live app or external files.
 C2 replaces the mis-posed `AssembleNoMarkerLeak`: raw literal/manual marker text
 is intentionally preserved; blocking is a provenance decision. Manual markers
 still block, and the `plain-text-gate` mutant rejects chosen source literals.
+Parsed source origins are trusted only after reconstructing both complete sides
+and matching the stage blobs byte-for-byte. Failed reconstruction publishes the
+original materialization as Manual; even a corrupt empty chosen side stays
+blocked. These parser-boundary cases are Rust backend regressions, not a claim
+that the pure model repairs marker-width parsing (#1751).
 The C1/C3/C4 removed-guard mutants are `empty-adoption-lost`,
 `invalid-materializes`, and `malformed-index`; each must remain red.
 `undecide-empty-adoption` supersedes the now-redundant `undecide-on-select`:

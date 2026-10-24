@@ -195,6 +195,7 @@ impl ResolutionBuffer {
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();
                     self.hunks.remove(&path);
+                    current.unverified_hunk_markers = None;
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;
@@ -203,6 +204,7 @@ impl ResolutionBuffer {
                     current.redo = std::mem::take(&mut saved.redo);
                 }
                 if let Some(model) = hunks.remove(&path) {
+                    current.unverified_hunk_markers = saved.unverified_hunk_markers.take();
                     self.hunks.insert(path.clone(), model);
                 }
                 if has_draft_state(current) {
@@ -224,6 +226,7 @@ impl ResolutionBuffer {
                     current.raw_result = saved.raw_result;
                     current.hunk_state = saved.hunk_state.take();
                     self.hunks.remove(&entry.path);
+                    current.unverified_hunk_markers = None;
                     current.draft_state = true;
                     current.editing_origin = saved.editing_origin.take();
                     current.live_editing_origin = saved.live_editing_origin;

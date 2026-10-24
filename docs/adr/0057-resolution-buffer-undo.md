@@ -67,9 +67,17 @@
   identity, and restores those exact origins after preflight. Dropping origins
   at the request boundary must not turn a chosen literal into a manual marker;
   changing only provenance invalidates the prepared payload binding.
-- Marker parsing/materialization collisions are tracked separately by #1751.
-  The provenance gate is proven on constructed hunks and full-side backend
-  choices; it does not claim a literal opener survives the existing parser.
+- Parsed hunk origins require proof: reconstruct the complete Current and
+  Incoming streams (passthrough plus that side of every hunk, independent of
+  decisions) and compare them byte-for-byte with stage 2 and 3. A missing side,
+  lost line, changed newline, or marker-width collision cannot establish trust.
+  On failure, hunk edits re-emit the original materialization as `Manual`, not
+  the corrupt parsed assembly: even an apparently empty chosen side must retain
+  the original unresolved markers and stay blocked in readiness, Continue and
+  both Save paths. Whole-side choices still read stage blobs directly.
+- Marker parsing/materialization collisions remain tracked separately by
+  #1751. The ignored parser reproduction remains; the provenance gate now
+  prevents its malformed attribution from authorizing corrupted hunk output.
 
 
 ## Result input と永続 draft の適用権限（#1721）

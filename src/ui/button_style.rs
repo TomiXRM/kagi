@@ -198,6 +198,69 @@ impl KagiButton {
     }
 }
 
+/// Dense actions and status badges share size and corner tokens, not semantics.
+pub(super) fn dense_control<E: Styled + ParentElement>(
+    control: E,
+    id: &'static str,
+    cx: &gpui::App,
+) -> E {
+    control
+        .rounded(super::e2e::commit_panel_labels::radius(
+            id,
+            cx.theme().radius,
+        ))
+        .h(super::theme::scaled_px(20.))
+        .min_h(gpui::px(20.))
+        .py_0()
+        .text_xs()
+        .line_height(super::theme::scaled_px(16.))
+        .border_2()
+        .border_color(gpui::transparent_black())
+        .overflow_hidden()
+        .ml_2()
+        .flex_shrink_0()
+        .relative()
+        .child(super::e2e::commit_panel_labels::measure_hit_box(
+            id,
+            super::keyboard_nav::RING,
+        ))
+}
+
+/// Opaque, named status text: no focus, hover/pressed paint or disabled-action ink.
+pub(super) fn status_badge(
+    id: impl Into<ElementId>,
+    probe: &'static str,
+    label: impl Into<SharedString>,
+    fill: u32,
+    stop_row_click: bool,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
+    let label = super::e2e::commit_panel_labels::caption(probe, label);
+    let ink = super::theme::on_accent_foreground(fill);
+    let (fill, ink) = super::e2e::commit_panel_labels::badge_colors(probe, fill, ink);
+    dense_control(
+        div()
+            .id(id)
+            .role(super::e2e::commit_panel_labels::role(probe, Role::Label))
+            .aria_label(super::e2e::commit_panel_labels::name(probe, label.clone()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .px_2()
+            .bg(rgb(fill))
+            .text_color(rgb(ink))
+            .cursor_default()
+            .when(stop_row_click, |badge| {
+                badge
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(|_, _, cx| cx.stop_propagation())
+            })
+            .child(label),
+        probe,
+        cx,
+    )
+}
+
 pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
     match role.filled_variant() {
         Some(variant) => btn.with_variant(variant),

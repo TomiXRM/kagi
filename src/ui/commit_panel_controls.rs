@@ -30,6 +30,11 @@ fn button_paint(button: impl IntoElement) -> gpui::Stateful<gpui::Div> {
         .child(button)
 }
 
+/// The xsmall action shares its frame with inert status badges.
+pub(super) fn inline_file_control(button: Button, id: &'static str, cx: &gpui::App) -> Button {
+    super::button_style::dense_control(button.xsmall(), id, cx)
+}
+
 /// The Stage/Unstage button stays inside its virtualized file-row slot.
 pub(super) fn inline_file_action(
     view: &CommitPanelView,
@@ -57,34 +62,22 @@ pub(super) fn inline_file_action(
             view.defer_stage_file(fi, window, cx);
         }
     });
-    KagiButton::styled(
-        (btn_id, fi),
-        e2e::commit_panel_labels::caption(action_id, label),
-        role,
+    inline_file_control(
+        KagiButton::styled(
+            (btn_id, fi),
+            e2e::commit_panel_labels::caption(action_id, label),
+            role,
+            cx,
+        ),
+        action_id,
         cx,
     )
-    .xsmall()
-    .h(theme::scaled_px(20.))
-    .py_0()
-    .text_xs()
-    .line_height(theme::scaled_px(16.))
     // Keep focus inside the slot, clear of the next row's opaque paint.
-    .border_2()
-    .border_color(gpui::transparent_black())
-    .overflow_hidden()
     .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
     // Only the remembered row's inline action participates in Tab;
     // preceding rows must not intercept Shift+Tab out of the section.
     .tab_stop(crate::ui::commit_panel_navigation::action_tab_stop(
         view, drawn, staged, fi,
-    ))
-    .min_h(px(20.))
-    .ml_2()
-    .flex_shrink_0()
-    .relative()
-    .child(e2e::commit_panel_labels::measure_hit_box(
-        action_id,
-        keyboard_nav::RING,
     ))
     .when(fi == 0, |button| {
         button.child(e2e::measure_inside(if staged {

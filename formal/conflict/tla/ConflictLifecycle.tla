@@ -16,14 +16,16 @@ Kind == CASE Scenario \in {"skip", "skipRefresh", "preserveSkip", "receiptSkip"}
           [] Scenario = "receiptMerge" -> "mergeContinue"
           [] Scenario = "merge" -> "mergeCommit"
           [] OTHER -> "save"
-DeferredReceipt == Kind \in {"skip", "continue", "mergeContinue"}
+DeferredReceipt == Kind \in {"skip", "continue", "mergeContinue"} /\ Broken = "workerReceipt"
 File(a) == IF Scenario \in {"draftRace", "draftRaceLost"} THEN a ELSE 1
 Revision == <<s.indexRev, s.headRev, s.metadataRev, s.operation>>
 Record(a) == <<File(a), s.context[a], s.text[a]>>
+\* life tracks worker lifetime; closing tracks UI destruction during dispatch.
 At(a, p) == a \in Participants /\ s.life[a] = "open" /\ s.pc[a] = p
 ActorInit == [a \in Actors |-> 0]
 Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     life |-> [a \in Actors |-> "open"], attached |-> [a \in Actors |-> TRUE],
+    closing |-> [a \in Actors |-> FALSE],
     indexRev |-> 0, headRev |-> 0, metadataRev |-> 0, operation |-> 0,
     wt |-> [f \in Files |-> IF Kind = "mergeCommit" THEN "shown" ELSE IF Kind = "df" /\ f = 2 THEN "child" ELSE "markers"],
     index |-> [f \in Files |-> IF Kind = "mergeCommit" THEN "shown" ELSE IF Kind = "df" /\ f = 2 THEN "child" ELSE IF f = 1 \/ Scenario \in {"draftRace","draftRaceLost"} THEN "unmerged" ELSE "absent"],
@@ -215,30 +217,29 @@ MergeCommit(a) == /\ At(a, "commit")
     /\ s' = [s EXCEPT !.committedTree = s.planTree[a], !.executed[a] = s.planTree[a],
         !.mutated[a] = TRUE, !.wroteUnapproved = @ \/ ~s.approved[a],
         !.pc[a] = "verify", !.event = <<"MergeCommit",a>>]
-\* conflict_observe.rs:348-395 checks save WT/index; :443-467 abort only HEAD/op.
-\* Continue/Skip measured summaries: conflicts.rs:1234-1245,1898-1906.
+\* #1740: verified mutation is accounted before worker lifetime ends or UI completion.
 Verify(a) == /\ At(a, "verify")
     /\ (Kind # "save" \/ (s.wt[1] = s.frozen[a] /\ s.index[1] = s.frozen[a]))
     /\ s' = [s EXCEPT !.successful[a] = TRUE,
         !.pc[a] = IF DeferredReceipt THEN "release" ELSE "append",
         !.event = <<"Verify",a>>]
-\* conflict_ops.rs:581-603 backend records before returning; Continue/Skip UI
-\* callbacks append later (ui/operations/conflict.rs:659,674-698; conflict_skip.rs:107,149).
-\* Merge Continue success only logs :444-448, with no append path.
-AppendReceipt(a) == /\ At(a, "append") /\ Kind # "mergeContinue"
-    /\ s' = [s EXCEPT !.receipt[a] = TRUE,
+\* Backend-owned append is independent of a live UI callback.
+\* workerReceipt restores release-before-append and missing merge accounting.
+AppendReceipt(a) == /\ At(a, "append") /\ (~DeferredReceipt \/ Kind # "mergeContinue")
+    /\ s' = [s EXCEPT !.receipt[a] = TRUE, !.successful[a] = TRUE,
         !.pc[a] = IF DeferredReceipt THEN "deliver" ELSE "release",
         !.event = <<"AppendReceipt",a>>]
-\* app/session.rs:661-669,760-776; app/settle.rs:147-149. No durable-receipt
-\* requirement for deferred writers. Broken="receipt" removes Save ordering.
+\* receipt retains the original Save ordering negative control.
 ReleaseLease(a) == /\ (At(a, "release") \/ (Broken = "receipt" /\ At(a, "append")))
     /\ s' = [s EXCEPT !.lease[a] = FALSE, !.released[a] = TRUE,
+        !.life[a] = IF s.closing[a] THEN "closed" ELSE @,
+        !.successful[a] = TRUE,
         !.pc[a] = IF DeferredReceipt /\ Kind # "mergeContinue" THEN "append" ELSE "deliver",
         !.event = <<"ReleaseLease",a>>]
-\* app/settle.rs:222-244,272-300; flow.rs:78 says Conflict changes_shared_refs=false.
-\* No sibling invalidation even if an Abort moved the shared branch.
-Deliver(a) == /\ At(a, "deliver")
-    /\ s' = [s EXCEPT !.reported[a] = Kind # "mergeContinue", !.pc[a] = "done",
+\* Backend settlement survives UI detachment; sibling classification is unchanged.
+Deliver(a) == /\ a \in Participants /\ s.pc[a] = "deliver"
+    /\ s' = [s EXCEPT !.reported[a] = s.life[a] = "open" /\ Kind # "mergeContinue",
+        !.pc[a] = "done",
         !.event = <<"Deliver",a>>]
 \* ui/tabs.rs:231-251; app/flow.rs:287-290: departure invalidates pending approval.
 \* Boundary restriction: departure once, after plan or after admission.
@@ -247,10 +248,12 @@ Depart(a) == /\ a \in Participants /\ s.life[a] = "open" /\ s.attached[a]
     /\ s' = [s EXCEPT !.attached[a] = FALSE, !.event = <<"Depart(tab switch)",a>>]
 \* app_bridge.rs:751-758; host_close.rs:62-68,107-111: lease gate, no conflict dirty gate.
 \* Sync autosave callback cannot be interrupted by graceful close in same process.
-GracefulExit(a, reason) == /\ a \in Participants /\ s.life[a] = "open" /\ ~s.lease[a]
-    /\ s.pc[a] \in {"ready","append","deliver","done"}
-    /\ s' = [s EXCEPT !.life[a] = "closed", !.attached[a] = FALSE,
-        !.text[a] = "none", !.abandoned = @ \/ (s.successful[a] /\ ~s.receipt[a]),
+GracefulExit(a, reason) == /\ a \in Participants /\ s.life[a] = "open" /\ ~s.closing[a]
+    /\ ((~s.lease[a] /\ s.pc[a] \in {"ready","append","deliver","done"})
+        \/ (s.lease[a] /\ Kind \in {"continue","mergeContinue","skip"}))
+    /\ s' = [s EXCEPT !.life[a] = IF s.lease[a] THEN @ ELSE "closed",
+        !.closing[a] = TRUE, !.attached[a] = FALSE,
+        !.text[a] = "none", !.abandoned = @ \/ (s.successful[a] /\ ~s.receipt[a] /\ ~s.lease[a]),
         !.event = <<reason,a>>]
 CloseWindow(a) == GracefulExit(a, "CloseWindow")
 \* ui/mod.rs:3661-3669 flushes settings/issue drafts, NOT conflict documents.
@@ -357,7 +360,7 @@ DraftNeverLost == (\E a \in Participants : s.restarted[a]) => s.captured \subset
 DraftWriteAtomic == ~s.readCorrupt /\ (s.diskValid => s.committed \subseteq s.disk)
 \* HOLD in fault-free single-writer callback completion; obsolete map P1 is guarded.
 ManualCapturePersisted == s.pc[1] = "ready" => s.captured \subseteq s.disk
-\* REFUTE for Continue/Skip, HOLD for Save when append succeeds and no crash.
+\* HOLD with backend append before successful completion/release; no OS crash.
 ReceiptFollowsMutation == \A a \in Participants :
     (s.successful[a] /\ (s.released[a] \/ s.life[a] = "closed")) => s.receipt[a]
 SkipDropsOnlyApprovedStep == ~s.wrongStep
@@ -375,7 +378,7 @@ RepoHasAtMostOneLease == Cardinality({a \in Actors : s.lease[a]}) <= 1
 \* Additional map P1: non-UTF8 stash abort passes verification leaving conflict WT.
 StashAbortRestoresConflictedBytes ==
     (Kind = "stashAbort" /\ s.successful[1]) => s.wt[1] = "original"
-\* REFUTE even with fair scheduling: close after lease release disables UI append.
+\* HOLD: backend accounting outlives close; workerReceipt restores lost callbacks.
 ContinueEventuallyRecordedOrReported ==
     (s.successful[1] /\ Kind \in {"continue","mergeContinue"}) ~>
         (s.receipt[1] \/ s.reported[1])

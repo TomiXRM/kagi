@@ -8,18 +8,17 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::{app, ui::*};
-fn conflict_unknown(error: &kagi_git::GitError, after: StateSummary) -> Option<OpOutcome> {
-    if let kagi_git::GitError::TerminationUnknown(reason) = error {
-        Some(OpOutcome::Unknown {
-            after,
-            evidence: format!(
-                "{}; process termination is unconfirmed — do not retry this operation",
-                reason
-            ),
-        })
-    } else {
-        None
-    }
+pub(super) fn conflict_unfinished_recording(
+    op: &str,
+    repo: &std::path::Path,
+    before: StateSummary,
+    error: &kagi_git::GitError,
+) -> kagi_git::backend::recording::Recording {
+    let outcome = kagi_git::backend::conflict_continue::conflict_completion_error(error, &before);
+    kagi_git::backend::recording::finalize(
+        kagi_git::oplog::OpLogEntry::new(op, repo.display().to_string(), before, outcome)
+            .with_worktree(Some(repo.display().to_string())),
+    )
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -404,52 +403,49 @@ impl KagiApp {
                             std::panic::catch_unwind(|| panic!("injected merge continue panic"));
                         return None;
                     }
-                    let result = kagi_git::Backend::open(&bg_path).and_then(|backend| {
-                        backend.stage_conflict_resolution(&session, &buffer, &expected_revision)
-                    });
-                    let unknown = app::settle_conflict_write(guard, &result, before);
-                    Some((result, unknown))
+                    let report = kagi_git::Backend::run_recorded_conflict_handoff(
+                        &bg_path,
+                        &session,
+                        &buffer,
+                        &expected_revision,
+                        before.clone(),
+                    );
+                    app::settle_conflict_write(guard, &report.result, before);
+                    Some((report.result, report.recording))
                 });
                 cx.spawn_in(window, async move |this, acx| {
-                    let (result, unknown) = task.fallible().await.flatten().unwrap_or_else(|| {
-                        let error = abandonment.into_unknown();
-                        let unknown = conflict_unknown(
-                            &error,
-                            StateSummary {
-                                head: format!("op={}", session_op),
-                                dirty: "resolving".into(),
-                            },
-                        );
-                        (Err(error), unknown)
-                    });
+                    let (result, recording) =
+                        task.fallible().await.flatten().unwrap_or_else(|| {
+                            let error = abandonment.into_unknown();
+                            let recording = conflict_unfinished_recording(
+                                &op_name,
+                                &repo_path,
+                                StateSummary {
+                                    head: format!("op={}", session_op),
+                                    dirty: "resolving".into(),
+                                },
+                                &error,
+                            );
+                            (Err(error), recording)
+                        });
                     let _ = this.update_in(acx, |app, window, cx| {
                         app.refresh_write_busy();
                         let current = app.active_session() == Some(owner)
                             && app.app_sessions.visit(owner) == visit;
                         if let Err(e) = &result {
                             klog!("refused: {} stage failed: {}", op_name, e);
-                            app.record_operation_completion(
-                                &op_name,
-                                StateSummary {
-                                    head: format!("op={}", session_op),
-                                    dirty: "resolving".into(),
-                                },
-                                unknown.unwrap_or_else(|| OpOutcome::Failed {
-                                    error: e.to_string(),
-                                }),
-                                None,
-                                &repo_path,
-                                current,
-                                false,
-                                None,
-                                cx,
-                            );
                         }
+                        // A successful handoff opens the composer, not another
+                        // result surface. Its receipt still belongs in history.
+                        app.present_operation_completion(
+                            &recording,
+                            current && result.is_err(),
+                            false,
+                            None,
+                            cx,
+                        );
                         if result.is_ok() {
-                            eprintln!(
-                                "[kagi] {}: routing to commit message panel (merge)",
-                                op_name
-                            );
+                            klog!("{}: routing to commit message panel (merge)", op_name);
                         }
                         for (id, op, path) in app.app_sessions.drain_unaccounted() {
                             app.notice_reconcile_required(id, op, &path);
@@ -494,10 +490,7 @@ impl KagiApp {
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
-                eprintln!(
-                    "[kagi] {}: opening continue confirmation (sequencer)",
-                    op_name
-                );
+                klog!("{}: opening continue confirmation (sequencer)", op_name);
                 self.set_conflict_continue_modal(ConflictContinuePlanModal {
                     plan: std::sync::Arc::new(*plan),
                     revision: mode.revision,
@@ -584,22 +577,22 @@ impl KagiApp {
                 let _ = std::panic::catch_unwind(|| panic!("injected stash continue panic"));
                 return None;
             }
-            let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
-                Ok(backend) => backend.observe_ref_moves(|b| {
-                    b.execute_conflict_continue(&session, &buffer, &expected_revision)
-                }),
-                Err(error) => (Err(error), None),
-            };
-            let unknown = app::settle_conflict_write(guard, &result, bg_before);
-            Some((result, ref_moves, unknown))
+            let report = kagi_git::Backend::run_recorded_conflict_continue(
+                &bg_path,
+                &session,
+                &buffer,
+                &expected_revision,
+                bg_before.clone(),
+            );
+            app::settle_conflict_write(guard, &report.result, bg_before);
+            Some((report.result, report.recording))
         });
         cx.spawn(async move |this, acx| {
-            let (result, ref_moves, unknown) =
-                task.fallible().await.flatten().unwrap_or_else(|| {
-                    let error = abandonment.into_unknown();
-                    let unknown = conflict_unknown(&error, before.clone());
-                    (Err(error), None, unknown)
-                });
+            let (result, recording) = task.fallible().await.flatten().unwrap_or_else(|| {
+                let error = abandonment.into_unknown();
+                let recording = conflict_unfinished_recording(&op_name, &repo_path, before, &error);
+                (Err(error), recording)
+            });
             #[cfg(feature = "gui-e2e")]
             if let Some((hold, reached)) = completion_hold {
                 reached.store(true, std::sync::atomic::Ordering::Release);
@@ -619,19 +612,7 @@ impl KagiApp {
                         klog!("executed: {}", op_name);
                         let stopped = !is_stash
                             && matches!(&result.outcome, kagi_git::ContinueOutcome::Staged);
-                        app.record_operation_completion(
-                            &op_name,
-                            before,
-                            OpOutcome::Success {
-                                after: result.after,
-                            },
-                            ref_moves,
-                            &repo_path,
-                            current,
-                            stopped,
-                            None,
-                            cx,
-                        );
+                        app.present_operation_completion(&recording, current, stopped, None, cx);
                         if modal_matches {
                             app.clear_conflict_continue_modal();
                         }
@@ -650,22 +631,12 @@ impl KagiApp {
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);
-                        let unknown_evidence = unknown.as_ref().and_then(|outcome| match outcome {
+                        let unknown_evidence = match &recording.entry().outcome {
                             OpOutcome::Unknown { evidence, .. } => Some(evidence.clone()),
                             _ => None,
-                        });
+                        };
                         klog!("{} failed: {}", op_name, err_msg);
-                        app.record_operation_completion(
-                            &op_name,
-                            before,
-                            unknown.unwrap_or(OpOutcome::Failed { error: err_msg }),
-                            ref_moves,
-                            &repo_path,
-                            current,
-                            false,
-                            None,
-                            cx,
-                        );
+                        app.present_operation_completion(&recording, current, false, None, cx);
                         if modal_matches {
                             // This admitted request is terminal. Retire only
                             // its frozen confirmation so its result/required

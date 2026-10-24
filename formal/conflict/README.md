@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 52 TLC configurations, 38 pure
-properties (1,695,579 input/property evaluations), twelve TLC negative controls,
+No product code is imported or changed. There are 56 TLC configurations, 38 pure
+properties (1,695,579 input/property evaluations), 16 TLC negative controls,
 35 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -64,7 +64,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
+holes/questions tracked by **#1731–#1733, #1743, #1744, #1745, #1746 (model-external runtime findings: #1734–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -95,6 +95,14 @@ of that backend defence; `skip-prewrite-broken` removes revision checks and is r
 zero exit; `zero-exit-advanced` restores the old classifier and is red.
 `continue-metadata-read` HOLDs under the full operation-metadata admission guard,
 with a separate red broken variant.
+
+The P2 cutover makes #1740 receipt ordering and Continue liveness HOLD: the
+worker verifies and appends before release, even if the UI closes while it runs.
+The model distinguishes UI destruction (`closing`, detached) from the remaining
+worker lifetime (`life`); successful verification still precedes append.
+OS process death and receipt I/O failure remain outside this ordering contract.
+Each original flaw remains refutable through its broken configurations below.
+Current run evidence is produced by the parent validation command.
 
 ### Saved runtime projections
 
@@ -147,9 +155,12 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
-| `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
-| `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
-| `receipt-skip` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
+| `receipt-continue` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
+| `receipt-continue-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
+| `receipt-merge` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
+| `receipt-merge-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
+| `receipt-skip` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
+| `receipt-skip-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
 | `receipt-save` | `ReceiptFollowsMutation` | HOLD | none | CONTRACT |
 | `receipt-save-broken` | `ReceiptFollowsMutation` | REFUTE | receipt | Negative control; no product issue |
 | `skip-replacement` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT |
@@ -164,7 +175,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none | #1743 |
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
-| `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
+| `continue-liveness` | `ContinueEventuallyRecordedOrReported` | HOLD | none | #1740 |
+| `continue-liveness-broken` | `ContinueEventuallyRecordedOrReported` | REFUTE | workerReceipt | Negative control for #1740 |
 
 ### Pure table (`pure/predict_*.py`)
 

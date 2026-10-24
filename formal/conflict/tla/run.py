@@ -43,9 +43,12 @@ CHECKS = [
     ("draft-lost-update", "draftRaceLost", "DraftWriteAtomic", "REFUTE", "none"),
     ("two-instance-leases", "saveRace", "RepoHasAtMostOneLease", "REFUTE", "none"),
     ("two-instance-stale-write", "saveRace", "StaleSnapshotNeverWrites", "REFUTE", "none"),
-    ("receipt-continue", "receiptContinue", "ReceiptFollowsMutation", "REFUTE", "none"),
-    ("receipt-merge", "receiptMerge", "ReceiptFollowsMutation", "REFUTE", "none"),
-    ("receipt-skip", "receiptSkip", "ReceiptFollowsMutation", "REFUTE", "none"),
+    ("receipt-continue", "receiptContinue", "ReceiptFollowsMutation", "HOLD", "none"),
+    ("receipt-continue-broken", "receiptContinue", "ReceiptFollowsMutation", "REFUTE", "workerReceipt"),
+    ("receipt-merge", "receiptMerge", "ReceiptFollowsMutation", "HOLD", "none"),
+    ("receipt-merge-broken", "receiptMerge", "ReceiptFollowsMutation", "REFUTE", "workerReceipt"),
+    ("receipt-skip", "receiptSkip", "ReceiptFollowsMutation", "HOLD", "none"),
+    ("receipt-skip-broken", "receiptSkip", "ReceiptFollowsMutation", "REFUTE", "workerReceipt"),
     ("receipt-save", "receiptSave", "ReceiptFollowsMutation", "HOLD", "none"),
     ("receipt-save-broken", "receiptSave", "ReceiptFollowsMutation", "REFUTE", "receipt"),
     ("skip-replacement", "skipRefresh", "SkipDropsOnlyApprovedStep", "HOLD", "none"),
@@ -60,7 +63,8 @@ CHECKS = [
     ("merge-tree", "merge", "MergeCommitTreeIsApprovedTree", "REFUTE", "none"),
     ("sibling-invalidation", "sibling", "SiblingWorktreesInvalidatedOnSharedRef", "REFUTE", "none"),
     ("stash-non-utf8", "stashAbort", "StashAbortRestoresConflictedBytes", "REFUTE", "none"),
-    ("continue-liveness", "liveness", "ContinueEventuallyRecordedOrReported", "REFUTE", "none"),
+    ("continue-liveness", "liveness", "ContinueEventuallyRecordedOrReported", "HOLD", "none"),
+    ("continue-liveness-broken", "liveness", "ContinueEventuallyRecordedOrReported", "REFUTE", "workerReceipt"),
 ]
 
 def main():

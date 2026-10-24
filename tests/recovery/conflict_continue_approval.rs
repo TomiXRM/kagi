@@ -497,9 +497,10 @@ fn queued_refusal(
         NoWrite::read(&repo),
         "backend refuses before ANY Git mutation"
     );
-    assert!(
-        oplog::records(&repo, "rebase-continue", 100, true).is_empty(),
-        "foreground receipt is still held; this is the actual BG boundary"
+    assert_eq!(
+        oplog::records(&repo, "rebase-continue", 100, true).len(),
+        1,
+        "the backend records before the held foreground completion"
     );
     completed.send();
     wait_idle(cx, app);

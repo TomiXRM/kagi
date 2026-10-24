@@ -44,28 +44,13 @@ fn skip_settlement(
 }
 
 fn skip_outcome(outcome: kagi_git::SkipOutcome) -> (OpOutcome, Option<String>) {
-    let git_said = outcome.error.map(|e| e.to_string()).unwrap_or_default();
-    match outcome.progress {
-        SkipProgress::Finished | SkipProgress::Advanced => (
-            OpOutcome::Success {
-                after: outcome.after,
-            },
-            None,
-        ),
-        SkipProgress::NoProgress => (
-            OpOutcome::Failed {
-                error: git_said.clone(),
-            },
-            Some(git_said),
-        ),
-        SkipProgress::Unclear => (
-            OpOutcome::Unknown {
-                after: outcome.after,
-                evidence: git_said.clone(),
-            },
-            Some(git_said),
-        ),
-    }
+    let receipt = kagi_git::backend::conflict_continue::conflict_skip_outcome(&outcome);
+    let failure = match &receipt {
+        OpOutcome::Failed { error } => Some(error.clone()),
+        OpOutcome::Unknown { evidence, .. } => Some(evidence.clone()),
+        _ => None,
+    };
+    (receipt, failure)
 }
 
 impl KagiApp {
@@ -140,6 +125,7 @@ impl KagiApp {
         let supervision = abandonment.supervision();
         let bg_path = repo_path.clone();
         let bg_before = before.clone();
+        let bg_op = op_name.clone();
         #[cfg(feature = "gui-e2e")]
         let hold = CONFLICT_SKIP_HOLD.with(|slot| slot.borrow_mut().take());
         let task = cx.background_spawn(async move {
@@ -153,35 +139,26 @@ impl KagiApp {
                 let _ = std::panic::catch_unwind(|| panic!("injected conflict skip panic"));
                 return None;
             }
-            let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
-                Ok(backend) => {
-                    backend.observe_ref_moves(|b| b.execute_conflict_skip(&plan, &buffer))
-                }
-                Err(error) => (Err(error), None),
-            };
-            let settlement = skip_settlement(&result);
-            let unknown = app::settle_conflict_write(guard, &settlement, bg_before);
-            Some((result, ref_moves, unknown))
+            let report =
+                kagi_git::Backend::run_recorded_conflict_skip(&bg_path, &plan, &buffer, &bg_op);
+            let settlement = skip_settlement(&report.result);
+            app::settle_conflict_write(guard, &settlement, bg_before);
+            Some((report.result, report.recording))
         });
         cx.spawn(async move |this, acx| {
-            let (result, ref_moves, unknown) = task.fallible().await.flatten().unwrap_or_else(|| {
+            let (result, recording) = task.fallible().await.flatten().unwrap_or_else(|| {
                 let error = abandonment.into_unknown();
-                let unknown = if let kagi_git::GitError::TerminationUnknown(reason) = &error {
-                    Some(OpOutcome::Unknown {
-                        after: before.clone(),
-                        evidence: format!("{}; process termination is unconfirmed — do not retry this operation", reason),
-                    })
-                } else {
-                    None
-                };
-                (Err(error), None, unknown)
+                let recording = super::conflict::conflict_unfinished_recording(
+                    &op_name, &repo_path, before, &error,
+                );
+                (Err(error), recording)
             });
             let _ = this.update(acx, |app, cx| {
                 app.refresh_write_busy();
-                let current = app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
+                let current =
+                    app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
                 let refusal_display = match &result {
-                    Err(kagi_git::GitError::Blocked(note)) =>
-                        Some(i18n::plan_note_text(note)),
+                    Err(kagi_git::GitError::Blocked(note)) => Some(i18n::plan_note_text(note)),
                     _ => None,
                 };
                 let (outcome, failure, ran) = match result {
@@ -191,24 +168,27 @@ impl KagiApp {
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);
-                        let outcome = match &e {
-                            kagi_git::GitError::Blocked(note) => OpOutcome::Refused {
-                                blockers: vec![note.message_en()],
-                            },
-                            _ => unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }),
-                        };
-                        (outcome, Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
+                        let outcome = recording.entry().outcome.clone();
+                        (
+                            outcome,
+                            Some(err_msg),
+                            matches!(e, kagi_git::GitError::TerminationUnknown(_)),
+                        )
                     }
                 };
                 let termination_unknown_evidence = match &outcome {
-                    OpOutcome::Unknown { evidence, .. } if evidence.contains("process termination is unconfirmed") => Some(evidence.clone()),
+                    OpOutcome::Unknown { evidence, .. }
+                        if evidence.contains("process termination is unconfirmed") =>
+                    {
+                        Some(evidence.clone())
+                    }
                     _ => None,
                 };
                 match &failure {
                     None => klog!("executed: {}", op_name),
                     Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
                 }
-                app.record_operation_completion(&op_name, before, outcome, ref_moves, &repo_path, current, false, refusal_display, cx);
+                app.present_operation_completion(&recording, current, false, refusal_display, cx);
                 if current {
                     if let Some(evidence) = termination_unknown_evidence {
                         app.report_unknown_notice(&repo_path, evidence);
@@ -227,7 +207,8 @@ impl KagiApp {
                 app.present_app_notice();
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
 }
 

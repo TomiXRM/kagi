@@ -25,6 +25,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Record conflict Continue, Skip and merge-to-Commit-Panel handoffs in the backend worker before releasing the write lease. Closing the host no longer discards their receipts; recording failures retain the attempted outcome. (#1740)
 - Keep Continue confirmations free of command disclosures, consistent with Abort, and distinguish a resolved rebase step from completion when more steps remain. (#1736)
 - Preview the same pre-apply restore target used by stash-conflict Abort, and require explicit confirmation before Continue stages its resolution. (#1737)
 - Honor the effective repository comment character, including automatic selection, when preparing and submitting merge commit messages; strip comments from the body while preserving typed subjects even when they begin with the comment character. (#1738)

@@ -39,13 +39,32 @@ witnesses are named there; those local artifacts are not committed).
 Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
-REFUTATIONS remain harness-green while tracked by #1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
+REFUTATIONS remain harness-green while tracked by #1731–#1733, #1743, #1744, #1745, #1746 (model-external runtime findings: #1734–#1738).
 The maintained lifecycle/pure expected-outcome tables linked above map each
 REFUTE to its issue, owner QUESTION, negative control, or runtime CONTRACT.
 The historical ledger below retains its original extraction classifications.
 Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
+
+## P2 maintained-model cutover — #1740
+
+The current `tla/run.py:CHECKS` list contains **56 configurations**, including
+**16 deliberate negative controls**. No TLC execution or new state counts
+are claimed by this cutover; the parent validation command supplies that evidence.
+Historical traces/counts below remain evidence about the original model only.
+
+- **#1740:** `Verify → AppendReceipt → ReleaseLease → Deliver` now applies to
+  Continue, Skip, and merge handoff, matching the backend-owned execute/observe/
+  finalize boundary. `successful` still means verified mutation, not receipt
+  completion. Close during dispatch sets `closing` and detaches the UI; `life`
+  represents the worker lifetime until release. The worker can therefore append
+  without resurrecting a weak UI owner. `ReceiptFollowsMutation` (three configs)
+  and `ContinueEventuallyRecordedOrReported` expect HOLD. Their four
+  `workerReceipt` controls restore release-before-callback accounting (and the
+  merge handoff's missing append). Receipt I/O failure, process kill and fsync
+  durability are outside this fault-free ordering guarantee.
+The draft models and #1732 expectations are intentionally unchanged.
 
 ---
 
@@ -56,13 +75,13 @@ never weaken an assertion just to restore green.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **48** checks, including refreshed-Skip and unreadable-metadata guards; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model now has **56** checks, including the P2 controls above; see also the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
 **Declared:** repository writes must follow plan → confirm → preflight → execute → verify → oplog (`AGENTS.md:23-37`); Save/Continue/Commit retain frozen revision/owner/lease checks and Save stages the explicitly reviewed file (`docs/adr/0227-progressive-conflict-resolution.md:126-128`); Abort preserves partial resolutions (`crates/kagi-git/src/conflicts.rs:27-33`, `ops/conflict_abort.rs:274-280`); D/F removal is recoverable because a snapshot was taken (`ops/dir_file_conflict.rs:299-300`); shared-ref changes invalidate sibling worktrees (`src/app/settle.rs:272-300`).
 
-**Implicit:** WT bytes are not fingerprinted; Save stages by rereading WT; draft JSON uses unlocked truncate/write; persistence errors are logged/ignored; Skip consumes a newly observed live step; Continue/Skip release before UI recording; merge handoff success has no append; merge finalization renews its plan; Conflict is classified as not shared-ref-changing; stash abort filters paths through UTF-8 and verifies only operation/HEAD. These are the actual transitions, not assumed repairs.
+**Historical implicit behavior (superseded where fixed above):** WT bytes were not fingerprinted; Save staged by rereading WT; draft JSON used unlocked truncate/write; persistence errors were logged/ignored; Skip consumed a newly observed live step; Continue/Skip released before UI recording; merge handoff success had no append; merge finalization renewed its plan; Conflict was classified as not shared-ref-changing; stash abort filtered paths through UTF-8 and verified only operation/HEAD. These describe the original extraction, not the maintained P2 transitions.
 
 **Map disagreement, material:** map §5 manual-keystroke P1 is obsolete in the inspected code. `draft_owner.rs:13-18` now calls `autosave_drafts` when capture changes text, and `:184-185` invokes capture on Change. `manual-capture.cfg` holds; deleting that persistence call in `manual-capture-broken.cfg` goes red. The nearby `flow.rs:19` comment that navigation “never persists” is also stale relative to the call at `:21`/`:29`. The strong Crash/Quit invariant still fails for real crash windows and failed I/O, not for the obsolete successful-callback ordering story. Other map line offsets drifted; citations here name inspected current lines.
 
@@ -75,7 +94,7 @@ never weaken an assertion just to restore green.
 - Synchronous edit capture → autosave is split only for crash and cross-process interleaving; **same-process graceful Close/Quit cannot interrupt that callback**. Restart restores same-revision compatible records; corrupted JSON is absent. The two draft writers edit distinct paths, so a missing second record is not legitimate same-file latest-edit coalescing.
 - `draft-lost-update` restricts reads to complete JSON to isolate stale overwrite from the shorter torn-read witness. Abort/Skip preservation failure can occur after truncation and destroy an earlier successful save; D/F snapshot failure is nonfatal before namespace deletion.
 - IndexWrite stages current WT (`index.add_path`), not frozen text. A race can stage unapproved bytes even though later Save verification detects it; the ledger asks whether **pre-verification** mutation exclusion is promised. The model does not claim the raced Save returns Success. Raw resolutions, multi-file Continue rename rollback, cached unrelated-index clobbering, byte decoding, signature/hooks, and detailed CLI retry outcomes are not covered by these lifecycle traces; pure-state checks are separate work.
-- Save receipt HOLD assumes append succeeds and no abrupt crash. It is an ordering guarantee, not fsync/power-loss durability. Continue liveness uses weak fairness for each actor, not an assumption that a closed weak UI owner can run again. The counterexample closes after a successful worker released its lease and then stutters forever.
+- Receipt HOLD assumes append succeeds and no abrupt process death. It is an ordering guarantee, not fsync/power-loss durability. Continue liveness retains weak fairness for each actor. UI destruction during a dispatched worker does not destroy that worker; release ends its retained lifetime after append. The negative control restores the closed-owner callback loss.
 - Safety counterexamples below are BFS-shortest in their configured finite slice. TLC's liveness lasso has no unnecessary loop before its terminal stutter; it is not claimed to minimize real UI gestures. Every event is mapped to source lines below; source-reviewed executable consequences remain [INFERENCE] until a product fixture confirms them.
 
 ## Ledger table
@@ -94,13 +113,13 @@ State counts separated by `/` follow the check/trace order in that row. CONTRACT
 | `DraftNeverLost (captured edit, same revision)` | REFUTE | REFUTED | 11 / 15 | [draft-crash](#trace-draft-crash), [draft-io-quit](#trace-draft-io-quit) | `ui/conflict_view/draft_owner.rs:13-18,233-236; resolution.rs:800-822; ui/editor_workspace/host_close.rs:62-68` | QUESTION (instant crash); BUG (silent I/O failure + close) | Define the capture/durability boundary; failed persistence must keep close blocked or visibly require recovery. |
 | `DraftWriteAtomic` | REFUTE | REFUTED | 20 / 178 / 251 | [draft-torn](#trace-draft-torn), [draft-two-writers](#trace-draft-two-writers), [draft-lost-update](#trace-draft-lost-update) | `resolution.rs:800-822; resolution/drafts.rs:253-301; conflicts.rs:27-33` | BUG | Use atomic replacement plus interprocess serialization/CAS of the load-merge-write document. |
 | `ManualCapturePersisted (successful synchronous callback)` | HOLD | HELD | 14 | — | `ui/conflict_view/draft_owner.rs:13-18,180-187` | CONTRACT; map P1 DISPROVED | The current callback already autosaves; remove the obsolete map suspicion, not the working guard. |
-| `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | REFUTE | REFUTED | 44 / 44 / 40 | [receipt-continue](#trace-receipt-continue), [receipt-merge](#trace-receipt-merge), [receipt-skip](#trace-receipt-skip) | `ui/operations/conflict.rs:404-448,653-698; ui/operations/conflict_skip.rs:100-149; app/session.rs:760-776` | BUG | Append/retain accounting in the mutation-owning worker before releasing its close gate. |
+| `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | HOLD | Awaiting parent TLC run | See maintained results | Historical traces retained below | Backend execute/observe/finalize before worker settlement | CONTRACT (#1740) | Three `workerReceipt` controls restore release-before-append or absent merge accounting. |
 | `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 65 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
 | `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | see current TLC summary | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |
 | `NoDestructiveProgressAfterPreservationFailure (Abort / Skip / D-F)` | REFUTE | REFUTED | 36 / 32 / 16 | [preserve-abort](#trace-preserve-abort), [preserve-skip](#trace-preserve-skip), [preserve-dir-file](#trace-preserve-dir-file) | `ops/conflict_abort.rs:274-286,342-351; conflicts.rs:1880-1894; ops/dir_file_conflict.rs:202-222,299-316` | BUG | Fail closed when the required recovery copy cannot be created; do not destroy the previous copy in place. |
 | `MergeCommitTreeIsApprovedTree` | REFUTE | REFUTED | 25 | [merge-tree](#trace-merge-tree) | `ui/operations/commit.rs:1054-1076,1191-1209; backend.rs:979-998; ops/commit.rs:38-44,74-83` | BUG | Pass the displayed approved index digest through merge finalization instead of silently replanning. |
 | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | REFUTED | 62 | [sibling-invalidation](#trace-sibling-invalidation) | `ops/conflict_abort.rs:367-400; app/flow.rs:78; app/settle.rs:272-300` | BUG | Mark ref-moving Abort as shared-ref-changing so retained sibling worktree views are invalidated. |
-| `ContinueEventuallyRecordedOrReported` | REFUTE | REFUTED | 73 | [continue-liveness](#trace-continue-liveness) | `ui/operations/conflict.rs:659-698; ui/operations/app_bridge.rs:751-758; ui/mod.rs:3661-3669` | BUG | Keep accounting alive beyond weak UI-owner destruction; fairness cannot revive a closed owner. |
+| `ContinueEventuallyRecordedOrReported` | HOLD | Awaiting parent TLC run | See maintained results | Historical [continue-liveness](#trace-continue-liveness) | Backend accounting survives UI destruction | CONTRACT (#1740) | `workerReceipt` restores weak-owner callback loss. |
 | `RepoHasAtMostOneLease (two independent apps)` | REFUTE | REFUTED | 3286 | [two-instance-leases](#trace-two-instance-leases) | `app/session.rs:261-278,544-558; ui/mod.rs:1601` | QUESTION | Is repository-global admission promised, or is independent-app concurrency intentionally unsupported? |
 | `StashAbortRestoresConflictedBytes (non-UTF-8)` | REFUTE | REFUTED | 44 | [stash-non-utf8](#trace-stash-non-utf8) | `ops/conflict_abort.rs:513-537,582-583; backend/conflict_observe.rs:443-467` | BUG | Keep raw path authority through checkout; verify restored WT/index bytes, not only HEAD/operation absence. |
 
@@ -117,12 +136,13 @@ These cfg files set `Broken` in the same source model; they are deliberate model
 | `StaleSnapshotNeverWrites (MERGE_MSG)` | [`stale-metadata-broken.cfg`](../../formal/conflict/tla/stale-metadata-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 43 |
 | `ManualCapturePersisted` | [`manual-capture-broken.cfg`](../../formal/conflict/tla/manual-capture-broken.cfg) | Remove persistence on changed captured input | REFUTE (exit 12) | 6 |
 | `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 41 |
+| `ReceiptFollowsMutation; ContinueEventuallyRecordedOrReported` | `receipt-continue-broken`, `receipt-merge-broken`, `receipt-skip-broken`, `continue-liveness-broken` | `workerReceipt`: release before UI-owned append; omit merge append | Expected REFUTE; pending parent run | — |
 
 The source has several repeated validation reads; the model deliberately consolidates the *last* full-revision/binding guard. The broken revision variant removes that consolidated check, not a claim that deleting only one of several Rust checks would suffice. The payload negative variant admits a non-frozen token at the write boundary to exercise the binding assertion. MergeCommit's modeled lease represents its synchronous busy UI interval, not a claim that its legacy synchronous path allocates a Sessions lease.
 
-## Complete minimal event traces
+## Historical complete minimal event traces
 
-The values below are copied from TLC's `event` field without reordering. Each event has its enabling source lines; 1/2 denote independent app instances. Full state valuations (including revisions, buffers, disk validity, receipts, leases, and staged bytes) are retained in the linked logs. For artificial negative controls, interpret the removed guard above as the only changed semantics.
+The values below were copied from the original TLC `event` field without reordering. Their verdicts, source offsets, and counts describe that historical extraction, not new executions after the P2 cutover. For #1740, current baselines expect HOLD and the paired broken configs preserve refutability; see the maintained table above. Each event has its enabling source lines; 1/2 denote independent app instances. For artificial negative controls, interpret the removed guard as the changed semantics.
 
 <a id="trace-approval-broken"></a>
 ### approval-broken

@@ -890,7 +890,7 @@ impl KagiApp {
                     return;
                 }
                 if let Err(error) = result {
-                    pane.update(cx, |view, _| view.note_draft_result(Err(error.to_string())));
+                    pane.update(cx, |view, _| view.note_draft_result(None, Err(error.to_string())));
                     app.record_operation_completion(
                         "conflict-draft-preserve",
                         kagi_git::ops::StateSummary {

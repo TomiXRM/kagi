@@ -15,7 +15,7 @@ impl ConflictView {
         if self.result_editing {
             if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
                 if let Err(error) = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) {
-                    self.note_draft_result(Err(error));
+                    self.note_draft_result(None, Err(error));
                 }
             }
         }
@@ -38,7 +38,7 @@ impl ConflictView {
                 true
             }
             Err(error) => {
-                self.note_draft_result(Err(error));
+                self.note_draft_result(None, Err(error));
                 false
             }
             _ => true,
@@ -59,7 +59,7 @@ impl ConflictView {
                 if let Err(error) =
                     pull_owned_editor(self.editor_inputs.as_ref(), previous, path, cx)
                 {
-                    self.note_draft_result(Err(error));
+                    self.note_draft_result(None, Err(error));
                 }
             }
         }
@@ -194,7 +194,7 @@ impl ConflictView {
                     return;
                 }
                 Err(error) => {
-                    self.note_draft_result(Err(error));
+                    self.note_draft_result(None, Err(error));
                     return;
                 }
                 Ok(None) => {}
@@ -265,7 +265,10 @@ impl ConflictView {
             Ok(ticket) => {
                 self.draft_save = Some(ticket);
             }
-            Err(error) => self.note_draft_result(Err(error.to_string())),
+            Err(error) => {
+                klog!("conflict-mode: resolution draft autosave failed: {error}");
+                self.note_draft_result(None, Err(error.to_string()));
+            }
         }
     }
 
@@ -308,7 +311,10 @@ impl ConflictView {
             let _ = this.update(cx, |view, cx| {
                 view.draft_watch_running = false;
                 if ticket.is_current() {
-                    view.note_draft_result(result.map(|_| ()).map_err(|error| error.to_string()));
+                    view.note_draft_result(
+                        Some(ticket.generation()),
+                        result.map(|_| ()).map_err(|error| error.to_string()),
+                    );
                     view.present_draft_failure(cx).detach();
                 }
                 view.watch_draft_save(cx);
@@ -318,11 +324,18 @@ impl ConflictView {
         .detach();
     }
 
-    pub(crate) fn note_draft_result(&mut self, result: Result<(), String>) {
+    pub(crate) fn note_draft_result(&mut self, generation: Option<u64>, result: Result<(), String>) {
         match result {
             Ok(()) => self.draft_persist_failed = None,
             Err(error) => {
-                klog!("conflict-mode: resolution draft autosave failed: {error}");
+                // wait() and flush() can report the same failed writer ticket.
+                // Capture errors already have their own draft-update contract.
+                if let Some(generation) = generation {
+                    if self.draft_logged_generation != Some(generation) {
+                        klog!("conflict-mode: resolution draft autosave failed: {error}");
+                        self.draft_logged_generation = Some(generation);
+                    }
+                }
                 if self.draft_persist_failed.as_ref() != Some(&error) {
                     self.draft_failure_pending = Some(error.clone());
                 }
@@ -431,7 +444,13 @@ impl ConflictView {
                             mode.revision == revision && !mode.buffer.has_unflushed_drafts()
                         });
                     if result.is_err() || current {
-                        view.note_draft_result(result.map_err(|error| error.to_string()));
+                        view.note_draft_result(
+                            ticket
+                                .as_ref()
+                                .filter(|ticket| ticket.is_current())
+                                .map(|ticket| ticket.generation()),
+                            result.map_err(|error| error.to_string()),
+                        );
                     }
                     if let Some(error) = view.draft_persist_failed.as_ref() {
                         view.draft_failure_pending = Some(error.clone());

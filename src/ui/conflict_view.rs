@@ -164,6 +164,7 @@ pub struct ConflictView {
     draft_save: Option<kagi_git::resolution::DraftSave>,
     draft_watch_running: bool,
     draft_watched_generation: u64,
+    draft_logged_generation: Option<u64>,
     pub(crate) draft_flushes: usize,
     /// Presentation projection from the existing accepted-observation stale path.
     pub(crate) saved_review_needed: bool,
@@ -265,6 +266,7 @@ impl ConflictView {
             draft_save: None,
             draft_watch_running: false,
             draft_watched_generation: 0,
+            draft_logged_generation: None,
             draft_flushes: 0,
             saved_review_needed: false,
             sidebar: Default::default(),

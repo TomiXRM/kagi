@@ -216,8 +216,20 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>, dis
     // Deny actual filesystem access, not an injected view flag or mocked backend.
     let denied = UnwritableDirectory::new(isolated.directory.path().join("conflicts"));
     let before = failed_receipts(&repo);
+    let failure_log_prefix = "[kagi] conflict-mode: resolution draft autosave failed: ";
+    let failure_logs = || {
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| {
+                line.starts_with(failure_log_prefix)
+                    && line.contains(denied.path.to_str().unwrap())
+            })
+            .count()
+    };
+    let before_logs = failure_logs();
     replace_result(cx, &app, window, &input, DRAFT);
     assert_live(cx, &app, window);
+    assert_eq!(failure_logs(), before_logs + 1, "one line per failed generation");
     assert!(
         failed_receipts(&repo) > before,
         "autosave failure must be durable in oplog"
@@ -244,6 +256,7 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>, dis
         click_control(cx, window, "editor-dirty-guard-discard");
     } else {
         let before_retry = failed_receipts(&repo);
+        let before_retry_logs = failure_logs();
         click_control(cx, window, "editor-dirty-guard-save");
         assert_guard(cx, &app, window, lang);
         assert!(
@@ -251,6 +264,11 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>, dis
             "Retry must attempt real persistence again"
         );
         assert_error_toast(cx, &app, &repo);
+        assert_eq!(
+            failure_logs(),
+            before_retry_logs + 1,
+            "Retry logs its new failed generation once despite wait/flush observers"
+        );
         denied.restore();
         click_control(cx, window, "editor-dirty-guard-save");
         cx.read(|cx| {

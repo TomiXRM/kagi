@@ -989,6 +989,13 @@ impl Render for KagiApp {
                     let height = self.bottom_panel_body_height(window, false);
                     // Conflict Mode replaces render_body, not the window-wide
                     // panel: preserved drafts must remain inspectable here.
+                    let notifications = self.render_toasts(
+                        window,
+                        super::busy::ToastPlacement::Repository,
+                        true,
+                        cx,
+                    );
+                    entity.update(cx, |view, _| view.notifications = notifications);
                     el.child(entity).children(self.render_bottom_panel_slot(
                         visible,
                         height,
@@ -1048,8 +1055,6 @@ impl Render for KagiApp {
         // are not overpainted by workspace chrome.
         let root = self.attach_modal_layer(root, true, window, cx);
         let content = root
-            // ── W3-NOTIFY: toast stack (above everything) ──────
-            .children(self.render_toasts(Some(window), true, cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(self.window_active, cx))
             .into_any();

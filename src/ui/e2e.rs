@@ -528,7 +528,7 @@ pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElemen
 use gpui::{App, AppContext as _, AssetSource, Entity, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{fonts, theme, toast_stack, KagiApp};
+use super::{fonts, theme, toast_stack, KagiApp, Msg, ToastKind};
 
 #[cfg(feature = "gui-e2e")]
 pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
@@ -781,6 +781,7 @@ pub fn build_kagi_entity(
         }
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.observe(stack, |_, _, cx| cx.notify()).detach();
             cx.subscribe_in(
                 stack,
                 window,
@@ -809,8 +810,39 @@ pub fn build_kagi_entity(
                         super::types::ToastAction::OpenOperationLog(entry) => {
                             app.open_operation_result(entry, cx)
                         }
+                        super::types::ToastAction::RefreshRepository(owner) => {
+                            let index = app.tabs.iter().position(|tab| {
+                                tab.session == owner.session && tab.path == owner.path
+                            });
+                            if let Some(index) = index {
+                                let left = app.home_yields_to_repository();
+                                app.return_to_tab(index, left, cx);
+                            }
+                            let attached = app.app_sessions.attachment(owner.session);
+                            if index.is_some()
+                                && app.active_session() == Some(owner.session)
+                                && app.repo_path.as_ref() == Some(&owner.path)
+                                && attached.as_ref().is_some_and(|current| {
+                                    current.path == owner.path && current.worktree == owner.worktree
+                                })
+                            {
+                                app.reload_manual(cx);
+                            } else {
+                                app.push_toast(
+                                    ToastKind::Error,
+                                    Msg::conflict_draft_refresh_unavailable(),
+                                    cx,
+                                );
+                            }
+                            false
+                        }
                     };
-                    if opened {
+                    let recovery_details = stack
+                        .read(cx)
+                        .toasts()
+                        .iter()
+                        .any(|toast| toast.id == request.id && toast.refresh_owner.is_some());
+                    if opened && !recovery_details {
                         stack.update(cx, |stack, cx| stack.begin_exit(request.id, cx));
                     }
                 },

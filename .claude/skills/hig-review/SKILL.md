@@ -113,6 +113,16 @@ default focus or a root Return action.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.
+Repository notifications occupy the center content's top-trailing safe area,
+below its header/help/banner and outside sidebar/Inspector, with a 45%-column
+width cap (#1768). Persistent cards keep × / Escape dismissal. Home/Settings
+open an in-flow lane only for Error/action-bearing cards; transient feedback
+must not move controls. Recovery captions reuse the existing command name,
+and a failed or unfinished refresh must not dismiss the failure preview.
+Any accepted successful read for the captured owner resolves that preview,
+including keyboard/menu refresh, tab reactivation and external reload; the
+card's own Refresh button is not a prerequisite. Takeover centers follow the
+same persistent-only lane admission, with no empty band for transient stacks.
 Mixed-state close warnings name every kind of unsaved data they will discard,
 including the scoped ordinary-editor file count alongside conflict decisions
 (`feedback.md › Best practices`: "Warn people when they initiate a task that can

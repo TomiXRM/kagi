@@ -145,6 +145,7 @@ pub type ToastCloseFocus =
 pub enum ToastAction {
     OpenRepository(std::path::PathBuf),
     OpenOperationLog(super::oplog_panel::EntryKey),
+    RefreshRepository(crate::app::Attachment),
 }
 
 /// One snackbar entry, stacked bottom-right above the status bar.
@@ -163,6 +164,7 @@ pub struct Toast {
     /// Stable repository / requested operation / outcome identity.
     pub result_key: Option<String>,
     pub action: Option<ToastAction>,
+    pub refresh_owner: Option<crate::app::Attachment>,
     /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,
     /// Hover pause began here; elapsed hover time is excluded from the timer.
@@ -170,6 +172,7 @@ pub struct Toast {
     /// Per-window rendered Button handles, retained until removal repairs focus.
     pub close_focus: ToastCloseFocus,
     pub action_focus: Option<ToastCloseFocus>,
+    pub refresh_focus: Option<ToastCloseFocus>,
     /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
     /// button): `t` is when the exit animation started. The toast keeps
     /// rendering during the exit so the slide-out is visible, then a one-shot
@@ -178,6 +181,10 @@ pub struct Toast {
 }
 
 impl Toast {
+    pub fn is_persistent(&self) -> bool {
+        self.kind == ToastKind::Error || self.action.is_some() || self.refresh_owner.is_some()
+    }
+
     /// Success/info/sync previews expire after four seconds of unhovered time.
     /// Errors require explicit dismissal, giving readers an unlimited interval.
     fn lifetime(&self) -> Duration {
@@ -187,8 +194,7 @@ impl Toast {
     /// The toast has been visible long enough to start sliding out (and is not
     /// already doing so).
     pub(crate) fn should_start_exit(&self) -> bool {
-        self.kind != ToastKind::Error
-            && self.action.is_none()
+        !self.is_persistent()
             && self.paused_at.is_none()
             && self.dismissing.is_none()
             && self.born.elapsed() >= self.lifetime()

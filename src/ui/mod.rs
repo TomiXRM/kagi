@@ -1784,6 +1784,11 @@ impl KagiApp {
             .unwrap_or("");
         let message = if repository.is_empty() {
             message
+        } else if op == "conflict-draft-restore" {
+            SharedString::from(format!(
+                "{message}\n{}",
+                Msg::conflict_draft_repository(repository)
+            ))
         } else {
             SharedString::from(format!("{message} — {repository}"))
         };

@@ -68,6 +68,13 @@ impl ConflictView {
             .child(e2e::measure_inside("conflict-sidebar-clip"))
         });
         let header = self.render_file_header(cx);
+        let source_headers = if self.selected_saved.is_none() {
+            self.mode
+                .as_ref()
+                .and_then(crate::ui::conflict_editor::source_headers)
+        } else {
+            None
+        };
         let chrome = self.editor_chrome();
         let body = if self.selected_saved.is_some() {
             self.render_saved(&chrome, cx)
@@ -89,8 +96,26 @@ impl ConflictView {
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(0.))
-                    .child(header)
-                    .child(body),
+                    .child(
+                        div()
+                            .relative()
+                            .flex_shrink_0()
+                            .child(e2e::measure_inside("conflict-content-header"))
+                            .child(header),
+                    )
+                    .children(source_headers)
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .min_h(px(0.))
+                            .child(e2e::measure_inside("toast-content-anchor"))
+                            .child(body)
+                            .children(self.notifications.take()),
+                    ),
             )
             .child(
                 gpui::canvas(

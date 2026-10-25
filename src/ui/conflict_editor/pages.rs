@@ -40,8 +40,6 @@ pub(super) fn render_panes(
     ];
     let a = pane(
         "conflict-pane-a",
-        format!("{} — {}", labels.current.name, Msg::EditorCurrentSide.t()),
-        theme().color_branch,
         side_row_list(
             path,
             model,
@@ -53,8 +51,6 @@ pub(super) fn render_panes(
     );
     let b = pane(
         "conflict-pane-b",
-        format!("{} — {}", labels.incoming.name, Msg::EditorIncomingSide.t()),
-        theme().color_remote,
         side_row_list(
             path,
             model,
@@ -158,7 +154,6 @@ pub(super) fn render_panes(
                         .flex()
                         .flex_col()
                         .bg(rgb(theme().panel))
-                        .child(div().h(theme::scaled_px(26.)).flex_shrink_0())
                         .child(gutter)
                         .child(div().h(theme::scaled_px(25.)).flex_shrink_0()),
                 )

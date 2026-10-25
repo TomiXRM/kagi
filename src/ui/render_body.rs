@@ -627,84 +627,99 @@ impl KagiApp {
                     .child(SharedString::from("MESSAGE")),
             );
 
-        let commit_list_col = div()
-            .flex_1()
-            // Allow the center column to shrink below its longest commit
-            // message's intrinsic width so the right-hand inspector panel always
-            // keeps its space (flex min-width defaults to content size, which for
-            // repos with long commit/merge messages pushes the inspector
-            // off-screen — user report, remote SSH repos with long branch names).
-            .min_w(px(0.))
-            .overflow_hidden()
-            .h_full()
-            .flex()
-            .flex_col()
-            .when(compact, |column| {
-                column
-                    .relative()
-                    .child(e2e::measure_inside("compact-graph"))
-            })
-            // ── Column header row (T030) ──────────────
-            .child(col_header)
-            // WIP, stash and commit rows share one scroll origin.
-            .child({
-                if self.loading_tab().is_none()
-                    && self.remote_view.is_none()
-                    && self.view().status_summary.is_unborn
-                    && prefix_count + row_count == 0
-                {
-                    // The cached unborn page replaces the entire list, so
-                    // release its retained focus before its tracker disappears.
-                    if self
-                        .graph_focus
-                        .as_ref()
-                        .is_some_and(|focus| focus.is_focused(window))
-                    {
-                        if let Some(root) = &self.root_focus {
-                            root.focus(window, cx);
-                        }
-                    }
-                    let mut empty = div()
+        let commit_list_col =
+            div()
+                .flex_1()
+                // Allow the center column to shrink below its longest commit
+                // message's intrinsic width so the right-hand inspector panel always
+                // keeps its space (flex min-width defaults to content size, which for
+                // repos with long commit/merge messages pushes the inspector
+                // off-screen — user report, remote SSH repos with long branch names).
+                .min_w(px(0.))
+                .overflow_hidden()
+                .h_full()
+                .flex()
+                .flex_col()
+                .when(compact, |column| {
+                    column
                         .relative()
-                        .size_full()
-                        .child(self.render_unborn_empty_state(cx));
-                    let height = px(row_height(self.graph_compact));
-                    for (ghost, offset, opacity) in self.ui().graph_motion.ghosts_after(0, height) {
-                        let (_, ordinal, label, count, diffstat, click, is_worktree) =
-                            &ghost.params;
-                        let content = self.render_wip_row(
-                            ghost.lane.map_or(*ordinal, |lane| lane.color),
-                            label.clone(),
-                            *count,
-                            *diffstat,
-                            click.clone(),
-                            *is_worktree,
-                            ghost.lane.map(|lane| lane.lane),
-                            &ghost.passing,
-                            badge_col_w,
-                            graph_col_w,
-                            self.ui().graph_scroll_x,
-                            (0, 0),
-                            Some(&ghost.key),
-                            cx,
-                        );
-                        empty = empty.child(
-                            div()
-                                .absolute()
-                                .top(offset)
-                                .w_full()
-                                .h(height)
-                                .opacity(opacity)
-                                .child(content)
-                                .child(e2e::measure_inside("graph-wip-ghost")),
-                        );
-                    }
-                    empty.into_any_element()
-                } else {
-                    // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
-                    // overlay; the other is moved into `track_scroll`.
-                    let scrollbar_handle = commit_scroll_handle.clone();
-                    let rows = div()
+                        .child(e2e::measure_inside("compact-graph"))
+                })
+                // ── Column header row (T030) ──────────────
+                .child(
+                    col_header
+                        .relative()
+                        .child(e2e::measure_inside("graph-column-header")),
+                )
+                // WIP, stash and commit rows share one scroll origin.
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .child(e2e::measure_inside("toast-content-anchor"))
+                        .child({
+                            if self.loading_tab().is_none()
+                                && self.remote_view.is_none()
+                                && self.view().status_summary.is_unborn
+                                && prefix_count + row_count == 0
+                            {
+                                // The cached unborn page replaces the entire list, so
+                                // release its retained focus before its tracker disappears.
+                                if self
+                                    .graph_focus
+                                    .as_ref()
+                                    .is_some_and(|focus| focus.is_focused(window))
+                                {
+                                    if let Some(root) = &self.root_focus {
+                                        root.focus(window, cx);
+                                    }
+                                }
+                                let mut empty = div()
+                                    .relative()
+                                    .size_full()
+                                    .child(self.render_unborn_empty_state(cx));
+                                let height = px(row_height(self.graph_compact));
+                                for (ghost, offset, opacity) in
+                                    self.ui().graph_motion.ghosts_after(0, height)
+                                {
+                                    let (_, ordinal, label, count, diffstat, click, is_worktree) =
+                                        &ghost.params;
+                                    let content = self.render_wip_row(
+                                        ghost.lane.map_or(*ordinal, |lane| lane.color),
+                                        label.clone(),
+                                        *count,
+                                        *diffstat,
+                                        click.clone(),
+                                        *is_worktree,
+                                        ghost.lane.map(|lane| lane.lane),
+                                        &ghost.passing,
+                                        badge_col_w,
+                                        graph_col_w,
+                                        self.ui().graph_scroll_x,
+                                        (0, 0),
+                                        Some(&ghost.key),
+                                        cx,
+                                    );
+                                    empty = empty.child(
+                                        div()
+                                            .absolute()
+                                            .top(offset)
+                                            .w_full()
+                                            .h(height)
+                                            .opacity(opacity)
+                                            .child(content)
+                                            .child(e2e::measure_inside("graph-wip-ghost")),
+                                    );
+                                }
+                                empty.into_any_element()
+                            } else {
+                                // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
+                                // overlay; the other is moved into `track_scroll`.
+                                let scrollbar_handle = commit_scroll_handle.clone();
+                                let rows = div()
                         .id("commit-list-roles")
                         .flex_1()
                         .min_h(px(0.))
@@ -937,52 +952,59 @@ impl KagiApp {
                             .flex_1()
                             .min_h(px(0.)),
                         );
-                    // One retained stop for the virtual commit list, not
-                    // one per recycled row. The inset ring leaves its
-                    // viewport and row geometry unchanged.
-                    let graph_focus = self
-                        .graph_focus
-                        .get_or_insert_with(|| cx.focus_handle())
-                        .clone()
-                        .tab_index(0)
-                        .tab_stop(true);
-                    let ring_visible =
-                        graph_focus.is_focused(window) && window.last_input_was_keyboard();
-                    let list = with_vertical_scrollbar(
-                        "commit-list-scroll",
-                        &scrollbar_handle,
-                        super::list_a11y::list_box(
-                            "commit-list",
-                            rows.track_focus(&graph_focus),
-                            Msg::A11yCommitList.t(),
-                        ),
-                        true,
-                    )
-                    .relative()
-                    .when(ring_visible, |list| {
-                        list.child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .border_2()
-                                .border_color(rgb(theme().ui_accent())),
-                        )
-                    })
-                    .child(e2e::measure_inside("commit-list-viewport"));
-                    // The pagination Button is a sibling, never a descendant of
-                    // the ListBox, whose virtual children are all Options.
-                    div()
-                        .flex_1()
-                        .min_h(px(0.))
-                        .flex()
-                        .flex_col()
-                        .child(list)
-                        .when(has_more_commits, |column| {
-                            column.child(render_load_more_row(self.graph_compact, cx))
+                                // One retained stop for the virtual commit list, not
+                                // one per recycled row. The inset ring leaves its
+                                // viewport and row geometry unchanged.
+                                let graph_focus = self
+                                    .graph_focus
+                                    .get_or_insert_with(|| cx.focus_handle())
+                                    .clone()
+                                    .tab_index(0)
+                                    .tab_stop(true);
+                                let ring_visible = graph_focus.is_focused(window)
+                                    && window.last_input_was_keyboard();
+                                let list = with_vertical_scrollbar(
+                                    "commit-list-scroll",
+                                    &scrollbar_handle,
+                                    super::list_a11y::list_box(
+                                        "commit-list",
+                                        rows.track_focus(&graph_focus),
+                                        Msg::A11yCommitList.t(),
+                                    ),
+                                    true,
+                                )
+                                .relative()
+                                .when(ring_visible, |list| {
+                                    list.child(
+                                        div()
+                                            .absolute()
+                                            .inset_0()
+                                            .border_2()
+                                            .border_color(rgb(theme().ui_accent())),
+                                    )
+                                })
+                                .child(e2e::measure_inside("commit-list-viewport"));
+                                // The pagination Button is a sibling, never a descendant of
+                                // the ListBox, whose virtual children are all Options.
+                                div()
+                                    .flex_1()
+                                    .min_h(px(0.))
+                                    .flex()
+                                    .flex_col()
+                                    .child(list)
+                                    .when(has_more_commits, |column| {
+                                        column.child(render_load_more_row(self.graph_compact, cx))
+                                    })
+                                    .into_any_element()
+                            }
                         })
-                        .into_any_element()
-                }
-            });
+                        .children(self.render_toasts(
+                            window,
+                            super::busy::ToastPlacement::Repository,
+                            true,
+                            cx,
+                        )),
+                );
 
         // The Graph page's panes are drawn this frame only while the sidebar
         // is (or is still closing) and shows that page — the PRs and Issues
@@ -1065,12 +1087,17 @@ impl KagiApp {
                 | workspace::CenterPane::IssuesMode
         );
         let center_content = div()
+            .relative()
             .flex()
             .flex_col()
             .flex_1()
             .min_w(px(0.))
             .min_h(px(0.))
             .overflow_hidden();
+        let mut takeover_notifications = !matches!(
+            layout.center,
+            workspace::CenterPane::CommitList | workspace::CenterPane::Editor
+        );
         let center_content = match workspace::center_item(layout.center) {
             Some(item) => match item.render(
                 self,
@@ -1087,6 +1114,7 @@ impl KagiApp {
                     workspace::CenterPane::Editor | workspace::CenterPane::Diff
                 ) =>
                 {
+                    takeover_notifications = false;
                     center_content.child(commit_list_col)
                 }
                 None => center_content,
@@ -1098,6 +1126,47 @@ impl KagiApp {
                 _ => center_content.child(commit_list_col),
             },
         };
+        // Like Home and Settings, takeovers reserve space only for persistent
+        // cards. Transient feedback stays overlaid; a fallback commit list
+        // already owns its stack and must not acquire a second one here.
+        let persistent_lane = self
+            .toast_stack
+            .as_ref()
+            .is_some_and(|stack| stack.read(cx).persistent_lane_open());
+        let center_content = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .when(takeover_notifications && persistent_lane, |el| {
+                el.child(
+                    div()
+                        .relative()
+                        .flex()
+                        .justify_end()
+                        .flex_shrink_0()
+                        .child(e2e::measure_inside("toast-content-anchor"))
+                        .children(self.render_toasts(
+                            window,
+                            super::busy::ToastPlacement::PersistentLane,
+                            true,
+                            cx,
+                        )),
+                )
+            })
+            .child(center_content.when(takeover_notifications, |el| {
+                el.child(e2e::measure_inside("takeover-page-controls"))
+            }))
+            .when(takeover_notifications, |el| {
+                el.children(self.render_toasts(
+                    window,
+                    super::busy::ToastPlacement::Transient,
+                    true,
+                    cx,
+                ))
+            });
         let center_column = div()
             .flex()
             .flex_col()

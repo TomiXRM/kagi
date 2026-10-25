@@ -507,6 +507,22 @@ These probes are not native VoiceOver or Full Keyboard Access evidence.
 Tier B inspects the live ComboBox and option names and both zoom button/value
 nodes at 100%, 70% and 167%, including disabled announcements.
 
+For #1766/#1767/#1768 include the conflict control/density/roles/progressive,
+danger-sheet, `toast_` and `conflict_draft_restore_io` scenarios. Count actual
+rendered button roles: unresolved Results have zero prominent controls, and a
+ready unsaved Result has exactly one, Save. Danger-sheet root Return preserves
+the same sheet/arm without executing or cancelling; Escape / ⌘. still cancel,
+and focused buttons retain Space / Return. Measure notification bounds against
+each actual center content, not the window: top-trailing below file/graph/editor
+controls, outside sidebar/Inspector, at most 45% of that column. Home/Settings
+reserve a lane only for persistent cards, preserve transient layout, and keep
+Settings' last control reachable. The saved-conflict failure has separate
+repository identity and full Operation Log / Refresh Repository labels; failed
+refresh retains it, accepted successful recovery dismisses only its own card.
+Tier B repeats these on a plain binary with real merge conflicts and a saved
+draft read failure, including × / Escape, root Return, focused-button activation
+and actual destructive caption contrast in EN/JA and Light/Dark.
+
 For #1591 use `KAGI_GUI_E2E_ONLY='toast_,toolbar_overflow,settings_groups'`
 with KEEP_GOING and `KAGI_GUI_E2E_TIMEOUT_SECS=300`.
 `toast_tooltip_lifetime` measures the actual dismiss-tooltip content, requiring

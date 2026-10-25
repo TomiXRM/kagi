@@ -9,6 +9,22 @@ impl Msg {
         draft_restore_failed_for(lang()).into()
     }
 
+    pub fn conflict_draft_repository(name: &str) -> String {
+        match lang() {
+            Lang::En => format!("Repository: {name}"),
+            Lang::Ja => format!("リポジトリ: {name}"),
+        }
+    }
+
+    pub fn conflict_draft_refresh_unavailable() -> &'static str {
+        match lang() {
+            Lang::En => {
+                "The repository for these saved edits is no longer available in this window."
+            }
+            Lang::Ja => "この保存済み編集のリポジトリは、このウィンドウでは利用できません。",
+        }
+    }
+
     pub fn conflict_draft_preserve_failed() -> String {
         draft_preserve_failed_for(lang()).into()
     }
@@ -95,8 +111,8 @@ fn draft_rescued_for(language: Lang, name: &str) -> String {
 
 fn draft_restore_failed_for(language: Lang) -> &'static str {
     match language {
-        Lang::En => "Could not read saved conflict edits. See Operation Log, then reload to try again.",
-        Lang::Ja => "保存した conflict の編集内容を読めませんでした。Operation Log を確認してから再読み込みしてください。",
+        Lang::En => "Could not read saved conflict edits.",
+        Lang::Ja => "保存した conflict の編集内容を読めませんでした。",
     }
 }
 
@@ -115,7 +131,7 @@ mod tests {
     fn failed_draft_restore_preview_is_bounded_in_both_languages() {
         for language in [Lang::En, Lang::Ja] {
             let preview = draft_restore_failed_for(language);
-            assert!(preview.contains("Operation Log"));
+            assert!(!preview.contains("Operation Log") && !preview.contains("reload"));
             assert!(preview.chars().count() < 100);
             assert!(!preview.contains('/') && !preview.contains('\n'));
         }

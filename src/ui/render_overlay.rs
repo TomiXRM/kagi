@@ -1,8 +1,7 @@
-//! Independently-rendered overlay entities split out of `render.rs`
-//! (T-SPLIT-RENDER-001 / ADR-0116 Wave 3): the toast stack and operation-log
-//! panel each render as their own GPUI entity so a push / row-expand only
-//! re-renders that subtree, not all of `KagiApp` (ADR-0110 Phase 5). Behaviour
-//! is unchanged — this is a pure physical move from `render.rs`.
+//! Overlay rendering split out of `render.rs` (ADR-0116 Wave 3).
+//! Toast lifecycle and actions retain one entity owner. Repository hosts render
+//! the whole stack; non-repository hosts project persistent cards into the
+//! in-flow lane and transient cards into a separate overlay.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -11,10 +10,9 @@ use super::*;
 use crate::ui::modal_renderers::*;
 
 // ──────────────────────────────────────────────────────────────
-// Toast overlay (ADR-0110 Phase 5): the toast cards render as their own
-// `Entity<ToastStack>` so a push/expire only re-renders this subtree, not
-// the whole `KagiApp`. The busy snackbar stays on `KagiApp` (driven by
-// the write latch); see `KagiApp::render_toasts`.
+// Toast overlay (ADR-0110 Phase 5): ToastHost borrows the shared ToastStack
+// through its existing window-owner subscriptions. The busy snackbar stays on
+// KagiApp (driven by the write latch); see KagiApp::render_toasts.
 
 /// The rotating sync icon, at `size` px. **Every** rotating arrow in the app
 /// comes from here: a static ⟳ promises motion it does not deliver, which is
@@ -72,21 +70,71 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
     theme::scaled_px(TOAST_SLIDE_PX * delta)
 }
 
+/// Lightweight host projection. The window owners already observe the shared
+/// stack, so this allocates no entity and keeps all callbacks on its owner.
+#[derive(gpui::IntoElement)]
+pub(super) struct ToastHost {
+    pub stack: gpui::Entity<toast_stack::ToastStack>,
+    pub partition: toast_stack::ToastPartition,
+}
+
+impl gpui::RenderOnce for ToastHost {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        self.stack.update(cx, |stack, cx| {
+            stack.render_partition(self.partition, window, cx)
+        })
+    }
+}
+
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_partition(toast_stack::ToastPartition::All, _window, cx)
+    }
+}
+
+impl toast_stack::ToastStack {
+    fn render_partition(
+        &mut self,
+        partition: toast_stack::ToastPartition,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let error_line_height = (_window.rem_size() * 1.4).round();
+        let count = self
+            .toasts()
+            .iter()
+            .filter(|toast| partition.includes(toast))
+            .count();
+        let newest = self
+            .toasts()
+            .iter()
+            .rev()
+            .find(|toast| partition.includes(toast))
+            .map(|toast| toast.id);
         // Keep the foreground workspace usable even at accessibility zoom.
         // Expansion scrolls within the same budget; durable detail stays in OpLog.
         let budget = _window.viewport_size().height * 0.3;
+        let slide_sign = if self.trailing_placement(_window.window_handle().window_id(), partition)
+        {
+            1.0
+        } else {
+            -1.0
+        };
         // Pinned GPUI has no live/priority setter. A stable Status node exposes
         // arrival text without stealing focus or promoting dismissed old cards.
-        let arrival = self.status();
+        let arrival = self.status().filter(|(id, _)| {
+            partition == toast_stack::ToastPartition::All
+                || self
+                    .toasts()
+                    .iter()
+                    .any(|toast| toast.id == *id && partition.includes(toast))
+        });
         let label = arrival
             .map(|(_, message)| message.clone())
             .unwrap_or_default();
         let role = gpui::Role::Status;
         let mut stack = div()
-            .id("toast-stack")
+            .id(("toast-stack", partition as u64))
             .role(role)
             .aria_label(label.clone())
             .flex()
@@ -94,15 +142,30 @@ impl gpui::Render for toast_stack::ToastStack {
             .gap_2()
             .min_h_0()
             .max_h(budget)
-            .child(e2e::measure_inside("toast-stack"));
+            .when(count > 0, |el| {
+                let el = el.child(e2e::measure_inside(match partition {
+                    toast_stack::ToastPartition::All => "toast-repository-stack",
+                    toast_stack::ToastPartition::Persistent => "toast-persistent-stack",
+                    toast_stack::ToastPartition::Transient => "toast-transient-stack",
+                }));
+                // Keep the existing primary-stack oracle unambiguous while
+                // allowing mixed-host tests to measure each projection.
+                el.when(
+                    partition != toast_stack::ToastPartition::Transient
+                        || !self.persistent_lane_open(),
+                    |el| el.child(e2e::measure_inside("toast-stack")),
+                )
+            });
         #[cfg(feature = "gui-e2e")]
-        toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
-        if self.toasts().len() > 1 {
+        if arrival.is_some() || self.is_empty() {
+            toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
+        }
+        if count > 1 {
             use gpui_component::button::{Button, ButtonVariants as _};
             let owner = cx.entity().downgrade();
             use gpui_component::Sizable as _;
-            let count = self.toasts().len() - 1;
-            let caption = if self.expanded {
+            let count = count - 1;
+            let caption = if self.expanded[partition as usize] {
                 Msg::ToastCollapse.t().to_string()
             } else if count == 1 {
                 Msg::ToastMoreOne.t().to_string()
@@ -117,48 +180,50 @@ impl gpui::Render for toast_stack::ToastStack {
                     .bg(rgb(theme().elevated_surface(theme().panel)))
                     .child(
                         toast_stack::ToastButton(
-                            Button::new(("toast-summary", 0u64))
+                            Button::new(("toast-summary", partition as u64))
                                 .small()
                                 .ghost()
                                 .w_full()
                                 .label(caption.clone())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.toggle_expanded(cx);
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_expanded(partition, cx);
                                 })),
-                            0,
-                            self.summary_focus.clone(),
+                            partition as u64,
+                            self.summary_focus[partition as usize].clone(),
                             "toast-summary",
                         )
                         .aria_label(SharedString::from(caption))
-                        .aria_expanded(self.expanded)
+                        .aria_expanded(self.expanded[partition as usize])
                         .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                            let _ = owner.update(cx, |stack, cx| stack.toggle_expanded(cx));
+                            let _ =
+                                owner.update(cx, |stack, cx| stack.toggle_expanded(partition, cx));
                         })
                         .on_key_down(super::keyboard_nav::stop_activation_keys),
                     ),
             );
         }
         let mut cards = div()
-            .id("toast-cards")
+            .id(("toast-cards", partition as u64))
             .flex()
             .flex_col()
             .gap_2()
             .min_h_0()
-            .max_h(if self.toasts().len() > 1 {
+            .max_h(if count > 1 {
                 (budget - theme::scaled_px(40.)).max(gpui::px(0.))
             } else {
                 budget
             })
             .overflow_y_scroll();
         for toast in self.toasts().iter().rev().filter(|toast| {
-            self.expanded || self.toasts().last().is_some_and(|last| last.id == toast.id)
+            partition.includes(toast)
+                && (self.expanded[partition as usize] || newest == Some(toast.id))
         }) {
             let id = toast.id;
             let leaving = toast.dismissing.is_some();
             let card = toast_card(toast, error_line_height, cx);
 
-            // Slide + fade: in from the left on appear, out to the left on
-            // dismiss. Keyed by toast id so the animation plays once and holds.
+            // Slide from the host's placement edge; bottom transients retain
+            // their leading animation while content/lane cards enter trailing.
             // Reduce motion: skip the horizontal slide (a vestibular trigger) and
             // show the toast at its resting state — visible while present, hidden
             // once leaving — so it appears/disappears without motion.
@@ -174,7 +239,10 @@ impl gpui::Render for toast_stack::ToastStack {
                     ("kagi-toast-exit", id),
                     gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))
                         .with_easing(gpui::quadratic),
-                    |el, delta| el.ml(-toast_slide_offset(delta)).opacity(1.0 - delta),
+                    move |el, delta| {
+                        el.ml(toast_slide_offset(delta) * slide_sign)
+                            .opacity(1.0 - delta)
+                    },
                 )
                 .into_any_element()
             } else {
@@ -182,13 +250,16 @@ impl gpui::Render for toast_stack::ToastStack {
                     ("kagi-toast-enter", id),
                     gpui::Animation::new(Duration::from_millis(TOAST_ENTER_MS))
                         .with_easing(gpui::ease_out_quint()),
-                    |el, delta| el.ml(-toast_slide_offset(1.0 - delta)).opacity(delta),
+                    move |el, delta| {
+                        el.ml(toast_slide_offset(1.0 - delta) * slide_sign)
+                            .opacity(delta)
+                    },
                 )
                 .into_any_element()
             };
             cards = cards.child(animated);
         }
-        stack.child(cards)
+        stack.child(cards).into_any_element()
     }
 }
 
@@ -241,57 +312,106 @@ fn toast_card(
             div()
                 .flex_1()
                 .min_w_0()
-                .overflow_hidden()
-                .when(toast.kind == ToastKind::Error, |d| {
-                    d.line_height(error_line_height)
-                        .max_h(error_line_height * 3.)
-                        .line_clamp(3)
-                        .text_ellipsis()
-                })
-                .when(toast.kind != ToastKind::Error, |d| {
-                    d.whitespace_nowrap().text_ellipsis()
-                })
-                .child(toast.message.clone())
-                .when(cfg!(feature = "gui-e2e"), |d| {
-                    d.child(e2e::measure_inside(format!("toast-message-{id}")))
-                }),
-        )
-        .when_some(toast.action_focus.clone(), |card, focus| {
-            use gpui_component::button::{Button, ButtonVariants as _};
-            use gpui_component::Sizable as _;
-            let owner = cx.entity().downgrade();
-            card.child(e2e::measure_control(
-                if matches!(
-                    &toast.action,
-                    Some(super::types::ToastAction::OpenOperationLog(_))
-                ) {
-                    "operation-result-details"
-                } else {
-                    "clone-completion-open"
-                },
-                toast_stack::ToastButton(
-                    Button::new(("toast-open-repository", id))
-                        .ghost()
-                        .small()
-                        .label(match &toast.action {
-                            Some(super::types::ToastAction::OpenOperationLog(_)) => {
-                                Msg::BottomTabOperationLog.t()
-                            }
-                            _ => Msg::ToastOpenRepository.t(),
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .when(toast.kind == ToastKind::Error, |d| {
+                            d.line_height(error_line_height)
+                                .max_h(error_line_height * 3.)
+                                .line_clamp(3)
+                                .text_ellipsis()
                         })
-                        .on_click(cx.listener(move |stack, _, _, cx| {
-                            stack.activate_action(id, cx);
-                        })),
-                    id,
-                    focus,
-                    "toast-open-repository",
+                        .when(toast.kind != ToastKind::Error, |d| {
+                            d.whitespace_nowrap().text_ellipsis()
+                        })
+                        .child(toast.message.clone())
+                        .when(cfg!(feature = "gui-e2e"), |d| {
+                            d.child(e2e::measure_inside(format!("toast-message-{id}")))
+                        }),
                 )
-                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                    let _ = owner.update(cx, |stack, cx| stack.activate_action(id, cx));
-                })
-                .on_key_down(super::keyboard_nav::stop_activation_keys),
-            ))
-        })
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .min_w_0()
+                        .when_some(toast.action_focus.clone(), |card, focus| {
+                            use gpui_component::button::{Button, ButtonVariants as _};
+                            use gpui_component::Sizable as _;
+                            let owner = cx.entity().downgrade();
+                            card.child(e2e::measure_control(
+                                if matches!(
+                                    &toast.action,
+                                    Some(super::types::ToastAction::OpenOperationLog(_))
+                                ) {
+                                    "operation-result-details"
+                                } else {
+                                    "clone-completion-open"
+                                },
+                                toast_stack::ToastButton(
+                                    Button::new(("toast-open-repository", id))
+                                        .ghost()
+                                        .small()
+                                        .h_auto()
+                                        .max_w_full()
+                                        .whitespace_normal()
+                                        .label(match &toast.action {
+                                            Some(super::types::ToastAction::OpenOperationLog(
+                                                _,
+                                            )) => Msg::BottomTabOperationLog.t(),
+                                            _ => Msg::ToastOpenRepository.t(),
+                                        })
+                                        .on_click(cx.listener(move |stack, _, _, cx| {
+                                            stack.activate_action(id, cx);
+                                        })),
+                                    id,
+                                    focus,
+                                    "toast-open-repository",
+                                )
+                                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                                    let _ =
+                                        owner.update(cx, |stack, cx| stack.activate_action(id, cx));
+                                })
+                                .on_key_down(super::keyboard_nav::stop_activation_keys),
+                            ))
+                        })
+                        .when_some(toast.refresh_focus.clone(), |actions, focus| {
+                            use gpui_component::button::{Button, ButtonVariants as _};
+                            use gpui_component::Sizable as _;
+                            let owner = cx.entity().downgrade();
+                            let label =
+                                super::command_palette::command_label("file.refresh", i18n::lang());
+                            actions.child(e2e::measure_control(
+                                "operation-result-refresh",
+                                toast_stack::ToastButton(
+                                    Button::new(("toast-refresh-repository", id))
+                                        .ghost()
+                                        .small()
+                                        .h_auto()
+                                        .max_w_full()
+                                        .whitespace_normal()
+                                        .label(label)
+                                        .on_click(cx.listener(move |stack, _, _, cx| {
+                                            stack.activate_refresh(id, cx);
+                                        })),
+                                    id,
+                                    focus,
+                                    "toast-refresh-repository",
+                                )
+                                .aria_label(SharedString::from(label))
+                                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                                    let _ = owner
+                                        .update(cx, |stack, cx| stack.activate_refresh(id, cx));
+                                })
+                                .on_key_down(super::keyboard_nav::stop_activation_keys),
+                            ))
+                        }),
+                ),
+        )
         .child(toast_close_control(toast, cx))
 }
 

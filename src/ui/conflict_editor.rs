@@ -75,13 +75,8 @@ fn guidance_pane(msg: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// A source document's quiet jump bar; its viewport has no enclosing border.
-fn pane(
-    id: &'static str,
-    label: String,
-    accent: u32,
-    editor: impl IntoElement,
-) -> gpui::Stateful<gpui::Div> {
+/// Source viewport; the shared column headers precede the notification anchor.
+fn pane(id: &'static str, editor: impl IntoElement) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
@@ -93,40 +88,73 @@ fn pane(
         .child(
             div()
                 .flex()
-                .items_center()
-                .gap(theme::scaled_px(8.))
-                .h(theme::scaled_px(26.))
-                .flex_shrink_0()
-                .px(theme::scaled_px(12.))
-                .bg(rgb(theme().panel))
-                .border_b_1()
-                .border_color(rgb(theme().surface))
-                .child(
-                    div()
-                        .size(theme::scaled_px(8.))
-                        .rounded_full()
-                        .bg(rgb(accent))
-                        .flex_shrink_0(),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_size(theme::scaled_px(11.5))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(rgb(theme().text_main))
-                        .child(label),
-                ),
-        )
-        .child(
-            div()
-                .flex()
                 .flex_col()
                 .flex_1()
                 .w_full()
                 .min_h(px(0.))
                 .child(editor),
+        )
+}
+
+pub(super) fn source_headers(mode: &ConflictMode) -> Option<gpui::AnyElement> {
+    let file = mode
+        .selected_file
+        .and_then(|index| mode.session.files.get(index))?;
+    mode.buffer.hunk_model(&file.path)?;
+    let labels = mode.labels();
+    Some(
+        div()
+            .relative()
+            .flex()
+            .flex_shrink_0()
+            .child(e2e::measure_inside("conflict-source-headers"))
+            .child(pane_header(
+                format!("{} — {}", labels.current.name, Msg::EditorCurrentSide.t()),
+                theme().color_branch,
+            ))
+            .child(
+                div()
+                    .w(theme::scaled_px(12.))
+                    .flex_shrink_0()
+                    .bg(rgb(theme().panel)),
+            )
+            .child(pane_header(
+                format!("{} — {}", labels.incoming.name, Msg::EditorIncomingSide.t()),
+                theme().color_remote,
+            ))
+            .into_any_element(),
+    )
+}
+
+fn pane_header(label: String, accent: u32) -> gpui::Div {
+    div()
+        .flex()
+        .flex_1()
+        .min_w(px(0.))
+        .items_center()
+        .gap(theme::scaled_px(8.))
+        .h(theme::scaled_px(26.))
+        .flex_shrink_0()
+        .px(theme::scaled_px(12.))
+        .bg(rgb(theme().panel))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            div()
+                .size(theme::scaled_px(8.))
+                .rounded_full()
+                .bg(rgb(accent))
+                .flex_shrink_0(),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .truncate()
+                .text_size(theme::scaled_px(11.5))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(rgb(theme().text_main))
+                .child(label),
         )
 }
 

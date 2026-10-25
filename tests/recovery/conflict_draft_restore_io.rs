@@ -107,6 +107,18 @@ fn check_failure(
         app.apply_conflict_detect(owner, payload, cx);
     });
     paint(cx, &app, window);
+    if !active && !recording_failure {
+        // First-open failure has no conflict pane: the repository Graph owns
+        // the notification's content column, not the window or Inspector.
+        let anchor = e2e::control_bounds(window.window_id(), "toast-content-anchor")
+            .expect("repository content anchor");
+        let stack = e2e::control_bounds(window.window_id(), "toast-stack")
+            .expect("persistent recovery stack");
+        assert!(stack.origin.x >= anchor.origin.x && stack.origin.y >= anchor.origin.y);
+        assert!(stack.origin.x + stack.size.width <= anchor.origin.x + anchor.size.width);
+        assert!(stack.origin.y + stack.size.height <= anchor.origin.y + anchor.size.height);
+        assert!(stack.size.width <= anchor.size.width * 0.45);
+    }
     let receipts = read_oplog_tail_for_repo(&repo, 100)
         .into_iter()
         .filter(|entry| entry.op == "conflict-draft-restore")
@@ -163,11 +175,21 @@ fn check_failure(
                 assert_eq!(
                     toast.message.as_ref(),
                     format!(
-                        "{preview} — {}",
-                        repo.file_name().unwrap().to_str().unwrap()
+                        "{preview}\n{}",
+                        kagi_ui_core::i18n::Msg::conflict_draft_repository(
+                            repo.file_name().unwrap().to_str().unwrap()
+                        )
                     )
                 );
                 assert!(!toast.message.contains('/') && !toast.message.contains(&cause));
+                assert!(toast
+                    .refresh_owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.path == repo));
+                assert!(matches!(
+                    &toast.action,
+                    Some(kagi::ui::types::ToastAction::OpenOperationLog(_))
+                ));
             }
             assert!(preview.chars().count() < 100);
             assert!(!preview.contains('/') && !preview.contains(&cause));
@@ -202,6 +224,184 @@ fn check_failure(
         before.with_appended_oplog(&receipts[0])
     };
     assert_eq!(expected, RepositoryState::read(&repo));
+    if failure == "unreadable" && !active && !recording_failure {
+        check_refresh_recovery(cx, &app, window, &repo, &store, expected, &receipts[0]);
+    }
     drop(lock.take());
     unmount(cx, app, window);
+}
+
+fn check_refresh_recovery(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+    store: &Path,
+    before: RepositoryState,
+    receipt: &kagi_git::oplog::OpLogEntry,
+) {
+    // Retry the same durable card by its button (EN) and ordinary reads (JA).
+    // The latter must recover without ever activating a card action.
+    std::fs::set_permissions(store, std::fs::Permissions::from_mode(0)).unwrap();
+    let other = content_fixture();
+    let other_repo = other.path().canonicalize().unwrap();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx))
+    });
+    crate::busy_dismiss::ready(cx, app);
+    let other_before = RepositoryState::read(&other_repo);
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| toast
+                .refresh_owner
+                .as_ref()
+                .is_some_and(|owner| owner.path == repo)
+                && toast.dismissing.is_none())),
+        "an accepted read for another repository retains the failure"
+    );
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    paint(cx, app, window);
+    let card_refresh = Lang::En == kagi_ui_core::i18n::lang();
+    if card_refresh {
+        click_control(cx, window, "operation-result-refresh");
+    } else {
+        app.update(cx, |app, cx| {
+            assert!(app.open_repository(repo.to_path_buf(), cx));
+            app.reload_manual(cx);
+        });
+    }
+    wait_refresh(cx, app, window, |app, cx| {
+        app.ui().conflict_restore_failed
+            && read_oplog_tail_for_repo(repo, 100).len() >= 2
+            && app
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| {
+                    toast
+                        .refresh_owner
+                        .as_ref()
+                        .is_some_and(|owner| owner.path == repo)
+                        && toast.dismissing.is_none()
+                })
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).repo_path.clone()).as_deref(),
+        Some(repo)
+    );
+    let retry_receipts = read_oplog_tail_for_repo(repo, 100);
+    let retry = retry_receipts
+        .iter()
+        .find(|entry| entry.op == "conflict-draft-restore" && entry.id != receipt.id)
+        .unwrap();
+    // Both repositories share this isolated audit file: only the captured
+    // owner's failed-read receipt may be appended, with no Git change to either.
+    let other_before = other_before.with_appended_oplog(retry);
+    assert_eq!(other_before, RepositoryState::read(&other_repo));
+    std::fs::set_permissions(store, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let expected = before.with_appended_oplog(retry);
+    assert_eq!(expected, RepositoryState::read(repo));
+    paint(cx, app, window);
+    if card_refresh {
+        click_control(cx, window, "operation-result-refresh");
+    } else {
+        app.update(cx, |app, cx| app.reload_external(cx));
+    }
+    app.update(cx, |app, cx| {
+        let stack = app.toast_stack.clone().unwrap();
+        stack.update(cx, |stack, cx| {
+            stack.push_notify(kagi::ui::ToastKind::Error, "Unrelated persistent error", cx);
+        });
+    });
+    wait_refresh(cx, app, window, |app, cx| {
+        let toasts = app.toast_stack.as_ref().unwrap().read(cx).toasts();
+        !app.ui().conflict_restore_failed
+            && app.ui().conflict.is_some()
+            && toasts
+                .iter()
+                .filter(|toast| toast.is_persistent() && toast.dismissing.is_none())
+                .count()
+                == 1
+            && toasts.iter().any(|toast| {
+                toast.message.as_ref() == "Unrelated persistent error" && toast.dismissing.is_none()
+            })
+    });
+    // Manual refresh also shows its normal transient success. It may remain
+    // hovered; only the matching failure must leave, not unrelated feedback.
+    cx.advance_clock(std::time::Duration::from_secs(1));
+    paint(cx, app, window);
+    cx.read(|cx| {
+        assert!(!app
+            .read(cx)
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| {
+                toast
+                    .refresh_owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.path == repo)
+            }));
+    });
+    assert_eq!(expected, RepositoryState::read(repo));
+    assert_eq!(other_before, RepositoryState::read(&other_repo));
+    assert!(read_oplog_tail_for_repo(repo, 100)
+        .iter()
+        .any(|entry| entry.id == receipt.id
+            && entry.op == receipt.op
+            && entry.timestamp == receipt.timestamp));
+}
+
+fn wait_refresh(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    ready: impl Fn(&KagiApp, &gpui::App) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        paint(cx, app, window);
+        if cx.read(|cx| ready(app.read(cx), cx)) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "refresh recovery did not settle: {:?}",
+            cx.read(|cx| {
+                let app = app.read(cx);
+                (
+                    app.ui().conflict_restore_failed,
+                    app.ui().conflict.is_some(),
+                    app.toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .iter()
+                        .map(|toast| {
+                            (
+                                toast.message.clone(),
+                                toast.dismissing.is_some(),
+                                toast.refresh_owner.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }

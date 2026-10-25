@@ -263,41 +263,43 @@ impl KagiApp {
         is_slow(elapsed).then_some((name, elapsed.as_secs()))
     }
 
-    /// Render the toast / busy overlay as an absolute container (bottom-left,
-    /// above the status bar). The toast cards live in the `Entity<ToastStack>`
-    /// child, so a push / expire re-renders only that subtree instead of all of
-    /// `KagiApp` (ADR-0110 Phase 5). The busy snackbar stays here because it is
-    /// driven by KagiApp state: the write latch, and a read that has been slow
-    /// for two seconds (#355). Returns `None` before the window (and thus the
-    /// toast entity) exists.
+    /// Render notifications inside the surface's content anchor, or in the
+    /// non-repository persistent lane / transient overlay.
     pub(super) fn render_toasts(
         &self,
-        repository_window: Option<&gpui::Window>,
+        window: &gpui::Window,
+        placement: ToastPlacement,
         show_clone_action: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
-        let mut stack = toast_container();
-        if let Some(window) = repository_window
-            .filter(|window| super::compact::for_window(window) && self.bottom_panel_open)
-        {
-            // Keep compact panel tabs above the stack, without moving its
-            // status-bar anchor. The viewport's 30% cap still applies below.
-            let ui = self.ui();
-            let layout = super::workspace::resolve_workspace(
-                &self.workspace_inputs(
-                    ui.commit_panel_open,
-                    ui.commit_panel.is_some(),
-                    ui.selected
-                        .and_then(|index| self.view().details.get(index))
-                        .is_some(),
-                ),
+        let partition = match placement {
+            ToastPlacement::Repository => super::toast_stack::ToastPartition::All,
+            ToastPlacement::PersistentLane => super::toast_stack::ToastPartition::Persistent,
+            ToastPlacement::Transient => super::toast_stack::ToastPartition::Transient,
+        };
+        toast_stack.update(cx, |stack, _| {
+            stack.set_trailing_placement(
+                window.window_handle().window_id(),
+                partition,
+                placement != ToastPlacement::Transient,
             );
-            let body = self.bottom_panel_body_height(
-                window,
-                matches!(layout.center, super::workspace::CenterPane::Editor),
+        });
+        let mut stack = toast_container(placement)
+            .max_h(gpui::px(f32::from(window.viewport_size().height) * 0.30))
+            .min_h(gpui::px(0.))
+            .when(placement == ToastPlacement::Transient, |el| {
+                el.child(super::e2e::measure_inside("toast-transient-overlay"))
+            });
+        if placement == ToastPlacement::PersistentLane {
+            return Some(
+                stack
+                    .child(super::render_overlay::ToastHost {
+                        stack: toast_stack,
+                        partition,
+                    })
+                    .into_any(),
             );
-            stack = stack.max_h(theme::scaled_px((body - super::TOAST_INSET_PX).max(0.)));
         }
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
@@ -328,10 +330,11 @@ impl KagiApp {
                 stack.child(self.render_busy_snackbar(label, slow, write, show_clone_action, cx));
         }
 
-        // The toast cards are an independently-rendered child entity.
-        stack = stack
-            .child(super::e2e::measure_inside("toast-stack"))
-            .child(toast_stack);
+        // Both projections borrow the same lifecycle/action owner.
+        stack = stack.child(super::render_overlay::ToastHost {
+            stack: toast_stack,
+            partition,
+        });
         Some(stack.into_any())
     }
 
@@ -557,14 +560,35 @@ mod tests {
     }
 }
 
-/// Shared out-of-flow toast placement for repository and Settings windows.
-pub(super) fn toast_container() -> gpui::Div {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ToastPlacement {
+    Repository,
+    PersistentLane,
+    Transient,
+}
+
+/// The repository parent is the actual center content, never the window.
+pub(super) fn toast_container(placement: ToastPlacement) -> gpui::Div {
     div()
-        .absolute()
-        .bottom(theme::scaled_px(
-            super::STATUS_BAR_H + super::TOAST_INSET_PX,
-        ))
-        .left(theme::scaled_px(super::TOAST_INSET_PX))
+        .when(placement == ToastPlacement::Repository, |el| {
+            el.absolute()
+                .top(theme::scaled_px(super::TOAST_INSET_PX))
+                .bottom(theme::scaled_px(super::TOAST_INSET_PX))
+                .right(theme::scaled_px(super::TOAST_INSET_PX))
+                .max_h(gpui::relative(1.0))
+        })
+        .when(placement == ToastPlacement::PersistentLane, |el| {
+            el.flex_shrink_0()
+                .my(theme::scaled_px(super::TOAST_INSET_PX))
+                .mr(theme::scaled_px(super::TOAST_INSET_PX))
+        })
+        .when(placement == ToastPlacement::Transient, |el| {
+            el.absolute()
+                .bottom(theme::scaled_px(
+                    super::STATUS_BAR_H + super::TOAST_INSET_PX,
+                ))
+                .left(theme::scaled_px(super::TOAST_INSET_PX))
+        })
         .w(theme::scaled_px(460.))
         .max_w(gpui::relative(0.45))
         .flex()

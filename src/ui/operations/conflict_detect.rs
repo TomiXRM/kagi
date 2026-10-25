@@ -343,8 +343,11 @@ impl KagiApp {
             }
         }
         if let Some(ui) = self.ui.get_mut(&owner.session) {
-            ui.conflict_restore_failed =
-                matches!(&outcome, ConflictDetectOutcome::OpenFailed(Some(_)));
+            match &outcome {
+                ConflictDetectOutcome::OpenFailed(Some(_)) => ui.conflict_restore_failed = true,
+                ConflictDetectOutcome::OpenFailed(None) => {}
+                _ => ui.conflict_restore_failed = false,
+            }
         }
         match outcome {
             ConflictDetectOutcome::OpenFailed(error) => {
@@ -369,13 +372,32 @@ impl KagiApp {
                         )
                         .with_ref_moves(Some(Vec::new())),
                     );
-                    self.present_operation_completion(
+                    let recording_failed = self.present_operation_completion(
                         &recording,
                         active_owner && exact_visit,
                         false,
                         Some(Msg::conflict_draft_restore_failed()),
                         cx,
                     );
+                    if !recording_failed {
+                        if let Some(stack) = self.toast_stack.clone() {
+                            let key = Self::operation_result_key(
+                                &owner.path,
+                                "conflict-draft-restore",
+                                "failed",
+                            );
+                            stack.update(cx, |stack, cx| {
+                                let id = stack
+                                    .toasts()
+                                    .iter()
+                                    .find(|toast| toast.result_key.as_ref() == Some(&key))
+                                    .map(|toast| toast.id);
+                                if let Some(id) = id {
+                                    stack.set_refresh_owner(id, owner.clone(), cx);
+                                }
+                            });
+                        }
+                    }
                 }
                 if active_owner && exact_visit {
                     // A prior approval cannot outlive the failed checked read.
@@ -417,6 +439,9 @@ impl KagiApp {
                 }
                 if let Some(ui) = self.ui.get_mut(&owner.session) {
                     ui.conflict = None;
+                }
+                if let Some(stack) = self.toast_stack.clone() {
+                    stack.update(cx, |stack, cx| stack.dismiss_restore_failure(&owner, cx));
                 }
             }
             ConflictDetectOutcome::Detected(detected) => {
@@ -532,6 +557,9 @@ impl KagiApp {
                             ui.conflict_hidden = false;
                         }
                     }
+                }
+                if let Some(stack) = self.toast_stack.clone() {
+                    stack.update(cx, |stack, cx| stack.dismiss_restore_failure(&owner, cx));
                 }
             }
         }

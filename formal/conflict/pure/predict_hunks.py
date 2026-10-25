@@ -12,7 +12,7 @@ ORDERS = ('CF', 'IF', 'CB', 'IB')
 R = 'crates/kagi-domain/src/resolution.rs'
 A = 'crates/kagi-domain/src/resolution/assembly.rs'
 T = 'crates/kagi-domain/src/resolution/order_tests.rs'
-VARIANTS = ('both-positional', 'empty-all', 'empty-adoption-lost', 'invalid-materializes', 'malformed-index', 'plain-text-gate', 'undecide-empty-adoption', 'order-without-tie', 'resolved-choice-only', 'wrong-origin', 'emit-marker', 'reverse-regions')
+VARIANTS = ('both-positional', 'empty-all', 'empty-adoption-lost', 'invalid-materializes', 'malformed-index', 'plain-text-gate', 'undecide-empty-adoption', 'order-without-tie', 'resolved-choice-only', 'wrong-origin', 'emit-marker', 'reverse-regions', 'crlf-marker-missed')
 
 
 def tri(bits, broken=None):
@@ -21,14 +21,19 @@ def tri(bits, broken=None):
         return 'All'
     return 'None' if not any(bits) else 'All' if all(bits) else 'Partial'
 
-def marker(line):
-    """crates/kagi-domain/src/checklist.rs:158-178: exact ASCII prefixes."""
-    return line.startswith(('<<<<<<< ', '>>>>>>> ', '======= ')) or line == '======='
+def marker(line, broken=None):
+    """resolution.rs::resolution_text_has_conflict_marker: complete >=7 run."""
+    if broken != 'crlf-marker-missed' and line.endswith('\r'):
+        line = line[:-1]
+    if not line or line[0] not in '<=>':
+        return False
+    width = len(line) - len(line.lstrip(line[0]))
+    return width >= 7 and (width == len(line) or line[width] == ' ')
 
 
 def marker_gate(lines, broken=None):
     """resolution::resolved_lines_have_conflict_marker: Manual-only residue."""
-    return any(marker(text) and (origin == 'm' or broken == 'plain-text-gate')
+    return any(marker(text, broken) and (origin == 'm' or broken == 'plain-text-gate')
                for text, origin in lines)
 
 
@@ -173,6 +178,10 @@ def run(broken=None):
     malformed = p('MalformedSelectionNeverPanics', 'HOLD', A+'::ConflictHunk::visit_resolved_lines', R.replace('resolution.rs', 'resolution/hardening_tests.rs')+'::stale_selection_dimensions_never_panic_or_emit_missing_lines')
     converted = p('ChoiceSelectionPreservesSourceChoices', 'HOLD', R+':157-173; '+A+':17-58', R+':863; '+T+':116,128')
     regionprop = p('RegionAssemblyPreservesOrder', 'HOLD', A+':76-84', R+':789', declared='Passthrough and hunk regions preserve sequence and context provenance.')
+    crlf = p('CRLFManualMarkerResidue', 'HOLD', R+'::resolution_text_has_conflict_marker', R.replace('resolution.rs', 'resolution/hardening_tests.rs')+'::crlf_manual_marker_residue_blocks_at_any_supported_width', declared='One optional CR is ignored only for marker detection; source provenance remains authoritative.')
+    for width, char, ending, origin in product((6, 7, 8, 10), '<=>', ('', '\r'), ('m', 'c', 'i', 'x')):
+        text = char * width + ending
+        crlf.check(marker_gate([(text, origin)], broken) == (width >= 7 and origin == 'm'), {'width': width, 'marker': char, 'ending': repr(ending), 'origin': origin})
     for values_len in range(4):
         for values in product(('None', 'All', 'Partial'), repeat=values_len):
             expected = 'None' if not values or set(values) == {'None'} else 'All' if set(values) == {'All'} else 'Partial'

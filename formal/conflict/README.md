@@ -6,8 +6,9 @@ assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission
 No product code is imported or changed by the harness. The maintained union has
 90 TLC configurations and 41 negative controls, retaining P2 lifecycle guards,
 #1731/#1784 preservation and off-thread flush guards, and #1734/#1735 explicit
-deletion and parked-namespace routes. There are 39 pure properties
-(1,695,651 evaluations), 36 pure mutants, and 34 saved drill projections / 46 logs
+deletion and parked-namespace routes. Including #1756's CRLF manual-residue
+predicate, there are 40 pure properties (1,695,747 evaluations), 37 pure mutants,
+and 34 saved drill projections / 46 logs
 with a forged-Skip negative control. Earlier 77-check deletion and 81-check P2
 runs are historical evidence in the lifecycle ledger; generated receipts record
 the current combined verdicts.

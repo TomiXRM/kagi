@@ -717,6 +717,7 @@ pub enum Msg {
     /// own name (`merge · in progress`, `rebase 2/5 · 進行中`).
     ConflictAborted,
     OperationInProgress,
+    ConflictBackToConflicts,
     ConflictExternalTool,
     ConflictExternalToolUnset,
     ConflictOpenTerminal,
@@ -3344,6 +3345,8 @@ impl Msg {
             (Ja, ConflictConfirmAbort) => "中止を確定",
             (En, OperationInProgress) => "in progress",
             (Ja, OperationInProgress) => "進行中",
+            (En, ConflictBackToConflicts) => "Back to conflicts",
+            (Ja, ConflictBackToConflicts) => "conflict に戻る",
             (En, ConflictExternalTool) => "Open in external tool",
             (Ja, ConflictExternalTool) => "外部ツールで開く",
             (En, ConflictExternalToolUnset) => {

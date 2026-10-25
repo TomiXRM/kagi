@@ -660,6 +660,11 @@ impl KagiApp {
     /// as the active mode. One list, derived from the resolver's order, is the
     /// only way these stay in step as panes are added.
     pub(crate) fn leave_takeovers(&mut self, keep: WorkspaceMode) {
+        // Keep the sole draft/selection/scroll owner alive while another view
+        // occupies the body. Accepted re-detections refresh that owner in place.
+        // Without an operation there is no strip to bring a failed handoff back.
+        let return_available = self.view().operation.is_some();
+        self.with_ui(|ui| ui.conflict_hidden = return_available && ui.conflict.is_some());
         self.close_file_history();
         self.close_ecosystem_view();
         self.with_ui(|ui| ui.branch_cleanup_open = false);
@@ -687,17 +692,37 @@ impl KagiApp {
         }
     }
 
+    /// The operation strip is the single return affordance. Remount the same
+    /// entity without changing its Result, file/hunk selection or scroll.
+    pub(super) fn show_conflict_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entity) = self.ui().conflict.clone() else {
+            return;
+        };
+        self.with_ui(|ui| ui.conflict_hidden = false);
+        entity.update(cx, |view, cx| {
+            if let Some(inputs) = view.editor_inputs.as_ref().filter(|_| view.result_editing) {
+                inputs
+                    .result
+                    .update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                view.focus_navigation(window, cx);
+            }
+        });
+        cx.notify();
+    }
+
     /// Retire only the presentation that just left the actual resolved body.
     /// Unchanged animation frames neither scan owners nor touch child entities.
+    /// Return whether this frame crossed a body-route visibility boundary.
     pub(super) fn sync_workspace_motion_visibility(
         &mut self,
         center: Option<super::workspace::CenterPane>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         use super::workspace::CenterPane::{CommitList, Diff};
         let visible = self.active_session().zip(center);
         if self.workspace_motion_visible == visible {
-            return;
+            return false;
         }
         let previous = std::mem::replace(&mut self.workspace_motion_visible, visible);
         if let Some((owner, super::workspace::CenterPane::Editor)) = previous {
@@ -723,6 +748,7 @@ impl KagiApp {
                 self.settle_file_list_motion(owner, cx);
             }
         }
+        true
     }
 
     /// The mode the resolver will show. PR and Issues mode both outrank Editor

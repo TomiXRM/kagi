@@ -1,5 +1,29 @@
 # Pure conflict predicate counterexample ledger
 
+## CRLF parser scope — #1756
+
+`pure/predict_hunks.py` enumerates selections, source-token assembly and
+provenance; it does not parse materialized marker text or model libgit2 line
+endings. The CRLF delimiter fix therefore adds no parser HOLD row or artificial
+broken-parser control to that enumeration. Byte-level coverage lives in Rust:
+`resolution/hardening_tests.rs::crlf_marker_choices_preserve_source_endings`
+and `conflicts/domain_hardening.rs::crlf_materialization_round_trips_choices_through_save`.
+They cover CRLF and mixed source endings, LF-only delimiters around CRLF
+content, zdiff3 base markers, both adoption orders and manual Results through
+direct and recorded Save. These are test definitions, not formal proof or a
+claim of native GUI verification.
+
+The adjacent manual-residue predicate *is* extracted. Review adds the following
+finite row, independent of parser recognition:
+
+| Property | Domain | Expected | Broken variant |
+|---|---|---|---|
+| `CRLFManualMarkerResidue` | widths 6/7/8/10 × `<=>` × LF/CRLF × Manual/Current/Incoming/Context (96 cases) | HOLD: complete runs ≥7 block only Manual | `crlf-marker-missed` retains CR and misses bare delimiters |
+
+The staged-content checklist strips the same optional CR while retaining its
+separate seven-wide labeled-opener/separator policy. It does not adopt the
+resolution gate's wider-run policy.
+
 ## Runtime reconciliation — 2026-10-24, main `834a1796`
 
 These are historical, hand-extracted models, not Rust execution or an automatic

@@ -3503,9 +3503,11 @@ impl KagiApp {
         }
     }
 
-    /// Conflict Mode replaces the normal body before workspace slots are resolved.
+    /// Conflict presentation is independent of its retained entity/operation.
     pub(crate) fn conflict_body_visible(&self) -> bool {
-        self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
+        self.ui().conflict.is_some()
+            && !self.ui().conflict_hidden
+            && !self.ui().conflict_merge_pending
     }
 
     fn commit_list_has_focus(&self, window: &Window, cx: &Context<Self>) -> bool {

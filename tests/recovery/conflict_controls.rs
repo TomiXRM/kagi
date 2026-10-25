@@ -19,8 +19,15 @@ pub use manual_reset::scenario_conflict_manual_reset_guard;
 #[path = "conflict_resume.rs"]
 mod resume;
 pub use resume::scenario_conflict_partial_resume;
+#[path = "conflict_leave_and_return.rs"]
+mod leave_and_return;
+pub use leave_and_return::scenario_conflict_leave_and_return;
 
 fn fixture() -> tempfile::TempDir {
+    fixture_with_context(20)
+}
+
+fn fixture_with_context(context_lines: usize) -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
     git(repo, &["init", "-q", "-b", "main"]);
@@ -36,7 +43,7 @@ fn fixture() -> tempfile::TempDir {
             git(repo, &["checkout", "-q", branch]);
         }
         for name in ["a.txt", "b.txt"] {
-            let middle = (0..20)
+            let middle = (0..context_lines)
                 .map(|i| format!("context {i}\n"))
                 .collect::<String>();
             std::fs::write(

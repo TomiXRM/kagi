@@ -1,5 +1,24 @@
 use super::*;
 
+#[test]
+fn crlf_manual_marker_residue_blocks_at_any_supported_width() {
+    for marker in ["<<<<<<<", "=======", "========", ">>>>>>>", "<<<<<<< ours"] {
+        let text = format!("before\r\n{marker}\r\nafter\r\n");
+        assert!(resolution_text_has_conflict_marker(&text));
+        assert!(resolved_lines_have_conflict_marker(&text_to_lines(
+            &text,
+            LineOrigin::Manual
+        )));
+        assert!(!resolved_lines_have_conflict_marker(&text_to_lines(
+            &text,
+            LineOrigin::Current
+        )));
+    }
+    for text in ["======\r\n", "========text\r\n", "=======\r\r\n"] {
+        assert!(!resolution_text_has_conflict_marker(text));
+    }
+}
+
 fn hunk(current_len: usize, incoming_len: usize, choice: HunkChoice) -> ConflictHunk {
     ConflictHunk {
         current: (0..current_len).map(|i| format!("c{i}")).collect(),
@@ -191,6 +210,47 @@ fn marker_parser_preserves_a_literal_source_opener() {
         "<<<<<<< Current\n<<<<<<< user\n=======\nincoming\n>>>>>>> Incoming\n",
     );
     assert_eq!(model.hunks()[0].current, vec!["<<<<<<< user"]);
+}
+
+#[test]
+fn crlf_marker_choices_preserve_source_endings() {
+    for width in [7, 10] {
+        // Marker endings are independent of source endings, including zdiff3's
+        // optional base marker and unlabeled delimiters.
+        for marker_ending in ["\n", "\r\n"] {
+            for incoming in ["incoming\r\n", "incoming\n"] {
+                let text = format!(
+                    "before\r\n{}{marker_ending}current\r\n{}{marker_ending}base\r\n{}{marker_ending}{incoming}{}{marker_ending}after\r\n",
+                    "<".repeat(width),
+                    "|".repeat(width),
+                    "=".repeat(width),
+                    ">".repeat(width),
+                );
+                let mut model = HunkModel::from_marker_text_with_width(&text, width);
+                assert_eq!(model.hunk_count(), 1);
+                assert_eq!(model.regions.len(), 3, "closer must end the hunk");
+                assert_eq!(model.hunks()[0].current, ["current\r"]);
+                assert_eq!(model.hunks()[0].base, ["base\r"]);
+                for (choice, body) in [
+                    (HunkChoice::AcceptCurrent, "current\r\n".to_string()),
+                    (HunkChoice::AcceptIncoming, incoming.to_string()),
+                    (
+                        HunkChoice::BothCurrentFirst,
+                        format!("current\r\n{incoming}"),
+                    ),
+                    (
+                        HunkChoice::BothIncomingFirst,
+                        format!("{incoming}current\r\n"),
+                    ),
+                    (HunkChoice::Manual("manual\r\n".into()), "manual\r\n".into()),
+                ] {
+                    assert!(model.set_choice(0, choice));
+                    assert!(model.all_resolved());
+                    assert_eq!(model.assembled_text(), format!("before\r\n{body}after\r\n"));
+                }
+            }
+        }
+    }
 }
 
 #[test]

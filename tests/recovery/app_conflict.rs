@@ -823,6 +823,9 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         assert!(ui.conflict_merge_pending);
         assert!(ui.commit_panel_open);
     });
+    // #1748 must not offer a return to the overview retired by Continue.
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-back");
     // The session may retain its entity; pending must remove its rendered body.
     e2e::clear_control_bounds(window.window_id(), "conflict-abort");
     cx.update_window(window, |_, window, cx| {
@@ -837,6 +840,7 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
             "{name} is painted over the real CommitPanel"
         );
     }
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-back").is_none());
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.

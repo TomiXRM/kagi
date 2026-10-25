@@ -287,6 +287,7 @@ pub struct ResolvedLine {
 /// a complete run of at least seven `<`, `=` or `>`, followed by space or EOL.
 pub fn resolution_text_has_conflict_marker(text: &str) -> bool {
     text.split('\n').any(|line| {
+        let line = line.strip_suffix('\r').unwrap_or(line);
         let bytes = line.as_bytes();
         let Some(&marker) = bytes.first() else {
             return false;
@@ -731,6 +732,8 @@ impl HunkModel {
 
 /// Match the complete marker run, not a prefix of a wider source literal.
 fn is_marker(line: &str, marker: u8, width: usize) -> bool {
+    // Normalize only the delimiter view: source lines retain their CR byte.
+    let line = line.strip_suffix('\r').unwrap_or(line);
     width != 0
         && line.as_bytes().get(..width).is_some_and(|run| {
             run.iter().all(|byte| *byte == marker)

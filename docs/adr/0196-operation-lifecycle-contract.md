@@ -759,6 +759,9 @@ The integrated #1731/#1760 preservation policy is fail-closed: a failed capture 
 durable draft flush refuses Abort, Skip and directory/file replacement before
 repository admission. The formal `preserve-abort`, `preserve-skip` and
 `preserve-dir-file` guarantees now remain HOLD alongside repository-wide admission.
+Directory/file recovery snapshots are separate from this draft barrier: their ref
+write follows repository acquisition and preflight while the lock remains held,
+before destructive index/worktree changes.
 
 Contention is `Refused`, never `Failed` or `Unknown`: durable English blocker
 \"Another Kagi window is operating on this repository\" and Japanese presentation

@@ -146,13 +146,14 @@ Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
 Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
     /\ ~s.refreshPending
     /\ s' = [s EXCEPT !.approved[a] = Broken # "approval", !.lease[a] = TRUE,
-        !.pc[a] = IF Kind \in {"skip","abort","stashAbort","df"} THEN "preserve" ELSE "admit",
+        !.pc[a] = IF Kind \in {"skip","abort","stashAbort"} THEN "preserve" ELSE "admit",
         !.event = <<"Approve(confirm)",a>>]
 \* #1746: write_lock.rs::acquire and conflict_ops.rs::run_recorded_conflict.
 \* Sessions leases remain per-process. The kernel writer lease is separate:
 \* final revision preflight follows acquisition, and Verify releases it.
-\* Draft preservation precedes this critical section in Rust; its separate
-\* draft lock is not represented in this writer-exclusion quotient.
+\* Abort/Skip draft preservation precedes this critical section in Rust; its
+\* separate draft lock is not represented in this writer-exclusion quotient.
+\* D/F recovery creates a snapshot ref after locked preflight, before index writes.
 AcquireRepositoryLease(a) == /\ At(a, "admit")
     /\ ((\A b \in Actors : ~s.repoLease[b]) \/ Broken = "repoLock")
     /\ s' = [s EXCEPT !.repoLease[a] = TRUE,
@@ -174,7 +175,7 @@ Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "pre
         !.metadataFailOpen = @ \/ (~s.metadataReadable /\ Kind = "continue"),
         !.pc[a] = CASE Kind = "skip" -> "skip"
                   [] Kind \in {"abort","stashAbort"} -> "abort"
-                  [] Kind = "df" -> "index"
+                  [] Kind = "df" -> "preserve"
                   [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wtValidate",
         !.event = <<"Preflight",a>>]
 \* #1733 conflict_boundary.rs::validate_save_binding / validate_current_paths;
@@ -195,10 +196,12 @@ FileRefused(a) == /\ At(a, "wtValidate")
 \* Required recovery failure returns Blocked before destructive repository work.
 Preserve(a) == /\ At(a, "preserve")
     /\ s' = [s EXCEPT !.preservationFailed[a] = Scenario \in {"preserveAbort","preserveSkip","preserveDF"},
-        \* #1732 atomic replacement retains the preceding acknowledged primary
-        \* on error; preservation completes before repository lock acquisition.
+        \* #1732 atomic replacement retains the preceding acknowledged draft
+        \* on Abort/Skip preservation failure before repository admission.
+        \* D/F snapshot creation instead stays under its preflighted repository lease.
         !.pc[a] = IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"}
-                          /\ Broken # "preservation" THEN "refused" ELSE "admit",
+                          /\ Broken # "preservation" THEN "refused"
+                  ELSE IF Kind = "df" THEN "index" ELSE "admit",
         !.event = <<"Preserve",a,IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"} THEN "failed" ELSE "ok">>]
 \* backend/conflict_ops.rs:562-581 and UI conflict_skip.rs:138-152 map errors
 \* to Refused; neither admission settlement nor presentation mutates the repo.
@@ -490,7 +493,10 @@ SkipRefreshDisarmsChangedStep ==
     ~(Scenario = "skipRefresh" /\ s.external /\ ~s.refreshPending
       /\ s.pc[1] = "approve" /\ s.approvedStep[1] # s.operation)
 MetadataReadErrorNeverAdmitted == ~s.metadataFailOpen
-NoDestructiveProgressAfterPreservationFailure == ~s.destructiveAfterFailure
+NoDestructiveProgressAfterPreservationFailure ==
+    /\ ~s.destructiveAfterFailure
+    /\ (Kind = "df" =>
+        \A a \in Actors : At(a, "preserve") => (s.repoLease[a] /\ s.preflight[a]))
 MergeCommitTreeIsApprovedTree == s.committedTree = "none" \/ s.committedTree = s.shownTree[1]
 SiblingWorktreesInvalidatedOnSharedRef ==
     (s.sharedMoved /\ s.pc[1] = "done") => s.siblingInvalidated

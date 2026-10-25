@@ -10,8 +10,8 @@ Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
 
-The #1746/#1784 merged guard matched all 70 lifecycle outcomes (64,358 summed
-distinct states) and detected all 25 removed-guard controls (4,214 summed states).
+The #1746/#1784 merged guard matched all 70 lifecycle outcomes (64,371 summed
+distinct states) and detected all 25 removed-guard controls (4,215 summed states).
 The pure properties, 36 mutants and historical drill projections also passed.
 
 ## Run

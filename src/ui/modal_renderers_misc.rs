@@ -479,6 +479,8 @@ pub(crate) fn render_editor_dirty_guard_modal(
     let (conflict_failed, conflict_discard_armed) = conflict_guard.unwrap_or((false, false));
     let title = if conflict_failed {
         Msg::ConflictDraftSaveFailed.t()
+    } else if conflict_present {
+        Msg::ConflictDraftSavingTitle.t()
     } else if restart_waiting {
         Msg::UpdateRestart.t()
     } else if host_close {

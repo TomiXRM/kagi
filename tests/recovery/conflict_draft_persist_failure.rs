@@ -552,7 +552,7 @@ fn run_unflushed_close(
     let progress = e2e::take_conflict_draft_guard().expect("pending flush presents progress");
     assert!(progress.saving);
     assert_eq!(progress.detail, Msg::ConflictDraftSaving.t());
-    assert_ne!(progress.title, Msg::ConflictDraftSaveFailed.t());
+    assert_eq!(progress.title, Msg::ConflictDraftSavingTitle.t());
     assert_eq!(progress.editor_count, 0);
     drop(lock);
     crate::busy_dismiss::wait_ui(cx, &app, "unflushed close completes", |app, cx| {

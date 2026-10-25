@@ -322,6 +322,7 @@ impl ConflictView {
         match result {
             Ok(()) => self.draft_persist_failed = None,
             Err(error) => {
+                klog!("conflict-mode: resolution draft autosave failed: {error}");
                 if self.draft_persist_failed.as_ref() != Some(&error) {
                     self.draft_failure_pending = Some(error.clone());
                 }

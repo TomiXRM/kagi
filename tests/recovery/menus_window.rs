@@ -199,9 +199,18 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
                 "active workspace {id} is checked"
             );
             assert_eq!(
-                view.items.iter().filter(|item| item.is_checked()).count(),
+                view.items
+                    .iter()
+                    .filter(|item| matches!(
+                        item,
+                        MenuItem::Action { action, checked: true, .. }
+                            if action.as_any().is::<commands::ShowGraph>()
+                                || action.as_any().is::<commands::TogglePrMode>()
+                                || action.as_any().is::<commands::ToggleEditorWorkspace>()
+                    ))
+                    .count(),
                 1,
-                "workspace selection is exclusive"
+                "workspace selection is exclusive independently of Editor Details"
             );
         }
         assert!(

@@ -20,12 +20,13 @@ pub(crate) fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimens
         // MacWindow::resize uses the native executor, not TestDispatcher.
         crate::macos::drain_native_events();
         cx.run_until_parked();
-        if cx.update_window(win, |_, w, _| w.viewport_size()).unwrap() == wanted {
+        let observed = cx.update_window(win, |_, w, _| w.viewport_size()).unwrap();
+        if observed == wanted {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "native resize did not reach {wanted:?}"
+            "native resize did not reach {wanted:?}; actual viewport is {observed:?}"
         );
     }
 }

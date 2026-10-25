@@ -893,17 +893,22 @@ impl KagiApp {
                     pane.update(cx, |view, _| {
                         view.note_draft_result(None, Err(error.to_string()))
                     });
-                    app.record_operation_completion(
-                        "conflict-draft-preserve",
-                        kagi_git::ops::StateSummary {
-                            head: "unobserved".into(),
-                            dirty: "unobserved".into(),
-                        },
-                        kagi_git::oplog::OpOutcome::Failed {
-                            error: error.to_string(),
-                        },
-                        Some(Vec::new()),
-                        &owner.path,
+                    let recording = kagi_git::backend::recording::finalize(
+                        kagi_git::oplog::OpLogEntry::new(
+                            "conflict-draft-preserve",
+                            owner.path.display().to_string(),
+                            kagi_git::ops::StateSummary {
+                                head: "unobserved".into(),
+                                dirty: "unobserved".into(),
+                            },
+                            kagi_git::oplog::OpOutcome::Failed {
+                                error: error.to_string(),
+                            },
+                        )
+                        .with_ref_moves(Some(Vec::new())),
+                    );
+                    app.present_operation_completion(
+                        &recording,
                         app.active_session() == Some(owner.session),
                         false,
                         Some(super::i18n::Msg::conflict_draft_preserve_failed()),

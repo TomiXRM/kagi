@@ -669,6 +669,155 @@ fn abort_is_admissible_with_no_conflict_view_and_settles_once() {
     );
 }
 
+/// Exercise the public plan/confirm/execute/settle path with two attached reads.
+fn assert_conflict_invalidation(
+    fixture: &Fixture,
+    sessions: &mut Sessions,
+    request: ConflictRequest,
+    shared: bool,
+    sibling_branch: Option<&str>,
+) {
+    let owner = sessions.sessions_for(
+        &Backend::open(&fixture.repo)
+            .unwrap()
+            .write_worktree_id()
+            .unwrap(),
+    )[0];
+    let linked = fixture.repo.with_file_name("linked");
+    if let Some(branch) = sibling_branch {
+        assert!(git(
+            &fixture.repo,
+            &[
+                "worktree",
+                "add",
+                "--force",
+                "-q",
+                linked.to_str().unwrap(),
+                branch
+            ],
+        ));
+    } else {
+        assert!(git(
+            &fixture.repo,
+            &["worktree", "add", "-qb", "linked", linked.to_str().unwrap()],
+        ));
+    }
+    let sibling = sessions.attach(linked);
+    let mut reads = Reads::<()>::new();
+    let owner_read = reads.begin(owner);
+    let sibling_read = reads.begin(sibling);
+    let policy = ExecutionPolicy::human(false);
+    let owner_attachment = sessions.attachment(owner).unwrap();
+    let pending = plan_conflict(
+        sessions,
+        ConflictAppRequest {
+            owner: owner_attachment,
+            request,
+        },
+        policy,
+    );
+    assert!(apply_plan(sessions, pending.run()));
+    let PlanState::Ready { token, prepared } = sessions.plan_state() else {
+        panic!("expected Ready, got {:?}", sessions.plan_state());
+    };
+    assert_eq!(prepared.changes_shared_refs(), shared);
+    let approved = approve(sessions, token.clone(), Policy::Conflict(policy)).unwrap();
+    let completion = prepare_conflict(sessions, approved).unwrap().run();
+    assert_eq!(
+        completion.report().evidence.progress,
+        ConflictProgress::Verified
+    );
+    assert!(matches!(
+        completion.report().recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    let deliveries = sessions.apply(completion);
+    for (session, expected) in [(owner, true), (sibling, shared)] {
+        let worktree = sessions.attachment(session).unwrap().worktree.unwrap();
+        assert_eq!(sessions.is_stale(&worktree), expected);
+        let invalidated = deliveries.iter().any(|delivery| {
+            matches!(
+                delivery,
+                Delivery::Invalidate(target) if target.worktree == worktree
+            )
+        });
+        assert_eq!(invalidated, expected);
+        if invalidated {
+            reads.invalidate(session);
+        }
+    }
+    assert!(!reads.is_fresh(owner_read));
+    assert_eq!(reads.is_fresh(sibling_read), !shared);
+}
+
+#[test]
+fn rebase_abort_restoring_shared_branch_invalidates_both_worktree_reads() {
+    let fixture = Fixture::rebase();
+    let original = git_output(&fixture.repo, &["rev-parse", "side"]);
+    let moved = git_output(&fixture.repo, &["rev-parse", "main"]);
+    assert_ne!(original, moved);
+    // Move the detached rebase's destination before planning, so a successful
+    // abort demonstrably changes the shared branch rather than only HEAD.
+    assert!(git(
+        &fixture.repo,
+        &["update-ref", "refs/heads/side", &moved]
+    ));
+    let mut sessions = Sessions::new();
+    fixture.owner_and_snapshot(&mut sessions);
+    let request = Backend::conflict_abort_request(&fixture.in_progress());
+    assert_conflict_invalidation(&fixture, &mut sessions, request, true, Some("side"));
+    assert_eq!(git_output(&fixture.repo, &["rev-parse", "side"]), original);
+    let linked = fixture.repo.with_file_name("linked");
+    for worktree in [&fixture.repo, &linked] {
+        assert_eq!(
+            git_output(worktree, &["symbolic-ref", "HEAD"]),
+            "refs/heads/side"
+        );
+        assert_eq!(git_output(worktree, &["rev-parse", "HEAD"]), original);
+    }
+}
+
+#[test]
+fn detached_merge_abort_invalidates_only_its_worktree_read() {
+    let fixture = Fixture::content();
+    // Keep the same merge kind but remove its shared ref destination.
+    let head = git_output(&fixture.repo, &["rev-parse", "HEAD"]);
+    assert!(git(
+        &fixture.repo,
+        &["update-ref", "--no-deref", "HEAD", &head],
+    ));
+    let mut sessions = Sessions::new();
+    fixture.owner_and_snapshot(&mut sessions);
+    let request = Backend::conflict_abort_request(&fixture.in_progress());
+    assert_conflict_invalidation(&fixture, &mut sessions, request, false, None);
+    assert_eq!(git_output(&fixture.repo, &["rev-parse", "main"]), head);
+}
+
+#[test]
+fn conflict_save_invalidates_only_its_worktree_read() {
+    let fixture = Fixture::content();
+    let mut sessions = Sessions::new();
+    let request = save_request(&fixture, &mut sessions);
+    assert_conflict_invalidation(&fixture, &mut sessions, request, false, None);
+}
+
+#[test]
+fn attached_stash_abort_invalidates_only_its_worktree_read() {
+    let fixture = Fixture::content();
+    assert!(git(&fixture.repo, &["merge", "--abort"]));
+    std::fs::write(fixture.repo.join("file.txt"), "stashed\n").unwrap();
+    assert!(git(&fixture.repo, &["stash", "push", "-qm", "conflict"]));
+    std::fs::write(fixture.repo.join("file.txt"), "new main\n").unwrap();
+    assert!(git(&fixture.repo, &["commit", "-qam", "new main"]));
+    assert!(!git(&fixture.repo, &["stash", "apply"]));
+    let head = git_output(&fixture.repo, &["rev-parse", "HEAD"]);
+    let mut sessions = Sessions::new();
+    fixture.owner_and_snapshot(&mut sessions);
+    let request = Backend::conflict_abort_request(&fixture.in_progress());
+    assert_conflict_invalidation(&fixture, &mut sessions, request, false, None);
+    assert_eq!(git_output(&fixture.repo, &["rev-parse", "main"]), head);
+}
+
 /// #704 review: a receipt reports the observation the plan froze, even when
 /// the repository can no longer be opened. Rebuilding `before` from the
 /// request there invented `operation: "unknown"` and — for an abort, which

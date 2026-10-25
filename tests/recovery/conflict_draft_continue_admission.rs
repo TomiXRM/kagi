@@ -178,3 +178,106 @@ fn check_continue(cx: &mut VisualTestAppContext, language: Lang) {
     drop(view);
     unmount(cx, app, window);
 }
+
+pub fn scenario_conflict_draft_recovered_save_frozen_payload(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    let _isolated = IsolatedLog::new();
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let repository = git2::Repository::open(&repo).unwrap();
+    repository
+        .config()
+        .unwrap()
+        .set_bool("core.filemode", false)
+        .unwrap();
+    repository
+        .config()
+        .unwrap()
+        .set_bool("core.autocrlf", false)
+        .unwrap();
+    std::fs::write(repo.join(".gitattributes"), "* text=auto\n").unwrap();
+    let mut index = repository.index().unwrap();
+    let mut ours = index.get_path(Path::new(FILE), 2).unwrap();
+    ours.mode = 0o100755;
+    index.add(&ours).unwrap();
+    index.write().unwrap();
+    std::fs::set_permissions(repo.join(FILE), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let head = repository.head().unwrap().target();
+    let (app, window) = mount(cx, &repo);
+    detect(cx, &app, window);
+    let input = result_input(cx, &app, window);
+    replace_result(cx, &app, window, &input, "APPROVED\r\n");
+    let view = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
+    let store = cx.read(|cx| {
+        view.read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .autosave()
+            .unwrap()
+    });
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+    let before = RepositoryState::read(&repo);
+    app.update(cx, |app, cx| app.load_more_commits(cx));
+    crate::busy_dismiss::wait(cx, &app, "frozen Save restore admission", |state| {
+        state.ui().conflict_restore_failed
+    });
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.ui().panes_revalidating());
+        assert!(!state.app_sessions.has_leases());
+        assert_eq!(
+            state.ui().conflict.as_ref().unwrap().entity_id(),
+            view.entity_id()
+        );
+        assert_eq!(input.read(cx).value().as_ref(), "APPROVED\r\n");
+    });
+    let failed = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].op, "conflict-draft-restore");
+    assert_eq!(
+        before.with_appended_oplog(&failed[0]),
+        RepositoryState::read(&repo)
+    );
+
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
+    detect(cx, &app, window);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(!state.ui().panes_revalidating());
+        assert!(!state.ui().conflict_restore_failed);
+        assert_eq!(
+            state.ui().conflict.as_ref().unwrap().entity_id(),
+            view.entity_id()
+        );
+        assert_eq!(input.read(cx).value().as_ref(), "APPROVED\r\n");
+    });
+    click_control(cx, window, "conflict-save");
+    crate::app_conflict::wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
+    index.read(true).unwrap();
+    assert!(!index.has_conflicts());
+    let staged = index.get_path(Path::new(FILE), 0).unwrap();
+    assert_eq!(staged.mode, 0o100755);
+    assert_eq!(
+        staged.id,
+        git2::Oid::hash_object(git2::ObjectType::Blob, b"APPROVED\n").unwrap()
+    );
+    assert_eq!(
+        repository.find_blob(staged.id).unwrap().content(),
+        b"APPROVED\n"
+    );
+    assert_eq!(std::fs::read(repo.join(FILE)).unwrap(), b"APPROVED\r\n");
+    assert_eq!(repository.head().unwrap().target(), head);
+    let saves = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "conflict-save:merge")
+        .collect::<Vec<_>>();
+    assert_eq!(saves.len(), 1);
+    assert!(matches!(saves[0].outcome, OpOutcome::Success { .. }));
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    drop(input);
+    drop(view);
+    unmount(cx, app, window);
+}

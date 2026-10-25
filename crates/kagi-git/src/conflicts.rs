@@ -1037,6 +1037,8 @@ pub struct SaveOutcome {
     pub path: PathBuf,
     /// Short hash of the resolved text that was written (for the oplog).
     pub after_short: String,
+    /// Frozen Result blob identity after clean filters using materialized attributes.
+    pub(crate) staged_oid: git2::Oid,
 }
 
 /// Plan a `continue`: validate that every file is resolved and free of marker
@@ -1291,6 +1293,16 @@ pub(crate) fn stage_conflict_resolution(
     buffer: &ResolutionBuffer,
     expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<(), GitError> {
+    stage_conflict_resolution_with_worktree_hook(repo, session, buffer, expected, || {})
+}
+
+fn stage_conflict_resolution_with_worktree_hook(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
+    expected: &kagi_domain::conflict_family::ConflictRevision,
+    after_worktree: impl FnOnce(),
+) -> Result<(), GitError> {
     preflight_continue_revision(repo, expected)?;
     // Both sequencer execution and the merge-panel route must fail closed if
     // the live index cannot be read or another unmerged path is untracked.
@@ -1321,7 +1333,7 @@ pub(crate) fn stage_conflict_resolution(
     // gitlink, #297) carry no text — they are staged by OID below and never
     // written through the working tree (so a conflicted symlink can never be
     // dereferenced, #298).
-    let mut resolutions: Vec<(std::path::PathBuf, String)> = Vec::new();
+    let mut resolutions = Vec::new();
     let mut raw_stages: Vec<(std::path::PathBuf, super::resolution::RawResolution)> = Vec::new();
     for file in &session.files {
         if let Some(raw) = buffer.raw_resolution(&file.path) {
@@ -1337,13 +1349,14 @@ pub(crate) fn stage_conflict_resolution(
                 )));
             }
         };
-        resolutions.push((file.path.clone(), text));
+        let mode = original_file_mode(&workdir.join(&file.path));
+        resolutions.push((file.path.clone(), text, mode));
     }
 
     // Phase 1: write each resolution to `<name>.kagi-resolve-tmp-<n>` next to
     // its target (same filesystem → rename is atomic). Create parent dirs.
     let mut temps: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new(); // (temp, target_abs)
-    for (n, (rel, text)) in resolutions.iter().enumerate() {
+    for (n, (rel, text, target_mode)) in resolutions.iter().enumerate() {
         let abs = workdir.join(rel);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -1356,7 +1369,7 @@ pub(crate) fn stage_conflict_resolution(
         // in-place per-file Save. Capture the target's mode (a symlink target is
         // never reached here: symlinks are raw-staged above) and re-apply it to
         // the temp before the rename.
-        let target_mode = original_file_mode(&abs);
+        let target_mode = *target_mode;
         let tmp_abs = abs.with_extension(format!("kagi-resolve-tmp-{}", n));
         match std::fs::write(&tmp_abs, text.as_bytes()) {
             Ok(()) => {
@@ -1405,11 +1418,13 @@ pub(crate) fn stage_conflict_resolution(
         }
     }
 
-    // Phase 3: stage every resolved path and flush the index once.
-    for (rel, _text) in &resolutions {
-        index.add_path(rel).map_err(|e| {
-            GitError::Other(format!("stage {} failed: {}", rel.display(), e.message()))
-        })?;
+    // Materialize the whole batch before loading clean filters: a resolved
+    // .gitattributes may change the policy for another Result in this batch,
+    // regardless of session order. The filter still consumes only frozen text,
+    // never the materialized file or bytes supplied by another worktree writer.
+    for (rel, text, mode) in &resolutions {
+        let frozen = freeze_text_resolution(repo, &index, rel, text, *mode)?;
+        stage_raw_entry(&mut index, rel, frozen)?;
     }
     // Raw (binary / symlink / gitlink) resolutions: stage the chosen side's OID
     // at stage 0 directly (#297) — byte-identical to the chosen side, exec bit /
@@ -1417,10 +1432,64 @@ pub(crate) fn stage_conflict_resolution(
     for (rel, raw) in &raw_stages {
         stage_raw_entry(&mut index, rel, *raw)?;
     }
+    after_worktree();
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
     Ok(())
+}
+
+fn freeze_text_resolution(
+    repo: &Repository,
+    index: &git2::Index,
+    path: &Path,
+    text: &str,
+    mode: Option<u32>,
+) -> Result<super::resolution::RawResolution, GitError> {
+    use std::io::Write;
+
+    let mode = text_resolution_mode(repo, index, path, mode)?;
+    // The path is a filter hint, not a source: libgit2 cleans the supplied frozen
+    // stream for the ODB without rereading the mutable worktree.
+    let mut writer = repo
+        .blob_writer(Some(path))
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    writer
+        .write_all(text.as_bytes())
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let oid = writer
+        .commit()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    Ok(super::resolution::RawResolution { oid, mode })
+}
+
+pub(crate) fn text_resolution_mode(
+    repo: &Repository,
+    index: &git2::Index,
+    path: &Path,
+    worktree_mode: Option<u32>,
+) -> Result<u32, GitError> {
+    let trust_filemode = match repo
+        .config()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?
+        .get_bool("core.filemode")
+    {
+        Ok(value) => value,
+        Err(error) if error.code() == git2::ErrorCode::NotFound => true,
+        Err(error) => return Err(GitError::Other(error.message().to_owned())),
+    };
+    // Planning and execution must agree on index.add_path's executable policy.
+    Ok(if !trust_filemode {
+        index
+            .get_path(path, 2)
+            .or_else(|| index.get_path(path, 3))
+            .or_else(|| index.get_path(path, 0))
+            .map_or(0o100644, |entry| entry.mode)
+    } else if worktree_mode.unwrap_or(0o644) & 0o111 != 0 {
+        0o100755
+    } else {
+        0o100644
+    })
 }
 
 /// Stage a raw resolution (a chosen side's blob/commit OID + git mode) at stage
@@ -1484,7 +1553,7 @@ pub(crate) fn path_to_index_bytes(rel: &Path) -> Option<Vec<u8>> {
 
 /// The current git file mode of a working-tree path, if it exists as a regular
 /// file (`symlink_metadata` — never follows a symlink). `None` when absent.
-fn original_file_mode(abs: &Path) -> Option<u32> {
+pub(crate) fn original_file_mode(abs: &Path) -> Option<u32> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1609,6 +1678,7 @@ pub(crate) fn execute_conflict_save_with_progress(
         return Ok(SaveOutcome {
             path: path.to_path_buf(),
             after_short: short_sha(&raw.oid.to_string()),
+            staged_oid: raw.oid,
         });
     }
 
@@ -1650,14 +1720,16 @@ pub(crate) fn execute_conflict_save_with_progress(
             )));
         }
     }
+    let mode = original_file_mode(&abs);
     std::fs::write(&abs, text.as_bytes())
         .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
     progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten);
 
-    // 2. Stage the path: index.add_path collapses stage 1/2/3 → stage 0.
-    index.add_path(path).map_err(|e| {
-        GitError::Other(format!("stage {} failed: {}", path.display(), e.message()))
-    })?;
+    // Stage the exact Result captured before materialization, not live WT bytes.
+    // A saved .gitattributes can change its own clean policy, so load filters
+    // after the write while still supplying the captured Result bytes.
+    let frozen = freeze_text_resolution(repo, &index, path, &text, mode)?;
+    stage_raw_entry(&mut index, path, frozen)?;
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
@@ -1666,6 +1738,7 @@ pub(crate) fn execute_conflict_save_with_progress(
     Ok(SaveOutcome {
         path: path.to_path_buf(),
         after_short: short_text_hash(&text),
+        staged_oid: frozen.oid,
     })
 }
 
@@ -2069,6 +2142,10 @@ pub(crate) fn current_state_summary(repo: &Repository) -> Result<StateSummary, G
 // ────────────────────────────────────────────────────────────
 // Unit tests (pure helpers; repo-backed behaviour in tests/conflicts_test.rs)
 // ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "conflicts_frozen_tests.rs"]
+mod frozen_staging_tests;
 
 #[cfg(test)]
 mod tests {

@@ -169,6 +169,7 @@ fn refuse_drift_in(dir: TempDir, op: Operation, drift: impl FnOnce(&Path)) {
     let worktree = std::fs::read(path.join("a")).unwrap();
     let refs = git_output(path, &["show-ref"]);
     let merge_head = std::fs::read(path.join(".git/MERGE_HEAD")).ok();
+    let merge_msg = std::fs::read(path.join(".git/MERGE_MSG")).ok();
     let report = backend.run_recorded(&op, &plan);
     let error = report
         .result
@@ -187,12 +188,19 @@ fn refuse_drift_in(dir: TempDir, op: Operation, drift: impl FnOnce(&Path)) {
         "no amend savepoint on refusal"
     );
     assert_eq!(std::fs::read(path.join(".git/MERGE_HEAD")).ok(), merge_head);
+    assert_eq!(std::fs::read(path.join(".git/MERGE_MSG")).ok(), merge_msg);
     let tail = read_oplog_tail_for_repo(path, 10);
     assert_eq!(tail.len(), 1, "one durable refusal receipt");
     assert_eq!(tail[0].id, report.recording.entry().id);
-    assert!(
-        matches!(&tail[0].outcome, OpOutcome::Failed { error: reason } if reason.contains("Staged content changed"))
-    );
+    if matches!(op, Operation::MergeCommit { .. }) {
+        assert!(
+            matches!(&tail[0].outcome, OpOutcome::Refused { blockers } if blockers.iter().any(|reason| reason.contains("Staged content changed")))
+        );
+    } else {
+        assert!(
+            matches!(&tail[0].outcome, OpOutcome::Failed { error: reason } if reason.contains("Staged content changed"))
+        );
+    }
 }
 
 fn swap_blob(path: &Path) {
@@ -369,6 +377,17 @@ fn commit_index_identity_rejects_resolved_merge_blob_swap() {
     if !test_support::run_isolated() {
         return;
     }
+    let dir = resolved_merge_fixture();
+    refuse_drift_in(
+        dir,
+        Operation::MergeCommit {
+            message: "approved merge".into(),
+        },
+        swap_blob,
+    );
+}
+
+fn resolved_merge_fixture() -> TempDir {
     let dir = fixture();
     let path = dir.path();
     commit_all(path, "approved base");
@@ -382,13 +401,79 @@ fn commit_index_identity_rejects_resolved_merge_blob_swap() {
     write_file(path, "a", "APPROVED\n");
     git(path, &["add", "a"]);
     assert!(path.join(".git/MERGE_HEAD").exists());
-    refuse_drift_in(
-        dir,
-        Operation::MergeCommit {
+    dir
+}
+
+#[test]
+fn merge_commit_approved_plan_refuses_external_add_and_cached_removal() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for remove in [false, true] {
+        refuse_drift_in(
+            resolved_merge_fixture(),
+            Operation::MergeCommit {
+                message: "approved merge".into(),
+            },
+            |path| {
+                if remove {
+                    git(path, &["rm", "--cached", "a"]);
+                } else {
+                    write_file(path, "external", "not approved\n");
+                    git(path, &["add", "external"]);
+                }
+            },
+        );
+    }
+}
+
+#[test]
+fn merge_commit_uses_displayed_index_digest_not_click_time_plan() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for remove in [false, true] {
+        let dir = resolved_merge_fixture();
+        let path = dir.path();
+        let mut backend = Backend::open(path).unwrap();
+        let (displayed, digest) = backend.commit_panel_status().unwrap();
+        assert!(displayed
+            .staged
+            .iter()
+            .any(|file| file.path == Path::new("a")));
+        if remove {
+            git(path, &["rm", "--cached", "a"]);
+        } else {
+            write_file(path, "external", "not approved\n");
+            git(path, &["add", "external"]);
+        }
+        let op = Operation::MergeCommit {
             message: "approved merge".into(),
-        },
-        swap_blob,
-    );
+        };
+        let mut plan = backend.plan(&op).unwrap();
+        assert_ne!(plan.approved_index_digest.as_deref(), Some(digest.as_str()));
+        plan.approved_index_digest = Some(digest);
+        let head = git_output(path, &["rev-parse", "HEAD"]);
+        let index = std::fs::read(path.join(".git/index")).unwrap();
+        let merge_head = std::fs::read(path.join(".git/MERGE_HEAD")).unwrap();
+        let merge_msg = std::fs::read(path.join(".git/MERGE_MSG")).unwrap();
+        let report = backend.run_recorded(&op, &plan);
+        assert!(matches!(report.result, Err(GitError::Preflight(_))));
+        assert!(matches!(
+            report.recording.entry().outcome,
+            OpOutcome::Refused { .. }
+        ));
+        assert_eq!(git_output(path, &["rev-parse", "HEAD"]), head);
+        assert_eq!(std::fs::read(path.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read(path.join(".git/MERGE_HEAD")).unwrap(),
+            merge_head
+        );
+        assert_eq!(
+            std::fs::read(path.join(".git/MERGE_MSG")).unwrap(),
+            merge_msg
+        );
+    }
 }
 
 fn checkout_state(path: &Path) -> (String, String, String, String, Vec<u8>) {

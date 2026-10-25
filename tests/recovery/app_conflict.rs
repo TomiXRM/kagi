@@ -608,7 +608,7 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
     assert!(cx.read(|cx| app.read(cx).ui().conflict_detected));
     app.update(cx, |app, cx| {
         app.ui_mut().expect("active session").conflict_detected = true;
-        app.apply_conflict_detect(stale_owner, payload, cx);
+        app.apply_conflict_detect(stale_owner.clone(), payload, cx);
     });
     cx.run_until_parked();
     cx.read(|cx| {
@@ -636,6 +636,28 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
         !cx.read(|cx| app.read(cx).ui().conflict_detected),
         "a stale callback must re-arm only its frozen owner's detector guard"
     );
+    // The unchanged-observation adoption path also preserves the pane above.
+    // Distinguish rejection from that path by delivering the wrong visit
+    // before the current visit has installed any pane at all.
+    let payload = e2e::detect_payload_for_test(&repo, "main");
+    app.update(cx, |app, cx| {
+        let ui = app.ui_mut().expect("active session");
+        ui.conflict = None;
+        ui.conflict_detected = true;
+        assert!(
+            app.view().operation.is_some(),
+            "the accepted read is still conflicted"
+        );
+        app.apply_conflict_detect(stale_owner, payload, cx);
+        assert!(
+            app.ui().conflict.is_none(),
+            "a wrong-visit result must never create the current visit's pane"
+        );
+        assert!(
+            !app.ui().conflict_detected,
+            "a wrong-visit result re-arms without falling through to adoption"
+        );
+    });
     drop(pane);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS a detector result for another owner is dropped (#707)");

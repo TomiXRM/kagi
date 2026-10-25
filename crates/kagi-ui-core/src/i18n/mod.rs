@@ -588,8 +588,18 @@ pub enum Msg {
     ConflictContinue,
     ConflictAbort,
     ConflictSkip,
-    /// Conflict dashboard: armed label on the two-stage Skip button.
+    /// Full armed Skip label, shared by the strip and sidebar tooltip.
     ConflictConfirmSkip,
+    /// Short armed sidebar button label; the full action stays in its tooltip.
+    ConflictConfirmSkipButton,
+    /// Repository menu titles (distinct from sentence-case buttons).
+    MenuConfirmSkip,
+    MenuAbortOperation,
+    MenuAbortMerge,
+    MenuAbortRebase,
+    MenuAbortCherryPick,
+    MenuAbortRevert,
+    MenuAbortStashApply,
     /// Conflict dashboard: what the armed Skip is about to discard.
     ConflictConfirmSkipHint,
     ConflictResolved,
@@ -3264,6 +3274,22 @@ impl Msg {
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
             (En, ConflictConfirmSkip) => "Confirm skip",
             (Ja, ConflictConfirmSkip) => "スキップを確定",
+            (En, ConflictConfirmSkipButton) => "Confirm",
+            (Ja, ConflictConfirmSkipButton) => "確定",
+            (En, MenuConfirmSkip) => "Confirm Skip",
+            (Ja, MenuConfirmSkip) => "スキップを確定",
+            (En, MenuAbortOperation) => "Abort Operation…",
+            (Ja, MenuAbortOperation) => "操作を中止…",
+            (En, MenuAbortMerge) => "Abort Merge…",
+            (Ja, MenuAbortMerge) => "merge を中止…",
+            (En, MenuAbortRebase) => "Abort Rebase…",
+            (Ja, MenuAbortRebase) => "rebase を中止…",
+            (En, MenuAbortCherryPick) => "Abort Cherry-Pick…",
+            (Ja, MenuAbortCherryPick) => "cherry-pick を中止…",
+            (En, MenuAbortRevert) => "Abort Revert…",
+            (Ja, MenuAbortRevert) => "revert を中止…",
+            (En, MenuAbortStashApply) => "Abort Stash Apply…",
+            (Ja, MenuAbortStashApply) => "stash apply を中止…",
             (En, ConflictConfirmSkipHint) => {
                 "Skip drops this step's changes and your in-progress resolution.                  Click again to confirm."
             }
@@ -5441,6 +5467,9 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "file.openInTerminal" => "リポジトリをターミナルで開く",
         "file.connectRemote" => "remote ホストに接続…",
         "file.refresh" => "リポジトリを再読み込み",
+        "repo.conflictAbort" => "操作を中止…",
+        "repo.conflictSkip" => "このステップをスキップ…",
+        "repo.conflictContinue" => "確認へ進む…",
         "view.zoomIn" => "拡大",
         "view.zoomOut" => "縮小",
         "view.zoomReset" => "実際のサイズ",

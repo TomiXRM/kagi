@@ -68,6 +68,13 @@ fn build_rows_empty_query_enumerates_all_commands() {
     {
         assert_eq!(row.id, cmd.id);
     }
+    for id in [
+        "repo.conflictAbort",
+        "repo.conflictSkip",
+        "repo.conflictContinue",
+    ] {
+        assert!(rows.iter().any(|row| row.id == id));
+    }
 }
 
 #[test]

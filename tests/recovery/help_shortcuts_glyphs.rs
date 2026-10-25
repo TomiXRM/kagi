@@ -45,7 +45,7 @@ fn check_help(cx: &mut VisualTestAppContext, repo: &std::path::Path, (width, hei
         }
         _ => panic!("Help opens the shortcut info panel"),
     });
-    let rows = app.read_with(cx, |app, _| command_palette::rows_for(app, ""));
+    let rows = app.read_with(cx, |app, cx| command_palette::rows_for(app, "", cx));
     let listing = commands::shortcut_listing();
     let mut index = 0;
     for command in commands::COMMANDS {

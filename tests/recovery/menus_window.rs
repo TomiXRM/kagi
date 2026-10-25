@@ -5,6 +5,9 @@ use gpui::{AnyWindowHandle, Entity, MenuItem, Role, VisualTestAppContext};
 use kagi::ui::{commands, dialog_a11y, e2e, window_menu, KagiApp};
 use kagi_ui_core::i18n::{self, Lang};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+
 fn mount_short(
     cx: &mut VisualTestAppContext,
     repo: &std::path::Path,
@@ -63,6 +66,235 @@ fn title(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> String {
 }
 fn repo_title(repo: &std::path::Path, branch: &str) -> String {
     format!("{} — {branch}", repo.file_name().unwrap().to_string_lossy())
+}
+
+pub fn scenario_conflict_repository_menu(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let old_lang = i18n::lang();
+    let fixture = crate::app_conflict::content_fixture();
+    let repo = fixture.path();
+    let (app, win) = mount_short(cx, repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    draw(cx, win);
+    let available = |cx: &mut VisualTestAppContext, action: &dyn gpui::Action| {
+        cx.update_window(win, |_, window, cx| window.is_action_available(action, cx))
+            .unwrap()
+    };
+    for (lang, expected) in [
+        (
+            Lang::En,
+            ["Abort Merge…", "Skip This Step…", "Review to Continue…"],
+        ),
+        (
+            Lang::Ja,
+            ["merge を中止…", "このステップをスキップ…", "確認へ進む…"],
+        ),
+    ] {
+        i18n::set_lang(lang);
+        draw(cx, win);
+        let repository = labels(cx, "Repository");
+        assert!(repository
+            .windows(3)
+            .any(|items| items.iter().map(String::as_str).eq(expected)));
+    }
+    assert!(available(cx, &commands::ConflictAbort));
+    assert!(!available(cx, &commands::ConflictSkip), "merge has no Skip");
+    assert!(
+        !available(cx, &commands::ConflictContinue),
+        "unresolved files block Continue"
+    );
+    let before = crate::macos::repo_fingerprint(repo);
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));
+    assert!(
+        !available(cx, &commands::ConflictAbort),
+        "modal blocks a second action"
+    );
+    assert_eq!(
+        crate::macos::repo_fingerprint(repo),
+        before,
+        "Abort only opens the existing confirmation"
+    );
+    app.update(cx, |app, cx| {
+        app.cancel_conflict_abort();
+        cx.notify();
+    });
+    invoke(cx, &app, win, "file.newTab");
+    for action in [
+        commands::ConflictAbort.boxed_clone(),
+        commands::ConflictSkip.boxed_clone(),
+        commands::ConflictContinue.boxed_clone(),
+    ] {
+        assert!(
+            !available(cx, action.as_ref()),
+            "Home has no mounted conflict menu actions"
+        );
+    }
+    unmount(cx, app, win);
+
+    git(repo, &["merge", "--abort"]);
+    for (operation, en, ja) in [
+        ("cherry-pick", "Abort Cherry-Pick…", "cherry-pick を中止…"),
+        ("rebase", "Abort Rebase…", "rebase を中止…"),
+        ("revert", "Abort Revert…", "revert を中止…"),
+    ] {
+        assert!(!git_fixture::git_succeeds(repo, &[operation, "feature"]));
+        let (app, win) = mount_short(cx, repo);
+        app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+        cx.run_until_parked();
+        draw(cx, win);
+        assert!(cx
+            .update_window(win, |_, window, cx| window
+                .is_action_available(&commands::ConflictSkip, cx))
+            .unwrap());
+        for (lang, abort, skip, review) in [
+            (Lang::En, en, "Skip This Step…", "Review to Continue…"),
+            (Lang::Ja, ja, "このステップをスキップ…", "確認へ進む…"),
+        ] {
+            i18n::set_lang(lang);
+            draw(cx, win);
+            assert!(labels(cx, "Repository")
+                .windows(3)
+                .any(|items| items.iter().map(String::as_str).eq([abort, skip, review])));
+        }
+        let before = crate::macos::repo_fingerprint(repo);
+        invoke(cx, &app, win, "repo.conflictSkip");
+        assert_eq!(
+            crate::macos::repo_fingerprint(repo),
+            before,
+            "first Skip only arms existing confirmation"
+        );
+        for (lang, expected) in [(Lang::En, "Confirm Skip"), (Lang::Ja, "スキップを確定")] {
+            i18n::set_lang(lang);
+            draw(cx, win);
+            assert!(labels(cx, "Repository")
+                .iter()
+                .any(|label| label == expected));
+        }
+        unmount(cx, app, win);
+        git(repo, &[operation, "--abort"]);
+    }
+    conflict_menu_saved_abort(cx);
+    i18n::set_lang(old_lang);
+}
+
+/// A saved merge first exposes the read-owned fallback, then #1755 mounts its
+/// overview. Continue retires that view for the real CommitPanel, where menu
+/// and strip Abort retain the same checked-read/confirmation gates.
+fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
+    let fixture = crate::app_conflict::content_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(repo, &["add", "file.txt"]);
+    let hold = crate::conflict_draft_inspection::DetectionHold::new(cx, false);
+    let (app, win) = mount_short(cx, repo);
+    hold.wait(cx, &app);
+    draw(cx, win);
+    cx.read(|cx| {
+        assert!(app.read(cx).ui().conflict.is_none());
+        assert!(app.read(cx).view().operation.is_some());
+    });
+    let available = |cx: &mut VisualTestAppContext| {
+        cx.update_window(win, |_, window, cx| {
+            window.is_action_available(&commands::ConflictAbort, cx)
+        })
+        .unwrap()
+    };
+    let before = crate::macos::repo_fingerprint(repo);
+    assert!(
+        !available(cx),
+        "the pending checked read refuses menu Abort"
+    );
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_none()));
+    assert_eq!(crate::macos::repo_fingerprint(repo), before);
+    drop(hold);
+    cx.run_until_parked();
+    e2e::clear_control_bounds(win.window_id(), "operation-strip-abort");
+    draw(cx, win);
+    cx.read(|cx| assert!(app.read(cx).ui().conflict.is_some()));
+    assert!(e2e::control_bounds(win.window_id(), "operation-strip-abort").is_none());
+    assert!(e2e::control_bounds(win.window_id(), "conflict-abort").is_some());
+    for name in ["cp-body", "cp-commit-action"] {
+        e2e::clear_control_bounds(win.window_id(), name);
+    }
+    crate::app_conflict::click_control(cx, win, "conflict-continue");
+    crate::app_conflict::wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
+    // The retained session entity must not leave its editor body on screen.
+    e2e::clear_control_bounds(win.window_id(), "conflict-abort");
+    draw(cx, win);
+    cx.read(|cx| {
+        let ui = app.read(cx).ui();
+        assert!(ui.conflict_merge_pending);
+        assert!(ui.commit_panel_open);
+    });
+    assert!(e2e::control_bounds(win.window_id(), "conflict-abort").is_none());
+    for name in ["cp-body", "cp-commit-action", "operation-strip-abort"] {
+        assert!(
+            e2e::control_bounds(win.window_id(), name).is_some(),
+            "{name} is painted over the real CommitPanel"
+        );
+    }
+    app.update(cx, |app, cx| {
+        app.planning = Some("merge-plan");
+        cx.notify();
+    });
+    draw(cx, win);
+    assert!(!available(cx), "planning blocks menu Abort");
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_none()));
+    app.update(cx, |app, cx| {
+        app.planning = None;
+        cx.notify();
+    });
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        draw(cx, win);
+        assert!(available(cx));
+        let abort = e2e::control_bounds(win.window_id(), "operation-strip-abort").unwrap();
+        cx.simulate_click(win, abort.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));
+        app.update(cx, |app, cx| {
+            app.cancel_conflict_abort();
+            cx.notify();
+        });
+        draw(cx, win);
+        invoke(cx, &app, win, "repo.conflictAbort");
+        cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));
+        assert!(!available(cx), "modal blocks menu Abort too");
+        assert_eq!(crate::macos::repo_fingerprint(repo), before);
+        app.update(cx, |app, cx| {
+            app.cancel_conflict_abort();
+            cx.notify();
+        });
+    }
+    app.update(cx, |app, cx| {
+        e2e::await_conflict_revalidation(app);
+        cx.notify();
+    });
+    draw(cx, win);
+    assert!(!available(cx), "unadmitted observation blocks menu Abort");
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_none()));
+    assert_eq!(crate::macos::repo_fingerprint(repo), before);
+    unmount(cx, app, win);
+
+    git(repo, &["merge", "--abort"]);
+    let (app, win) = mount_short(cx, repo);
+    draw(cx, win);
+    assert!(
+        !cx.update_window(win, |_, window, cx| {
+            window.is_action_available(&commands::ConflictAbort, cx)
+        })
+        .unwrap(),
+        "no operation means no Abort"
+    );
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_none()));
+    unmount(cx, app, win);
 }
 pub fn scenario_window_title_identity(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();

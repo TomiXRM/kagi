@@ -169,7 +169,7 @@ pub fn scenario_palette_viewport(cx: &mut VisualTestAppContext) {
             contained(card, input, "palette input");
             let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
             contained(card, scroll.bounds(), "palette results");
-            let rows = cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), ""));
+            let rows = cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), "", cx));
             assert!(
                 rows.iter().any(|row| row.label.len() > 300),
                 "long theme fixture is drawn"
@@ -223,7 +223,7 @@ pub fn scenario_palette_viewport(cx: &mut VisualTestAppContext) {
                 );
                 contained(filtered_card, scroll.bounds(), "filtered results");
                 let filtered =
-                    cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), query));
+                    cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), query, cx));
                 assert!(filtered.len() <= 1, "few/empty result fixture");
                 if let Some(row) = filtered.first() {
                     let ax = kagi::ui::list_a11y::recorded_list("command-palette-list").unwrap();
@@ -265,7 +265,7 @@ pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {
     keys(cx, window, "cmd-p");
     draw(cx, window);
     let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
-    let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+    let rows = cx.read(|cx| rows_for(app.read(cx), "", cx));
     assert!(rows.len() > 20, "fixture must overflow the palette");
     assert!(rows.iter().any(|row| row.disabled_reason.is_some()));
     let heights: Vec<_> = (0..rows.len())
@@ -356,7 +356,7 @@ pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {
 
     wheel(cx, -100_000.);
     query(cx, "zzzzzzzzzzzzzzzzzzzz");
-    assert!(cx.read(|cx| rows_for(app.read(cx), "zzzzzzzzzzzzzzzzzzzz").is_empty()));
+    assert!(cx.read(|cx| rows_for(app.read(cx), "zzzzzzzzzzzzzzzzzzzz", cx).is_empty()));
     keys(cx, window, "up down enter");
     assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
     query(cx, "");
@@ -371,7 +371,7 @@ pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {
     query(cx, &toggle.label);
     visible(cx);
     assert_eq!(
-        cx.read(|cx| rows_for(app.read(cx), &toggle.label)[0].action.clone()),
+        cx.read(|cx| rows_for(app.read(cx), &toggle.label, cx)[0].action.clone()),
         toggle.action
     );
     let sidebar = cx.read(|cx| app.read(cx).sidebar.visible);

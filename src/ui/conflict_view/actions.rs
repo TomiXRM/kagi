@@ -2,6 +2,29 @@
 use super::*;
 
 impl ConflictView {
+    pub(crate) fn menu_command_state(&self, id: &str) -> crate::ui::commands::CommandState {
+        use crate::ui::commands::CommandState::{Disabled, Enabled};
+        let Some(mode) = self.mode.as_ref() else {
+            return Disabled(Msg::ConflictReviewNeeded.t());
+        };
+        if self.writer_busy {
+            return Disabled(Msg::OpInProgress.t());
+        }
+        match id {
+            "repo.conflictAbort" => Enabled,
+            "repo.conflictSkip" if mode.session.op.is_sequencer() => Enabled,
+            "repo.conflictContinue" if self.saved_review_needed => {
+                Disabled(Msg::ConflictReviewNeeded.t())
+            }
+            "repo.conflictContinue" if mode.can_continue() => Enabled,
+            _ => Disabled(
+                mode.continue_blocker()
+                    .unwrap_or(Msg::ConflictReviewNeeded)
+                    .t(),
+            ),
+        }
+    }
+
     /// Apply a per-file side choice to the in-memory resolution buffer, then
     /// recompute that file's status.  The repository is untouched (in-memory
     /// first); the buffer is autosaved so the partial resolution survives.

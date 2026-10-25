@@ -3,8 +3,8 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 57 TLC configurations, 39 pure
-properties (1,695,651 input/property evaluations), 16 TLC negative controls,
+No product code is imported or changed. There are 69 TLC configurations, 39 pure
+properties (1,695,651 input/property evaluations), 24 TLC negative controls,
 36 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
@@ -64,7 +64,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
+holes/questions tracked by **#1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -95,6 +95,42 @@ of that backend defence; `skip-prewrite-broken` removes revision checks and is r
 zero exit; `zero-exit-advanced` restores the old classifier and is red.
 `continue-metadata-read` HOLDs under the full operation-metadata admission guard,
 with a separate red broken variant.
+
+#1731 makes `draft-io-quit` and the three `preserve-*` checks HOLD. The extracted
+close path retains the failed-autosave flag and live text while its sheet offers
+Retry or Cancel; a successful retry clears the hold. `DraftNeverLost` is unchanged:
+this no-discard safety scenario does not model a separately approved intentional
+discard. The native `conflict_draft_persist_failure` scenario covers both explicit
+discard confirmations, as well as retry/cancel and close/quit in EN/JA.
+Abort, Skip, and D/F preservation failures now reach a Refused state before any
+repository mutation. Four `*-broken` controls independently remove those guards
+and retain the original loss/destructive-progress counterexamples. Atomic draft
+replacement and interprocess serialization remain the separate #1732 properties;
+the pure hunk/draft compatibility predicates are intentionally unchanged.
+
+### Background UI cutover (#1760)
+
+Ordinary Result edits and source selections call `queue_autosave()`; acceptance
+does not acknowledge disk. The UI awaits `flush()` on a background executor for
+close, quit, repository-tab close, Save, Continue, Abort, Skip and D/F. A failed
+barrier retains the live pane and Retry/two-step Discard gate; an operation is
+Refused. Approval additionally requires the same ticket generation, pane revision
+and attachment. Capture/flush completes before repository admission, never under
+its lock. `has_unflushed_drafts()` includes pending writes and failed saves.
+
+The `draft-flush-*` refinement explores two captured generations, an edit during
+the barrier, success/error completion and explicit draft/repository lock phases.
+Four assertions require current-generation approval, no approval after error,
+durable close and nonnested locks; each has a guard-removal counterexample.
+It is a hand-extracted ordering model, not an execution of GPUI or OS locks.
+`draft-crash` deliberately remains REFUTE: the up-to-250 ms coalescing interval
+plus in-flight I/O is unacknowledged and may be lost on abrupt process death.
+The guarded close/quit transitions cover cancellable app-owned exits.
+Non-cancellable OS termination captures every live pane and urgently flushes
+off-thread within GPUI's shared 200 ms shutdown budget; slow/failing storage can
+still exceed it. That path does not strengthen `draft-crash` to HOLD or claim an
+acknowledgment before a successful current-generation flush.
+
 
 ### Saved runtime projections
 
@@ -141,7 +177,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
 | `draft-crash` | `DraftNeverLost` | REFUTE | none | #1732; capture before acknowledged flush can be lost |
-| `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
+| `draft-io-quit` | `DraftNeverLost` | HOLD | none | #1731 fixed (no explicit discard) |
+| `draft-io-quit-broken` | `DraftNeverLost` | REFUTE | draftClose | Negative control for #1731 |
 | `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
 | `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |
 | `draft-two-writers` | `DraftWriteAtomic` | HOLD | none | #1732 |
@@ -150,6 +187,14 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
 | `two-writer-recovery` | `DraftWriteAtomic` | HOLD | none | #1732: retain an earlier body after stale-editor other-file autosave |
 | `two-writer-recovery-broken` | `DraftWriteAtomic` | REFUTE | preMergeRecovery | Negative control; deduplicate against the pre-merge editor |
+| `draft-flush-failure` | `BarrierFailureNeverApproved` | HOLD | none | #1760: Err refuses approval |
+| `draft-flush-failure-broken` | `BarrierFailureNeverApproved` | REFUTE | flushFailure | Negative control; acknowledge Err |
+| `draft-flush-generation` | `BarrierApprovalCurrentGeneration` | HOLD | none | #1760: acknowledge only the current generation |
+| `draft-flush-generation-broken` | `BarrierApprovalCurrentGeneration` | REFUTE | flushGeneration | Negative control; approve stale completion |
+| `draft-flush-close` | `BarrierCloseDurable` | HOLD | none | #1760: close awaits successful current flush |
+| `draft-flush-close-broken` | `BarrierCloseDurable` | REFUTE | flushClose | Negative control; close while pending |
+| `draft-flush-lock-order` | `BarrierLocksNeverNested` | HOLD | none | #1760 / #1746: flush before repository admission |
+| `draft-flush-lock-order-broken` | `BarrierLocksNeverNested` | REFUTE | flushLock | Negative control; acquire repository lock before flush |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
@@ -163,9 +208,12 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `skip-prewrite-broken` | `SkipDropsOnlyApprovedStep` | REFUTE | skipRevision | Negative control for #1746 D2 |
 | `continue-metadata-read` | `MetadataReadErrorNeverAdmitted` | HOLD | none | CONTRACT at runtime (metadata guard) |
 | `continue-metadata-read-broken` | `MetadataReadErrorNeverAdmitted` | REFUTE | metadata | Negative control; no product issue |
-| `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
-| `preserve-skip` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
-| `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | none | #1731 |
+| `preserve-abort` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
+| `preserve-abort-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
+| `preserve-skip` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
+| `preserve-skip-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
+| `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
+| `preserve-dir-file-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none | #1743 |
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |

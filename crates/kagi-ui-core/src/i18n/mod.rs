@@ -1358,6 +1358,7 @@ pub enum Msg {
     AdviceConflictsConflictGone,
     AdviceConflictsAbortStartUnavailable,
     AdviceConflictsAbortHeadMoved,
+    AdviceConflictsDraftPreservationFailed,
     AdviceConflictsResolutionMarkers,
     AdviceConflictsUnresolvedFiles,
     AdviceConflictsMarkerResidue,
@@ -1764,6 +1765,15 @@ pub enum Msg {
     EditorHostSaveAll,
     EditorHostSaveWaiting,
     EditorHostRecoveryRequired,
+    ConflictDraftSaveFailed,
+    ConflictDraftRetry,
+    ConflictDraftDiscardClose,
+    ConflictDraftDiscardConfirm,
+    ConflictDraftUnsavedDetail,
+    ConflictDraftSavingTitle,
+    ConflictDraftSaving,
+    ConflictDraftDiscardDetail,
+    ConflictDraftMixedDiscardDetail,
     EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
@@ -2350,6 +2360,8 @@ impl Msg {
             (Ja, AdviceConflictsAbortStartUnavailable) => plan::conflicts::ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE,
             (En, AdviceConflictsAbortHeadMoved) => advice_en!(ConflictsAbortHeadMoved),
             (Ja, AdviceConflictsAbortHeadMoved) => plan::conflicts::ADVICE_CONFLICTS_ABORT_HEAD_MOVED,
+            (En, AdviceConflictsDraftPreservationFailed) => advice_en!(ConflictsDraftPreservationFailed),
+            (Ja, AdviceConflictsDraftPreservationFailed) => plan::conflicts::ADVICE_CONFLICTS_DRAFT_PRESERVATION_FAILED,
             (En, AdviceConflictsResolutionMarkers) => advice_en!(ConflictsResolutionMarkers),
             (Ja, AdviceConflictsResolutionMarkers) => plan::conflicts::ADVICE_CONFLICTS_RESOLUTION_MARKERS,
             (En, AdviceConflictsUnresolvedFiles) => advice_en!(ConflictsUnresolvedFiles),
@@ -4605,6 +4617,24 @@ impl Msg {
             (Ja, EditorHostRecoveryRequired) => {
                 "操作の結果が不明です。「キャンセル」を選び、操作ログで復旧方法を確認してから再試行してください。"
             }
+            (En, ConflictDraftSaveFailed) => "Draft could not be saved",
+            (Ja, ConflictDraftSaveFailed) => "下書きを保存できていません",
+            (En, ConflictDraftRetry) => "Retry",
+            (Ja, ConflictDraftRetry) => "再試行",
+            (En, ConflictDraftDiscardClose) => "Discard and Close",
+            (Ja, ConflictDraftDiscardClose) => "破棄して閉じる",
+            (En, ConflictDraftDiscardConfirm) => "Confirm Discard and Close",
+            (Ja, ConflictDraftDiscardConfirm) => "破棄して閉じることを確認",
+            (En, ConflictDraftUnsavedDetail) => "Conflict decisions exist only in this window. Retry saving or explicitly discard them before closing.",
+            (Ja, ConflictDraftUnsavedDetail) => "conflict の解決内容はこのウィンドウにのみ残っています。保存を再試行するか、明示的に破棄してから閉じてください。",
+            (En, ConflictDraftSavingTitle) => "Saving Conflict Decisions",
+            (Ja, ConflictDraftSavingTitle) => "conflict の解決内容を保存中",
+            (En, ConflictDraftSaving) => "Saving conflict decisions…",
+            (Ja, ConflictDraftSaving) => "conflict の解決内容を保存しています…",
+            (En, ConflictDraftDiscardDetail) => "These unsaved conflict decisions will be lost. Discard them and close?",
+            (Ja, ConflictDraftDiscardDetail) => "未保存の conflict 解決内容が失われます。破棄して閉じますか？",
+            (En, ConflictDraftMixedDiscardDetail) => "These unsaved conflict decisions and file changes will be lost. Discard them and close?",
+            (Ja, ConflictDraftMixedDiscardDetail) => "未保存の conflict 解決内容とファイルの変更が失われます。破棄して閉じますか？",
             (En, EditorWorkspaceSaveInterrupted) => {
                 "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
             }

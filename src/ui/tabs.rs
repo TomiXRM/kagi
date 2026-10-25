@@ -680,8 +680,18 @@ impl KagiApp {
             return;
         }
         let closing_session = self.tabs[index].session;
-        if self.editor_dirty_for(closing_session, cx) {
+        if self.editor_dirty_for(closing_session, cx)
+            || self.failed_conflict_draft_for(closing_session, cx)
+        {
             self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closing_session), cx);
+            if self
+                .ui
+                .get(&closing_session)
+                .and_then(|ui| ui.conflict.as_ref())
+                .is_some_and(|pane| pane.read(cx).draft_persist_failed.is_none())
+            {
+                self.flush_host_conflict_drafts(cx);
+            }
             return;
         }
         let closed = self.tabs.remove(index);

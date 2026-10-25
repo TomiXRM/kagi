@@ -646,7 +646,7 @@ fn queued_failure_stays_unflushed_until_a_successful_retry() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             let lock = draft_storage::lock(&path).unwrap();
             let failed = buffer.queue_autosave().unwrap();
-            let error = buffer.flush().unwrap_err().to_string();
+            let error = failed.flush().unwrap_err().to_string();
             assert!(error.contains("lock"), "{error}");
             assert!(failed.wait().is_err());
             assert!(buffer.has_unflushed_drafts());
@@ -662,7 +662,7 @@ fn queued_failure_stays_unflushed_until_a_successful_retry() {
                 "failure is retained, not mistaken for no pending write"
             );
             let retry = buffer.queue_autosave().unwrap();
-            buffer.flush().unwrap();
+            retry.flush().unwrap();
             retry.wait().unwrap();
             assert!(!buffer.has_unflushed_drafts());
             assert!(!buffer.files[file].pending_edit.is_pending());

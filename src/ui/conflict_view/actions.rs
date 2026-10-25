@@ -50,7 +50,7 @@ impl ConflictView {
         // Refresh status for this file from the buffer.
         c.refresh_file_status(path);
         // Autosave (ADR-0057): never lose a partial resolution.
-        let _ = c.buffer.autosave();
+        self.autosave_drafts();
         Some(Ok(()))
     }
 
@@ -165,7 +165,7 @@ impl ConflictView {
             return;
         };
         c.refresh_file_status(path);
-        let _ = c.buffer.autosave();
+        self.autosave_drafts();
     }
 }
 impl ConflictView {
@@ -343,7 +343,7 @@ impl ConflictView {
         // Reset leaves marker residue → status becomes NeedsReview (still has a
         // result draft, but unresolved markers remain).
         c.refresh_file_status(path);
-        let _ = c.buffer.autosave();
+        self.autosave_drafts();
     }
 
     /// Select a file and open its matching content editor (or binary preview).

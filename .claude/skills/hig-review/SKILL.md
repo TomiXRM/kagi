@@ -106,6 +106,14 @@ default. A caution symbol only where data can be lost.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.
+Mixed-state close warnings name every kind of unsaved data they will discard,
+including the scoped ordinary-editor file count alongside conflict decisions
+(`feedback.md › Best practices`: "Warn people when they initiate a task that can
+cause data loss that’s unexpected and irreversible."). Healthy background saves
+show progress rather than failure/Retry instructions; error choices appear only
+after failure (#1731/#1760 merge review).
+Failure Retry retries conflict persistence only; mixed ordinary file writes remain
+behind the explicitly labeled Save All action and its scoped file count.
 
 **Layout** — controls align to the grid of their siblings (shared height,
 radius, spacing tokens); a row has one reading direction; nothing is placed

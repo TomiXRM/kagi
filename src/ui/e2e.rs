@@ -121,6 +121,33 @@ pub fn status_chips() -> Vec<(String, Option<String>, Option<String>)> {
     STATUS_CHIPS.with(|value| value.borrow().clone())
 }
 
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct ConflictDraftGuardPresentation {
+    pub title: &'static str,
+    pub retry: &'static str,
+    pub discard: &'static str,
+    pub detail: &'static str,
+    pub editor_count: usize,
+    pub saving: bool,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CONFLICT_DRAFT_GUARD: RefCell<Option<ConflictDraftGuardPresentation>> = const { RefCell::new(None) };
+}
+
+/// Observe the labels actually selected by the conflict draft guard renderer.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_conflict_draft_guard(presentation: ConflictDraftGuardPresentation) {
+    CONFLICT_DRAFT_GUARD.with(|value| *value.borrow_mut() = Some(presentation));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_conflict_draft_guard() -> Option<ConflictDraftGuardPresentation> {
+    CONFLICT_DRAFT_GUARD.with(|value| value.borrow_mut().take())
+}
+
 /// #707 review: the revision-laundering and cross-session regressions need to
 /// produce a detector payload for one state and land it against another.
 pub use super::operations::conflict_detect::detect_payload_for_test;

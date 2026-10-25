@@ -405,6 +405,27 @@ pub fn scenario_conflict_continue_stopped_result_owner(cx: &mut VisualTestAppCon
                             toasts.is_empty(),
                             "required acknowledgment is the sole result"
                         );
+                        let notice = state
+                            .app_notice()
+                            .expect("failed append retains the stopped result in its acknowledgment");
+                        let diagnostic = format!(
+                            "git error: oplog retention: {}",
+                            std::fs::TryLockError::WouldBlock
+                        );
+                        let expected = format!(
+                            "{}\n\n{}",
+                            i18n::op::user_text::operations::recording_failed(
+                                repo.display(),
+                                "rebase-continue",
+                                i18n::op::RecordingOutcome::Partial,
+                                &diagnostic,
+                            ),
+                            i18n::Msg::conflict_stopped(None),
+                        );
+                        assert_eq!(
+                            notice.message, expected,
+                            "EN/JA acknowledgment must say Continue stopped at the next conflict, not succeeded"
+                        );
                     } else {
                         assert!(state.app_notice().is_none());
                         assert_eq!(toasts.len(), 1);

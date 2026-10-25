@@ -125,7 +125,8 @@ impl KagiApp {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
         let op = entry.op.clone();
         let repo_path = std::path::Path::new(&entry.repo);
-        let stopped = stopped && matches!(&entry.outcome, OpOutcome::Success { .. });
+        // A failed append makes the display row Partial, not the execution.
+        let stopped = stopped && matches!(&recording.entry().outcome, OpOutcome::Success { .. });
         let recording_failed = matches!(
             recording,
             kagi_git::backend::recording::Recording::Failed { .. }

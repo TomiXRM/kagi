@@ -206,10 +206,16 @@ localized non-success stopped notice, real unresolved index entries and disabled
 Continue. The existing oplog failure scenario covers failed Fetch plus success
 and Unknown attempts under a real sidecar lock.
 `oplog_append_failure_conflict_stopped` locks the real oplog sidecar while merge
-and rebase stop on one/three-file conflicts in EN/JA. Require both the stopped
-Info toast and a separate Error toast plus immediate recording-failure AppNotice,
-one non-durable Partial row, no Success toast, no durable receipt/retry and a
-released known-outcome lease.
+and rebase stop on one/three-file conflicts in EN/JA. Require the recording-failure
+AppNotice as the sole result presentation, retaining stopped context and the
+append diagnostic, one non-durable Partial row, no toast, no durable receipt/retry
+and a released known-outcome lease.
+`conflict_continue_stopped_result_owner` repeats a real rebase Continue stopping
+at step 2 for EN/JA and current/departed owners, with healthy/failed append.
+On failed append, assert the exact localized acknowledgment includes the
+next-conflict stop and Partial classification, not Succeeded. This classification
+uses the original execution outcome, before conversion into a Partial display
+row. Clicking its rendered confirmation must not replay, skip or retry persistence.
 `pull_current_up_to_date` covers equal/ahead strict/ordinary Pull without changing
 local edits; its blocker neighbor rejects a conflict arriving during the freshness
 fetch. Tier B compares

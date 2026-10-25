@@ -26,6 +26,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Record conflict Continue, Skip and merge-to-Commit-Panel handoffs in the backend worker before releasing the write lease. Closing the host no longer discards their receipts; recording failures retain the attempted outcome. (#1740)
+  - Preserve the next-conflict stop in the recording-failure acknowledgment when Continue succeeds at one replay but its receipt cannot be appended. Classify from the execution outcome, not the display row's recording-failure conversion. (#1775 review)
 - Freeze the approved merge commit plan through execution, refusing changed staging and re-presenting the new plan rather than silently committing the live index. Conflict staging writes the approved payload rather than rereading mutable worktree bytes. (#1743)
 - Freeze the approved merge commit plan through execution, refusing changed staging and re-presenting the new plan rather than silently committing the live index. Conflict staging writes the approved payload rather than rereading mutable worktree bytes, preserving index executable modes when `core.fileMode=false`. (#1743)
   - Share the planned and executed executable-mode policy so recorded Save verifies successfully, and apply path-specific Git clean filters to frozen Result bytes without rereading the worktree. Preserve CRLF when no normalization is configured; verify the filtered staged blob separately from the original worktree bytes. (#1775 review)

@@ -527,6 +527,9 @@ impl KagiApp {
                         });
                         if let Some(ui) = self.ui.get_mut(&owner.session) {
                             ui.conflict = Some(entity);
+                            // Only a newly created pane takes over the body.
+                            // A retained pane's refresh must respect departure.
+                            ui.conflict_hidden = false;
                         }
                     }
                 }

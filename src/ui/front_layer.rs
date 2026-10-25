@@ -177,7 +177,7 @@ impl KagiApp {
 
     pub(crate) fn conflict_file_menu_visible(&self, cx: &App) -> bool {
         !self.home_in_front()
-            && !self.ui().conflict_merge_pending
+            && self.conflict_body_visible()
             && self.ui().conflict.as_ref().is_some_and(|entity| {
                 let view = entity.read(cx);
                 view.file_menu.is_some() && view.mode.is_some()

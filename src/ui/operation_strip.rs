@@ -19,6 +19,8 @@
 //! visible here. The main toolbar has no conflict-session controls.
 //! Localized Repository commands use the observed operation name and dispatch
 //! the same paths; Abort remains available without a mounted conflict editor.
+//! While explicit workspace navigation retains an unmounted pane, the leading
+//! secondary return button restores that same entity (#1748).
 //! Abort still dispatches `open_conflict_abort_modal`; admission from
 //! `TabViewState::operation`, confirmations, revision/lease guards and execution
 //! safety remain unchanged.
@@ -41,12 +43,12 @@ impl KagiApp {
         // per ADR-0048; only the prose around them is localized.
         let label = match operation.step {
             Some((step, total)) => format!(
-                "{} {step}/{total} · {}",
+                "● {} {step}/{total} · {}",
                 operation.kind().slug(),
                 Msg::OperationInProgress.t()
             ),
             None => format!(
-                "{} · {}",
+                "● {} · {}",
                 operation.kind().slug(),
                 Msg::OperationInProgress.t()
             ),
@@ -77,6 +79,32 @@ impl KagiApp {
                     .bg(rgb(theme().surface))
                     .border_b_1()
                     .border_color(rgb(theme().color_warning))
+                    .when(
+                        self.ui().conflict_hidden
+                            && self.ui().conflict.is_some()
+                            && !self.ui().conflict_merge_pending,
+                        |el| {
+                            el.child(super::e2e::measure_control(
+                                "operation-strip-back",
+                                super::button_style::KagiButton::styled(
+                                    "operation-strip-back",
+                                    Msg::ConflictBackToConflicts.t(),
+                                    super::button_style::ButtonRole::Secondary,
+                                    cx,
+                                )
+                                .small()
+                                .compact()
+                                .h(theme::scaled_px(20.))
+                                .rounded(theme::scaled_px(5.))
+                                .text_size(theme::scaled_px(12.))
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.show_conflict_mode(window, cx);
+                                    },
+                                )),
+                            ))
+                        },
+                    )
                     .child(
                         div()
                             .text_xs()

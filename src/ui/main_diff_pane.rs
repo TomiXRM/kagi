@@ -847,6 +847,9 @@ impl KagiApp {
         let Some(ui) = self.ui.get_mut(&owner.session) else {
             return true;
         };
+        // The operation strip disappears with the operation. Keep its retained
+        // Result reachable while preservation is pending or has failed.
+        ui.conflict_hidden = false;
         ui.pane_revalidation = PaneRevalidation::AwaitingConflict;
         ui.conflict_detected = true;
         ui.conflict_detect_generation = ui.conflict_detect_generation.wrapping_add(1);

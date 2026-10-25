@@ -96,6 +96,15 @@ fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
         history.resolved_text(file)
     });
     let baseline = failed_autosave_baseline(cx, &app, &view, &repo);
+    // A hidden failed Result must remain reachable after the strip's operation
+    // disappears. Exercise the real keyboard exit, not an internal flag toggle.
+    cx.simulate_keystrokes(window, "cmd-shift-g");
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "conflict-result-editor");
+    paint(cx, &app, window);
+    assert!(cx.read(|cx| app.read(cx).ui().conflict_hidden));
+    assert!(e2e::control_bounds(window.window_id(), "conflict-result-editor").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-back").is_some());
     if complete {
         assert!(!fixture_git::git_succeeds(&repo, &["rebase", "--skip"]));
         fixture_git::git(&repo, &["rebase", "--skip"]);
@@ -109,6 +118,7 @@ fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
     paint(cx, &app, window);
     cx.read(|cx| {
         let state = app.read(cx);
+        assert!(!state.ui().conflict_hidden, "retained failed Result reappears");
         assert_eq!(state.ui().conflict.as_ref().unwrap().entity_id(), view.entity_id());
         assert!(state.ui().panes_revalidating());
         assert!(state.ui().conflict_detected);
@@ -129,6 +139,16 @@ fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
         assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message) if message == &preview));
         assert!(preview.chars().count() < 100 && !preview.contains('/'));
     });
+    assert!(e2e::control_bounds(window.window_id(), "conflict-result-editor").is_some());
+    cx.simulate_keystrokes(window, "cmd-shift-g");
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "conflict-result-editor");
+    paint(cx, &app, window);
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().conflict_hidden),
+        "another navigation request cannot hide recovery without a return strip"
+    );
+    assert!(e2e::control_bounds(window.window_id(), "conflict-result-editor").is_some());
     let receipts = read_oplog_tail_for_repo(&repo, 100);
     assert_eq!(receipts.len(), baseline + 1);
     let preservation = receipts
@@ -149,6 +169,21 @@ fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
         baseline + 1,
         "no frame retries"
     );
+    // The retained Result still owns the existing Retry/two-step Discard sheet.
+    app.update(cx, |app, cx| {
+        let session = app.active_session().unwrap();
+        app.open_editor_dirty_guard(kagi::ui::EditorPendingIntent::CloseRepoTab(session), cx);
+    });
+    e2e::take_conflict_draft_guard();
+    paint(cx, &app, window);
+    let guard = e2e::take_conflict_draft_guard().expect("failed Result recovery sheet");
+    assert_eq!(guard.title, Msg::ConflictDraftSaveFailed.t());
+    assert_eq!(guard.retry, Msg::ConflictDraftRetry.t());
+    assert_eq!(guard.discard, Msg::ConflictDraftDiscardClose.t());
+    for id in ["editor-dirty-guard-save", "editor-dirty-guard-discard"] {
+        assert!(e2e::control_bounds(window.window_id(), id).is_some());
+    }
+    click_control(cx, window, "editor-dirty-guard-cancel");
     drop(lock);
     app.update(cx, |app, cx| app.reload_manual(cx));
     crate::busy_dismiss::wait(cx, &app, "repaired handoff removes pane", |state| {

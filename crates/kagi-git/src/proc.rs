@@ -334,10 +334,10 @@ pub fn run_child(
                 let _ = t.join();
             }
             // Pipe EOF and a reaped leader do not prove that every descendant
-            // stopped. Use the same whole-job/group stop proof as Sessions
-            // reconciliation, even when a helper closed its output early.
+            // stopped. Probe this group's liveness without retiring its still
+            // executing supervisor job; the caller may spawn another command.
             if !writer_locks.is_empty() {
-                while !supervisor::group_stopped(stop_key) {
+                while group_alive(stop_key) {
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -1236,6 +1236,68 @@ mod tests {
             run.io,
             Err(ProcIo::Unfinished),
             "a truncated capture must not pass for a complete one"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn writer_janitor_preserves_supervision_for_later_commands() {
+        if !fixture_supervisor(
+            "proc::tests::writer_janitor_preserves_supervision_for_later_commands",
+        ) {
+            return;
+        }
+        use std::os::unix::process::CommandExt;
+
+        let directory = tempfile::tempdir().expect("private writer repository");
+        let repository = git2::Repository::init(directory.path()).expect("writer repository");
+        let id = supervisor::begin();
+        let _job = supervisor::enter(id);
+        let lock = crate::write_lock::acquire(&repository).expect("repository admission");
+        let mut fixture = DescendantFixture::new();
+        let run = run_child(&mut fixture.command(true), Duration::from_secs(30), None)
+            .expect("spawn pipe-holding descendant");
+        assert!(!run.group_stopped, "the descendant must outlive its leader");
+        drop(lock);
+        assert!(
+            crate::Backend::check_conflict_write_admission(directory.path()).is_err(),
+            "the janitor must retain admission before its group stops"
+        );
+
+        fixture
+            .cleanup()
+            .expect("stop and reap the owned descendant");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if crate::Backend::check_conflict_write_admission(directory.path()).is_ok() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "janitor did not release admission"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        // The lock becoming free proves that the janitor's stop probe ran.
+        // It must not remove this still-executing job from the supervisor.
+        let child = Command::new("sleep")
+            .arg("300")
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the same task's next command");
+        let group = child.id();
+        let handle = supervisor::register_child(group, child);
+        let _owned = OwnedChild {
+            child: handle.reclaim().expect("retain fixture child ownership"),
+            group_owned: true,
+        };
+        assert_eq!(
+            supervisor::take_live_groups(id),
+            vec![group],
+            "a later live command must still be supervised, not falsely read as stopped"
         );
     }
 

@@ -310,8 +310,9 @@ Rust uses shared same-fd `Arc` ownership and revokes the originating thread's
 reentrancy permission, so another command cannot reuse quarantined admission.
 Its weak entry remains to retain admission for any further child under an
 existing outer guard until that child's own stop proof. The existing janitor
-uses `proc::supervisor::group_stopped`, the same stop proof as Sessions
-reconciliation; this is not a second monitor.
+uses the non-retiring `proc::group_alive` fact for its own group, leaving any
+still-executing supervisor job registered for later commands. Sessions uses
+the same underlying liveness evidence for its separate lease; no second monitor.
 The quotient assumes successful approval/preflight and already-completed draft
 flush, cooperating lock users, a surviving monitoring app, and sound group-stop
 evidence. It does not model kernel internals, escaped descendants, abrupt app
@@ -377,7 +378,7 @@ Expectations describe the maintained union. Results and state counts are histori
 | `BarrierLocksNeverNested` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/operations/conflict.rs::flush_conflict_drafts; resolution/draft_writer.rs::DraftSave::flush` | CONTRACT (#1760 UI boundary) | Complete and release the UI flush's draft transaction before repository admission; Abort/Skip preservation precedes admission, while D/F snapshot refs follow locked preflight. |
 | `NoDestructiveProgressAfterPreservationFailure (Abort / Skip / D-F)` | HOLD | HELD (TLC exit 0) | 31 / 31 / 21 | [historical preserve-abort](#trace-preserve-abort), [historical preserve-skip](#trace-preserve-skip), [historical preserve-dir-file](#trace-preserve-dir-file) | `ops/conflict_abort.rs:execute_conflict_abort_expecting; conflicts.rs:execute_conflict_skip; ops/dir_file_conflict.rs:apply_dir_file_resolution_with_progress` | #1731 fixed | Required recovery failure returns Refused before destructive index/worktree changes. Abort/Skip draft preservation precedes repository admission; D/F snapshot creation follows locked preflight, asserted by the preservation invariant. Recovery file atomicity is guarded by #1732. |
 | `RepoHasAtMostOneLease (two independent apps)` | HOLD | HELD | 14337 | historical [two-instance-leases](#trace-two-instance-leases) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | #1746 D3 fixed | Kernel ownership spans final preflight→execute→verify; approval probes do not retain it through confirmation. |
-| `LiveWriterKeepsRepositoryLease (writer-termination)` | HOLD | Not yet measured | — | — | `write_lock.rs; proc.rs::run_child; proc::supervisor::group_stopped` | CONTRACT (#1780) | Live descendants retain repository admission across unknown return and EOF; a second app cannot enter. Sessions reconciliation remains separate. |
+| `LiveWriterKeepsRepositoryLease (writer-termination)` | HOLD | Not yet measured | — | — | `write_lock.rs; proc.rs::run_child; proc::group_alive` | CONTRACT (#1780) | Live descendants retain repository admission across unknown return and EOF; a second app cannot enter. Sessions reconciliation remains separate. |
 | `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | HOLD | HELD | 123 / 123 / 103 | Historical traces retained below | Backend execute/observe/finalize before worker settlement | CONTRACT (#1740) | Three `workerReceipt` controls restore release-before-append or absent merge accounting. |
 | `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
 | `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | 203 / 141 | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |

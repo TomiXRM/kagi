@@ -152,16 +152,18 @@ reservation alone cannot protect against another app.
 
 The implementation shares the same lock fd's `Arc` ownership with the
 **existing `run_child` janitor**, not a second independent monitor. The janitor
-retains it until `proc::supervisor::group_stopped` proves the group empty, even
+retains it until `proc::group_alive` returns false for its group, even
 after pipe EOF. Quarantine revokes the originating thread's reentrancy permission;
 its weak resource entry remains so every further child under an existing guard
 also retains the descriptor until its own stop proof. Sessions reconciliation
-uses the same stop predicate but owns a separate lease and may finish later.
+uses the same underlying group-liveness evidence but owns a separate lease and
+may finish later. The janitor never retires a still-executing supervisor job,
+so that job's later commands remain registered for abandonment/reaping.
 The model assumes a surviving monitoring app, cooperating lock users and sound
 process-group stop evidence; it does not prove escaped descendants, abrupt app
 death, OS lock semantics or arbitrary external Git cooperation. No eventual
 stop is assumed: an unproven stop keeps admission closed indefinitely.
-Continue/Skip draft preservation remains outside repository admission; D/F's
+Abort/Skip draft preservation remains outside repository admission; D/F's
 snapshot ref remains after repository admission and preflight. Existing
 generation/lock-nonnesting and preservation invariants are unchanged.
 

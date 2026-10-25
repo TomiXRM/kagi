@@ -155,6 +155,30 @@ fn marker_width_accounts_for_every_source_and_delimiter_character() {
 }
 
 #[test]
+fn crlf_source_runs_still_select_collision_free_width() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for source in 0..3 {
+        for delimiter in ['<', '=', '>', '|'] {
+            let mut sources = [
+                "base\r\n".to_owned(),
+                "current\r\n".to_owned(),
+                "incoming\r\n".to_owned(),
+            ];
+            sources[source].push_str(&delimiter.to_string().repeat(12));
+            sources[source].push_str("\r\n");
+            let (_tmp, repo, buffer) =
+                materialize_sources(Some(&sources[0]), &sources[1], &sources[2]);
+            let marker = buffer
+                .materialized_markers(&repo, Path::new("file.txt"))
+                .unwrap();
+            assert_eq!(marker.marker_width, 13, "source={source}, char={delimiter}");
+        }
+    }
+}
+
+#[test]
 fn unrepresentable_marker_width_refuses_materialization() {
     if !test_support::run_isolated() {
         return;

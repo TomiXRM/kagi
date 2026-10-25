@@ -69,7 +69,7 @@ fn repository_contention_retains_the_chain_until_the_next_retry() {
     assert_eq!(q.intents(session(1)).unwrap().len(), 2);
     assert_eq!(q.intents(session(1)).unwrap().back().unwrap().id, second);
     assert_eq!(
-        q.apply(QueueEvent::RetryRepositoryBusy),
+        q.apply(QueueEvent::RepositoryAvailable(first)),
         vec![QueueEffect::StartPlan(first)],
     );
     q.apply(QueueEvent::PlanCompleted(first));

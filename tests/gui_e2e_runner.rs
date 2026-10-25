@@ -3549,6 +3549,10 @@ mod macos {
                 Box::new(crate::repository_lock::scenario_repository_lock_stage_receipt),
             ),
             (
+                "repository_lock_queue_retry",
+                Box::new(crate::repository_lock::scenario_repository_lock_queue_retry),
+            ),
+            (
                 "conflict_continue_refusal_result_owner",
                 Box::new(crate::app_conflict::scenario_conflict_continue_refusal_result_owner),
             ),

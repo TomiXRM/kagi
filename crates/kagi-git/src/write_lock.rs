@@ -24,6 +24,13 @@ pub(crate) struct RepositoryWriteLock {
 }
 
 pub(crate) fn acquire(repo: &git2::Repository) -> Result<RepositoryWriteLock, GitError> {
+    acquire_with_timeout(repo, Duration::from_millis(100))
+}
+
+fn acquire_with_timeout(
+    repo: &git2::Repository,
+    timeout: Duration,
+) -> Result<RepositoryWriteLock, GitError> {
     // Shared refs require one lock even for different linked worktrees.
     let path = std::fs::canonicalize(repo.commondir())
         .map_err(io)?
@@ -33,14 +40,13 @@ pub(crate) fn acquire(repo: &git2::Repository) -> Result<RepositoryWriteLock, Gi
         if let Some(file) = held.get(&path).and_then(Weak::upgrade) {
             return Ok(RepositoryWriteLock { _file: file });
         }
-        let file = crate::advisory_lock::lock_exclusive(&path, Duration::from_millis(100))
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::WouldBlock {
-                    GitError::Blocked(Box::new(PlanNote::Conflicts(ConflictsNote::RepositoryBusy)))
-                } else {
-                    io(error)
-                }
-            })?;
+        let file = crate::advisory_lock::lock_exclusive(&path, timeout).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                GitError::Blocked(Box::new(PlanNote::Conflicts(ConflictsNote::RepositoryBusy)))
+            } else {
+                io(error)
+            }
+        })?;
         let file = Rc::new(file);
         held.retain(|_, file| file.strong_count() != 0);
         held.insert(path, Rc::downgrade(&file));
@@ -91,10 +97,11 @@ pub(crate) fn acquire_recorded(
 }
 
 impl crate::Backend {
-    /// Probe repository admission without recording: the operation owns its receipt.
+    /// Probe repository admission without waiting or recording: the operation owns
+    /// its receipt. Planners and executors retain their bounded admission timeout.
     pub fn check_conflict_write_admission(path: &std::path::Path) -> Result<(), GitError> {
         let repo = git2::Repository::discover(path).map_err(io)?;
-        let _lock = acquire(&repo)?;
+        let _lock = acquire_with_timeout(&repo, Duration::ZERO)?;
         Ok(())
     }
 }

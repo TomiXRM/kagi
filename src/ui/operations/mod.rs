@@ -460,8 +460,9 @@ impl KagiApp {
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
-                self.queue_admission_refused(&error, cx);
-                self.report_admission_refusal(error, cx);
+                if self.queue_admission_refused(&error, cx) {
+                    self.report_admission_refusal(error, cx);
+                }
                 return false;
             }
         };

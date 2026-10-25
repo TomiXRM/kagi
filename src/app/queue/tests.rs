@@ -331,7 +331,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             }
             ReleaseEvent::ModalSlotFree | ReleaseEvent::RevalidationDone => unreachable!(),
             ReleaseEvent::InputBlurred => q.apply(QueueEvent::InputBlurred),
-            ReleaseEvent::RepositoryRetry => q.apply(QueueEvent::RetryRepositoryBusy),
+            ReleaseEvent::RepositoryRetry => q.apply(QueueEvent::RepositoryAvailable(a)),
         };
         assert!(
             effects.contains(&QueueEffect::StartPlan(a)),

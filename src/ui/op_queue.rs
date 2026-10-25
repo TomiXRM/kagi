@@ -57,6 +57,13 @@ pub(crate) struct QueueWiring {
     rejected: Option<IntentId>,
     logged_cancels: HashSet<IntentId>,
     ticker_alive: bool,
+    /// Dropped immediately when its waiting head or owning tab disappears.
+    repository_retries: HashMap<IntentId, gpui::Task<()>>,
+    repository_busy_notified: HashSet<IntentId>,
+    #[cfg(feature = "gui-e2e")]
+    repository_probe_count: usize,
+    #[cfg(feature = "gui-e2e")]
+    repository_resume_count: usize,
 }
 
 struct NextRun {
@@ -169,6 +176,20 @@ impl KagiApp {
         rejected.map_or(Ok(()), |error| Err(Some(error)))
     }
 
+    pub(crate) fn cancel_repository_retries_for_session(&mut self, session: SessionId) {
+        let queue = &self.op_queue.queue;
+        self.op_queue.repository_retries.retain(|id, _| {
+            queue
+                .intent(*id)
+                .is_some_and(|intent| intent.owner != session)
+        });
+        self.op_queue.repository_busy_notified.retain(|id| {
+            queue
+                .intent(*id)
+                .is_some_and(|intent| intent.owner != session)
+        });
+    }
+
     fn run_queue_effects(&mut self, effects: Vec<QueueEffect>, cx: &mut Context<Self>) {
         for effect in effects {
             match effect {
@@ -213,6 +234,7 @@ impl KagiApp {
             }
         }
         self.log_new_cancellations();
+        self.sync_repository_retries(cx);
         self.ensure_queue_ticker(cx);
         cx.notify();
     }
@@ -656,11 +678,20 @@ impl KagiApp {
         &mut self,
         error: &AdmissionError,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if let Some(NextRun {
             intent: Some(id), ..
         }) = self.op_queue.next_run.take()
         {
+            let report = *error != AdmissionError::RepositoryBusy
+                || self.op_queue.repository_busy_notified.insert(id);
+            if !report {
+                self.status_footer = super::FooterStatus::Idle(
+                    crate::ui::i18n::Msg::AdviceConflictsRepositoryBusy
+                        .t()
+                        .into(),
+                );
+            }
             self.drive_queue(
                 QueueEvent::Admission {
                     id,
@@ -668,7 +699,9 @@ impl KagiApp {
                 },
                 cx,
             );
+            return report;
         }
+        true
     }
 
     /// `finish_run` admitted a write. One with a verify path is a possible
@@ -798,5 +831,13 @@ impl KagiApp {
     /// before any read started by the caller can land.
     pub fn sync_queue_for_e2e(&mut self, cx: &mut Context<Self>) {
         self.sync_queue(cx);
+    }
+
+    pub fn repository_retry_state_for_e2e(&self) -> (usize, usize, usize) {
+        (
+            self.op_queue.repository_retries.len(),
+            self.op_queue.repository_probe_count,
+            self.op_queue.repository_resume_count,
+        )
     }
 }

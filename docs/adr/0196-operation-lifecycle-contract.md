@@ -703,8 +703,9 @@ releases ownership in the kernel.
 Both draft and repository admission use `kagi_git::advisory_lock::lock_exclusive`;
 the caller supplies the distinct path and timeout, not a second flock implementation.
 
-Read-only plan and application admission probe the same lock with nonblocking
-attempts, retrying for at most 100 ms. The confirmation modal retains no lock.
+Read-only conflict plans probe the same lock with nonblocking attempts, retrying
+for at most 100 ms. Generic application admission uses one zero-timeout probe,
+never a lock sleep on the UI thread. The confirmation modal retains no lock.
 The mutation owner reacquires before final preflight and retains the descriptor
 through execution and verification; the approved full revision is checked again
 under that lock. Reads do not acquire it. Nested executor calls on the same
@@ -718,8 +719,13 @@ Continue and Skip planning likewise return their blocker to their existing UI
 receipt owner; only legacy Abort/merge planning without a receipt owner records
 its own early refusal. Silent auto-fetch skips contention without a toast or
 receipt and retries on its next ordinary tick. A queued head waits with the same
-localized repository-busy explanation and replans on the queue ticker; contention
-never claims an identity change or cancels its successors.
+localized repository-busy explanation and one error toast per intent. Its retained,
+cancellable retry task probes with timeout zero on the background executor after
+250 ms, then 500 ms, 1 s and at most 2 s between probes. Failed probes neither
+replan nor renew approval nor emit another toast. Only successful availability
+returns that specific head to Queued for a fresh plan. Closing its owner or
+removing the head drops the task; late results cannot revive it. Contention never
+claims an identity change or cancels successors.
 
 Draft preservation is a preceding phase: capture live input and complete the
 background writer's `flush()` barrier (or blocking backend `autosave()`) and

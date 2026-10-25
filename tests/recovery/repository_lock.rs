@@ -193,3 +193,205 @@ pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
     });
     unmount(cx, app, window);
 }
+
+/// A busy head retains one retry, not a repeating admission/replanning loop.
+/// Measure only dispatcher work: fixture Git and assertion I/O are excluded.
+pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
+    use crate::evidence_support::deferred;
+    use crate::macos::git;
+    use kagi::ui::{e2e, KagiApp, ToastKind};
+    use std::time::{Duration, Instant};
+
+    const TICK: Duration = Duration::from_millis(250);
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    for branch in ["a", "b", "c"] {
+        git(&repo, &["branch", branch]);
+    }
+    let (app, window) = mount(cx, &repo);
+    wait_idle(cx, &app);
+    let before = read_oplog_tail_for_repo(&repo, 100).len();
+    let head_before = std::fs::read(repo.join(".git/HEAD")).unwrap();
+    let index_before = std::fs::read(repo.join(".git/index")).unwrap();
+    let plan_count = || {
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.contains("queue: plan checkout b "))
+            .count()
+    };
+    let error_ids = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            app.read(cx)
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .filter(|toast| toast.kind == ToastKind::Error)
+                .map(|toast| toast.id)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert!(error_ids(cx).is_empty());
+    let mut queued_ids = Vec::new();
+    with_repository_lock(&repo, || {
+        // Use the existing queue-entry seam so acquisition precedes admission,
+        // without racing an independently completing predecessor.
+        app.update(cx, |app, cx| {
+            assert!(e2e::enqueue_checkout(app, "b", cx));
+            assert!(e2e::enqueue_checkout(app, "c", cx));
+        });
+        cx.run_until_parked();
+        queued_ids = cx.read(|cx| app.read(cx).queue_ids_for_e2e());
+        assert_eq!(queued_ids.len(), 2);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().0),
+            1,
+            "only the RepositoryBusy head retains a retry task"
+        );
+        let retry_before = cx.read(|cx| app.read(cx).repository_retry_state_for_e2e());
+        let now = cx.background_executor.now();
+        let strip = cx.read(|cx| app.read(cx).queue_strip_for_e2e(now)).unwrap();
+        assert_eq!(
+            strip.1[0],
+            (
+                "checkout b".to_string(),
+                kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy
+                    .t()
+                    .to_string()
+            ),
+            "the head explicitly waits for repository admission"
+        );
+        let errors = error_ids(cx);
+        assert_eq!(errors.len(), 1, "the busy intent reports exactly one Error");
+        let plans = plan_count();
+        let mut dispatch_wall = Duration::ZERO;
+        for _ in 0..20 {
+            let started = Instant::now();
+            cx.advance_clock(TICK);
+            cx.run_until_parked();
+            dispatch_wall += started.elapsed();
+            assert_eq!(error_ids(cx), errors, "retry must not repeat its toast");
+            assert_eq!(plan_count(), plans, "busy probes must not replan");
+            assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert_eq!(state.queue_ids_for_e2e(), queued_ids);
+                let retry = state.repository_retry_state_for_e2e();
+                assert_eq!(retry.0, 1);
+                assert_eq!(
+                    retry.2, retry_before.2,
+                    "a busy probe never emits availability"
+                );
+                assert!(!state.app_sessions.has_leases());
+                assert!(state.plan_modal().is_none());
+                assert!(state.app_notice().is_none());
+            });
+        }
+        assert!(
+            dispatch_wall < Duration::from_millis(800),
+            "five simulated seconds of isolated ticks blocked the UI for {dispatch_wall:?}"
+        );
+        let retry_after = cx.read(|cx| app.read(cx).repository_retry_state_for_e2e());
+        assert!(
+            retry_after.1 >= retry_before.1 + 3,
+            "background retries were exercised"
+        );
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head_before);
+        assert_eq!(
+            std::fs::read(repo.join(".git/index")).unwrap(),
+            index_before
+        );
+    });
+
+    // Freeze the resumed write to inspect the untouched successor before it runs.
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    for _ in 0..8 {
+        cx.advance_clock(TICK);
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).app_sessions.has_leases()) {
+            break;
+        }
+    }
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.app_sessions.has_leases(),
+            "head resumes within the 2 s cap"
+        );
+        assert_eq!(
+            state.queue_ids_for_e2e(),
+            queued_ids,
+            "tail survives contention"
+        );
+        let retry = state.repository_retry_state_for_e2e();
+        assert_eq!(retry.0, 0);
+        assert_eq!(retry.2, 1, "one successful probe resumes the waiting head");
+    });
+    release.send(());
+    for _ in 0..80 {
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).queue_ids_for_e2e().is_empty()) {
+            break;
+        }
+        cx.advance_clock(TICK);
+    }
+    assert!(cx.read(|cx| app.read(cx).queue_ids_for_e2e().is_empty()));
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".git/HEAD")).unwrap(),
+        "ref: refs/heads/c\n"
+    );
+    let receipts = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(
+        receipts.len(),
+        before + 2,
+        "only the two real checkouts record"
+    );
+    assert!(receipts
+        .iter()
+        .all(|entry| entry.op != "conflict-write-admission"));
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|entry| entry.op == "checkout"
+                && matches!(&entry.outcome, OpOutcome::Success { .. }))
+            .count(),
+        2,
+        "both the resumed head and its tail finish successfully"
+    );
+
+    // Closing the owner drops its pending timer; releasing the external owner
+    // afterwards must never resurrect the abandoned checkout.
+    with_repository_lock(&repo, || {
+        app.update(cx, |app, cx| assert!(e2e::enqueue_checkout(app, "a", cx)));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().0),
+            1
+        );
+        app.update(cx, |app, cx| app.close_tab(0, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().0),
+            0
+        );
+    });
+    for _ in 0..8 {
+        cx.advance_clock(TICK);
+        cx.run_until_parked();
+    }
+    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before + 2);
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".git/HEAD")).unwrap(),
+        "ref: refs/heads/c\n"
+    );
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().2),
+        1,
+        "a closed owner's retry never emits availability"
+    );
+    unmount(cx, app, window);
+}

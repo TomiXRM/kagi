@@ -162,8 +162,8 @@ pub enum QueueEvent<'a> {
     PlanError(IntentId),
     Approve(IntentId),
     Reject(IntentId),
-    /// Retry an external repository owner on the bounded queue ticker.
-    RetryRepositoryBusy,
+    /// A background, zero-wait probe found repository admission available.
+    RepositoryAvailable(IntentId),
     Admission {
         id: IntentId,
         result: Result<OwnerStamp, super::AdmissionError>,
@@ -253,6 +253,17 @@ impl IntentQueue {
     }
     pub fn intents(&self, session: SessionId) -> Option<&VecDeque<QueuedIntent>> {
         self.per_session.get(&session)
+    }
+    pub fn repository_waiters(&self) -> impl Iterator<Item = &QueuedIntent> {
+        self.per_session
+            .values()
+            .filter_map(VecDeque::front)
+            .filter(|head| {
+                head.state
+                    == (IntentState::Waiting {
+                        reason: WaitReason::RepositoryBusy,
+                    })
+            })
     }
     pub fn cancelled(&self, session: SessionId) -> Option<&VecDeque<QueuedIntent>> {
         self.cancelled.get(&session)
@@ -738,16 +749,18 @@ impl IntentQueue {
                 }
                 self.gates.remove(&session);
             }
-            E::RetryRepositoryBusy => {
-                for queue in self.per_session.values_mut() {
-                    if let Some(head) = queue.front_mut() {
-                        if head.state
-                            == (IntentState::Waiting {
-                                reason: WaitReason::RepositoryBusy,
-                            })
-                        {
-                            head.state = IntentState::Queued;
-                        }
+            E::RepositoryAvailable(id) => {
+                if let Some(head) = self
+                    .head(id)
+                    .and_then(|session| self.per_session.get_mut(&session))
+                    .and_then(VecDeque::front_mut)
+                {
+                    if head.state
+                        == (IntentState::Waiting {
+                            reason: WaitReason::RepositoryBusy,
+                        })
+                    {
+                        head.state = IntentState::Queued;
                     }
                 }
             }

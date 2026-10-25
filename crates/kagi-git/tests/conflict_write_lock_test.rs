@@ -95,6 +95,49 @@ fn busy(error: &GitError) {
 }
 
 #[test]
+fn admission_probe_is_prompt_and_receipt_free_until_owner_death() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo, "main");
+    let receipts_before = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len();
+    let owner = Owner::start(repo);
+    // Repeated probes distinguish zero-timeout admission from eight bounded
+    // 100ms waits, with headroom for repository discovery and scheduling.
+    let started = std::time::Instant::now();
+    for _ in 0..8 {
+        busy(&Backend::check_conflict_write_admission(repo).unwrap_err());
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_millis(400),
+        "admission probes must not sleep for the planner/executor timeout: {elapsed:?}"
+    );
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
+        receipts_before,
+        "busy probes must not write refusal receipts"
+    );
+
+    drop(owner); // SIGKILL + wait releases the independent owner's descriptor.
+    Backend::check_conflict_write_admission(repo).unwrap();
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
+        receipts_before,
+        "successful probes must not write receipts either"
+    );
+    assert!(
+        repo.join(".git/kagi-write.lock").exists(),
+        "owner death must not unlink the shared lock sidecar"
+    );
+    // A successful probe releases admission rather than retaining ownership.
+    let _next_owner = Owner::start(repo);
+    busy(&Backend::check_conflict_write_admission(repo).unwrap_err());
+}
+
+#[test]
 fn child_lock_refuses_save_continue_skip_abort_without_writes_and_death_releases_it() {
     if !isolated::run_isolated() {
         return;

@@ -148,6 +148,77 @@ impl KagiApp {
         }
     }
 
+    /// One cancellable retry per waiting head. No plan or approval is renewed
+    /// until a background, zero-wait repository probe succeeds.
+    pub(super) fn sync_repository_retries(&mut self, cx: &mut Context<Self>) {
+        use crate::app::WaitReason;
+        let queue = &self.op_queue.queue;
+        self.op_queue.repository_retries.retain(|id, _| {
+            queue.intent(*id).is_some_and(|intent| {
+                intent.state
+                    == (IntentState::Waiting {
+                        reason: WaitReason::RepositoryBusy,
+                    })
+            })
+        });
+        self.op_queue
+            .repository_busy_notified
+            .retain(|id| queue.intent(*id).is_some());
+        for intent in queue.repository_waiters() {
+            let id = intent.id;
+            if self.op_queue.repository_retries.contains_key(&id) {
+                continue;
+            }
+            let Some(owner) = self.app_sessions.attachment(intent.owner) else {
+                continue;
+            };
+            let retry = cx.spawn(async move |this, acx| {
+                let mut interval = TICK;
+                loop {
+                    acx.background_executor().timer(interval).await;
+                    let path = owner.path.clone();
+                    let available = acx
+                        .background_spawn(async move {
+                            kagi_git::Backend::check_conflict_write_admission(&path).is_ok()
+                        })
+                        .await;
+                    let keep_waiting = this
+                        .update(acx, |app, cx| {
+                            #[cfg(feature = "gui-e2e")]
+                            {
+                                app.op_queue.repository_probe_count += 1;
+                            }
+                            let current = app.op_queue.queue.intent(id).is_some_and(|intent| {
+                                intent.owner == owner.session
+                                    && intent.state
+                                        == (IntentState::Waiting {
+                                            reason: WaitReason::RepositoryBusy,
+                                        })
+                            }) && app.app_sessions.is_attached(owner.session);
+                            if !current {
+                                return false;
+                            }
+                            if available {
+                                #[cfg(feature = "gui-e2e")]
+                                {
+                                    app.op_queue.repository_resume_count += 1;
+                                }
+                                app.drive_queue(QueueEvent::RepositoryAvailable(id), cx);
+                                return false;
+                            }
+                            true
+                        })
+                        .unwrap_or(false);
+                    if !keep_waiting {
+                        break;
+                    }
+                    interval = (interval * 2).min(std::time::Duration::from_secs(2));
+                }
+            });
+            self.op_queue.repository_retries.insert(id, retry);
+        }
+    }
+
     pub(super) fn ensure_queue_ticker(&mut self, cx: &mut Context<Self>) {
         if self.op_queue.ticker_alive || self.op_queue.queue.is_empty() {
             return;
@@ -158,7 +229,6 @@ impl KagiApp {
             let alive = this
                 .update(acx, |app, cx| {
                     app.sync_queue(cx);
-                    app.drive_queue(QueueEvent::RetryRepositoryBusy, cx);
                     // Redraw for the running row's elapsed seconds.
                     cx.notify();
                     if app.op_queue.queue.is_empty() {

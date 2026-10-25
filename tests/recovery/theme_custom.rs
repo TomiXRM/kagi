@@ -157,7 +157,7 @@ fn run_palette(
                 app.open_command_palette(window, cx);
                 let input = app.command_palette_input.clone().expect("palette input");
                 input.update(cx, |state, cx| state.set_value(query, window, cx));
-                let row = command_palette::rows_for(app, query).into_iter().next();
+                let row = command_palette::rows_for(app, query, cx).into_iter().next();
                 app.run_selected_command_palette(window, cx);
                 row
             })
@@ -212,7 +212,7 @@ fn assert_every_surface_lists(
     name: &str,
 ) {
     assert!(menu_lists(slug), "View → Theme lacks {slug}");
-    let rows = cx.read(|cx| command_palette::rows_for(kagi.read(cx), name));
+    let rows = cx.read(|cx| command_palette::rows_for(kagi.read(cx), name, cx));
     assert!(
         rows.iter()
             .any(|row| row.action == PaletteAction::SetTheme(SharedString::from(slug.to_string()))),

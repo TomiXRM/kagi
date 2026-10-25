@@ -352,12 +352,26 @@ impl Theme {
     /// (dark one) until it reads. Flower Road's pink accent on its beige
     /// `surface` was 1.6:1 on the selected sidebar tab; it stays pink, deeper.
     pub fn accent_text_on(&self, background: u32) -> u32 {
-        const MIN: f64 = 4.5;
-        let accent = self.ui_accent();
-        if contrast_ratio(accent, background) >= MIN {
-            return accent;
+        self.readable_text_on(self.ui_accent(), &[background], 4.5)
+    }
+
+    /// Destructive text keeps its hue across every composited button state.
+    /// A small rounding margin preserves 4.5:1 after HSLA and native painting.
+    pub fn destructive_text_on(&self, backgrounds: &[u32]) -> u32 {
+        self.readable_text_on(self.color_blocker, backgrounds, 4.6)
+    }
+
+    fn readable_text_on(&self, color: u32, backgrounds: &[u32], minimum: f64) -> u32 {
+        let readable = |color| {
+            backgrounds
+                .iter()
+                .all(|&bg| contrast_ratio(color, bg) >= minimum)
+        };
+        if readable(color) {
+            return color;
         }
-        let base = to_hsla(accent);
+        let background = backgrounds[0];
+        let base = to_hsla(color);
         let step = if relative_luminance(background) > 0.5 {
             -0.005
         } else {
@@ -377,7 +391,7 @@ impl Theme {
                     1.0,
                 ))
             })
-            .find(|&c| contrast_ratio(c, background) >= MIN)
+            .find(|&c| readable(c))
             .unwrap_or(self.text_main)
     }
 
@@ -1212,7 +1226,7 @@ fn relative_luminance(c: u32) -> f64 {
         + 0.0722 * channel(c & 0xff)
 }
 
-/// WCAG contrast ratio between two opaque RGB colors.
+/// WCAG contrast ratio of two opaque `0xRRGGBB` colours.
 pub fn contrast_ratio(a: u32, b: u32) -> f64 {
     let (la, lb) = (relative_luminance(a), relative_luminance(b));
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
@@ -1721,6 +1735,36 @@ mod nagi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destructive_text_meets_aa_on_composited_conflict_chrome() {
+        use gpui_component::Colorize as _;
+        for t in [
+            &crate::theme_apple_light::APPLE_LIGHT,
+            &crate::theme_apple_dark::APPLE_DARK,
+        ] {
+            let mut kit = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut kit);
+            for background in [t.sidebar, t.surface] {
+                let backgrounds = [0.2, 0.4].map(|amount| {
+                    let fill = kit.colors.button.mix_oklab(kit.transparent, amount);
+                    u32::from(to_hsla(background).blend(fill).to_rgb()) >> 8
+                });
+                let ink = t.destructive_text_on(&backgrounds);
+                let original = to_hsla(t.color_blocker);
+                let adjusted = to_hsla(ink);
+                assert!((adjusted.h - original.h).abs() < 0.015);
+                assert!((adjusted.s - original.s).abs() < 0.02);
+                for bg in backgrounds {
+                    assert!(
+                        contrast_ratio(ink, bg) >= 4.5,
+                        "{} destructive ink on #{bg:06x}",
+                        t.slug
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn apple_secondary_text_meets_wcag_aa_without_changing_light() {

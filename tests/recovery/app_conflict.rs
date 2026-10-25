@@ -219,46 +219,46 @@ fn stuck_merging_fixture() -> tempfile::TempDir {
 pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    let hold = crate::conflict_draft_inspection::DetectionHold::new(cx, false);
     let (app, window) = mount(cx, &repo);
-    // No explicit detection: the first accepted read creates the staged
-    // overview, while operation admission stays in the session read model.
+    hold.wait(cx, &app);
+    // Admission arrives before presentation. Hold the real detector callback
+    // to prove #704's fallback stays reachable during that startup interval.
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    cx.read(|cx| {
-        let entity = app
-            .read(cx)
-            .ui()
-            .conflict
-            .as_ref()
-            .expect("staged overview from first read");
-        assert!(entity
-            .read(cx)
-            .mode
-            .as_ref()
-            .unwrap()
-            .session
-            .files
-            .is_empty());
-    });
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
     assert!(
         cx.read(|cx| app.read(cx).view().operation.is_some()),
         "the read model knows the merge is still in progress"
     );
-    assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_some());
-    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_some());
     assert!(
-        e2e::control_bounds(window.window_id(), "operation-strip").is_none(),
-        "the overview and operation strip never compete"
+        e2e::control_bounds(window.window_id(), "conflict-abort").is_none(),
+        "an unmounted editor never duplicates the strip exit"
     );
+    drop(hold);
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "operation-strip");
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "#1755: the accepted startup read mounts the resolved-merge overview"
+    );
+    assert!(cx.read(|cx| app.read(cx).view().operation.is_some()));
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-session-header").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_some());
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS staged overview visible at startup on a stuck MERGING repo");
+    eprintln!("[gui-e2e] PASS operation_strip_startup: runtime verified fallback Abort before the detector callback, then sidebar session header after #1755 mounts ConflictView");
 }
 
-/// The owner ruling on top of #707: while the conflict editor is mounted the
-/// strip under the toolbar is redundant, so it is not drawn there and the
-/// dashboard carries the Abort — the same `open_conflict_abort_modal`, the same
-/// two stages. Admission is unchanged: the read model still says an operation is
-/// in progress, only the control's placement moved.
+/// While the conflict sidebar is visible its session header owns Abort. Hiding
+/// the sidebar exposes #704 instead; both dispatch the same confirmation.
+/// Admission remains in the read model regardless of control placement.
 pub fn scenario_operation_strip_hidden_in_editor(cx: &mut VisualTestAppContext) {
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -357,7 +357,13 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
         "a stale detector result must not erase the accepted read's observation"
     );
 
-    // …and Abort still goes through, which is what the erasure used to break.
+    // …and the mounted sidebar's Abort still goes through, which is what
+    // the erasure used to break.
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_some()));
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
     click_control(cx, window, "conflict-abort");
     cx.run_until_parked();
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
@@ -787,13 +793,39 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "#1755: the accepted startup read mounts the resolved-merge overview"
+    );
+    eprintln!(
+        "[gui-e2e] operation_strip_abort: runtime verified mounted ConflictView before CommitPanel"
+    );
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
-    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
-    cx.run_until_parked();
+    for name in ["cp-body", "cp-commit-action"] {
+        e2e::clear_control_bounds(window.window_id(), name);
+    }
     click_control(cx, window, "conflict-continue");
     wait_idle(cx, &app);
     crate::busy_dismiss::ready(cx, &app);
-    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    cx.read(|cx| {
+        let ui = app.read(cx).ui();
+        assert!(ui.conflict_merge_pending);
+        assert!(ui.commit_panel_open);
+    });
+    // The session may retain its entity; pending must remove its rendered body.
+    e2e::clear_control_bounds(window.window_id(), "conflict-abort");
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_none());
+    for name in ["cp-body", "cp-commit-action", "operation-strip-abort"] {
+        assert!(
+            e2e::control_bounds(window.window_id(), name).is_some(),
+            "{name} is painted over the real CommitPanel"
+        );
+    }
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.

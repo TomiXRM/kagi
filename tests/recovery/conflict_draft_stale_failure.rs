@@ -202,13 +202,13 @@ fn retry_autosave(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     });
 }
 
-struct DetectionHold {
+pub(crate) struct DetectionHold {
     release: Option<crate::evidence_support::Reply<()>>,
     reached: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl DetectionHold {
-    fn new(cx: &mut VisualTestAppContext, expect_restore_error: bool) -> Self {
+    pub(crate) fn new(cx: &mut VisualTestAppContext, expect_restore_error: bool) -> Self {
         let (hold, release) = crate::evidence_support::deferred(cx);
         Self {
             release: Some(release),
@@ -216,7 +216,7 @@ impl DetectionHold {
         }
     }
 
-    fn wait(&self, cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+    pub(crate) fn wait(&self, cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
         crate::busy_dismiss::wait(
             cx,
             app,

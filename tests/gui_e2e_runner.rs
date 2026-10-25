@@ -529,6 +529,13 @@ mod conflict_continue_cache;
 mod conflict_draft_revision;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_barrier_edges.rs"]
+mod conflict_draft_barrier_edges;
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_persist_failure.rs"]
+mod conflict_draft_persist_failure;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_continue_approval.rs"]
 mod conflict_continue_approval;
 
@@ -2055,6 +2062,10 @@ mod macos {
                 Box::new(crate::menus_window::scenario_view_menu_state_labels),
             ),
             (
+                "conflict_repository_menu",
+                Box::new(crate::menus_window::scenario_conflict_repository_menu),
+            ),
+            (
                 "window_menu_items",
                 Box::new(crate::menus_window::scenario_window_menu_items),
             ),
@@ -3238,6 +3249,22 @@ mod macos {
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_approval_unrelated_replan),
             ),
             (
+                "conflict_draft_persist_failure",
+                Box::new(crate::conflict_draft_persist_failure::scenario_conflict_draft_persist_failure),
+            ),
+            (
+                "conflict_draft_flush_boundaries",
+                Box::new(crate::conflict_draft_persist_failure::scenario_conflict_draft_flush_boundaries),
+            ),
+            (
+                "conflict_draft_shutdown",
+                Box::new(crate::conflict_draft_barrier_edges::scenario_conflict_draft_shutdown),
+            ),
+            (
+                "conflict_draft_repaired_actions",
+                Box::new(crate::conflict_draft_barrier_edges::scenario_conflict_draft_repaired_actions),
+            ),
+            (
                 "conflict_continue_presentation",
                 Box::new(crate::conflict_continue_approval::scenario_conflict_continue_presentation),
             ),
@@ -3639,6 +3666,10 @@ mod macos {
             (
                 "palette_rows_ax_action",
                 Box::new(crate::palette_ax::scenario_palette_rows_ax_action),
+            ),
+            (
+                "palette_conflict_admission",
+                Box::new(crate::palette_ax::scenario_palette_conflict_admission),
             ),
             (
                 "palette_viewport",

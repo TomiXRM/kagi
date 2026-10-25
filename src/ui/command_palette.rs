@@ -1,6 +1,6 @@
 //! Command palette (issue #352): fuzzy-search the whole [`COMMANDS`] registry
 //! in one overlay. Disabled commands are shown greyed-out with their
-//! [`command_state`] reason as a subtitle — the differentiator over Sublime
+//! [`commands::command_state_in`] reason as a subtitle — the differentiator over Sublime
 //! Merge, which just hides them (see issue #352 §2).
 //!
 //! The **pure** parts live at the top of this file (fuzzy matcher + row-model
@@ -12,11 +12,11 @@
 //! taken by `view.togglePrMode`, so the nearest free key — `Cmd/Ctrl+P` — is
 //! used (see `COMMANDS` entry, verified free against every `KeyBinding::new`).
 
-use gpui::{div, prelude::*, rgb, Context, MouseButton, SharedString, Window};
+use gpui::{div, prelude::*, rgb, App, Context, MouseButton, SharedString, Window};
 use gpui_component::input::{Input, InputState};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
-use super::commands::{self, command_state, CommandState, MenuOverlay, COMMANDS};
+use super::commands::{self, CommandState, MenuOverlay, COMMANDS};
 use super::i18n::{self, Lang};
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -274,12 +274,17 @@ pub fn command_label(id: &str, lang: Lang) -> &'static str {
 
 /// Live palette rows for the given query, resolved against the current app +
 /// language. Thin wrapper over [`build_rows`] used by the renderer.
-pub fn rows_for(app: &KagiApp, query: &str) -> Vec<PaletteRow> {
+pub fn rows_for(app: &KagiApp, query: &str, cx: &App) -> Vec<PaletteRow> {
     let lang = i18n::lang();
+    let state = super::window_menu::current_state(cx);
     build_rows(
         query,
-        |id| command_label(id, lang).to_string(),
-        |id| command_state(app, id),
+        |id| {
+            super::window_menu::state_label(id, &state)
+                .unwrap_or_else(|| command_label(id, lang))
+                .to_string()
+        },
+        |id| commands::command_state_in(app, id, cx),
         |id| commands::effective_keystroke(id).map(|k| commands::display_keystroke(&k)),
     )
 }
@@ -347,7 +352,7 @@ impl KagiApp {
     /// palette first so the command's own modal/overlay is not fought over.
     pub fn run_selected_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.command_palette_query(cx);
-        let rows = rows_for(self, &query);
+        let rows = rows_for(self, &query, cx);
         // Use the same clamped index as the highlight if live results shrink.
         let selected = self
             .command_palette_selected
@@ -396,7 +401,7 @@ impl KagiApp {
     /// Move the palette highlight by `delta`, clamped to the current result set.
     fn step_command_palette_selection(&mut self, delta: i64, cx: &Context<Self>) {
         let query = self.command_palette_query(cx);
-        let n = rows_for(self, &query).len();
+        let n = rows_for(self, &query, cx).len();
         if n == 0 {
             self.command_palette_selected = 0;
             return;
@@ -419,7 +424,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let query = self.command_palette_query(cx);
-        let rows = rows_for(self, &query);
+        let rows = rows_for(self, &query, cx);
         let selected = self
             .command_palette_selected
             .min(rows.len().saturating_sub(1));

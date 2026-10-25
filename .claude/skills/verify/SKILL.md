@@ -57,6 +57,53 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1731 use `KAGI_GUI_E2E_ONLY='conflict_draft_persist_failure,conflict_abort'`
+with KEEP_GOING. The draft failure scenario makes the real conflicts directory
+unwritable, edits the native Result, and checks the durable Failed receipt,
+bounded Error toast even in the active Graph workspace, and EN/JA host-close/quit
+and Cmd+W last-tab-close sheets. Its active-window seam prevents ordinary short-operation toast suppression
+from hiding mandatory autosave errors. Renderer-fed guard labels
+are observed through `record_conflict_draft_guard`; this is not OS accessibility
+evidence. Retry must retain the sheet while writes fail, then save exact live
+text after permissions recover; discard must require a second explicit action.
+Abort is refused at both plan opening and confirmation while the live failure
+flag remains set, even if permissions recover and an older on-disk draft can be
+saved again. These cases compare every repository file byte, including `.git`,
+and retain the newer live text. The real rebase Skip failure also checks that
+the same operation-neutral typed blocker reaches the EN/JA footer and toast.
+Tier B repeats DrillLeaveResume §1c and DrillSequencers §1 on private fixture
+copies with chmod 000, comparing the plain binary before/after and capturing
+the close sheet and refused abort without changing the repository.
+
+For #1760 include `conflict_draft_flush_boundaries` in that selection. It sends
+the production Result Change event without draining the writer first, then closes
+the host/last repository tab and checks the exact durable body before destruction.
+Hold the real draft lock while painting the pending sheet: EN/JA must show
+Saving conflict decisions, not failure/Retry guidance, before release lets close
+complete. The failure matrix also retains a dirty ordinary editor alongside the
+failed conflict pane: its scoped file count remains visible through both Discard
+steps; failure Retry flushes only the conflict draft and leaves the dirty ordinary
+file and sheet open until a separate explicit Save All. Discard leaves disk unchanged.
+Its second EN/JA case edits again while Continue awaits a barrier and requires
+the stale generation to leave Git byte-identical without opening an approval.
+Ordinary input only queues; no test may infer durability from queue acceptance.
+The same-turn Continue → tab-close case must await the real concurrent barrier.
+`draft_autosave_settled_for_e2e()` observes the pane's latest completion watcher,
+pending failure presentation and outstanding barriers; `busy_dismiss::wait_ui`
+waits on this state rather than sleeping for 250 ms. Locked restore/handoff
+fixtures baseline already-presented autosave receipts/toast identities before
+checking the one additional operation-owned receipt; they never hide real errors.
+Tier B types in `long-policy.txt`, checks failed flush → Retry/two-step Discard
+and successful unflushed close, and compares synchronous/queued timings with the
+ignored backend `autosave_latency_three_files_five_hunks_200kb` benchmark.
+That benchmark measures capture/disk API latency, not end-to-end frame latency.
+`conflict_draft_repaired_actions` restores real directory permissions and retries
+Save/Abort without a close sheet; both must pass the current-generation barrier.
+`conflict_draft_shutdown` queues edits in two live conflict panes, invokes the
+actual GPUI shutdown hook without first draining autosave, and checks both durable
+bodies. Non-cancellable OS termination has a shared 200 ms budget, not an unlimited
+durability guarantee; storage errors/slow I/O retain an unacknowledged crash window.
+
 For #1706 W3 use
 `KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Shared helpers own byte-exact repository

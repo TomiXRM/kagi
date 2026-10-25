@@ -305,6 +305,17 @@ pub(super) fn continue_result_owner(cx: &mut VisualTestAppContext) {
                 window.draw(cx).clear();
             })
             .unwrap();
+            crate::busy_dismiss::wait(cx, &app, "Continue refusal after draft flush", |app| {
+                if recording_failure {
+                    app.app_notice().is_some()
+                } else {
+                    read_oplog_tail_for_repo(&repo, 100)
+                        .iter()
+                        .any(|entry| entry.op == "merge-continue")
+                }
+            });
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
             cx.read(|cx| {
                 let state = app.read(cx);
                 assert!(!state.app_sessions.has_leases());

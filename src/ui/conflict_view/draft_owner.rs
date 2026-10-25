@@ -10,23 +10,38 @@ use kagi_git::resolution::ResolutionBuffer;
 use std::path::{Path, PathBuf};
 
 impl ConflictView {
-    /// Capture the live owned input without doing disk I/O on the UI thread.
-    /// The caller must keep this entity until its ordered writer completes.
+    /// Capture the live owned input before its buffer leaves the pane.
     pub(crate) fn capture_result_for_handoff(&mut self, cx: &Context<Self>) {
         if self.result_editing {
             if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
-                let _ = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx);
+                if let Err(error) = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) {
+                    self.note_draft_result(None, Err(error));
+                }
             }
         }
     }
 
-    pub(super) fn capture_result_for_navigation(&mut self, cx: &Context<Self>) {
-        if self.result_editing {
-            if let (Some(mode), Some(path)) = (self.mode.as_mut(), self.editing.as_deref()) {
-                if pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) == Some(true) {
-                    autosave_drafts(&mode.buffer);
+    pub(super) fn capture_result_for_navigation(&mut self, cx: &Context<Self>) -> bool {
+        let result = if self.result_editing {
+            match (self.mode.as_mut(), self.editing.as_deref()) {
+                (Some(mode), Some(path)) => {
+                    pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx)
                 }
+                _ => Ok(None),
             }
+        } else {
+            Ok(None)
+        };
+        match result {
+            Ok(Some(true)) => {
+                self.autosave_drafts();
+                true
+            }
+            Err(error) => {
+                self.note_draft_result(None, Err(error));
+                false
+            }
+            _ => true,
         }
     }
     /// Adopt a changed observation without granting its predecessor's text
@@ -41,7 +56,11 @@ impl ConflictView {
         let mut previous = self.mode.take();
         if self.result_editing {
             if let (Some(previous), Some(path)) = (previous.as_mut(), self.editing.as_deref()) {
-                let _ = pull_owned_editor(self.editor_inputs.as_ref(), previous, path, cx);
+                if let Err(error) =
+                    pull_owned_editor(self.editor_inputs.as_ref(), previous, path, cx)
+                {
+                    self.note_draft_result(None, Err(error));
+                }
             }
         }
         let selected = self
@@ -99,7 +118,7 @@ impl ConflictView {
             mode.refresh_file_statuses();
             // This writes only the existing recovery document, never the repo.
             // It also retains an old live edit if its earlier autosave failed.
-            autosave_drafts(&mode.buffer);
+            self.queue_draft_snapshot(&mode.buffer);
         }
         if retain_input {
             if let Some(inputs) = self.editor_inputs.as_mut() {
@@ -139,6 +158,12 @@ impl ConflictView {
     /// Pull only from the editor bound to this revision; otherwise initialize
     /// a fresh InputState so old text, selection and undo cannot cross owners.
     pub fn sync_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_owned_editor_inputs(window, cx);
+        self.watch_draft_save(cx);
+        self.present_draft_failure(cx).detach();
+    }
+
+    fn sync_owned_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(inputs) = &self.editor_inputs {
             inputs.result.update(cx, |state, cx| {
                 state.set_search_labels(kagi_ui_core::find::labels(), cx);
@@ -161,11 +186,18 @@ impl ConflictView {
             return;
         };
         if self.result_editing {
-            if let Some(changed) = pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) {
-                if changed {
-                    autosave_drafts(&mode.buffer);
+            match pull_owned_editor(self.editor_inputs.as_ref(), mode, path, cx) {
+                Ok(Some(changed)) => {
+                    if changed {
+                        self.autosave_drafts();
+                    }
+                    return;
                 }
-                return;
+                Err(error) => {
+                    self.note_draft_result(None, Err(error));
+                    return;
+                }
+                Ok(None) => {}
             }
         }
         let Some(model) = mode.buffer.hunk_model(path) else {
@@ -208,6 +240,246 @@ impl ConflictView {
             inputs.content_sig = sig;
         }
     }
+
+    pub(super) fn autosave_drafts(&mut self) {
+        let result = self.mode.as_ref().map(|mode| mode.buffer.queue_autosave());
+        if let Some(result) = result {
+            self.accept_draft_queue(result, true);
+        }
+    }
+
+    fn queue_draft_snapshot(&mut self, buffer: &ResolutionBuffer) {
+        self.accept_draft_queue(buffer.queue_autosave(), true);
+    }
+
+    fn accept_draft_queue(
+        &mut self,
+        result: Result<kagi_git::resolution::DraftSave, kagi_git::GitError>,
+        decisions_changed: bool,
+    ) {
+        if decisions_changed {
+            self.intent_token =
+                super::NEXT_INTENT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        match result {
+            Ok(ticket) => {
+                self.draft_save = Some(ticket);
+            }
+            Err(error) => {
+                klog!("conflict-mode: resolution draft autosave failed: {error}");
+                self.note_draft_result(None, Err(error.to_string()));
+            }
+        }
+    }
+
+    pub(crate) fn has_unflushed_drafts(&self) -> bool {
+        self.draft_persist_failed.is_some()
+            || self
+                .mode
+                .as_ref()
+                .is_some_and(|mode| mode.buffer.has_unflushed_drafts())
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn draft_autosave_settled_for_e2e(&self) -> bool {
+        !self.draft_watch_running
+            && self.draft_flushes == 0
+            && self.draft_failure_pending.is_none()
+            && self
+                .draft_save
+                .as_ref()
+                .is_none_or(|ticket| ticket.generation() == self.draft_watched_generation)
+    }
+
+    fn watch_draft_save(&mut self, cx: &mut Context<Self>) {
+        if self.draft_watch_running {
+            return;
+        }
+        let Some(ticket) = self
+            .draft_save
+            .clone()
+            .filter(|ticket| ticket.generation() != self.draft_watched_generation)
+        else {
+            return;
+        };
+        self.draft_watch_running = true;
+        self.draft_watched_generation = ticket.generation();
+        let wait_ticket = ticket.clone();
+        let task = cx.background_spawn(async move { wait_ticket.wait() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |view, cx| {
+                view.draft_watch_running = false;
+                if ticket.is_current() {
+                    view.note_draft_result(
+                        Some(ticket.generation()),
+                        result.map(|_| ()).map_err(|error| error.to_string()),
+                    );
+                    view.present_draft_failure(cx).detach();
+                }
+                view.watch_draft_save(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn note_draft_result(
+        &mut self,
+        generation: Option<u64>,
+        result: Result<(), String>,
+    ) {
+        match result {
+            Ok(()) => self.draft_persist_failed = None,
+            Err(error) => {
+                // wait() and flush() can report the same failed writer ticket.
+                // Capture errors already have their own draft-update contract.
+                if let Some(generation) = generation {
+                    if self.draft_logged_generation != Some(generation) {
+                        klog!("conflict-mode: resolution draft autosave failed: {error}");
+                        self.draft_logged_generation = Some(generation);
+                    }
+                }
+                if self.draft_persist_failed.as_ref() != Some(&error) {
+                    self.draft_failure_pending = Some(error.clone());
+                }
+                self.draft_persist_failed = Some(error);
+            }
+        }
+    }
+
+    fn present_draft_failure(&mut self, cx: &mut Context<Self>) -> gpui::Task<()> {
+        let Some(error) = self.draft_failure_pending.take() else {
+            return gpui::Task::ready(());
+        };
+        let parent = self.app.clone();
+        let owner = self.owner.clone();
+        let repo = self.repo_path.clone();
+        cx.spawn(async move |_, cx| {
+            let _ = parent.update(cx, |app, cx| {
+                let current = app.conflict_action_owner_on_screen(&owner);
+                // Unlike ordinary short operation results, a failed autosave
+                // must announce even while its Graph workspace is foreground.
+                // This shared path records once and keeps the preview bounded.
+                app.record_op_result(
+                    kagi_git::oplog::OpLogEntry::new(
+                        "conflict-draft-autosave",
+                        repo.display().to_string(),
+                        kagi_git::StateSummary {
+                            head: "conflict".into(),
+                            dirty: "unsaved decisions".into(),
+                        },
+                        kagi_git::oplog::OpOutcome::Failed { error },
+                    ),
+                    cx,
+                    true,
+                    None,
+                    None,
+                    true,
+                    current,
+                    None,
+                    false,
+                    None,
+                    None,
+                );
+            });
+        })
+    }
+
+    fn prepare_draft_flush(&mut self, cx: &Context<Self>) -> bool {
+        if !self.capture_result_for_navigation(cx) {
+            return false;
+        }
+        if self.draft_persist_failed.is_some()
+            || self
+                .draft_save
+                .as_ref()
+                .is_none_or(|ticket| !ticket.is_current())
+                && self.has_unflushed_drafts()
+        {
+            // A retry changes writer generation, not the decisions frozen by
+            // this action. A changed Result was already invalidated by capture.
+            if let Some(mode) = self.mode.as_ref() {
+                self.accept_draft_queue(mode.buffer.queue_autosave(), false);
+            }
+        }
+        true
+    }
+
+    /// The non-cancellable OS exit path has only GPUI's shared 200 ms budget.
+    /// Capture before windows disappear, then urgently flush owned tickets off
+    /// the UI thread; do not depend on an entity callback surviving shutdown.
+    pub(super) fn flush_drafts_on_quit(&mut self, cx: &mut Context<Self>) -> gpui::Task<()> {
+        if !self.prepare_draft_flush(cx) {
+            eprintln!("Conflict draft shutdown: could not capture the latest Result");
+        }
+        let ticket = self.draft_save.clone();
+        cx.background_spawn(async move {
+            if let Some(ticket) = ticket {
+                if let Err(error) = ticket.flush() {
+                    eprintln!("Conflict draft shutdown flush: {error}");
+                }
+            }
+        })
+    }
+
+    /// Capture first; the blocking barrier runs before repository admission and
+    /// never under its lock. Explicit actions retry a failed current body.
+    pub(crate) fn flush_drafts(&mut self, cx: &mut Context<Self>) -> gpui::Task<bool> {
+        if !self.prepare_draft_flush(cx) {
+            return gpui::Task::ready(false);
+        }
+        let Some(mode) = self.mode.as_ref() else {
+            return gpui::Task::ready(self.draft_persist_failed.is_none());
+        };
+        let revision = mode.revision.clone();
+        let ticket = self.draft_save.clone();
+        self.draft_flushes += 1;
+        let task = cx.background_spawn(async move {
+            let result = ticket.as_ref().map_or(Ok(()), |ticket| ticket.flush());
+            (result, ticket)
+        });
+        cx.spawn(async move |this, cx| {
+            let (result, ticket) = task.await;
+            let notification = this
+                .update(cx, |view, cx| {
+                    let current = ticket.as_ref().is_none_or(|ticket| ticket.is_current())
+                        && view.mode.as_ref().is_some_and(|mode| {
+                            mode.revision == revision && !mode.buffer.has_unflushed_drafts()
+                        });
+                    if result.is_err() || current {
+                        view.note_draft_result(
+                            ticket
+                                .as_ref()
+                                .filter(|ticket| ticket.is_current())
+                                .map(|ticket| ticket.generation()),
+                            result.map_err(|error| error.to_string()),
+                        );
+                    }
+                    if let Some(error) = view.draft_persist_failed.as_ref() {
+                        view.draft_failure_pending = Some(error.clone());
+                    }
+                    view.present_draft_failure(cx)
+                })
+                .ok();
+            // Finish the draft diagnostic before the caller presents its more
+            // specific operation refusal; detached callbacks must not erase it.
+            if let Some(notification) = notification {
+                notification.await;
+            }
+            this.update(cx, |view, cx| {
+                view.draft_flushes -= 1;
+                view.capture_result_for_handoff(cx);
+                let current = ticket.as_ref().is_none_or(|ticket| ticket.is_current())
+                    && view.mode.as_ref().is_some_and(|mode| {
+                        mode.revision == revision && !mode.buffer.has_unflushed_drafts()
+                    });
+                cx.notify();
+                current && view.draft_persist_failed.is_none()
+            })
+            .unwrap_or(false)
+        })
+    }
 }
 
 /// None means a foreign/stale editor; Some reports whether owned text changed.
@@ -218,11 +490,15 @@ fn pull_owned_editor(
     mode: &mut ConflictMode,
     path: &Path,
     cx: &Context<ConflictView>,
-) -> Option<bool> {
-    let inputs = inputs.filter(|inputs| {
+) -> Result<Option<bool>, String> {
+    let Some(inputs) = inputs.filter(|inputs| {
         inputs.path == path && inputs.revision == mode.revision && inputs.content_sig != 0
-    })?;
-    let model = mode.buffer.hunk_model(path)?;
+    }) else {
+        return Ok(None);
+    };
+    let Some(model) = mode.buffer.hunk_model(path) else {
+        return Ok(None);
+    };
     let result_text = mode
         .buffer
         .resolved_text(path)
@@ -232,20 +508,14 @@ fn pull_owned_editor(
         .split_terminator('\n')
         .eq(result_text.split_terminator('\n'));
     if !changed {
-        return Some(false);
+        return Ok(Some(false));
     }
     if let Err(error) = mode.buffer.set_manual_text(path, &edited) {
         klog!("conflict-mode: resolution draft update failed: {error}");
-        return Some(false);
+        return Err(error.to_string());
     }
     mode.refresh_file_status(path);
-    Some(true)
-}
-
-fn autosave_drafts(buffer: &ResolutionBuffer) {
-    if let Err(error) = buffer.autosave() {
-        klog!("conflict-mode: resolution draft autosave failed: {error}");
-    }
+    Ok(Some(true))
 }
 
 fn new_editor_inputs(

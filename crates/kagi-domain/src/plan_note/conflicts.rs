@@ -31,6 +31,8 @@ pub enum ConflictsNote {
     AbortStartUnavailable,
     /// blocker (abort) — HEAD no longer matches the sequencer's safe rollback tip.
     AbortHeadMoved,
+    /// blocker (abort/skip/D-F) — required recovery data could not be preserved.
+    DraftPreservationFailed,
     /// blocker (save) — the resolution draft still contains conflict markers.
     ResolutionMarkers,
     /// blocker (continue) — one or more files have no resolution draft.
@@ -58,11 +60,11 @@ pub enum ConflictsNote {
     NoConflictingFilesDetected,
     /// warning (continue) — the current step is resolved, but replay has more steps.
     ContinuesToNextStep { remaining: usize },
-    /// warning (abort) — the partial resolution buffer is preserved, not
-    /// discarded.
+    /// warning (abort) — a recovery copy of the live buffer is required before
+    /// restoring the operation's working-tree changes.
     PartialResolutionsPreserved,
-    /// warning (skip) — the current sequencer step's changes are discarded,
-    /// but the partial resolution is preserved.
+    /// warning (skip) — the current sequencer step's changes are discarded
+    /// only after the live resolution buffer is saved for recovery.
     SkipDiscardsStep,
 }
 
@@ -90,6 +92,9 @@ impl ConflictsNote {
             }
             ConflictsNote::AbortHeadMoved => {
                 crate::advice_template_en!(ConflictsAbortHeadMoved).into()
+            }
+            ConflictsNote::DraftPreservationFailed => {
+                crate::advice_template_en!(ConflictsDraftPreservationFailed).into()
             }
             ConflictsNote::ResolutionMarkers => {
                 crate::advice_template_en!(ConflictsResolutionMarkers).into()
@@ -366,8 +371,8 @@ mod tests {
     fn partial_resolutions_preserved_note() {
         assert_eq!(
             ConflictsNote::PartialResolutionsPreserved.message_en(),
-            "Your partial resolutions are preserved in the autosave directory and \
-             referenced in the operation log; they are not discarded."
+            "Abort proceeds only after the current resolution buffer is saved for recovery. \
+             Existing saved drafts are retained when no live conflicts remain; working-tree changes from the operation are restored."
         );
     }
 
@@ -376,7 +381,7 @@ mod tests {
         assert_eq!(
             ConflictsNote::SkipDiscardsStep.message_en(),
             "Skip discards the current step's changes (the conflicting pick is dropped, \
-             not committed). Your partial resolution is preserved in the autosave directory."
+             not committed). Skip proceeds only after the current resolution buffer is saved for recovery."
         );
     }
 

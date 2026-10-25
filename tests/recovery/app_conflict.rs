@@ -219,46 +219,46 @@ pub(crate) fn stuck_merging_fixture() -> tempfile::TempDir {
 pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    let hold = crate::conflict_draft_inspection::DetectionHold::new(cx, false);
     let (app, window) = mount(cx, &repo);
-    // No explicit detection: the first accepted read creates the staged
-    // overview, while operation admission stays in the session read model.
+    hold.wait(cx, &app);
+    // Admission arrives before presentation. Hold the real detector callback
+    // to prove #704's fallback stays reachable during that startup interval.
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    cx.read(|cx| {
-        let entity = app
-            .read(cx)
-            .ui()
-            .conflict
-            .as_ref()
-            .expect("staged overview from first read");
-        assert!(entity
-            .read(cx)
-            .mode
-            .as_ref()
-            .unwrap()
-            .session
-            .files
-            .is_empty());
-    });
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
     assert!(
         cx.read(|cx| app.read(cx).view().operation.is_some()),
         "the read model knows the merge is still in progress"
     );
-    assert!(e2e::control_bounds(window.window_id(), "conflict-continue").is_some());
-    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_some());
     assert!(
-        e2e::control_bounds(window.window_id(), "operation-strip").is_none(),
-        "the overview and operation strip never compete"
+        e2e::control_bounds(window.window_id(), "conflict-abort").is_none(),
+        "an unmounted editor never duplicates the strip exit"
     );
+    drop(hold);
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "operation-strip");
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "#1755: the accepted startup read mounts the resolved-merge overview"
+    );
+    assert!(cx.read(|cx| app.read(cx).view().operation.is_some()));
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-session-header").is_some());
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_some());
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS staged overview visible at startup on a stuck MERGING repo");
+    eprintln!("[gui-e2e] PASS operation_strip_startup: runtime verified fallback Abort before the detector callback, then sidebar session header after #1755 mounts ConflictView");
 }
 
-/// The owner ruling on top of #707: while the conflict editor is mounted the
-/// strip under the toolbar is redundant, so it is not drawn there and the
-/// dashboard carries the Abort — the same `open_conflict_abort_modal`, the same
-/// two stages. Admission is unchanged: the read model still says an operation is
-/// in progress, only the control's placement moved.
+/// While the conflict sidebar is visible its session header owns Abort. Hiding
+/// the sidebar exposes #704 instead; both dispatch the same confirmation.
+/// Admission remains in the read model regardless of control placement.
 pub fn scenario_operation_strip_hidden_in_editor(cx: &mut VisualTestAppContext) {
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -357,7 +357,13 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
         "a stale detector result must not erase the accepted read's observation"
     );
 
-    // …and Abort still goes through, which is what the erasure used to break.
+    // …and the mounted sidebar's Abort still goes through, which is what
+    // the erasure used to break.
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_some()));
+    e2e::clear_control_bounds(window.window_id(), "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "operation-strip-abort").is_none());
     click_control(cx, window, "conflict-abort");
     cx.run_until_parked();
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
@@ -787,38 +793,86 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "#1755: the accepted startup read mounts the resolved-merge overview"
+    );
+    eprintln!(
+        "[gui-e2e] operation_strip_abort: runtime verified mounted ConflictView before CommitPanel"
+    );
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+    for name in ["cp-body", "cp-commit-action"] {
+        e2e::clear_control_bounds(window.window_id(), name);
+    }
     click_control(cx, window, "conflict-continue");
     wait_idle(cx, &app);
     crate::busy_dismiss::ready(cx, &app);
-    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    cx.read(|cx| {
+        let ui = app.read(cx).ui();
+        assert!(ui.conflict_merge_pending);
+        assert!(ui.commit_panel_open);
+    });
+    // The session may retain its entity; pending must remove its rendered body.
+    e2e::clear_control_bounds(window.window_id(), "conflict-abort");
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_none());
+    for name in ["cp-body", "cp-commit-action", "operation-strip-abort"] {
+        assert!(
+            e2e::control_bounds(window.window_id(), name).is_some(),
+            "{name} is painted over the real CommitPanel"
+        );
+    }
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.planning = Some("merge-plan");
+            app.status_footer =
+                kagi::ui::FooterStatus::Idle("Awaiting Abort planning refusal".into());
             let owner = app
                 .active_session()
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("abort owner");
             app.open_conflict_abort_modal(owner, window, cx);
-            assert!(
-                app.conflict_abort_modal().is_none(),
-                "a plan in flight must refuse the abort confirmation (#283)"
-            );
             app.confirm_conflict_abort(cx);
-            app.planning = None;
         });
     })
     .unwrap();
     cx.run_until_parked();
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Abort refusal after the flush while planning",
+        |app| {
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(message)
+            if message.as_ref() == kagi::ui::i18n::Msg::OpInProgress.t())
+        },
+    );
+    cx.read(|cx| {
+        assert_eq!(app.read(cx).planning, Some("merge-plan"));
+        assert!(
+            app.read(cx).conflict_abort_modal().is_none(),
+            "a plan in flight refuses the completed Abort-open continuation (#283)"
+        );
+    });
     assert!(
         repo.join(".git/MERGE_HEAD").exists(),
         "and a refused abort mutates nothing"
     );
+    app.update(cx, |app, _| app.planning = None);
     click_control(cx, window, "operation-strip-abort");
     cx.run_until_parked();
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Abort plan opens after planning releases",
+        |app| app.conflict_abort_modal().is_some(),
+    );
     assert!(
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
         "the first click confirms nothing — it opens the plan"
@@ -1282,6 +1336,9 @@ pub fn scenario_conflict_confirm_continue_panic(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+        app.conflict_continue_modal().is_some()
+    });
     assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
     kagi::ui::KagiApp::panic_next_continue_confirm_for_e2e();
     app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
@@ -1318,12 +1375,22 @@ pub fn scenario_conflict_confirm_dismissed_still_reloads(cx: &mut VisualTestAppC
         });
     })
     .unwrap();
-    assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
-    app.update(cx, |app, cx| {
-        app.confirm_conflict_continue(cx);
-        app.cancel_conflict_continue();
+    crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+        app.conflict_continue_modal().is_some()
     });
-    cx.run_until_parked();
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Continue write admitted before dismissal",
+        |app| app.write_busy_op.is_some(),
+    );
+    app.update(cx, |app, _| app.cancel_conflict_continue());
+    release.send(());
+    wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
     assert!(
         !repo.join(".git/CHERRY_PICK_HEAD").exists(),
         "the sequencer must have continued"
@@ -1772,12 +1839,20 @@ pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppCon
                     });
                 })
                 .unwrap();
+                crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+                    app.conflict_continue_modal().is_some()
+                });
                 assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
                 let repo_before = crate::macos::repo_fingerprint(&repo);
                 let other_before = crate::macos::repo_fingerprint(&other_repo);
                 let (hold, release) = crate::evidence_support::deferred::<()>(cx);
                 kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
                 app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                // Wait for flush admission before leaving or hiding the repository:
+                // the existing hold suspends the backend write, not draft persistence.
+                crate::busy_dismiss::wait(cx, &app, "Continue confirmation admitted", |app| {
+                    app.write_busy_op.is_some()
+                });
                 if departed {
                     app.update(cx, |app, cx| {
                         app.cancel_conflict_continue();
@@ -1809,7 +1884,9 @@ pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppCon
                 });
                 std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
                 release.send(());
-                cx.run_until_parked();
+                crate::busy_dismiss::wait(cx, &app, "Continue backend-open failure", |app| {
+                    app.write_busy_op.is_none() && app.conflict_continue_modal().is_none()
+                });
                 std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
                 let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
                     .into_iter()

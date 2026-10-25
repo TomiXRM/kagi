@@ -76,6 +76,15 @@ impl KagiApp {
         if !self.conflict_action_owner_on_screen(&owner) {
             return;
         }
+        self.flush_conflict_drafts(owner.clone(), "skip", cx, move |app, cx| {
+            app.conflict_skip_flushed(owner, cx);
+        });
+    }
+
+    fn conflict_skip_flushed(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }
@@ -186,8 +195,7 @@ impl KagiApp {
                 app.refresh_write_busy();
                 let current = app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
                 let refusal_display = match &result {
-                    Err(kagi_git::GitError::Blocked(note)) =>
-                        Some(i18n::plan_note_text(note)),
+                    Err(kagi_git::GitError::Blocked(note)) => Some(i18n::plan_note_text(note)),
                     _ => None,
                 };
                 let (outcome, failure, ran) = match result {
@@ -197,13 +205,10 @@ impl KagiApp {
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);
-                        let outcome = match &e {
-                            kagi_git::GitError::Blocked(note) => OpOutcome::Refused {
-                                blockers: vec![note.message_en()],
-                            },
-                            _ => unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }),
-                        };
-                        (outcome, Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
+                        let refused = e.blocker().map(|note| OpOutcome::Refused {
+                            blockers: vec![note.message_en()],
+                        });
+                        (unknown.or(refused).unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }), Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
                     }
                 };
                 let termination_unknown_evidence = match &outcome {

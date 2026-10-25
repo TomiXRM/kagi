@@ -23,6 +23,13 @@ use crate::ops::{OperationPlan, StateSummary};
 use crate::resolution::ResolutionBuffer;
 use crate::{resolve_head, GitError};
 
+/// A required recovery write failed before the destructive operation started.
+pub(crate) fn draft_preservation_failed() -> GitError {
+    GitError::Blocked(Box::new(PlanNote::Conflicts(
+        ConflictsNote::DraftPreservationFailed,
+    )))
+}
+
 /// The ref an abort will move back to the recorded start, and where it pointed when
 /// the operation was observed (#707 review).
 ///
@@ -264,7 +271,6 @@ pub(crate) fn execute_conflict_abort_expecting(
     expected: Option<&RestoreRef>,
     progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
-    drop(crate::write_lock::acquire(repo)?);
     // Before anything at all, including the buffer autosave: an expectation
     // that names a ref this session does not restore is a caller trying to
     // choose the destination, and must leave the repository untouched.
@@ -287,7 +293,7 @@ pub(crate) fn execute_conflict_abort_expecting(
     let buffer_preserved_at = if session.files.is_empty() {
         None
     } else {
-        buffer.autosave().ok()
+        Some(buffer.autosave().map_err(|_| draft_preservation_failed())?)
     };
     execute_conflict_abort_preserved(repo, session, expected, buffer_preserved_at, progress)
 }
@@ -501,7 +507,6 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     buffer: &ResolutionBuffer,
     progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
-    drop(crate::write_lock::acquire(repo)?);
     // 1. Preserve the buffer BEFORE touching the repo (never lose partial
     //    work) — but only when there IS live work to preserve.
     //
@@ -513,7 +518,7 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     let buffer_preserved_at = if session.files.is_empty() {
         None
     } else {
-        buffer.autosave().ok()
+        Some(buffer.autosave().map_err(|_| draft_preservation_failed())?)
     };
     execute_stash_conflict_abort_preserved(repo, session, buffer_preserved_at, progress)
 }

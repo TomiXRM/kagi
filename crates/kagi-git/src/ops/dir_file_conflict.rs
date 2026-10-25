@@ -170,6 +170,9 @@ pub(crate) fn execute_dir_file_resolution(
                 dirty: format!("staged (stage 0); file_oid={}; {}", plan.file_oid, recovery),
             },
         },
+        Err(GitError::Blocked(note)) => OpOutcome::Refused {
+            blockers: vec![note.message_en()],
+        },
         Err(error) => OpOutcome::Failed {
             error: error.to_string(),
         },
@@ -212,10 +215,7 @@ pub(crate) fn apply_dir_file_resolution_with_progress(
             progress(kagi_domain::conflict_family::ConflictProgress::RecoveryCaptured);
             format!("snapshot={} commit={}", s.id, s.commit)
         }
-        Err(e) => {
-            eprintln!("kagi-git: dir-file snapshot failed (non-fatal): {}", e);
-            "snapshot=unavailable".to_string()
-        }
+        Err(_) => return Err(crate::ops::conflict_abort::draft_preservation_failed()),
     };
     apply_to_index(repo, plan)?;
     progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);

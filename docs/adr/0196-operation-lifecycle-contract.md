@@ -755,9 +755,10 @@ queued captures, not uncaptured live input. Never hold both locks, in either ord
 After preservation, reacquire repository admission and repeat preflight; a changed
 approval refuses without mutation. This is advisory coordination among Kagi
 instances, not exclusion against arbitrary external Git/worktree writers.
-The existing best-effort Abort preservation policy is unchanged: failed draft
-autosave is not made fail-closed by this admission slice. The formal
-`preserve-abort` counterexample remains REFUTE pending the preservation work.
+The integrated #1731/#1760 preservation policy is fail-closed: a failed capture or
+durable draft flush refuses Abort, Skip and directory/file replacement before
+repository admission. The formal `preserve-abort`, `preserve-skip` and
+`preserve-dir-file` guarantees now remain HOLD alongside repository-wide admission.
 
 Contention is `Refused`, never `Failed` or `Unknown`: durable English blocker
 \"Another Kagi window is operating on this repository\" and Japanese presentation

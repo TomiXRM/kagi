@@ -41,10 +41,19 @@ pub(super) fn wait(
     what: &str,
     ready: impl Fn(&KagiApp) -> bool,
 ) {
+    wait_ui(cx, app, what, |state, _| ready(state));
+}
+
+pub(super) fn wait_ui(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    what: &str,
+    ready: impl Fn(&KagiApp, &gpui::App) -> bool,
+) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         cx.run_until_parked();
-        if cx.read(|cx| ready(app.read(cx))) {
+        if cx.read(|cx| ready(app.read(cx), cx)) {
             return;
         }
         assert!(Instant::now() < deadline, "{what}");

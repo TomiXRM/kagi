@@ -588,8 +588,18 @@ pub enum Msg {
     ConflictContinue,
     ConflictAbort,
     ConflictSkip,
-    /// Conflict dashboard: armed label on the two-stage Skip button.
+    /// Full armed Skip label, shared by the strip and sidebar tooltip.
     ConflictConfirmSkip,
+    /// Short armed sidebar button label; the full action stays in its tooltip.
+    ConflictConfirmSkipButton,
+    /// Repository menu titles (distinct from sentence-case buttons).
+    MenuConfirmSkip,
+    MenuAbortOperation,
+    MenuAbortMerge,
+    MenuAbortRebase,
+    MenuAbortCherryPick,
+    MenuAbortRevert,
+    MenuAbortStashApply,
     /// Conflict dashboard: what the armed Skip is about to discard.
     ConflictConfirmSkipHint,
     ConflictResolved,
@@ -1349,6 +1359,7 @@ pub enum Msg {
     AdviceConflictsConflictGone,
     AdviceConflictsAbortStartUnavailable,
     AdviceConflictsAbortHeadMoved,
+    AdviceConflictsDraftPreservationFailed,
     AdviceConflictsResolutionMarkers,
     AdviceConflictsUnresolvedFiles,
     AdviceConflictsMarkerResidue,
@@ -1755,6 +1766,15 @@ pub enum Msg {
     EditorHostSaveAll,
     EditorHostSaveWaiting,
     EditorHostRecoveryRequired,
+    ConflictDraftSaveFailed,
+    ConflictDraftRetry,
+    ConflictDraftDiscardClose,
+    ConflictDraftDiscardConfirm,
+    ConflictDraftUnsavedDetail,
+    ConflictDraftSavingTitle,
+    ConflictDraftSaving,
+    ConflictDraftDiscardDetail,
+    ConflictDraftMixedDiscardDetail,
     EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
@@ -2343,6 +2363,8 @@ impl Msg {
             (Ja, AdviceConflictsAbortStartUnavailable) => plan::conflicts::ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE,
             (En, AdviceConflictsAbortHeadMoved) => advice_en!(ConflictsAbortHeadMoved),
             (Ja, AdviceConflictsAbortHeadMoved) => plan::conflicts::ADVICE_CONFLICTS_ABORT_HEAD_MOVED,
+            (En, AdviceConflictsDraftPreservationFailed) => advice_en!(ConflictsDraftPreservationFailed),
+            (Ja, AdviceConflictsDraftPreservationFailed) => plan::conflicts::ADVICE_CONFLICTS_DRAFT_PRESERVATION_FAILED,
             (En, AdviceConflictsResolutionMarkers) => advice_en!(ConflictsResolutionMarkers),
             (Ja, AdviceConflictsResolutionMarkers) => plan::conflicts::ADVICE_CONFLICTS_RESOLUTION_MARKERS,
             (En, AdviceConflictsUnresolvedFiles) => advice_en!(ConflictsUnresolvedFiles),
@@ -3267,6 +3289,22 @@ impl Msg {
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
             (En, ConflictConfirmSkip) => "Confirm skip",
             (Ja, ConflictConfirmSkip) => "スキップを確定",
+            (En, ConflictConfirmSkipButton) => "Confirm",
+            (Ja, ConflictConfirmSkipButton) => "確定",
+            (En, MenuConfirmSkip) => "Confirm Skip",
+            (Ja, MenuConfirmSkip) => "スキップを確定",
+            (En, MenuAbortOperation) => "Abort Operation…",
+            (Ja, MenuAbortOperation) => "操作を中止…",
+            (En, MenuAbortMerge) => "Abort Merge…",
+            (Ja, MenuAbortMerge) => "merge を中止…",
+            (En, MenuAbortRebase) => "Abort Rebase…",
+            (Ja, MenuAbortRebase) => "rebase を中止…",
+            (En, MenuAbortCherryPick) => "Abort Cherry-Pick…",
+            (Ja, MenuAbortCherryPick) => "cherry-pick を中止…",
+            (En, MenuAbortRevert) => "Abort Revert…",
+            (Ja, MenuAbortRevert) => "revert を中止…",
+            (En, MenuAbortStashApply) => "Abort Stash Apply…",
+            (Ja, MenuAbortStashApply) => "stash apply を中止…",
             (En, ConflictConfirmSkipHint) => {
                 "Skip drops this step's changes and your in-progress resolution.                  Click again to confirm."
             }
@@ -4582,6 +4620,24 @@ impl Msg {
             (Ja, EditorHostRecoveryRequired) => {
                 "操作の結果が不明です。「キャンセル」を選び、操作ログで復旧方法を確認してから再試行してください。"
             }
+            (En, ConflictDraftSaveFailed) => "Draft could not be saved",
+            (Ja, ConflictDraftSaveFailed) => "下書きを保存できていません",
+            (En, ConflictDraftRetry) => "Retry",
+            (Ja, ConflictDraftRetry) => "再試行",
+            (En, ConflictDraftDiscardClose) => "Discard and Close",
+            (Ja, ConflictDraftDiscardClose) => "破棄して閉じる",
+            (En, ConflictDraftDiscardConfirm) => "Confirm Discard and Close",
+            (Ja, ConflictDraftDiscardConfirm) => "破棄して閉じることを確認",
+            (En, ConflictDraftUnsavedDetail) => "Conflict decisions exist only in this window. Retry saving or explicitly discard them before closing.",
+            (Ja, ConflictDraftUnsavedDetail) => "conflict の解決内容はこのウィンドウにのみ残っています。保存を再試行するか、明示的に破棄してから閉じてください。",
+            (En, ConflictDraftSavingTitle) => "Saving Conflict Decisions",
+            (Ja, ConflictDraftSavingTitle) => "conflict の解決内容を保存中",
+            (En, ConflictDraftSaving) => "Saving conflict decisions…",
+            (Ja, ConflictDraftSaving) => "conflict の解決内容を保存しています…",
+            (En, ConflictDraftDiscardDetail) => "These unsaved conflict decisions will be lost. Discard them and close?",
+            (Ja, ConflictDraftDiscardDetail) => "未保存の conflict 解決内容が失われます。破棄して閉じますか？",
+            (En, ConflictDraftMixedDiscardDetail) => "These unsaved conflict decisions and file changes will be lost. Discard them and close?",
+            (Ja, ConflictDraftMixedDiscardDetail) => "未保存の conflict 解決内容とファイルの変更が失われます。破棄して閉じますか？",
             (En, EditorWorkspaceSaveInterrupted) => {
                 "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
             }
@@ -5444,6 +5500,9 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "file.openInTerminal" => "リポジトリをターミナルで開く",
         "file.connectRemote" => "remote ホストに接続…",
         "file.refresh" => "リポジトリを再読み込み",
+        "repo.conflictAbort" => "操作を中止…",
+        "repo.conflictSkip" => "このステップをスキップ…",
+        "repo.conflictContinue" => "確認へ進む…",
         "view.zoomIn" => "拡大",
         "view.zoomOut" => "縮小",
         "view.zoomReset" => "実際のサイズ",

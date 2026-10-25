@@ -9,14 +9,22 @@
 //! this is not that banner back, it is the operation's own row and it exists
 //! only while an operation does.
 //!
-//! The one place it is not drawn is while the conflict editor is mounted
-//! (owner ruling on top of #707): there the dashboard's own Abort sits with
-//! Continue / Next conflict and dispatches `open_conflict_abort_modal` — this
-//! module's action, unchanged. Admission never moves: it is
-//! `TabViewState::operation` in both placements, so an abort is reachable
-//! whether or not a `ConflictView` exists, which is what #704 was about.
+//! The strip is omitted only while `ConflictView` and its sidebar are shown.
+//! Revised owner/HIG placement (#1764) groups Skip and Abort with the operation
+//! name/step in the leading sidebar header. Abort is framed Secondary with a red
+//! label. Only Continue follows the file actions/Save, separated by a line or gap.
+//! A hidden sidebar uses this #704 strip under the main toolbar, not an inline
+//! file-header session group; an unmounted `ConflictView` retains it too,
+//! including at startup. Hidden sequencer controls keep Skip's armed state
+//! visible here. The main toolbar has no conflict-session controls.
+//! Localized Repository commands use the observed operation name and dispatch
+//! the same paths; Abort remains available without a mounted conflict editor.
+//! Abort still dispatches `open_conflict_abort_modal`; admission from
+//! `TabViewState::operation`, confirmations, revision/lease guards and execution
+//! safety remain unchanged.
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
+use gpui_component::{Disableable as _, Sizable as _};
 
 use super::i18n::Msg;
 use super::theme::{self, theme};
@@ -43,11 +51,15 @@ impl KagiApp {
                 Msg::OperationInProgress.t()
             ),
         };
-        let abort = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            if let Some(owner) = this.detect_owner() {
-                this.open_conflict_abort_modal(owner, window, cx);
-            }
-            cx.notify();
+        let abort_disabled = !super::commands::is_enabled(self, "repo.conflictAbort", cx);
+        let skip = self.ui().conflict.as_ref().and_then(|entity| {
+            let view = entity.read(cx);
+            view.mode.as_ref().and_then(|mode| {
+                mode.session
+                    .op
+                    .is_sequencer()
+                    .then_some(mode.skip_approval.is_some())
+            })
         });
         Some(
             super::e2e::measure_control(
@@ -76,22 +88,46 @@ impl KagiApp {
                     .child(
                         super::e2e::measure_control(
                             "operation-strip-abort",
-                            div()
-                                .id("operation-strip-abort")
-                                .px_2()
-                                .py(theme::scaled_px(2.0))
-                                .rounded_md()
-                                .border_1()
-                                .border_color(rgb(theme().color_blocker))
-                                .text_xs()
-                                .text_color(rgb(theme().color_blocker))
-                                .cursor(gpui::CursorStyle::PointingHand)
-                                .hover(|style| style.bg(rgb(theme().selected)))
-                                .child(SharedString::from(Msg::ConflictAbort.t()))
-                                .on_click(abort),
+                            super::button_style::conflict_abort_button(
+                                "operation-strip-abort",
+                                abort_disabled,
+                                theme().surface,
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.handle_menu_command("repo.conflictAbort", window, cx)
+                                },
+                            )),
                         )
                         .into_any_element(),
-                    ),
+                    )
+                    .when_some(skip, |el, armed| {
+                        el.child(super::e2e::measure_control(
+                            "operation-strip-skip",
+                            super::button_style::KagiButton::styled(
+                                "operation-strip-skip",
+                                if armed {
+                                    Msg::ConflictConfirmSkip.t()
+                                } else {
+                                    Msg::ConflictSkip.t()
+                                },
+                                super::button_style::ButtonRole::Secondary,
+                                cx,
+                            )
+                            .small()
+                            .compact()
+                            .h(theme::scaled_px(20.))
+                            .rounded(theme::scaled_px(5.))
+                            .text_size(theme::scaled_px(12.))
+                            .disabled(!super::commands::is_enabled(self, "repo.conflictSkip", cx))
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.handle_menu_command("repo.conflictSkip", window, cx)
+                                },
+                            )),
+                        ))
+                    }),
             )
             .into_any_element(),
         )

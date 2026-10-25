@@ -434,19 +434,23 @@ impl Backend {
         // HEAD back; a save moves nothing and records `Some(空)`).
         let (result, ref_moves) = backend.observe_ref_moves(|_| {
             (|| -> Result<(), GitError> {
-                // A busy repository refuses before even preserving a draft.
-                drop(crate::write_lock::acquire(&backend.repo)?);
-                let preserved = if let ConflictPreparedAction::Abort { session, .. } = &plan.action
-                {
-                    let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
-                    if session.files.is_empty() {
-                        None
+                let preserved =
+                    if let ConflictPreparedAction::Abort { session, .. } = &plan.action {
+                        // A failed draft read is not an empty buffer: refuse before
+                        // repository admission rather than overwrite partial work.
+                        let buffer = backend
+                            .resolution_buffer_from_repo_with_autosave()
+                            .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?;
+                        if session.files.is_empty() {
+                            None
+                        } else {
+                            Some(buffer.autosave().map_err(|_| {
+                                crate::ops::conflict_abort::draft_preservation_failed()
+                            })?)
+                        }
                     } else {
-                        buffer.autosave().ok()
-                    }
-                } else {
-                    None
-                };
+                        None
+                    };
                 // Never nest buffer.json.lock and kagi-write.lock. Revalidate
                 // the full approved revision only after preservation finishes.
                 let _lock = crate::write_lock::acquire(&backend.repo)?;

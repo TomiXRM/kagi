@@ -12,7 +12,7 @@ mod cherry_pick_sequence;
 
 /// The native confirmation and its receipt must describe the entire sequence.
 pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
-    use kagi::ui::i18n::{self, Lang};
+    use kagi::ui::i18n::{self, Lang, Msg};
     use kagi_git::oplog::OpOutcome;
     struct RestoreLanguage {
         lang: Lang,
@@ -27,19 +27,10 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
         lang: i18n::lang(),
         _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
     };
-    for (lang, unavailable, moved) in [
-        (
-            Lang::En,
-            "pre-sequence HEAD cannot be established",
-            "HEAD moved since the sequence started",
-        ),
-        (
-            Lang::Ja,
-            "sequence 開始前の HEAD を確認できません",
-            "sequence 開始後に HEAD が移動したため",
-        ),
-    ] {
+    for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
+        let unavailable = Msg::AdviceConflictsAbortStartUnavailable.t();
+        let moved = Msg::AdviceConflictsAbortHeadMoved.t();
         for case in ["ready", "missing-start", "head-moved"] {
             let fixture = cherry_pick_sequence::Fixture::new(true, false);
             let repo = fixture.path().canonicalize().unwrap();

@@ -27,6 +27,38 @@ pub(super) fn check_cleared_handoff(cx: &mut VisualTestAppContext) {
     }
 }
 
+pub(super) fn failed_autosave_baseline(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    view: &Entity<ConflictView>,
+    repo: &Path,
+) -> usize {
+    // Native replacement can queue multiple generations. Observe the latest
+    // watcher, not just the first failure receipt, before starting the operation.
+    crate::busy_dismiss::wait_ui(cx, app, "failed autosave setup settles", |state, cx| {
+        let view = view.read(cx);
+        view.draft_autosave_settled_for_e2e()
+            && view.draft_persist_failed.is_some()
+            && state.toast_stack.as_ref().is_some_and(|stack| {
+                stack
+                    .read(cx)
+                    .toasts()
+                    .iter()
+                    .any(|toast| toast.kind == kagi::ui::ToastKind::Error)
+            })
+    });
+    let receipts = read_oplog_tail_for_repo(repo, 100);
+    assert!(
+        !receipts.is_empty(),
+        "failed autosave must record its receipt"
+    );
+    assert!(receipts.iter().all(|entry| {
+        entry.op == "conflict-draft-autosave"
+            && matches!(&entry.outcome, OpOutcome::Failed { error } if error.contains("lock"))
+    }));
+    receipts.len()
+}
+
 fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
     let fixture = RebaseFixture::new();
     let repo = fixture.path();
@@ -63,6 +95,7 @@ fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
         assert!(history.undo(file));
         history.resolved_text(file)
     });
+    let baseline = failed_autosave_baseline(cx, &app, &view, &repo);
     if complete {
         assert!(!fixture_git::git_succeeds(&repo, &["rebase", "--skip"]));
         fixture_git::git(&repo, &["rebase", "--skip"]);
@@ -97,16 +130,23 @@ fn check_end(cx: &mut VisualTestAppContext, language: Lang, complete: bool) {
         assert!(preview.chars().count() < 100 && !preview.contains('/'));
     });
     let receipts = read_oplog_tail_for_repo(&repo, 100);
-    assert_eq!(receipts.len(), 1);
-    assert!(matches!(&receipts[0].outcome, OpOutcome::Failed { error }
-        if error.contains("lock")));
+    assert_eq!(receipts.len(), baseline + 1);
+    let preservation = receipts
+        .iter()
+        .filter(|entry| entry.op == "conflict-draft-preserve")
+        .collect::<Vec<_>>();
+    assert_eq!(preservation.len(), 1);
+    assert!(
+        matches!(&preservation[0].outcome, OpOutcome::Failed { error }
+        if error.contains("lock"))
+    );
     let before = RepositoryState::read(&repo);
     click_control(cx, window, "conflict-save");
     paint(cx, &app, window);
     assert_eq!(before, RepositoryState::read(&repo));
     assert_eq!(
         read_oplog_tail_for_repo(&repo, 100).len(),
-        1,
+        baseline + 1,
         "no frame retries"
     );
     drop(lock);
@@ -153,6 +193,10 @@ pub(super) fn check_stale_handoff(cx: &mut VisualTestAppContext) {
     )
     .unwrap();
     replace_result(cx, &app, window, &input, UNSAVED);
+    crate::busy_dismiss::wait_ui(cx, &app, "first handoff draft fails autosave", |_, cx| {
+        let view = view.read(cx);
+        view.draft_autosave_settled_for_e2e() && view.draft_persist_failed.is_some()
+    });
     drop(lock);
     // Capture a real successful write, withholding only its UI completion.
     let (hold, reply) = crate::evidence_support::deferred::<()>(cx);
@@ -169,6 +213,10 @@ pub(super) fn check_stale_handoff(cx: &mut VisualTestAppContext) {
     )
     .unwrap();
     replace_result(cx, &app, window, &input, NEWER);
+    crate::busy_dismiss::wait_ui(cx, &app, "newer handoff draft fails autosave", |_, cx| {
+        let view = view.read(cx);
+        view.draft_autosave_settled_for_e2e() && view.draft_persist_failed.is_some()
+    });
     app.update(cx, |app, cx| app.reload_manual(cx));
     crate::busy_dismiss::wait(cx, &app, "new generation refuses failed handoff", |state| {
         state.ui().conflict_restore_failed

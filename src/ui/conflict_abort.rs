@@ -85,12 +85,50 @@ impl KagiApp {
         if !self.conflict_action_owner_on_screen(&owner) {
             return;
         }
+        let handle = window.window_handle();
+        self.flush_conflict_drafts(owner.clone(), "abort", cx, move |app, cx| {
+            let token = app
+                .ui()
+                .conflict
+                .as_ref()
+                .map(|pane| pane.read(cx).intent_token);
+            let this = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = this.update(cx, |app, cx| {
+                        let current = app
+                            .ui()
+                            .conflict
+                            .as_ref()
+                            .map(|pane| pane.read(cx).intent_token);
+                        if current != token {
+                            return;
+                        }
+                        app.open_conflict_abort_modal_flushed(owner, window, cx)
+                    });
+                });
+            });
+        });
+    }
+
+    fn open_conflict_abort_modal_flushed(
+        &mut self,
+        owner: crate::app::Attachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }
         let Some(operation) = self.view().operation.clone() else {
             return;
         };
+        if self.refuse_conflict_abort_for_failed_draft(&owner, &operation, cx) {
+            return;
+        }
         let repo_session = self.ui().repo_session.clone();
         let Some(repo) = repo_session.as_ref().map(|session| session.backend()) else {
             self.push_toast(
@@ -147,14 +185,74 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// A disk-loaded preservation buffer cannot stand in for a newer failed
+    /// live draft, even after filesystem permissions have recovered.
+    pub(crate) fn refuse_conflict_abort_for_failed_draft(
+        &mut self,
+        owner: &crate::app::Attachment,
+        operation: &ObservedOperation,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.failed_conflict_draft_for(owner.session, cx) {
+            return false;
+        }
+        let Some(repo_path) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.session == owner.session)
+            .map(|tab| tab.path.clone())
+        else {
+            return false;
+        };
+        let blocker = kagi_domain::plan_note::PlanNote::Conflicts(
+            kagi_domain::plan_note::ConflictsNote::DraftPreservationFailed,
+        );
+        let message = super::i18n::plan_note_text(&blocker);
+        let entry = Self::refused_entry(
+            &format!("{}-abort", operation.kind().slug()),
+            kagi_domain::plan::StateSummary {
+                head: format!("op={}", operation.kind().slug()),
+                dirty: "unsaved decisions".into(),
+            },
+            &[blocker],
+            &repo_path,
+        );
+        self.record_op_result(
+            entry,
+            cx,
+            true,
+            None,
+            Some((ToastKind::Error, message.into())),
+            true,
+            true,
+            None,
+            false,
+            None,
+            None,
+        );
+        true
+    }
+
     pub fn cancel_conflict_abort(&mut self) {
         self.clear_conflict_abort_modal();
     }
 
-    /// Stage two: require the checked pane, then hand the frozen request to the
-    /// conflict family. The family owns writer admission (`begin_write`), live
-    /// preflight, execution, verification and the receipt.
+    /// Stage two: require the checked pane and recheck draft preservation before
+    /// handing the frozen request to the family, which owns writer admission,
+    /// live repository preflight, execution, verification and the receipt.
     pub fn confirm_conflict_abort(&mut self, cx: &mut Context<Self>) {
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+        else {
+            return;
+        };
+        self.flush_conflict_drafts(owner, "abort", cx, |app, cx| {
+            app.confirm_conflict_abort_flushed(cx)
+        });
+    }
+
+    fn confirm_conflict_abort_flushed(&mut self, cx: &mut Context<Self>) {
         if !self
             .active_session()
             .is_some_and(|owner| self.pane_mutation_admitted(owner))
@@ -172,6 +270,11 @@ impl KagiApp {
         else {
             return;
         };
+        if self.refuse_conflict_abort_for_failed_draft(&owner, &modal.operation, cx) {
+            self.clear_conflict_abort_modal();
+            cx.notify();
+            return;
+        }
         let request = app::ConflictAppRequest {
             owner,
             request: kagi_git::Backend::conflict_abort_request(&modal.operation),

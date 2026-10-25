@@ -27,6 +27,8 @@ use super::KagiApp;
 
 use super::{conflict_binary_view, e2e, ToastKind};
 
+static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
+
 mod actions;
 mod file_menu;
 mod saved;
@@ -136,6 +138,7 @@ pub struct EditorChrome {
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
     window_activation_subscription: Option<gpui::Subscription>,
+    _draft_quit_subscription: gpui::Subscription,
     pub(crate) operation_chrome_subscription: Option<gpui::Subscription>,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
@@ -155,6 +158,14 @@ pub struct ConflictView {
     pub saved_preview: Option<SavedPreview>,
     pub save_refused: Option<PathBuf>,
     pub(crate) save_attempt: Option<PathBuf>,
+    /// Live decisions have not reached their recovery document; host close must ask.
+    pub draft_persist_failed: Option<String>,
+    draft_failure_pending: Option<String>,
+    draft_save: Option<kagi_git::resolution::DraftSave>,
+    draft_watch_running: bool,
+    draft_watched_generation: u64,
+    draft_logged_generation: Option<u64>,
+    pub(crate) draft_flushes: usize,
     /// Presentation projection from the existing accepted-observation stale path.
     pub(crate) saved_review_needed: bool,
     sidebar: sidebar::SidebarState,
@@ -231,10 +242,11 @@ impl ConflictView {
         app: WeakEntity<KagiApp>,
         repo_path: PathBuf,
         owner: crate::app::Attachment,
+        cx: &mut Context<Self>,
     ) -> Self {
-        static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
             window_activation_subscription: None,
+            _draft_quit_subscription: cx.on_app_quit(|view, cx| view.flush_drafts_on_quit(cx)),
             operation_chrome_subscription: None,
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
@@ -249,6 +261,13 @@ impl ConflictView {
             saved_preview: None,
             save_refused: None,
             save_attempt: None,
+            draft_persist_failed: None,
+            draft_failure_pending: None,
+            draft_save: None,
+            draft_watch_running: false,
+            draft_watched_generation: 0,
+            draft_logged_generation: None,
+            draft_flushes: 0,
             saved_review_needed: false,
             sidebar: Default::default(),
             saved_cache: HashMap::new(),

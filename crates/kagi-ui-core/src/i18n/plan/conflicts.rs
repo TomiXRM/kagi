@@ -17,6 +17,8 @@ pub(crate) const ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE: &str =
     "中止できませんでした(何も変更していません)。この操作の開始地点が分かりません。手動で直す前にターミナルで `git status` を確認してください。";
 pub(crate) const ADVICE_CONFLICTS_ABORT_HEAD_MOVED: &str =
     "中止できませんでした: 操作開始後に HEAD が移動したため、戻すと作業が失われる可能性があります。何も変更していません。";
+pub(crate) const ADVICE_CONFLICTS_DRAFT_PRESERVATION_FAILED: &str =
+    "下書きを保持できないため実行できません。リポジトリを変更する処理は行っていません。保存先のアクセス権を確認して再試行してください。";
 pub(crate) const ADVICE_CONFLICTS_RESOLUTION_MARKERS: &str =
     "解決結果に conflict marker が残っています。削除してから保存してください。";
 pub(crate) const ADVICE_CONFLICTS_UNRESOLVED_FILES: &str =
@@ -33,9 +35,9 @@ pub(crate) const ADVICE_CONFLICTS_EMPTY_MERGE_MESSAGE: &str =
 pub(crate) const ADVICE_CONFLICTS_NO_CONFLICTING_FILES_DETECTED: &str =
     "conflict ファイルはありません。続行すると操作はそのまま完了します。";
 pub(crate) const ADVICE_CONFLICTS_PARTIAL_RESOLUTIONS_PRESERVED: &str =
-    "途中までの解決内容は保持され、破棄されません。";
+    "現在の解決バッファーを復旧用に保存できた場合のみ中止します。conflict が残っていなければ既存の下書きは保持し、この操作による working tree の変更を元に戻します。";
 pub(crate) const ADVICE_CONFLICTS_SKIP_DISCARDS_STEP: &str =
-    "Skip するとこの commit の変更は適用されません。途中までの解決内容は保持されます。";
+    "Skip は現在の commit の変更を適用しません。現在の解決バッファーを復旧用に保存できない場合は拒否します。";
 
 /// Japanese rendering of one conflicts note.
 pub fn note_ja(note: &ConflictsNote) -> String {
@@ -60,6 +62,9 @@ pub fn note_ja(note: &ConflictsNote) -> String {
         }
         ConflictsNote::AbortHeadMoved => {
             super::advice_text(Msg::AdviceConflictsAbortHeadMoved, &[])
+        }
+        ConflictsNote::DraftPreservationFailed => {
+            super::advice_text(Msg::AdviceConflictsDraftPreservationFailed, &[])
         }
         ConflictsNote::ResolutionMarkers => {
             super::advice_text(Msg::AdviceConflictsResolutionMarkers, &[])

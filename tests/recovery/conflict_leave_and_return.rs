@@ -83,6 +83,7 @@ fn leave_and_return(cx: &mut VisualTestAppContext, lang: Lang) {
             assert!(state.view().operation.is_some(), "leaving is not aborting");
         });
         assert!(!drawn(cx, window, "conflict-result-editor"));
+        crate::native_ax::activate(cx);
         assert!(drawn(cx, window, "operation-strip-back"));
         let back = crate::native_ax::node(cx, window, "operation-strip-back".into());
         assert_eq!(back["aria"]["label"], Msg::ConflictBackToConflicts.t());

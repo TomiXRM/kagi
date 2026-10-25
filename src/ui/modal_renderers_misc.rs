@@ -472,11 +472,11 @@ pub(crate) fn render_editor_dirty_guard_modal(
     saving: bool,
     restart_waiting: bool,
     restart_message: Msg,
-    conflict_guard: Option<bool>,
+    conflict_guard: Option<(bool, bool)>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let conflict_failed = conflict_guard.is_some();
-    let conflict_discard_armed = conflict_guard.unwrap_or(false);
+    let conflict_present = conflict_guard.is_some();
+    let (conflict_failed, conflict_discard_armed) = conflict_guard.unwrap_or((false, false));
     let title = if conflict_failed {
         Msg::ConflictDraftSaveFailed.t()
     } else if restart_waiting {
@@ -488,10 +488,12 @@ pub(crate) fn render_editor_dirty_guard_modal(
     };
     let retry_label = if conflict_failed {
         Msg::ConflictDraftRetry.t()
+    } else if !host_close {
+        Msg::EditorSave.t()
     } else {
         Msg::EditorHostSaveAll.t()
     };
-    let discard_label = if conflict_failed {
+    let discard_label = if conflict_present {
         if conflict_discard_armed {
             Msg::ConflictDraftDiscardConfirm.t()
         } else {
@@ -533,7 +535,7 @@ pub(crate) fn render_editor_dirty_guard_modal(
                 current_theme().color_warning,
             )),
         )))
-        .when(conflict_failed, |card| {
+        .when(conflict_present, |card| {
             card.child(div().child(if conflict_discard_armed {
                 Msg::ConflictDraftDiscardDetail.t()
             } else {
@@ -543,15 +545,18 @@ pub(crate) fn render_editor_dirty_guard_modal(
         .when(restart_waiting, |card| {
             card.child(div().child(restart_message.t()))
         })
-        .when(host_close && !restart_waiting && !conflict_failed, |card| {
-            card.child(
-                div().child(
-                    Msg::EditorHostUnsavedCount
-                        .t()
-                        .replace("{count}", &count.to_string()),
-                ),
-            )
-        })
+        .when(
+            host_close && !restart_waiting && !conflict_present,
+            |card| {
+                card.child(
+                    div().child(
+                        Msg::EditorHostUnsavedCount
+                            .t()
+                            .replace("{count}", &count.to_string()),
+                    ),
+                )
+            },
+        )
         .child(
             div().flex_shrink_0().child(
                 super::button_style::modal_button_row()
@@ -581,19 +586,22 @@ pub(crate) fn render_editor_dirty_guard_modal(
                             cx,
                         ),
                     ))
-                    .when((host_close || conflict_failed) && !restart_waiting, |row| {
-                        row.child(super::e2e::measure_control(
-                            "editor-dirty-guard-save",
-                            modal_button(
+                    .when(
+                        (host_close || conflict_present) && !restart_waiting,
+                        |row| {
+                            row.child(super::e2e::measure_control(
                                 "editor-dirty-guard-save",
-                                retry_label,
-                                ModalButtonKind::Primary,
-                                busy,
-                                save,
-                                cx,
-                            ),
-                        ))
-                    }),
+                                modal_button(
+                                    "editor-dirty-guard-save",
+                                    retry_label,
+                                    ModalButtonKind::Primary,
+                                    busy,
+                                    save,
+                                    cx,
+                                ),
+                            ))
+                        },
+                    ),
             ),
         );
 

@@ -393,6 +393,31 @@ pub fn scenario_conflict_draft_fresh_restore_failure(cx: &mut VisualTestAppConte
                 std::io::ErrorKind::PermissionDenied
             );
             drop(lock);
+            crate::busy_dismiss::wait_ui(
+                cx,
+                &app,
+                "queued autosave observation settles",
+                |_, cx| view.read(cx).draft_autosave_settled_for_e2e(),
+            );
+            // A failed queued edit has its own mandatory #1731 presentation.
+            // Reload must add exactly its restore receipt, not duplicate that
+            // already-observed autosave error or erase its notification.
+            let setup_receipts = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
+            assert!(setup_receipts.iter().all(|entry| {
+                entry.op == "conflict-draft-autosave"
+                    && matches!(entry.outcome, kagi_git::oplog::OpOutcome::Failed { .. })
+            }));
+            let setup_toasts = cx.read(|cx| {
+                app.read(cx)
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .toasts()
+                    .iter()
+                    .map(|toast| toast.id)
+                    .collect::<Vec<_>>()
+            });
             let before = RepositoryState::read(&repo);
             let read_key = cx.read(|cx| app.read(cx).reads.current_key(owner));
             // Exercise the ordinary production reload, not a forged failure payload.
@@ -429,17 +454,23 @@ pub fn scenario_conflict_draft_fresh_restore_failure(cx: &mut VisualTestAppConte
             assert!(state.app_notice().is_none(), "recorded failure is not a modal");
             let preview = kagi_ui_core::i18n::Msg::conflict_draft_restore_failed();
             assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message) if message == &preview));
-            assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty());
+            assert_eq!(
+                state.toast_stack.as_ref().unwrap().read(cx).toasts()
+                    .iter().map(|toast| toast.id).collect::<Vec<_>>(),
+                setup_toasts,
+                "restore failure does not duplicate the observed autosave notice"
+            );
             assert!(!preview.contains('/') && preview.chars().count() < 100);
         });
             let receipts = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
-            assert_eq!(receipts.len(), 1);
-            assert_eq!(receipts[0].op, "conflict-draft-restore");
+            assert_eq!(receipts.len(), setup_receipts.len() + 1);
+            let receipt = receipts.first().unwrap();
+            assert_eq!(receipt.op, "conflict-draft-restore");
             assert!(
-                matches!(&receipts[0].outcome, kagi_git::oplog::OpOutcome::Failed { error }
+                matches!(&receipt.outcome, kagi_git::oplog::OpOutcome::Failed { error }
             if error.contains(store.to_str().unwrap()) && error.contains("Permission denied"))
             );
-            let expected = before.with_appended_oplog(&receipts[0]);
+            let expected = before.with_appended_oplog(receipt);
             assert_eq!(expected, RepositoryState::read(&repo));
             click_control(cx, window, "conflict-save");
             cx.run_until_parked();

@@ -81,6 +81,12 @@ the host/last repository tab and checks the exact durable body before destructio
 Its second EN/JA case edits again while Continue awaits a barrier and requires
 the stale generation to leave Git byte-identical without opening an approval.
 Ordinary input only queues; no test may infer durability from queue acceptance.
+The same-turn Continue → tab-close case must await the real concurrent barrier.
+`draft_autosave_settled_for_e2e()` observes the pane's latest completion watcher,
+pending failure presentation and outstanding barriers; `busy_dismiss::wait_ui`
+waits on this state rather than sleeping for 250 ms. Locked restore/handoff
+fixtures baseline already-presented autosave receipts/toast identities before
+checking the one additional operation-owned receipt; they never hide real errors.
 Tier B types in `long-policy.txt`, checks failed flush → Retry/two-step Discard
 and successful unflushed close, and compares synchronous/queued timings with the
 ignored backend `autosave_latency_three_files_five_hunks_200kb` benchmark.

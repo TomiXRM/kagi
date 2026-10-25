@@ -823,9 +823,12 @@ impl KagiApp {
                             } else {
                                 self.host_close_hold_message(true)
                             },
-                            self.dirty_guard_has_failed_conflict_draft(cx).then(|| {
-                                self.editor_dirty_guard_modal()
-                                    .is_some_and(|modal| modal.conflict_discard_armed)
+                            self.dirty_guard_has_unflushed_conflict_draft(cx).then(|| {
+                                (
+                                    self.dirty_guard_has_failed_conflict_draft(cx),
+                                    self.editor_dirty_guard_modal()
+                                        .is_some_and(|modal| modal.conflict_discard_armed),
+                                )
                             }),
                             cx,
                         ))

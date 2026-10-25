@@ -141,6 +141,17 @@ impl KagiApp {
         cx: &mut Context<Self>,
         resume: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
     ) {
+        // Restore failures own the retained pane and its existing diagnostic.
+        // Admission must precede even capture/flush, not only the later writer.
+        if !self.pane_mutation_admitted(owner.session) {
+            match action {
+                "continue" => self.clear_conflict_continue_modal(),
+                "abort" => self.clear_conflict_abort_modal(),
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
         let Some(pane) = self
             .ui
             .get(&owner.session)
@@ -184,7 +195,8 @@ impl KagiApp {
                     let blocker = kagi_domain::plan_note::PlanNote::Conflicts(
                         kagi_domain::plan_note::ConflictsNote::DraftPreservationFailed,
                     );
-                    app.record_refused(
+                    let message = super::super::i18n::plan_note_text(&blocker);
+                    let entry = Self::refused_entry(
                         &format!(
                             "{}-{action}",
                             app.view()
@@ -199,7 +211,20 @@ impl KagiApp {
                         },
                         &[blocker],
                         &owner.path,
+                    );
+                    let announce = app.operation_result_toast_needed(false);
+                    app.record_op_result(
+                        entry,
                         cx,
+                        true,
+                        None,
+                        Some((ToastKind::Error, message.into())),
+                        announce,
+                        true,
+                        None,
+                        false,
+                        None,
+                        None,
                     );
                 }
                 cx.notify();

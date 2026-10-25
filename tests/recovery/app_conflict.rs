@@ -1659,12 +1659,20 @@ pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppCon
                     });
                 })
                 .unwrap();
+                crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+                    app.conflict_continue_modal().is_some()
+                });
                 assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
                 let repo_before = crate::macos::repo_fingerprint(&repo);
                 let other_before = crate::macos::repo_fingerprint(&other_repo);
                 let (hold, release) = crate::evidence_support::deferred::<()>(cx);
                 kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
                 app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                // Wait for flush admission before leaving or hiding the repository:
+                // the existing hold suspends the backend write, not draft persistence.
+                crate::busy_dismiss::wait(cx, &app, "Continue confirmation admitted", |app| {
+                    app.write_busy_op.is_some()
+                });
                 if departed {
                     app.update(cx, |app, cx| {
                         app.cancel_conflict_continue();
@@ -1696,7 +1704,9 @@ pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppCon
                 });
                 std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
                 release.send(());
-                cx.run_until_parked();
+                crate::busy_dismiss::wait(cx, &app, "Continue backend-open failure", |app| {
+                    app.write_busy_op.is_none() && app.conflict_continue_modal().is_none()
+                });
                 std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
                 let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
                     .into_iter()

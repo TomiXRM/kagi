@@ -94,6 +94,19 @@ impl KagiApp {
             .is_some_and(|pane| pane.read(cx).has_unflushed_drafts())
     }
 
+    pub(crate) fn dirty_guard_has_unflushed_conflict_draft(&self, cx: &App) -> bool {
+        self.editor_dirty_guard_modal()
+            .is_some_and(|modal| match modal.intent {
+                EditorPendingIntent::CloseRepoTab(session) => {
+                    self.failed_conflict_draft_for(session, cx)
+                }
+                EditorPendingIntent::Quit
+                | EditorPendingIntent::CloseWindow(_)
+                | EditorPendingIntent::Relaunch => self.failed_conflict_draft_count(cx) > 0,
+                _ => false,
+            })
+    }
+
     pub(crate) fn dirty_guard_has_failed_conflict_draft(&self, cx: &App) -> bool {
         let Some(modal) = self.editor_dirty_guard_modal() else {
             return false;

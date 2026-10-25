@@ -274,6 +274,17 @@ impl ConflictView {
                 .is_some_and(|mode| mode.buffer.has_unflushed_drafts())
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn draft_autosave_settled_for_e2e(&self) -> bool {
+        !self.draft_watch_running
+            && self.draft_flushes == 0
+            && self.draft_failure_pending.is_none()
+            && self
+                .draft_save
+                .as_ref()
+                .is_none_or(|ticket| ticket.generation() == self.draft_watched_generation)
+    }
+
     fn watch_draft_save(&mut self, cx: &mut Context<Self>) {
         if self.draft_watch_running {
             return;
@@ -368,7 +379,13 @@ impl ConflictView {
         if !self.capture_result_for_navigation(cx) {
             return gpui::Task::ready(false);
         }
-        if retry || self.draft_save.is_none() && self.has_unflushed_drafts() {
+        if retry && self.draft_persist_failed.is_some()
+            || self
+                .draft_save
+                .as_ref()
+                .is_none_or(|ticket| !ticket.is_current())
+                && self.has_unflushed_drafts()
+        {
             self.autosave_drafts();
         }
         let Some(mode) = self.mode.as_ref() else {

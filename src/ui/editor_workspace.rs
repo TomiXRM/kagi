@@ -784,7 +784,7 @@ impl KagiApp {
             self.explain_host_save_wait(cx);
             return;
         }
-        if self.dirty_guard_has_failed_conflict_draft(cx)
+        if self.dirty_guard_has_unflushed_conflict_draft(cx)
             && self
                 .editor_dirty_guard_modal()
                 .is_some_and(|modal| !modal.conflict_discard_armed)

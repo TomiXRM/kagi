@@ -447,7 +447,12 @@ fn queue_result(
     .unwrap();
 }
 
-fn run_unflushed_close(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>) {
+fn run_unflushed_close(
+    cx: &mut VisualTestAppContext,
+    lang: Lang,
+    entry: Option<Entry>,
+    concurrent: bool,
+) {
     let _isolated = IsolatedLog::new();
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -455,6 +460,7 @@ fn run_unflushed_close(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<
     app.update(cx, |app, cx| app.set_lang(lang, cx));
     detect(cx, &app, window);
     let input = result_input(cx, &app, window);
+    let view = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
     queue_result(cx, window, &input, DRAFT);
     cx.read(|cx| {
         assert!(conflict_read(&app, cx)
@@ -464,8 +470,45 @@ fn run_unflushed_close(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<
             .buffer
             .has_unflushed_drafts());
     });
-    request_close(cx, &app, window, entry);
-    cx.run_until_parked();
+    if !concurrent && entry.is_none() {
+        app.update(cx, |app, cx| {
+            assert!(view.read(cx).draft_persist_failed.is_none());
+            let session = app.active_session().unwrap();
+            app.open_editor_dirty_guard(kagi::ui::EditorPendingIntent::CloseRepoTab(session), cx);
+            app.confirm_editor_dirty_guard(cx);
+            assert!(
+                app.editor_dirty_guard_modal()
+                    .is_some_and(|modal| modal.conflict_discard_armed),
+                "unacknowledged healthy drafts also require the second Discard action"
+            );
+            assert_eq!(
+                app.tabs.len(),
+                1,
+                "first Discard cannot remove the live pane"
+            );
+            app.cancel_editor_dirty_guard();
+        });
+    }
+    if concurrent {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let owner = app
+                    .app_sessions
+                    .attachment(app.active_session().unwrap())
+                    .unwrap();
+                app.conflict_continue(owner, window, cx);
+                // Begin close in the same UI turn, while Continue's barrier
+                // is still outstanding. The close awaits its real result.
+                app.close_tab(app.active_tab, cx);
+            });
+        })
+        .unwrap();
+    } else {
+        request_close(cx, &app, window, entry);
+    }
+    crate::busy_dismiss::wait_ui(cx, &app, "unflushed close completes", |app, cx| {
+        app.editor_dirty_guard_modal().is_none() && view.read(cx).draft_autosave_settled_for_e2e()
+    });
     let restored = ResolutionBuffer::load(&repo).expect("close must await the real durable writer");
     assert_eq!(
         restored.resolved_text(Path::new(FILE)).as_deref(),
@@ -487,8 +530,9 @@ fn run_unflushed_close(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<
 pub fn scenario_conflict_draft_flush_boundaries(cx: &mut VisualTestAppContext) {
     let _presentation = crate::presentation_support::Presentation::keep();
     for lang in [Lang::En, Lang::Ja] {
-        run_unflushed_close(cx, lang, Some(Entry::Close));
-        run_unflushed_close(cx, lang, None);
+        run_unflushed_close(cx, lang, Some(Entry::Close), false);
+        run_unflushed_close(cx, lang, None, false);
+        run_unflushed_close(cx, lang, None, true);
         let _isolated = IsolatedLog::new();
         let fixture = content_fixture();
         let repo = fixture.path().canonicalize().unwrap();
@@ -512,13 +556,26 @@ pub fn scenario_conflict_draft_flush_boundaries(cx: &mut VisualTestAppContext) {
             });
         })
         .unwrap();
-        cx.run_until_parked();
+        crate::busy_dismiss::wait_ui(cx, &app, "superseded barrier settles", |app, cx| {
+            app.ui()
+                .conflict
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .draft_autosave_settled_for_e2e()
+        });
         paint(cx, &app, window);
         assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_none()));
         assert_eq!(
             repository_bytes(&repo),
             before,
             "stale flush cannot stage or continue"
+        );
+        assert!(
+            !read_oplog_tail_for_repo(&repo, 1000)
+                .iter()
+                .any(|entry| { matches!(entry.outcome, OpOutcome::Refused { .. }) }),
+            "a superseded successful flush is not a storage-permission refusal"
         );
         cx.read(|cx| {
             assert_eq!(

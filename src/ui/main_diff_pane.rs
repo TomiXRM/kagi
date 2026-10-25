@@ -838,10 +838,7 @@ impl KagiApp {
             view.capture_result_for_handoff(cx);
             view.mode.as_ref().and_then(|mode| {
                 view.has_unflushed_drafts()
-                    .then(|| match view.draft_persist_failed.as_ref() {
-                        Some(error) => Err(kagi_git::GitError::Other(error.clone())),
-                        None => mode.buffer.queue_autosave(),
-                    })
+                    .then(|| mode.buffer.queue_autosave())
             })
         });
         let Some(save) = save else {

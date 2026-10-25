@@ -312,6 +312,7 @@ pub fn scenario_conflict_continue_stopped_result_owner(cx: &mut VisualTestAppCon
                     });
                 })
                 .unwrap();
+                wait_for(cx, &app, |app| app.conflict_continue_modal().is_some());
                 assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
                 let recording_lock = recording_failure.then(|| {
                     let path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
@@ -331,6 +332,10 @@ pub fn scenario_conflict_continue_stopped_result_owner(cx: &mut VisualTestAppCon
                     release
                 });
                 app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                if departed {
+                    // Confirm flushes before admitting the held backend write.
+                    wait_for(cx, &app, |app| app.write_busy_op.is_some());
+                }
                 let foreign_before = if let Some(other_repo) = other_repo.as_ref() {
                     app.update(cx, |app, cx| {
                         // The existing Cancel dismisses the running confirmation,

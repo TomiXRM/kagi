@@ -472,11 +472,67 @@ pub(crate) fn render_editor_dirty_guard_modal(
     saving: bool,
     restart_waiting: bool,
     restart_message: Msg,
+    conflict_guard: Option<(bool, bool)>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let conflict_present = conflict_guard.is_some();
+    let (conflict_failed, conflict_discard_armed) = conflict_guard.unwrap_or((false, false));
+    let title = if conflict_failed {
+        Msg::ConflictDraftSaveFailed.t()
+    } else if conflict_present {
+        Msg::ConflictDraftSavingTitle.t()
+    } else if restart_waiting {
+        Msg::UpdateRestart.t()
+    } else if host_close {
+        Msg::EditorHostUnsavedTitle.t()
+    } else {
+        Msg::EditorWorkspaceUnsavedTitle.t()
+    };
+    let retry_label = if conflict_failed {
+        Msg::ConflictDraftRetry.t()
+    } else if !host_close {
+        Msg::EditorSave.t()
+    } else {
+        Msg::EditorHostSaveAll.t()
+    };
+    let discard_label = if conflict_present {
+        if conflict_discard_armed {
+            Msg::ConflictDraftDiscardConfirm.t()
+        } else {
+            Msg::ConflictDraftDiscardClose.t()
+        }
+    } else if restart_waiting {
+        Msg::UpdateRestart.t()
+    } else {
+        Msg::EditorWorkspaceDiscard.t()
+    };
+    let detail = if conflict_discard_armed && count > 0 {
+        Msg::ConflictDraftMixedDiscardDetail.t()
+    } else if conflict_discard_armed {
+        Msg::ConflictDraftDiscardDetail.t()
+    } else if conflict_failed {
+        Msg::ConflictDraftUnsavedDetail.t()
+    } else {
+        Msg::ConflictDraftSaving.t()
+    };
+    #[cfg(feature = "gui-e2e")]
+    if conflict_present {
+        super::e2e::record_conflict_draft_guard(super::e2e::ConflictDraftGuardPresentation {
+            title,
+            retry: retry_label,
+            discard: discard_label,
+            detail,
+            editor_count: count,
+            saving,
+        });
+    }
     let busy = saving.then(|| SharedString::from(Msg::OpInProgress.t()));
-    let save = cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
-        this.save_host_dirty_guard(cx);
+    let save = cx.listener(move |this, _e: &gpui::ClickEvent, _, cx| {
+        if conflict_failed {
+            this.flush_host_conflict_drafts(cx);
+        } else {
+            this.save_host_dirty_guard(cx);
+        }
     });
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_dirty_guard();
@@ -495,22 +551,17 @@ pub(crate) fn render_editor_dirty_guard_modal(
 
     let card = modal_card(MODAL_W_SM)
         .child(div().flex_shrink_0().child(render_modal_title_row(
-            SharedString::from(if restart_waiting {
-                Msg::UpdateRestart.t()
-            } else if host_close {
-                Msg::EditorHostUnsavedTitle.t()
-            } else {
-                Msg::EditorWorkspaceUnsavedTitle.t()
-            }),
+            SharedString::from(title),
             Some((
                 ModalIcon::Path("icons/file-text.svg"),
                 current_theme().color_warning,
             )),
         )))
+        .when(conflict_present, |card| card.child(div().child(detail)))
         .when(restart_waiting, |card| {
             card.child(div().child(restart_message.t()))
         })
-        .when(host_close && !restart_waiting, |card| {
+        .when(count > 0 && (host_close || conflict_present), |card| {
             card.child(
                 div().child(
                     Msg::EditorHostUnsavedCount
@@ -522,40 +573,48 @@ pub(crate) fn render_editor_dirty_guard_modal(
         .child(
             div().flex_shrink_0().child(
                 super::button_style::modal_button_row()
-                    .child(modal_button(
+                    .child(super::e2e::measure_control(
                         "editor-dirty-guard-cancel",
-                        Msg::EditorWorkspaceCancel.t(),
-                        ModalButtonKind::Cancel,
-                        None,
-                        cancel,
-                        cx,
-                    ))
-                    .child(modal_button(
-                        "editor-dirty-guard-discard",
-                        if restart_waiting {
-                            Msg::UpdateRestart.t()
-                        } else {
-                            Msg::EditorWorkspaceDiscard.t()
-                        },
-                        if restart_waiting {
-                            ModalButtonKind::Primary
-                        } else {
-                            ModalButtonKind::Destructive
-                        },
-                        busy.clone(),
-                        discard,
-                        cx,
-                    ))
-                    .when(host_close && !restart_waiting, |row| {
-                        row.child(modal_button(
-                            "editor-dirty-guard-save",
-                            Msg::EditorHostSaveAll.t(),
-                            ModalButtonKind::Primary,
-                            busy,
-                            save,
+                        modal_button(
+                            "editor-dirty-guard-cancel",
+                            Msg::EditorWorkspaceCancel.t(),
+                            ModalButtonKind::Cancel,
+                            None,
+                            cancel,
                             cx,
-                        ))
-                    }),
+                        ),
+                    ))
+                    .child(super::e2e::measure_control(
+                        "editor-dirty-guard-discard",
+                        modal_button(
+                            "editor-dirty-guard-discard",
+                            discard_label,
+                            if restart_waiting {
+                                ModalButtonKind::Primary
+                            } else {
+                                ModalButtonKind::Destructive
+                            },
+                            busy.clone(),
+                            discard,
+                            cx,
+                        ),
+                    ))
+                    .when(
+                        (host_close || conflict_present) && !restart_waiting,
+                        |row| {
+                            row.child(super::e2e::measure_control(
+                                "editor-dirty-guard-save",
+                                modal_button(
+                                    "editor-dirty-guard-save",
+                                    retry_label,
+                                    ModalButtonKind::Primary,
+                                    busy,
+                                    save,
+                                    cx,
+                                ),
+                            ))
+                        },
+                    ),
             ),
         );
 

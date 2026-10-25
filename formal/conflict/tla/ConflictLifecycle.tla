@@ -35,6 +35,8 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     captured |-> {}, disk |-> {}, diskValid |-> TRUE,
     pending |-> [a \in Actors |-> {}], committed |-> {}, restored |-> {},
     readCorrupt |-> FALSE, restarted |-> [a \in Actors |-> FALSE],
+    draftPersistFailed |-> [a \in Actors |-> FALSE],
+    closeSheet |-> [a \in Actors |-> FALSE],
     frozen |-> [a \in Actors |-> "none"], shownTree |-> [a \in Actors |-> "unmerged"],
     planTree |-> [a \in Actors |-> "unmerged"], planRev |-> [a \in Actors |-> <<0,0,0,0>>],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
@@ -49,6 +51,10 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     sharedMoved |-> FALSE, siblingInvalidated |-> FALSE,
     external |-> FALSE, committedTree |-> "none", abandoned |-> FALSE,
     refreshPending |-> FALSE, metadataReadable |-> TRUE, metadataFailOpen |-> FALSE,
+    barrier |-> [generation |-> 0, durable |-> 0, ticket |-> 0,
+        flushed |-> 0, phase |-> "edit", failed |-> FALSE,
+        draftLock |-> FALSE, repoLock |-> FALSE,
+        badApproval |-> FALSE, badClose |-> FALSE, badGeneration |-> FALSE],
     event |-> "Init"]
 
 \* backend/conflict_observe.rs:91-101: index.read(true) precedes operation_parts.
@@ -107,10 +113,22 @@ AutosaveWriteStart(a) == /\ At(a, "autosaveStart")
 AutosaveWrite(a) == /\ At(a, "autosaveFinish")
     /\ s' = [s EXCEPT !.diskValid = TRUE, !.disk = s.pending[a],
         !.draftOwner = IF s.draftOwner = a THEN 0 ELSE @,
-        !.committed = @ \cup {Record(a)}, !.pc[a] = "ready", !.event = <<"AutosaveWrite(rename)",a>>]
-\* draft_owner.rs:233-236 logs failure; actions.rs:145 ignores it. No close flush.
+        !.committed = @ \cup {Record(a)}, !.draftPersistFailed[a] = FALSE,
+        !.closeSheet[a] = FALSE, !.pc[a] = "ready", !.event = <<"AutosaveWrite(rename)",a>>]
+\* #1731 draft_owner.rs: note_draft_result retains failure until autosave succeeds.
 AutosaveFailure(a) == /\ Scenario = "draftIO" /\ At(a, "autosaveStart")
-    /\ s' = [s EXCEPT !.pc[a] = "ready", !.draftOwner = 0, !.event = <<"AutosaveFailure",a>>]
+    /\ s' = [s EXCEPT !.draftPersistFailed[a] = TRUE,
+        !.pc[a] = "ready", !.draftOwner = 0, !.event = <<"AutosaveFailure",a>>]
+\* #1731 host_close.rs: hold_host_close/save_host_dirty_guard retain live text.
+\* This no-discard safety scenario excludes a separately approved intentional
+\* discard; the native conflict_draft_persist_failure test checks its two steps.
+OpenCloseSheet(a) == /\ Scenario = "draftIO" /\ At(a, "ready")
+    /\ s.draftPersistFailed[a] /\ ~s.closeSheet[a] /\ Broken # "draftClose"
+    /\ s' = [s EXCEPT !.closeSheet[a] = TRUE, !.event = <<"OpenCloseSheet",a>>]
+RetryDraft(a) == /\ At(a, "ready") /\ s.closeSheet[a] /\ s.draftPersistFailed[a]
+    /\ s' = [s EXCEPT !.pc[a] = "autosaveRead", !.event = <<"RetryDraft",a>>]
+CancelCloseSheet(a) == /\ At(a, "ready") /\ s.closeSheet[a]
+    /\ s' = [s EXCEPT !.closeSheet[a] = FALSE, !.event = <<"CancelCloseSheet",a>>]
 \* backend/conflict_ops.rs:195-218,244-288: revision/payload-bound immutable plan.
 \* merge panel's shown staged set: ui/operations/commit.rs:1054-1065.
 Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
@@ -166,16 +184,25 @@ FileRefused(a) == /\ At(a, "wtValidate")
         (s.materializedWT[a] # s.wt[File(a)] /\ s.frozen[a] # s.wt[File(a)] /\ Broken # "worktree"))
     /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"FileRefused",a>>]
-\* conflicts.rs:1880-1881; conflict_abort.rs:274-286,489-493; dir_file_conflict.rs:202-218.
-\* Preservation failure is ignored; failure schedules are explicit scenario inputs.
+\* #1731 conflict_abort.rs: execute_conflict_abort_expecting, conflicts.rs:
+\* execute_conflict_skip, dir_file_conflict.rs: apply_dir_file_resolution_with_progress.
+\* Required recovery failure returns Blocked before destructive repository work.
 Preserve(a) == /\ At(a, "preserve")
     /\ s' = [s EXCEPT !.preservationFailed[a] = Scenario \in {"preserveAbort","preserveSkip","preserveDF"},
         \* A possible fs::write error AFTER truncation destroys even an older save.
-        \* resolution.rs:800-806; abort/skip swallow the error at the sites above.
+        \* resolution.rs:800-806; atomic draft replacement is tracked by #1732.
         !.diskValid = IF Scenario \in {"preserveAbort","preserveSkip"} THEN FALSE ELSE @,
         !.disk = IF Scenario \in {"preserveAbort","preserveSkip"} THEN {} ELSE @,
-        !.pc[a] = CASE Kind = "skip" -> "skip" [] Kind \in {"abort","stashAbort"} -> "abort" [] OTHER -> "index",
+        !.pc[a] = CASE Scenario \in {"preserveAbort","preserveSkip","preserveDF"}
+                          /\ Broken # "preservation" -> "refused"
+                  [] Kind = "skip" -> "skip"
+                  [] Kind \in {"abort","stashAbort"} -> "abort" [] OTHER -> "index",
         !.event = <<"Preserve",a,IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"} THEN "failed" ELSE "ok">>]
+\* backend/conflict_ops.rs:562-581 and UI conflict_skip.rs:138-152 map errors
+\* to Refused; neither admission settlement nor presentation mutates the repo.
+RefusePreservation(a) == /\ At(a, "refused") /\ s.preservationFailed[a]
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.receipt[a] = TRUE,
+        !.reported[a] = TRUE, !.pc[a] = "done", !.event = <<"RefusePreservation",a>>]
 \* conflicts.rs:1646-1648 Save; :1380-1404 Continue rename; dir_file_conflict.rs:315-324.
 \* #1745: stash checkout retains raw path authority, including non-UTF-8.
 WTWrite(a) == \E payload \in {s.frozen[a], "tampered"} :
@@ -271,17 +298,19 @@ Deliver(a) == /\ a \in Participants /\ s.pc[a] = "deliver"
 Depart(a) == /\ a \in Participants /\ s.life[a] = "open" /\ s.attached[a]
     /\ s.pc[a] \in {"approve","preflight","append","deliver"}
     /\ s' = [s EXCEPT !.attached[a] = FALSE, !.event = <<"Depart(tab switch)",a>>]
-\* app_bridge.rs:751-758; host_close.rs:62-68,107-111: lease gate, no conflict dirty gate.
-\* Sync autosave callback cannot be interrupted by graceful close in same process.
+\* #1731 host_close.rs: failed conflict drafts join the existing host dirty gate.
+\* #1740: UI close detaches an admitted worker without ending its lifetime.
+\* Broken="draftClose" removes only the failed-draft hold.
 GracefulExit(a, reason) == /\ a \in Participants /\ s.life[a] = "open" /\ ~s.closing[a]
     /\ ((~s.lease[a] /\ s.pc[a] \in {"ready","append","deliver","done"})
         \/ (s.lease[a] /\ Kind \in {"continue","mergeContinue","skip"}))
+    /\ (~s.draftPersistFailed[a] \/ Broken = "draftClose")
     /\ s' = [s EXCEPT !.life[a] = IF s.lease[a] THEN @ ELSE "closed",
         !.closing[a] = TRUE, !.attached[a] = FALSE,
         !.text[a] = "none", !.abandoned = @ \/ (s.successful[a] /\ ~s.receipt[a] /\ ~s.lease[a]),
         !.event = <<reason,a>>]
 CloseWindow(a) == GracefulExit(a, "CloseWindow")
-\* ui/mod.rs:3661-3669 flushes settings/issue drafts, NOT conflict documents.
+\* Host/tab close flush durability is additionally modeled by DraftBarrierNext.
 Quit(a) == GracefulExit(a, "Quit")
 \* #1732: a crash closes the draft lock fd; the kernel releases its advisory lock.
 \* Only draft crash scenarios allow abrupt exit; liveness uses graceful close.
@@ -392,15 +421,63 @@ DraftRecoveryNext ==
               !.event = "RecoverySave(A other file, adopt B primary, dedup recoveries)"]
        [] OTHER -> FALSE
 
+\* #1760: draft_owner.rs::{autosave_drafts,flush_drafts} and
+\* operations/conflict.rs::flush_conflict_drafts. Two captured generations
+\* quotient edits before/during an off-thread barrier; accepted != durable.
+\* No discard action: explicit two-step intentional loss is outside this safety
+\* assertion, as in draftIO. Draft lock release precedes returned flush success.
+BarrierEdit == /\ s.barrier.generation < 2 /\ ~s.barrier.repoLock
+    /\ s' = [s EXCEPT !.barrier.generation = @ + 1,
+        !.event = "QueueAutosave(acceptance only)"]
+BarrierRequest == /\ s.barrier.phase = "edit" /\ s.barrier.generation > 0
+    /\ s' = [s EXCEPT !.barrier.ticket = s.barrier.generation,
+        !.barrier.phase = "waiting", !.event = "FlushOffThread"]
+BarrierWriteStart == /\ s.barrier.phase = "waiting" /\ ~s.barrier.draftLock
+    /\ s' = [s EXCEPT !.barrier.draftLock = TRUE, !.barrier.phase = "writing",
+        !.event = "DraftLockAcquire"]
+BarrierWriteFinish == /\ s.barrier.phase = "writing"
+    /\ \E ok \in BOOLEAN :
+        s' = [s EXCEPT !.barrier.draftLock = FALSE,
+            !.barrier.durable = IF ok THEN s.barrier.ticket ELSE @,
+            !.barrier.failed = ~ok, !.barrier.phase = "returned",
+            !.event = IF ok THEN "FlushOk(lock released)" ELSE "FlushErr"]
+BarrierAccept == /\ s.barrier.phase = "returned"
+    /\ (Broken = "flushFailure" \/ ~s.barrier.failed)
+    /\ (Broken = "flushGeneration" \/ s.barrier.ticket = s.barrier.generation)
+    /\ s' = [s EXCEPT !.barrier.flushed = s.barrier.ticket,
+        !.barrier.phase = "approved",
+        !.barrier.badApproval = s.barrier.failed,
+        !.barrier.badGeneration = s.barrier.ticket # s.barrier.generation,
+        !.event = "ApproveCurrentGeneration"]
+BarrierClose == /\ s.barrier.phase \in {"waiting", "writing", "returned", "approved"}
+    /\ (Broken = "flushClose" \/ (s.barrier.phase = "approved"
+        /\ s.barrier.flushed = s.barrier.generation /\ ~s.barrier.failed))
+    /\ s' = [s EXCEPT !.barrier.badClose =
+        (s.barrier.durable # s.barrier.generation \/ s.barrier.failed),
+        !.barrier.phase = "closed", !.event = "CloseHostOrTab"]
+BarrierRepoLock == /\ ~s.barrier.repoLock
+    /\ (Broken = "flushLock" \/ (s.barrier.phase = "approved"
+        /\ s.barrier.flushed = s.barrier.generation /\ ~s.barrier.failed))
+    /\ s' = [s EXCEPT !.barrier.repoLock = TRUE,
+        !.event = "RepositoryAdmissionAfterFlush"]
+DraftBarrierNext == BarrierEdit \/ BarrierRequest \/ BarrierWriteStart
+    \/ BarrierWriteFinish \/ BarrierAccept \/ BarrierClose \/ BarrierRepoLock
+BarrierFailureNeverApproved == ~s.barrier.badApproval
+BarrierApprovalCurrentGeneration == ~s.barrier.badGeneration
+BarrierCloseDurable == ~s.barrier.badClose
+BarrierLocksNeverNested == ~(s.barrier.draftLock /\ s.barrier.repoLock)
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
+    \/ OpenCloseSheet(a) \/ RetryDraft(a) \/ CancelCloseSheet(a)
     \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
-    \/ ValidateFile(a) \/ FileRefused(a) \/ MergeRefused(a)
+    \/ RefusePreservation(a) \/ ValidateFile(a) \/ FileRefused(a) \/ MergeRefused(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
-Next == IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+Next == IF Scenario = "draftBarrier" THEN DraftBarrierNext
+    ELSE IF Scenario = "draftRecovery" THEN DraftRecoveryNext
     ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
         \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars

@@ -2460,3 +2460,6 @@ mod draft_completion;
 
 #[path = "conflicts/materialization.rs"]
 mod materialization;
+
+#[path = "conflicts/preservation_failure.rs"]
+mod preservation_failure;

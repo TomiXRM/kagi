@@ -283,6 +283,9 @@ macro_rules! advice_template_en {
     (ConflictsAbortHeadMoved) => {
         "abort refused: HEAD moved since the sequence started; not rewinding. The current HEAD no longer matches the sequencer's safe rollback tip. No repository state was changed."
     };
+    (ConflictsDraftPreservationFailed) => {
+        "Cannot proceed because the draft recovery copy could not be preserved. No destructive repository step was performed. Check the save location's access permissions and retry."
+    };
     (ConflictsResolutionMarkers) => {
         "conflict markers remain in the resolution buffer"
     };
@@ -308,10 +311,10 @@ macro_rules! advice_template_en {
         "No conflicting files detected; continue will finish the operation as-is."
     };
     (ConflictsPartialResolutionsPreserved) => {
-        "Your partial resolutions are preserved in the autosave directory and referenced in the operation log; they are not discarded."
+        "Abort proceeds only after the current resolution buffer is saved for recovery. Existing saved drafts are retained when no live conflicts remain; working-tree changes from the operation are restored."
     };
     (ConflictsSkipDiscardsStep) => {
-        "Skip discards the current step's changes (the conflicting pick is dropped, not committed). Your partial resolution is preserved in the autosave directory."
+        "Skip discards the current step's changes (the conflicting pick is dropped, not committed). Skip proceeds only after the current resolution buffer is saved for recovery."
     };
     (BranchRenameRefOnlyDirty) => {
         "Working tree is dirty; branch rename is ref-only and will not touch files."
@@ -697,10 +700,10 @@ macro_rules! advice_template_display_en {
         "Some unmerged files are not shown here: {}. Refresh the repository."
     };
     (ConflictsPartialResolutionsPreserved) => {
-        "Your partial resolutions are kept; nothing is discarded."
+        "Abort requires a saved recovery copy of the current resolution buffer. Existing saved drafts remain when there are no live conflicts; the operation's working-tree changes are restored."
     };
     (ConflictsSkipDiscardsStep) => {
-        "Skip drops this commit's changes. Your partial resolution is kept."
+        "Skip drops this commit's changes only after saving the current resolution buffer for recovery."
     };
     (BranchRenameConfigChanged) => {
         "Branch settings changed after you confirmed. Rename again to review them."

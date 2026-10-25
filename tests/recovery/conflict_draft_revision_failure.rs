@@ -54,6 +54,18 @@ fn check_language(cx: &mut VisualTestAppContext, language: Lang) {
     assert!(history.undo(file));
     let previous = history.resolved_text(file);
     assert_ne!(previous.as_deref(), Some(UNSAVED));
+    let baseline = cleared_handoff::failed_autosave_baseline(cx, &app, &view, &repo);
+    let baseline_toasts = cx.read(|cx| {
+        app.read(cx)
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .map(|toast| toast.id)
+            .collect::<Vec<_>>()
+    });
     std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
     assert_eq!(
         std::fs::read(&store).unwrap_err().kind(),
@@ -110,15 +122,24 @@ fn check_language(cx: &mut VisualTestAppContext, language: Lang) {
         assert!(state.app_notice().is_none());
         let preview = Msg::conflict_draft_restore_failed();
         assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message) if message == &preview));
-        assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts().is_empty());
+        assert_eq!(
+            state.toast_stack.as_ref().unwrap().read(cx)
+                .toasts().iter().map(|toast| toast.id).collect::<Vec<_>>(),
+            baseline_toasts,
+            "restore failure adds no toast beyond mandatory autosave errors"
+        );
         assert!(!preview.contains('/') && preview.chars().count() < 100);
     });
     let receipts = read_oplog_tail_for_repo(&repo, 100);
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].op, "conflict-draft-restore");
-    assert!(matches!(&receipts[0].outcome, OpOutcome::Failed { error }
+    assert_eq!(receipts.len(), baseline + 1);
+    let restore = receipts
+        .iter()
+        .filter(|entry| entry.op == "conflict-draft-restore")
+        .collect::<Vec<_>>();
+    assert_eq!(restore.len(), 1);
+    assert!(matches!(&restore[0].outcome, OpOutcome::Failed { error }
         if error.contains(store.to_str().unwrap()) && error.contains("Permission denied")));
-    let expected = before.with_appended_oplog(&receipts[0]);
+    let expected = before.with_appended_oplog(restore[0]);
     assert_eq!(expected, RepositoryState::read(&repo));
     click_control(cx, window, "conflict-save");
     cx.run_until_parked();

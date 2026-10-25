@@ -142,6 +142,7 @@ pub fn operation_label(op: &str) -> Cow<'_, str> {
         "reset" | "reset-current" => ("Reset current branch", "現在の branch を reset"),
         "revert" => ("Revert", "revert"),
         "save" | "editor-save" => ("Save file", "ファイルを保存"),
+        "conflict-draft-autosave" => ("Save conflict draft", "conflict の下書きを保存"),
         "set-upstream" => ("Set upstream", "upstream を設定"),
         "write-commit-graph" => ("Optimize history", "履歴を最適化"),
         "enable-fsmonitor" => ("Speed up file checks", "ファイルの確認を高速化"),

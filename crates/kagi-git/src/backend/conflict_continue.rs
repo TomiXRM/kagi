@@ -12,15 +12,17 @@ pub fn conflict_completion_error(
     error: &GitError,
     before: &ops::StateSummary,
 ) -> crate::oplog::OpOutcome {
+    if let Some(note) = error.blocker() {
+        return crate::oplog::OpOutcome::Refused {
+            blockers: vec![note.message_en()],
+        };
+    }
     match error {
         GitError::TerminationUnknown(reason) => crate::oplog::OpOutcome::Unknown {
             after: before.clone(),
             evidence: format!(
                 "{reason}; process termination is unconfirmed — do not retry this operation"
             ),
-        },
-        GitError::Blocked(note) => crate::oplog::OpOutcome::Refused {
-            blockers: vec![note.message_en()],
         },
         _ => crate::oplog::OpOutcome::Failed {
             error: error.to_string(),

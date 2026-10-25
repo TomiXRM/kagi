@@ -23,6 +23,13 @@ use crate::ops::{OperationPlan, StateSummary};
 use crate::resolution::ResolutionBuffer;
 use crate::{resolve_head, GitError};
 
+/// A required recovery write failed before the destructive operation started.
+pub(crate) fn draft_preservation_failed() -> GitError {
+    GitError::Blocked(Box::new(PlanNote::Conflicts(
+        ConflictsNote::DraftPreservationFailed,
+    )))
+}
+
 /// The ref an abort will move back to the recorded start, and where it pointed when
 /// the operation was observed (#707 review).
 ///
@@ -290,7 +297,7 @@ pub(crate) fn execute_conflict_abort_expecting(
     let buffer_preserved_at = if session.files.is_empty() {
         None
     } else {
-        buffer.autosave().ok()
+        Some(buffer.autosave().map_err(|_| draft_preservation_failed())?)
     };
 
     // 3. Restore the working tree + index to the recorded starting tree,
@@ -498,7 +505,7 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     let buffer_preserved_at = if session.files.is_empty() {
         None
     } else {
-        buffer.autosave().ok()
+        Some(buffer.autosave().map_err(|_| draft_preservation_failed())?)
     };
 
     if repo.workdir().is_none() {

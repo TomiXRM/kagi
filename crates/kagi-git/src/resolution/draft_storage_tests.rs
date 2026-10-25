@@ -330,7 +330,7 @@ fn unreadable_primary_with_good_backup_refuses_restore_and_stale_autosave() {
     );
 
     let permissions = std::fs::metadata(&store).unwrap().permissions();
-    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o000)).unwrap();
     let denied = std::fs::read(&store);
     let read_error = read(root.path(), &store).err();
     let restore_error = draft_storage::read_for_restore(root.path(), &store).err();
@@ -646,7 +646,7 @@ fn queued_failure_stays_unflushed_until_a_successful_retry() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             let lock = draft_storage::lock(&path).unwrap();
             let failed = buffer.queue_autosave().unwrap();
-            let error = buffer.flush().unwrap_err().to_string();
+            let error = failed.flush().unwrap_err().to_string();
             assert!(error.contains("lock"), "{error}");
             assert!(failed.wait().is_err());
             assert!(buffer.has_unflushed_drafts());
@@ -662,7 +662,7 @@ fn queued_failure_stays_unflushed_until_a_successful_retry() {
                 "failure is retained, not mistaken for no pending write"
             );
             let retry = buffer.queue_autosave().unwrap();
-            buffer.flush().unwrap();
+            retry.flush().unwrap();
             retry.wait().unwrap();
             assert!(!buffer.has_unflushed_drafts());
             assert!(!buffer.files[file].pending_edit.is_pending());

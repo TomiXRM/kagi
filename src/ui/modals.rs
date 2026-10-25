@@ -625,6 +625,10 @@ pub struct EditorDirtyGuardModal {
     pub intent: EditorPendingIntent,
     /// The single save currently admitted by Save All; Cancel stops continuation.
     pub saving: Option<gpui::EntityId>,
+    /// Identifies this draft-save continuation across Cancel and a new sheet.
+    pub draft_save_token: Option<u64>,
+    /// Losing an unpersisted conflict draft always needs a second explicit action.
+    pub conflict_discard_armed: bool,
 }
 
 // ──────────────────────────────────────────────────────────────

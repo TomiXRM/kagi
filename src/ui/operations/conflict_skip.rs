@@ -43,14 +43,12 @@ fn skip_settlement(
     }
 }
 
-fn skip_outcome(outcome: kagi_git::SkipOutcome) -> (OpOutcome, Option<String>) {
-    let receipt = kagi_git::backend::conflict_continue::conflict_skip_outcome(&outcome);
-    let failure = match &receipt {
+fn skip_failure(outcome: &OpOutcome) -> Option<String> {
+    match outcome {
         OpOutcome::Failed { error } => Some(error.clone()),
         OpOutcome::Unknown { evidence, .. } => Some(evidence.clone()),
         _ => None,
-    };
-    (receipt, failure)
+    }
 }
 
 impl KagiApp {
@@ -58,6 +56,15 @@ impl KagiApp {
     /// the plan pipeline (T-042, ADR-0067): `plan_conflict_skip` → execute →
     /// oplog → re-detect. Merge has no skip.
     pub fn conflict_skip(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
+        self.flush_conflict_drafts(owner.clone(), "skip", cx, move |app, cx| {
+            app.conflict_skip_flushed(owner, cx);
+        });
+    }
+
+    fn conflict_skip_flushed(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
         if !self.conflict_action_owner_on_screen(&owner) {
             return;
         }
@@ -92,14 +99,14 @@ impl KagiApp {
         let plan = match repo.plan_conflict_skip(&mode.session, expected) {
             Ok(p) => p,
             Err(e) => {
-                if let kagi_git::GitError::Blocked(note) = &e {
+                if let Some(note) = e.blocker() {
                     self.record_refused(
                         &op_name,
                         StateSummary {
                             head: String::new(),
                             dirty: String::new(),
                         },
-                        std::slice::from_ref(note.as_ref()),
+                        std::slice::from_ref(note),
                         &repo_path,
                         cx,
                     );
@@ -157,26 +164,20 @@ impl KagiApp {
                 app.refresh_write_busy();
                 let current =
                     app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
-                let refusal_display = match &result {
-                    Err(kagi_git::GitError::Blocked(note)) => Some(i18n::plan_note_text(note)),
-                    _ => None,
+                let refusal_display = result
+                    .as_ref()
+                    .err()
+                    .and_then(|error| error.blocker())
+                    .map(i18n::plan_note_text);
+                let outcome = &recording.entry().outcome;
+                let (failure, ran) = match result {
+                    Ok(_) => (skip_failure(outcome), true),
+                    Err(e) => (
+                        Some(e.to_string()),
+                        matches!(e, kagi_git::GitError::TerminationUnknown(_)),
+                    ),
                 };
-                let (outcome, failure, ran) = match result {
-                    Ok(o) => {
-                        let (outcome, failure) = skip_outcome(o);
-                        (outcome, failure, true)
-                    }
-                    Err(e) => {
-                        let err_msg = format!("{}", e);
-                        let outcome = recording.entry().outcome.clone();
-                        (
-                            outcome,
-                            Some(err_msg),
-                            matches!(e, kagi_git::GitError::TerminationUnknown(_)),
-                        )
-                    }
-                };
-                let termination_unknown_evidence = match &outcome {
+                let termination_unknown_evidence = match outcome {
                     OpOutcome::Unknown { evidence, .. }
                         if evidence.contains("process termination is unconfirmed") =>
                     {

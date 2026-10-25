@@ -509,7 +509,9 @@ impl Backend {
                         // hand the executor something to save over the user's
                         // drafts. Refusing before any mutation is the safe half of
                         // that choice (#707 review).
-                        let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
+                        let buffer = backend
+                            .resolution_buffer_from_repo_with_autosave()
+                            .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?;
                         let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
                         let restored = if stash {
                             crate::ops::conflict_abort::execute_stash_conflict_abort_with_progress(

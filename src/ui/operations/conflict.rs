@@ -131,7 +131,110 @@ impl KagiApp {
             .and_then(|e| e.read(cx).mode.clone())
     }
 
+    /// Complete the recovery barrier before any plan approval or repository lock.
+    /// The retained pane and attachment must still own the acknowledged generation.
+    pub(crate) fn flush_conflict_drafts(
+        &mut self,
+        owner: crate::app::Attachment,
+        action: &'static str,
+        cx: &mut Context<Self>,
+        resume: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        // Restore failures own the retained pane and its existing diagnostic.
+        // Admission must precede even capture/flush, not only the later writer.
+        if !self.pane_mutation_admitted(owner.session) {
+            match action {
+                "continue" => self.clear_conflict_continue_modal(),
+                "abort" => self.clear_conflict_abort_modal(),
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
+        let Some(pane) = self
+            .ui
+            .get(&owner.session)
+            .and_then(|ui| ui.conflict.clone())
+        else {
+            resume(self, cx);
+            return;
+        };
+        if pane.read(cx).draft_flushes > 0 {
+            return;
+        }
+        let task = pane.update(cx, |view, cx| view.flush_drafts(cx));
+        cx.spawn(async move |this, cx| {
+            let saved = task.await;
+            let _ = this.update(cx, |app, cx| {
+                if !app.conflict_action_owner_on_screen(&owner)
+                    || app
+                        .ui
+                        .get(&owner.session)
+                        .and_then(|ui| ui.conflict.as_ref())
+                        != Some(&pane)
+                {
+                    return;
+                }
+                if saved {
+                    resume(app, cx);
+                } else {
+                    if pane.read(cx).draft_persist_failed.is_none() {
+                        app.push_toast(ToastKind::Error, "stale conflict action was ignored", cx);
+                        cx.notify();
+                        return;
+                    }
+                    if action == "abort" {
+                        if let Some(operation) = app.view().operation.clone() {
+                            app.refuse_conflict_abort_for_failed_draft(&owner, &operation, cx);
+                            app.clear_conflict_abort_modal();
+                            cx.notify();
+                            return;
+                        }
+                    }
+                    let blocker = kagi_domain::plan_note::PlanNote::Conflicts(
+                        kagi_domain::plan_note::ConflictsNote::DraftPreservationFailed,
+                    );
+                    let message = super::super::i18n::plan_note_text(&blocker);
+                    let entry = Self::refused_entry(
+                        &format!(
+                            "{}-{action}",
+                            app.view()
+                                .operation
+                                .as_ref()
+                                .map(|op| op.kind().slug())
+                                .unwrap_or("conflict")
+                        ),
+                        StateSummary {
+                            head: "conflict".into(),
+                            dirty: "unsaved decisions".into(),
+                        },
+                        &[blocker],
+                        &owner.path,
+                    );
+                    let recording = kagi_git::backend::recording::finalize(entry);
+                    app.present_operation_completion(&recording, true, false, Some(message), cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn accept_conflict_intent(
+        &mut self,
+        intent: conflict_view::FrozenConflictIntent,
+        cx: &mut Context<Self>,
+    ) {
+        let owner = match &intent {
+            conflict_view::FrozenConflictIntent::Request { request, .. } => request.owner.clone(),
+            conflict_view::FrozenConflictIntent::SaveRefusal { owner, .. } => owner.clone(),
+        };
+        self.flush_conflict_drafts(owner, "save", cx, move |app, cx| {
+            app.accept_flushed_conflict_intent(intent, cx);
+        });
+    }
+
+    fn accept_flushed_conflict_intent(
         &mut self,
         intent: conflict_view::FrozenConflictIntent,
         cx: &mut Context<Self>,
@@ -278,6 +381,41 @@ impl KagiApp {
     ///   confirmation modal (`conflict_continue_modal`); the sequencer runs only
     ///   when the user confirms (`confirm_conflict_continue`).
     pub fn conflict_continue(
+        &mut self,
+        owner: crate::app::Attachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
+        let handle = window.window_handle();
+        self.flush_conflict_drafts(owner.clone(), "continue", cx, move |app, cx| {
+            let token = app
+                .ui()
+                .conflict
+                .as_ref()
+                .map(|pane| pane.read(cx).intent_token);
+            let this = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = this.update(cx, |app, cx| {
+                        let current = app
+                            .ui()
+                            .conflict
+                            .as_ref()
+                            .map(|pane| pane.read(cx).intent_token);
+                        if current != token || app.failed_conflict_draft_for(owner.session, cx) {
+                            return;
+                        }
+                        app.conflict_continue_flushed(owner, window, cx)
+                    });
+                });
+            });
+        });
+    }
+
+    fn conflict_continue_flushed(
         &mut self,
         owner: crate::app::Attachment,
         window: &mut Window,
@@ -518,6 +656,18 @@ impl KagiApp {
     /// sequencer), record the oplog, and reload. Keep the revision-bound autosave
     /// available for recovery even if the UI never adopts the next observation.
     pub fn confirm_conflict_continue(&mut self, cx: &mut Context<Self>) {
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+        else {
+            return;
+        };
+        self.flush_conflict_drafts(owner, "continue", cx, |app, cx| {
+            app.confirm_conflict_continue_flushed(cx)
+        });
+    }
+
+    fn confirm_conflict_continue_flushed(&mut self, cx: &mut Context<Self>) {
         if !self
             .active_session()
             .is_some_and(|owner| self.pane_mutation_admitted(owner))

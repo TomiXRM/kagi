@@ -519,6 +519,7 @@ impl KagiApp {
                                 weak_app,
                                 repo_path,
                                 owner.clone(),
+                                cx,
                             );
                             view.current_commit = current_commit;
                             view.adopt_detected(mode, editing_path, cx);

@@ -29,6 +29,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Make Graph, PR and Editor navigation leave the conflict workspace without discarding its live Result, selected file/hunk or scroll. Keep the in-progress operation and existing Abort/Skip actions visible below the toolbar, with one secondary Back to conflicts / conflict に戻る button that restores the same pane. Refresh retained conflicts in place while away; keep existing write-blocker explanations and admission guards. (#1748)
+
 - Surface failed conflict-draft autosaves in the Operation Log and an error notification, retain live decisions, and block close/quit until retry succeeds or a second explicit discard is confirmed. Refuse Abort, Skip and directory/file replacement before repository writes when their recovery copy cannot be saved. (#1731)
   - Protect repository-tab close (including Cmd+W on the last tab) with the same retry/two-confirmation discard sheet. Require Abort plan and confirm to durably preserve the current live draft, never an older disk-loaded copy; localize shared Abort/Skip/D-F refusal guidance in English and Japanese.
   - Queue ordinary Result edits and source selections through the background writer instead of waiting for draft locks/fsync on the UI thread. Await durable flush off-thread at close/quit/tab close and Save/Continue/Abort/Skip/D-F boundaries, reject failed or superseded generations before approval, and retain Retry/two-step Discard protection while any draft remains unflushed. Flush precedes repository admission; queued acceptance still has an unacknowledged crash window. (#1760)

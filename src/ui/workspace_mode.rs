@@ -660,6 +660,9 @@ impl KagiApp {
     /// as the active mode. One list, derived from the resolver's order, is the
     /// only way these stay in step as panes are added.
     pub(crate) fn leave_takeovers(&mut self, keep: WorkspaceMode) {
+        // Keep the sole draft/selection/scroll owner alive while another view
+        // occupies the body. Accepted re-detections refresh that owner in place.
+        self.with_ui(|ui| ui.conflict_hidden = ui.conflict.is_some());
         self.close_file_history();
         self.close_ecosystem_view();
         self.with_ui(|ui| ui.branch_cleanup_open = false);
@@ -685,6 +688,17 @@ impl KagiApp {
                 ui.github_issue_detail_error = None;
             });
         }
+    }
+
+    /// The operation strip is the single return affordance. Remount the same
+    /// entity without changing its Result, file/hunk selection or scroll.
+    pub(super) fn show_conflict_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entity) = self.ui().conflict.clone() else {
+            return;
+        };
+        self.with_ui(|ui| ui.conflict_hidden = false);
+        entity.update(cx, |view, cx| view.focus_navigation(window, cx));
+        cx.notify();
     }
 
     /// Retire only the presentation that just left the actual resolved body.

@@ -53,17 +53,20 @@ fn assert_menu(
         let bounds = cx
             .read(|cx| state.read(cx).range_to_bounds(&(0..1)))
             .expect("first selected character is laid out in the actual input");
+        // Hit before the glyph's midpoint: the Input chooses the nearest caret
+        // offset, and the end of the one-character selection is exclusive.
+        let selected_x = bounds.left() + bounds.size.width / 4.;
         // Result is independently clipped in the compact three-pane layout.
         // Hit its painted character fragment, not the off-clip line centre.
         let pointer = if let Some(viewport) =
-            e2e::control_bounds(window.window_id(), "conflict-result-edit-body")
+            e2e::control_bounds(window.window_id(), "conflict-result-editor")
         {
             let top = bounds.top().max(viewport.top());
             let bottom = bounds.bottom().min(viewport.bottom());
             assert!(bottom > top, "a visible Result character is required");
-            gpui::point(bounds.center().x, (top + bottom) / 2.)
+            gpui::point(selected_x, (top + bottom) / 2.)
         } else {
-            bounds.center()
+            gpui::point(selected_x, bounds.center().y)
         };
         input::capture_next_menu_for_e2e();
         cx.simulate_mouse_down(
@@ -79,9 +82,14 @@ fn assert_menu(
             gpui::Modifiers::none(),
         );
         cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| state.read(cx).selected_range()),
+            0..1,
+            "{host}: right-click inside the selected glyph preserves selection"
+        );
         let menu = input::take_menu_for_e2e().unwrap_or_else(|| panic!(
             "{host}: actual right-click must build the Kagi menu; character={bounds:?}; result={:?}; focused={}",
-            e2e::control_bounds(window.window_id(), "conflict-result-edit-body"),
+            e2e::control_bounds(window.window_id(), "conflict-result-editor"),
             cx.update_window(window, |_, window, cx| state.read(cx).focus_handle(cx).is_focused(window)).unwrap(),
         ));
         let actions: Vec<_> = menu
@@ -113,7 +121,8 @@ fn assert_menu(
         );
         assert!(
             !actions[0].2 && !actions[1].2,
-            "{host}: selected text enables Cut/Copy"
+            "{host}: selected text enables Cut/Copy; actions={actions:?}; selection={:?}",
+            cx.read(|cx| state.read(cx).selected_range())
         );
         assert!(!actions[3].2, "Select All remains available");
         assert_eq!(menu.items.len(), 5, "four actions and their one separator");
@@ -127,7 +136,12 @@ fn editor(cx: &mut VisualTestAppContext, width: f32) {
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
         .unwrap();
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        // Markdown now opens in Preview by default. This scenario exercises
+        // the code Input's native menu, so show the actual editable buffer.
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();

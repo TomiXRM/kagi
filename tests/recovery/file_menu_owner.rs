@@ -397,6 +397,19 @@ pub fn scenario_file_menu_rejects_stale_owner(cx: &mut VisualTestAppContext) {
     });
     assert_ne!(owner_a, owner_b);
     cx.run_until_parked();
+    assert!(
+        cx.read(|cx| !app
+            .read(cx)
+            .ui()
+            .commit_panel
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .state
+            .unstaged
+            .is_empty()),
+        "A's event-source row must exist before deferring its menu"
+    );
 
     // Event-source gate: the parent callback lands only after B owns the UI.
     defer_first_menu(cx, &app, window);
@@ -416,6 +429,9 @@ pub fn scenario_file_menu_rejects_stale_owner(cx: &mut VisualTestAppContext) {
         app.switch_repo(0, cx);
         e2e::open_local_panel_no_inputs(app, repo_a.clone(), cx);
     });
+    // Reopening clears the rows until its asynchronous status read lands.
+    // Wait for that real row before freezing its intent, not after the event.
+    cx.run_until_parked();
     defer_first_menu(cx, &app, window);
     cx.run_until_parked();
     let stale: FileMenu = cx.read(|cx| app.read(cx).file_menu.clone().expect("A menu"));

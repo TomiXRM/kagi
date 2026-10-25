@@ -505,6 +505,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             window.draw(cx).clear();
         })
         .unwrap();
+        wait(cx, &app, |app| app.conflict_abort_modal().is_some());
         cx.read(|cx| {
             let modal = app.read(cx).conflict_abort_modal().unwrap();
             assert_eq!(
@@ -569,11 +570,12 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
                     .and_then(|session| app.app_sessions.attachment(session))
                     .expect("continue owner");
                 app.conflict_continue(owner, window, cx);
-                assert!(app.conflict_continue_modal().is_some());
                 assert!(!app.app_sessions.has_leases());
             });
         })
         .unwrap();
+        wait(cx, &app, |app| app.conflict_continue_modal().is_some());
+        assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
         let before_confirm = crate::macos::repo_fingerprint(&repo);
         cx.run_until_parked();
         assert_eq!(before_confirm, crate::macos::repo_fingerprint(&repo));
@@ -668,6 +670,14 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    wait(cx, &app, |_| {
+        read_oplog_tail_for_repo(&repo, 1)
+            .last()
+            .is_some_and(|entry| {
+                entry.op.ends_with("-continue")
+                    && matches!(entry.outcome, kagi_git::OpOutcome::Refused { .. })
+            })
+    });
     let refused = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
     assert!(
         refused.op.ends_with("-continue")
@@ -676,7 +686,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(refused.ref_moves, Some(Vec::new()));
     let closed = cx.read(|cx| app.read(cx).active_session().unwrap());
-    // Continue and close in the same host turn, before its async reload can
+    // Close after the admitted write, before its held foreground completion can
     // present the one-shot drop follow-up.
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
@@ -693,13 +703,20 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("continue owner");
             app.conflict_continue(owner, window, cx);
-            assert!(app.conflict_continue_modal().is_some());
-            app.confirm_conflict_continue(cx);
-            app.close_tab(0, cx);
         });
     })
     .unwrap();
-    cx.run_until_parked();
+    wait(cx, &app, |app| app.conflict_continue_modal().is_some());
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    let completed = KagiApp::hold_next_continue_completion_for_e2e(hold);
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+    wait(cx, &app, |_| {
+        completed.load(std::sync::atomic::Ordering::SeqCst)
+    });
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    wait(cx, &app, |app| !app.app_sessions.is_attached(closed));
+    release.send(());
+    wait(cx, &app, |app| app.write_busy_op.is_none());
     // #884: the UI continue records the refs it moved (a stash continue only
     // stages, so: recorded, nothing moved) — not "no record".
     let continued = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
@@ -810,11 +827,11 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("continue owner");
             app.conflict_continue(owner, window, cx);
-            assert!(app.conflict_continue_modal().is_some());
-            app.confirm_conflict_continue(cx);
         });
     })
     .unwrap();
+    wait(cx, &app, |app| app.conflict_continue_modal().is_some());
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
     wait(cx, &app, |app| app.ui().conflict.is_none());
     assert!(cx.read(|cx| app.read(cx).stash_drop_modal().is_none()));
     assert_eq!(ids(&repo), before);
@@ -923,11 +940,11 @@ pub fn scenario_stash_continue_panic(cx: &mut VisualTestAppContext) {
                 .attachment(app.active_session().unwrap())
                 .unwrap();
             app.conflict_continue(owner, window, cx);
-            assert!(app.conflict_continue_modal().is_some());
-            app.confirm_conflict_continue(cx);
         });
     })
     .unwrap();
+    wait(cx, &app, |app| app.conflict_continue_modal().is_some());
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
     wait(cx, &app, |app| app.app_sessions.reconcile_ids().len() == 1);
     let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 30)
         .into_iter()
@@ -979,13 +996,19 @@ pub fn scenario_stash_continue_after_tab_switch(cx: &mut VisualTestAppContext) {
                 .attachment(app.active_session().unwrap())
                 .unwrap();
             app.conflict_continue(owner, window, cx);
-            assert!(app.conflict_continue_modal().is_some());
-            app.confirm_conflict_continue(cx);
-            app.switch_repo(1, cx);
-            app.status_footer = FooterStatus::Idle("other tab sentinel".into());
         });
     })
     .unwrap();
+    wait(cx, &app, |app| app.conflict_continue_modal().is_some());
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_continue_confirm_for_e2e(hold);
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+    wait(cx, &app, |app| app.write_busy_op.is_some());
+    app.update(cx, |app, cx| {
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("other tab sentinel".into());
+    });
+    release.send(());
     wait(cx, &app, |app| app.write_busy_op.is_none());
     let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 30)
         .into_iter()

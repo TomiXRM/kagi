@@ -1336,6 +1336,9 @@ pub fn scenario_conflict_confirm_continue_panic(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+        app.conflict_continue_modal().is_some()
+    });
     assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
     kagi::ui::KagiApp::panic_next_continue_confirm_for_e2e();
     app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
@@ -1372,12 +1375,22 @@ pub fn scenario_conflict_confirm_dismissed_still_reloads(cx: &mut VisualTestAppC
         });
     })
     .unwrap();
-    assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
-    app.update(cx, |app, cx| {
-        app.confirm_conflict_continue(cx);
-        app.cancel_conflict_continue();
+    crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+        app.conflict_continue_modal().is_some()
     });
-    cx.run_until_parked();
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Continue write admitted before dismissal",
+        |app| app.write_busy_op.is_some(),
+    );
+    app.update(cx, |app, _| app.cancel_conflict_continue());
+    release.send(());
+    wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
     assert!(
         !repo.join(".git/CHERRY_PICK_HEAD").exists(),
         "the sequencer must have continued"

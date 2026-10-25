@@ -152,7 +152,8 @@ pub(crate) fn render(
             "conflict-resolution-paths",
             div()
                 .id("conflict-resolution-paths")
-                .max_h(modal_list_max_h(count))
+                .flex_shrink_0()
+                .h(modal_list_max_h(count))
                 .overflow_y_scroll()
                 .child(paths),
         ));

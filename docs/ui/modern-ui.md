@@ -93,6 +93,7 @@ caption and both languages at narrow widths; genuine keyboard/AX delivery and
 EN Light / JA Dark screenshots remain Tier B evidence, not renderer assertions.
 Path rows use the shared fixed-height dense row around `modal_path_text`; its
 horizontal flex sizing must never collapse a vertically stacked filename.
+The path scroller reserves its capped row-count height without flex compression.
 The native regression checks filename bounds inside the path scroller. DD has
 no absent-side preview or instruction to choose a nonexistent side.
 Reference: macOS Finder confirmation hierarchy, without importing mobile

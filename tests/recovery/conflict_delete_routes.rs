@@ -112,7 +112,10 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
             "filename must not collapse"
         );
         assert!(filename.size.width > gpui::px(0.));
-        assert!(filename.origin.y >= list.origin.y && filename.bottom() <= list.bottom());
+        assert!(
+            filename.origin.y >= list.origin.y && filename.bottom() <= list.bottom(),
+            "deletion filename {filename:?} must remain inside path viewport {list:?}"
+        );
         match cancel {
             "button" => click_control(cx, window, "conflict-resolution-cancel"),
             key => {

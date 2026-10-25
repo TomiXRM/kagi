@@ -27,6 +27,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Preserve the staged-merge handoff to Commit Panel when an accepted reload revalidates conflicts; do not recreate the retired Saved workspace behind commit review. Update conflict detector and co-author picker regressions for accepted startup detection and retained-pane failure gates without weakening stale-result rejection or hidden-menu keyboard isolation. (#1776)
+  - Check native View workspace exclusivity only among Graph, Pull Requests and Editor, independently of the Editor Details checkmark.
+
 - Preserve concurrent conflict-draft decisions across Kagi processes with an interprocess lock and content-based three-way hunk merge. Atomically sync and replace drafts, retain colliding/manual bodies for inspection, and recover torn documents from the last good `.prev` without treating corruption as an empty draft. (#1732)
   - Expose an ordered background draft writer with latest-snapshot coalescing (up to 250 ms before starting), generation-aware completion and explicit durable flush barriers; keep blocking `autosave()` durable for preservation callers. Queue acceptance is not durability: an unacknowledged captured edit can still be lost on abrupt exit.
   - Keep newer in-memory edits when preserving a clone after failed autosave. On upgrade, quarantine a damaged draft without a usable backup under an exclusively reserved `.corrupt[.N]` name, record the failure, and show an EN/JA recovery notice while loading the editable index-backed buffer.

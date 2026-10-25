@@ -52,6 +52,14 @@ A control is modern when, for its role:
    state label — is the explanation. Apple's apps and current web apps do not
    ship how-to paragraphs next to controls; neither does Kagi. A needed
    warning is a short state ("Uncommitted changes"), not a procedure.
+   Conflict adoption rows use quiet NeutralTinted Use/Both controls, never a
+   primary control for every hunk on both sides (#1766). The available file
+   Save is the sole prominent action while resolving; an unresolved file has
+   no prominent action, not a disabled primary Save.
+   Quiet adoption controls still meet 4.5:1 text and 3:1 outline contrast
+   against their actual conflict band and hover backgrounds.
+   「採用」「両方」「変更」は、中立な見た目でも実際の背景・ホバー背景に
+   対して文字 4.5:1、枠線 3:1 以上を保つ。
    Icons carry type and state (folder, branch, lock, terminal, warning) so a
    row is not a line of text.
 

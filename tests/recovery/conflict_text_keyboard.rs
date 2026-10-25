@@ -996,6 +996,7 @@ pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
             );
             crate::native_ax::activate(cx);
             paint(cx, window);
+            crate::conflict_controls::assert_prominence(0);
             let tree = crate::native_ax::tree(cx, window);
             assert_session_accessibility(cx, window);
             for message in [

@@ -157,6 +157,7 @@ pub(super) fn render_result_pane(
         TriState::None,
         Msg::ConflictResetFocused.t(),
         ButtonRole::NeutralTinted,
+        theme().panel,
         None,
         chrome.source_choices_enabled && focused_resolved,
         &chrome.resolver_keyboard,
@@ -183,6 +184,7 @@ pub(super) fn render_result_pane(
             Msg::EditorReset.t()
         },
         ButtonRole::NeutralTinted,
+        theme().panel,
         None,
         !chrome.writer_busy,
         &chrome.resolver_keyboard,

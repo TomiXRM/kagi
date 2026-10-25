@@ -140,6 +140,13 @@ pub(super) fn save_button(
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let p_save = path.to_path_buf();
+    let role = if ready || refused {
+        ButtonRole::Primary
+    } else {
+        ButtonRole::Secondary
+    };
+    #[cfg(feature = "gui-e2e")]
+    super::conflict_editor_a11y::record_button_role("conflict-save", role);
     let save = cx.listener(
         move |view: &mut ConflictView, _: &gpui::ClickEvent, window, cx| {
             view.conflict_show_page(ConflictPage::Review, cx);
@@ -169,11 +176,7 @@ pub(super) fn save_button(
             } else {
                 Msg::EditorSave.t()
             },
-            if ready || refused {
-                ButtonRole::Primary
-            } else {
-                ButtonRole::Secondary
-            },
+            role,
             save,
             cx,
         )

@@ -5,6 +5,7 @@ thread_local! {
     static FOCUSED: std::cell::RefCell<Option<String>> = Default::default();
     static DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, String>> = Default::default();
     static ROW_COUNTS: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+    static BUTTON_ROLES: std::cell::RefCell<std::collections::HashMap<String, super::button_style::ButtonRole>> = Default::default();
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record(id: &str, name: &str, state: &str, description: &str) {
@@ -52,9 +53,19 @@ pub fn take_focus_probe() -> Option<String> {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub(crate) fn record_button_role(id: &str, role: super::button_style::ButtonRole) {
+    BUTTON_ROLES.with(|values| values.borrow_mut().insert(id.into(), role));
+}
+#[cfg(feature = "gui-e2e")]
+pub fn button_roles() -> std::collections::HashMap<String, super::button_style::ButtonRole> {
+    BUTTON_ROLES.with(|values| values.borrow().clone())
+}
+
+#[cfg(feature = "gui-e2e")]
 pub(crate) fn begin_frame() {
     CONTROLS.with(|values| values.borrow_mut().clear());
     DESCRIPTIONS.with(|values| values.borrow_mut().clear());
+    BUTTON_ROLES.with(|values| values.borrow_mut().clear());
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_status(id: &str, name: &str) {

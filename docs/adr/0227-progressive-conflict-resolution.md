@@ -38,9 +38,9 @@ hunk in both sources. No Context toggle or content-sized source-height clamp is 
 
 The [FRD A+C decision](../ui/conflict-sidebar-frd.md#ac-per-pane-action-rows-2026-10-24-owner-mock-conflictacdchtml)
 supersedes the gutter arrows and More menu with an action row above every hunk
-in both source panes: unresolved rows offer primary Use this side and neutral
-Both in that pane's block order; resolved rows show Used / Not used / Partly
-used and Change, which resets that hunk. Action rows are **24px**, correcting
+in both source panes: unresolved rows offer neutral-tinted Use this side and
+Both in that pane's block order (#1766); resolved rows show Used / Not used /
+Partly used and Change, which resets that hunk. Action rows are **24px**, correcting
 the mock's 26px to the uniform-list contract: both sources and the gutter retain
 equal row counts and measured row heights. The gutter is a **control-free 12px**
 hunk band with a focused-hunk edge. Result's header owns focused-hunk Reset

@@ -138,6 +138,107 @@ pub(super) fn conflict_abort_button(
         )
 }
 
+#[derive(Clone, Copy)]
+struct AdoptionColors {
+    normal: u32,
+    hover: u32,
+    active: u32,
+    ink: u32,
+}
+
+/// Cache the finite conflict-band surfaces, not one entry per hunk or caption.
+/// Selection/focus paints a separate stripe/ring and does not replace the band.
+fn adoption_colors(palette: &super::theme::Theme, background: u32) -> AdoptionColors {
+    type Entry = ([u32; 3], AdoptionColors);
+    thread_local! {
+        static CACHE: std::cell::RefCell<[Option<Entry>; 8]> =
+            const { std::cell::RefCell::new([None; 8]) };
+    }
+    let key = [palette.text_sub, palette.text_main, background];
+    CACHE.with(|cache| {
+        let mut entries = cache.borrow_mut();
+        if let Some((_, colors)) = entries.iter().flatten().find(|(k, _)| *k == key) {
+            return *colors;
+        }
+        let surface = Hsla::from(rgb(background));
+        let tint = Hsla::from(rgb(palette.text_sub));
+        let [normal, hover, active] = [0.2, 0.3, 0.4]
+            .map(|alpha| u32::from(surface.blend(tint.opacity(alpha)).to_rgb()) >> 8);
+        // Every intermediate fill lies between these luminance endpoints.
+        // Opaque caption/outline ink also contrasts against the outside band.
+        let ink = palette.status_label_text_on(palette.text_sub, background, active);
+        let colors = AdoptionColors {
+            normal,
+            hover,
+            active,
+            ink,
+        };
+        entries.rotate_right(1);
+        entries[0] = Some((key, colors));
+        colors
+    })
+}
+
+/// Own adoption paint on a plain stateful element. The kit's Button::render
+/// installs hover/active refinements itself, so adding them to Button panics.
+/// Keep its small outlined-button geometry; the caller owns roving focus/clicks.
+pub(super) fn readable_adoption_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    background: u32,
+) -> gpui::Stateful<gpui::Div> {
+    let colors = adoption_colors(&theme(), background);
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_selected(false)
+        .cursor_default()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .px_3()
+        .border_1()
+        .h(super::theme::scaled_px(20.))
+        .rounded(super::theme::scaled_px(5.))
+        .text_size(super::theme::scaled_px(11.5))
+        .text_color(rgb(colors.ink))
+        .bg(rgb(colors.normal))
+        .border_color(rgb(colors.ink))
+        .hover(move |style| {
+            style
+                .bg(rgb(colors.hover))
+                .border_color(rgb(colors.ink))
+                .text_color(rgb(colors.ink))
+        })
+        .active(move |style| {
+            style
+                .bg(rgb(colors.active))
+                .border_color(rgb(colors.ink))
+                .text_color(rgb(colors.ink))
+        })
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            gpui_component::GlobalState::suppress_text_selection(cx);
+        })
+        .child(
+            div()
+                .id("label")
+                .flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .gap_1()
+                .child(
+                    div()
+                        .flex_none()
+                        .line_height(gpui::relative(1.))
+                        .child(label.into()),
+                ),
+        )
+}
+
 /// An operation's hierarchy is independent of its palette's RGB values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonRole {
@@ -213,6 +314,37 @@ mod role_tests {
             assert_eq!(ButtonRole::NeutralTinted.filled_variant(), None);
             assert_eq!(ButtonRole::SideCurrent.accent(t), t.color_branch);
             assert_eq!(ButtonRole::SideIncoming.accent(t), t.color_remote);
+        }
+    }
+
+    #[test]
+    fn adoption_caption_and_outline_contrast_on_actual_band_and_button_fills() {
+        use super::super::theme::contrast_ratio;
+        for palette in super::super::theme::THEMES {
+            // Both source sides use these unresolved/used/not-used surfaces;
+            // the result reset controls use panel. Focus adds only an edge.
+            for band in [
+                palette.diff_removed_bg,
+                palette.diff_added_bg,
+                palette.surface,
+                palette.panel,
+            ] {
+                let colors = adoption_colors(palette, band);
+                for fill in [band, colors.normal, colors.hover, colors.active] {
+                    let ratio = contrast_ratio(colors.ink, fill);
+                    assert!(
+                        ratio >= 4.5,
+                        "{} caption on #{fill:06x}: {ratio}",
+                        palette.slug
+                    );
+                    assert!(
+                        ratio >= 3.0,
+                        "{} outline on #{fill:06x}: {ratio}",
+                        palette.slug
+                    );
+                }
+                assert_eq!(adoption_colors(palette, band).ink, colors.ink);
+            }
         }
     }
 }

@@ -51,8 +51,12 @@ never weaken an assertion just to restore green.
 ## Current union — #1775 / #1746 / #1780 / #1784
 
 The reconciled inventory contains **84 lifecycle configurations / 37 negative
-controls**. Measured state totals and verdicts for this union are pending the
-parent's full harness run; all measurements below identify predecessor cohorts.
+controls**. The full harness at `56dc8c42` matched all 84 expected lifecycle
+outcomes (**80,775 summed distinct states**) and detected all 37 negative
+controls (**15,387 summed states**). All 39 pure properties (1,695,651 evaluations),
+36 pure mutants and 34 saved drill projections / 46 logs passed; the forged-Skip
+control was rejected. Per-row predecessor measurements remain historical unless
+explicitly marked as current-union evidence below.
 The union retains frozen approved staging/merge plans, backend receipts and
 worker-close liveness, raw stash restore/verification and sibling invalidation,
 alongside D3 exclusion, writer-termination ownership and every draft barrier.
@@ -355,7 +359,7 @@ D/F snapshot-after-admission/preflight ordering remain unchanged.
 
 ## Ledger table
 
-Expectations describe the maintained union. Results and state counts are historical predecessor evidence, not a combined-run claim: P2 rows retain atomic-draft/P2 measurements, failed-close and barrier rows retain incoming-main measurements, and D3/preservation rows retain the 70-check #1746/#1784 measurements. The #1780 rows are unmeasured. Counts separated by `/` follow the check/trace order. Parent validation supplies current combined evidence. CONTRACT rows are bounded holds, not global proofs. BUG/QUESTION classifications apply to the corresponding implementation interpretation, not artificial broken variants.
+Expectations describe the maintained union; the full current-union outcome and state totals are above. Unless marked current union, per-row results and state counts are historical predecessor evidence: P2 rows retain atomic-draft/P2 measurements, failed-close and barrier rows retain incoming-main measurements, and D3/preservation rows retain the 70-check #1746/#1784 measurements. The #1780 rows and combined two-writer control are measured current-union evidence. Counts separated by `/` follow the check/trace order. CONTRACT rows are bounded holds, not global proofs. BUG/QUESTION classifications apply to the corresponding implementation interpretation, not artificial broken variants.
 
 | Invariant | Expectation | Result | States explored | Trace (if refuted) | Code lines | Classification | Owner question / fix sketch |
 |---|---|---|---:|---|---|---|---|
@@ -378,7 +382,7 @@ Expectations describe the maintained union. Results and state counts are histori
 | `BarrierLocksNeverNested` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/operations/conflict.rs::flush_conflict_drafts; resolution/draft_writer.rs::DraftSave::flush` | CONTRACT (#1760 UI boundary) | Complete and release the UI flush's draft transaction before repository admission; Abort/Skip preservation precedes admission, while D/F snapshot refs follow locked preflight. |
 | `NoDestructiveProgressAfterPreservationFailure (Abort / Skip / D-F)` | HOLD | HELD (TLC exit 0) | 31 / 31 / 21 | [historical preserve-abort](#trace-preserve-abort), [historical preserve-skip](#trace-preserve-skip), [historical preserve-dir-file](#trace-preserve-dir-file) | `ops/conflict_abort.rs:execute_conflict_abort_expecting; conflicts.rs:execute_conflict_skip; ops/dir_file_conflict.rs:apply_dir_file_resolution_with_progress` | #1731 fixed | Required recovery failure returns Refused before destructive index/worktree changes. Abort/Skip draft preservation precedes repository admission; D/F snapshot creation follows locked preflight, asserted by the preservation invariant. Recovery file atomicity is guarded by #1732. |
 | `RepoHasAtMostOneLease (two independent apps)` | HOLD | HELD | 14337 | historical [two-instance-leases](#trace-two-instance-leases) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | #1746 D3 fixed | Kernel ownership spans final preflight→execute→verify; approval probes do not retain it through confirmation. |
-| `LiveWriterKeepsRepositoryLease (writer-termination)` | HOLD | Not yet measured | — | — | `write_lock.rs; proc.rs::run_child; proc::group_alive` | CONTRACT (#1780) | Live descendants retain repository admission across unknown return and EOF; a second app cannot enter. Sessions reconciliation remains separate. |
+| `LiveWriterKeepsRepositoryLease (writer-termination)` | HOLD | HELD (current union) | 107 | — | `write_lock.rs; proc.rs::run_child; proc::group_alive` | CONTRACT (#1780) | Live descendants retain repository admission across unknown return and EOF; a second app cannot enter. Sessions reconciliation remains separate. |
 | `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | HOLD | HELD | 123 / 123 / 103 | Historical traces retained below | Backend execute/observe/finalize before worker settlement | CONTRACT (#1740) | Three `workerReceipt` controls restore release-before-append or absent merge accounting. |
 | `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
 | `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | 203 / 141 | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |
@@ -411,12 +415,12 @@ the listed cfg order; temporal violations retain TLC exit 13.
 | `DraftWriteAtomic (lost update)` | [`draft-lost-update-broken.cfg`](../../formal/conflict/tla/draft-lost-update-broken.cfg) | Remove serialization while requiring complete JSON reads | REFUTE (exit 12) | 222 |
 | `DraftWriteAtomic (two-writer recovery)` | [`two-writer-recovery-broken.cfg`](../../formal/conflict/tla/two-writer-recovery-broken.cfg) | Compare recovery equality against the editor's pre-merge body | REFUTE (exit 12) | 4 |
 | `RepoHasAtMostOneLease` | [`two-instance-leases-broken.cfg`](../../formal/conflict/tla/two-instance-leases-broken.cfg) | Remove repository-level lock exclusion only | REFUTE (exit 12) | 2938 |
-| `LiveWriterKeepsRepositoryLease` | [`writer-termination-broken.cfg`](../../formal/conflict/tla/writer-termination-broken.cfg) | Release repository admission at unknown return while descendants remain live; keep Sessions lease | Expected REFUTE; not yet measured | — |
+| `LiveWriterKeepsRepositoryLease` | [`writer-termination-broken.cfg`](../../formal/conflict/tla/writer-termination-broken.cfg) | Release repository admission at unknown return while descendants remain live; keep Sessions lease | REFUTE (current union, exit 12) | 4 |
 | `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 45 |
 | `ReceiptFollowsMutation; ContinueEventuallyRecordedOrReported` | `receipt-continue-broken`, `receipt-merge-broken`, `receipt-skip-broken`, `continue-liveness-broken` | `workerReceipt`: release before UI-owned append; omit merge append | REFUTE (exit 12 / 12 / 12 / 13) | 82 / 82 / 62 / 121 |
 | `ApprovedRevisionFrozen; MergeCommitTreeIsApprovedTree` | `approved-revision-broken`, `merge-tree-broken` | `mergePlan`: silently renew approved tree/revision | REFUTE (exit 12) | 25 / 25 |
 | `ApprovedRevisionFrozen` | `approved-index-race-broken` | `stagePayload`: stage mutable WT instead of approved payload | REFUTE (historical P2, exit 12) | 43 |
-| `ApprovedRevisionFrozen` | `approved-two-writers-broken` | `stagePayloadRepoLock`: remove frozen staging and independently protective D3 exclusion, retaining the same two-app schedule | Expected REFUTE; not yet measured | — |
+| `ApprovedRevisionFrozen` | `approved-two-writers-broken` | `stagePayloadRepoLock`: remove frozen staging and independently protective D3 exclusion, retaining the same two-app schedule | REFUTE (current union, exit 12) | 10498 |
 | `SiblingWorktreesInvalidatedOnSharedRef` | `sibling-invalidation-broken` | `sharedRef`: omit planned sibling invalidation | REFUTE (exit 12) | 62 |
 | `StashAbortRestoresConflictedBytes` | `stash-non-utf8-broken`, `stash-verify-broken` | Original UTF-8 checkout/verification omission; independently remove restore verification | REFUTE (exit 12) | 44 / 54 |
 | `SkipRefreshDisarmsChangedStep; SkipDropsOnlyApprovedStep` | `skip-refresh-broken`, `skip-prewrite-broken` | Remove the refresh-disarm or final prewrite revision guard | REFUTE (exit 12) | 32 / 89 |

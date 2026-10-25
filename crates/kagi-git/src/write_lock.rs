@@ -207,6 +207,6 @@ mod tests {
         .join()
         .unwrap());
         drop(second_run);
-        acquire_with_timeout(&repo, Duration::ZERO).unwrap();
+        drop(acquire_with_timeout(&repo, Duration::ZERO).unwrap());
     }
 }

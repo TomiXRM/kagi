@@ -8,8 +8,10 @@ No product code is imported or changed by the guard. The reconciled inventory is
 admission, #1780 writer termination and #1731/#1784 draft-preservation/flush guards.
 The unchanged pure inventory is 39 properties (1,695,651 evaluations), 36 mutants,
 and 34 saved drill projections / 46 logs plus a forged-Skip control.
-Measured totals for this union await the parent validation run; predecessor
-measurements are explicitly historical in the lifecycle ledger.
+The full harness matched all 84 expected lifecycle outcomes (80,775 summed
+distinct states) and detected all 37 removed-guard controls (15,387 summed
+states). Pure properties, mutants and saved drill projections also passed.
+Predecessor measurements remain explicitly historical in the lifecycle ledger.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).

@@ -96,6 +96,13 @@ sidebar therefore can't be the only place for a command. `(owner ruling,
 スキップ; when the sidebar is hidden the #704 operation strip carries them, and
 the Repository menu always does.
 
+**Sidebar toggle** `[HIG]` — `toolbars.md › Item groupings`: "Elements that
+let people return to the previous document and show or hide a sidebar appear at
+the far leading edge". Kagi has one sidebar slot owned by the shell and one
+toggle for it, in the titlebar right after the window controls, in every mode;
+it is disabled, never removed, where there is no sidebar, so the tabs after it
+never move. A mode does not mount its own sidebar (#1790).
+
 **Primary / secondary / destructive** `[HIG]` — `buttons.md › Style`: "Keep the
 number of prominent buttons to one or two per view." (a ceiling: zero is valid
 when no action is ready). `buttons.md › Role`: "Don't assign the primary role to

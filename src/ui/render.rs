@@ -966,7 +966,7 @@ impl Render for KagiApp {
             .child(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // #704 is the exit when the conflict sidebar is hidden or unmounted.
             // Admission remains owned by TabViewState::operation.
             .when(

@@ -501,6 +501,14 @@ impl KagiApp {
                             view.adopt_detected(mode, editing_path, cx);
                         });
                     }
+                    // Continue handed this staged merge to CommitPanel. An
+                    // accepted-read revalidation still checks the observation,
+                    // but must not recreate the retired saved workspace.
+                    None if self.ui.get(&owner.session).is_some_and(|ui| {
+                        ui.conflict_merge_pending
+                            && matches!(mode.session.op, kagi_git::ConflictOp::Merge { .. })
+                            && mode.session.files.is_empty()
+                    }) => {}
                     // Fresh conflict: build the entity, capturing the repo path +
                     // a weak back-ref for its deferred parent callbacks.
                     None => {

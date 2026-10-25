@@ -2,6 +2,10 @@
 use super::super::keyboard_nav::{Activation, TabList};
 use super::*;
 
+/// The sidebar toggle and its gap before the first tab, outside UI zoom like
+/// the traffic lights it follows.
+const SIDEBAR_TOGGLE_W: f32 = 32.;
+
 impl KagiApp {
     /// Document tabs share the native titlebar, including a single document.
     pub fn render_tab_strip(
@@ -22,6 +26,7 @@ impl KagiApp {
         };
         let list = self.document_tab_list(keys, selected, repos, cx);
         let has_add = !self.tabs.is_empty() || self.remote_view.is_some();
+        let has_sidebar_toggle = !super::super::compact::for_window(window);
         let scale = window.scale_factor();
         let snap = |value: gpui::Pixels| gpui::px((f32::from(value) * scale).round() / scale);
         // GPUI snaps each control separately, not their combined reference width.
@@ -31,7 +36,12 @@ impl KagiApp {
             } else {
                 gpui::px(0.)
             }
-            + snap(gpui::px(if cfg!(target_os = "macos") { 80. } else { 0. }));
+            + snap(gpui::px(if cfg!(target_os = "macos") { 80. } else { 0. }))
+            + if has_sidebar_toggle {
+                snap(gpui::px(SIDEBAR_TOGGLE_W))
+            } else {
+                gpui::px(0.)
+            };
         self.tab_strip_focus
             .release_closed(self.root_focus.as_ref(), window, cx);
         let focused = self.tab_strip_focus.focused(window);
@@ -69,6 +79,14 @@ impl KagiApp {
             .border_b_1()
             .border_color(rgb(theme().surface))
             .child(super::super::e2e::measure_inside("repo-tab-strip"))
+            .when(has_sidebar_toggle, |bar| {
+                bar.child(
+                    div()
+                        .flex_shrink_0()
+                        .w(gpui::px(SIDEBAR_TOGGLE_W))
+                        .child(super::super::pr_layout::sidebar_toggle(self, cx)),
+                )
+            })
             .child(
                 div()
                     .relative()

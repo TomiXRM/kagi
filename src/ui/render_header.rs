@@ -296,7 +296,6 @@ impl KagiApp {
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -484,16 +483,8 @@ impl KagiApp {
         };
         let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
         let pending_widths = self.toolbar_layout.pending(present, style_key);
-        let show_sidebar_toggle = mode == WorkspaceMode::Prs && !super::compact::for_window(window);
-        let hidden = self
-            .toolbar_layout
-            .hidden(present, selected, show_sidebar_toggle, style_key);
-        let sidebar_width = self
-            .toolbar_layout
-            .sidebar_width(show_sidebar_toggle, style_key);
-        let identity_width = self
-            .toolbar_layout
-            .identity_width(show_sidebar_toggle, style_key);
+        let hidden = self.toolbar_layout.hidden(present, selected, style_key);
+        let identity_width = self.toolbar_layout.identity_width(style_key);
         let visible = present & !hidden;
         let workspace_width = self
             .toolbar_layout
@@ -757,25 +748,9 @@ impl KagiApp {
                     .flex_1()
                     .min_w_0()
                     .when(icon_only, |el| {
-                        el.min_w(px(
-                            self.toolbar_layout.icon_identity_width(style_key) + sidebar_width
-                        ))
+                        el.min_w(px(self.toolbar_layout.icon_identity_width(style_key)))
                     })
                     .when(!icon_only, |el| el.min_w(px(identity_width)))
-                    .when(show_sidebar_toggle, |el| {
-                        el.child(
-                            div()
-                                .relative()
-                                .flex_shrink_0()
-                                .pr_2()
-                                .child(toolbar_overflow::probe(
-                                    layout_app.clone(),
-                                    Some(16),
-                                    style_key,
-                                ))
-                                .child(super::pr_layout::navigator_toggle(self, window, cx)),
-                        )
-                    })
                     // ── LEFT: Refresh (user request: left of the repo title) ──
                     .child({
                         // Spin for one full turn after a click (user request).

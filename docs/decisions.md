@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-25
+> **Last updated:** 2026-10-26
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-26 | #1790: サイドバーはシェルが持つ 1 つの枠にする。Graph / PRs / Issues は同じ `render_body` の左スロット・同じ `sidebar.visible`・同じ開閉アニメーションを使い、PR / Issues の takeover は自前のサイドバーを持たない。表示切替はタイトルバー先頭、信号機の直後に 1 つだけ置き、全モード同じ位置。Home では無効表示にして消さない。PRs ツールバー先頭の切替と PR ナビゲーターの drawer は廃止。信号機は (9,9) から (9,11) へ下げ、信号機・切替・タブを 36px 行の同じ中心線に揃える。アイコンは SF Symbols `sidebar.left` 相当の `sidebar-left.svg`(stroke 1.75、行 2 本) | オーナー指摘: Issues ではサイドバーが消えず、PRs はアニメーション無しで消え、Graph はアニメーション付きで消えた。原因は中身(`render_sidebar_pages`)は共通でも、マウント先が `render_body` / `render_pr_mode` / `render_issues_mode` の 3 か所に分かれ、それぞれ別の条件で描いていたこと。HIG Toolbars › Leading edge「show or hide a sidebar appear at the far leading edge」。PRs だけの切替はモード切替のたびに更新ボタンとリポジトリ名を押し出していた。Home で消すとタブが 32pt ずれる。lucide `panel-left` は `columns-2` とほぼ同形。(9,9) は実測で中心 y≈15.75 とタブ(18)より 2pt 上だった。Editor のファイルツリーと Conflict のツリーはまだ各自の枠で、同じ切替で開閉する(別 issue)。 |
 | 2026-10-25 | HIG gate の checklist を「HIG 原文の引用」「Kagi の house rule」「オーナー判断」に分ける。#1764 B(サイドバー見出しに 中止 / スキップ、確認へ進む は file header、ツールバーには置かない)を owner ruling として記録。danger sheet の root Return = Cancel(2026-10-12 #1292 / #1334)と HIG の no-default-button の食い違いはオーナー判断待ちとして明記 | #1765 で書いた checklist の一部(「サイドバーは session を終える操作を持たない」「状態の隣に exit と advance を置く」)が HIG の原文に根拠がなく、オーナーが選んだ #1764 B と矛盾していた。reviewer が根拠のない規則で owner ruling を P1 にしないよう、規則ごとに出典を付け、引用文はすべて apple-design corpus(914b6a3)で逐語確認した。 |
 | 2026-10-25 | #1756 review: apply optional-CR marker views to residue gates too / 残留検出にも CR 判定を統一 | Manual Results use complete delimiter runs of at least seven characters regardless of materialization width, so bare CRLF runs must block Save. Strip one CR in the plain-text detector and staged checklist without rewriting bytes; preserve chosen-source provenance and the checklist's distinct seven-wide labeled-opener rule. The extracted residue model adds 96 ending/width/provenance cases and a CR-retention negative control; marker parsing itself remains outside the model. |
 | 2026-10-25 | #1756: strip one optional CR only in the width-aware marker predicate / marker 判定だけ末尾 CR を除外 | `split_terminator('\n')` deliberately retains source CR bytes for #1730 Result assembly. Match delimiters against a borrowed suffix-stripped view, including zdiff3 base and unlabeled markers; never normalize stored content or infer one file-wide ending. Width selection already counts raw leading delimiter runs before CR. The pure hunk enumeration models assembly/selection, not marker parsing; Rust parser and Git Save regressions own this byte-level contract. |

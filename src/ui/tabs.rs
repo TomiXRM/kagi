@@ -54,7 +54,8 @@ pub struct RepoTab {
 }
 
 /// Fixed logical titlebar height, independent of UI zoom and shared density.
-/// Native macOS traffic lights remain at (9,9); document labels cap at 14px.
+/// Native macOS traffic lights sit at (9,11), centred on this row (#1790);
+/// document labels cap at 14px.
 pub(crate) const TAB_STRIP_H: f32 = 36.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;

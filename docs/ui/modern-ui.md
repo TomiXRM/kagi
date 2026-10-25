@@ -91,6 +91,10 @@ has no default Return route; Cancel/Escape preserve the repository. The immutabl
 plan token and owner survive until explicit confirmation. Test the long DD
 caption and both languages at narrow widths; genuine keyboard/AX delivery and
 EN Light / JA Dark screenshots remain Tier B evidence, not renderer assertions.
+Path rows use the shared fixed-height dense row around `modal_path_text`; its
+horizontal flex sizing must never collapse a vertically stacked filename.
+The native regression checks filename bounds inside the path scroller. DD has
+no absent-side preview or instruction to choose a nonexistent side.
 Reference: macOS Finder confirmation hierarchy, without importing mobile
 spacing into the dense file row.
 [Design figure and HIG quotations](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317);

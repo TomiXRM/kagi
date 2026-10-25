@@ -103,6 +103,16 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
                 vec![Path::new("file.txt").to_path_buf()]
             );
         });
+        let list = e2e::control_bounds(window.window_id(), "conflict-resolution-paths")
+            .expect("visible path list");
+        let filename = e2e::control_bounds(window.window_id(), "modal-path-name-file.txt-file.txt")
+            .expect("painted deletion target");
+        assert!(
+            filename.size.height >= gpui::px(12.),
+            "filename must not collapse"
+        );
+        assert!(filename.size.width > gpui::px(0.));
+        assert!(filename.origin.y >= list.origin.y && filename.bottom() <= list.bottom());
         match cancel {
             "button" => click_control(cx, window, "conflict-resolution-cancel"),
             key => {

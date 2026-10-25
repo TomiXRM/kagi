@@ -191,15 +191,17 @@ pub(super) fn render_center(
             .flex_grow(1.)
             .h_full()
             .child(choices)
-            .child(render_preview(
-                mode,
-                &path,
-                kind,
-                &labels,
-                raw_preview_scroll,
-                raw_preview,
-                cx,
-            ))
+            .when(resolutions.len() > 1, |pane| {
+                pane.child(render_preview(
+                    mode,
+                    &path,
+                    kind,
+                    &labels,
+                    raw_preview_scroll,
+                    raw_preview,
+                    cx,
+                ))
+            })
             .into_any_element();
     }
 

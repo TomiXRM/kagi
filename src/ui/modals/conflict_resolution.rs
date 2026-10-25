@@ -72,7 +72,9 @@ pub(crate) fn render(
 ) -> gpui::AnyElement {
     use ui::button_style::{modal_button, modal_button_row, ModalButtonKind};
     use ui::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
-    use ui::modal_shell::{modal_body, modal_card, modal_list_max_h, modal_path_text, MODAL_W_MD};
+    use ui::modal_shell::{
+        modal_body, modal_card, modal_list_max_h, modal_path_text, MODAL_LIST_ROW_H, MODAL_W_MD,
+    };
     let cancel_listener = cx.listener(|app, _: &(), window, cx| {
         app.cancel_conflict_resolution();
         if let Some(focus) = &app.root_focus {
@@ -107,7 +109,7 @@ pub(crate) fn render(
         title.into(),
         None,
     ));
-    let mut paths = div().flex().flex_col().gap_2();
+    let mut paths = div().flex_shrink_0().flex().flex_col();
     let mut count = 0;
     for (label, group) in [
         (Msg::ConflictRemoveIndex, modal.changes.remove_index),
@@ -119,11 +121,25 @@ pub(crate) fn render(
             continue;
         }
         count += group.len() + 1;
-        paths = paths.child(div().text_sm().child(label.t()));
+        paths = paths.child(
+            div()
+                .flex_shrink_0()
+                .h(ui::theme::scaled_px(MODAL_LIST_ROW_H))
+                .text_sm()
+                .child(label.t()),
+        );
         for path in group {
-            paths = paths.child(modal_path_text(SharedString::from(
-                path.display().to_string(),
-            )));
+            paths = paths.child(
+                div()
+                    .flex_shrink_0()
+                    .h(ui::theme::scaled_px(MODAL_LIST_ROW_H))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .child(modal_path_text(SharedString::from(
+                        path.display().to_string(),
+                    ))),
+            );
         }
     }
     let body = modal_body()
@@ -132,13 +148,14 @@ pub(crate) fn render(
                 .text_sm()
                 .child(Msg::ConflictResolutionConsequence.t()),
         )
-        .child(
+        .child(ui::e2e::measure_leaf(
+            "conflict-resolution-paths",
             div()
                 .id("conflict-resolution-paths")
                 .max_h(modal_list_max_h(count))
                 .overflow_y_scroll()
                 .child(paths),
-        );
+        ));
     let buttons = modal_button_row()
         .child(ui::e2e::measure_control(
             "conflict-resolution-cancel",

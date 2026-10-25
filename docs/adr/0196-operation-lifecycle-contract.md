@@ -714,7 +714,14 @@ thread reuse the descriptor; unrelated background writers do not share admission
 Every local writer's Sessions admission also probes that repository lock, so
 stage, pull, commit and background fetch cannot start while another process is
 inside a conflict mutation. These generic probes never append an admission
-receipt: the operation's existing receipt owner records its refusal once.
+receipt themselves. User-facing dispatch owns a single `Refused` receipt under
+the requested operation's name (Pull, Commit, checkout, manual Fetch, snapshot,
+Editor save, etc.); a Pull refused before its preparatory Fetch is named `pull`,
+not `fetch`. Continue, Skip and staging retain their existing receipt owners.
+No `conflict-write-admission` receipt is synthesized. A waiting queued intent
+records its initial refused attempt once; probes and automatic re-contention
+do not append repeated receipts. Recording failure retains the existing required
+acknowledgment instead of presenting an ordinary refusal as durably recorded.
 Continue and Skip planning likewise return their blocker to their existing UI
 receipt owner; only legacy Abort/merge planning without a receipt owner records
 its own early refusal. Silent auto-fetch skips contention without a toast or

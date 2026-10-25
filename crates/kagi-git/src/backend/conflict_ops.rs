@@ -61,6 +61,9 @@ impl ConflictPlan {
     pub fn repo(&self) -> &Path {
         &self.repo
     }
+    pub fn operation_name(&self) -> &str {
+        &self.op_name
+    }
 
     pub fn common_dir(&self) -> &kagi_domain::remove::RepoId {
         &self.common_dir

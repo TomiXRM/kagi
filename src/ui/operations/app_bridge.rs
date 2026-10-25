@@ -217,7 +217,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         let owner = self.active_session();
-        self.reserve_write_for(name, path, owner, cx)
+        self.reserve_write_for(name, name, path, owner, cx)
     }
 
     /// [`Self::reserve_write`] for a writer the operation queue must not
@@ -226,6 +226,7 @@ impl KagiApp {
     pub(crate) fn reserve_write_for(
         &mut self,
         name: &'static str,
+        refusal_name: &str,
         path: &std::path::Path,
         owner: Option<app::SessionId>,
         cx: &mut Context<Self>,
@@ -259,7 +260,11 @@ impl KagiApp {
                     cx.notify();
                     return None;
                 }
-                self.report_admission_refusal(error, cx);
+                if name == "fetch" && owner.is_none() {
+                    self.report_admission_refusal(error, cx);
+                } else {
+                    self.report_write_admission_refusal(refusal_name, path, error, cx);
+                }
                 None
             }
         }
@@ -302,6 +307,11 @@ impl KagiApp {
                 }
             },
         };
+        let refusal_owner = approved.prepared.owner();
+        let conflict_plan = match &approved.prepared {
+            app::Planned::Conflict { plan, .. } => Some(plan.clone()),
+            _ => None,
+        };
         let admitted = if self.op_latched() {
             Err(app::AdmissionError::Busy)
         } else {
@@ -310,7 +320,14 @@ impl KagiApp {
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
-                self.report_admission_refusal(error, cx);
+                if let app::OwnerAttachment::Local(owner) = refusal_owner {
+                    let operation = conflict_plan
+                        .as_ref()
+                        .map_or(name, |plan| plan.operation_name());
+                    self.report_write_admission_refusal(operation, &owner.path, error, cx);
+                } else {
+                    self.report_admission_refusal(error, cx);
+                }
                 return;
             }
         };

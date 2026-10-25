@@ -38,6 +38,43 @@ impl KagiApp {
         });
     }
 
+    /// Repository admission is a probe, not a receipt owner. Record a refused
+    /// user attempt here, under its requested operation, before presenting it.
+    pub(crate) fn report_write_admission_refusal(
+        &mut self,
+        operation: &str,
+        path: &Path,
+        error: app::AdmissionError,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = OpLogEntry::new(
+            operation,
+            path.display().to_string(),
+            StateSummary {
+                head: "unobserved".into(),
+                dirty: "not admitted".into(),
+            },
+            OpOutcome::Refused {
+                blockers: vec![error.to_string()],
+            },
+        )
+        .with_worktree(Some(path.display().to_string()))
+        .with_nothing_moved();
+        let recording = kagi_git::backend::recording::finalize(entry);
+        self.notice_recording_failure(operation, &recording, path, None);
+        self.insert_recorded_row(&recording, cx);
+        if matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        ) {
+            self.present_recorded(&recording, true, cx);
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        self.report_admission_refusal(error, cx);
+    }
+
     /// A live writer refuses contextually; reconciliation still offers Inspect.
     pub(crate) fn report_admission_refusal(
         &mut self,

@@ -223,9 +223,13 @@ impl KagiApp {
         match event {
             EditorWorkspaceEvent::SaveRequested(request) => {
                 let repo_path = view.read(cx).repo_path.clone();
-                let Some(guard) =
-                    self.reserve_write_for("editor-save", &repo_path, Some(owner), cx)
-                else {
+                let Some(guard) = self.reserve_write_for(
+                    "editor-save",
+                    "editor-save",
+                    &repo_path,
+                    Some(owner),
+                    cx,
+                ) else {
                     self.stop_editor_guard_save();
                     return;
                 };

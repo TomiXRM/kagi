@@ -377,7 +377,13 @@ impl KagiApp {
                 // optional, so the index may still hold unmerged entries.  Without
                 // this the commit panel shows nothing staged (Commit disabled) and
                 // execute_merge_commit refuses the still-conflicted index.
-                let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
+                let Some(guard) = self.reserve_write_for(
+                    "conflict-continue",
+                    &op_name,
+                    &repo_path,
+                    self.active_session(),
+                    cx,
+                ) else {
                     return;
                 };
                 let before = StateSummary {
@@ -566,7 +572,13 @@ impl KagiApp {
         }
         let op_name = format!("{}-continue", modal.operation_kind.slug());
 
-        let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
+        let Some(guard) = self.reserve_write_for(
+            "conflict-continue",
+            &op_name,
+            &repo_path,
+            self.active_session(),
+            cx,
+        ) else {
             return;
         };
         let owner = self.active_session();

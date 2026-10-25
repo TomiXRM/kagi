@@ -461,7 +461,7 @@ impl KagiApp {
             Ok(job) => job,
             Err(error) => {
                 if self.queue_admission_refused(&error, cx) {
-                    self.report_admission_refusal(error, cx);
+                    self.report_write_admission_refusal(op_name, &repo_path, error, cx);
                 }
                 return false;
             }

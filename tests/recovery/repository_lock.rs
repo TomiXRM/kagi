@@ -293,7 +293,11 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
             dispatch_wall += started.elapsed();
             assert_eq!(error_ids(cx), errors, "retry must not repeat its toast");
             assert_eq!(plan_count(), plans, "busy probes must not replan");
-            assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+            assert_eq!(
+                read_oplog_tail_for_repo(&repo, 100).len(),
+                before + 1,
+                "one user-attempt refusal, never one receipt per probe"
+            );
             cx.read(|cx| {
                 let state = app.read(cx);
                 assert_eq!(state.queue_ids_for_e2e(), queued_ids);
@@ -361,7 +365,7 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
         errors_before_race,
         "same intent still toasts once"
     );
-    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+    assert_one_refusal(&repo, before, "checkout");
     drop(second_owner.borrow_mut().take());
 
     // Freeze the resumed write to inspect the untouched successor before it runs.
@@ -408,8 +412,8 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
     let receipts = read_oplog_tail_for_repo(&repo, 100);
     assert_eq!(
         receipts.len(),
-        before + 2,
-        "only the two real checkouts record"
+        before + 3,
+        "one refused attempt and the two real checkouts record"
     );
     assert!(receipts
         .iter()
@@ -444,7 +448,7 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
         cx.advance_clock(TICK);
         cx.run_until_parked();
     }
-    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before + 2);
+    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before + 4);
     assert_eq!(
         std::fs::read_to_string(repo.join(".git/HEAD")).unwrap(),
         "ref: refs/heads/c\n"
@@ -527,10 +531,87 @@ fn retry_nonblocker_reports_real_error(cx: &mut VisualTestAppContext) {
         );
         assert!(!state.app_sessions.has_leases());
     });
-    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+    let entries = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(
+        entries.len(),
+        before + 2,
+        "contention and the actual terminal failure each record"
+    );
+    assert!(entries.iter().all(|entry| entry.op == "checkout"));
+    assert!(entries.iter().any(|entry| matches!(&entry.outcome,
+        OpOutcome::Refused { blockers } if blockers.iter().any(|blocker| blocker.contains(&error.to_string())))));
     assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
     assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
     std::fs::remove_dir(&sidecar).unwrap();
     std::fs::rename(&preserved, &sidecar).unwrap();
+    unmount(cx, app, window);
+}
+
+pub fn scenario_repository_lock_user_receipts(cx: &mut VisualTestAppContext) {
+    use crate::macos::git;
+    use kagi::ui::{e2e, ToastKind};
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    crate::fetch_owner::local_remote_with_change(&repo, remote.path());
+    std::fs::write(repo.join("pending.txt"), "user commit\n").unwrap();
+    git(&repo, &["add", "pending.txt"]);
+    let (app, window) = mount(cx, &repo);
+    wait_idle(cx, &app);
+    let head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+    let oid = std::fs::read(repo.join(".git/refs/heads/main")).unwrap();
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let pending = std::fs::read(repo.join("pending.txt")).unwrap();
+    let before = read_oplog_tail_for_repo(&repo, 100).len();
+    with_repository_lock(&repo, || {
+        app.update(cx, |app, cx| app.open_pull_modal(cx));
+        wait_idle(cx, &app);
+        assert_one_refusal(&repo, before, "pull");
+        app.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+            e2e::set_commit_message(app, "user admission refusal", cx);
+        });
+        wait_idle(cx, &app);
+        app.update(cx, |app, cx| {
+            app.open_commit_plan_modal(app.active_session().unwrap(), cx);
+        });
+        wait_idle(cx, &app);
+        assert_one_refusal(&repo, before + 1, "commit");
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.iter().filter(|entry| entry.op == "pull").count(), 1);
+        assert_eq!(
+            entries.iter().filter(|entry| entry.op == "commit").count(),
+            1
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.ref_moves.as_ref().is_some_and(Vec::is_empty)));
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(!state.app_sessions.has_leases());
+            assert!(state.fetch_in_flight.is_none());
+            assert_eq!(
+                state
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .toasts()
+                    .iter()
+                    .filter(|toast| toast.kind == ToastKind::Error)
+                    .count(),
+                2,
+                "each user attempt gets one bounded error notification"
+            );
+        });
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
+        assert_eq!(
+            std::fs::read(repo.join(".git/refs/heads/main")).unwrap(),
+            oid
+        );
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(std::fs::read(repo.join("pending.txt")).unwrap(), pending);
+    });
     unmount(cx, app, window);
 }

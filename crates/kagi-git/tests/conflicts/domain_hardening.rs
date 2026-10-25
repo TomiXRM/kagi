@@ -3,6 +3,46 @@ use kagi_domain::resolution::HunkChoice;
 use kagi_git::Backend;
 
 #[test]
+fn crlf_manual_marker_residue_refuses_save_without_mutation() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for marker in ["<<<<<<< ours", "<<<<<<<", "=======", "========", ">>>>>>>"] {
+        let (tmp, repo) = source_fixture("current\r\n", "base\r\n", "incoming\r\n");
+        let path = Path::new("file.txt");
+        let before_file = std::fs::read(tmp.path().join(path)).unwrap();
+        let before_index = std::fs::read(repo.path().join("index")).unwrap();
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        let markers = buffer.materialized_markers(&repo, path).unwrap();
+        assert_eq!(markers.marker_width, 7);
+        assert!(buffer.ensure_hunks(path, &markers.text, markers.marker_width));
+        assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::Manual(format!("{marker}\r\n"))));
+        assert!(buffer.cached_marker_residue(path));
+        assert!(buffer.has_marker_residue(path));
+        assert!(execute_conflict_save(&repo, &buffer, path).is_err());
+        let snapshot = Backend::open(tmp.path())
+            .unwrap()
+            .conflict_snapshot()
+            .unwrap()
+            .unwrap();
+        let request = Backend::conflict_save_request(
+            snapshot.observation.revision,
+            &buffer,
+            path,
+            snapshot.observation.kind,
+            "",
+        )
+        .unwrap();
+        assert!(Backend::plan_recorded_conflict(tmp.path(), request).is_err());
+        assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), before_file);
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            before_index
+        );
+    }
+}
+
+#[test]
 fn chosen_literal_marker_is_ready_and_saves_directly_and_recorded() {
     if !test_support::run_isolated() {
         return;
@@ -183,6 +223,42 @@ fn assert_hunk_save(case: &HunkCase<'_>, recorded: bool) {
         index.get_path(path, 0).unwrap().id,
         repo.blob(case.expected.as_bytes()).unwrap()
     );
+}
+
+#[test]
+fn crlf_materialization_round_trips_choices_through_save() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for recorded in [false, true] {
+        for incoming in ["incoming\r\n", "incoming\n"] {
+            for (choice, body) in [
+                (HunkChoice::AcceptCurrent, "current\r\n".to_string()),
+                (HunkChoice::AcceptIncoming, incoming.to_string()),
+                (
+                    HunkChoice::BothCurrentFirst,
+                    format!("current\r\n{incoming}"),
+                ),
+                (
+                    HunkChoice::BothIncomingFirst,
+                    format!("{incoming}current\r\n"),
+                ),
+                (HunkChoice::Manual("manual\r\n".into()), "manual\r\n".into()),
+            ] {
+                assert_hunk_save(
+                    &HunkCase {
+                        current: "before\r\ncurrent\r\nafter\r\n",
+                        base: "before\r\nbase\r\nafter\r\n",
+                        incoming: &format!("before\r\n{incoming}after\r\n"),
+                        choices: &[choice],
+                        expected: &format!("before\r\n{body}after\r\n"),
+                        width: 7,
+                    },
+                    recorded,
+                );
+            }
+        }
+    }
 }
 
 #[test]

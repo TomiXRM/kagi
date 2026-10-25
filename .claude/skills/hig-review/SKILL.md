@@ -74,28 +74,40 @@ exact head before merge; the PR body links the review. When the GitHub review
 bot is unavailable, this review is still required — it is not a substitute for
 Codex, Codex is not a substitute for it.
 
-## Placement checklist (quote the page you apply)
+## Placement checklist
 
-**Toolbars** — window-level, frequently used commands that act on the window's
-content. No session exits (abort/cancel), no destructive commands, no controls
-whose target is a sidebar row. Navigation (view switching) sits apart from
-commands. Nothing in a toolbar changes meaning depending on which pane has
-focus.
+Each rule is tagged by where its authority comes from. A reviewer reports a
+`[HIG]` rule as P1/P2 only with the quoted sentence; a `[house]` rule is a Kagi
+convention and is reported as such, never as "HIG says". An `(owner ruling,
+#N)` overrides both and is not re-litigated in review.
 
-**Sidebars** — navigation and selection. A sidebar may carry a short status
-header for the list it shows; it does not carry commands that act on the whole
-window or end a session. Row actions are in context menus or in the row.
+**Toolbars** `[HIG]` — `toolbars.md › Best practices`: "Choose items
+deliberately to avoid overcrowding." / "Keep actions with text labels
+separate." / "Make every toolbar item available as a command in the menu bar."
+`[house]` Navigation (view switching) sits apart from commands; nothing in a
+toolbar changes meaning with pane focus. `(owner ruling, #1764)` Conflict
+session controls (中止 / スキップ / 確認へ進む) are not in the main toolbar.
 
-**Primary / secondary / destructive** — one primary action per surface, on the
-trailing edge of its row or sheet; prominent (filled) buttons stay at one or
-two per view (`buttons.md › Style`). A destructive action is visually
-distinct, never adjacent to the primary, and an uncommon, irreversible one is
-confirmed in a sheet (`alerts.md`). The confirmation names the consequence,
-not the command (#1588: no `git …` strings in copy).
+**Sidebars** `[HIG]` — `sidebars.md`: "A sidebar appears on the leading side of
+a view and lets people navigate between areas of your app or top-level
+collections of content" / "Consider letting people hide the sidebar." The
+sidebar therefore can't be the only place for a command. `(owner ruling,
+#1764)` The conflict sidebar's session header carries `● <op> n/N`, 中止 and
+スキップ; when the sidebar is hidden the #704 operation strip carries them, and
+the Repository menu always does.
 
-**Status is not a button** — an in-progress operation (merge 1/3, rebase step)
-is a status banner or label; its exits (abort) and its advance (continue) are
-controls next to it, separated by space, not mixed into unrelated rows.
+**Primary / secondary / destructive** `[HIG]` — `buttons.md › Style`: "Keep the
+number of prominent buttons to one or two per view." (a ceiling: zero is valid
+when no action is ready). `buttons.md › Role`: "Don't assign the primary role to
+a button that performs a destructive action." `alerts.md › Buttons`: "Cancel
+buttons are typically on the leading side of a row". `[house]` The confirmation
+names the consequence, not the command (#1588: no `git …` strings in copy).
+
+**Status and its controls** `[HIG]` — `feedback.md › Best practices`: "Consider
+integrating status feedback into your interface." `[house]` An in-progress
+operation is a status label, not a button; its exit (中止) is visually separate
+from its advance. `(owner ruling, #1764)` 確認へ進む sits at the trailing edge
+of the file header, separated from the file-level 保存 by a divider.
 
 **Sheets and alerts** `[HIG]` — `alerts.md › Buttons`: "you don't want to make
 a Cancel button the default button… avoid making any button the default

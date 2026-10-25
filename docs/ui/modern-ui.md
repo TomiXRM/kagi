@@ -116,6 +116,14 @@ screen with no siblings to copy (#934's worktree row).
    focused button accepts Space / Return. Warning symbols mark unexpected
    data loss, not reassurance, progress or deliberate removal. Destructive
    filled captions meet 4.5:1 against their actual rest/hover/pressed fills.
+   Commit Panel status labels (#1772) are outline-only `Role::Label`, after
+   aligned filenames and outside the trailing action column. Share the 20px
+   height/radius, not button fill or interaction. Conflict uses destructive
+   hue; localized Rule retains warning hue. Ink meets 4.5:1 and border 3:1
+   against actual row/hover/inactive backgrounds. Selected labels seed from
+   row primary with label-only contrast correction; clicks select the row,
+   never mutate Git. The shared selection-ink policy is tracked separately
+   in [#1791](https://github.com/TomiXRM/kagi/issues/1791).
 5. **Build to the role target**, using theme roles and `scaled_px` / rem so
    zoom (0.7–2.0) scales it. State which owner a value belongs to:
    `sync_gpui_component_theme` (shared — `Theme.radius` changes every

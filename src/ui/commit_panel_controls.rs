@@ -32,7 +32,7 @@ fn button_paint(button: impl IntoElement) -> gpui::Stateful<gpui::Div> {
 
 /// The xsmall action shares its frame with inert status badges.
 pub(super) fn inline_file_control(button: Button, id: &'static str, cx: &gpui::App) -> Button {
-    super::button_style::dense_control(button.xsmall(), id, cx)
+    super::button_style::dense_control(button.xsmall(), id, super::keyboard_nav::RING, cx)
 }
 
 /// The Stage/Unstage button stays inside its virtualized file-row slot.

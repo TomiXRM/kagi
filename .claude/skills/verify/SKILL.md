@@ -507,21 +507,45 @@ These probes are not native VoiceOver or Full Keyboard Access evidence.
 Tier B inspects the live ComboBox and option names and both zoom button/value
 nodes at 100%, 70% and 167%, including disabled announcements.
 
+For #1772 include `commit_panel_density,commit_panel` in the native filter.
+Retain tree/flat, EN/JA, Apple Light/Dark and zoom coverage. Measure actual
+outline pixels: label interior matches its row, caption contrast is at least
+4.5:1 and border at least 3:1. Labels follow aligned filenames outside the
+trailing action column, keep shared height/radius and `Role::Label`, and lack
+independent focus/activation/disabled semantics. Conflict-label click now
+selects its row; require unchanged index/conflict bytes. Convention keeps Rule
+wording and warning hue, with selected on-accent label-only AA correction.
+Tier B captures the same states in EN/JA × Light/Dark.
+
 For #1766/#1767/#1768 include the conflict control/density/roles/progressive,
 danger-sheet, `toast_` and `conflict_draft_restore_io` scenarios. Count actual
 rendered button roles: unresolved Results have zero prominent controls, and a
 ready unsaved Result has exactly one, Save. Danger-sheet root Return preserves
 the same sheet/arm without executing or cancelling; Escape / ⌘. still cancel,
-and focused buttons retain Space / Return. Measure notification bounds against
-each actual center content, not the window: top-trailing below file/graph/editor
-controls, outside sidebar/Inspector, at most 45% of that column. Home/Settings
-reserve a lane only for persistent cards, preserve transient layout, and keep
-Settings' last control reachable. The saved-conflict failure has separate
+and focused buttons retain Space / Return. Quiet adoption captions must meet
+4.5:1 and outlines 3:1 against the real conflict band and rest/hover/pressed fills.
+Measure notification bounds against each actual center content, not the window:
+top-trailing below file/graph/editor controls and source-pane column headers,
+outside sidebar/Inspector, at most 45% of that column. Home/Settings/takeovers
+size the lane from persistent cards only; Info/Success and busy feedback stay
+overlaid even while that lane is open. Assert identical full lane/control bounds
+after transient arrival, expiry/removal and a real held read's busy feedback;
+separate `toast-persistent-stack`, `toast-transient-stack` and outer
+`toast-transient-overlay` probes prevent mixed-host measurement collisions.
+Keep Settings' last control reachable. The saved-conflict failure has separate
 repository identity and full Operation Log / Refresh Repository labels; failed
 refresh retains it, accepted successful recovery dismisses only its own card.
 Tier B repeats these on a plain binary with real merge conflicts and a saved
 draft read failure, including × / Escape, root Return, focused-button activation
 and actual destructive caption contrast in EN/JA and Light/Dark.
+For focused activation evidence, inspect the actual focus-ring pixels before
+pressing Space: the header Copy control precedes Cancel in Tab order, so never
+assume the first Tab focuses Cancel or activate Copy during validation. Capture
+a selected **convention-file** row on opaque accent fill for Rule's local AA
+correction; conflict rows cannot supply that selected-state evidence.
+永続通知の行は永続カードだけで測り、一時通知・処理中表示でも操作位置が
+変わらないことを確認する。フォーカス枠を確認してから Space を押し、
+Copy を作動させない。選択色の証跡には規約ファイルの行を使う。
 
 For #1591 use `KAGI_GUI_E2E_ONLY='toast_,toolbar_overflow,settings_groups'`
 with KEEP_GOING and `KAGI_GUI_E2E_TIMEOUT_SECS=300`.

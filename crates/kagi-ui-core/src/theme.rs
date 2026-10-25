@@ -361,6 +361,38 @@ impl Theme {
         self.readable_text_on(self.color_blocker, backgrounds, 4.6)
     }
 
+    /// Hue-preserving caption and outline ink against the row and its hover fill.
+    /// Cache both semantic roles: long file lists reuse these exact backgrounds.
+    pub fn status_label_text_on(&self, color: u32, background: u32, hover: u32) -> u32 {
+        #[derive(Clone, Copy)]
+        struct CachedInk {
+            key: [u32; 4],
+            ink: u32,
+        }
+        thread_local! {
+            static LAST: std::cell::Cell<[CachedInk; 2]> =
+                const { std::cell::Cell::new([CachedInk { key: [u32::MAX, 0, 0, 0], ink: 0 }; 2]) };
+        }
+        let key = [color, background, hover, self.text_main];
+        LAST.with(|cache| {
+            let entries = cache.get();
+            if let Some(entry) = entries.iter().find(|entry| entry.key == key) {
+                return entry.ink;
+            }
+            let ink = self.readable_text_on(color, &[background, hover], 4.6);
+            // Near middle luminance, even black/white can fall just below the
+            // rounding margin. Keep the AA requirement rather than that margin.
+            let ink = if contrast_ratio(ink, background) >= 4.5 && contrast_ratio(ink, hover) >= 4.5
+            {
+                ink
+            } else {
+                self.readable_text_on(color, &[background, hover], 4.5)
+            };
+            cache.set([CachedInk { key, ink }, entries[0]]);
+            ink
+        })
+    }
+
     /// Caption ink for an opaque destructive button across its actual fills.
     /// Compute when syncing the palette, never in the button render path.
     pub fn destructive_fill_text_on(&self, backgrounds: &[u32]) -> u32 {
@@ -1772,6 +1804,50 @@ mod tests {
                 for background in backgrounds {
                     assert!(contrast_ratio(ink, background) >= 4.5);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn status_label_ink_reads_on_rows_and_keeps_semantic_hues() {
+        for t in THEMES {
+            for color in [t.color_blocker, t.color_warning] {
+                for (background, hover) in [
+                    (t.panel, t.surface),
+                    (t.inactive_selected, t.inactive_selected),
+                    (t.diff_removed_bg, t.diff_removed_bg),
+                ] {
+                    let ink = t.status_label_text_on(color, background, hover);
+                    for fill in [background, hover] {
+                        assert!(
+                            contrast_ratio(ink, fill) >= 4.5,
+                            "{} status #{color:06x} on #{fill:06x}",
+                            t.slug
+                        );
+                    }
+                    let original = to_hsla(color);
+                    let adjusted = to_hsla(ink);
+                    let hue_delta = (original.h - adjusted.h).abs();
+                    assert!(hue_delta.min(1.0 - hue_delta) < 0.02, "{}", t.slug);
+                    assert!((original.s - adjusted.s).abs() < 0.03, "{}", t.slug);
+                    assert_eq!(t.status_label_text_on(color, background, hover), ink);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn status_label_selected_ink_preserves_on_accent_semantics_and_aa() {
+        let t = &crate::theme_apple_light::APPLE_LIGHT;
+        for channel in 0..=255 {
+            let background = channel * 0x010101;
+            let primary = on_accent_foreground(background);
+            let ink = t.status_label_text_on(primary, background, background);
+            assert!(contrast_ratio(ink, background) >= 4.5);
+            assert_eq!((ink >> 16) & 255, (ink >> 8) & 255);
+            assert_eq!((ink >> 8) & 255, ink & 255);
+            if contrast_ratio(primary, background) >= 4.6 {
+                assert_eq!(ink, primary);
             }
         }
     }

@@ -18,7 +18,7 @@ thread_local! {
     static PRESSED: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
     static FOCUS: RefCell<HashMap<String, gpui::FocusHandle>> = RefCell::new(HashMap::new());
     static RADII: RefCell<HashMap<&'static str, gpui::Pixels>> = RefCell::new(HashMap::new());
-    static BADGE_COLORS: RefCell<HashMap<&'static str, (u32, u32)>> = RefCell::new(HashMap::new());
+    static BADGE_COLORS: RefCell<HashMap<&'static str, (u32, u32, u32)>> = RefCell::new(HashMap::new());
 }
 
 pub(crate) fn name(id: &str, text: impl Into<SharedString>) -> SharedString {
@@ -146,17 +146,26 @@ pub fn rendered_radius(id: &str) -> Option<gpui::Pixels> {
     RADII.with(|values| values.borrow().get(id).copied())
 }
 
-/// The actual opaque fill and ink passed to the shared status renderer.
-pub(crate) fn badge_colors(id: &'static str, fill: u32, ink: u32) -> (u32, u32) {
+/// The underlying row background, caption ink and outline of the unfilled label.
+pub(crate) fn badge_colors(
+    id: &'static str,
+    row_background: u32,
+    ink: u32,
+    border: u32,
+) -> (u32, u32, u32) {
     #[cfg(feature = "gui-e2e")]
-    BADGE_COLORS.with(|values| values.borrow_mut().insert(id, (fill, ink)));
+    BADGE_COLORS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(id, (row_background, ink, border))
+    });
     #[cfg(not(feature = "gui-e2e"))]
     let _ = id;
-    (fill, ink)
+    (row_background, ink, border)
 }
 
 #[cfg(feature = "gui-e2e")]
-pub fn rendered_badge_colors(id: &str) -> Option<(u32, u32)> {
+pub fn rendered_badge_colors(id: &str) -> Option<(u32, u32, u32)> {
     BADGE_COLORS.with(|values| values.borrow().get(id).copied())
 }
 

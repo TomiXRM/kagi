@@ -162,9 +162,14 @@ fn open(
         move |window, cx| e2e::mount_root(state, window, cx, &output),
     );
     let app = captured.borrow().clone().unwrap();
+    crate::busy_dismiss::ready(cx, &app);
+    crate::busy_dismiss::wait_ui(cx, &app, "initial operation inspection", |app, _| {
+        app.view().operation.is_none() || app.ui().conflict.is_some()
+    });
     cx.update_window(window.into(), |_, window, cx| {
         app.update(cx, |app, cx| {
             app.set_theme(case.theme, cx);
+            app.show_graph_mode(cx);
             app.open_commit_panel(window, cx);
         });
     })

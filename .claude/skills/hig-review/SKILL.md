@@ -108,6 +108,10 @@ integrating status feedback into your interface." `[house]` An in-progress
 operation is a status label, not a button; its exit (中止) is visually separate
 from its advance. `(owner ruling, #1764)` 確認へ進む sits at the trailing edge
 of the file header, separated from the file-level 保存 by a divider.
+`(owner ruling, #1772)` Status labels are outline-only, after the aligned
+filename and outside the action column; clicking the label selects its row.
+状態ラベルは塗りなしの枠線表示とし、揃ったファイル名の後ろ・操作列の外に
+置く。クリックは行の選択に伝える。
 
 **Sheets and alerts** `[HIG]` — `alerts.md › Buttons`: "you don't want to make
 a Cancel button the default button… avoid making any button the default

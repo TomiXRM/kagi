@@ -388,6 +388,7 @@ impl KagiButton {
 pub(super) fn dense_control<E: Styled + ParentElement>(
     control: E,
     id: &'static str,
+    border_width: f32,
     cx: &gpui::App,
 ) -> E {
     control
@@ -400,7 +401,7 @@ pub(super) fn dense_control<E: Styled + ParentElement>(
         .py_0()
         .text_xs()
         .line_height(super::theme::scaled_px(16.))
-        .border_2()
+        .border(gpui::px(border_width))
         .border_color(gpui::transparent_black())
         .overflow_hidden()
         .ml_2()
@@ -408,22 +409,22 @@ pub(super) fn dense_control<E: Styled + ParentElement>(
         .relative()
         .child(super::e2e::commit_panel_labels::measure_hit_box(
             id,
-            super::keyboard_nav::RING,
+            border_width,
         ))
 }
 
-/// Opaque, named status text: no focus, hover/pressed paint or disabled-action ink.
+/// Outline-only status text: no focus, hover/pressed paint or action semantics.
 pub(super) fn status_badge(
     id: impl Into<ElementId>,
     probe: &'static str,
     label: impl Into<SharedString>,
-    fill: u32,
-    stop_row_click: bool,
+    row_background: u32,
+    ink: u32,
     cx: &gpui::App,
 ) -> gpui::Stateful<gpui::Div> {
     let label = super::e2e::commit_panel_labels::caption(probe, label);
-    let ink = super::theme::on_accent_foreground(fill);
-    let (fill, ink) = super::e2e::commit_panel_labels::badge_colors(probe, fill, ink);
+    let (_, ink, border) =
+        super::e2e::commit_panel_labels::badge_colors(probe, row_background, ink, ink);
     dense_control(
         div()
             .id(id)
@@ -433,18 +434,14 @@ pub(super) fn status_badge(
             .items_center()
             .justify_center()
             .px_2()
-            .bg(rgb(fill))
             .text_color(rgb(ink))
             .cursor_default()
-            .when(stop_row_click, |badge| {
-                badge
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(|_, _, cx| cx.stop_propagation())
-            })
             .child(label),
         probe,
+        1.,
         cx,
     )
+    .border_color(rgb(border))
 }
 
 pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {

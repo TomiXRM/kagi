@@ -194,7 +194,7 @@ pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("lock-stage.txt"), "unstaged\n").unwrap();
     let (app, window) = mount(cx, &repo);
-    app.update(cx, |app, _| app.set_window_active_for_e2e(true));
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     let before = read_oplog_tail_for_repo(&repo, 100).len();
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     with_repository_lock(&repo, || {

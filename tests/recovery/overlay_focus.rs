@@ -57,64 +57,95 @@ fn open_push_from_palette(
 pub fn scenario_palette_push_modal_keys(cx: &mut VisualTestAppContext) {
     let _ports = crate::gui_isolation::PortStore::keep();
     let _shell = crate::gui_isolation::StandInShell::install();
-    let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
-    let before = repo_fingerprint(&repo);
-    let (app, window) = mount(cx, &repo);
-    // The real launch opens the bottom panel on the Terminal tab and starts
-    // the shell, which takes focus (`open_main_window` → `ensure_terminal`).
-    // Escape is bound `!Terminal`, so this is the focus the palette returns to.
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.bottom_panel_open = true;
-            app.bottom_tab = kagi::ui::BottomTab::Terminal;
-            app.ensure_terminal(window, cx);
-        })
-    })
-    .unwrap();
-    draw(cx, window);
-    assert!(
+    for active in [true, false] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let before = repo_fingerprint(&repo);
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+        // The real launch opens the bottom panel on the Terminal tab and starts
+        // the shell, which takes focus (`open_main_window` → `ensure_terminal`).
+        // Escape is bound `!Terminal`, so this is the focus the palette returns to.
         cx.update_window(window, |_, window, cx| {
-            let root = app.read(cx).root_focus.clone().expect("root focus");
-            window.focused(cx).is_some() && !root.is_focused(window)
+            app.update(cx, |app, cx| {
+                app.bottom_panel_open = true;
+                app.bottom_tab = kagi::ui::BottomTab::Terminal;
+                app.ensure_terminal(window, cx);
+            })
         })
-        .unwrap(),
-        "precondition: the started terminal holds focus, as at launch"
-    );
+        .unwrap();
+        draw(cx, window);
+        assert!(
+            cx.update_window(window, |_, window, cx| {
+                let root = app.read(cx).root_focus.clone().expect("root focus");
+                window.focused(cx).is_some() && !root.is_focused(window)
+            })
+            .unwrap(),
+            "precondition: the started terminal holds focus, as at launch"
+        );
 
-    // Enter refuses the blocked plan: the modal closes, the refusal is durable
-    // and the footer carries it.
-    open_push_from_palette(cx, &app, window);
-    keys(cx, window, "enter");
-    cx.read(|cx| {
+        // Enter refuses the blocked plan: the modal closes, the exact blocker is
+        // durable, and one bounded result reaches the active footer or notification.
+        open_push_from_palette(cx, &app, window);
+        keys(cx, window, "enter");
+        cx.read(|cx| {
         let app = app.read(cx);
         assert!(
             app.push_modal().is_none(),
             "Enter must reach the push modal opened from the palette"
         );
-        assert!(
-            matches!(app.status_footer, FooterStatus::Failed(_)),
-            "the refusal must reach the footer, got {:?}",
-            app.status_footer
-        );
+        let expected = match kagi_ui_core::i18n::lang() {
+            kagi_ui_core::i18n::Lang::En => "Push: The operation could not be completed. Review its details before continuing. See the Operation Log for details.",
+            kagi_ui_core::i18n::Lang::Ja => "push: 操作を完了できませんでした。続行する前に詳細を確認してください。 詳しくは操作ログを確認してください。",
+        };
+        if active {
+            match &app.status_footer {
+                FooterStatus::Failed(text) => assert_eq!(text.as_ref(), expected),
+                other => panic!("expected the bounded push refusal, got {other:?}"),
+            }
+        } else {
+            assert!(matches!(&app.status_footer,
+                FooterStatus::Idle(text) if text.is_empty()));
+        }
+        let toasts = app.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert_eq!(toasts.len(), usize::from(!active), "one result surface only");
+        if !active {
+            let repo_name = repo.file_name().unwrap().to_string_lossy();
+            assert_eq!(toasts[0].message.as_ref(), format!("{expected} — {repo_name}"));
+            assert!(matches!(toasts[0].kind, kagi::ui::ToastKind::Error));
+        }
     });
-    assert_eq!(push_refusals(&repo), 1, "Enter must record one refusal");
+        let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "push")
+            .collect();
+        assert_eq!(entries.len(), 1, "Enter must record exactly one refusal");
+        let blocker = kagi_domain::plan_note::PlanNote::Push(
+            kagi_domain::plan_note::PushNote::NoUpstreamNoRemotes {
+                branch: "main".into(),
+            },
+        );
+        assert!(matches!(
+            &entries[0].outcome,
+            OpOutcome::Refused { blockers } if blockers.as_slice() == [blocker.message_en()]
+        ));
 
-    // Escape closes it without recording anything.
-    open_push_from_palette(cx, &app, window);
-    keys(cx, window, "escape");
-    assert!(
-        cx.read(|cx| app.read(cx).push_modal().is_none()),
-        "Escape must close the push modal opened from the palette"
-    );
-    assert_eq!(push_refusals(&repo), 1, "Escape must not refuse or push");
-    assert_eq!(
-        repo_fingerprint(&repo),
-        before,
-        "a refused push mutates nothing"
-    );
+        // Escape closes it without recording anything.
+        open_push_from_palette(cx, &app, window);
+        keys(cx, window, "escape");
+        assert!(
+            cx.read(|cx| app.read(cx).push_modal().is_none()),
+            "Escape must close the push modal opened from the palette"
+        );
+        assert_eq!(push_refusals(&repo), 1, "Escape must not refuse or push");
+        assert_eq!(
+            repo_fingerprint(&repo),
+            before,
+            "a refused push mutates nothing"
+        );
 
-    unmount(cx, app, window);
+        unmount(cx, app, window);
+    }
     eprintln!("[gui-e2e] PASS palette_push_modal_keys");
 }
 

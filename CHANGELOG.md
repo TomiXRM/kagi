@@ -25,7 +25,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Restore native menu/queue regression coverage: explicitly edit the Markdown fixtures for code-input menus and the accessible-field inventory, preserve the selected glyph during right-click, await reopened Commit Panel rows before capturing menu ownership, use a genuinely warned detached checkout for pending confirmation, and assert bounded single-surface checkout refusals while retaining their exact durable blockers. Product behavior and safety gates are unchanged. (#1777)
+- Restore native menu/queue regression coverage: explicitly edit the Markdown fixtures for code-input menus, the accessible-field inventory and PR Peek's real-input dirty guard, preserve the selected glyph during right-click, await reopened Commit Panel rows before capturing menu ownership, use a genuinely warned detached checkout for pending confirmation, and assert bounded single-surface checkout and palette-push refusals while retaining their exact durable blockers. Product behavior and safety gates are unchanged. (#1777)
 - Preserve the staged-merge handoff to Commit Panel when an accepted reload revalidates conflicts; do not recreate the retired Saved workspace behind commit review. Update conflict detector and co-author picker regressions for accepted startup detection and retained-pane failure gates without weakening stale-result rejection or hidden-menu keyboard isolation. (#1776)
   - Check native View workspace exclusivity only among Graph, Pull Requests and Editor, independently of the Editor Details checkmark.
 

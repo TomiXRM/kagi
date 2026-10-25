@@ -4755,9 +4755,15 @@ never both, while the complete blocker remains in a durable refusal receipt), an
 worktree cannot enter the busy queue; its typed blocker reaches the oplog).
 
 For #1777's menu/queue regressions, scope
-`KAGI_GUI_E2E_ONLY='input_code_context_menus,input_names_inventory,file_menu_rejects_stale_owner,queue_merge_refusal_is_shown,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`.
-The Input menu and accessible-field inventory scenarios explicitly select Edit
-for their Markdown fixture; Preview has no painted code Input.
+`KAGI_GUI_E2E_ONLY='input_code_context_menus,input_names_inventory,file_menu_rejects_stale_owner,queue_merge_refusal_is_shown,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses,pr_peek_dirty_guard,pr_peek_read_failure_context,palette_push_modal_keys'`.
+The Input menu, accessible-field inventory and PR Peek dirty-editor helper
+explicitly select Edit for their Markdown fixture; Preview has no painted code
+Input. PR Peek still dirties that real Input with a simulated keystroke and checks
+`any_dirty()` before exercising the dirty guard and read-failure preservation.
+The palette Push focus scenario exercises both window-activity states: raw Enter
+must close the blocked plan, persist exactly its no-remote blocker and display
+the exact bounded active footer or one inactive error notification, never both.
+Raw Escape must still close the next plan without writing another receipt.
 The menu's right-click hits before the selected glyph's
 midpoint so nearest-caret rounding cannot collapse the exclusive-end selection.
 The stale-owner menu scenario awaits the reopened

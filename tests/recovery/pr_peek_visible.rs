@@ -505,7 +505,12 @@ fn dirty_editor(
     use gpui::Focusable;
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
     let editor = cx.read(|cx| app.read(cx).ui().editor_workspace.clone().expect("editor"));
-    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    editor.update(cx, |view, cx| {
+        view.open_tab("README.md".into(), cx);
+        // Markdown defaults to Preview. Mount the real editable Input so the
+        // simulated keystroke below, not a direct draft mutation, makes it dirty.
+        view.set_markdown_preview(false, cx);
+    });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         cx.run_until_parked();

@@ -713,15 +713,16 @@ impl KagiApp {
 
     /// Retire only the presentation that just left the actual resolved body.
     /// Unchanged animation frames neither scan owners nor touch child entities.
+    /// Return whether this frame crossed a body-route visibility boundary.
     pub(super) fn sync_workspace_motion_visibility(
         &mut self,
         center: Option<super::workspace::CenterPane>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         use super::workspace::CenterPane::{CommitList, Diff};
         let visible = self.active_session().zip(center);
         if self.workspace_motion_visible == visible {
-            return;
+            return false;
         }
         let previous = std::mem::replace(&mut self.workspace_motion_visible, visible);
         if let Some((owner, super::workspace::CenterPane::Editor)) = previous {
@@ -747,6 +748,7 @@ impl KagiApp {
                 self.settle_file_list_motion(owner, cx);
             }
         }
+        true
     }
 
     /// The mode the resolver will show. PR and Issues mode both outrank Editor

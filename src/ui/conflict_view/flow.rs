@@ -16,6 +16,11 @@ impl ConflictView {
         }
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn navigation_focus_for_e2e(&self) -> Option<&gpui::FocusHandle> {
+        self.navigation_focus.as_ref()
+    }
+
     /// Navigation captures a pending keystroke, but never persists or stages it.
     pub fn conflict_show_page(&mut self, page: ConflictPage, cx: &Context<Self>) {
         self.capture_result_for_navigation(cx);

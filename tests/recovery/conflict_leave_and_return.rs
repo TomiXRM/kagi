@@ -16,6 +16,7 @@ pub fn scenario_conflict_leave_and_return(cx: &mut VisualTestAppContext) {
     let original = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
         leave_and_return(cx, lang);
+        navigation_and_sidebar_departure(cx, lang);
     }
     i18n::set_lang(original);
 }
@@ -96,19 +97,7 @@ fn leave_and_return(cx: &mut VisualTestAppContext, lang: Lang) {
         });
         assert!(!drawn(cx, window, "conflict-result-editor"));
         if !external_change {
-            assert!(
-                cx.update_window(window, |_, window, cx| {
-                    app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
-                })
-                .unwrap(),
-                "keyboard departure retires the hidden Result focus"
-            );
-            cx.simulate_keystrokes(window, "end");
-            cx.run_until_parked();
-            cx.read(|cx| {
-                let state = app.read(cx);
-                assert_eq!(state.ui().selected, Some(state.view().rows.len() - 1));
-            });
+            assert_graph_keyboard(cx, &app, window);
         }
         crate::native_ax::activate(cx);
         assert!(drawn(cx, window, "operation-strip-back"));
@@ -228,6 +217,92 @@ fn leave_and_return(cx: &mut VisualTestAppContext, lang: Lang) {
         }
     }
     drop(input);
+    drop(conflict);
+    unmount(cx, app, window);
+}
+
+fn assert_graph_keyboard(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: gpui::AnyWindowHandle,
+) {
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
+        })
+        .unwrap(),
+        "departure retires every hidden conflict focus owner to the root"
+    );
+    for key in ["home", "end"] {
+        cx.simulate_keystrokes(window, key);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let expected = if key == "home" {
+                0
+            } else {
+                state.view().rows.len() - 1
+            };
+            assert_eq!(state.ui().selected, Some(expected), "Graph handles {key}");
+        });
+    }
+}
+
+fn navigation_and_sidebar_departure(cx: &mut VisualTestAppContext, lang: Lang) {
+    let fixture = fixture();
+    let repo = fixture.path();
+    let before = repo_fingerprint(repo);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        app.detect_conflict_mode(cx);
+    });
+    cx.run_until_parked();
+    click_control(cx, window, "conflict-row-1");
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    click_control(cx, window, "tb-graph-mode");
+    click_control(cx, window, "operation-strip-back");
+    crate::native_ax::activate(cx);
+    assert!(drawn(cx, window, "conflict-result-editor"));
+    for sidebar in [false, true] {
+        assert!(
+            cx.update_window(window, |_, window, cx| {
+                let view = conflict.read(cx);
+                assert!(!view.result_editing);
+                view.navigation_focus_for_e2e()
+                    .is_some_and(|focus| focus.is_focused(window))
+            })
+            .unwrap(),
+            "non-editing Back focuses the retained navigation handle"
+        );
+        if sidebar {
+            click_control(cx, window, "conflict-row-1");
+            assert!(drawn(cx, window, "conflict-result-editor"));
+            let row = crate::native_ax::node(cx, window, "conflict-row-1".into());
+            assert_eq!(
+                crate::native_ax::focused(cx, window)["element_id"],
+                row["element_id"],
+                "depart from an actually focused sidebar row"
+            );
+        }
+        cx.simulate_keystrokes(window, "cmd-shift-g");
+        cx.run_until_parked();
+        assert!(!drawn(cx, window, "conflict-result-editor"));
+        assert_graph_keyboard(cx, &app, window);
+        click_control(cx, window, "operation-strip-back");
+        assert!(drawn(cx, window, "conflict-result-editor"));
+        cx.read(|cx| {
+            assert_eq!(
+                app.read(cx).ui().conflict.as_ref().unwrap().entity_id(),
+                conflict.entity_id()
+            );
+            assert_eq!(
+                conflict.read(cx).editing.as_deref(),
+                Some(Path::new("b.txt"))
+            );
+        });
+    }
+    assert_eq!(repo_fingerprint(repo), before);
     drop(conflict);
     unmount(cx, app, window);
 }

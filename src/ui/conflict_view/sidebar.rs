@@ -1,6 +1,7 @@
 //! One roving source list with top-down sections and one shared scroll viewport.
 use super::*;
 use crate::ui::{keyboard_nav, list_a11y};
+use gpui::Focusable;
 use kagi_ui_core::file_tree::{build_file_tree_opt, TreeRow};
 use std::rc::Rc;
 
@@ -37,6 +38,27 @@ pub(super) struct SidebarState {
 }
 
 impl ConflictView {
+    /// All retained focus owners, including controls inside the source rows.
+    pub(crate) fn contains_focused_any(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.sidebar.focus.holds_focus(window, cx)
+            || [
+                self.navigation_focus.as_ref(),
+                self.sidebar_toggle_focus.as_ref(),
+                self.reset_all_focus.as_ref(),
+                self.sidebar.session_focus.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|focus| focus.contains_focused(window, cx))
+            || self.editor_inputs.as_ref().is_some_and(|inputs| {
+                inputs
+                    .result
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            })
+    }
+
     pub(super) fn rebuild_tree(&mut self) {
         self.sidebar.entries.clear();
         if let Some(mode) = &self.mode {

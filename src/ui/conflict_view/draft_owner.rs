@@ -324,7 +324,11 @@ impl ConflictView {
         .detach();
     }
 
-    pub(crate) fn note_draft_result(&mut self, generation: Option<u64>, result: Result<(), String>) {
+    pub(crate) fn note_draft_result(
+        &mut self,
+        generation: Option<u64>,
+        result: Result<(), String>,
+    ) {
         match result {
             Ok(()) => self.draft_persist_failed = None,
             Err(error) => {

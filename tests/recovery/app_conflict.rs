@@ -577,9 +577,22 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    cx.run_until_parked();
+    let pane = cx
+        .read(|cx| app.read(cx).ui().conflict.clone())
+        .expect("accepted startup detection has settled");
+    pane.update(cx, |view, _| {
+        view.selected_hunk = 3;
+        view.mode
+            .as_mut()
+            .unwrap()
+            .buffer
+            .apply_choice(Path::new("file.txt"), kagi_git::ResolutionChoice::Incoming)
+            .unwrap();
+    });
     let payload = e2e::detect_payload_for_test(&repo, "main");
 
-    // The owner the job would have frozen, had it launched one visit earlier.
+    // A different visit cannot replace the pane installed by accepted startup.
     let stale_owner = cx
         .read(|cx| {
             let app = app.read(cx);
@@ -592,20 +605,60 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
         })
         .expect("attached");
 
-    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
+    assert!(cx.read(|cx| app.read(cx).ui().conflict_detected));
     app.update(cx, |app, cx| {
         app.ui_mut().expect("active session").conflict_detected = true;
-        app.apply_conflict_detect(stale_owner, payload, cx);
+        app.apply_conflict_detect(stale_owner.clone(), payload, cx);
     });
     cx.run_until_parked();
-    assert!(
-        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
-        "a payload from another visit must not build this tab's conflict editor"
-    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(
+            state.ui().conflict.as_ref().map(|view| view.entity_id()),
+            Some(pane.entity_id()),
+            "a payload from another visit must not replace this tab's conflict editor"
+        );
+        let view = pane.read(cx);
+        assert_eq!(
+            view.selected_hunk, 3,
+            "wrong-owner results retain navigation"
+        );
+        assert!(
+            view.mode
+                .as_ref()
+                .unwrap()
+                .buffer
+                .has_resolution(Path::new("file.txt")),
+            "wrong-owner results retain the live resolution"
+        );
+    });
     assert!(
         !cx.read(|cx| app.read(cx).ui().conflict_detected),
         "a stale callback must re-arm only its frozen owner's detector guard"
     );
+    // The unchanged-observation adoption path also preserves the pane above.
+    // Distinguish rejection from that path by delivering the wrong visit
+    // before the current visit has installed any pane at all.
+    let payload = e2e::detect_payload_for_test(&repo, "main");
+    app.update(cx, |app, cx| {
+        let ui = app.ui_mut().expect("active session");
+        ui.conflict = None;
+        ui.conflict_detected = true;
+        assert!(
+            app.view().operation.is_some(),
+            "the accepted read is still conflicted"
+        );
+        app.apply_conflict_detect(stale_owner, payload, cx);
+        assert!(
+            app.ui().conflict.is_none(),
+            "a wrong-visit result must never create the current visit's pane"
+        );
+        assert!(
+            !app.ui().conflict_detected,
+            "a wrong-visit result re-arms without falling through to adoption"
+        );
+    });
+    drop(pane);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS a detector result for another owner is dropped (#707)");
 }
@@ -659,6 +712,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
         staged,
     ] {
         app.update(cx, |app, cx| {
+            e2e::await_conflict_revalidation(app);
             app.ui_mut().expect("active session").conflict_detected = true;
             app.apply_conflict_detect(owner.clone(), stale, cx);
         });
@@ -679,10 +733,22 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
             Some(revision.clone()),
             "and must not replace what it shows"
         );
-        assert!(
-            !cx.read(|cx| app.read(cx).ui().conflict_detected),
-            "dropping a stale outcome re-arms the detector"
-        );
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(
+                state.ui().conflict.as_ref().map(|pane| pane.entity_id()),
+                Some(view.entity_id()),
+                "stale outcomes retain the exact live pane"
+            );
+            assert!(
+                state.ui().conflict_detected,
+                "stale outcomes do not re-arm a settled detector"
+            );
+            assert!(
+                state.ui().panes_revalidating(),
+                "stale outcomes cannot acknowledge the checked-read gate"
+            );
+        });
     }
 
     // Once the accepted read agrees, the same producer now installs a fresh
@@ -1039,10 +1105,9 @@ pub fn scenario_conflict_pane_survives_activation(cx: &mut VisualTestAppContext)
     eprintln!("[gui-e2e] PASS conflict_pane_survives_activation");
 }
 
-/// #722 (codex P1): the pane pass waits on a detection against the accepted
-/// read. If that detection comes back stale (here `OpenFailed` while the read
-/// still shows an operation), the gate must not stay shut until some unrelated
-/// publish — the unconfirmed pane is dropped and the gate settles.
+/// A stale open failure owns neither the retained pane nor its checked-read
+/// gate. A fresh restore failure also retains the pane, but closes the gate
+/// until a successful detection can acknowledge the accepted read.
 pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppContext) {
     use kagi::ui::e2e::ConflictDetectOutcome;
 
@@ -1055,6 +1120,7 @@ pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppC
         cx.read(|cx| app.read(cx).ui().conflict.is_some()),
         "precondition: pane"
     );
+    let pane = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
     let owner = cx
         .read(|cx| {
             let app = app.read(cx);
@@ -1063,25 +1129,74 @@ pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppC
         })
         .expect("attached");
 
+    for awaiting in [false, true] {
+        let gate = app.update(cx, |app, cx| {
+            if awaiting {
+                e2e::await_conflict_revalidation(app);
+            }
+            let gate = app.ui().pane_revalidation;
+            let detected = app.ui().conflict_detected;
+            app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed(None), cx);
+            assert_eq!(app.ui().conflict_detected, detected);
+            gate
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(
+                state.ui().pane_revalidation,
+                gate,
+                "a stale failure leaves the gate unchanged"
+            );
+            assert_eq!(
+                state.ui().conflict.as_ref().map(|view| view.entity_id()),
+                Some(pane.entity_id()),
+                "a stale failure cannot discard the retained pane"
+            );
+        });
+    }
+    // Produce a real restore failure for this accepted operation, not an
+    // observation-free OpenFailed(None), which is necessarily stale here.
+    use std::os::unix::fs::PermissionsExt;
+    let store = kagi_git::Backend::open(&repo)
+        .unwrap()
+        .resolution_buffer_from_repo()
+        .unwrap()
+        .autosave()
+        .unwrap();
+    let permissions = std::fs::metadata(&store).unwrap().permissions();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+    let failure = e2e::detect_payload_for_test(&repo, "main");
+    std::fs::set_permissions(&store, permissions).unwrap();
+    assert!(matches!(
+        failure,
+        ConflictDetectOutcome::OpenFailed(Some(_))
+    ));
+    // First settle the artificial wait with an accepted success, then show
+    // that the fresh failure independently closes an otherwise open gate.
+    let success = e2e::detect_payload_for_test(&repo, "main");
     app.update(cx, |app, cx| {
-        e2e::await_conflict_revalidation(app);
-        assert!(
-            app.ui().panes_revalidating(),
-            "precondition: awaiting detection"
-        );
-        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed(None), cx);
+        app.apply_conflict_detect(owner.clone(), success, cx);
+        assert!(!app.ui().panes_revalidating());
+        app.apply_conflict_detect(owner, failure, cx);
     });
     cx.read(|cx| {
-        let app = app.read(cx);
+        let state = app.read(cx);
         assert!(
-            !app.ui().panes_revalidating(),
-            "awaited-detection-stale-settles: the gate stayed shut after a stale detection"
+            state.ui().panes_revalidating(),
+            "a fresh restore failure closes the gate"
         );
         assert!(
-            app.ui().conflict.is_none(),
-            "awaited-detection-stale-settles: an unconfirmed conflict pane stayed actionable"
+            state.ui().conflict_detected,
+            "failed restore waits for explicit revalidation"
+        );
+        assert!(state.ui().conflict_restore_failed);
+        assert_eq!(
+            state.ui().conflict.as_ref().map(|view| view.entity_id()),
+            Some(pane.entity_id()),
+            "a fresh failure retains the live pane behind the closed gate"
         );
     });
+    drop(pane);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_awaited_detection_stale_settles");
 }

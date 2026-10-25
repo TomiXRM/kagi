@@ -221,15 +221,18 @@ fn run_case(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>, dis
         kagi_ui_core::klog::tail()
             .iter()
             .filter(|line| {
-                line.starts_with(failure_log_prefix)
-                    && line.contains(denied.path.to_str().unwrap())
+                line.starts_with(failure_log_prefix) && line.contains(denied.path.to_str().unwrap())
             })
             .count()
     };
     let before_logs = failure_logs();
     replace_result(cx, &app, window, &input, DRAFT);
     assert_live(cx, &app, window);
-    assert_eq!(failure_logs(), before_logs + 1, "one line per failed generation");
+    assert_eq!(
+        failure_logs(),
+        before_logs + 1,
+        "one line per failed generation"
+    );
     assert!(
         failed_receipts(&repo) > before,
         "autosave failure must be durable in oplog"

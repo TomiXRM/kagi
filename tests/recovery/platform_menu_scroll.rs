@@ -370,6 +370,9 @@ pub fn scenario_filter_menu_then_settings(cx: &mut VisualTestAppContext) {
 pub fn scenario_coauthor_menu_under_conflict(cx: &mut VisualTestAppContext) {
     let fixture = crate::app_conflict::content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    // Startup now detects accepted conflicted reads automatically. Start
+    // clean so the picker is genuinely visible before an external conflict.
+    crate::macos::git(&repo, &["merge", "--abort"]);
     let (app, win) = crate::macos::mount(cx, &repo);
     cx.run_until_parked();
     app.update(cx, |app, cx| {
@@ -389,7 +392,17 @@ pub fn scenario_coauthor_menu_under_conflict(cx: &mut VisualTestAppContext) {
         "precondition: the co-author picker is the front layer"
     );
 
-    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    let merge = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["merge", "feature"])
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "the external merge must conflict");
+    app.update(cx, |app, cx| {
+        app.ui_mut().unwrap().conflict_detected = false;
+        app.detect_conflict_mode_async(cx);
+    });
     cx.run_until_parked();
     cx.update_window(win, |_, window, cx| {
         window.refresh();

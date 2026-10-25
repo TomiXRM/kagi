@@ -287,6 +287,7 @@ pub struct ResolvedLine {
 /// a complete run of at least seven `<`, `=` or `>`, followed by space or EOL.
 pub fn resolution_text_has_conflict_marker(text: &str) -> bool {
     text.split('\n').any(|line| {
+        let line = line.strip_suffix('\r').unwrap_or(line);
         let bytes = line.as_bytes();
         let Some(&marker) = bytes.first() else {
             return false;

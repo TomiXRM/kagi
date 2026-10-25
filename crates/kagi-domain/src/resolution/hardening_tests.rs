@@ -1,5 +1,24 @@
 use super::*;
 
+#[test]
+fn crlf_manual_marker_residue_blocks_at_any_supported_width() {
+    for marker in ["<<<<<<<", "=======", "========", ">>>>>>>", "<<<<<<< ours"] {
+        let text = format!("before\r\n{marker}\r\nafter\r\n");
+        assert!(resolution_text_has_conflict_marker(&text));
+        assert!(resolved_lines_have_conflict_marker(&text_to_lines(
+            &text,
+            LineOrigin::Manual
+        )));
+        assert!(!resolved_lines_have_conflict_marker(&text_to_lines(
+            &text,
+            LineOrigin::Current
+        )));
+    }
+    for text in ["======\r\n", "========text\r\n", "=======\r\r\n"] {
+        assert!(!resolution_text_has_conflict_marker(text));
+    }
+}
+
 fn hunk(current_len: usize, incoming_len: usize, choice: HunkChoice) -> ConflictHunk {
     ConflictHunk {
         current: (0..current_len).map(|i| format!("c{i}")).collect(),

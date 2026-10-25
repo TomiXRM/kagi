@@ -156,6 +156,7 @@ fn has_conflict_marker(bytes: &[u8]) -> bool {
 /// - `=======`  — exactly 7 `=` as the whole line, or `======= ` followed by
 ///   more (the divider).  Matching the bare 7-`=` line is the ADR-0043 rule.
 fn line_is_conflict_marker(line: &[u8]) -> bool {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
     is_marker_run(line, b'<') || is_marker_run(line, b'>') || is_equals_marker(line)
 }
 
@@ -318,6 +319,9 @@ mod tests {
         assert!(line_is_conflict_marker(b">>>>>>> feature"));
         assert!(line_is_conflict_marker(b"======="));
         assert!(line_is_conflict_marker(b"======= label"));
+        assert!(line_is_conflict_marker(b"=======\r"));
+        assert!(line_is_conflict_marker(b"<<<<<<< ours\r"));
+        assert!(!line_is_conflict_marker(b"========\r"));
         // Not markers:
         assert!(!line_is_conflict_marker(b"<<<<<< only six"));
         assert!(!line_is_conflict_marker(b"<<<<<<<no space"));

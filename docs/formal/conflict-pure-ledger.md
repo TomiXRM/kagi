@@ -13,6 +13,17 @@ content, zdiff3 base markers, both adoption orders and manual Results through
 direct and recorded Save. These are test definitions, not formal proof or a
 claim of native GUI verification.
 
+The adjacent manual-residue predicate *is* extracted. Review adds the following
+finite row, independent of parser recognition:
+
+| Property | Domain | Expected | Broken variant |
+|---|---|---|---|
+| `CRLFManualMarkerResidue` | widths 6/7/8/10 × `<=>` × LF/CRLF × Manual/Current/Incoming/Context (96 cases) | HOLD: complete runs ≥7 block only Manual | `crlf-marker-missed` retains CR and misses bare delimiters |
+
+The staged-content checklist strips the same optional CR while retaining its
+separate seven-wide labeled-opener/separator policy. It does not adopt the
+resolution gate's wider-run policy.
+
 ## Runtime reconciliation — 2026-10-24, main `834a1796`
 
 These are historical, hand-extracted models, not Rust execution or an automatic

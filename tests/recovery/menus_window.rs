@@ -179,14 +179,16 @@ pub fn scenario_conflict_repository_menu(cx: &mut VisualTestAppContext) {
     i18n::set_lang(old_lang);
 }
 
-/// Fully saved resolutions mount CommitPanel, not ConflictView. Both exits
-/// must still open the same guarded confirmation without changing the repo.
+/// A saved merge first exposes the read-owned fallback, then #1755 mounts its
+/// overview. Menu and visible Abort share the checked-read/confirmation gates.
 fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
     let fixture = crate::app_conflict::content_fixture();
     let repo = fixture.path();
     std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
     git(repo, &["add", "file.txt"]);
+    let hold = crate::conflict_draft_inspection::DetectionHold::new(cx, false);
     let (app, win) = mount_short(cx, repo);
+    hold.wait(cx, &app);
     draw(cx, win);
     cx.read(|cx| {
         assert!(app.read(cx).ui().conflict.is_none());
@@ -199,12 +201,26 @@ fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
         .unwrap()
     };
     let before = crate::macos::repo_fingerprint(repo);
+    assert!(
+        !available(cx),
+        "the pending checked read refuses menu Abort"
+    );
+    invoke(cx, &app, win, "repo.conflictAbort");
+    cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_none()));
+    assert_eq!(crate::macos::repo_fingerprint(repo), before);
+    drop(hold);
+    cx.run_until_parked();
+    e2e::clear_control_bounds(win.window_id(), "operation-strip-abort");
+    draw(cx, win);
+    cx.read(|cx| assert!(app.read(cx).ui().conflict.is_some()));
+    assert!(e2e::control_bounds(win.window_id(), "operation-strip-abort").is_none());
+    assert!(e2e::control_bounds(win.window_id(), "conflict-abort").is_some());
     app.update(cx, |app, cx| {
         app.planning = Some("merge-plan");
         cx.notify();
     });
     draw(cx, win);
-    assert!(!available(cx), "planning blocks fallback menu Abort");
+    assert!(!available(cx), "planning blocks menu Abort");
     invoke(cx, &app, win, "repo.conflictAbort");
     cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_none()));
     app.update(cx, |app, cx| {
@@ -215,8 +231,8 @@ fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
         i18n::set_lang(lang);
         draw(cx, win);
         assert!(available(cx));
-        let strip = e2e::control_bounds(win.window_id(), "operation-strip-abort").unwrap();
-        cx.simulate_click(win, strip.center(), gpui::Modifiers::none());
+        let abort = e2e::control_bounds(win.window_id(), "conflict-abort").unwrap();
+        cx.simulate_click(win, abort.center(), gpui::Modifiers::none());
         cx.run_until_parked();
         cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));
         app.update(cx, |app, cx| {
@@ -226,7 +242,7 @@ fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
         draw(cx, win);
         invoke(cx, &app, win, "repo.conflictAbort");
         cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));
-        assert!(!available(cx), "modal blocks fallback menu Abort too");
+        assert!(!available(cx), "modal blocks menu Abort too");
         assert_eq!(crate::macos::repo_fingerprint(repo), before);
         app.update(cx, |app, cx| {
             app.cancel_conflict_abort();

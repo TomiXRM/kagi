@@ -588,8 +588,10 @@ pub enum Msg {
     ConflictContinue,
     ConflictAbort,
     ConflictSkip,
-    /// Conflict dashboard: armed label on the two-stage Skip button.
+    /// Full armed Skip label, shared by the strip and sidebar tooltip.
     ConflictConfirmSkip,
+    /// Short armed sidebar button label; the full action stays in its tooltip.
+    ConflictConfirmSkipButton,
     /// Repository menu titles (distinct from sentence-case buttons).
     MenuConfirmSkip,
     MenuAbortOperation,
@@ -3272,6 +3274,8 @@ impl Msg {
             (Ja, ConflictSectionResolved) => "Resolved ファイル",
             (En, ConflictConfirmSkip) => "Confirm skip",
             (Ja, ConflictConfirmSkip) => "スキップを確定",
+            (En, ConflictConfirmSkipButton) => "Confirm",
+            (Ja, ConflictConfirmSkipButton) => "確定",
             (En, MenuConfirmSkip) => "Confirm Skip",
             (Ja, MenuConfirmSkip) => "スキップを確定",
             (En, MenuAbortOperation) => "Abort Operation…",

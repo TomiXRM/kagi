@@ -17,6 +17,7 @@ thread_local! {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static SESSION_HEADER_LABEL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    static SESSION_SKIP_LABEL: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
 }
 
 impl ConflictView {
@@ -28,6 +29,11 @@ impl ConflictView {
     #[cfg(feature = "gui-e2e")]
     pub fn session_header_label_for_e2e() -> String {
         SESSION_HEADER_LABEL.with(|value| value.borrow().clone())
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn session_skip_label_for_e2e() -> &'static str {
+        SESSION_SKIP_LABEL.with(|value| value.get())
     }
 
     pub(super) fn render_workspace(
@@ -387,11 +393,19 @@ impl ConflictView {
             )
             .width
             .ceil();
-        let skip_label = if mode.skip_approval.is_some() {
-            Msg::ConflictConfirmSkip.t()
+        let skip_armed = mode.skip_approval.is_some();
+        let skip_label = if skip_armed {
+            Msg::ConflictConfirmSkipButton.t()
         } else {
             Msg::ConflictSkip.t()
         };
+        let skip_help = if skip_armed {
+            Msg::ConflictConfirmSkip.t()
+        } else {
+            skip_label
+        };
+        #[cfg(feature = "gui-e2e")]
+        SESSION_SKIP_LABEL.with(|value| value.set(skip_label));
         #[cfg(feature = "gui-e2e")]
         SESSION_HEADER_LABEL.with(|value| {
             let mut value = value.borrow_mut();
@@ -470,11 +484,13 @@ impl ConflictView {
                             div().flex_1().min_w(px(0.)).child(e2e::measure_control(
                                 "conflict-skip",
                                 crate::ui::button_style::apply_role(
-                                    Button::new("conflict-skip").aria_label(skip_label).child(
+                                    Button::new("conflict-skip").aria_label(skip_help).child(
                                         div()
                                             .flex_1()
                                             .min_w(px(0.))
-                                            .truncate()
+                                            .line_height(gpui::relative(1.))
+                                            .whitespace_nowrap()
+                                            .when(!skip_armed, |label| label.truncate())
                                             .child(e2e::measure_inside("conflict-skip-label"))
                                             .child(skip_label),
                                     ),
@@ -503,7 +519,7 @@ impl ConflictView {
                                     })
                                     .detach();
                                 }))
-                                .hover_tooltip("conflict-skip-help", skip_label),
+                                .hover_tooltip("conflict-skip-help", skip_help),
                             )),
                         )
                     }),

@@ -166,6 +166,7 @@ fn assert_operation_placement(
         "conflict-abort",
         "conflict-save",
         "conflict-skip",
+        "conflict-skip-label",
         "conflict-continue",
         "tb-graph-mode",
         "tb-pr-mode",
@@ -192,9 +193,10 @@ fn assert_operation_placement(
             && inner.top() >= outer.top()
             && inner.bottom() <= outer.bottom()
     };
-    let (hidden, sequencer, identity) = cx.read(|cx| {
+    let (hidden, sequencer, identity, skip_armed) = cx.read(|cx| {
         let view = conflict.read(cx);
-        let op = &view.mode.as_ref().unwrap().session.op;
+        let mode = view.mode.as_ref().unwrap();
+        let op = &mode.session.op;
         let identity = match op {
             kagi_git::conflicts::ConflictOp::Rebase { step, total, .. } => {
                 assert!(*step > 0 && *total >= *step);
@@ -202,7 +204,12 @@ fn assert_operation_placement(
             }
             op => op.slug().to_owned(),
         };
-        (view.sidebar_hidden, op.is_sequencer(), identity)
+        (
+            view.sidebar_hidden,
+            op.is_sequencer(),
+            identity,
+            mode.skip_approval.is_some(),
+        )
     });
     let toolbar = bounds("toolbar-row");
     let header = bounds("conflict-file-header");
@@ -251,26 +258,52 @@ fn assert_operation_placement(
         let identity_paint =
             e2e::control_paint(window.window_id(), "conflict-session-identity").unwrap();
         assert!(!identity_paint.ellipsis && !identity_paint.middle_ellipsis);
+        if sequencer && skip_armed {
+            assert_eq!(
+                ConflictView::session_skip_label_for_e2e(),
+                Msg::ConflictConfirmSkipButton.t(),
+                "the rendered armed caption is the short EN/JA confirmation verb"
+            );
+            let caption = e2e::control_paint(window.window_id(), "conflict-skip-label").unwrap();
+            assert!(!caption.ellipsis && !caption.middle_ellipsis);
+            assert!(
+                contains(bounds("conflict-skip"), caption.bounds),
+                "armed {:?} caption={caption:?}, button={:?}",
+                i18n::lang(),
+                bounds("conflict-skip")
+            );
+            assert!(contains(caption.mask, caption.bounds));
+        }
         cx.update_window(window, |_, window, _| {
             let mut font = kagi_ui_core::fonts::ui_font();
             font.weight = gpui::FontWeight::SEMIBOLD;
             for text in [
                 identity.as_str(),
                 "cherry-pick 10/10",
-                if sequencer {
+                if sequencer && skip_armed {
+                    Msg::ConflictConfirmSkipButton.t()
+                } else if sequencer {
                     Msg::ConflictSkip.t()
                 } else {
                     identity.as_str()
                 },
             ] {
+                let caption = (text != identity && text != "cherry-pick 10/10").then(|| {
+                    e2e::control_paint(window.window_handle().window_id(), "conflict-skip-label")
+                        .unwrap()
+                });
+                let mut text_font = font.clone();
+                if let Some(caption) = caption {
+                    text_font.weight = caption.font_weight;
+                }
                 let width = window
                     .text_system()
                     .shape_line(
                         text.to_owned().into(),
-                        theme::scaled_px(12.),
+                        caption.map_or(theme::scaled_px(12.), |paint| paint.font_size),
                         &[gpui::TextRun {
                             len: text.len(),
-                            font: font.clone(),
+                            font: text_font,
                             color: gpui::rgb(theme::theme().text_main).into(),
                             ..Default::default()
                         }],

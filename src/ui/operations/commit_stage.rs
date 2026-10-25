@@ -118,7 +118,7 @@ impl KagiApp {
                 return;
             }
         };
-        let status = match backend.working_tree_status() {
+        let (status, digest) = match backend.commit_panel_status() {
             Ok(status) => status,
             Err(error) => {
                 klog!("commit_panel: working_tree_status error: {}", error);
@@ -134,7 +134,7 @@ impl KagiApp {
         };
         let diffstat = self.ui().commit_panel.clone().map(|panel| {
             panel.update(cx, |panel, cx| {
-                panel.apply_status(&backend, status);
+                panel.apply_status(&backend, status, digest);
                 let mut diffstat = WipDiffStat::default();
                 for stat in panel
                     .state

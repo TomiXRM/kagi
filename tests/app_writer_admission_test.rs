@@ -741,3 +741,55 @@ fn continue_pre_execution_failure_and_known_staged_result_release_normally() {
     assert!(sessions.reconcile_ids().is_empty());
     sessions.write_lease(&fixture.linked).unwrap().complete();
 }
+
+#[test]
+fn continue_receipt_exists_before_lease_release_without_ui_completion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let (fixture, session, mut buffer) = continue_stash_fixture();
+    buffer
+        .apply_choice(Path::new("file"), kagi_git::ResolutionChoice::Incoming)
+        .unwrap();
+    let backend = Backend::open(&fixture.repo).unwrap();
+    let expected = backend
+        .conflict_snapshot()
+        .unwrap()
+        .unwrap()
+        .observation
+        .revision;
+    let before = backend
+        .plan_conflict_continue(&session, &buffer, &expected)
+        .unwrap()
+        .current;
+    let mut sessions = Sessions::new();
+    let guard = sessions
+        .write_lease(&fixture.repo)
+        .unwrap()
+        .for_op("conflict-continue");
+    let report = Backend::run_recorded_conflict_continue(
+        &fixture.repo,
+        &session,
+        &buffer,
+        &expected,
+        before.clone(),
+    );
+    assert!(report.result.is_ok());
+    assert!(
+        sessions.has_leases(),
+        "mutation owner records before settlement"
+    );
+    let receipts = kagi_git::oplog::read_oplog_tail(100);
+    assert_eq!(receipts.len(), 1);
+    assert!(matches!(receipts[0].outcome, OpOutcome::Success { .. }));
+    assert!(Backend::open(&fixture.repo)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .is_none());
+    assert!(settle_conflict_write(guard, &report.result, before).is_none());
+    drop(report);
+    assert!(!sessions.has_leases());
+    assert_eq!(kagi_git::oplog::read_oplog_tail(100).len(), 1);
+}

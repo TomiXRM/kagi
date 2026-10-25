@@ -78,6 +78,15 @@ consume them are later work.
 - Recording still uses the existing append/error policy and schema; this does
   not make failed filesystem writes durable. Other non-run owners remain a
   separate migration, not a second implementation of this boundary.
+- **2026-10-25 (#1740):** Continue, Skip and merge handoff use recorded backend
+  entry points. Execution, observed ref moves and receipt finalization finish
+  before the background caller settles its write lease. UI completion consumes
+  the attempted `Recording` without retrying append, including on another tab.
+  A successful merge handoff now has its own receipt even though MERGE_HEAD
+  remains for the separately approved commit. Append failure is not successful
+  persistence; it retains both mutation outcome and the required acknowledgement.
+  This closes the host/callback lifetime gap, not an OS crash between Git's
+  mutation and the oplog append.
 
 ### Schema fields (#333)
 

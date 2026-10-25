@@ -357,15 +357,20 @@ impl KagiApp {
                         .get(&owner.session)
                         .is_some_and(|ui| ui.conflict.is_some());
                 if let Some(error) = error {
-                    self.record_operation_completion(
-                        "conflict-draft-restore",
-                        StateSummary {
-                            head: "unobserved".into(),
-                            dirty: "unobserved".into(),
-                        },
-                        OpOutcome::Failed { error: error.cause },
-                        Some(Vec::new()),
-                        &owner.path,
+                    let recording = kagi_git::backend::recording::finalize(
+                        kagi_git::oplog::OpLogEntry::new(
+                            "conflict-draft-restore",
+                            owner.path.display().to_string(),
+                            StateSummary {
+                                head: "unobserved".into(),
+                                dirty: "unobserved".into(),
+                            },
+                            OpOutcome::Failed { error: error.cause },
+                        )
+                        .with_ref_moves(Some(Vec::new())),
+                    );
+                    self.present_operation_completion(
+                        &recording,
                         active_owner && exact_visit,
                         false,
                         Some(Msg::conflict_draft_restore_failed()),

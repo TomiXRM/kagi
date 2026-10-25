@@ -83,11 +83,38 @@ fn skip_unwritable_draft_directory_is_blocked_without_repository_changes() {
     assert!(plan.plan.blockers.is_empty());
     obstruct_draft_directory();
     let before = repository_bytes(tmp.path());
-    let error = backend.execute_conflict_skip(&plan, &buffer).unwrap_err();
+    let report =
+        Backend::run_recorded_conflict_skip(tmp.path(), &plan, &buffer, "cherry-pick-skip");
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Refused { .. }),
+        "the mutation owner must record preservation refusal before returning"
+    );
+    let error = report.result.unwrap_err();
     assert_eq!(
         error.blocker(),
         Some(&PlanNote::Conflicts(ConflictsNote::DraftPreservationFailed))
     );
     assert_eq!(repository_bytes(tmp.path()), before);
     assert_eq!(buffer.resolved_text(Path::new("file.txt")).unwrap(), draft);
+}
+
+#[test]
+fn preservation_refusal_survives_preflight_wrapping_in_worker_receipts() {
+    let note = PlanNote::Conflicts(ConflictsNote::DraftPreservationFailed);
+    let before = kagi_git::ops::StateSummary {
+        head: "unchanged".into(),
+        dirty: "unchanged".into(),
+    };
+    for error in [
+        kagi_git::GitError::Blocked(Box::new(note.clone())),
+        kagi_git::GitError::Preflight(Box::new(kagi_git::GitError::Blocked(Box::new(
+            note.clone(),
+        )))),
+    ] {
+        let outcome =
+            kagi_git::backend::conflict_continue::conflict_completion_error(&error, &before);
+        assert!(
+            matches!(outcome, OpOutcome::Refused { blockers } if blockers == vec![note.message_en()])
+        );
+    }
 }

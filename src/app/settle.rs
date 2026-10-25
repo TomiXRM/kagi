@@ -277,7 +277,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             Planned::Stash { plan, .. } => &plan.common_dir,
             Planned::RemoteStash { .. } => unreachable!("remote refs have no local siblings"),
             Planned::RemotePull { .. } => unreachable!("remote refs have no local siblings"),
-            Planned::Conflict { .. } => unreachable!("conflict writes are worktree-local"),
+            Planned::Conflict { plan, .. } => plan.common_dir(),
             Planned::Run(request) => &request.repo,
             Planned::Pull(request) => &request.repo,
         };

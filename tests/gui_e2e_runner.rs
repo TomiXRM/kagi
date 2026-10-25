@@ -3317,6 +3317,10 @@ mod macos {
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_continue_restore_admission),
             ),
             (
+                "conflict_draft_recovered_save_frozen_payload",
+                Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_recovered_save_frozen_payload),
+            ),
+            (
                 "conflict_draft_stale_restore_success",
                 Box::new(crate::conflict_draft_inspection::scenario_conflict_draft_stale_restore_success),
             ),

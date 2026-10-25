@@ -330,7 +330,7 @@ fn unreadable_primary_with_good_backup_refuses_restore_and_stale_autosave() {
     );
 
     let permissions = std::fs::metadata(&store).unwrap().permissions();
-    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o000)).unwrap();
     let denied = std::fs::read(&store);
     let read_error = read(root.path(), &store).err();
     let restore_error = draft_storage::read_for_restore(root.path(), &store).err();

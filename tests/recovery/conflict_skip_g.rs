@@ -1,5 +1,5 @@
 //! Skip classification against real app admission/reconciliation, without GPUI.
-use super::{isolated, skip_outcome, skip_settlement};
+use super::{isolated, skip_failure, skip_settlement};
 use crate::app::{settle_conflict_write, AdmissionError, Sessions};
 use kagi_git::{GitError, OpOutcome, SkipOutcome, SkipProgress, StateSummary, Termination};
 
@@ -136,7 +136,8 @@ fn zero_exit_without_movement_maps_to_warning_not_success() {
     let mut observed = outcome(progress);
     observed.error = None; // A zero exit has no Git complaint to render.
     let before = observed.after.clone();
-    let (mapped, failure) = skip_outcome(observed);
+    let mapped = kagi_git::backend::conflict_continue::conflict_skip_outcome(&observed);
+    let failure = skip_failure(&mapped);
     assert!(matches!(mapped, OpOutcome::Unknown { .. }));
     assert!(failure.is_some());
     let (footer, success) =

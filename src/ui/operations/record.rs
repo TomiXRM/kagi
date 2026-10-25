@@ -107,43 +107,48 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
-    /// Persist an async operation for its frozen owner. Quiet completions keep
-    /// the live footer/toast and bottom panel with their current presentation owner.
-    /// Returns true only when appending this completion failed, so a caller
-    /// adding its own result cannot overwrite the required acknowledgement.
+    /// Present the mutation owner's attempted receipt without appending again.
+    /// Quiet completions retain the live footer/toast presentation owner.
     /// `stopped` comes from the typed sequencer result for this request; it
     /// changes only the success presentation, never the recorded outcome.
     /// `display` carries a typed backend refusal's localized preview separately
     /// from the receipt's stable English blocker.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::ui) fn record_operation_completion(
+    pub(in crate::ui) fn present_operation_completion(
         &mut self,
-        op: &str,
-        before: StateSummary,
-        outcome: OpOutcome,
-        ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
-        repo_path: &std::path::Path,
+        recording: &kagi_git::backend::recording::Recording,
         current: bool,
         stopped: bool,
         display: Option<String>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let stopped = stopped && matches!(&outcome, OpOutcome::Success { .. });
-        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
-            .with_ref_moves(ref_moves);
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        let op = entry.op.clone();
+        let repo_path = std::path::Path::new(&entry.repo);
+        // A failed append makes the display row Partial, not the execution.
+        let stopped = stopped && matches!(&recording.entry().outcome, OpOutcome::Success { .. });
+        let recording_failed = matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        );
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
+            klog!("oplog: write failed (non-fatal): {}", error);
+            let stopped_notice = stopped.then(|| i18n::Msg::conflict_stopped(None));
+            self.notice_recording_failure(&op, recording, repo_path, stopped_notice.as_deref());
+        }
         if current {
             let announce = self.operation_result_toast_needed(false);
             return self
                 .record_op_result(
                     entry,
                     cx,
-                    true,
+                    false,
                     None,
                     display.map(|message| (crate::ui::ToastKind::Error, message.into())),
                     announce,
                     true,
                     None,
-                    false,
+                    recording_failed,
                     stopped.then(|| i18n::Msg::conflict_stopped(None).into()),
                     None,
                 )
@@ -155,27 +160,8 @@ impl KagiApp {
             &entry.outcome,
             OpOutcome::Success { .. } | OpOutcome::Unknown { .. }
         );
-        let recording = kagi_git::backend::recording::finalize(entry);
-        let recording_failed = matches!(
-            recording,
-            kagi_git::backend::recording::Recording::Failed { .. }
-        );
-        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
-            klog!("oplog: write failed (non-fatal): {}", error);
-            let stopped_notice = stopped.then(|| i18n::Msg::conflict_stopped(None));
-            self.app_notices.push_back(
-                recording_failure_notice(
-                    repo_path.display(),
-                    op,
-                    &recording.entry().outcome,
-                    &error.to_string(),
-                    stopped_notice.as_deref(),
-                )
-                .into(),
-            );
-        }
         if let Some(panel) = self.op_log.clone() {
-            let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+            let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
             panel.update(cx, |panel, cx| {
                 panel.push(shown);
                 panel.collapse();
@@ -195,10 +181,10 @@ impl KagiApp {
             } else {
                 (
                     crate::ui::ToastKind::Error,
-                    display.unwrap_or_else(|| super::outcome_text(op, &entry.outcome)),
+                    display.unwrap_or_else(|| super::outcome_text(&op, &entry.outcome)),
                 )
             };
-            let _ = self.push_operation_result(entry, op, kind, message.into(), cx);
+            let _ = self.push_operation_result(entry, &op, kind, message.into(), cx);
         }
         recording_failed
     }

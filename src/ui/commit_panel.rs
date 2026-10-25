@@ -73,6 +73,8 @@ pub struct CommitPanelState {
     pub unstaged: Vec<FileStatus>,
     /// Files in the staged section.
     pub staged: Vec<FileStatus>,
+    /// Index identity published with these staged rows, never renewed at commit click.
+    pub displayed_index_digest: Option<String>,
     /// W16-DIFFSTAT: per-file additions/deletions for unstaged files (index→WT).
     pub unstaged_stats: Vec<FileDiffStat>,
     /// W16-DIFFSTAT: per-file additions/deletions for staged files (HEAD→index).
@@ -158,6 +160,7 @@ impl CommitPanelState {
         Self {
             unstaged: Vec::new(),
             staged: Vec::new(),
+            displayed_index_digest: None,
             unstaged_stats: Vec::new(),
             staged_stats: Vec::new(),
             conflicted_paths: std::collections::HashSet::new(),
@@ -202,8 +205,8 @@ impl CommitPanelState {
                 return;
             }
         };
-        match backend.working_tree_status() {
-            Ok(status) => self.apply_status(&backend, status),
+        match backend.commit_panel_status() {
+            Ok((status, digest)) => self.apply_status(&backend, status, digest),
             Err(e) => {
                 klog!("commit_panel: working_tree_status error: {}", e);
             }
@@ -211,7 +214,13 @@ impl CommitPanelState {
     }
 
     /// Apply a read already owned by the caller, without another status walk.
-    pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+    pub(crate) fn apply_status(
+        &mut self,
+        backend: &Backend,
+        status: kagi_git::WorkingTreeStatus,
+        digest: String,
+    ) {
+        self.displayed_index_digest = Some(digest);
         // Track conflicted paths for UI (these cannot be staged).
         self.conflicted_paths = status.conflicted.iter().cloned().collect();
 
@@ -597,9 +606,14 @@ impl CommitPanelView {
     }
 
     /// Publish an already-read status, superseding any pending opening payload.
-    pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+    pub(crate) fn apply_status(
+        &mut self,
+        backend: &Backend,
+        status: kagi_git::WorkingTreeStatus,
+        digest: String,
+    ) {
         self.invalidate_status_read();
-        self.state.apply_status(backend, status);
+        self.state.apply_status(backend, status, digest);
     }
 
     /// Invalidate an opening read before a newer in-place status publication.

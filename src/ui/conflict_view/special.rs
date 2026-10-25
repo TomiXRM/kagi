@@ -149,7 +149,7 @@ pub(super) fn render_center(
                 super::toolbar::compact_button(
                     "conflict-delete",
                     delete_label.t(),
-                    ButtonRole::Destructive,
+                    ButtonRole::Danger,
                     cx,
                 )
                 .disabled(writer_busy)

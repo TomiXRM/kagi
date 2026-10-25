@@ -78,9 +78,9 @@ screen with no siblings to copy (#934's worktree row).
 ### Conflict deletion and namespace choices (#1734 / #1735)
 
 Use the existing dense, file-local `compact_button` role, not window toolbar or
-sidebar session controls. DD has one destructive Confirm deletion (deleted on
-both sides)… action; modify/delete has destructive Use deleted side… and
-secondary Use modified side. D/F has equal secondary Keep directory… / Keep
+sidebar session controls. DD has one destructive-tinted Confirm deletion (deleted
+on both sides)… action; modify/delete has destructive-tinted Use deleted side…
+(the existing `ButtonRole::Danger`) and secondary Use modified side. D/F has equal secondary Keep directory… / Keep
 file… choices. Ellipses identify plan-opening actions. Keep existing geometry,
 hover/pressed/focus-visible states and writer-busy admission; do not introduce a
 second control style or infer side presence from empty text.

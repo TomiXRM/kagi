@@ -3605,6 +3605,10 @@ mod macos {
                 Box::new(crate::palette_ax::scenario_palette_rows_ax_action),
             ),
             (
+                "palette_conflict_admission",
+                Box::new(crate::palette_ax::scenario_palette_conflict_admission),
+            ),
+            (
                 "palette_viewport",
                 Box::new(crate::overlay_focus::scenario_palette_viewport),
             ),

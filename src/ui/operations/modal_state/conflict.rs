@@ -11,6 +11,28 @@ use super::super::super::modals::ActiveModal;
 use super::super::super::KagiApp;
 
 impl KagiApp {
+    pub fn conflict_resolution_modal(
+        &self,
+    ) -> Option<&crate::ui::modals::conflict_resolution::ConflictResolutionModal> {
+        match &self.active_modal {
+            Some(ActiveModal::ConflictResolution(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_conflict_resolution_modal(
+        &mut self,
+        modal: crate::ui::modals::conflict_resolution::ConflictResolutionModal,
+    ) {
+        self.replace_modal_from_user(ActiveModal::ConflictResolution(modal));
+    }
+
+    pub(crate) fn clear_conflict_resolution_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::ConflictResolution(_))) {
+            self.active_modal = None;
+        }
+    }
+
     #[inline]
     pub fn conflict_continue_modal(&self) -> Option<&ConflictContinuePlanModal> {
         match &self.active_modal {

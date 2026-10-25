@@ -3564,6 +3564,14 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
             ),
             (
+                "conflict_delete_routes_en",
+                Box::new(crate::app_conflict::scenario_conflict_delete_routes_en),
+            ),
+            (
+                "conflict_delete_routes_ja",
+                Box::new(crate::app_conflict::scenario_conflict_delete_routes_ja),
+            ),
+            (
                 "conflict_family_result_owner",
                 Box::new(crate::app_conflict::scenario_conflict_family_result_owner),
             ),

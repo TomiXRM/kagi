@@ -29,6 +29,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Complete both-deleted/renamed conflicts with an explicit confirmed deletion, and offer deleted-side versus modified-side choices for one-sided conflicts. Preserve renamed destinations instead of attempting to select nonexistent blobs. (#1734)
+- Resolve Git-started directory/file conflicts at their original namespace: keep the directory or restore the file, remove the parked `~HEAD` artifact, and show the exact affected paths in the standard confirmation sheet. Verify both index and worktree outcomes; preserve recovery and refuse stale plans. (#1735)
+  - Add deletion/parked-namespace formal obligations and independently red missing-route, empty-blob, parked-path, suffix-attribution and leftover-artifact controls.
 - Surface failed conflict-draft autosaves in the Operation Log and an error notification, retain live decisions, and block close/quit until retry succeeds or a second explicit discard is confirmed. Refuse Abort, Skip and directory/file replacement before repository writes when their recovery copy cannot be saved. (#1731)
   - Protect repository-tab close (including Cmd+W on the last tab) with the same retry/two-confirmation discard sheet. Require Abort plan and confirm to durably preserve the current live draft, never an older disk-loaded copy; localize shared Abort/Skip/D-F refusal guidance in English and Japanese.
   - Queue ordinary Result edits and source selections through the background writer instead of waiting for draft locks/fsync on the UI thread. Await durable flush off-thread at close/quit/tab close and Save/Continue/Abort/Skip/D-F boundaries, reject failed or superseded generations before approval, and retain Retry/two-step Discard protection while any draft remains unflushed. Flush precedes repository admission; queued acceptance still has an unacknowledged crash window. (#1760)

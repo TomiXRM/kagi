@@ -34,6 +34,8 @@ use kagi_git::{
     SkipProgress,
 };
 
+#[path = "conflicts/deletion.rs"]
+mod deletion;
 #[path = "conflicts/domain_hardening.rs"]
 mod domain_hardening;
 

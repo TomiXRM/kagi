@@ -39,7 +39,7 @@ witnesses are named there; those local artifacts are not committed).
 Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
-REFUTATIONS remain harness-green while tracked by #1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
+REFUTATIONS remain harness-green while tracked by #1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1736–#1738). The deletion/namespace amendment below adds explicit coverage for #1734/#1735 without relabeling the historical observations.
 The maintained lifecycle/pure expected-outcome tables linked above map each
 REFUTE to its issue, owner QUESTION, negative control, or runtime CONTRACT.
 The historical traces below retain their original extraction classifications;
@@ -158,6 +158,53 @@ p50 **65.987 ms** / p95 **69.350 ms**, versus queued capture at
 p50 **0.096 ms** / p95 **0.122 ms** (maximum **1.087 ms**). These are backend
 API measurements, not end-to-end GUI frame timings.
 
+### #1734 / #1735 deletion and parked-namespace amendment — 2026-10-25
+
+The baseline had no `dd-rename` or `df-head-parked` model rows. Both were runtime
+findings outside the initial extraction. The maintained lifecycle model now
+contains these named HOLD obligations and `modify-delete`, plus five deliberately
+broken variants; this is an added extraction, not a retrospective claim that the
+2026-10-24 drill failures were TLC counterexamples.
+
+The domain's `conflict_family::Resolution::Delete` and `ConflictDraft::Delete`
+represent absence, not an empty file. Captured side presence determines the
+available actions. The existing recorded conflict boundary freezes the exact
+delete/namespace operation; the operation's plan/preflight/execute/verify owns
+all filesystem and index changes. `ops/dir_file_conflict.rs` attributes a parked
+file to its original path with source-tree and index identity, then resolves
+that whole namespace rather than saving the parked filename.
+
+`NamespaceNext` in `ConflictLifecycle.tla` extracts classification → exact plan →
+confirmation → preflight → recovery → index/worktree writes → verification
+→ receipt. It fixes index-before-worktree as an abstract order; production deletion
+removes the worktree artifact before the index entry, while D/F writes the index
+first. No model action interleaves those writes, so this is not a partial-write
+ordering proof. It explores six paths (source, two rename destinations, parked file,
+child and an unrelated lookalike), both modify/delete orientations, DD with and
+without an artifact, both D/F choices, proven/unproven namespace ownership,
+cancel, one preflight-time external change and recovery success/failure.
+`DeletionRouteCompletes` checks actual route availability after classification;
+`ParkedNamespaceCompletes` rejects unproven suffix mapping. Both require the
+complete approved index/worktree maps after mutation and a receipt at completion.
+They do not claim eventual execution, OS atomicity or exclusion of external Git
+after preflight. Unrelated lifecycle and pure-property assumptions are unchanged.
+
+The five red controls independently restore absent-side-only DD choices,
+deletion-as-empty-blob, literal parked-path staging, suffix-only attribution and
+leftover parked worktree content. The maintained declared matrix is **77 TLC
+checks / 29 negative controls**. Generated full-suite receipts remain the source
+for observed verdicts; the earlier 69-check run above remains historical.
+
+Observed on `fix/delete-routes-1734` after the implementation and safety review:
+the complete `formal/conflict/run.sh` exited 0 in **57.369 seconds**. All **77**
+declared verdicts matched across **52,915 distinct states**; all **29** forced-HOLD
+negative controls refuted (**1,371 states**). Specifically, `dd-rename`,
+`modify-delete`, and `df-head-parked` held and their five broken variants stayed
+red. Pure checks remained **39 properties / 1,695,651 evaluations / 36 mutants**.
+The unchanged historical projection also passed **34 trials / 46 logs**, retaining
+its explicit log gaps and forged-Skip refusal. These historical logs are not new
+GUI evidence for this amendment.
+
 
 ---
 
@@ -168,7 +215,7 @@ API measurements, not end-to-end GUI frame timings.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model has **69** checks and **24** negative controls, retaining #1731's failed-close and preservation guards alongside #1732's atomic writer, #1746 D1/D2 and #1760's off-thread generation-bound barriers; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model has **77** checks and **29** negative controls, retaining the prior 69-check guards and adding the #1734/#1735 deletion/namespace refinement above; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Current machine-readable evidence lives under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
@@ -181,11 +228,11 @@ API measurements, not end-to-end GUI frame timings.
 ## Finite scope and honest model/code gaps
 
 - Two independent application instances share one repository and one draft file; leases remain per-instance. Concurrent configs explore **all enabled interleavings** of both instances. Single-route configs leave the second actor idle to isolate minimal witnesses. A passive sibling worktree view is represented separately by its invalidation bit.
-- At most two paths; one abstract hunk per edited text path; text/blob/namespace payloads are finite enums. Full revision is a tuple of bounded index/HEAD/metadata/operation revision counters. One operation per actor, one external CLI edit/replacement, at most one restart. No hash collisions, path aliases, or SHA internals are modelled.
+- Ordinary lifecycle scenarios have at most two paths; the #1734/#1735 refinement above has six. One abstract hunk per edited text path; text/blob/namespace payloads are finite enums. Full revision is a tuple of bounded index/HEAD/metadata/operation revision counters. One operation per actor, one external CLI edit/replacement, at most one restart. No hash collisions, path aliases, or SHA internals are modelled.
 - Scenario selectors are **environment/scope restrictions**, not product guards. Index/HEAD/MERGE_MSG external edits are separate runs before final preflight; WT-only edits are before preflight or between WT write and add_path; index CLI interference and two-app interference also occur after final preflight. Observation is explicitly split into index/metadata/accept, but these configs do not claim exhaustive mid-observation metadata tearing coverage.
 - Read failures/trust/path/marker/identity validators unrelated to the witness are fixed to successful, known, compatible inputs. A failed preflight is a terminal nonmutating path (deadlock checking disabled); rejection UI text is outside this quotient. Continue has one resolved text path and no unexpected unmerged path. D/F has a namespace decision, not a fictitious text hunk. MergeCommit starts at an already resolved commit panel.
 - Immediate capture and queued completion are distinct transitions. Pending snapshots coalesce for at most 250 ms before starting, and in-flight fsync may extend the unacknowledged window; abrupt exit can lose that newest captured edit, so `DraftNeverLost` remains REFUTE without changing its assertion. Successful `flush` is the durable boundary. Restart restores same-revision compatible records; a corrupt primary uses the last good `.prev`. Without a valid backup, restore preserves positively damaged documents under exclusively reserved `.corrupt[.N]` names, records and announces the failure, then loads the editable base; ordinary writers still refuse corrupt input. This upgrade recovery is covered by backend/native tests, not an additional TLA transition. The two model writers edit distinct paths; backend/native regressions also cover independent same-file hunk decisions.
-- Draft reads acquire the bounded advisory lock and re-read/merge the latest document; the model quotients successful lock acquisition, while backend tests cover timeout and death release. The historical `draft-lost-update` trace remains reproducible by its broken-lock variant. Abort/Skip preservation failures remain independently tracked by #1731; D/F snapshot failure remains nonfatal before namespace deletion.
+- Draft reads acquire the bounded advisory lock and re-read/merge the latest document; the model quotients successful lock acquisition, while backend tests cover timeout and death release. The historical `draft-lost-update` trace remains reproducible by its broken-lock variant. #1731 makes Abort/Skip/D/F preservation failure refuse before mutation; the deletion/namespace refinement retains the same recovery prerequisite.
 - IndexWrite stages current WT (`index.add_path`), not frozen text. A race can stage unapproved bytes even though later Save verification detects it; the ledger asks whether **pre-verification** mutation exclusion is promised. The model does not claim the raced Save returns Success. Raw resolutions, multi-file Continue rename rollback, cached unrelated-index clobbering, byte decoding, signature/hooks, and detailed CLI retry outcomes are not covered by these lifecycle traces; pure-state checks are separate work.
 - Save receipt HOLD assumes append succeeds and no abrupt crash. It is an ordering guarantee, not fsync/power-loss durability. Continue liveness uses weak fairness for each actor, not an assumption that a closed weak UI owner can run again. The counterexample closes after a successful worker released its lease and then stutters forever.
 - Safety counterexamples below are BFS-shortest in their configured finite slice. TLC's liveness lasso has no unnecessary loop before its terminal stutter; it is not claimed to minimize real UI gestures. Every event is mapped to source lines below; source-reviewed executable consequences remain [INFERENCE] until a product fixture confirms them.

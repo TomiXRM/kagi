@@ -34,8 +34,39 @@ impl BufferRevision {
     }
 }
 
+/// Whole-file routes derived from source presence, not decoded text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resolution {
+    Delete,
+    Current,
+    Incoming,
+}
+
+pub fn available_resolutions(
+    current_present: bool,
+    incoming_present: bool,
+) -> &'static [Resolution] {
+    use Resolution::*;
+    match (current_present, incoming_present) {
+        (false, false) => &[Delete],
+        (true, false) => &[Delete, Current],
+        (false, true) => &[Delete, Incoming],
+        (true, true) => &[Current, Incoming],
+    }
+}
+
+/// Exact paths disclosed by a frozen conflict plan.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConflictPathChanges {
+    pub remove_index: Vec<PathBuf>,
+    pub remove_worktree: Vec<PathBuf>,
+    pub keep: Vec<PathBuf>,
+    pub restore: Vec<PathBuf>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConflictDraft {
+    Delete,
     Text {
         bytes: Vec<u8>,
         origins: Vec<crate::resolution::LineOrigin>,
@@ -236,6 +267,15 @@ pub struct ConflictEvidence {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_file_routes_follow_source_presence() {
+        use Resolution::*;
+        assert_eq!(available_resolutions(false, false), &[Delete]);
+        assert_eq!(available_resolutions(true, false), &[Delete, Current]);
+        assert_eq!(available_resolutions(false, true), &[Delete, Incoming]);
+        assert_eq!(available_resolutions(true, true), &[Current, Incoming]);
+    }
 
     /// #704 review: one typed kind, and its slugs are the oplog names
     /// (`merge-abort`, `rebase-abort`, …) the git layer has always produced.

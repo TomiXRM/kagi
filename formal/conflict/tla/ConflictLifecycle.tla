@@ -22,6 +22,25 @@ Revision == <<s.indexRev, s.headRev, s.metadataRev, s.operation>>
 Record(a) == <<File(a), s.context[a], s.text[a]>>
 At(a, p) == a \in Participants /\ s.life[a] = "open" /\ s.pc[a] = p
 ActorInit == [a \in Actors |-> 0]
+\* #1734/#1735: finite extraction of deletion and Git-parked namespace routes.
+\* Six distinct paths retain rename destinations and an unrelated suffix lookalike.
+\* Values distinguish absent entries, unmerged stages, and clean file identities.
+NamespaceScenario == Scenario \in {"ddRename", "modifyDelete", "dfHeadParked"}
+NamespacePaths == {"source", "renameA", "renameB", "parked", "child", "lookalike"}
+NamespaceIndex == [p \in NamespacePaths |->
+    CASE p = "renameA" -> "rename-a"
+      [] p = "renameB" -> "rename-b"
+      [] p = "lookalike" -> "unrelated"
+      [] p = "source" /\ Scenario = "ddRename" -> "stage1"
+      [] p = "source" /\ Scenario = "modifyDelete" -> "stage1+side"
+      [] p = "parked" /\ Scenario = "dfHeadParked" -> "stage2-file"
+      [] p = "child" /\ Scenario = "dfHeadParked" -> "stage1+3-child"
+      [] OTHER -> "absent"]
+NamespaceWT == [p \in NamespacePaths |->
+    CASE p = "source" -> IF Scenario = "modifyDelete" THEN "file" ELSE "absent"
+      [] p = "parked" /\ Scenario = "dfHeadParked" -> "file"
+      [] p = "child" /\ Scenario = "dfHeadParked" -> "child"
+      [] OTHER -> NamespaceIndex[p]]
 Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     life |-> [a \in Actors |-> "open"], attached |-> [a \in Actors |-> TRUE],
     indexRev |-> 0, headRev |-> 0, metadataRev |-> 0, operation |-> 0,
@@ -53,6 +72,11 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
         flushed |-> 0, phase |-> "edit", failed |-> FALSE,
         draftLock |-> FALSE, repoLock |-> FALSE,
         badApproval |-> FALSE, badClose |-> FALSE, badGeneration |-> FALSE],
+    namespace |-> [phase |-> "inspect", index |-> NamespaceIndex, wt |-> NamespaceWT,
+        current |-> FALSE, incoming |-> FALSE, proven |-> FALSE, choices |-> {},
+        choice |-> "none", planIndex |-> NamespaceIndex, planWT |-> NamespaceWT,
+        approved |-> FALSE, recovery |-> FALSE, mutated |-> FALSE,
+        external |-> FALSE, receipt |-> FALSE],
     event |-> "Init"]
 
 \* backend/conflict_observe.rs:91-101: index.read(true) precedes operation_parts.
@@ -440,6 +464,113 @@ BarrierApprovalCurrentGeneration == ~s.barrier.badGeneration
 BarrierCloseDurable == ~s.barrier.badClose
 BarrierLocksNeverNested == ~(s.barrier.draftLock /\ s.barrier.repoLock)
 
+\* The production family rules use captured stage presence, not text emptiness.
+N == s.namespace
+NamespaceChoices(current, incoming) ==
+    IF current /\ incoming THEN {"current", "incoming"}
+    ELSE IF ~current /\ ~incoming THEN {"delete"}
+    ELSE IF current THEN {"delete", "current"} ELSE {"delete", "incoming"}
+NamespaceInspect ==
+    /\ N.phase = "inspect"
+    /\ \E current \in {FALSE, TRUE}, proven \in {FALSE, TRUE}, artifact \in {FALSE, TRUE} :
+        LET c == Scenario = "modifyDelete" /\ current
+            i == Scenario = "modifyDelete" /\ ~current
+            accepted == Scenario # "dfHeadParked" \/ proven \/ Broken = "suffixOnly"
+        IN s' = [s EXCEPT
+            !.namespace.current = c, !.namespace.incoming = i,
+            !.namespace.proven = proven,
+            !.namespace.wt["source"] =
+                IF Scenario = "ddRename" /\ artifact THEN "conflict-artifact" ELSE @,
+            !.namespace.choices = IF ~accepted THEN {}
+                ELSE IF Scenario = "dfHeadParked" THEN {"directory", "file"}
+                ELSE IF Broken = "missingDelete" THEN {"current", "incoming"}
+                ELSE NamespaceChoices(c, i),
+            !.namespace.phase = IF accepted THEN "choose" ELSE "refused",
+            !.event = "NamespaceInspect"]
+NamespacePlan ==
+    /\ N.phase = "choose"
+    /\ \E choice \in N.choices :
+        s' = [s EXCEPT !.namespace.choice = choice,
+            !.namespace.planIndex = N.index, !.namespace.planWT = N.wt,
+            !.namespace.phase = "confirm", !.event = <<"NamespacePlan", choice>>]
+NamespaceConfirm ==
+    /\ N.phase = "confirm"
+    /\ s' = [s EXCEPT !.namespace.approved = TRUE,
+        !.namespace.phase = "preflight", !.event = "NamespaceConfirm"]
+NamespaceCancel ==
+    /\ N.phase = "confirm"
+    /\ s' = [s EXCEPT !.namespace.phase = "cancelled", !.event = "NamespaceCancel"]
+\* One external edit after the exact removal set has been shown; preflight refuses.
+NamespaceExternal ==
+    /\ N.phase \in {"confirm", "preflight"} /\ ~N.external
+    /\ s' = [s EXCEPT
+        !.namespace.wt[IF Scenario = "dfHeadParked" THEN "parked" ELSE "source"] = "external",
+        !.namespace.external = TRUE, !.event = "NamespaceExternal"]
+NamespacePreflight ==
+    /\ N.phase = "preflight"
+    /\ s' = [s EXCEPT !.namespace.phase =
+        IF N.index = N.planIndex /\ N.wt = N.planWT THEN "preserve" ELSE "refused",
+        !.event = "NamespacePreflight"]
+NamespacePreserve ==
+    /\ N.phase = "preserve"
+    /\ \E saved \in {FALSE, TRUE} :
+        s' = [s EXCEPT !.namespace.recovery = saved,
+            !.namespace.phase = IF saved THEN "writeIndex" ELSE "refused",
+            !.event = <<"NamespacePreserve", saved>>]
+NamespaceExpectedIndex ==
+    IF Scenario = "dfHeadParked" THEN
+        [N.planIndex EXCEPT !["parked"] = "absent",
+            !["source"] = IF N.choice = "file" THEN "file" ELSE "absent",
+            !["child"] = IF N.choice = "directory" THEN "child" ELSE "absent"]
+    ELSE [N.planIndex EXCEPT !["source"] = IF N.choice = "delete" THEN "absent" ELSE "file"]
+NamespaceExpectedWT ==
+    IF Scenario = "dfHeadParked" THEN
+        [N.planWT EXCEPT !["parked"] = "absent",
+            !["source"] = IF N.choice = "file" THEN "file" ELSE "absent",
+            !["child"] = IF N.choice = "directory" THEN "child" ELSE "absent"]
+    ELSE [N.planWT EXCEPT !["source"] = IF N.choice = "delete" THEN "absent" ELSE "file"]
+NamespaceIndexWrite ==
+    /\ N.phase = "writeIndex"
+    /\ s' = [s EXCEPT !.namespace.index =
+        IF Broken = "literalParked" THEN [N.planIndex EXCEPT !["parked"] = "file"]
+        ELSE IF Broken = "deleteAsEmpty" /\ N.choice = "delete"
+            THEN [N.planIndex EXCEPT !["source"] = "empty-blob"]
+        ELSE NamespaceExpectedIndex,
+        !.namespace.mutated = TRUE, !.namespace.phase = "writeWT",
+        !.event = "NamespaceIndexWrite"]
+NamespaceWTWrite ==
+    /\ N.phase = "writeWT"
+    /\ s' = [s EXCEPT !.namespace.wt =
+        IF Broken = "parkedResidue" THEN [NamespaceExpectedWT EXCEPT !["parked"] = "file"]
+        ELSE NamespaceExpectedWT,
+        !.namespace.phase = "verify", !.event = "NamespaceWTWrite"]
+NamespaceVerify ==
+    /\ N.phase = "verify"
+    /\ N.index = NamespaceExpectedIndex /\ N.wt = NamespaceExpectedWT
+    /\ s' = [s EXCEPT !.namespace.phase = "record", !.event = "NamespaceVerify"]
+NamespaceRecord ==
+    /\ N.phase = "record"
+    /\ s' = [s EXCEPT !.namespace.phase = "done", !.namespace.receipt = TRUE,
+        !.event = "NamespaceRecord"]
+NamespaceNext == NamespaceInspect \/ NamespacePlan \/ NamespaceConfirm \/ NamespaceCancel
+    \/ NamespaceExternal \/ NamespacePreflight \/ NamespacePreserve
+    \/ NamespaceIndexWrite \/ NamespaceWTWrite \/ NamespaceVerify \/ NamespaceRecord
+\* Assert route availability immediately after classification: missing choices
+\* cannot vacuously pass by deadlocking before a success-only postcondition.
+DeletionRouteCompletes ==
+    /\ (N.phase # "inspect" => N.choices = NamespaceChoices(N.current, N.incoming))
+    /\ (N.mutated => N.approved /\ N.recovery /\ ~N.external)
+    /\ (N.phase \in {"verify", "record", "done"} =>
+        N.index = NamespaceExpectedIndex /\ N.wt = NamespaceExpectedWT)
+    /\ (N.phase = "done" => N.receipt)
+ParkedNamespaceCompletes ==
+    /\ (N.phase # "inspect" /\ ~N.proven => N.phase = "refused" /\ ~N.mutated)
+    /\ (N.phase # "inspect" /\ N.proven => N.choices = {"directory", "file"})
+    /\ (N.mutated => N.approved /\ N.recovery /\ ~N.external)
+    /\ (N.phase \in {"verify", "record", "done"} =>
+        N.index = NamespaceExpectedIndex /\ N.wt = NamespaceExpectedWT)
+    /\ (N.phase = "done" => N.receipt)
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
@@ -449,7 +580,8 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
-Next == IF Scenario = "draftBarrier" THEN DraftBarrierNext
+Next == IF NamespaceScenario THEN NamespaceNext
+    ELSE IF Scenario = "draftBarrier" THEN DraftBarrierNext
     ELSE IF Scenario = "draftRecovery" THEN DraftRecoveryNext
     ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
         \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)

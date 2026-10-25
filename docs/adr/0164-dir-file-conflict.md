@@ -75,3 +75,51 @@ the state kagi sees — the tests drive `repo.merge` directly.)
 - The focused GUI scenarios exercise the Save and D/F adapters one at a time;
   the window-free application tests own the revision, admission, progress and
   exactly-once receipt matrix.
+
+## Git-started namespace and deletion amendment (#1734 / #1735, 2026-10-25)
+
+The CLI/libgit2 distinction above describes the original implementation, not a
+reason to refuse repositories whose merge was started outside Kagi. Extend the
+same detector and namespace operation to Git's parked file: for example,
+`dir-vs-file~HEAD` at an unmerged stage plus `dir-vs-file/child.txt` at an
+unmerged or clean stage. The original path is the logical conflict target.
+Index and source-tree identity must positively attribute the parked file to
+that namespace; a filename suffix alone is never ownership evidence.
+
+The immutable D/F plan freezes the actual file-side path, child stage/OID/mode
+identities and exact worktree removals. Preflight compares those facts before
+the existing recovery snapshot or any mutation. Keep directory removes the
+parked file, resolves the directory-side stages and retains/stages the children.
+Keep file removes the approved directory entries, restores the chosen file at
+the **original** path and stages that original path. Both remove the parked
+artifact. Verification checks the index and worktree, not merely that a stage-0
+entry exists. Unrelated files and lookalike suffix names are outside the plan.
+Plans refuse unsupported gitlink/special modes and nested repository metadata
+before mutation: the ordinary worktree snapshot cannot preserve a nested object
+store, and recovery capture may fail even for keep-directory. Both choices refuse
+at planning rather than promising unavailable recovery. Preflight repeats after
+recovery capture and before the first write.
+
+The existing conflict-family values also express deletion explicitly:
+`Resolution::Delete` is a family choice and `ConflictDraft::Delete` is the frozen
+request. DD has only Confirm deletion (deleted on both sides); either
+modify/delete orientation has Use deleted side and Use modified side. Neither
+an absent-side blob nor a zero-byte Result represents deletion. The delete
+operation uses its own plan/preflight/execute/verify triple under the same
+recorded conflict boundary, preserves recovery and removes only approved
+conflict entries/artifacts. The two renamed destinations of a DD source are
+not deletion targets.
+
+File-local compact actions open the standard plan sheet for deletion and both
+D/F choices. It names exact removed/kept/restored paths in EN/JA, with no command
+syntax. Delete is destructive, never primary; Cancel/Escape are safe and Return
+does not implicitly confirm a destructive plan. Confirmation retains the frozen
+owner and plan token through the existing draft-flush and writer-admission
+boundaries; a changed repository requires a new plan, not renewed approval.
+The sidebar remains navigation and session actions retain #1764's placement.
+
+Design evidence:
+[architecture and figure](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317),
+[independent HIG design review](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394580602).
+The formal ledger adds scoped deletion/parked-namespace HOLD checks and red
+variants; the original baseline had no corresponding REFUTE rows to relabel.

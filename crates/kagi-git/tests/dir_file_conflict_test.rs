@@ -1,10 +1,7 @@
 //! Integration tests for directory/file conflict classification + resolution
 //! (#320 / ADR-0164).
 //!
-//! A D/F conflict is produced the way kagi produces it at runtime: libgit2's
-//! `repo.merge` (NOT the git CLI, which renames the losing file to
-//! `path~BRANCH` and so never leaves a same-namespace collision in the index).
-//! Each test reverts to the fix in its comment to stay a real regression.
+//! Native libgit2 and real CLI Git fixtures exercise both namespace representations.
 
 #[path = "../../../tests/support/backend_ops.rs"]
 mod backend_ops;
@@ -37,27 +34,59 @@ fn git(dir: &Path, args: &[&str]) {
 /// libgit2 merge of `other` into it — leaving a genuine D/F conflict in the
 /// index. Returns the temp dir (kept alive) and the opened repo.
 fn df_conflict(checkout: &str, other: &str) -> (TempDir, Repository) {
+    df_conflict_with_cli(checkout, other, false)
+}
+
+fn df_conflict_with_cli(checkout: &str, other: &str, cli: bool) -> (TempDir, Repository) {
     let td = TempDir::new().unwrap();
     let d = td.path();
     git(d, &["init", "-q", "-b", "main"]);
     std::fs::write(d.join("base.txt"), b"base\n").unwrap();
+    if cli {
+        std::fs::create_dir(d.join("thing")).unwrap();
+        std::fs::write(d.join("thing/child"), b"base child\n").unwrap();
+        std::fs::write(
+            d.join("thing~tracked-lookalike"),
+            b"unrelated tracked file\n",
+        )
+        .unwrap();
+    }
     git(d, &["add", "."]);
     git(d, &["commit", "-qm", "base"]);
 
     git(d, &["checkout", "-q", "-b", "file-side"]);
+    if cli {
+        git(d, &["rm", "-r", "thing"]);
+    }
     std::fs::write(d.join("thing"), b"i am a file\n").unwrap();
     git(d, &["add", "thing"]);
     git(d, &["commit", "-qm", "file"]);
 
     git(d, &["checkout", "-q", "main"]);
     git(d, &["checkout", "-q", "-b", "dir-side"]);
-    std::fs::create_dir(d.join("thing")).unwrap();
+    std::fs::create_dir_all(d.join("thing")).unwrap();
     std::fs::write(d.join("thing/child"), b"inside dir\n").unwrap();
     git(d, &["add", "thing/child"]);
     git(d, &["commit", "-qm", "dir"]);
 
     git(d, &["checkout", "-q", checkout]);
     let repo = Repository::open(d).unwrap();
+    if cli {
+        let result = Command::new("git")
+            .args(["merge", "--no-edit", other])
+            .current_dir(d)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", d)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "expected real CLI conflict: {:?}",
+            result
+        );
+        return (td, repo);
+    }
     let other_commit = repo
         .revparse_single(other)
         .unwrap()
@@ -217,12 +246,12 @@ fn keep_directory_reconciles_working_tree() {
     }
     let (_td, repo) = df_conflict("file-side", "dir-side");
     let wd = repo.workdir().unwrap().to_path_buf();
-    let plan =
-        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory).unwrap();
 
     // Put the losing (file) namespace on disk so the resolution must reconcile it.
     std::fs::remove_dir_all(wd.join("thing")).unwrap();
     std::fs::write(wd.join("thing"), b"stale file on disk\n").unwrap();
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory).unwrap();
 
     execute_dir_file_resolution(&repo, &wd, &plan).unwrap();
 
@@ -389,9 +418,9 @@ fn keep_file_refuses_when_recovery_snapshot_cannot_be_written() {
         return;
     }
     let (td, repo) = df_conflict("dir-side", "file-side");
+    std::fs::write(td.path().join("thing/untracked"), b"irreplaceable\n").unwrap();
     let plan =
         plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
-    std::fs::write(td.path().join("thing/untracked"), b"irreplaceable\n").unwrap();
     // Block creation of the recovery ref without relying on Unix permissions.
     std::fs::create_dir_all(repo.path().join("refs/kagi")).unwrap();
     std::fs::write(repo.path().join("refs/kagi/snapshots"), b"blocked\n").unwrap();
@@ -422,4 +451,216 @@ fn keep_file_refuses_when_recovery_snapshot_cannot_be_written() {
         entries.last().unwrap().outcome,
         kagi_git::oplog::OpOutcome::Refused { .. }
     ));
+}
+
+#[test]
+fn cli_parked_namespace_resolves_both_directions_and_choices() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for (current, incoming) in [("file-side", "dir-side"), ("dir-side", "file-side")] {
+        for choice in [DirFileChoice::KeepDirectory, DirFileChoice::KeepFile] {
+            let (td, repo) = df_conflict_with_cli(current, incoming, true);
+            let root = td.path();
+            std::fs::write(root.join("thing~unrelated"), b"leave this alone\n").unwrap();
+            let session = detect_conflict_session(&repo).unwrap();
+            assert_eq!(session.files.len(), 1);
+            assert_eq!(session.files[0].path, Path::new("thing"));
+            assert_eq!(session.files[0].kind, ConflictKind::DirFile);
+            let plan = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
+            assert_ne!(plan.file_path, plan.path);
+            assert!(plan.child_entries.iter().any(|e| e.stage == 1));
+            assert!(plan
+                .child_entries
+                .iter()
+                .any(|e| e.stage == 2 || e.stage == 3));
+            assert!(plan.removal_paths.contains(&plan.file_path));
+            execute_dir_file_resolution(&repo, root, &plan).unwrap();
+            let mut index = repo.index().unwrap();
+            assert!(!index.has_conflicts());
+            assert!(!root.join(&plan.file_path).exists());
+            assert!(!root.join("thing~HEAD").exists());
+            for stage in 0..=3 {
+                assert!(index.get_path(&plan.file_path, stage).is_none());
+            }
+            match choice {
+                DirFileChoice::KeepFile => {
+                    let file = index.get_path(Path::new("thing"), 0).unwrap();
+                    assert_eq!(file.id, plan.file_oid);
+                    assert_eq!(std::fs::read(root.join("thing")).unwrap(), b"i am a file\n");
+                    assert!(index.get_path(Path::new("thing/child"), 0).is_none());
+                }
+                DirFileChoice::KeepDirectory => {
+                    assert_eq!(
+                        std::fs::read(root.join("thing/child")).unwrap(),
+                        b"inside dir\n"
+                    );
+                    assert!(index.get_path(Path::new("thing/child"), 0).is_some());
+                    assert!(index.get_path(Path::new("thing"), 0).is_none());
+                }
+            }
+            index.write_tree().unwrap();
+            assert_eq!(
+                std::fs::read(root.join("thing~unrelated")).unwrap(),
+                b"leave this alone\n"
+            );
+            assert!(index
+                .get_path(Path::new("thing~tracked-lookalike"), 0)
+                .is_some());
+            assert_eq!(
+                std::fs::read(root.join("thing~tracked-lookalike")).unwrap(),
+                b"unrelated tracked file\n"
+            );
+        }
+    }
+}
+
+#[test]
+fn cli_parked_plan_refuses_changed_child_identity_or_removal_contents() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for change in 0..3 {
+        let (td, repo) = df_conflict_with_cli("file-side", "dir-side", true);
+        let root = td.path();
+        let plan =
+            plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+        if change == 0 {
+            let child = plan.kept_children.first().unwrap();
+            let mut index = repo.index().unwrap();
+            let mut entry = index.get_path(&child.path, child.stage as i32).unwrap();
+            entry.id = repo.blob(b"new directory identity\n").unwrap();
+            index.add(&entry).unwrap();
+            index.write().unwrap();
+        } else if change == 1 {
+            std::fs::write(root.join("thing/new-untracked"), b"unapproved removal\n").unwrap();
+        } else {
+            std::fs::write(root.join("thing/child"), b"new unstaged work\n").unwrap();
+        }
+        let before = std::fs::read(repo.path().join("index")).unwrap();
+        let work = std::fs::read(root.join("thing/child")).unwrap();
+        assert!(execute_dir_file_resolution(&repo, root, &plan).is_err());
+        assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
+        assert_eq!(std::fs::read(root.join("thing/child")).unwrap(), work);
+        if change == 1 {
+            assert_eq!(
+                std::fs::read(root.join("thing/new-untracked")).unwrap(),
+                b"unapproved removal\n"
+            );
+        }
+        assert_eq!(
+            repo.references_glob("refs/kagi/snapshots/*")
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn suffix_without_side_tree_identity_is_not_a_parked_namespace() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (td, repo) = df_conflict_with_cli("file-side", "dir-side", true);
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    let mut index = repo.index().unwrap();
+    let stage = if index.get_path(&plan.file_path, 2).is_some() {
+        2
+    } else {
+        3
+    };
+    let mut entry = index.get_path(&plan.file_path, stage).unwrap();
+    entry.id = repo.blob(b"not the original file side\n").unwrap();
+    index.add(&entry).unwrap();
+    index.write().unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(!session
+        .files
+        .iter()
+        .any(|f| f.kind == ConflictKind::DirFile));
+    assert!(session.files.iter().any(|f| f.path == plan.file_path));
+    assert!(plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).is_err());
+    assert!(td.path().join(&plan.file_path).exists());
+}
+
+#[test]
+fn dir_file_plan_refuses_gitlinks_before_any_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for file_side in [false, true] {
+        let (td, repo) = df_conflict("dir-side", "file-side");
+        let plan =
+            plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+        let mut index = repo.index().unwrap();
+        let mut entry = if file_side {
+            index.get_path(&plan.file_path, 3).unwrap()
+        } else {
+            let child = &plan.kept_children[0];
+            index.get_path(&child.path, child.stage as i32).unwrap()
+        };
+        entry.mode = 0o160000;
+        entry.id = repo.head().unwrap().target().unwrap();
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+        let before = std::fs::read(repo.path().join("index")).unwrap();
+        let child = std::fs::read(td.path().join("thing/child")).unwrap();
+        for choice in [DirFileChoice::KeepFile, DirFileChoice::KeepDirectory] {
+            let error = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap_err();
+            assert!(error.to_string().contains("submodules"), "{error}");
+        }
+        assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
+        assert_eq!(std::fs::read(td.path().join("thing/child")).unwrap(), child);
+        assert_eq!(
+            repo.references_glob("refs/kagi/snapshots/*")
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn dir_file_plan_refuses_nested_repository_metadata_before_recovery_or_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (td, repo) = df_conflict("dir-side", "file-side");
+    let root = td.path();
+    let approved = [DirFileChoice::KeepFile, DirFileChoice::KeepDirectory]
+        .map(|choice| plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap());
+    let nested = root.join("thing/vendor");
+    std::fs::create_dir(&nested).unwrap();
+    git(&nested, &["init", "-q", "-b", "main"]);
+    std::fs::write(nested.join("treasure"), b"nested repository work\n").unwrap();
+    git(&nested, &["add", "."]);
+    git(&nested, &["commit", "-qm", "nested"]);
+    let nested_repo = Repository::open(&nested).unwrap();
+    let nested_head = nested_repo.head().unwrap().target().unwrap();
+    let metadata = std::fs::read(nested.join(".git/config")).unwrap();
+    let index = std::fs::read(repo.path().join("index")).unwrap();
+    for plan in &approved {
+        let error = plan_dir_file_resolution(&repo, Path::new("thing"), plan.choice).unwrap_err();
+        assert!(
+            error.to_string().contains("nested repository metadata"),
+            "{error}"
+        );
+        assert!(execute_dir_file_resolution(&repo, root, plan).is_err());
+    }
+    assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
+    assert_eq!(
+        repo.references_glob("refs/kagi/snapshots/*")
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(std::fs::read(nested.join(".git/config")).unwrap(), metadata);
+    assert_eq!(nested_repo.head().unwrap().target().unwrap(), nested_head);
+    assert!(nested_repo.find_commit(nested_head).is_ok());
+    assert_eq!(
+        std::fs::read(nested.join("treasure")).unwrap(),
+        b"nested repository work\n"
+    );
 }

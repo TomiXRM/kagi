@@ -3,9 +3,10 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 69 TLC configurations, 39 pure
-properties (1,695,651 input/property evaluations), 24 TLC negative controls,
-36 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+No product code is imported or changed by the harness. There are 77 TLC
+configurations, 39 pure properties (1,695,651 input/property evaluations),
+29 TLC negative controls, 36 pure mutants, and 34 saved drill projections
+with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -64,7 +65,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738)**,
+holes/questions tracked by **#1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1736–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -130,6 +131,32 @@ Non-cancellable OS termination captures every live pane and urgently flushes
 off-thread within GPUI's shared 200 ms shutdown budget; slow/failing storage can
 still exceed it. That path does not strengthen `draft-crash` to HOLD or claim an
 acknowledgment before a successful current-generation flush.
+
+### Deletion and Git-parked namespace routes (#1734 / #1735)
+
+The original ledgers classified these two issues as **model-external runtime
+findings**: there were no `dd-rename` or `df-head-parked` REFUTE rows to relabel.
+The matching fix adds those named HOLD checks and a `modify-delete` HOLD to the
+existing lifecycle model, with five independently red negative controls.
+The historical drill projections remain unchanged.
+
+This refinement has six distinct paths: original source, two rename targets,
+parked file, directory child and unrelated suffix lookalike. It distinguishes
+unmerged stages, absent entries and clean identities. DD offers only explicit
+deletion; either modify/delete direction offers deletion or the present side.
+D/F requires positive source-tree attribution before offering either namespace
+choice. An exact index/worktree plan is confirmed, rechecked, recovery-captured,
+applied, verified and recorded. One external edit before preflight and recovery
+failure both refuse without mutation. Full expected maps preserve unrelated
+paths and both rename targets; the kept file occupies the original namespace.
+
+The invariants check **choice availability after classification**, not only
+success-implies-correctness, so removing the delete route cannot vacuously pass
+by leaving no enabled action. They also check complete index/worktree outcomes
+after mutation and a receipt at completion. This is a finite route/safety
+extraction, not a fairness claim, filesystem race proof or Rust execution.
+Deletion is an explicit confirmed request, not a persisted empty Result, so the
+text/raw draft-readiness pure models do not change.
 
 
 ### Saved runtime projections
@@ -214,6 +241,14 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `preserve-skip-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
 | `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
 | `preserve-dir-file-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
+| `dd-rename` | `DeletionRouteCompletes` | HOLD | none | #1734 explicit deletion; rename targets preserved |
+| `dd-rename-broken` | `DeletionRouteCompletes` | REFUTE | missingDelete | Negative control: absent-side choices replace deletion |
+| `dd-empty-blob-broken` | `DeletionRouteCompletes` | REFUTE | deleteAsEmpty | Negative control: deletion incorrectly stages an empty blob |
+| `modify-delete` | `DeletionRouteCompletes` | HOLD | none | #1734 both one-sided stage patterns |
+| `df-head-parked` | `ParkedNamespaceCompletes` | HOLD | none | #1735 both original-namespace outcomes |
+| `df-head-parked-broken` | `ParkedNamespaceCompletes` | REFUTE | literalParked | Negative control: stage the parked filename |
+| `df-suffix-only-broken` | `ParkedNamespaceCompletes` | REFUTE | suffixOnly | Negative control: infer ownership from suffix alone |
+| `df-worktree-residue-broken` | `ParkedNamespaceCompletes` | REFUTE | parkedResidue | Negative control: leave the parked worktree artifact |
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none | #1743 |
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
 | `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |

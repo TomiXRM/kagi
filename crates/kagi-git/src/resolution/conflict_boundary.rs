@@ -39,6 +39,17 @@ fn current_file_identity(
 }
 
 impl ResolutionBuffer {
+    pub fn file_resolutions(
+        &self,
+        path: &Path,
+    ) -> Option<&'static [kagi_domain::conflict_family::Resolution]> {
+        let file = self.files.get(path)?;
+        Some(kagi_domain::conflict_family::available_resolutions(
+            file.current_raw.is_some(),
+            file.incoming_raw.is_some(),
+        ))
+    }
+
     /// Live write authority is the same exact identity as draft adoption, not
     /// merely a path still present in an older session. The caller reloads the
     /// index before this check; missing/unknown identities never authorize writes.
@@ -202,6 +213,11 @@ impl ResolutionBuffer {
         file.worktree_fingerprint = worktree_fingerprint.clone();
         file.draft_state = true;
         match draft {
+            kagi_domain::conflict_family::ConflictDraft::Delete => {
+                return Err(GitError::Other(
+                    "deletion requires its frozen deletion plan".into(),
+                ));
+            }
             kagi_domain::conflict_family::ConflictDraft::Text { bytes, origins } => {
                 let text = std::str::from_utf8(bytes).map_err(|_| {
                     GitError::Other(format!(

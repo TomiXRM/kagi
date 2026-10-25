@@ -75,6 +75,28 @@ screen with no siblings to copy (#934's worktree row).
 | **State of an existing part** — a new disabled/loading/error state, a keyboard path, an AX name | Steps 3–6 for that part only; the reference may be omitted. |
 | **Wording only**, or no visible change | Nothing from this file. |
 
+### Conflict deletion and namespace choices (#1734 / #1735)
+
+Use the existing dense, file-local `compact_button` role, not window toolbar or
+sidebar session controls. DD has one destructive Confirm deletion (deleted on
+both sides)… action; modify/delete has destructive Use deleted side… and
+secondary Use modified side. D/F has equal secondary Keep directory… / Keep
+file… choices. Ellipses identify plan-opening actions. Keep existing geometry,
+hover/pressed/focus-visible states and writer-busy admission; do not introduce a
+second control style or infer side presence from empty text.
+
+The standard plan sheet discloses exact index removals, worktree removals,
+retained paths and original-path restoration in EN/JA. Its destructive action
+has no default Return route; Cancel/Escape preserve the repository. The immutable
+plan token and owner survive until explicit confirmation. Test the long DD
+caption and both languages at narrow widths; genuine keyboard/AX delivery and
+EN Light / JA Dark screenshots remain Tier B evidence, not renderer assertions.
+Reference: macOS Finder confirmation hierarchy, without importing mobile
+spacing into the dense file row.
+[Design figure and HIG quotations](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317);
+[independent design approval](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394580602).
+
+
 ## The procedure
 
 1. **Name the role and the density.** Which role from the table below? Is the

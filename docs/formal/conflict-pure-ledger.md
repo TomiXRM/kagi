@@ -39,11 +39,15 @@ witnesses are named there; those local artifacts are not committed).
 Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
-REFUTATIONS remain harness-green while tracked by #1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
+REFUTATIONS remain harness-green while tracked by #1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1736–#1738).
 The maintained tables now mark C1–C4 fixed by #1746; C6 remains an owner
 QUESTION. C5 is CONTRACT at runtime (metadata guard,
 `continue-metadata-read` HOLD), not an end-to-end fail-open issue.
 Unless explicitly amended below, the historical evidence keeps its original classifications.
+The #1734/#1735 [lifecycle amendment](conflict-lifecycle-ledger.md#1734--1735-deletion-and-parked-namespace-amendment--2026-10-25)
+adds deletion/namespace checks for formerly model-external findings. Explicit
+deletion is a confirmed operation, not persisted empty text; these text/raw
+draft-readiness predicates and their negative controls are intentionally unchanged.
 Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.

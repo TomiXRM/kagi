@@ -20,6 +20,7 @@ use conflict_observe::{
 
 #[derive(Clone, Debug)]
 enum ConflictPreparedAction {
+    Delete(ops::conflict_delete::ConflictDeletePlan),
     Save {
         path: PathBuf,
         draft: ConflictDraft,
@@ -72,6 +73,48 @@ impl ConflictPlan {
 
     pub fn request(&self) -> &ConflictRequest {
         &self.request
+    }
+
+    pub fn path_changes(&self) -> kagi_domain::conflict_family::ConflictPathChanges {
+        use kagi_domain::conflict_family::ConflictPathChanges;
+        match &self.action {
+            ConflictPreparedAction::Delete(plan) => ConflictPathChanges {
+                remove_index: vec![plan.path.clone()],
+                remove_worktree: plan.removal_paths.clone(),
+                ..Default::default()
+            },
+            ConflictPreparedAction::DirFile(plan) => {
+                let mut changes = ConflictPathChanges {
+                    remove_worktree: plan.removal_paths.clone(),
+                    ..Default::default()
+                };
+                match plan.choice {
+                    ops::DirFileChoice::KeepDirectory => {
+                        changes.remove_index.push(plan.file_path.clone());
+                        changes.keep = plan
+                            .kept_children
+                            .iter()
+                            .map(|entry| entry.path.clone())
+                            .collect();
+                    }
+                    ops::DirFileChoice::KeepFile => {
+                        changes.remove_index = plan.dir_children.clone();
+                        if plan.file_path != plan.path {
+                            changes.remove_index.push(plan.file_path.clone());
+                            changes.restore.push(plan.path.clone());
+                        } else {
+                            changes.keep.push(plan.path.clone());
+                        }
+                    }
+                }
+                changes
+            }
+            ConflictPreparedAction::Save { path, .. } => ConflictPathChanges {
+                keep: vec![path.clone()],
+                ..Default::default()
+            },
+            ConflictPreparedAction::Abort { .. } => ConflictPathChanges::default(),
+        }
     }
 }
 
@@ -219,6 +262,40 @@ impl Backend {
         })
     }
 
+    pub fn conflict_delete_request(
+        revision: ConflictRevision,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+        kind: kagi_domain::conflict_family::ConflictOperationKind,
+    ) -> Result<ConflictRequest, GitError> {
+        if !buffer.file_resolutions(path).is_some_and(|routes| {
+            routes.contains(&kagi_domain::conflict_family::Resolution::Delete)
+        }) {
+            return Err(GitError::Other(
+                "deletion is not available for this conflict".into(),
+            ));
+        }
+        let identity = buffer.file_identity(path).ok_or_else(|| {
+            GitError::Blocked(Box::new(PlanNote::Conflicts(
+                ConflictsNote::ObservationChanged,
+            )))
+        })?;
+        let draft = ConflictDraft::Delete;
+        Ok(ConflictRequest::Save {
+            path: path.to_path_buf(),
+            revision,
+            buffer_revision: buffer_revision(path, &draft, identity),
+            worktree_fingerprint: buffer.worktree_fingerprint(path).map(str::to_owned),
+            draft,
+            kind,
+            before_hash: buffer
+                .worktree_fingerprint(path)
+                .unwrap_or("unknown")
+                .to_owned(),
+            actions: "delete".into(),
+        })
+    }
+
     /// The Abort request for an observed in-progress operation (#704).
     ///
     /// Takes the pure observation the read model carries, so no caller needs a
@@ -300,12 +377,19 @@ impl Backend {
                         ))));
                     }
                 }
-                ConflictPreparedAction::Save {
-                    path: path.clone(),
-                    draft: draft.clone(),
-                    expected_mode: match draft {
-                        ConflictDraft::Raw { mode, .. } => *mode,
-                        ConflictDraft::Text { .. } => text_mode(&backend.repo, path),
+                match draft {
+                    ConflictDraft::Delete => ConflictPreparedAction::Delete(
+                        ops::conflict_delete::plan_conflict_delete(&backend.repo, path)?,
+                    ),
+                    ConflictDraft::Raw { mode, .. } => ConflictPreparedAction::Save {
+                        path: path.clone(),
+                        draft: draft.clone(),
+                        expected_mode: *mode,
+                    },
+                    ConflictDraft::Text { .. } => ConflictPreparedAction::Save {
+                        path: path.clone(),
+                        draft: draft.clone(),
+                        expected_mode: text_mode(&backend.repo, path),
                     },
                 }
             }
@@ -450,6 +534,32 @@ impl Backend {
                     return Err(GitError::Other("injected before conflict mutation".into()));
                 }
                 match &plan.action {
+                    ConflictPreparedAction::Delete(delete) => {
+                        let ConflictRequest::Save {
+                            path,
+                            draft,
+                            buffer_revision,
+                            worktree_fingerprint,
+                            ..
+                        } = &plan.request
+                        else {
+                            return Err(GitError::Other(
+                                "deletion request binding is missing".into(),
+                            ));
+                        };
+                        ResolutionBuffer::validate_save_binding(
+                            &backend.repo,
+                            path,
+                            draft,
+                            buffer_revision,
+                            worktree_fingerprint.as_deref(),
+                        )?;
+                        recovery = Some(ops::conflict_delete::execute_conflict_delete(
+                            &backend.repo,
+                            delete,
+                            |value| progress = value,
+                        )?);
+                    }
                     ConflictPreparedAction::Save {
                         path,
                         draft,
@@ -552,11 +662,19 @@ impl Backend {
         };
         let observed_after = match &plan.request {
             ConflictRequest::Save {
+                draft: ConflictDraft::Delete,
+                ..
+            } => ops::StateSummary {
+                head: "deleted from index and worktree".into(),
+                dirty: "resolved deletion".into(),
+            },
+            ConflictRequest::Save {
                 draft, before_hash, ..
             } => ops::StateSummary {
                 head: format!(
                     "staged (stage 0) before={before_hash} after={}",
                     match draft {
+                        ConflictDraft::Delete => "deleted".into(),
                         ConflictDraft::Text { bytes, .. } => short_text_hash(bytes),
                         ConflictDraft::Raw { oid, .. } => oid.chars().take(16).collect(),
                     }

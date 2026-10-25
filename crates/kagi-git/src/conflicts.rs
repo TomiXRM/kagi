@@ -491,6 +491,7 @@ fn collect_conflict_files(
     // stage-0 children never appear in `index.conflicts()`, so detecting the
     // collision needs the full entry list, not just the conflict iterator.
     let all_paths: Vec<Vec<u8>> = index.iter().map(|e| e.path).collect();
+    let parked = crate::ops::parked_dir_file_paths(repo, index);
 
     let mut files: Vec<ConflictFile> = Vec::new();
     for entry in conflicts {
@@ -499,6 +500,12 @@ fn collect_conflict_files(
             Some(p) => p,
             None => continue,
         };
+        if parked
+            .iter()
+            .any(|(original, file)| &path == file || path.starts_with(original))
+        {
+            continue;
+        }
         let kind = classify_kind(repo, &conflict, &path, &all_paths);
         files.push(ConflictFile {
             path,
@@ -506,6 +513,11 @@ fn collect_conflict_files(
             status: ConflictStatus::Unresolved,
         });
     }
+    files.extend(parked.into_iter().map(|(path, _)| ConflictFile {
+        path,
+        kind: ConflictKind::DirFile,
+        status: ConflictStatus::Unresolved,
+    }));
 
     files.sort_by(|a, b| a.path.cmp(&b.path));
     // Collapse only *exact* duplicate entries (same path AND kind). Keying the

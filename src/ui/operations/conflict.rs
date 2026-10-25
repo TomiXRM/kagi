@@ -331,9 +331,9 @@ impl KagiApp {
         }
     }
 
-    /// Plan → approve → dispatch one conflict-family request. `false` = the
-    /// request never became a job (closed pane admission, refused plan, stale
-    /// approval). A closed pane gate retains its already-presented failure.
+    /// Prepare one conflict-family request. Ordinary Save retains its explicit
+    /// Save approval; deletion and directory/file choices require the frozen
+    /// plan sheet's separate confirmation before dispatch.
     pub(crate) fn start_conflict_request(
         &mut self,
         request: app::ConflictAppRequest,
@@ -342,6 +342,15 @@ impl KagiApp {
         if !self.pane_mutation_admitted(request.owner.session) {
             return false;
         }
+        use kagi_domain::conflict_family::{ConflictDraft, ConflictRequest};
+        let needs_confirmation = matches!(
+            &request.request,
+            ConflictRequest::Save {
+                draft: ConflictDraft::Delete,
+                ..
+            } | ConflictRequest::ResolveDirFile { .. }
+        );
+        let attachment = request.owner.clone();
         let policy = crate::ui::blocking_ops::execution_policy();
         let owner = request.owner.session;
         let action = request.request.action();
@@ -371,6 +380,36 @@ impl KagiApp {
             }
             _ => return false,
         };
+        if needs_confirmation {
+            let app::PlanState::Ready {
+                prepared: app::Planned::Conflict { plan, .. },
+                ..
+            } = self.app_sessions.plan_state()
+            else {
+                return false;
+            };
+            let changes = plan.path_changes();
+            let revision = plan.request().revision().clone();
+            let Some(intent_token) = self
+                .ui()
+                .conflict
+                .as_ref()
+                .map(|pane| pane.read(cx).intent_token)
+            else {
+                return false;
+            };
+            self.set_conflict_resolution_modal(
+                crate::ui::modals::conflict_resolution::ConflictResolutionModal {
+                    token,
+                    owner: attachment,
+                    revision,
+                    intent_token,
+                    changes,
+                },
+            );
+            cx.notify();
+            return true;
+        }
         match app::approve(&mut self.app_sessions, token, app::Policy::Conflict(policy)) {
             Ok(approved) => {
                 self.dispatch_job(approved, cx);

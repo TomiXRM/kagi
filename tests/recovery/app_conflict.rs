@@ -734,27 +734,47 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.planning = Some("merge-plan");
+            app.status_footer =
+                kagi::ui::FooterStatus::Idle("Awaiting Abort planning refusal".into());
             let owner = app
                 .active_session()
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("abort owner");
             app.open_conflict_abort_modal(owner, window, cx);
-            assert!(
-                app.conflict_abort_modal().is_none(),
-                "a plan in flight must refuse the abort confirmation (#283)"
-            );
             app.confirm_conflict_abort(cx);
-            app.planning = None;
         });
     })
     .unwrap();
     cx.run_until_parked();
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Abort refusal after the flush while planning",
+        |app| {
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(message)
+            if message.as_ref() == kagi::ui::i18n::Msg::OpInProgress.t())
+        },
+    );
+    cx.read(|cx| {
+        assert_eq!(app.read(cx).planning, Some("merge-plan"));
+        assert!(
+            app.read(cx).conflict_abort_modal().is_none(),
+            "a plan in flight refuses the completed Abort-open continuation (#283)"
+        );
+    });
     assert!(
         repo.join(".git/MERGE_HEAD").exists(),
         "and a refused abort mutates nothing"
     );
+    app.update(cx, |app, _| app.planning = None);
     click_control(cx, window, "operation-strip-abort");
     cx.run_until_parked();
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Abort plan opens after planning releases",
+        |app| app.conflict_abort_modal().is_some(),
+    );
     assert!(
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
         "the first click confirms nothing — it opens the plan"

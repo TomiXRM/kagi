@@ -811,7 +811,7 @@ impl KagiApp {
                     .when(editor_dirty_guard_open, |el| {
                         el.child(render_editor_dirty_guard_modal(
                             self.host_dirty_guard_open(),
-                            self.host_dirty_buffer_count(cx),
+                            self.dirty_guard_editor_buffer_count(cx),
                             self.editor_dirty_guard_modal()
                                 .is_some_and(|modal| modal.saving.is_some()),
                             self.host_dirty_buffer_count(cx) == 0

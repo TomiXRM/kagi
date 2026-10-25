@@ -94,6 +94,21 @@ impl KagiApp {
             .is_some_and(|pane| pane.read(cx).has_unflushed_drafts())
     }
 
+    pub(crate) fn dirty_guard_editor_buffer_count(&self, cx: &App) -> usize {
+        let session = self
+            .editor_dirty_guard_modal()
+            .and_then(|modal| match modal.intent {
+                EditorPendingIntent::CloseRepoTab(session) => Some(session),
+                _ => None,
+            });
+        self.ui
+            .iter()
+            .filter(|(id, _)| session.is_none_or(|session| **id == session))
+            .filter_map(|(_, ui)| ui.editor_workspace.as_ref())
+            .map(|editor| editor.read(cx).dirty_buffer_count())
+            .sum()
+    }
+
     pub(crate) fn dirty_guard_has_unflushed_conflict_draft(&self, cx: &App) -> bool {
         self.editor_dirty_guard_modal()
             .is_some_and(|modal| match modal.intent {
@@ -285,7 +300,7 @@ impl KagiApp {
                 modal.draft_save_token = Some(token);
                 modal.conflict_discard_armed = false;
             }
-            let task = conflict.update(cx, |view, cx| view.retry_draft_autosave(cx));
+            let task = conflict.update(cx, |view, cx| view.flush_drafts(cx));
             cx.spawn(async move |this, cx| {
                 let saved = task.await;
                 let _ = this.update(cx, |app, cx| {

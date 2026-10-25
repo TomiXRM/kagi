@@ -122,22 +122,29 @@ pub fn status_chips() -> Vec<(String, Option<String>, Option<String>)> {
 }
 
 #[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct ConflictDraftGuardPresentation {
+    pub title: &'static str,
+    pub retry: &'static str,
+    pub discard: &'static str,
+    pub detail: &'static str,
+    pub editor_count: usize,
+    pub saving: bool,
+}
+
+#[cfg(feature = "gui-e2e")]
 thread_local! {
-    static CONFLICT_DRAFT_GUARD: RefCell<Option<(&'static str, &'static str, &'static str)>> = const { RefCell::new(None) };
+    static CONFLICT_DRAFT_GUARD: RefCell<Option<ConflictDraftGuardPresentation>> = const { RefCell::new(None) };
 }
 
 /// Observe the labels actually selected by the conflict draft guard renderer.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn record_conflict_draft_guard(
-    title: &'static str,
-    retry: &'static str,
-    discard: &'static str,
-) {
-    CONFLICT_DRAFT_GUARD.with(|value| *value.borrow_mut() = Some((title, retry, discard)));
+pub(crate) fn record_conflict_draft_guard(presentation: ConflictDraftGuardPresentation) {
+    CONFLICT_DRAFT_GUARD.with(|value| *value.borrow_mut() = Some(presentation));
 }
 
 #[cfg(feature = "gui-e2e")]
-pub fn take_conflict_draft_guard() -> Option<(&'static str, &'static str, &'static str)> {
+pub fn take_conflict_draft_guard() -> Option<ConflictDraftGuardPresentation> {
     CONFLICT_DRAFT_GUARD.with(|value| value.borrow_mut().take())
 }
 

@@ -160,7 +160,7 @@ impl ConflictView {
     pub fn sync_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_owned_editor_inputs(window, cx);
         self.watch_draft_save(cx);
-        self.present_draft_failure(cx);
+        self.present_draft_failure(cx).detach();
     }
 
     fn sync_owned_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -244,22 +244,25 @@ impl ConflictView {
     pub(super) fn autosave_drafts(&mut self) {
         let result = self.mode.as_ref().map(|mode| mode.buffer.queue_autosave());
         if let Some(result) = result {
-            self.accept_draft_queue(result);
+            self.accept_draft_queue(result, true);
         }
     }
 
     fn queue_draft_snapshot(&mut self, buffer: &ResolutionBuffer) {
-        self.accept_draft_queue(buffer.queue_autosave());
+        self.accept_draft_queue(buffer.queue_autosave(), true);
     }
 
     fn accept_draft_queue(
         &mut self,
         result: Result<kagi_git::resolution::DraftSave, kagi_git::GitError>,
+        decisions_changed: bool,
     ) {
+        if decisions_changed {
+            self.intent_token =
+                super::NEXT_INTENT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         match result {
             Ok(ticket) => {
-                self.intent_token =
-                    super::NEXT_INTENT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.draft_save = Some(ticket);
             }
             Err(error) => self.note_draft_result(Err(error.to_string())),
@@ -306,7 +309,7 @@ impl ConflictView {
                 view.draft_watch_running = false;
                 if ticket.is_current() {
                     view.note_draft_result(result.map(|_| ()).map_err(|error| error.to_string()));
-                    view.present_draft_failure(cx);
+                    view.present_draft_failure(cx).detach();
                 }
                 view.watch_draft_save(cx);
                 cx.notify();
@@ -327,9 +330,9 @@ impl ConflictView {
         }
     }
 
-    fn present_draft_failure(&mut self, cx: &mut Context<Self>) {
+    fn present_draft_failure(&mut self, cx: &mut Context<Self>) -> gpui::Task<()> {
         let Some(error) = self.draft_failure_pending.take() else {
-            return;
+            return gpui::Task::ready(());
         };
         let parent = self.app.clone();
         let owner = self.owner.clone();
@@ -363,30 +366,50 @@ impl ConflictView {
                 );
             });
         })
-        .detach();
     }
 
-    /// Capture first; the blocking barrier runs before repository admission and
-    /// never under its lock. A newer generation cannot inherit this approval.
-    pub(crate) fn retry_draft_autosave(&mut self, cx: &mut Context<Self>) -> gpui::Task<bool> {
-        self.flush_drafts(true, cx)
-    }
-
-    pub(crate) fn flush_drafts(&mut self, retry: bool, cx: &mut Context<Self>) -> gpui::Task<bool> {
-        if !retry && self.draft_persist_failed.is_some() {
-            return gpui::Task::ready(false);
-        }
+    fn prepare_draft_flush(&mut self, cx: &Context<Self>) -> bool {
         if !self.capture_result_for_navigation(cx) {
-            return gpui::Task::ready(false);
+            return false;
         }
-        if retry && self.draft_persist_failed.is_some()
+        if self.draft_persist_failed.is_some()
             || self
                 .draft_save
                 .as_ref()
                 .is_none_or(|ticket| !ticket.is_current())
                 && self.has_unflushed_drafts()
         {
-            self.autosave_drafts();
+            // A retry changes writer generation, not the decisions frozen by
+            // this action. A changed Result was already invalidated by capture.
+            if let Some(mode) = self.mode.as_ref() {
+                self.accept_draft_queue(mode.buffer.queue_autosave(), false);
+            }
+        }
+        true
+    }
+
+    /// The non-cancellable OS exit path has only GPUI's shared 200 ms budget.
+    /// Capture before windows disappear, then urgently flush owned tickets off
+    /// the UI thread; do not depend on an entity callback surviving shutdown.
+    pub(super) fn flush_drafts_on_quit(&mut self, cx: &mut Context<Self>) -> gpui::Task<()> {
+        if !self.prepare_draft_flush(cx) {
+            eprintln!("Conflict draft shutdown: could not capture the latest Result");
+        }
+        let ticket = self.draft_save.clone();
+        cx.background_spawn(async move {
+            if let Some(ticket) = ticket {
+                if let Err(error) = ticket.flush() {
+                    eprintln!("Conflict draft shutdown flush: {error}");
+                }
+            }
+        })
+    }
+
+    /// Capture first; the blocking barrier runs before repository admission and
+    /// never under its lock. Explicit actions retry a failed current body.
+    pub(crate) fn flush_drafts(&mut self, cx: &mut Context<Self>) -> gpui::Task<bool> {
+        if !self.prepare_draft_flush(cx) {
+            return gpui::Task::ready(false);
         }
         let Some(mode) = self.mode.as_ref() else {
             return gpui::Task::ready(self.draft_persist_failed.is_none());
@@ -400,6 +423,26 @@ impl ConflictView {
         });
         cx.spawn(async move |this, cx| {
             let (result, ticket) = task.await;
+            let notification = this
+                .update(cx, |view, cx| {
+                    let current = ticket.as_ref().is_none_or(|ticket| ticket.is_current())
+                        && view.mode.as_ref().is_some_and(|mode| {
+                            mode.revision == revision && !mode.buffer.has_unflushed_drafts()
+                        });
+                    if result.is_err() || current {
+                        view.note_draft_result(result.map_err(|error| error.to_string()));
+                    }
+                    if let Some(error) = view.draft_persist_failed.as_ref() {
+                        view.draft_failure_pending = Some(error.clone());
+                    }
+                    view.present_draft_failure(cx)
+                })
+                .ok();
+            // Finish the draft diagnostic before the caller presents its more
+            // specific operation refusal; detached callbacks must not erase it.
+            if let Some(notification) = notification {
+                notification.await;
+            }
             this.update(cx, |view, cx| {
                 view.draft_flushes -= 1;
                 view.capture_result_for_handoff(cx);
@@ -407,14 +450,6 @@ impl ConflictView {
                     && view.mode.as_ref().is_some_and(|mode| {
                         mode.revision == revision && !mode.buffer.has_unflushed_drafts()
                     });
-                if result.is_err() || current {
-                    view.note_draft_result(result.map_err(|error| error.to_string()));
-                }
-                // An explicit Retry announces a repeated failure as well.
-                if let Some(error) = view.draft_persist_failed.as_ref() {
-                    view.draft_failure_pending = Some(error.clone());
-                }
-                view.present_draft_failure(cx);
                 cx.notify();
                 current && view.draft_persist_failed.is_none()
             })

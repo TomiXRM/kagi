@@ -163,7 +163,7 @@ impl KagiApp {
         if pane.read(cx).draft_flushes > 0 {
             return;
         }
-        let task = pane.update(cx, |view, cx| view.flush_drafts(false, cx));
+        let task = pane.update(cx, |view, cx| view.flush_drafts(cx));
         cx.spawn(async move |this, cx| {
             let saved = task.await;
             let _ = this.update(cx, |app, cx| {

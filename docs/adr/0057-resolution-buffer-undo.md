@@ -19,11 +19,21 @@
   UI thread, before repository admission. A successful current-generation flush
   alone permits approval; changed generations/revisions/attachments invalidate it.
   No draft lock may be nested under the repository admission lock.
+  Non-cancellable OS termination instead captures all live panes before windows
+  disappear and urgently flushes their owned tickets within GPUI's shared 200 ms
+  shutdown budget. Failing/slow I/O can exceed that budget; this path does not
+  claim a successful durability acknowledgment or remove the crash window.
 - `has_unflushed_drafts()` drives the unsaved gate, including failed saves.
   Failed persistence retains live text, records the failure and refuses the
   operation. Explicit Retry must durably finish; intentional close-time loss
   requires both Discard confirmations. Merely recovering storage permissions
   does not authorize Abort to substitute an older disk-loaded draft.
+  Each explicit operation retries the current captured body after storage repair.
+  A mixed-state close-sheet Retry flushes conflict decisions only; ordinary
+  editor writes remain behind their separate, explicitly labeled Save All.
+  Retrying an identical capture may create a new writer generation without
+  changing its UI decision token. Real decision changes invalidate that token
+  even if queuing fails; approval still requires the current writer ticket.
 
 ## JSON codec（#513 resolution slice）
 

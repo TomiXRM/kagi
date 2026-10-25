@@ -1760,7 +1760,9 @@ pub enum Msg {
     ConflictDraftDiscardClose,
     ConflictDraftDiscardConfirm,
     ConflictDraftUnsavedDetail,
+    ConflictDraftSaving,
     ConflictDraftDiscardDetail,
+    ConflictDraftMixedDiscardDetail,
     EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
@@ -4598,8 +4600,12 @@ impl Msg {
             (Ja, ConflictDraftDiscardConfirm) => "破棄して閉じることを確認",
             (En, ConflictDraftUnsavedDetail) => "Conflict decisions exist only in this window. Retry saving or explicitly discard them before closing.",
             (Ja, ConflictDraftUnsavedDetail) => "conflict の解決内容はこのウィンドウにのみ残っています。保存を再試行するか、明示的に破棄してから閉じてください。",
+            (En, ConflictDraftSaving) => "Saving conflict decisions…",
+            (Ja, ConflictDraftSaving) => "conflict の解決内容を保存しています…",
             (En, ConflictDraftDiscardDetail) => "These unsaved conflict decisions will be lost. Discard them and close?",
             (Ja, ConflictDraftDiscardDetail) => "未保存の conflict 解決内容が失われます。破棄して閉じますか？",
+            (En, ConflictDraftMixedDiscardDetail) => "These unsaved conflict decisions and file changes will be lost. Discard them and close?",
+            (Ja, ConflictDraftMixedDiscardDetail) => "未保存の conflict 解決内容とファイルの変更が失われます。破棄して閉じますか？",
             (En, EditorWorkspaceSaveInterrupted) => {
                 "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
             }

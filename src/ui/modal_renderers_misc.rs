@@ -504,13 +504,33 @@ pub(crate) fn render_editor_dirty_guard_modal(
     } else {
         Msg::EditorWorkspaceDiscard.t()
     };
+    let detail = if conflict_discard_armed && count > 0 {
+        Msg::ConflictDraftMixedDiscardDetail.t()
+    } else if conflict_discard_armed {
+        Msg::ConflictDraftDiscardDetail.t()
+    } else if conflict_failed {
+        Msg::ConflictDraftUnsavedDetail.t()
+    } else {
+        Msg::ConflictDraftSaving.t()
+    };
     #[cfg(feature = "gui-e2e")]
-    if conflict_failed {
-        super::e2e::record_conflict_draft_guard(title, retry_label, discard_label);
+    if conflict_present {
+        super::e2e::record_conflict_draft_guard(super::e2e::ConflictDraftGuardPresentation {
+            title,
+            retry: retry_label,
+            discard: discard_label,
+            detail,
+            editor_count: count,
+            saving,
+        });
     }
     let busy = saving.then(|| SharedString::from(Msg::OpInProgress.t()));
-    let save = cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
-        this.save_host_dirty_guard(cx);
+    let save = cx.listener(move |this, _e: &gpui::ClickEvent, _, cx| {
+        if conflict_failed {
+            this.flush_host_conflict_drafts(cx);
+        } else {
+            this.save_host_dirty_guard(cx);
+        }
     });
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_dirty_guard();
@@ -535,28 +555,19 @@ pub(crate) fn render_editor_dirty_guard_modal(
                 current_theme().color_warning,
             )),
         )))
-        .when(conflict_present, |card| {
-            card.child(div().child(if conflict_discard_armed {
-                Msg::ConflictDraftDiscardDetail.t()
-            } else {
-                Msg::ConflictDraftUnsavedDetail.t()
-            }))
-        })
+        .when(conflict_present, |card| card.child(div().child(detail)))
         .when(restart_waiting, |card| {
             card.child(div().child(restart_message.t()))
         })
-        .when(
-            host_close && !restart_waiting && !conflict_present,
-            |card| {
-                card.child(
-                    div().child(
-                        Msg::EditorHostUnsavedCount
-                            .t()
-                            .replace("{count}", &count.to_string()),
-                    ),
-                )
-            },
-        )
+        .when(count > 0 && (host_close || conflict_present), |card| {
+            card.child(
+                div().child(
+                    Msg::EditorHostUnsavedCount
+                        .t()
+                        .replace("{count}", &count.to_string()),
+                ),
+            )
+        })
         .child(
             div().flex_shrink_0().child(
                 super::button_style::modal_button_row()

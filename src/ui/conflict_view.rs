@@ -138,6 +138,7 @@ pub struct EditorChrome {
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
     window_activation_subscription: Option<gpui::Subscription>,
+    _draft_quit_subscription: gpui::Subscription,
     pub(crate) operation_chrome_subscription: Option<gpui::Subscription>,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
@@ -240,9 +241,11 @@ impl ConflictView {
         app: WeakEntity<KagiApp>,
         repo_path: PathBuf,
         owner: crate::app::Attachment,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
             window_activation_subscription: None,
+            _draft_quit_subscription: cx.on_app_quit(|view, cx| view.flush_drafts_on_quit(cx)),
             operation_chrome_subscription: None,
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,

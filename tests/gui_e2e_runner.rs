@@ -525,6 +525,9 @@ mod conflict_continue_cache;
 mod conflict_draft_revision;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_draft_barrier_edges.rs"]
+mod conflict_draft_barrier_edges;
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_draft_persist_failure.rs"]
 mod conflict_draft_persist_failure;
 
@@ -3244,6 +3247,14 @@ mod macos {
             (
                 "conflict_draft_flush_boundaries",
                 Box::new(crate::conflict_draft_persist_failure::scenario_conflict_draft_flush_boundaries),
+            ),
+            (
+                "conflict_draft_shutdown",
+                Box::new(crate::conflict_draft_barrier_edges::scenario_conflict_draft_shutdown),
+            ),
+            (
+                "conflict_draft_repaired_actions",
+                Box::new(crate::conflict_draft_barrier_edges::scenario_conflict_draft_repaired_actions),
             ),
             (
                 "conflict_continue_presentation",

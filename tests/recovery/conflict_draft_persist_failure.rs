@@ -23,15 +23,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const DRAFT: &str = "MANUAL RESULT MUST SURVIVE FAILED AUTOSAVE\n";
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
 
-struct IsolatedLog {
+pub(super) const DRAFT: &str = "MANUAL RESULT MUST SURVIVE FAILED AUTOSAVE\n";
+
+pub(super) struct IsolatedLog {
     previous: Option<OsString>,
     directory: tempfile::TempDir,
 }
 
 impl IsolatedLog {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let previous = std::env::var_os("KAGI_LOG_DIR");
         std::env::set_var("KAGI_LOG_DIR", directory.path());
@@ -51,13 +54,13 @@ impl Drop for IsolatedLog {
     }
 }
 
-struct UnwritableDirectory {
+pub(super) struct UnwritableDirectory {
     path: PathBuf,
     permissions: Permissions,
 }
 
 impl UnwritableDirectory {
-    fn new(path: PathBuf) -> Self {
+    pub(super) fn new(path: PathBuf) -> Self {
         std::fs::create_dir_all(&path).unwrap();
         let permissions = std::fs::metadata(&path).unwrap().permissions();
         let guard = Self { path, permissions };
@@ -65,7 +68,7 @@ impl UnwritableDirectory {
         guard
     }
 
-    fn restore(&self) {
+    pub(super) fn restore(&self) {
         std::fs::set_permissions(&self.path, self.permissions.clone()).unwrap();
     }
 }
@@ -131,8 +134,13 @@ fn assert_guard(
 ) {
     e2e::take_conflict_draft_guard();
     paint(cx, app, window);
-    let (title, retry, discard) =
-        e2e::take_conflict_draft_guard().expect("production renderer selected failure labels");
+    let e2e::ConflictDraftGuardPresentation {
+        title,
+        retry,
+        discard,
+        detail,
+        ..
+    } = e2e::take_conflict_draft_guard().expect("production renderer selected failure labels");
     assert_eq!(
         title,
         match lang {
@@ -142,6 +150,7 @@ fn assert_guard(
     );
     assert_eq!(retry, Msg::ConflictDraftRetry.t());
     assert_eq!(discard, Msg::ConflictDraftDiscardClose.t());
+    assert_eq!(detail, Msg::ConflictDraftUnsavedDetail.t());
     for id in [
         "editor-dirty-guard-save",
         "editor-dirty-guard-discard",
@@ -304,12 +313,17 @@ fn repository_bytes(repo: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 fn assert_refused(
-    cx: &VisualTestAppContext,
+    cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     repo: &Path,
     op: &str,
     announced: bool,
 ) {
+    crate::busy_dismiss::wait(cx, app, "draft flush refuses the operation", |_| {
+        read_oplog_tail_for_repo(repo, 1000)
+            .iter()
+            .any(|entry| entry.op == op && matches!(entry.outcome, OpOutcome::Refused { .. }))
+    });
     let entries = read_oplog_tail_for_repo(repo, 1000);
     let receipt = entries.iter().rev().find(|entry| entry.op == op).unwrap();
     let reason = kagi_domain::plan_note::PlanNote::Conflicts(
@@ -365,12 +379,8 @@ fn run_abort_case(cx: &mut VisualTestAppContext, lang: Lang, at_confirm: bool) {
     } else {
         None
     };
-    let denied = UnwritableDirectory::new(isolated.directory.path().join("conflicts"));
-    replace_result(cx, &app, window, &input, DRAFT);
-    assert_live(cx, &app, window);
-    denied.restore();
-    // Storage is usable again, but Abort's disk-loaded buffer is stale until
-    // the live view has successfully retried its own autosave.
+    // The permission trap must prevent Abort from substituting this older
+    // durable body for the newer live Result, at both plan and confirmation.
     assert_eq!(
         ResolutionBuffer::load(&repo)
             .unwrap()
@@ -378,6 +388,9 @@ fn run_abort_case(cx: &mut VisualTestAppContext, lang: Lang, at_confirm: bool) {
             .as_deref(),
         Some("OLDER DURABLE DRAFT\n")
     );
+    let _denied = UnwritableDirectory::new(isolated.directory.path().join("conflicts"));
+    replace_result(cx, &app, window, &input, DRAFT);
+    assert_live(cx, &app, window);
     let before = repository_bytes(&repo);
     if let Some(frozen) = frozen {
         // Replay a genuinely computed confirmation at the app boundary after
@@ -390,12 +403,12 @@ fn run_abort_case(cx: &mut VisualTestAppContext, lang: Lang, at_confirm: bool) {
         click_control(cx, window, "conflict-abort");
     }
     wait_idle(cx, &app);
+    assert_refused(cx, &app, &repo, "merge-abort", true);
     assert_eq!(
         repository_bytes(&repo),
         before,
         "refused Abort is byte-exact no-write"
     );
-    assert_refused(cx, &app, &repo, "merge-abort", true);
     assert_live(cx, &app, window);
     assert!(cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()));
     assert!(repo.join(".git/MERGE_HEAD").exists());
@@ -425,14 +438,14 @@ fn run_skip_case(cx: &mut VisualTestAppContext, lang: Lang, active: bool) {
         app.conflict_skip(owner, cx);
     });
     wait_idle(cx, &app);
-    assert_eq!(repository_bytes(&repo), before);
     assert_refused(cx, &app, &repo, "rebase-skip", !active);
+    assert_eq!(repository_bytes(&repo), before);
     assert_live(cx, &app, window);
     drop(input);
     cleanup(cx, app, window);
 }
 
-fn queue_result(
+pub(super) fn queue_result(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
     input: &Entity<gpui_component::input::InputState>,
@@ -461,6 +474,20 @@ fn run_unflushed_close(
     detect(cx, &app, window);
     let input = result_input(cx, &app, window);
     let view = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
+    let store = cx.read(|cx| {
+        view.read(cx)
+            .mode
+            .as_ref()
+            .unwrap()
+            .buffer
+            .autosave()
+            .unwrap()
+    });
+    let lock = kagi_git::advisory_lock::lock_exclusive(
+        &store.with_file_name("buffer.json.lock"),
+        std::time::Duration::ZERO,
+    )
+    .unwrap();
     queue_result(cx, window, &input, DRAFT);
     cx.read(|cx| {
         assert!(conflict_read(&app, cx)
@@ -504,8 +531,30 @@ fn run_unflushed_close(
         })
         .unwrap();
     } else {
-        request_close(cx, &app, window, entry);
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                if entry.is_some() {
+                    app.handle_menu_command("window.close", window, cx);
+                } else {
+                    app.close_tab(app.active_tab, cx);
+                }
+            });
+        })
+        .unwrap();
     }
+    e2e::take_conflict_draft_guard();
+    // Draw before driving the test executor's blocking background tasks.
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let progress = e2e::take_conflict_draft_guard().expect("pending flush presents progress");
+    assert!(progress.saving);
+    assert_eq!(progress.detail, Msg::ConflictDraftSaving.t());
+    assert_ne!(progress.title, Msg::ConflictDraftSaveFailed.t());
+    assert_eq!(progress.editor_count, 0);
+    drop(lock);
     crate::busy_dismiss::wait_ui(cx, &app, "unflushed close completes", |app, cx| {
         app.editor_dirty_guard_modal().is_none() && view.read(cx).draft_autosave_settled_for_e2e()
     });
@@ -594,6 +643,105 @@ pub fn scenario_conflict_draft_flush_boundaries(cx: &mut VisualTestAppContext) {
     }
 }
 
+fn run_mixed_guard(cx: &mut VisualTestAppContext, lang: Lang, entry: Option<Entry>, discard: bool) {
+    let isolated = IsolatedLog::new();
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    crate::macos::git(&repo, &["merge", "--abort"]);
+    let ordinary = repo.join("ordinary.txt");
+    std::fs::write(&ordinary, "ordinary original\n").unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.set_lang(lang, cx));
+    let editor =
+        crate::host_dirty_guard::edit(cx, &app, window, "ordinary.txt", "ordinary unsaved\n");
+    assert!(!git_fixture::git_succeeds(&repo, &["merge", "feature"]));
+    detect(cx, &app, window);
+    let input = result_input(cx, &app, window);
+    let denied = UnwritableDirectory::new(isolated.directory.path().join("conflicts"));
+    replace_result(cx, &app, window, &input, DRAFT);
+    request_close(cx, &app, window, entry);
+    assert_guard(cx, &app, window, lang);
+    paint(cx, &app, window);
+    let presented = e2e::take_conflict_draft_guard().unwrap();
+    assert_eq!(
+        presented.editor_count, 1,
+        "do not count the conflict pane as a file"
+    );
+    click_control(cx, window, "editor-dirty-guard-discard");
+    paint(cx, &app, window);
+    let armed = e2e::take_conflict_draft_guard().unwrap();
+    assert_eq!(armed.detail, Msg::ConflictDraftMixedDiscardDetail.t());
+    assert_eq!(
+        armed.editor_count, 1,
+        "loss confirmation must still disclose ordinary files"
+    );
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+    assert_eq!(
+        std::fs::read_to_string(&ordinary).unwrap(),
+        "ordinary original\n"
+    );
+    if discard {
+        click_control(cx, window, "editor-dirty-guard-discard");
+    } else {
+        denied.restore();
+        click_control(cx, window, "editor-dirty-guard-save");
+        crate::busy_dismiss::wait_ui(
+            cx,
+            &app,
+            "Retry flushes only conflict decisions",
+            |state, cx| {
+                state
+                    .editor_dirty_guard_modal()
+                    .is_some_and(|modal| modal.saving.is_none())
+                    && conflict_read(&app, cx).draft_persist_failed.is_none()
+                    && !conflict_read(&app, cx)
+                        .mode
+                        .as_ref()
+                        .unwrap()
+                        .buffer
+                        .has_unflushed_drafts()
+            },
+        );
+        assert!(cx.read(|cx| editor.read(cx).dirty));
+        assert_eq!(
+            std::fs::read_to_string(&ordinary).unwrap(),
+            "ordinary original\n"
+        );
+        assert!(
+            alive(cx, window),
+            "Retry must not implicitly save ordinary files and close"
+        );
+        paint(cx, &app, window);
+        assert_eq!(
+            kagi::ui::button_style::recorded_modal_button("editor-dirty-guard-save")
+                .unwrap()
+                .label,
+            Msg::EditorHostSaveAll.t()
+        );
+        click_control(cx, window, "editor-dirty-guard-save");
+    }
+    crate::busy_dismiss::wait(cx, &app, "mixed guard finishes approved close", |app| {
+        app.editor_dirty_guard_modal().is_none()
+    });
+    if entry.is_some() {
+        assert!(!alive(cx, window));
+    } else {
+        assert!(cx.read(|cx| app.read(cx).tabs.is_empty()));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&ordinary).unwrap(),
+        if discard {
+            "ordinary original\n"
+        } else {
+            "ordinary unsaved\n"
+        },
+        "Ordinary changes require explicit Save All or explicit two-step Discard"
+    );
+    drop(editor);
+    drop(input);
+    cleanup(cx, app, window);
+}
+
 pub fn scenario_conflict_draft_persist_failure(cx: &mut VisualTestAppContext) {
     let _presentation = crate::presentation_support::Presentation::keep();
     cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
@@ -610,6 +758,9 @@ pub fn scenario_conflict_draft_persist_failure(cx: &mut VisualTestAppContext) {
         for active in [false, true] {
             run_skip_case(cx, lang, active);
         }
+        run_mixed_guard(cx, lang, Some(Entry::Close), false);
+        run_mixed_guard(cx, lang, Some(Entry::Close), true);
+        run_mixed_guard(cx, lang, None, true);
     }
     cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
 }

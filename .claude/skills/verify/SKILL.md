@@ -78,6 +78,12 @@ the close sheet and refused abort without changing the repository.
 For #1760 include `conflict_draft_flush_boundaries` in that selection. It sends
 the production Result Change event without draining the writer first, then closes
 the host/last repository tab and checks the exact durable body before destruction.
+Hold the real draft lock while painting the pending sheet: EN/JA must show
+Saving conflict decisions, not failure/Retry guidance, before release lets close
+complete. The failure matrix also retains a dirty ordinary editor alongside the
+failed conflict pane: its scoped file count remains visible through both Discard
+steps; failure Retry flushes only the conflict draft and leaves the dirty ordinary
+file and sheet open until a separate explicit Save All. Discard leaves disk unchanged.
 Its second EN/JA case edits again while Continue awaits a barrier and requires
 the stale generation to leave Git byte-identical without opening an approval.
 Ordinary input only queues; no test may infer durability from queue acceptance.
@@ -91,6 +97,12 @@ Tier B types in `long-policy.txt`, checks failed flush → Retry/two-step Discar
 and successful unflushed close, and compares synchronous/queued timings with the
 ignored backend `autosave_latency_three_files_five_hunks_200kb` benchmark.
 That benchmark measures capture/disk API latency, not end-to-end frame latency.
+`conflict_draft_repaired_actions` restores real directory permissions and retries
+Save/Abort without a close sheet; both must pass the current-generation barrier.
+`conflict_draft_shutdown` queues edits in two live conflict panes, invokes the
+actual GPUI shutdown hook without first draining autosave, and checks both durable
+bodies. Non-cancellable OS termination has a shared 200 ms budget, not an unlimited
+durability guarantee; storage errors/slow I/O retain an unacknowledged crash window.
 
 For #1706 W3 use
 `KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`

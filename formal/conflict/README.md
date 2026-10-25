@@ -125,6 +125,11 @@ durable close and nonnested locks; each has a guard-removal counterexample.
 It is a hand-extracted ordering model, not an execution of GPUI or OS locks.
 `draft-crash` deliberately remains REFUTE: the up-to-250 ms coalescing interval
 plus in-flight I/O is unacknowledged and may be lost on abrupt process death.
+The guarded close/quit transitions cover cancellable app-owned exits.
+Non-cancellable OS termination captures every live pane and urgently flushes
+off-thread within GPUI's shared 200 ms shutdown budget; slow/failing storage can
+still exceed it. That path does not strengthen `draft-crash` to HOLD or claim an
+acknowledgment before a successful current-generation flush.
 
 
 ### Saved runtime projections

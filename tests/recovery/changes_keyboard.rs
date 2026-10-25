@@ -495,10 +495,16 @@ fn discard_menu(
             );
             assert!(modal.plan.blockers.is_empty());
         });
-        press(cx, window, "enter");
+        crate::destructive_modal_return::root_return_keeps_modal(cx, app, window, repo);
+        cx.read(|cx| {
+            let modal = app.read(cx).discard_modal().unwrap();
+            assert_eq!(modal.paths, vec![path.to_string()]);
+            assert!(!modal.confirm_armed);
+        });
+        press(cx, window, "escape");
         assert!(
             cx.read(|cx| app.read(cx).discard_modal().is_none()),
-            "destructive root Return cancels"
+            "Escape cancels the unchanged destructive sheet"
         );
         replace(cx, app, repo);
         paint(cx, window);

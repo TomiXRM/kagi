@@ -309,17 +309,20 @@ pub fn scenario_pr_detail_a11y_1257(cx: &mut VisualTestAppContext) {
             let opened = pr_detail::activation_count(APPLY);
             crate::keyboard_nav::keys(cx, cell.win, "enter");
             cell.paint(cx);
-            assert!(cx.read(|cx| cell.app.read(cx).apply_suggestion_modal().is_none()));
+            assert!(cx.read(|cx| cell.app.read(cx).apply_suggestion_modal().is_some()));
             assert_eq!(
                 pr_detail::activation_count(APPLY),
                 opened,
-                "Return cancellation must not reopen through the opener's key-up"
+                "Return must not reactivate the opener through key-up"
             );
             assert_eq!(crate::macos::repo_fingerprint(repo), before);
             assert_eq!(
                 kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
                 receipts
             );
+            crate::keyboard_nav::keys(cx, cell.win, "escape");
+            cell.paint(cx);
+            assert!(cx.read(|cx| cell.app.read(cx).apply_suggestion_modal().is_none()));
         }
     });
 }

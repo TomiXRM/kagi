@@ -97,12 +97,19 @@ not the command (#1588: no `git …` strings in copy).
 is a status banner or label; its exits (abort) and its advance (continue) are
 controls next to it, separated by space, not mixed into unrelated rows.
 
-**Sheets and alerts** — one question, two or three buttons, Cancel on the
-leading side, Escape cancels. A danger sheet has **no default button**: Return
-does nothing, so people read it (`alerts.md`: "you don't want to make a Cancel
-button the default button… avoid making any button the default button"); the
-destructive button uses the destructive style and never has keyboard focus by
-default. A caution symbol only where data can be lost.
+**Sheets and alerts** `[HIG]` — `alerts.md › Buttons`: "you don't want to make
+a Cancel button the default button… avoid making any button the default
+button"; "Use a caution symbol sparingly… when confirming an action that might
+result in unexpected loss of data." `(owner ruling, #1767)` Return does
+nothing on danger sheets; confirm by click or Space/Return on the focused
+button; Escape / ⌘. cancel. This supersedes the root-Return-cancels policy in
+the 2026-10-12 #1292 / #1334 decisions and ADR-0046.
+A caution symbol only for **unexpected** data loss, not reassuring or
+progress notes or tasks whose sole purpose is deliberate overwrite/removal
+(`alerts.md › Desktop (macOS)`). Classify typed note kinds, never their translated
+text. The user-selected Abort confirmation retains its destructive appearance
+as an explicit safety convention (owner ruling, #1767); this does not give it
+default focus or a root Return action.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.

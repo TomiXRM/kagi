@@ -3165,8 +3165,8 @@ mod macos {
                 Box::new(crate::conflict_stopped::scenario_conflict_continue_stopped_result_owner),
             ),
             (
-                "pr_merge_delete_branch_return_cancel",
-                Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
+                "pr_merge_delete_branch_no_default",
+                Box::new(crate::squash_safe_default::pr_merge_delete_branch_no_default),
             ),
             (
                 "pr_merge_card_scope",

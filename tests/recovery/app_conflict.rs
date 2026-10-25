@@ -913,6 +913,16 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         ),
         "the next Confirm aborts immediately, then recovery is announced"
     );
+    let plan = cx.read(|cx| app.read(cx).conflict_abort_modal().unwrap().plan.clone());
+    crate::destructive_modal_return::root_return_keeps_modal(cx, &app, window, &repo);
+    assert!(cx.read(|cx| std::sync::Arc::ptr_eq(
+        &app.read(cx).conflict_abort_modal().unwrap().plan,
+        &plan,
+    )));
+    assert!(
+        repo.join(".git/MERGE_HEAD").exists(),
+        "Return must not abort"
+    );
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
     wait_idle(cx, &app);
     assert!(

@@ -140,17 +140,17 @@ pub(crate) fn render_cherry_pick_modal(
     // ── Warnings ──────────────────────────────────────────
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!(
-                        "\u{26a0} {}",
-                        plan_note_text(w)
-                    ))),
-            );
+        for (index, warning) in plan.warnings.iter().enumerate() {
+            let (glyph, color) =
+                super::plan_card_rows::note_presentation(warning.kind(), &current_theme());
+            warn_col = warn_col.child(super::plan_card_rows::render_note_row(
+                format!("cherry-pick-warning-{index}").into(),
+                false,
+                glyph,
+                color,
+                &plan_note_text(warning),
+                false,
+            ));
         }
         body = body.child(warn_col.flex_shrink_0());
     }
@@ -374,17 +374,17 @@ pub(crate) fn render_commit_plan_modal(
     // Warnings
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
-            warn_col = warn_col.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!(
-                        "\u{26a0} {}",
-                        plan_note_text(w)
-                    ))),
-            );
+        for (index, warning) in plan.warnings.iter().enumerate() {
+            let (glyph, color) =
+                super::plan_card_rows::note_presentation(warning.kind(), &current_theme());
+            warn_col = warn_col.child(super::plan_card_rows::render_note_row(
+                format!("commit-warning-{index}").into(),
+                false,
+                glyph,
+                color,
+                &plan_note_text(warning),
+                false,
+            ));
         }
         body = body.child(warn_col.flex_shrink_0());
     }

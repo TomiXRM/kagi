@@ -76,7 +76,7 @@ the Menu key as well as right-click. Stable path/section focus, roving row
 navigation and the shared MenuKeys preserve the frozen session owner and
 repository-relative path. Escape returns to the launching row; choosing
 Discard still only plans the operation. The destructive confirmation retains
-root Return = Cancel and explicit danger-button approval. All three compact
+no default action on root Return and explicit danger-button approval. All three compact
 menu rows fit the actual viewport at the current zoom. Backend semantics,
 mandatory backups, preflight, verification and oplog ownership are unchanged.
 

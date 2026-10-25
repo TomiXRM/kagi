@@ -125,9 +125,9 @@ edits are unrelated and preserved.
 
 `cross_worktree_merge` exercises real graph drag events, destination tab reuse,
 cancellation, stale plan completion, a dirty origin editor that survives the
-merge navigation (and still prompts on ← Graph). Root Return cancels that
-destructive guard while retaining the same dirty editor; explicitly focused
-Discard closes it per ADR-0125's safe Return policy (#1277). It rejects external branch drift,
+merge navigation (and still prompts on ← Graph). Root Return retains that
+destructive guard and the same dirty editor; Escape cancels the sheet and explicitly focused
+Discard closes the editor per ADR-0125's no-default policy (#1767). It rejects external branch drift,
 then confirms a two-parent merge and checks both worktrees and the destination
 receipt. Backend fixtures in `tests/drag_merge_test.rs` cover a dirty parent and
 both fresh and stale approvals against a dirty linked destination.

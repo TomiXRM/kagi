@@ -98,9 +98,9 @@ impl KagiApp {
         }
     }
 
-    /// Return is the safe default, not an implicit selection of a danger action.
+    /// Danger sheets have no default action: root Return leaves them unchanged.
     /// Focused buttons consume their own Enter/Space before this root handler.
-    pub(super) fn active_modal_defaults_to_cancel(&self) -> bool {
+    pub(super) fn active_modal_has_no_default(&self) -> bool {
         use modals::ActiveModal as M;
         let danger_plan = |plan: &kagi_git::OperationPlan| {
             modal_renderers::plan_confirm_kind(plan.destructive, &plan.title, false)
@@ -172,7 +172,7 @@ impl KagiApp {
     /// Alert-style confirmations have no text field to take focus for them.
     /// Share the named-dialog focus trap, including the owner-trust prompt.
     pub(super) fn active_modal_needs_alert_trap(&self) -> bool {
-        self.active_modal_defaults_to_cancel() || self.trust_repo_modal().is_some()
+        self.active_modal_has_no_default() || self.trust_repo_modal().is_some()
     }
 
     /// Cards rendered through input_dialog_frame own their replacement focus,
@@ -329,9 +329,8 @@ impl KagiApp {
                     return;
                 }
                 if this.front_layer(cx) == front_layer::FrontLayer::Modal
-                    && this.active_modal_defaults_to_cancel()
+                    && this.active_modal_has_no_default()
                 {
-                    this.cancel_active_modal(cx);
                     cx.stop_propagation();
                     return;
                 }

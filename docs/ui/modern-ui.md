@@ -111,6 +111,11 @@ screen with no siblings to copy (#934's worktree row).
    AX), selected, loading, empty, error; plus every Kagi safety contract the
    control touches (plan → confirm, one modal slot, oplog-owned errors,
    Esc/Enter routing, IME).
+   Danger sheets have no default button (#1767): root Return retains the
+   sheet and its existing arm without acting; Escape / ⌘. cancel, and only a
+   focused button accepts Space / Return. Warning symbols mark unexpected
+   data loss, not reassurance, progress or deliberate removal. Destructive
+   filled captions meet 4.5:1 against their actual rest/hover/pressed fills.
 5. **Build to the role target**, using theme roles and `scaled_px` / rem so
    zoom (0.7–2.0) scales it. State which owner a value belongs to:
    `sync_gpui_component_theme` (shared — `Theme.radius` changes every

@@ -1044,7 +1044,8 @@ must preserve keyboard entry; the test does not refocus the root. Cover the firs
 raw file, ready unsaved drafts, saved read-only inspection, and sidebar hide/show
 without selection loss. Inactive fill and selected AX option must agree.
 The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
-for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
+for Pop/Drop; danger sheets have no default button after #1767: root Return
+leaves the same sheet open and neither confirms nor cancels. Follow-up coverage
 checks that the retained stash has no write lease before explicit approval,
 confirmed Drop records exactly one successful receipt, and root Return leaves
 the stash/repository unchanged without a drop receipt. Duplicate-OID suppression

@@ -26,7 +26,11 @@ pub(crate) fn render_note_row(
             .text_sm()
             .text_color(rgb(color))
             .overflow_hidden()
-            .child(SharedString::from(format!("{} {}", glyph, text)))
+            .child(if glyph.is_empty() {
+                SharedString::from(text.to_owned())
+            } else {
+                SharedString::from(format!("{glyph} {text}"))
+            })
             .into_any_element();
     }
     let (bg, border, _) = theme::badge_style(color);
@@ -41,12 +45,9 @@ pub(crate) fn render_note_row(
         .border_color(gpui::rgba(border))
         .px_2()
         .py(theme::scaled_px(4.))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_color(rgb(color))
-                .child(SharedString::from(glyph)),
-        )
+        .when(!glyph.is_empty(), |row| {
+            row.child(div().flex_shrink_0().text_color(rgb(color)).child(glyph))
+        })
         .child(
             div()
                 .flex_1()
@@ -57,6 +58,19 @@ pub(crate) fn render_note_row(
                 .child(SharedString::from(text.to_string())),
         )
         .into_any_element()
+}
+
+/// Shared warning-list presentation; blocking status remains a separate axis.
+pub(crate) fn note_presentation(
+    kind: kagi_domain::plan_note::PlanNoteKind,
+    palette: &theme::Theme,
+) -> (&'static str, u32) {
+    match kind {
+        kagi_domain::plan_note::PlanNoteKind::Information => ("", palette.text_sub),
+        kagi_domain::plan_note::PlanNoteKind::UnexpectedDataLoss => {
+            ("\u{26a0}", palette.color_warning)
+        }
+    }
 }
 
 /// Advisory form-plan warnings: wrap full localized text with shared Note semantics.
@@ -72,16 +86,10 @@ pub(crate) fn render_warnings_list(
         .children(warnings.iter().enumerate().map(|(index, warning)| {
             let id: SharedString = format!("{prefix}-{index}").into();
             let text = kagi_ui_core::i18n::plan_note_text(warning);
+            let (glyph, color) = note_presentation(warning.kind(), &current_theme());
             super::e2e::measure_control(
                 id.clone(),
-                render_note_row(
-                    id,
-                    false,
-                    "\u{26a0}",
-                    current_theme().color_warning,
-                    &text,
-                    true,
-                ),
+                render_note_row(id, false, glyph, color, &text, true),
             )
         }))
 }
@@ -166,4 +174,82 @@ pub(crate) fn render_commit_row(
             super::render_helpers::subject_tooltip(tooltip.clone(), window, cx)
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kagi_domain::plan_note::PlanNoteKind;
+
+    #[test]
+    fn only_unexpected_loss_gets_caution_ink_and_symbol() {
+        for palette in theme::THEMES {
+            assert_eq!(
+                note_presentation(PlanNoteKind::Information, palette),
+                ("", palette.text_sub),
+            );
+            assert_eq!(
+                note_presentation(PlanNoteKind::UnexpectedDataLoss, palette),
+                ("\u{26a0}", palette.color_warning),
+            );
+        }
+    }
+
+    #[test]
+    fn specialized_plan_notes_use_typed_presentation() {
+        use kagi_domain::plan_note::{
+            commit::CommitLeftoverParts, BranchNote, CloneNote, CommitNote, DiscardNote,
+            HistoryNote, OplogRestoreNote, PlanNote, StashNote,
+        };
+
+        // These bespoke surfaces must not infer caution from warning-list membership,
+        // operation destructiveness, or words in a branch/path.
+        let information = [
+            PlanNote::Branch(BranchNote::RenameRemoteNotRenamed),
+            PlanNote::Clone(CloneNote::ForkAddsUpstream),
+            PlanNote::History(HistoryNote::AmendDivergesFromRemote {
+                sha: "abc1234".into(),
+                branch: "unexpected loss".into(),
+            }),
+            PlanNote::Discard(DiscardNote::UntrackedWillBeDeleted { count: 1 }),
+            PlanNote::Commit(CommitNote::LeftoverNotIncluded {
+                count: 1,
+                parts: CommitLeftoverParts {
+                    modified: 1,
+                    untracked: 0,
+                },
+            }),
+            PlanNote::Stash(StashNote::UntrackedIncluded { count: 1 }),
+            PlanNote::Stash(StashNote::ApplyWouldConflict {
+                count: 1,
+                files: vec!["file".into()],
+            }),
+            PlanNote::Stash(StashNote::PopWouldConflict {
+                count: 1,
+                files: vec!["file".into()],
+            }),
+            PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch {
+                branch: "main".into(),
+                path: "unexpected loss".into(),
+            }),
+            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty {
+                branch: "main".into(),
+                path: "worktree".into(),
+            }),
+        ];
+        let loss = PlanNote::Stash(StashNote::IndexOnlyNotRestored { files: vec![] });
+        for palette in theme::THEMES {
+            for note in &information {
+                assert_eq!(
+                    note_presentation(note.kind(), palette),
+                    ("", palette.text_sub),
+                    "{note:?}",
+                );
+            }
+            assert_eq!(
+                note_presentation(loss.kind(), palette),
+                ("\u{26a0}", palette.color_warning),
+            );
+        }
+    }
 }

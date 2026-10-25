@@ -597,12 +597,13 @@ pub fn scenario_pr_peek_dirty_guard(cx: &mut VisualTestAppContext) {
             });
             match case {
                 "cancel" | "return" => {
-                    press_key(
-                        cx,
-                        &app,
-                        window,
-                        if case == "return" { "enter" } else { "escape" },
-                    );
+                    if case == "return" {
+                        crate::destructive_modal_return::root_return_keeps_modal(
+                            cx, &app, window, &repo,
+                        );
+                        assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+                    }
+                    press_key(cx, &app, window, "escape");
                     cx.read(|cx| {
                         let state = app.read(cx);
                         assert!(state.editor_dirty_guard_modal().is_none());

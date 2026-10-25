@@ -263,6 +263,18 @@ pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
             i18n::Msg::TerminalPasteBody.t(),
             "clipboard Tab must not hide the newline warning"
         );
+        crate::keyboard_nav::keys(cx, win, "enter");
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| app
+                .read(cx)
+                .terminal_paste_modal()
+                .unwrap()
+                .text
+                .to_string()),
+            "unsafe\t\ncommand\n"
+        );
+        assert_eq!(shell.bytes(), before, "Return must send no clipboard bytes");
         crate::keyboard_nav::keys(cx, win, "escape");
         assert_eq!(shell.bytes(), before, "Cancel must send no clipboard bytes");
         focus_terminal(cx, app, win);

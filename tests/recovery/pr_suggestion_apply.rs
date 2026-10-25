@@ -110,7 +110,7 @@ fn applies(repo: &Path) -> Vec<kagi_git::oplog::OpLogEntry> {
         .collect()
 }
 
-fn root_return_cancels_suggestion(
+fn root_return_retains_suggestion(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -123,18 +123,19 @@ fn root_return_cancels_suggestion(
         click(cx, window, APPLY);
         assert_eq!(modal_open(cx, app), Some(0));
         let before = crate::macos::repo_fingerprint(repo);
-        crate::recovery_operations::press_key(cx, app, window, "enter");
-        wait_idle(cx, app);
+        crate::destructive_modal_return::root_return_keeps_modal(cx, app, window, repo);
         assert_eq!(
             modal_open(cx, app),
-            None,
-            "Return cancels destructive suggestion"
+            Some(0),
+            "Return retains the same destructive suggestion"
         );
         assert_eq!(crate::macos::repo_fingerprint(repo), before);
         assert!(
             applies(repo).is_empty(),
             "Return must not record a suggestion write"
         );
+        crate::recovery_operations::press_key(cx, app, window, "escape");
+        assert_eq!(modal_open(cx, app), None);
     }
     app.update(cx, |app, cx| app.set_lang(previous, cx));
 }
@@ -219,7 +220,7 @@ pub fn scenario_pr_suggestion_apply(cx: &mut VisualTestAppContext) {
     assert_eq!(modal_open(cx, &app), None, "Cancel closes the card");
     assert_eq!(file(), "one\ntwo\nthree\n", "Cancel wrote");
     assert!(applies(&repo).is_empty(), "Cancel recorded an apply");
-    root_return_cancels_suggestion(cx, &app, window, &repo);
+    root_return_retains_suggestion(cx, &app, window, &repo);
 
     // Confirm: exactly the anchored line changes, nothing is staged, and one
     // successful entry carries the backup ref.

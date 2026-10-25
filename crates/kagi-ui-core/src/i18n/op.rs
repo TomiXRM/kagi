@@ -97,7 +97,7 @@ impl Op {
     fn label(self) -> (&'static str, &'static str) {
         use Op::*;
         match self {
-            Abort => ("Abort", "abort"),
+            Abort => ("Abort", "中止"),
             Amend => ("Amend", "amend"),
             Checkout => ("Checkout", "checkout"),
             Continue => ("Continue", "続行"),
@@ -477,6 +477,11 @@ pub fn terminal_lock_changed_contract(language: Lang) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn abort_label_localizes_the_action_not_the_git_command() {
+        assert_eq!(Op::Abort.label(), ("Abort", "中止"));
+    }
 
     #[test]
     fn display_failures_are_unchanged_by_toast_normalization() {

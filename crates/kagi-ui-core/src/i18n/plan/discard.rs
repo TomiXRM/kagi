@@ -14,7 +14,7 @@ pub(crate) const ADVICE_DISCARD_TARGET_SUBMODULE: &str =
 
 /// JA template for `Msg::AdviceDiscardUntrackedWillBeDeleted`.
 pub(crate) const ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED: &str =
-    "⚠️ 未追跡ファイル {} 件をディスクから削除します（空フォルダも削除）。各ファイルを削除前に Git 参照で保持するバックアップに保存します。操作ログの記録にある参照を使い、`git cat-file blob <backup-ref>:file` で内容を取り出せます。";
+    "未追跡ファイル {} 件をディスクから削除します（空フォルダも削除）。各ファイルを削除前に Git 参照で保持するバックアップに保存します。操作ログの記録にある参照を使い、`git cat-file blob <backup-ref>:file` で内容を取り出せます。";
 
 /// Japanese rendering of one discard note.
 pub fn note_ja(note: &DiscardNote) -> String {
@@ -64,6 +64,7 @@ mod contract_tests {
         assert!(ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains("バックアップ"));
         assert!(ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains("<backup-ref>:file"));
         assert!(!ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains("PERMANENTLY"));
+        assert!(!ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED.contains('⚠'));
         let recovery = recovery_ja();
         assert!(recovery.contains("Git の種類・モード"));
         assert!(recovery.contains("git ls-tree <backup-ref>"));

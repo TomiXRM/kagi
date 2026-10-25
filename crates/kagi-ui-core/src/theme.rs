@@ -361,6 +361,16 @@ impl Theme {
         self.readable_text_on(self.color_blocker, backgrounds, 4.6)
     }
 
+    /// Caption ink for an opaque destructive button across its actual fills.
+    /// Compute when syncing the palette, never in the button render path.
+    pub fn destructive_fill_text_on(&self, backgrounds: &[u32]) -> u32 {
+        self.readable_text_on(
+            filled_button_foreground(self.color_blocker, self),
+            backgrounds,
+            4.5,
+        )
+    }
+
     fn readable_text_on(&self, color: u32, backgrounds: &[u32], minimum: f64) -> u32 {
         let readable = |color| {
             backgrounds
@@ -370,9 +380,16 @@ impl Theme {
         if readable(color) {
             return color;
         }
-        let background = backgrounds[0];
         let base = to_hsla(color);
-        let step = if relative_luminance(background) > 0.5 {
+        // Mid-luminance fills can need dark ink even in a dark theme. Choose
+        // the endpoint with the best worst-state contrast, not theme mode.
+        let endpoint_contrast = |ink| {
+            backgrounds
+                .iter()
+                .map(|&bg| contrast_ratio(ink, bg))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let step = if endpoint_contrast(0x000000) >= endpoint_contrast(0xffffff) {
             -0.005
         } else {
             0.005
@@ -1467,8 +1484,13 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.button_secondary_hover = to_hsla(k.selected);
     gc.colors.button_secondary_active = to_hsla(k.surface);
     let danger_foreground = filled_button_foreground(k.color_blocker, k);
-    let (danger_foreground, danger_hover, danger_active) =
+    let (_, danger_hover, danger_active) =
         filled_button_interaction_colors(k.color_blocker, danger_foreground);
+    let danger_foreground = k.destructive_fill_text_on(&[
+        k.color_blocker,
+        u32::from(danger_hover.to_rgb()) >> 8,
+        u32::from(danger_active.to_rgb()) >> 8,
+    ]);
     gc.colors.button_danger = to_hsla(k.color_blocker);
     gc.colors.button_danger_foreground = to_hsla(danger_foreground);
     gc.colors.button_danger_hover = danger_hover;
@@ -1735,6 +1757,24 @@ mod nagi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readable_ink_uses_all_fill_states_not_theme_mode() {
+        for palette in [
+            &crate::theme_apple_light::APPLE_LIGHT,
+            &crate::theme_apple_dark::APPLE_DARK,
+        ] {
+            for backgrounds in [
+                [0x888888, 0x999999, 0xaaaaaa],
+                [0x333333, 0x444444, 0x555555],
+            ] {
+                let ink = palette.readable_text_on(0x777777, &backgrounds, 4.5);
+                for background in backgrounds {
+                    assert!(contrast_ratio(ink, background) >= 4.5);
+                }
+            }
+        }
+    }
 
     #[test]
     fn destructive_text_meets_aa_on_composited_conflict_chrome() {
@@ -2042,6 +2082,35 @@ mod tests {
             apply_gpui_component_theme(t, &mut gc);
             assert_eq!(gc.colors.button_danger, to_hsla(t.color_blocker));
             let foreground = u32::from(gc.colors.button_danger_foreground.to_rgb()) >> 8;
+            let backgrounds = [
+                gc.colors.button_danger,
+                gc.colors.button_danger_hover,
+                gc.colors.button_danger_active,
+            ]
+            .map(|fill| u32::from(fill.to_rgb()) >> 8);
+            // Match the palette's HSL conversion, not a lossy RGB round-trip
+            // of either the original fill or the generated caption.
+            assert_eq!(
+                gc.colors.button_danger_foreground,
+                to_hsla(t.destructive_fill_text_on(&[
+                    t.color_blocker,
+                    backgrounds[1],
+                    backgrounds[2],
+                ])),
+            );
+            // The pinned Danger Button paints tokens, not just ThemeColor.
+            assert_eq!(
+                gpui::Background::from(gc.tokens.button_danger),
+                gpui::Background::from(gc.colors.button_danger),
+            );
+            assert_eq!(
+                gpui::Background::from(gc.tokens.button_danger_hover),
+                gpui::Background::from(gc.colors.button_danger_hover),
+            );
+            assert_eq!(
+                gpui::Background::from(gc.tokens.button_danger_active),
+                gpui::Background::from(gc.colors.button_danger_active),
+            );
             for (state, background) in [
                 ("rest", gc.colors.button_danger),
                 ("hover", gc.colors.button_danger_hover),

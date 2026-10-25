@@ -8,7 +8,7 @@ use crate::ui::modal_copy::modal_copy_button;
 use crate::ui::modal_renderers::modal_overlay;
 use crate::ui::modal_shell::{modal_card, MODAL_W_LG};
 use crate::ui::modals::oplog_restore::OplogRestoreModal;
-use crate::ui::plan_card_rows::render_note_row;
+use crate::ui::plan_card_rows::{note_presentation, render_note_row};
 use crate::ui::theme::{self, theme};
 use crate::ui::KagiApp;
 use crate::ui::MONO_FONT;
@@ -172,9 +172,15 @@ fn title_chip(title: &PlanTitle) -> String {
     }
 }
 
-fn checked_out_warning_row(index: usize, reason: &str, path: &str) -> gpui::AnyElement {
+fn checked_out_warning_row(
+    index: usize,
+    reason: &str,
+    path: &str,
+    glyph: &'static str,
+    color: u32,
+) -> gpui::AnyElement {
     let id: SharedString = format!("restore-warning-{index}").into();
-    let (bg, border, _) = theme::badge_style(theme().color_warning);
+    let (bg, border, _) = theme::badge_style(color);
     let full = format!("{reason} · {path}");
     let path_text = SharedString::from(path.to_owned());
     let tooltip = path_text.clone();
@@ -189,12 +195,9 @@ fn checked_out_warning_row(index: usize, reason: &str, path: &str) -> gpui::AnyE
         .border_color(gpui::rgba(border))
         .px_2()
         .py(theme::scaled_px(4.))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_color(rgb(theme().color_warning))
-                .child("⚠"),
-        )
+        .when(!glyph.is_empty(), |row| {
+            row.child(div().flex_shrink_0().text_color(rgb(color)).child(glyph))
+        })
         .child(
             div()
                 .flex_1()
@@ -494,6 +497,7 @@ pub(crate) fn render(
         .child(refs);
     let mut warnings = Vec::new();
     for (index, warning) in modal.plan.warnings.iter().enumerate() {
+        let (glyph, color) = note_presentation(warning.kind(), &theme());
         match warning {
             PlanNote::OplogRestore(OplogRestoreNote::Moves { .. } | OplogRestoreNote::RefsOnly) => {
                 continue
@@ -503,6 +507,8 @@ pub(crate) fn render(
                     index,
                     &i18n::oplog_panel::restore_checked_out(branch, false),
                     path,
+                    glyph,
+                    color,
                 ));
             }
             PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, path }) => {
@@ -510,13 +516,15 @@ pub(crate) fn render(
                     index,
                     &i18n::oplog_panel::restore_checked_out(branch, true),
                     path,
+                    glyph,
+                    color,
                 ));
             }
             _ => warnings.push(render_note_row(
                 format!("restore-warning-{index}").into(),
                 false,
-                "⚠",
-                theme().color_warning,
+                glyph,
+                color,
                 &plan_note_text(warning),
                 true,
             )),

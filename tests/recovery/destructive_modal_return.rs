@@ -5,6 +5,41 @@ use kagi::ui::KagiApp;
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
 
+/// Root Return neither approves nor dismisses the current danger sheet.
+pub(crate) fn root_return_keeps_modal(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &std::path::Path,
+) {
+    let kind = cx.read(|cx| std::mem::discriminant(app.read(cx).active_modal.as_ref().unwrap()));
+    let fingerprint = crate::macos::repo_fingerprint(repo);
+    let leased = cx.read(|cx| app.read(cx).app_sessions.has_leases());
+    let receipts = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100);
+    for _ in 0..2 {
+        press_key(cx, app, window, "enter");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(
+                std::mem::discriminant(state.active_modal.as_ref().expect("Return retains sheet")),
+                kind
+            );
+            assert_eq!(
+                state.app_sessions.has_leases(),
+                leased,
+                "Return cannot change write admission"
+            );
+        });
+        assert_eq!(crate::macos::repo_fingerprint(repo), fingerprint);
+        assert_eq!(
+            format!("{:?}", kagi_git::oplog::read_oplog_tail_for_repo(repo, 100)),
+            format!("{receipts:?}"),
+            "Return must not change receipts"
+        );
+    }
+}
+
 pub(crate) fn focused_confirm(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -78,7 +113,7 @@ pub fn scenario_dirty_guard_focus_trap(cx: &mut VisualTestAppContext) {
             editor.read(cx).dirty
         });
         assert!(cx.read(|cx| editor.read(cx).dirty));
-        for cancel_key in ["escape", "enter"] {
+        for cancel_key in ["escape", "cmd-."] {
             app.update(cx, |app, cx| app.show_graph_mode(cx));
             cx.run_until_parked();
             paint(cx, window);
@@ -108,6 +143,8 @@ pub fn scenario_dirty_guard_focus_trap(cx: &mut VisualTestAppContext) {
                     "both dialog controls must participate in the cycle"
                 );
             }
+            root_return_keeps_modal(cx, &app, window, repo);
+            assert!(cx.read(|cx| editor.read(cx).dirty));
             press_key(cx, &app, window, cancel_key);
             cx.run_until_parked();
             assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
@@ -279,30 +316,26 @@ pub fn scenario_destructive_modal_return(cx: &mut VisualTestAppContext) {
         assert_eq!(cancel.role, gpui::Role::Button);
         assert_eq!(cancel.label, kagi_ui_core::i18n::Msg::PlanCancel.t());
         let before = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len();
-        press_key(cx, &app, window, "enter");
-        cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).discard_modal().is_some()) {
-            // Before the fix the first implicit default armed; another Return
-            // executed the discard without selecting its danger button.
-            press_key(cx, &app, window, "enter");
-            wait_idle(cx, &app);
-        }
+        root_return_keeps_modal(cx, &app, window, repo);
+        assert!(!cx.read(|cx| app.read(cx).discard_modal().unwrap().confirm_armed));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "# changed\n",
             "root Return must never discard files"
         );
         assert!(
-            cx.read(|cx| app.read(cx).discard_modal().is_none()),
-            "Return cancels the destructive modal"
+            cx.read(|cx| app.read(cx).discard_modal().is_some()),
+            "Return retains the destructive modal"
         );
-        assert!(kagi_ui_core::klog::tail()
-            .iter()
-            .any(|line| line == "[kagi] discard: cancelled"));
         assert_eq!(
             kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
             before
         );
+        press_key(cx, &app, window, "escape");
+        assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
+        assert!(kagi_ui_core::klog::tail()
+            .iter()
+            .any(|line| line == "[kagi] discard: cancelled"));
         app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
         wait_idle(cx, &app);
         paint(cx, window);
@@ -328,7 +361,9 @@ pub fn scenario_destructive_modal_return(cx: &mut VisualTestAppContext) {
             assert!(notice.contains("バックアップがありません"));
             assert!(!notice.contains("Working-tree changes"));
         }
-        press_key(cx, &app, window, "enter");
+        root_return_keeps_modal(cx, &app, window, repo);
+        assert!(cx.read(|cx| app.read(cx).discard_modal().unwrap().confirm_armed));
+        press_key(cx, &app, window, "escape");
         assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "# changed\n");
         app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
@@ -454,7 +489,9 @@ fn amend_confirmation_policy(cx: &mut VisualTestAppContext, lang: kagi_ui_core::
             assert!(!notice.contains("This rewrites"));
         }
         if cancel {
-            press_key(cx, &app, window, "enter");
+            root_return_keeps_modal(cx, &app, window, repo);
+            assert!(cx.read(|cx| app.read(cx).amend_modal().unwrap().confirm_armed));
+            press_key(cx, &app, window, "escape");
             assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
             assert_eq!(
                 git_fixture::git_output(repo, &["rev-parse", "HEAD"]),
@@ -503,11 +540,11 @@ fn cancel_other_danger_modals(
         });
         wait_idle(cx, &app);
         assert!(cx.read(|cx| app.read(cx).active_modal.is_some()));
-        press_key(cx, &app, window, "enter");
-        cx.run_until_parked();
+        root_return_keeps_modal(cx, app, window, repo);
+        press_key(cx, app, window, "escape");
         assert!(
             cx.read(|cx| app.read(cx).active_modal.is_none()),
-            "{kind}: Return cancels"
+            "{kind}: Escape cancels"
         );
         assert_eq!(crate::macos::repo_fingerprint(repo), fingerprint);
         assert_eq!(

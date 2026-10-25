@@ -494,8 +494,8 @@ Return keeps the existing non-destructive primary action (Inspect, ordinary
 Acknowledge or the first arm step). Handled modal Return is consumed before
 default text input delivery, so it cannot insert a newline into the retained
 Input that opened the notice. Root Return on the armed destructive release
-continues to cancel, now dismissing its presentation rather than reopening an
-unarmed copy. Unread notices already queued may present next; a notice displaced
+has no default action and retains the armed presentation. Escape or Cmd-. dismisses
+it without releasing the write blockade. Unread notices already queued may present next; a notice displaced
 by another user-opened dialog is still unread and remains queued under #718.
 
 

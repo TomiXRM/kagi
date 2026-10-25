@@ -234,16 +234,23 @@ pub fn scenario_plan_footer_long_branch(cx: &mut VisualTestAppContext) {
                             "full source/destination AX identity"
                         );
                     }
-                    if replay && !blocked {
-                        let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
-                        cx.update_window(window, |_, window, cx| window.focus(&root, cx))
-                            .unwrap();
-                        cx.simulate_keystrokes(window, "enter");
-                        cx.run_until_parked();
-                        assert!(
-                            cx.read(|cx| app.read(cx).rebase_current_onto_modal().is_none()),
-                            "root Return cancels Replay"
+                    if replay {
+                        crate::destructive_modal_return::root_return_keeps_modal(
+                            cx,
+                            app,
+                            window,
+                            fixture.path(),
                         );
+                        assert_eq!(
+                            cx.read(|cx| app
+                                .read(cx)
+                                .rebase_current_onto_modal()
+                                .unwrap()
+                                .confirm_armed),
+                            armed
+                        );
+                        crate::recovery_operations::press_key(cx, app, window, "escape");
+                        assert!(cx.read(|cx| app.read(cx).rebase_current_onto_modal().is_none()));
                     }
                     assert_eq!(repo_fingerprint(fixture.path()), fingerprint);
                 }

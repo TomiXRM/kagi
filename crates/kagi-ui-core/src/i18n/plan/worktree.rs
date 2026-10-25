@@ -42,11 +42,11 @@ pub(crate) const ADVICE_WORKTREE_REPAIRS_WORKTREES: &str =
 pub(crate) const ADVICE_WORKTREE_POST_CREATE_STEPS: &str =
     ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}";
 pub(crate) const ADVICE_WORKTREE_POST_CREATE_STEPS_TRUST_REQUIRED: &str =
-    ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}\n  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。";
+    ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}\n  確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。";
 pub(crate) const ADVICE_WORKTREE_PRE_REMOVE_STEPS: &str =
     ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}";
 pub(crate) const ADVICE_WORKTREE_PRE_REMOVE_STEPS_TRUST_REQUIRED: &str =
-    ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}\n  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。";
+    ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}\n  確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。";
 
 /// Japanese rendering of one worktree note.
 pub fn note_ja(note: &WorktreeNote) -> String {
@@ -273,6 +273,24 @@ pub(crate) fn note_ja_contract(note: &WorktreeNote) -> String {
     use kagi_domain::worktree_autolock::AutoUnlockRefusal;
 
     match note {
+        WorktreeNote::PostCreateSteps {
+            steps,
+            trust_required: true,
+            ..
+        } => format!(
+            ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}\n  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。",
+            steps.len(),
+            kagi_domain::plan_note::worktree::worktree_steps_lines(steps, false, "")
+        ),
+        WorktreeNote::PreRemoveSteps {
+            steps,
+            trust_required: true,
+            ..
+        } => format!(
+            ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}\n  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。",
+            steps.len(),
+            kagi_domain::plan_note::worktree::worktree_steps_lines(steps, false, "")
+        ),
         WorktreeNote::IncludeOverCap {
             total_bytes,
             cap_bytes,
@@ -314,6 +332,26 @@ pub(crate) fn note_ja_contract(note: &WorktreeNote) -> String {
 mod contract_tests {
     use super::*;
     use kagi_domain::worktree_autolock::AutoUnlockRefusal;
+
+    #[test]
+    fn trust_display_omits_caution_but_contract_keeps_it() {
+        assert!(!ADVICE_WORKTREE_POST_CREATE_STEPS_TRUST_REQUIRED.contains('⚠'));
+        assert!(!ADVICE_WORKTREE_PRE_REMOVE_STEPS_TRUST_REQUIRED.contains('⚠'));
+        for note in [
+            WorktreeNote::PostCreateSteps {
+                steps: vec![],
+                trust_required: true,
+                sha256: "digest".into(),
+            },
+            WorktreeNote::PreRemoveSteps {
+                steps: vec![],
+                trust_required: true,
+                sha256: "digest".into(),
+            },
+        ] {
+            assert!(note_ja_contract(&note).contains('⚠'));
+        }
+    }
 
     #[test]
     fn contract_preserves_legacy_bytes_and_raw_worktree_payloads() {

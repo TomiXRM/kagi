@@ -35,7 +35,7 @@
 ## Amendment — 2026-10-21: 回復可能な操作の確認 (#1695)
 
 一段確認も plan を省略せず、明示的に選んだ Confirm だけが実行を承認する。
-root Return は Cancel、Esc と Cancel は無変更のまま。二段 arm は実行時 guard の
+root Return は既定アクションなしで sheet と arm を保持し、Esc / Cmd-. と Cancel は無変更で閉じる。二段 arm は実行時 guard の
 代替ではなく、どちらの段数も plan → preflight → execute → verify → oplog を守る。
 identity / tip / digest / lease の再検査と blocker は緩和しない。
 

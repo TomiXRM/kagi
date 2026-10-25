@@ -73,7 +73,7 @@ fn pr(repo: &std::path::Path) -> kagi_domain::github::PullRequest {
     }
 }
 
-pub fn pr_merge_delete_branch_return_cancel(cx: &mut VisualTestAppContext) {
+pub fn pr_merge_delete_branch_no_default(cx: &mut VisualTestAppContext) {
     let _settings = crate::recovery_layout::GlobalSettings::capture();
     let _theme = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     let transport = tempfile::tempdir().unwrap();
@@ -122,20 +122,20 @@ pub fn pr_merge_delete_branch_return_cancel(cx: &mut VisualTestAppContext) {
         );
         assert!(!copied.contains("Files: 0") && !copied.contains("ファイル: 0 件"));
         let calls_before = std::fs::read(&calls).unwrap_or_default();
-        cx.simulate_keystrokes(window, "enter");
-        cx.simulate_keystrokes(window, "enter");
-        cx.run_until_parked();
+        crate::destructive_modal_return::root_return_keeps_modal(cx, &app, window, fixture.path());
         assert!(
-            cx.read(|cx| app.read(cx).pr_merge_modal().is_none()),
-            "root Return must cancel"
+            cx.read(|cx| app.read(cx).pr_merge_modal().is_some()),
+            "root Return retains the merge sheet"
         );
         assert!(
             !cx.read(|cx| app.read(cx).app_sessions.has_leases()),
-            "Cancel admits no merge write"
+            "Return admits no merge write"
         );
         assert_eq!(std::fs::read(&calls).unwrap_or_default(), calls_before);
         assert_eq!(raw.refname_to_id("refs/heads/feature").unwrap(), before);
         assert_eq!(raw.head().unwrap().target(), head_before);
+        crate::recovery_operations::press_key(cx, &app, window, "escape");
+        assert!(cx.read(|cx| app.read(cx).pr_merge_modal().is_none()));
 
         let mut blocked = request.clone();
         blocked.is_draft = true;
@@ -150,9 +150,9 @@ pub fn pr_merge_delete_branch_return_cancel(cx: &mut VisualTestAppContext) {
                 .disabled
         );
         let calls_before = std::fs::read(&calls).unwrap_or_default();
-        cx.simulate_keystrokes(window, "enter");
-        cx.run_until_parked();
+        crate::destructive_modal_return::root_return_keeps_modal(cx, &app, window, fixture.path());
         assert_eq!(std::fs::read(&calls).unwrap_or_default(), calls_before);
+        crate::recovery_operations::press_key(cx, &app, window, "escape");
         assert!(cx.read(|cx| app.read(cx).pr_merge_modal().is_none()));
         app.update(cx, |app, cx| {
             app.open_pr_merge_modal(&request, kagi_git::github::MergeMethod::Squash, true, cx)

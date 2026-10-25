@@ -711,9 +711,13 @@ fn render_modal_button(
         ModalButtonKind::Destructive => ButtonRole::Destructive,
     };
     let bounded = description.is_some();
+    // Keep the existing filled Danger behavior. Its caption uses the palette's
+    // contrast-checked ink explicitly; Custom ignores its foreground field.
+    let caption_ink =
+        matches!(kind, ModalButtonKind::Destructive).then_some(cx.theme().button_danger_foreground);
     let button = button_accessibility(
         apply_role(
-            Button::new(id).child(modal_caption(label.clone(), bounded)),
+            Button::new(id).child(modal_caption(label.clone(), bounded, caption_ink)),
             role,
             cx,
         ),
@@ -781,7 +785,7 @@ fn unavailable_modal_button(
         .rounded(cx.theme().radius)
         .bg(Hsla::from(rgb(accent)).opacity(0.15))
         .text_color(cx.theme().muted_foreground.opacity(0.5))
-        .child(modal_caption(label, bounded))
+        .child(modal_caption(label, bounded, None))
         .hover_tooltip_builder((id, 0usize), move |window, cx| {
             if bounded {
                 super::render_helpers::subject_tooltip(description.clone(), window, cx)
@@ -792,7 +796,7 @@ fn unavailable_modal_button(
         .into_any_element()
 }
 
-fn modal_caption(label: SharedString, bounded: bool) -> gpui::AnyElement {
+fn modal_caption(label: SharedString, bounded: bool, ink: Option<Hsla>) -> gpui::AnyElement {
     if !bounded {
         return div()
             .min_w_0()
@@ -800,6 +804,7 @@ fn modal_caption(label: SharedString, bounded: bool) -> gpui::AnyElement {
             .whitespace_normal()
             .line_height(gpui::relative(1.))
             .text_center()
+            .when_some(ink, |caption, ink| caption.text_color(ink))
             .child(label)
             .into_any_element();
     }
@@ -809,6 +814,7 @@ fn modal_caption(label: SharedString, bounded: bool) -> gpui::AnyElement {
         .whitespace_nowrap()
         .text_ellipsis_middle()
         .relative()
+        .when_some(ink, |caption, ink| caption.text_color(ink))
         .child(super::e2e::measure_inside("plan-confirm-caption"))
         .child(label)
         .into_any_element()

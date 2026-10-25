@@ -71,7 +71,7 @@ fn confirm(
             Some(ActiveModal::Pop(_) | ActiveModal::StashDrop(_))
         )
     }) {
-        // #1270: root Return cancels danger cards. Tab to their real Confirm
+        // Danger cards have no root Return default. Tab to their real Confirm
         // button and send its Enter down/up rather than bypassing approval.
         crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     } else {
@@ -605,14 +605,19 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             assert_eq!(ids(&repo), kept);
         } else if cancel_followup {
             let fingerprint = crate::macos::repo_fingerprint(&repo);
-            crate::recovery_operations::press_key(cx, &app, window, "enter");
-            wait(cx, &app, |app| app.stash_drop_modal().is_none());
+            crate::destructive_modal_return::root_return_keeps_modal(cx, &app, window, &repo);
+            assert_eq!(
+                cx.read(|cx| app.read(cx).stash_drop_modal().unwrap().stash_index),
+                Some(1)
+            );
             assert_eq!(ids(&repo), kept, "root Return keeps the retained stash");
             assert_eq!(crate::macos::repo_fingerprint(&repo), fingerprint);
             assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
             assert!(!read_oplog_tail_for_repo(&repo, 100)
                 .iter()
                 .any(|entry| entry.op == "stash-drop"));
+            crate::recovery_operations::press_key(cx, &app, window, "escape");
+            wait(cx, &app, |app| app.stash_drop_modal().is_none());
         } else {
             // Cancelling is not the only thing this prompt must support: the
             // point of the follow-up is that it can be *confirmed*, and that it
@@ -638,7 +643,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             assert!(matches!(drops[0].outcome, OpOutcome::Success { .. }));
         }
         unmount(cx, app, window);
-        eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID explicit confirm/Return cancel (duplicate={duplicate}, cancel={cancel_followup})");
+        eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID explicit confirm/no-default Return (duplicate={duplicate}, cancel={cancel_followup})");
     }
 }
 
@@ -901,10 +906,7 @@ pub fn scenario_stash_apply_conflict_preview(cx: &mut VisualTestAppContext) {
     let (role, name) = kagi::ui::dialog_a11y::recorded_note("stash-apply-warning-0").unwrap();
     assert_eq!(role, gpui::Role::Note);
     assert!(!name.is_empty());
-    assert_eq!(
-        kagi::ui::take_stash_warning_glyph_for_e2e(),
-        Some("\u{26a0}")
-    );
+    assert_eq!(kagi::ui::take_stash_warning_glyph_for_e2e(), Some(""));
 
     unmount(cx, app, window);
 }

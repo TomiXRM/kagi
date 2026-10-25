@@ -387,7 +387,7 @@ fn unreadable_metadata_and_state_directory_refuse_before_writes() {
             target.clone(),
             std::fs::metadata(&target).unwrap().permissions(),
         );
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o000)).unwrap();
         assert!(backend.conflict_snapshot().is_err());
         assert_stale_approval(path, &backend, &approved, &buffer);
         drop(restore);

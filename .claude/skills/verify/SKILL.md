@@ -281,10 +281,16 @@ localized non-success stopped notice, real unresolved index entries and disabled
 Continue. The existing oplog failure scenario covers failed Fetch plus success
 and Unknown attempts under a real sidecar lock.
 `oplog_append_failure_conflict_stopped` locks the real oplog sidecar while merge
-and rebase stop on one/three-file conflicts in EN/JA. Require both the stopped
-Info toast and a separate Error toast plus immediate recording-failure AppNotice,
-one non-durable Partial row, no Success toast, no durable receipt/retry and a
-released known-outcome lease.
+and rebase stop on one/three-file conflicts in EN/JA. Require the recording-failure
+AppNotice as the sole result presentation, retaining stopped context and the
+append diagnostic, one non-durable Partial row, no toast, no durable receipt/retry
+and a released known-outcome lease.
+`conflict_continue_stopped_result_owner` repeats a real rebase Continue stopping
+at step 2 for EN/JA and current/departed owners, with healthy/failed append.
+On failed append, assert the exact localized acknowledgment includes the
+next-conflict stop and Partial classification, not Succeeded. This classification
+uses the original execution outcome, before conversion into a Partial display
+row. Clicking its rendered confirmation must not replay, skip or retry persistence.
 `pull_current_up_to_date` covers equal/ahead strict/ordinary Pull without changing
 local edits; its blocker neighbor rejects a conflict arriving during the freshness
 fetch. Tier B compares
@@ -1133,6 +1139,12 @@ ReadKey and bypasses Reload's modal sweep, so only failed detection can invalida
 the approval. The modal must close with the existing bounded failure preview.
 Reinstalling that genuine approval and clicking Confirm separately
 tests the consumer gate: no lease, staging, sequencer advance or receipt append.
+`conflict_draft_recovered_save_frozen_payload` combines #1732 restore admission
+with #1743 staging: a real unreadable draft retains the CRLF Result and editor
+behind the closed gate without a Git write. After repaired explicit detection,
+the real Save must record Success, retain the index-side executable mode under
+`core.fileMode=false`, clean the frozen blob to LF under `text=auto`, and preserve
+the approved CRLF worktree bytes. This is native Tier A, not a Tier B screenshot.
 `conflict_draft_stale_restore_success` holds an older real successful detection,
 then applies a newer real failed restore with the same Git observation. ReadKey
 and detector-generation supersession are exercised independently; neither stale

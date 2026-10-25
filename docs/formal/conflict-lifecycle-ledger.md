@@ -39,22 +39,132 @@ witnesses are named there; those local artifacts are not committed).
 Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
-REFUTATIONS remain harness-green while tracked by #1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
+REFUTATIONS remain harness-green while tracked by #1732–#1733 and #1746 (model-external runtime findings: #1734–#1738).
 The maintained lifecycle/pure expected-outcome tables linked above map each
 REFUTE to its issue, owner QUESTION, negative control, or runtime CONTRACT.
 The historical traces below retain their original extraction classifications;
-the maintained ledger table updates #1732 as described in the amendment below.
+the maintained ledger table incorporates the P2 and draft-preservation amendments.
 Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
 
-#1731/#1733 merge validation: the maintained full harness passed **55/55** expected lifecycle
+## Current union — #1775 / #1746 / #1780 / #1784
+
+The reconciled inventory contains **84 lifecycle configurations / 37 negative
+controls**. Measured state totals and verdicts for this union are pending the
+parent's full harness run; all measurements below identify predecessor cohorts.
+The union retains frozen approved staging/merge plans, backend receipts and
+worker-close liveness, raw stash restore/verification and sibling invalidation,
+alongside D3 exclusion, writer-termination ownership and every draft barrier.
+
+`stage_conflict_resolution_with_worktree_hook` acquires repository admission
+before revision preflight, so both its production wrapper and private hook path
+retain the guard through index publication. It stages clean-filtered frozen
+Results, not reread worktree content; materialize-then-filter ordering remains.
+The interleaving regression also asserts that a separate-thread contender sees
+`RepositoryBusy` during the hook. Abort carries `restored_paths` through
+`verify_abort` under the same repository guard, including raw stash WT/index
+postconditions. These describe the merged source/test contract, not new test
+execution evidence.
+
+Abort/Skip/stashAbort preserve drafts before repository admission, never nesting
+draft and repository locks. D/F remains Approve → admit → preflight →
+preserve(snapshot ref) → index; its invariant explicitly requires the lease and
+preflight at preservation. Quiet generic probes do not record; the actual
+operation owns its one receipt before Sessions settlement. Kernel release after
+known-stop verification is distinct from Sessions release after accounting;
+unknown-stop writers retain the same-fd resource until janitor group-stop proof.
+
+The upstream two-app `stagePayload` mutant is masked by D3 exclusion. Its
+replacement `stagePayloadRepoLock` explicitly removes **both** frozen staging
+and repository exclusion, without changing the assertion or `saveRace` schedule.
+It is a combined control, not evidence of an independently load-bearing single
+guard. The external-CLI `stageWT`/`stagePayload` and independent `repoLock`
+controls remain enabled. `MergeRefused` drops both reservations on drift.
+
+## Historical integration of P2 with #1731/#1784
+
+That predecessor model combined worker-owned receipts, frozen merge/staging
+payloads, planned-ref invalidation and byte-faithful stash restoration with
+failed-draft close holds, Abort/Skip/D/F preservation refusal, and current-generation
+off-thread flush barriers. No assertion or negative-control expectation is weakened.
+The integrated tree with main `cd733a50` passed all **81 configured TLC
+verdicts / 89,533 summed distinct states**. All **35** removed-guard controls
+remained red against their HOLD assertions (**10,755 states**). The pure suite
+passed **39 properties / 1,695,651 evaluations / 36 mutants**; runtime replay
+passed **34 trials / 46 logs** and rejected forged Skip. These are historical
+pre-D3/P1 union measurements, not results for the current integration.
+
+## Historical combined-tree validation — #1732 and P2
+
+The integrated tree combining `a3c359de` with main `af06cd7a` passed all
+**69 configured TLC verdicts / 89,229 summed distinct states**. All **27**
+negative controls remained red against their HOLD assertions (10,578 states).
+Both the atomic-draft and P2 HOLD sets remain HOLD without weakened assertions.
+The pure suite passed **39 properties / 1,695,651 evaluations / 36 mutants**;
+runtime replay passed **34 trials / 46 logs** and rejected forged Skip.
+
+The combined native filter passed 79 of 83 scenarios, including repaired
+draft-restore admission followed by a recorded Save of frozen, clean-filtered
+CRLF content with an index-preserved executable mode. The remaining four are
+the separately confirmed main dev-red scenarios tracked by #1776; they are not
+claimed as passing integration evidence. Workspace tests and the remaining
+build, lint and repository gates passed.
+
+## P2 maintained-model cutover — #1740, #1743, #1744, #1745
+
+The P2-only harness run passed **64 configured verdicts / 147,458 distinct
+states**, detected **23 TLC negative controls** (16,274 states), and passed
+38 pure properties / 1,695,579 evaluations / 35 mutants. Those are historical
+pre-integration counts; the historical atomic-draft/P2 evidence above superseded them.
+TLC's invariant exit 12 and temporal-property exit 13 remain distinct.
+
+- **#1740:** `Verify → AppendReceipt → ReleaseLease → Deliver` now applies to
+  Continue, Skip, and merge handoff, matching the backend-owned execute/observe/
+  finalize boundary. `successful` still means verified mutation, not receipt
+  completion. Close during dispatch sets `closing` and detaches the UI; `life`
+  represents the worker lifetime until release. The worker can therefore append
+  without resurrecting a weak UI owner. `ReceiptFollowsMutation` (three configs)
+  and `ContinueEventuallyRecordedOrReported` expect HOLD. Their four
+  `workerReceipt` controls restore release-before-callback accounting (and the
+  merge handoff's missing append). Receipt I/O failure, process kill and fsync
+  durability are outside this fault-free ordering guarantee.
+- **#1743:** the merge approval's original tree/revision survive dispatch;
+  `MergeRefused` terminates drift without mutation. Staging uses approved frozen
+  payloads rather than rereading mutable WT, including cross-instance schedules.
+  All three `ApprovedRevisionFrozen` configs and `MergeCommitTreeIsApprovedTree`
+  expect HOLD. `mergePlan` controls restore silent renewal; `stagePayload`
+  restores the external live-WT staging race. The current two-app compound
+  control is explained above. Arbitrary CLI final-check gaps remain separate;
+  D3 closes cooperating-instance admission, not arbitrary CLI interference.
+- **#1744:** `Deliver` classifies Abort from its planned ref restore, rather than
+  inferring shared-ref scope from a successful result. It invalidates the passive
+  sibling even when UI completion is detached. `SiblingWorktreesInvalidatedOnSharedRef`
+  expects HOLD; `sharedRef` removes that settlement classification.
+- **#1745:** stash `WTWrite` checks out the raw-byte path; `Verify` checks both
+  restored WT and index. `StashAbortRestoresConflictedBytes` is strengthened to
+  require the expected index as well as the original WT. `stash-non-utf8` and
+  `stash-verify` expect HOLD. `stashRestore` restores the original combined
+  UTF-8 omission/verification hole; `stashVerify` independently removes
+  verification under a WT-or-index drift schedule.
+  On this macOS APFS filesystem, invalid-UTF-8 creation returned EILSEQ and the
+  Unix integration explicitly skipped that unsupported path. The filesystem-
+  independent raw-path builder and representable Unicode restoration/corruption
+  oracles passed locally; those checks support this HOLD cutover without claiming
+  raw-filename filesystem execution. The Ubuntu CI workspace test job exercises
+  the Unix integration on a filesystem that accepts the name; its remote result
+  remains separate evidence.
+
+### Historical #1731/#1733 merge validation
+
+The predecessor full harness passed **55/55** expected lifecycle
 verdicts (85,344 distinct states summed), all **15** removed-guard controls produced
 their named counterexamples, all **38** pure properties / **30** pure mutants
 matched, and all **34** historical drill projections remained admitted with the
 forged-Skip projection rejected. Generated receipts under
-`formal/conflict/tla/results/` are current; detailed counterexample sections below
-remain explicitly historical, not claims that the repaired paths still fail.
+`formal/conflict/tla/results/` were generated for that historical run; detailed
+counterexample sections below remain historical, not claims that repaired paths
+still fail.
 
 ### #1732 atomic-draft amendment — 2026-10-24
 
@@ -79,17 +189,17 @@ against an already-refuted baseline; that control and its count are removed.
 After merging #1733 and removing that control, the earlier run passed
 **54 expected outcomes / 52,223 summed distinct states**, with all **14**
 remaining negative controls detected against baseline-HOLD properties.
-Integrating #1746 D1/D2 and #1757's width-aware materialization preserves those
-draft guards and adds the frozen Skip revision/prewrite defence: the maintained
-run passes **55 expected outcomes / 52,280 summed distinct states**, with all
-**15** meaningful negative controls detected. The pure lane retains 38 properties
-(1,695,579 input/property evaluations) and now detects 35 mutants.
+Integrating #1746 D1/D2 and #1757's width-aware materialization preserved those
+draft guards and added the frozen Skip revision/prewrite defence: that
+pre-integration run passed **55 expected outcomes / 52,280 summed distinct states**,
+with **15** meaningful negative controls detected. Its pure lane retained 38
+properties (1,695,579 evaluations) and detected 35 mutants.
 
 ### #1732 two-writer recovery-retention amendment — 2026-10-25
 
-The complete maintained run passes **57 expected outcomes / 52,289 summed
-distinct states**, detects all **16** meaningful TLC negative controls, and
-passes **39 pure properties / 1,695,651 evaluations / 36 detected mutants**.
+The historical draft-only recovery-retention run passed **57 expected outcomes / 52,289
+summed distinct states**, detected all **16** meaningful TLC negative controls,
+and passed **39 pure properties / 1,695,651 evaluations / 36 detected mutants**.
 The new recovery check explores **5** states; its broken counterpart refutes
 in **4** states (exit 12): Init → A primary → B primary + A recovery →
 A other-file save adopts B but deletes A recovery.
@@ -149,7 +259,7 @@ preservation before repository admission, but D/F snapshot refs after locked pre
 through the up-to-250 ms coalescing interval and any in-flight I/O. Explicit
 two-step Discard remains outside the no-intentional-loss scenarios.
 
-The upstream cutover run matched **69/69 expected outcomes**, exploring
+The historical incoming-main cutover run matched **69/69 expected outcomes**, exploring
 **52,578 summed distinct states**, and detected all **24** removed-guard controls.
 The pure lane passed **39 properties / 1,695,651 evaluations / 36 mutants**;
 all **34** historical projections remained admitted and forged Skip was rejected.
@@ -160,7 +270,7 @@ API measurements, not end-to-end GUI frame timings.
 
 ### #1746 / #1784 merge reconciliation — 2026-10-25
 
-The merged runner expects **70 lifecycle outcomes / 25 negative controls**:
+That historical merged runner expected **70 lifecycle outcomes / 25 negative controls**:
 upstream's 69 checks plus the repository-lock negative control. Repository
 exclusion, two-instance approval/revision/stale-write guards, failed-draft close,
 all three preservation refusals, and all four generation-bound flush guards
@@ -180,7 +290,7 @@ describe their respective pre-merge runs, not this combined transition system.
 
 ### #1780 unknown CLI writer termination — 2026-10-25
 
-The maintained runner now expects **72 lifecycle outcomes / 26 negative controls**.
+The pre-P2 #1780 runner inventory was **72 lifecycle outcomes / 26 negative controls**.
 The two added configurations are `writer-termination` (HOLD) and
 `writer-termination-broken` (REFUTE), both checking
 `LiveWriterKeepsRepositoryLease`. The measured 70/25 totals above remain the
@@ -220,13 +330,13 @@ D/F snapshot-after-admission/preflight ordering remain unchanged.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model has **72** checks and **26** negative controls, retaining #1731's failed-close and preservation guards alongside #1732's atomic writer, #1746 D1/D2/D3 repository admission, #1780's unknown-termination ownership and #1760/#1784's off-thread generation-bound barriers; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Machine-readable evidence is generated under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained union has **84** configurations and **37** negative controls, retaining P2, #1731 preservation, #1732 atomic drafts, #1746 D1/D2/D3, #1780 writer termination and #1760/#1784 flush barriers. Measured union totals await parent validation. See the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Machine-readable evidence is generated under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
 **Declared:** repository writes must follow plan → confirm → preflight → execute → verify → oplog (`AGENTS.md:23-37`); Save/Continue/Commit retain frozen revision/owner/lease checks and Save stages the explicitly reviewed file (`docs/adr/0227-progressive-conflict-resolution.md:126-128`); Abort preserves partial resolutions (`crates/kagi-git/src/conflicts.rs:27-33`, `ops/conflict_abort.rs:274-280`); D/F removal is recoverable because a snapshot was taken (`ops/dir_file_conflict.rs:299-300`); shared-ref changes invalidate sibling worktrees (`src/app/settle.rs:272-300`).
 
-**Historical implicit behavior:** WT bytes are not fingerprinted; Save stages by rereading WT; draft JSON used unlocked truncate/write (repaired by #1732 above); persistence errors are logged/ignored; Skip consumes a newly observed live step; Continue/Skip release before UI recording; merge handoff success has no append; merge finalization renews its plan; Conflict is classified as not shared-ref-changing; stash abort filters paths through UTF-8 and verifies only operation/HEAD.
+**Historical implicit behavior (superseded where fixed above):** WT bytes were not fingerprinted; Save staged by rereading WT; draft JSON used unlocked truncate/write; persistence errors were logged/ignored; Skip consumed a newly observed live step; Continue/Skip released before UI recording; merge handoff success had no append; merge finalization renewed its plan; Conflict was classified as not shared-ref-changing; stash abort filtered paths through UTF-8 and verified only operation/HEAD. These describe the original extraction, not the maintained P2 transitions.
 
 **Map disagreement, material:** map §5's missing manual-capture persistence call was obsolete in the inspected synchronous implementation. The ordered backend now separates immediate capture/queue acceptance from successful durable writer completion; `manual-capture.cfg` holds only at the latter boundary, and deleting the commit path goes red. `draft-crash` deliberately remains REFUTE for abrupt death between capture and commit. The UI must await `flush` off-thread at lifecycle/operation boundaries and preserve errors rather than interpreting queue acceptance as saved. Historical map line offsets drifted; the original trace citations remain extraction evidence.
 
@@ -238,68 +348,82 @@ D/F snapshot-after-admission/preflight ordering remain unchanged.
 - Read failures/trust/path/marker/identity validators unrelated to the witness are fixed to successful, known, compatible inputs. A failed preflight is a terminal nonmutating path (deadlock checking disabled); rejection UI text is outside this quotient. Continue has one resolved text path and no unexpected unmerged path. D/F has a namespace decision, not a fictitious text hunk. MergeCommit starts at an already resolved commit panel.
 - Immediate capture and queued completion are distinct transitions. Pending snapshots coalesce for at most 250 ms before starting, and in-flight fsync may extend the unacknowledged window; abrupt exit can lose that newest captured edit, so `DraftNeverLost` remains REFUTE without changing its assertion. Successful `flush` is the durable boundary. Restart restores same-revision compatible records; a corrupt primary uses the last good `.prev`. Without a valid backup, restore preserves positively damaged documents under exclusively reserved `.corrupt[.N]` names, records and announces the failure, then loads the editable base; ordinary writers still refuse corrupt input. This upgrade recovery is covered by backend/native tests, not an additional TLA transition. The two model writers edit distinct paths; backend/native regressions also cover independent same-file hunk decisions.
 - Draft reads acquire the bounded advisory lock and re-read/merge the latest document; the model quotients successful lock acquisition, while backend tests cover timeout and death release. The historical `draft-lost-update` trace remains reproducible by its broken-lock variant. Abort/Skip draft preservation failure returns Refused before repository admission or mutation. D/F snapshot creation follows repository admission and preflight; failure refuses before destructive index/worktree changes. The preservation invariant additionally asserts that D/F reaches its snapshot boundary only with the repository lease and preflight held; broken-preservation controls retain destructive-progress witnesses.
-- IndexWrite stages current WT (`index.add_path`), not frozen text. A race can stage unapproved bytes even though later Save verification detects it; the ledger asks whether **pre-verification** mutation exclusion is promised. The model does not claim the raced Save returns Success. Raw resolutions, multi-file Continue rename rollback, cached unrelated-index clobbering, byte decoding, signature/hooks, and detailed CLI retry outcomes are not covered by these lifecycle traces; pure-state checks are separate work.
-- Save receipt HOLD assumes append succeeds and no abrupt crash. It is an ordering guarantee, not fsync/power-loss durability. Continue liveness uses weak fairness for each actor, not an assumption that a closed weak UI owner can run again. The counterexample closes after a successful worker released its lease and then stutters forever.
+- IndexWrite now stages the frozen payload; `stagePayload` restores current-WT `add_path` behavior. The index/WT write boundaries remain separate and no stronger exclusion of arbitrary CLI interference is claimed. Raw resolutions, multi-file Continue rollback, cached unrelated-index clobbering, signature/hooks, and detailed CLI retry outcomes remain outside these lifecycle traces; pure-state checks are separate work.
+- Receipt HOLD assumes append succeeds and no abrupt process death. It is an ordering guarantee, not fsync/power-loss durability. Continue liveness retains weak fairness for each actor. UI destruction during a dispatched worker does not destroy that worker; release ends its retained lifetime after append. The negative control restores the closed-owner callback loss.
 - Safety counterexamples below are BFS-shortest in their configured finite slice. TLC's liveness lasso has no unnecessary loop before its terminal stutter; it is not claimed to minimize real UI gestures. Every event is mapped to source lines below; source-reviewed executable consequences remain [INFERENCE] until a product fixture confirms them.
 
 ## Ledger table
 
-State counts separated by `/` follow the check/trace order in that row and come from the merged guard above; historical trace links remain explicitly marked. The complete regenerated counts are in `formal/conflict/tla/results/summary.json`. CONTRACT rows are bounded holds, not global proofs. BUG/QUESTION classifications apply to the corresponding implementation interpretation, not to artificial broken variants.
+Expectations describe the maintained union. Results and state counts are historical predecessor evidence, not a combined-run claim: P2 rows retain atomic-draft/P2 measurements, failed-close and barrier rows retain incoming-main measurements, and D3/preservation rows retain the 70-check #1746/#1784 measurements. The #1780 rows are unmeasured. Counts separated by `/` follow the check/trace order. Parent validation supplies current combined evidence. CONTRACT rows are bounded holds, not global proofs. BUG/QUESTION classifications apply to the corresponding implementation interpretation, not artificial broken variants.
 
 | Invariant | Expectation | Result | States explored | Trace (if refuted) | Code lines | Classification | Owner question / fix sketch |
 |---|---|---|---:|---|---|---|---|
-| `NoWriteBeforeApproval` | HOLD | HELD | 14777 total (8 runs) | — | `app/flow.rs:261-347; app/session.rs:516-558` | CONTRACT | Retain confirmation/admission guards for all seven writer routes and both instances. |
-| `ApprovedRevisionFrozen (merge + external staging races)` | REFUTE | REFUTED | 26 / 45 | [approved-revision](#trace-approved-revision), [approved-index-race](#trace-approved-index-race) | `ui/operations/commit.rs:1054-1076,1191-1209; conflicts.rs:1646-1656` | #1743 residual: external CLI | The two-instance case is now HOLD via #1746 D3; merge renewal and arbitrary external staging remain separate. |
-| `ApprovedRevisionFrozen (approved-two-writers)` | HOLD | HELD | 14337 | historical [approved-two-writers](#trace-approved-two-writers) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | HOLD via #1746 D3 (lock) | #1743 residual = external CLI; final approved revision is checked under exclusive kernel admission. |
-| `ApprovedSavePayloadFrozen (WT payload)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:195-218,281-288; resolution/conflict_boundary.rs:103-107,170-195` | CONTRACT | Keep immutable payload binding; this is not a claim that concurrent add_path stages those bytes. |
+| `NoWriteBeforeApproval` | HOLD | HELD | 32779 total (8 runs) | — | `app/flow.rs:261-347; app/session.rs:516-558` | CONTRACT | Retain confirmation/admission guards for all seven writer routes and both instances. |
+| `ApprovedRevisionFrozen (merge + staging races)` | HOLD | HELD (historical P2) | 40 / 79 / 32205 | Historical traces retained below | Frozen merge plan; frozen staging payload; D3 repository exclusion | CONTRACT (#1743, #1746) | `mergePlan` and `stagePayload` retain the external flaws; the two-app control removes both staging and repository guards (`stagePayloadRepoLock`). |
+| `ApprovedSavePayloadFrozen (WT payload)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:195-218,281-288; resolution/conflict_boundary.rs:103-107,170-195` | CONTRACT | Keep immutable payload binding at WT materialization and index staging. |
 | `StaleSnapshotNeverWrites (WT edit before per-file validation)` | HOLD | HELD | 89 | — (historical [stale-worktree](#trace-stale-worktree)) | `resolution/conflict_boundary.rs::validate_save_binding, validate_current_paths; resolution/worktree_state.rs::validate` | CONTRACT (#1733) | Freeze the live draft's WT-byte fingerprint and refuse changed bytes before mutation; broken WT guard remains a negative control. |
-| `StaleSnapshotNeverWrites (WT edit + watcher before first choice)` | HOLD | HELD | 145 | — | `resolution/drafts.rs::retain_drafts; resolution/worktree_state.rs::retain_provenance` | CONTRACT (#1733 review) | Untouched live files retain the original fingerprint too. `stale-worktree-before-choice-broken` removes only that carry and must REFUTE. Exact frozen-text rewrites remain idempotently retryable after Partial execution. |
-| `StaleSnapshotNeverWrites (final-check gap)` | REFUTE | REFUTED | 41 | [stale-after-preflight](#trace-stale-after-preflight) | `conflicts.rs::execute_conflict_save_with_progress; resolution/worktree_state.rs::validate` | QUESTION (CLI TOCTOU) | Keep validation and write as distinct model transitions. A last-read fingerprint does not exclude arbitrary CLI writes; the two-instance case is separately protected by #1746 D3. |
-| `StaleSnapshotNeverWrites (two-instance-stale-write)` | HOLD | HELD | 14337 | historical [two-instance-stale-write](#trace-two-instance-stale-write) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | HOLD via #1746 D3 (lock) | #1733 residual = external CLI. |
+| `StaleSnapshotNeverWrites (WT edit + watcher before first choice)` | HOLD | HELD | 143 | — | `resolution/drafts.rs::retain_drafts; resolution/worktree_state.rs::retain_provenance` | CONTRACT (#1733 review) | Untouched live files retain the original fingerprint too. `stale-worktree-before-choice-broken` removes only that carry and must REFUTE. Exact frozen-text rewrites remain idempotently retryable after Partial execution. |
+| `StaleSnapshotNeverWrites (final-check gap)` | REFUTE | REFUTED (historical D3) | 41 | [stale-after-preflight](#trace-stale-after-preflight) | `conflicts.rs::execute_conflict_save_with_progress; resolution/worktree_state.rs::validate` | QUESTION (CLI TOCTOU) | Validation and mutation remain distinct; arbitrary CLI writers need not honor admission. |
+| `StaleSnapshotNeverWrites (two-instance-stale-write)` | HOLD | HELD (historical D3) | 14337 | historical [two-instance-stale-write](#trace-two-instance-stale-write) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | CONTRACT (#1746 D3) | Cooperating instances serialize final preflight and mutation; external CLI exclusion is not promised. |
 | `StaleSnapshotNeverWrites (index/HEAD/MERGE_MSG drift before preflight)` | HOLD | HELD | 77 / 77 / 77 | — | `backend/conflict_ops.rs:419-425; resolution/conflict_boundary.rs:170-175; conflicts.rs:1261-1297` | CONTRACT | Retain full-revision refusal; it protects preflight-time drift, not the later write window. |
 | `DraftNeverLost (captured but unacknowledged, same revision)` | REFUTE | REFUTED | 11 | [draft-crash](#trace-draft-crash) | `resolution/draft_writer.rs::{queue_autosave,flush}; resolution/draft_storage.rs::write_atomic` | EXPLICIT CRASH WINDOW (#1732) | Capture/queue acceptance is not durable; up to 250 ms coalescing plus in-flight I/O may be lost. Only successful flush acknowledges disk. |
+| `DraftWriteAtomic (torn / two writers / lost update)` | HOLD | HELD | 25 / 253 / 253 | — (historical traces below retained; broken controls refute) | `resolution/draft_storage.rs::{read,lock,replace,save}; resolution/draft_merge.rs::merge_file; resolution/draft_storage_tests.rs` | CONTRACT (#1732) | Atomic replacement, last-good backup, and interprocess locked read/CAS/merge retain acknowledged decisions. |
 | `DraftNeverLost (failed autosave + graceful close; no explicit discard)` | HOLD | HELD (TLC exit 0) | 21 | [historical draft-io-quit](#trace-draft-io-quit) | `ui/conflict_view/draft_owner.rs:note_draft_result; ui/editor_workspace/host_close.rs:hold_host_close,save_host_dirty_guard` | #1731 fixed | Keep the live buffer and sheet on failure; only successful Retry clears the hold. Native EN/JA tests additionally exercise the separately approved two-step intentional discard, outside this unchanged no-loss invariant. |
-| `DraftWriteAtomic (torn / two writers / lost update)` | HOLD | HELD | 25 / 357 / 357 | — (historical traces below retained; broken controls refute) | `resolution/draft_storage.rs::{read,lock,replace,save}; resolution/draft_merge.rs::merge_file; resolution/draft_storage_tests.rs` | CONTRACT (#1732) | Atomic replacement, last-good backup, and interprocess locked read/CAS/merge retain acknowledged decisions. |
 | `DraftWriteAtomic (two-writer-recovery)` | HOLD | HELD | 5 | —; `two-writer-recovery-broken` retains the lost-body witness | `resolution/drafts.rs::autosave_json; resolution/draft_merge.rs::{record,matches_record}; resolution/draft_storage_tests.rs::two_writer_recovery_survives_other_file_autosaves` | CONTRACT (#1732 P1) | Compare recovered bodies with the serialized post-merge primary, never the stale in-memory editor record. |
-| `ManualCapturePersisted (fault-free durable writer completion)` | HOLD | HELD | 14 | — | `resolution/draft_writer.rs::{DraftSave::wait,flush}; resolution/draft_storage.rs::write_atomic` | CONTRACT; map P1 DISPROVED | The writer's successful completion, not queue acceptance, acknowledges the captured body. |
+| `ManualCapturePersisted (fault-free durable writer completion)` | HOLD | HELD | 12 | — | `resolution/draft_writer.rs::{DraftSave::wait,flush}; resolution/draft_storage.rs::write_atomic` | CONTRACT; map P1 DISPROVED | The writer's successful completion, not queue acceptance, acknowledges the captured body. |
 | `BarrierFailureNeverApproved` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/conflict_view/draft_owner.rs::flush_drafts; ui/operations/conflict.rs::flush_conflict_drafts` | CONTRACT (#1760) | A failed off-thread flush retains the live pane and cannot authorize an operation. |
 | `BarrierApprovalCurrentGeneration` | HOLD | HELD (TLC exit 0) | 28 | — | `resolution/draft_writer.rs::DraftSave::is_current; ui/conflict_view/draft_owner.rs::flush_drafts` | CONTRACT (#1760) | Recheck the current ticket and pane revision after completion; superseded success is not storage failure or approval. |
 | `BarrierCloseDurable` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/editor_workspace/host_close.rs::save_host_dirty_guard_inner; ui/tabs.rs::close_tab` | CONTRACT (#1760) | Without explicit two-step Discard, close follows successful current-generation durability. |
 | `BarrierLocksNeverNested` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/operations/conflict.rs::flush_conflict_drafts; resolution/draft_writer.rs::DraftSave::flush` | CONTRACT (#1760 UI boundary) | Complete and release the UI flush's draft transaction before repository admission; Abort/Skip preservation precedes admission, while D/F snapshot refs follow locked preflight. |
-| `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | REFUTE | REFUTED | 50 / 50 / 40 | [receipt-continue](#trace-receipt-continue), [receipt-merge](#trace-receipt-merge), [receipt-skip](#trace-receipt-skip) | `ui/operations/conflict.rs:404-448,653-698; ui/operations/conflict_skip.rs:100-149; app/session.rs:760-776` | BUG | Append/retain accounting in the mutation-owning worker before releasing its close gate. |
-| `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
-| `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | 135 | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |
 | `NoDestructiveProgressAfterPreservationFailure (Abort / Skip / D-F)` | HOLD | HELD (TLC exit 0) | 31 / 31 / 21 | [historical preserve-abort](#trace-preserve-abort), [historical preserve-skip](#trace-preserve-skip), [historical preserve-dir-file](#trace-preserve-dir-file) | `ops/conflict_abort.rs:execute_conflict_abort_expecting; conflicts.rs:execute_conflict_skip; ops/dir_file_conflict.rs:apply_dir_file_resolution_with_progress` | #1731 fixed | Required recovery failure returns Refused before destructive index/worktree changes. Abort/Skip draft preservation precedes repository admission; D/F snapshot creation follows locked preflight, asserted by the preservation invariant. Recovery file atomicity is guarded by #1732. |
-| `MergeCommitTreeIsApprovedTree` | REFUTE | REFUTED | 26 | [merge-tree](#trace-merge-tree) | `ui/operations/commit.rs:1054-1076,1191-1209; backend.rs:979-998; ops/commit.rs:38-44,74-83` | BUG | Pass the displayed approved index digest through merge finalization instead of silently replanning. |
-| `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | REFUTED | 62 | [sibling-invalidation](#trace-sibling-invalidation) | `ops/conflict_abort.rs:367-400; app/flow.rs:78; app/settle.rs:272-300` | BUG | Mark ref-moving Abort as shared-ref-changing so retained sibling worktree views are invalidated. |
-| `ContinueEventuallyRecordedOrReported` | REFUTE | REFUTED | 79 | [continue-liveness](#trace-continue-liveness) | `ui/operations/conflict.rs:659-698; ui/operations/app_bridge.rs:751-758; ui/mod.rs:3661-3669` | BUG | Keep accounting alive beyond weak UI-owner destruction; fairness cannot revive a closed owner. |
 | `RepoHasAtMostOneLease (two independent apps)` | HOLD | HELD | 14337 | historical [two-instance-leases](#trace-two-instance-leases) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | #1746 D3 fixed | Kernel ownership spans final preflight→execute→verify; approval probes do not retain it through confirmation. |
 | `LiveWriterKeepsRepositoryLease (writer-termination)` | HOLD | Not yet measured | — | — | `write_lock.rs; proc.rs::run_child; proc::supervisor::group_stopped` | CONTRACT (#1780) | Live descendants retain repository admission across unknown return and EOF; a second app cannot enter. Sessions reconciliation remains separate. |
-| `StashAbortRestoresConflictedBytes (non-UTF-8)` | REFUTE | REFUTED | 44 | [stash-non-utf8](#trace-stash-non-utf8) | `ops/conflict_abort.rs:513-537,582-583; backend/conflict_observe.rs:443-467` | BUG | Keep raw path authority through checkout; verify restored WT/index bytes, not only HEAD/operation absence. |
+| `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | HOLD | HELD | 123 / 123 / 103 | Historical traces retained below | Backend execute/observe/finalize before worker settlement | CONTRACT (#1740) | Three `workerReceipt` controls restore release-before-append or absent merge accounting. |
+| `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
+| `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | 203 / 141 | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |
+| `MergeCommitTreeIsApprovedTree` | HOLD | HELD | 40 | Historical [merge-tree](#trace-merge-tree) | Approved merge plan; `ops/commit.rs::approved_commit_index` | CONTRACT (#1743) | Preserve approved index snapshot; `mergePlan` restores replanning. |
+| `SiblingWorktreesInvalidatedOnSharedRef` | HOLD | HELD | 79 | Historical [sibling-invalidation](#trace-sibling-invalidation) | Planned Abort ref restoration → shared-ref settlement | CONTRACT (#1744) | `sharedRef` removes planned invalidation. |
+| `ContinueEventuallyRecordedOrReported` | HOLD | HELD | 123 | Historical [continue-liveness](#trace-continue-liveness) | Backend accounting survives UI destruction | CONTRACT (#1740) | `workerReceipt` restores weak-owner callback loss. |
+| `StashAbortRestoresConflictedBytes (non-UTF-8; post-checkout drift)` | HOLD | HELD | 75 / 83 | Historical [stash-non-utf8](#trace-stash-non-utf8) | Raw checkout paths; restored WT/index verification | CONTRACT (#1745) | `stashRestore` restores original omission; `stashVerify` removes independent postconditions. |
 
 ## Load-bearing negative controls
 
 These cfg files set `Broken` in the same source model; they are deliberate model patches, not product fixes. The ordinary cfg values remain `"none"`. No expected product refutation is reclassified as a negative-control bug.
 
+Most measurements below are from the historical integrated P2/#1731/#1784
+removed-guard run (35 controls). The repository-lock row instead retains the
+historical D3 run; writer termination and the combined staging/lock mutant await
+parent measurement. The union enables 37 controls. Grouped state counts follow
+the listed cfg order; temporal violations retain TLC exit 13.
+
 | HELD invariant | Broken cfg | Deliberately removed guard | TLC result | States |
 |---|---|---|---|---:|
-| `NoWriteBeforeApproval (all route configs)` | [`approval-broken.cfg`](../../formal/conflict/tla/approval-broken.cfg) | Bypass the explicit approval gate while keeping preflight | REFUTE (exit 12) | 34 |
-| `ApprovedSavePayloadFrozen` | [`save-payload-broken.cfg`](../../formal/conflict/tla/save-payload-broken.cfg) | Remove payload == frozen binding guard at WT materialization | REFUTE (exit 12) | 35 |
-| `StaleSnapshotNeverWrites (index)` | [`stale-index-broken.cfg`](../../formal/conflict/tla/stale-index-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 53 |
-| `StaleSnapshotNeverWrites (HEAD)` | [`stale-head-broken.cfg`](../../formal/conflict/tla/stale-head-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 53 |
-| `StaleSnapshotNeverWrites (MERGE_MSG)` | [`stale-metadata-broken.cfg`](../../formal/conflict/tla/stale-metadata-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 53 |
+| `NoWriteBeforeApproval (all route configs)` | [`approval-broken.cfg`](../../formal/conflict/tla/approval-broken.cfg) | Bypass the explicit approval gate while keeping preflight | REFUTE (exit 12) | 32 |
+| `ApprovedSavePayloadFrozen` | [`save-payload-broken.cfg`](../../formal/conflict/tla/save-payload-broken.cfg) | Remove payload == frozen binding guard at WT materialization | REFUTE (exit 12) | 33 |
+| `StaleSnapshotNeverWrites (index)` | [`stale-index-broken.cfg`](../../formal/conflict/tla/stale-index-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 51 |
+| `StaleSnapshotNeverWrites (HEAD)` | [`stale-head-broken.cfg`](../../formal/conflict/tla/stale-head-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 51 |
+| `StaleSnapshotNeverWrites (MERGE_MSG)` | [`stale-metadata-broken.cfg`](../../formal/conflict/tla/stale-metadata-broken.cfg) | Remove consolidated final revision/identity preflight guard | REFUTE (exit 12) | 51 |
+| `StaleSnapshotNeverWrites (WT and pre-choice WT)` | `stale-worktree-broken`, `stale-worktree-before-choice-broken` | Remove WT provenance validation, including untouched live files | REFUTE (exit 12) | 51 / 122 |
 | `ManualCapturePersisted` | [`manual-capture-broken.cfg`](../../formal/conflict/tla/manual-capture-broken.cfg) | Remove persistence on changed captured input | REFUTE (exit 12) | 6 |
 | `DraftWriteAtomic (torn)` | [`draft-torn-broken.cfg`](../../formal/conflict/tla/draft-torn-broken.cfg) | Restore truncation of the primary before write completion | REFUTE (exit 12) | 20 |
-| `DraftWriteAtomic (two writers)` | [`draft-two-writers-broken.cfg`](../../formal/conflict/tla/draft-two-writers-broken.cfg) | Remove serialization of load/merge/write | REFUTE (exit 12) | 253 |
-| `DraftWriteAtomic (lost update)` | [`draft-lost-update-broken.cfg`](../../formal/conflict/tla/draft-lost-update-broken.cfg) | Remove serialization while requiring complete JSON reads | REFUTE (exit 12) | 253 |
+| `DraftWriteAtomic (two writers)` | [`draft-two-writers-broken.cfg`](../../formal/conflict/tla/draft-two-writers-broken.cfg) | Remove serialization of load/merge/write | REFUTE (exit 12) | 222 |
+| `DraftWriteAtomic (lost update)` | [`draft-lost-update-broken.cfg`](../../formal/conflict/tla/draft-lost-update-broken.cfg) | Remove serialization while requiring complete JSON reads | REFUTE (exit 12) | 222 |
 | `DraftWriteAtomic (two-writer recovery)` | [`two-writer-recovery-broken.cfg`](../../formal/conflict/tla/two-writer-recovery-broken.cfg) | Compare recovery equality against the editor's pre-merge body | REFUTE (exit 12) | 4 |
-| `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 47 |
 | `RepoHasAtMostOneLease` | [`two-instance-leases-broken.cfg`](../../formal/conflict/tla/two-instance-leases-broken.cfg) | Remove repository-level lock exclusion only | REFUTE (exit 12) | 2938 |
 | `LiveWriterKeepsRepositoryLease` | [`writer-termination-broken.cfg`](../../formal/conflict/tla/writer-termination-broken.cfg) | Release repository admission at unknown return while descendants remain live; keep Sessions lease | Expected REFUTE; not yet measured | — |
+| `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 45 |
+| `ReceiptFollowsMutation; ContinueEventuallyRecordedOrReported` | `receipt-continue-broken`, `receipt-merge-broken`, `receipt-skip-broken`, `continue-liveness-broken` | `workerReceipt`: release before UI-owned append; omit merge append | REFUTE (exit 12 / 12 / 12 / 13) | 82 / 82 / 62 / 121 |
+| `ApprovedRevisionFrozen; MergeCommitTreeIsApprovedTree` | `approved-revision-broken`, `merge-tree-broken` | `mergePlan`: silently renew approved tree/revision | REFUTE (exit 12) | 25 / 25 |
+| `ApprovedRevisionFrozen` | `approved-index-race-broken` | `stagePayload`: stage mutable WT instead of approved payload | REFUTE (historical P2, exit 12) | 43 |
+| `ApprovedRevisionFrozen` | `approved-two-writers-broken` | `stagePayloadRepoLock`: remove frozen staging and independently protective D3 exclusion, retaining the same two-app schedule | Expected REFUTE; not yet measured | — |
+| `SiblingWorktreesInvalidatedOnSharedRef` | `sibling-invalidation-broken` | `sharedRef`: omit planned sibling invalidation | REFUTE (exit 12) | 62 |
+| `StashAbortRestoresConflictedBytes` | `stash-non-utf8-broken`, `stash-verify-broken` | Original UTF-8 checkout/verification omission; independently remove restore verification | REFUTE (exit 12) | 44 / 54 |
+| `SkipRefreshDisarmsChangedStep; SkipDropsOnlyApprovedStep` | `skip-refresh-broken`, `skip-prewrite-broken` | Remove the refresh-disarm or final prewrite revision guard | REFUTE (exit 12) | 32 / 89 |
+| `MetadataReadErrorNeverAdmitted` | `continue-metadata-read-broken` | Ignore failed operation-metadata reads before Continue | REFUTE (exit 12) | 41 |
 | `DraftNeverLost (failed autosave + close)` | [`draft-io-quit-broken.cfg`](../../formal/conflict/tla/draft-io-quit-broken.cfg) | Remove only the failed-draft close hold, preserving the lease gate | REFUTE (exit 12) | 15 |
 | `NoDestructiveProgressAfterPreservationFailure (Abort)` | [`preserve-abort-broken.cfg`](../../formal/conflict/tla/preserve-abort-broken.cfg) | Ignore failed recovery and continue to destructive Abort | REFUTE (exit 12) | 36 |
-| `NoDestructiveProgressAfterPreservationFailure (Skip)` | [`preserve-skip-broken.cfg`](../../formal/conflict/tla/preserve-skip-broken.cfg) | Ignore failed recovery and run Skip | REFUTE (exit 12) | 32 |
-| `NoDestructiveProgressAfterPreservationFailure (D/F)` | [`preserve-dir-file-broken.cfg`](../../formal/conflict/tla/preserve-dir-file-broken.cfg) | Ignore failed snapshot and mutate the index/working tree | REFUTE (exit 12) | 17 |
+| `NoDestructiveProgressAfterPreservationFailure (Skip)` | [`preserve-skip-broken.cfg`](../../formal/conflict/tla/preserve-skip-broken.cfg) | Ignore failed recovery and run Skip | REFUTE (exit 12) | 42 |
+| `NoDestructiveProgressAfterPreservationFailure (D/F)` | [`preserve-dir-file-broken.cfg`](../../formal/conflict/tla/preserve-dir-file-broken.cfg) | Ignore failed snapshot and mutate the index/working tree | REFUTE (historical D3, exit 12) | 17 |
 | `BarrierFailureNeverApproved` | [`draft-flush-failure-broken.cfg`](../../formal/conflict/tla/draft-flush-failure-broken.cfg) | Accept an errored flush as approval | REFUTE (exit 12) | 18 |
 | `BarrierApprovalCurrentGeneration` | [`draft-flush-generation-broken.cfg`](../../formal/conflict/tla/draft-flush-generation-broken.cfg) | Accept a successful superseded generation | REFUTE (exit 12) | 21 |
 | `BarrierCloseDurable` | [`draft-flush-close-broken.cfg`](../../formal/conflict/tla/draft-flush-close-broken.cfg) | Close immediately after requesting the barrier | REFUTE (exit 12) | 8 |
@@ -307,19 +431,19 @@ These cfg files set `Broken` in the same source model; they are deliberate model
 
 The source has several repeated validation reads; the model deliberately consolidates the *last* full-revision/binding guard. The broken revision variant removes that consolidated check, not a claim that deleting only one of several Rust checks would suffice. The payload negative variant admits a non-frozen token at the write boundary to exercise the binding assertion. MergeCommit's modeled lease represents its synchronous busy UI interval, not a claim that its legacy synchronous path allocates a Sessions lease.
 
-## Complete minimal event traces
+## Historical complete minimal event traces
 
-The values below are copied from TLC's `event` field without reordering. Each event has its enabling source lines; 1/2 denote independent app instances. Full state valuations (including revisions, buffers, disk validity, receipts, leases, and staged bytes) are retained in the linked logs. For artificial negative controls, interpret the removed guard above as the only changed semantics.
+The values below were copied from the original TLC `event` field without reordering. Their verdicts, source offsets, and counts describe that historical extraction, not new executions after the P2 cutover. For #1740/#1743/#1744/#1745, current baselines expect HOLD and the paired broken configs preserve refutability; see the maintained table above. Each event has its enabling source lines; 1/2 denote independent app instances. For artificial negative controls, interpret the removed guard as the changed semantics.
 
 The lease, approved-two-writer and two-instance-stale-write traces below are
-historical pre-#1746 counterexamples. Current expectations/results are HOLD;
-the broken-lock variant retains the cross-process counterexample. On 2026-10-24,
+historical pre-#1746 counterexamples. Current expectations are HOLD;
+the broken-lock variant retains the cross-process exclusion counterexample. On 2026-10-24,
 the maintained runner passed 55/55 expected outcomes (64,064 summed states),
 all fifteen broken controls remained red, and the complete top-level formal guard
 exited 0. Per-instance Sessions lease state remains in the model separately from
 the actual repository writer lease; no arbitrary-CLI exclusion is assumed.
 
-After merging `origin/main` `af06cd7a` on 2026-10-25, the complete guard exits 0:
+After merging `origin/main` `af06cd7a` on 2026-10-25, that historical guard exited 0:
 **58/58 expected outcomes, 64,127 summed distinct states**, all **17** TLC
 negative controls detected, and **39 pure properties / 1,695,651 evaluations /
 36 detected mutants**. Both draft recovery/atomicity and repository-admission

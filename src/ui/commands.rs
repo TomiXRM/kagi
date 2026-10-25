@@ -2877,19 +2877,19 @@ impl KagiApp {
                         // Fetch changes tracking refs even when its owner departs.
                         // Persist once, without adding a second success toast or
                         // presenting a quiet auto-fetch on the active tab.
-                        recording_failed = app.record_operation_completion(
-                            "fetch",
-                            flight.before.clone(),
-                            kagi_git::oplog::OpOutcome::Success {
-                                after: flight.before.clone(),
-                            },
-                            ref_moves.take(),
-                            &repo_path_guard,
-                            false,
-                            false,
-                            None,
-                            cx,
+                        let recording = kagi_git::backend::recording::finalize(
+                            kagi_git::oplog::OpLogEntry::new(
+                                "fetch",
+                                repo_path_guard.display().to_string(),
+                                flight.before.clone(),
+                                kagi_git::oplog::OpOutcome::Success {
+                                    after: flight.before.clone(),
+                                },
+                            )
+                            .with_ref_moves(ref_moves.take()),
                         );
+                        recording_failed =
+                            app.present_operation_completion(&recording, false, false, None, cx);
                     }
                 }
                 // A visit is a stay in the same tab, not merely its session.

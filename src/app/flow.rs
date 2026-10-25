@@ -75,7 +75,7 @@ impl Planned {
             // WorktreeId sibling discovery cannot describe a remote repository.
             Self::RemoteStash { .. } => false,
             Self::RemotePull { .. } => false,
-            Self::Conflict { .. } => false,
+            Self::Conflict { plan, .. } => plan.changes_shared_refs(),
             // Conservative: every run-pipeline write may move refs or HEAD, so
             // every open sibling is told. Index-only families are not here.
             Self::Run { .. } => true,

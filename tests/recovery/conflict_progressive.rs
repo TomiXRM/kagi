@@ -538,6 +538,107 @@ fn progressive_add_add_with_comments(
     } else {
         format!("{edited_title}\n\n# Edited heading\nKeep edited body; punctuation.")
     };
+    let displayed_message = cx.read(|cx| panel.read(cx).effective_commit_message(cx));
+    // Keep the accepted staged presentation while an external process changes the
+    // index, then use the ordinary smooth-commit click without yielding to watchers.
+    for remove in [false, true] {
+        let backend = kagi_git::Backend::open(repo).unwrap();
+        let approved = cx.read(|cx| panel.read(cx).state.displayed_index_digest.clone());
+        assert!(
+            approved.is_some(),
+            "staged rows carry their accepted index identity"
+        );
+        if remove {
+            git(repo, &["rm", "--cached", "external.txt"]);
+        } else {
+            std::fs::write(repo.join("external.txt"), "not yet approved\n").unwrap();
+            git(repo, &["add", "external.txt"]);
+        }
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        let merge_head = std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap();
+        let merge_msg = std::fs::read(repo.join(".git/MERGE_MSG")).unwrap();
+        let fresh = backend.plan_merge_commit(&expected_message).unwrap();
+        assert_ne!(approved, fresh.approved_index_digest);
+        let prior_toast_receipt = cx.read(|cx| {
+            app.read(cx).toast_stack.as_ref().and_then(|stack| {
+                stack
+                    .read(cx)
+                    .toasts()
+                    .last()
+                    .and_then(|toast| match &toast.action {
+                        Some(kagi::ui::ToastAction::OpenOperationLog(key)) => Some(key.clone()),
+                        _ => None,
+                    })
+            })
+        });
+        app.update(cx, |app, cx| {
+            let owner = app.active_session().expect("merge commit owner");
+            app.open_commit_plan_modal(owner, cx);
+        });
+        assert_eq!(repository.head().unwrap().target(), Some(head));
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
+            merge_head
+        );
+        assert_eq!(
+            std::fs::read(repo.join(".git/MERGE_MSG")).unwrap(),
+            merge_msg
+        );
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(state.ui().conflict_merge_pending);
+            assert!(state.ui().commit_panel_open);
+            // ADR-0196 sends unattended results to a toast and clears the footer.
+            // The native harness need not own the foreground window; require this
+            // refusal's notice, not an attended-only presentation variant.
+            let refusal_toast = state.toast_stack.as_ref().is_some_and(|stack| {
+                stack.read(cx).toasts().iter().any(|toast| {
+                    matches!(&toast.action,
+                        Some(kagi::ui::ToastAction::OpenOperationLog(key))
+                            if Some(key) != prior_toast_receipt.as_ref())
+                        && matches!(toast.kind, kagi::ui::ToastKind::Error)
+                        && toast
+                            .result_key
+                            .as_deref()
+                            .is_some_and(|key| key.contains("\0merge-commit\0"))
+                        && !toast.message.is_empty()
+                })
+            });
+            assert!(
+                matches!(state.status_footer, kagi::ui::FooterStatus::Failed(_)) || refusal_toast,
+                "this refusal must reach the current footer or a new merge-commit error toast"
+            );
+            let panel = state.ui().commit_panel.as_ref().unwrap().read(cx);
+            assert!(
+                panel.state.plan_modal.is_none(),
+                "no new confirmation modal"
+            );
+            assert_eq!(
+                panel.state.displayed_index_digest,
+                fresh.approved_index_digest
+            );
+            assert_eq!(
+                panel
+                    .state
+                    .staged
+                    .iter()
+                    .any(|file| file.path == Path::new("external.txt")),
+                !remove,
+                "the refused click re-presents the current staged rows"
+            );
+            assert_eq!(panel.effective_commit_message(cx), displayed_message);
+        });
+        let receipts = kagi_git::oplog::read_oplog_tail_for_repo(repo, 1);
+        assert!(matches!(
+            receipts.last().map(|entry| &entry.outcome),
+            Some(kagi_git::oplog::OpOutcome::Refused { .. })
+        ));
+    }
+    let mut approved_index = repository.index().unwrap();
+    approved_index.read(true).unwrap();
+    let approved_tree = approved_index.write_tree().unwrap();
+    // Only another ordinary Commit click may execute the re-presented tree.
     app.update(cx, |app, cx| {
         let owner = app.active_session().expect("merge commit owner");
         app.open_commit_plan_modal(owner, cx);
@@ -547,6 +648,11 @@ fn progressive_add_add_with_comments(
     let commit = repository.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(commit.parent_count(), 2, "the actual merge-commit path ran");
     assert_eq!(commit.parent_id(0).unwrap(), head);
+    assert_eq!(
+        commit.tree_id(),
+        approved_tree,
+        "merge tree is the re-presented tree"
+    );
     assert_eq!(
         commit.summary().unwrap(),
         Some(edited_title),

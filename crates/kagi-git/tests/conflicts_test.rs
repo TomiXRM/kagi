@@ -37,6 +37,12 @@ use kagi_git::{
 #[path = "conflicts/domain_hardening.rs"]
 mod domain_hardening;
 
+#[path = "conflicts/receipt_lifecycle.rs"]
+mod receipt_lifecycle;
+
+#[path = "conflicts/frozen_staging.rs"]
+mod frozen_staging;
+
 fn write_binary(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(dir.join(name), content).expect("write_binary failed");
 }

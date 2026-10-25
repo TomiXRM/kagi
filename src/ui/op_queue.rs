@@ -801,6 +801,8 @@ thread_local! {
     static RUN_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
         const { std::cell::RefCell::new(None) };
     static RUN_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static REPOSITORY_RESUME_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -812,6 +814,13 @@ pub(super) fn take_run_panic() -> bool {
 pub(super) fn take_run_hold() -> Option<gpui::Task<()>> {
     RUN_HOLD.with(|slot| slot.borrow_mut().take())
 }
+#[cfg(feature = "gui-e2e")]
+fn before_repository_resume_for_e2e() {
+    let hook = REPOSITORY_RESUME_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook();
+    }
+}
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
@@ -819,6 +828,12 @@ impl KagiApp {
     /// its backend work: the lease is held, nothing has been written.
     pub fn hold_next_run_for_e2e(hold: gpui::Task<()>) {
         RUN_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+    /// Interleave another owner after the background probe but before admission.
+    pub fn before_next_repository_resume_for_e2e(hook: impl FnOnce() + 'static) {
+        REPOSITORY_RESUME_HOOK.with(|slot| {
+            assert!(slot.borrow_mut().replace(Box::new(hook)).is_none());
+        });
     }
 
     /// The next admitted run-family job dies before running: its completion

@@ -179,7 +179,10 @@ impl KagiApp {
                     let path = owner.path.clone();
                     let available = acx
                         .background_spawn(async move {
-                            kagi_git::Backend::check_conflict_write_admission(&path).is_ok()
+                            match kagi_git::Backend::check_conflict_write_admission(&path) {
+                                Ok(()) => true,
+                                Err(error) => error.blocker().is_none(),
+                            }
                         })
                         .await;
                     let keep_waiting = this
@@ -199,6 +202,13 @@ impl KagiApp {
                                 return false;
                             }
                             if available {
+                                // Retire this task before reentrant admission can put
+                                // the same intent back into Waiting and arm its successor.
+                                if let Some(retry) = app.op_queue.repository_retries.remove(&id) {
+                                    retry.detach();
+                                }
+                                #[cfg(feature = "gui-e2e")]
+                                super::before_repository_resume_for_e2e();
                                 #[cfg(feature = "gui-e2e")]
                                 {
                                     app.op_queue.repository_resume_count += 1;

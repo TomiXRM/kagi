@@ -721,9 +721,13 @@ its own early refusal. Silent auto-fetch skips contention without a toast or
 receipt and retries on its next ordinary tick. A queued head waits with the same
 localized repository-busy explanation and one error toast per intent. Its retained,
 cancellable retry task probes with timeout zero on the background executor after
-250 ms, then 500 ms, 1 s and at most 2 s between probes. Failed probes neither
-replan nor renew approval nor emit another toast. Only successful availability
-returns that specific head to Queued for a fresh plan. Closing its owner or
+250 ms, then 500 ms, 1 s and at most 2 s between probes. Contended probes neither
+replan nor renew approval nor emit another toast. Successful availability returns
+that specific head to Queued for a fresh plan. Before emitting availability the
+task removes and detaches its own handle, so reentrant admission that loses to
+another process can retain a new retry for the same head. A non-blocker probe
+error also returns the head to normal planning/admission, which reports the actual
+failure rather than waiting indefinitely as contention. Closing its owner or
 removing the head drops the task; late results cannot revive it. Contention never
 claims an identity change or cancels successors.
 

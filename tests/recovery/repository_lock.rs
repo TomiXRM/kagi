@@ -11,11 +11,17 @@ const BUSY: &str = "Another Kagi window is operating on this repository";
 /// Hold a separate descriptor on a scoped thread. The backend's
 /// conflict_write_lock_test owns the independent-process/death-release oracle;
 /// its child entry point is not available in the native runner binary.
-fn with_repository_lock(repo: &Path, action: impl FnOnce()) {
-    std::thread::scope(|scope| {
+struct RepositoryLockOwner {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RepositoryLockOwner {
+    fn acquire(repo: &Path) -> Self {
+        let repo = repo.to_owned();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        scope.spawn(move || {
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
             let lock = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -29,10 +35,23 @@ fn with_repository_lock(repo: &Path, action: impl FnOnce()) {
             drop(lock);
         });
         ready_rx.recv().unwrap();
-        action();
-        // Disconnect also releases the owner if the scenario panics.
-        drop(release_tx);
-    });
+        Self {
+            release: Some(release),
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for RepositoryLockOwner {
+    fn drop(&mut self) {
+        self.release.take();
+        self.thread.take().unwrap().join().unwrap();
+    }
+}
+
+fn with_repository_lock(repo: &Path, action: impl FnOnce()) {
+    let _owner = RepositoryLockOwner::acquire(repo);
+    action();
 }
 
 fn assert_one_refusal(repo: &Path, before: usize, operation: &str) {
@@ -305,6 +324,46 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
         );
     });
 
+    // A second window wins admission after the first successful probe. The
+    // old retry must retire before reentrant admission registers its successor.
+    let second_owner = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let second_slot = second_owner.clone();
+    let second_repo = repo.clone();
+    KagiApp::before_next_repository_resume_for_e2e(move || {
+        *second_slot.borrow_mut() = Some(RepositoryLockOwner::acquire(&second_repo));
+    });
+    let errors_before_race = error_ids(cx);
+    for _ in 0..8 {
+        cx.advance_clock(TICK);
+        cx.run_until_parked();
+        if second_owner.borrow().is_some() {
+            break;
+        }
+    }
+    assert!(second_owner.borrow().is_some(), "second owner interleaves");
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.queue_ids_for_e2e(), queued_ids);
+        assert_eq!(
+            state.repository_retry_state_for_e2e().0,
+            1,
+            "re-contention registers a fresh retry before the old task returns"
+        );
+        assert_eq!(state.repository_retry_state_for_e2e().2, 1);
+        assert!(!state.app_sessions.has_leases());
+    });
+    for _ in 0..4 {
+        cx.advance_clock(TICK);
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        error_ids(cx),
+        errors_before_race,
+        "same intent still toasts once"
+    );
+    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+    drop(second_owner.borrow_mut().take());
+
     // Freeze the resumed write to inspect the untouched successor before it runs.
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_run_for_e2e(hold);
@@ -328,7 +387,10 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
         );
         let retry = state.repository_retry_state_for_e2e();
         assert_eq!(retry.0, 0);
-        assert_eq!(retry.2, 1, "one successful probe resumes the waiting head");
+        assert_eq!(
+            retry.2, 2,
+            "the second availability resumes the re-contended head"
+        );
     });
     release.send(());
     for _ in 0..80 {
@@ -390,8 +452,85 @@ pub fn scenario_repository_lock_queue_retry(cx: &mut VisualTestAppContext) {
     assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
     assert_eq!(
         cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().2),
-        1,
+        2,
         "a closed owner's retry never emits availability"
     );
+    unmount(cx, app, window);
+    retry_nonblocker_reports_real_error(cx);
+}
+
+fn retry_nonblocker_reports_real_error(cx: &mut VisualTestAppContext) {
+    use crate::macos::git;
+    use kagi::ui::{e2e, ToastKind};
+    use std::time::Duration;
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["branch", "b"]);
+    let (app, window) = mount(cx, &repo);
+    wait_idle(cx, &app);
+    let before = read_oplog_tail_for_repo(&repo, 100).len();
+    let head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    with_repository_lock(&repo, || {
+        app.update(cx, |app, cx| assert!(e2e::enqueue_checkout(app, "b", cx)));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().0),
+            1
+        );
+    });
+    // Keep the repository healthy, but make opening the admission sidecar fail
+    // with a non-contention I/O error. This is deterministic even as root.
+    let sidecar = repo.join(".git/kagi-write.lock");
+    let preserved = repo.join(".git/kagi-write.lock.preserved");
+    std::fs::rename(&sidecar, &preserved).unwrap();
+    std::fs::create_dir(&sidecar).unwrap();
+    let error = kagi_git::Backend::check_conflict_write_admission(&repo).unwrap_err();
+    assert!(error.blocker().is_none());
+    let expected = kagi_ui_core::i18n::op::user_text::diagnostic(
+        &kagi::app::AdmissionError::Identity(error.to_string()).to_string(),
+    )
+    .into_owned();
+    for _ in 0..8 {
+        cx.advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).repository_retry_state_for_e2e().2) > 0 {
+            break;
+        }
+    }
+    let now = cx.background_executor.now();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(
+            state.repository_retry_state_for_e2e().0,
+            0,
+            "non-blocker errors retire the busy retry instead of waiting forever"
+        );
+        assert_eq!(state.repository_retry_state_for_e2e().2, 1);
+        let strip = state.queue_strip_for_e2e(now).unwrap();
+        assert!(
+            strip.1.is_empty(),
+            "the head no longer waits for repository contention"
+        );
+        assert_eq!(strip.2.len(), 1, "normal admission cancels the failed head");
+        assert!(
+            state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| toast.kind == ToastKind::Error && toast.message.as_ref() == expected),
+            "normal admission reports the actual non-blocker diagnostic"
+        );
+        assert!(!state.app_sessions.has_leases());
+    });
+    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+    assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    std::fs::remove_dir(&sidecar).unwrap();
+    std::fs::rename(&preserved, &sidecar).unwrap();
     unmount(cx, app, window);
 }

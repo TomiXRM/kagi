@@ -25,6 +25,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native menu/queue regression coverage: explicitly edit the Markdown fixtures for code-input menus and the accessible-field inventory, preserve the selected glyph during right-click, await reopened Commit Panel rows before capturing menu ownership, use a genuinely warned detached checkout for pending confirmation, and assert bounded single-surface checkout refusals while retaining their exact durable blockers. Product behavior and safety gates are unchanged. (#1777)
 - Preserve concurrent conflict-draft decisions across Kagi processes with an interprocess lock and content-based three-way hunk merge. Atomically sync and replace drafts, retain colliding/manual bodies for inspection, and recover torn documents from the last good `.prev` without treating corruption as an empty draft. (#1732)
   - Expose an ordered background draft writer with latest-snapshot coalescing (up to 250 ms before starting), generation-aware completion and explicit durable flush barriers; keep blocking `autosave()` durable for preservation callers. Queue acceptance is not durability: an unacknowledged captured edit can still be lost on abrupt exit.
   - Keep newer in-memory edits when preserving a clone after failed autosave. On upgrade, quarantine a damaged draft without a usable backup under an exclusively reserved `.corrupt[.N]` name, record the failure, and show an EN/JA recovery notice while loading the editable index-backed buffer.

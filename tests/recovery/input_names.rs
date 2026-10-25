@@ -244,7 +244,12 @@ pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
                 let editor = cx
                     .read(|cx| app.read(cx).ui().editor_workspace.clone())
                     .unwrap();
-                editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+                editor.update(cx, |view, cx| {
+                    view.open_tab("README.md".into(), cx);
+                    // Inventory the rendered editable Input, not Markdown's
+                    // default Preview surface, which has no code field.
+                    view.set_markdown_preview(false, cx);
+                });
                 let deadline = Instant::now() + Duration::from_secs(15);
                 loop {
                     cx.run_until_parked();

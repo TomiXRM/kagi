@@ -419,14 +419,21 @@ pub fn scenario_queue_merge_refusal_is_shown(cx: &mut VisualTestAppContext) {
     KagiApp::hold_next_run_for_e2e(hold);
     app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
     cx.run_until_parked();
-    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
-    // Local changes: b's replan carries a warning and waits for an answer.
-    std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+    // Carrying unrelated local edits no longer requires a warning (#1696).
+    // A genuinely detached target still requires explicit confirmation.
+    let target = kagi_git::CommitId(rev_parse(&repo, &["HEAD~1"]));
+    app.update(cx, |app, cx| {
+        app.open_checkout_commit_modal(target.clone(), cx)
+    });
     release.send(());
-    tick_until(cx, &app, "b's confirmation", |app| {
+    tick_until(cx, &app, "the detached checkout confirmation", |app| {
         app.plan_modal().and_then(|m| m.queued).is_some()
     });
     assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert_eq!(head(&repo), "a", "the queued checkout still needs approval");
+    cx.read(|cx| {
+        assert!(!app.read(cx).plan_modal().unwrap().plan.warnings.is_empty());
+    });
     git(&repo, &["checkout", "-q", "--detach"]);
     app.update(cx, |app, cx| {
         app.open_merge_modal("feature".into(), None, cx)
@@ -445,7 +452,10 @@ pub fn scenario_queue_merge_refusal_is_shown(cx: &mut VisualTestAppContext) {
     });
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("checkout b".to_string(), "confirming".to_string())]
+        vec![(
+            format!("checkout {}", target.short()),
+            "confirming".to_string()
+        )]
     );
     app.update(cx, |app, _| app.cancel_modal());
     cx.run_until_parked();

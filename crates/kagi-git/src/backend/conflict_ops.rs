@@ -116,6 +116,16 @@ impl ConflictPlan {
             ConflictPreparedAction::Abort { .. } => ConflictPathChanges::default(),
         }
     }
+
+    pub fn changes_shared_refs(&self) -> bool {
+        matches!(
+            &self.action,
+            ConflictPreparedAction::Abort {
+                restore: Some(_),
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -389,7 +399,7 @@ impl Backend {
                     ConflictDraft::Text { .. } => ConflictPreparedAction::Save {
                         path: path.clone(),
                         draft: draft.clone(),
-                        expected_mode: text_mode(&backend.repo, path),
+                        expected_mode: text_mode(&backend.repo, path)?,
                     },
                 }
             }
@@ -583,13 +593,13 @@ impl Backend {
                                 "injected index failure after worktree write".into(),
                             ));
                         }
-                        conflicts::execute_conflict_save_with_progress(
+                        let saved = conflicts::execute_conflict_save_with_progress(
                             &backend.repo,
                             &buffer,
                             path,
                             |value| progress = value,
                         )?;
-                        verify_save(&backend.repo, path, draft, *expected_mode)?;
+                        verify_save(&backend.repo, path, draft, *expected_mode, saved.staged_oid)?;
                     }
                     ConflictPreparedAction::DirFile(dir_file) => {
                         recovery = Some(ops::apply_dir_file_resolution_with_progress(

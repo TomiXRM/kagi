@@ -113,10 +113,16 @@ pub fn scenario_compact_wip_first_frame(cx: &mut VisualTestAppContext) {
             cx.notify();
         });
         let first = cx.read(|cx| panel.read(cx).state.unstaged[0].path.clone());
+        let displayed_digest = cx.read(|cx| panel.read(cx).state.displayed_index_digest.clone());
+        assert!(displayed_digest.is_some());
         release.send(());
         settle(cx, win);
         cx.read(|cx| {
             assert_eq!(panel.read(cx).state.unstaged[0].path, first);
+            assert_eq!(
+                panel.read(cx).state.displayed_index_digest,
+                displayed_digest
+            );
             assert_eq!(panel.read(cx).title_input.as_ref(), Some(&title));
             assert_eq!(title.read(cx).value().as_ref(), "unsaved draft");
         });

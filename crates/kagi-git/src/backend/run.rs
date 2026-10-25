@@ -131,6 +131,13 @@ impl Backend {
         };
         let outcome = if action.is_some() {
             stash::stash_outcome(&result, plan, &evidence)
+        } else if let (Operation::MergeCommit { .. }, Err(GitError::Preflight(error))) =
+            (op, &result)
+        {
+            // Merge approval drift is a refusal before any commit is written.
+            crate::oplog::OpOutcome::Refused {
+                blockers: vec![error.to_string()],
+            }
         } else if let Some(blocker) =
             result
                 .as_ref()

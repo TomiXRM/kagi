@@ -325,28 +325,14 @@ fn draft_metadata_known(
         }
     }
 }
-pub(crate) fn text_mode(repo: &Repository, path: &Path) -> u32 {
-    let executable = repo
+pub(crate) fn text_mode(repo: &Repository, path: &Path) -> Result<u32, GitError> {
+    let index = repo
+        .index()
+        .map_err(|error| GitError::Other(error.message().to_owned()))?;
+    let worktree_mode = repo
         .workdir()
-        .and_then(|root| std::fs::symlink_metadata(root.join(path)).ok())
-        .map(|metadata| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = metadata;
-                false
-            }
-        })
-        .unwrap_or(false);
-    if executable {
-        0o100755
-    } else {
-        0o100644
-    }
+        .and_then(|root| conflicts::original_file_mode(&root.join(path)));
+    conflicts::text_resolution_mode(repo, &index, path, worktree_mode)
 }
 
 pub(crate) fn verify_save(
@@ -354,6 +340,7 @@ pub(crate) fn verify_save(
     path: &Path,
     draft: &ConflictDraft,
     expected_mode: u32,
+    expected_oid: git2::Oid,
 ) -> Result<(), GitError> {
     let index = repo
         .index()
@@ -382,8 +369,6 @@ pub(crate) fn verify_save(
                 .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
             let actual = std::fs::read(root.join(path))
                 .map_err(|e| GitError::Other(format!("verify {} failed: {e}", path.display())))?;
-            let expected_oid = git2::Oid::hash_object(git2::ObjectType::Blob, bytes)
-                .map_err(|e| GitError::Other(e.to_string()))?;
             if actual != *bytes || entry.id != expected_oid || entry.mode != expected_mode {
                 return Err(GitError::Other(format!(
                     "{} bytes, blob, or mode differ after save",
@@ -435,5 +420,127 @@ pub(crate) fn verify_abort(
             head.unwrap_or_else(|| "unresolvable".into())
         )));
     }
+    if !restored.restored_paths.is_empty() {
+        verify_restored_paths(repo, target, &restored.restored_paths)?;
+    }
     Ok(())
+}
+
+/// Compare both sides independently: a matching HEAD cannot prove that checkout
+/// restored the index or the worktree. A fresh in-memory index has no stat cache,
+/// so worktree verification reads content even for same-size corruption.
+fn verify_restored_paths(
+    repo: &Repository,
+    target: &str,
+    paths: &[PathBuf],
+) -> Result<(), GitError> {
+    let verify = || -> Result<bool, git2::Error> {
+        let tree = repo.find_commit(git2::Oid::from_str(target)?)?.tree()?;
+        let mut options = git2::DiffOptions::new();
+        options
+            .disable_pathspec_match(true)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_typechange(true);
+        for path in paths {
+            options.pathspec(path.as_path());
+        }
+        let index = repo.index()?;
+        if repo
+            .diff_tree_to_index(Some(&tree), Some(&index), Some(&mut options))?
+            .deltas()
+            .len()
+            != 0
+        {
+            return Ok(false);
+        }
+        let mut expected = git2::Index::new()?;
+        expected.read_tree(&tree)?;
+        Ok(repo
+            .diff_index_to_workdir(Some(&expected), Some(&mut options))?
+            .deltas()
+            .len()
+            == 0)
+    };
+    match verify() {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(GitError::Other(
+            "restored index or worktree differs after stash abort".into(),
+        )),
+        Err(error) => Err(GitError::Other(format!(
+            "stash abort verification failed: {}",
+            error.message()
+        ))),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod stash_abort_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn stash_abort_verification_rejects_non_utf8_index_and_worktree_corruption() {
+        assert_corruption_rejected(Path::new(std::ffi::OsStr::from_bytes(b"restored-\xff.txt")));
+    }
+
+    #[test]
+    fn stash_abort_verification_rejects_unicode_index_and_worktree_corruption() {
+        assert_corruption_rejected(Path::new("restored-雪.txt"));
+    }
+
+    fn assert_corruption_rejected(path: &Path) {
+        for corruption in ["missing index", "wrong index blob", "worktree bytes"] {
+            let temp = tempfile::tempdir().unwrap();
+            let repo = Repository::init(temp.path()).unwrap();
+            if let Err(error) = std::fs::write(temp.path().join(path), b"restored\n") {
+                if path.to_str().is_none() && error.raw_os_error() == Some(libc::EILSEQ) {
+                    eprintln!(
+                        "skip: filesystem rejects non-UTF-8 filenames (EILSEQ); Unicode corruption coverage runs separately"
+                    );
+                    return;
+                }
+                panic!("cannot create verification fixture: {error}");
+            }
+            let mut index = repo.index().unwrap();
+            index.add_path(path).unwrap();
+            index.write().unwrap();
+            let tree_oid = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_oid).unwrap();
+            let signature = git2::Signature::now("Test", "test@example.com").unwrap();
+            let head = repo
+                .commit(Some("HEAD"), &signature, &signature, "base", &tree, &[])
+                .unwrap();
+            let outcome = conflicts::AbortOutcome {
+                restored_to: Some(head.to_string()),
+                buffer_preserved_at: None,
+                restored_paths: vec![path.to_path_buf()],
+            };
+            verify_abort(&repo, &outcome).expect("uncorrupted restore verifies");
+
+            match corruption {
+                "missing index" => {
+                    index.remove_path(path).unwrap();
+                    index.write().unwrap();
+                }
+                "wrong index blob" => {
+                    let mut entry = index.get_path(path, 0).unwrap();
+                    entry.id = repo.blob(b"corrupt!\n").unwrap();
+                    index.add(&entry).unwrap();
+                    index.write().unwrap();
+                }
+                "worktree bytes" => {
+                    // Same length, unchanged HEAD and staged blob: verification
+                    // must inspect worktree content, not only metadata or HEAD.
+                    std::fs::write(temp.path().join(path), b"corrupt!\n").unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(repo.head().unwrap().target(), Some(head));
+            assert!(
+                verify_abort(&repo, &outcome).is_err(),
+                "verification accepted {corruption}"
+            );
+        }
+    }
 }

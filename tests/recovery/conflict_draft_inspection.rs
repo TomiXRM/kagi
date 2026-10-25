@@ -19,7 +19,10 @@ mod inspection_hold;
 
 #[path = "conflict_draft_continue_admission.rs"]
 mod continue_admission;
-pub use continue_admission::scenario_conflict_draft_continue_restore_admission;
+pub use continue_admission::{
+    scenario_conflict_draft_continue_restore_admission,
+    scenario_conflict_draft_recovered_save_frozen_payload,
+};
 
 #[path = "conflict_draft_abort_admission.rs"]
 mod abort_admission;

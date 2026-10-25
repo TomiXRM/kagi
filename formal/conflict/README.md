@@ -3,10 +3,14 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed by the harness. There are 77 TLC
-configurations, 39 pure properties (1,695,651 input/property evaluations),
-29 TLC negative controls, 36 pure mutants, and 34 saved drill projections
-with a forged-Skip negative control.
+No product code is imported or changed by the harness. The maintained union has
+89 TLC configurations and 40 negative controls, retaining P2 lifecycle guards,
+#1731/#1784 preservation and off-thread flush guards, and #1734/#1735 explicit
+deletion and parked-namespace routes. There are 39 pure properties
+(1,695,651 evaluations), 36 pure mutants, and 34 saved drill projections / 46 logs
+with a forged-Skip negative control. Earlier 77-check deletion and 81-check P2
+runs are historical evidence in the lifecycle ledger; generated receipts record
+the current combined verdicts.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -65,7 +69,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1732–#1733, #1740, #1743–#1746 (model-external runtime findings: #1736–#1738)**,
+holes/questions tracked by **#1732–#1733 and #1746 (model-external runtime findings: #1736–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -96,6 +100,20 @@ of that backend defence; `skip-prewrite-broken` removes revision checks and is r
 zero exit; `zero-exit-advanced` restores the old classifier and is red.
 `continue-metadata-read` HOLDs under the full operation-metadata admission guard,
 with a separate red broken variant.
+
+The P2 cutover makes #1740 receipt ordering and Continue liveness HOLD: the
+worker verifies and appends before release, even if the UI closes while it runs.
+The model distinguishes UI destruction (`closing`, detached) from the remaining
+worker lifetime (`life`); successful verification still precedes append.
+OS process death and receipt I/O failure remain outside this ordering contract.
+#1743 retains the approved merge plan and stages frozen payloads; all three
+`ApprovedRevisionFrozen` configs and `merge-tree` HOLD without narrowing scenarios.
+#1744 invalidates siblings from planned Abort ref restoration, not an outcome
+guess. #1745 retains raw checkout paths and verifies both restored WT and index.
+The `stash-verify` pair also admits independent WT/index drift before verification.
+Each original flaw remains refutable through the new broken configs below.
+These are maintained expectations, not a claim that this edit ran TLC; current
+run evidence is produced by the parent validation command.
 
 #1731 makes `draft-io-quit` and the three `preserve-*` checks HOLD. The extracted
 close path retains the failed-autosave flag and live text while its sheet offers
@@ -187,9 +205,12 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `approval-two-instances` | `NoWriteBeforeApproval` | HOLD | none | CONTRACT |
 | `save-payload` | `ApprovedSavePayloadFrozen` | HOLD | none | CONTRACT |
 | `save-payload-broken` | `ApprovedSavePayloadFrozen` | REFUTE | payload | Negative control; no product issue |
-| `approved-revision` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
-| `approved-index-race` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
-| `approved-two-writers` | `ApprovedRevisionFrozen` | REFUTE | none | #1743 |
+| `approved-revision` | `ApprovedRevisionFrozen` | HOLD | none | #1743 |
+| `approved-revision-broken` | `ApprovedRevisionFrozen` | REFUTE | mergePlan | Negative control for #1743: renew approval |
+| `approved-index-race` | `ApprovedRevisionFrozen` | HOLD | none | #1743 |
+| `approved-index-race-broken` | `ApprovedRevisionFrozen` | REFUTE | stagePayload | Negative control for #1743: reread WT |
+| `approved-two-writers` | `ApprovedRevisionFrozen` | HOLD | none | #1743 |
+| `approved-two-writers-broken` | `ApprovedRevisionFrozen` | REFUTE | stagePayload | Negative control for #1743: reread WT |
 | `stale-worktree` | `StaleSnapshotNeverWrites` | HOLD | none | #1733 fixed: captured WT provenance checked before mutation |
 | `stale-worktree-broken` | `StaleSnapshotNeverWrites` | REFUTE | worktree | Negative control; remove #1733 WT provenance guard |
 | `stale-worktree-before-choice` | `StaleSnapshotNeverWrites` | HOLD | none | #1733: watcher refresh before any choice retains original WT provenance |
@@ -224,9 +245,12 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-flush-lock-order-broken` | `BarrierLocksNeverNested` | REFUTE | flushLock | Negative control; acquire repository lock before flush |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
-| `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
-| `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
-| `receipt-skip` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
+| `receipt-continue` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
+| `receipt-continue-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
+| `receipt-merge` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
+| `receipt-merge-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
+| `receipt-skip` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
+| `receipt-skip-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
 | `receipt-save` | `ReceiptFollowsMutation` | HOLD | none | CONTRACT |
 | `receipt-save-broken` | `ReceiptFollowsMutation` | REFUTE | receipt | Negative control; no product issue |
 | `skip-replacement` | `SkipDropsOnlyApprovedStep` | HOLD | none | CONTRACT |
@@ -249,10 +273,16 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `df-head-parked-broken` | `ParkedNamespaceCompletes` | REFUTE | literalParked | Negative control: stage the parked filename |
 | `df-suffix-only-broken` | `ParkedNamespaceCompletes` | REFUTE | suffixOnly | Negative control: infer ownership from suffix alone |
 | `df-worktree-residue-broken` | `ParkedNamespaceCompletes` | REFUTE | parkedResidue | Negative control: leave the parked worktree artifact |
-| `merge-tree` | `MergeCommitTreeIsApprovedTree` | REFUTE | none | #1743 |
-| `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | none | #1744 |
-| `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | REFUTE | none | #1745 |
-| `continue-liveness` | `ContinueEventuallyRecordedOrReported` | REFUTE | none | #1740 |
+| `merge-tree` | `MergeCommitTreeIsApprovedTree` | HOLD | none | #1743 |
+| `merge-tree-broken` | `MergeCommitTreeIsApprovedTree` | REFUTE | mergePlan | Negative control for #1743 |
+| `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | HOLD | none | #1744 |
+| `sibling-invalidation-broken` | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | sharedRef | Negative control for #1744 |
+| `stash-non-utf8` | `StashAbortRestoresConflictedBytes` | HOLD | none | #1745 |
+| `stash-non-utf8-broken` | `StashAbortRestoresConflictedBytes` | REFUTE | stashRestore | Negative control for #1745: original checkout + verification omission |
+| `stash-verify` | `StashAbortRestoresConflictedBytes` | HOLD | none | #1745: WT/index drift before verification |
+| `stash-verify-broken` | `StashAbortRestoresConflictedBytes` | REFUTE | stashVerify | Negative control for #1745: remove restore verification |
+| `continue-liveness` | `ContinueEventuallyRecordedOrReported` | HOLD | none | #1740 |
+| `continue-liveness-broken` | `ContinueEventuallyRecordedOrReported` | REFUTE | workerReceipt | Negative control for #1740 |
 
 The #1732 draft guards cite `resolution/draft_storage.rs`'s OS lock, checked
 content-CAS read, and ADR-0191 atomic temp/sync/rename writer. Its backend

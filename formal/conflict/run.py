@@ -91,7 +91,9 @@ def main():
                 rows = evidence["checks"]
                 detected = red == 1 and bool(rows) and all(
                     row["expectation"] == "HOLD" and row["result"] == "REFUTE"
-                    and row["tlc_exit"] == 12 and bool(row["trace"]) for row in rows)
+                    and row["tlc_exit"] == (
+                        13 if row["invariant"] == "ContinueEventuallyRecordedOrReported" else 12
+                    ) and bool(row["trace"]) for row in rows)
                 summary["checks"].append({"name": "tla-broken", "exit": red,
                                           "detected": detected, "mutations": len(rows)})
                 code = run("tla/trace/klog2events.py", env=env)

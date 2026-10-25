@@ -77,8 +77,8 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     namespace |-> [phase |-> "inspect", index |-> NamespaceIndex, wt |-> NamespaceWT,
         current |-> FALSE, incoming |-> FALSE, proven |-> FALSE, choices |-> {},
         choice |-> "none", planIndex |-> NamespaceIndex, planWT |-> NamespaceWT,
-        approved |-> FALSE, recovery |-> FALSE, mutated |-> FALSE,
-        external |-> FALSE, receipt |-> FALSE],
+        approved |-> FALSE, repoLease |-> FALSE, preflight |-> FALSE,
+        recovery |-> FALSE, mutated |-> FALSE, external |-> FALSE, receipt |-> FALSE],
     event |-> "Init"]
 
 \* backend/conflict_observe.rs:91-101: index.read(true) precedes operation_parts.
@@ -523,27 +523,47 @@ NamespacePlan ==
 NamespaceConfirm ==
     /\ N.phase = "confirm"
     /\ s' = [s EXCEPT !.namespace.approved = TRUE,
-        !.namespace.phase = "preflight", !.event = "NamespaceConfirm"]
+        !.namespace.phase = "admit", !.event = "NamespaceConfirm"]
 NamespaceCancel ==
     /\ N.phase = "confirm"
     /\ s' = [s EXCEPT !.namespace.phase = "cancelled", !.event = "NamespaceCancel"]
-\* One external edit after the exact removal set has been shown; preflight refuses.
+\* Single-owner admission quotient. D3 maps this boundary to the repository
+\* writer lease before preflight; cross-process exclusion is checked separately.
+NamespaceAcquireRepositoryLease ==
+    /\ N.phase = "admit" /\ N.approved
+    /\ s' = [s EXCEPT !.namespace.repoLease = TRUE,
+        !.namespace.phase = "preflight", !.event = "NamespaceAcquireRepositoryLease"]
+\* One foreign edit, either before initial preflight or during snapshot creation.
+\* The repository lease does not exclude external Git or worktree editors.
 NamespaceExternal ==
-    /\ N.phase \in {"confirm", "preflight"} /\ ~N.external
+    /\ N.phase \in {"confirm", "admit", "preflight", "preserve", "repreflight"} /\ ~N.external
     /\ s' = [s EXCEPT
         !.namespace.wt[IF Scenario = "dfHeadParked" THEN "parked" ELSE "source"] = "external",
         !.namespace.external = TRUE, !.event = "NamespaceExternal"]
 NamespacePreflight ==
-    /\ N.phase = "preflight"
-    /\ s' = [s EXCEPT !.namespace.phase =
-        IF N.index = N.planIndex /\ N.wt = N.planWT THEN "preserve" ELSE "refused",
+    /\ N.phase = "preflight" /\ N.repoLease
+    /\ LET valid == N.index = N.planIndex /\ N.wt = N.planWT
+       IN s' = [s EXCEPT !.namespace.preflight = valid,
+        !.namespace.repoLease = valid,
+        !.namespace.phase = IF valid THEN "preserve" ELSE "refused",
         !.event = "NamespacePreflight"]
 NamespacePreserve ==
-    /\ N.phase = "preserve"
+    /\ N.phase = "preserve" /\ N.repoLease /\ N.preflight
     /\ \E saved \in {FALSE, TRUE} :
         s' = [s EXCEPT !.namespace.recovery = saved,
-            !.namespace.phase = IF saved THEN "writeIndex" ELSE "refused",
+            !.namespace.repoLease = saved,
+            !.namespace.phase = IF saved THEN "repreflight" ELSE "refused",
             !.event = <<"NamespacePreserve", saved>>]
+\* dir_file_conflict.rs::apply_dir_file_resolution_with_progress rechecks the
+\* frozen removal set after the potentially slow snapshot, before index writes.
+\* The mutant traverses this boundary without reading the current state.
+NamespaceRepreflight ==
+    /\ N.phase = "repreflight" /\ N.repoLease /\ N.recovery
+    /\ LET valid == Broken = "namespaceRepreflight"
+                   \/ (N.index = N.planIndex /\ N.wt = N.planWT)
+       IN s' = [s EXCEPT !.namespace.repoLease = valid,
+        !.namespace.phase = IF valid THEN "writeIndex" ELSE "refused",
+        !.event = "NamespaceRepreflight"]
 NamespaceExpectedIndex ==
     IF Scenario = "dfHeadParked" THEN
         [N.planIndex EXCEPT !["parked"] = "absent",
@@ -578,14 +598,19 @@ NamespaceVerify ==
 NamespaceRecord ==
     /\ N.phase = "record"
     /\ s' = [s EXCEPT !.namespace.phase = "done", !.namespace.receipt = TRUE,
-        !.event = "NamespaceRecord"]
+        !.namespace.repoLease = FALSE, !.event = "NamespaceRecord"]
 NamespaceNext == NamespaceInspect \/ NamespacePlan \/ NamespaceConfirm \/ NamespaceCancel
-    \/ NamespaceExternal \/ NamespacePreflight \/ NamespacePreserve
+    \/ NamespaceAcquireRepositoryLease \/ NamespaceExternal
+    \/ NamespacePreflight \/ NamespacePreserve \/ NamespaceRepreflight
     \/ NamespaceIndexWrite \/ NamespaceWTWrite \/ NamespaceVerify \/ NamespaceRecord
 \* Assert route availability immediately after classification: missing choices
 \* cannot vacuously pass by deadlocking before a success-only postcondition.
+NamespaceRecoveryAdmitted ==
+    N.phase \in {"preserve", "repreflight", "writeIndex", "writeWT", "verify", "record"}
+    => N.repoLease /\ N.preflight /\ N.approved
 DeletionRouteCompletes ==
     /\ (N.phase # "inspect" => N.choices = NamespaceChoices(N.current, N.incoming))
+    /\ NamespaceRecoveryAdmitted
     /\ (N.mutated => N.approved /\ N.recovery /\ ~N.external)
     /\ (N.phase \in {"verify", "record", "done"} =>
         N.index = NamespaceExpectedIndex /\ N.wt = NamespaceExpectedWT)
@@ -593,6 +618,7 @@ DeletionRouteCompletes ==
 ParkedNamespaceCompletes ==
     /\ (N.phase # "inspect" /\ ~N.proven => N.phase = "refused" /\ ~N.mutated)
     /\ (N.phase # "inspect" /\ N.proven => N.choices = {"directory", "file"})
+    /\ NamespaceRecoveryAdmitted
     /\ (N.mutated => N.approved /\ N.recovery /\ ~N.external)
     /\ (N.phase \in {"verify", "record", "done"} =>
         N.index = NamespaceExpectedIndex /\ N.wt = NamespaceExpectedWT)

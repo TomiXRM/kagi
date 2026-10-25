@@ -4,7 +4,7 @@ This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
 No product code is imported or changed by the harness. The maintained union has
-89 TLC configurations and 40 negative controls, retaining P2 lifecycle guards,
+90 TLC configurations and 41 negative controls, retaining P2 lifecycle guards,
 #1731/#1784 preservation and off-thread flush guards, and #1734/#1735 explicit
 deletion and parked-namespace routes. There are 39 pure properties
 (1,695,651 evaluations), 36 pure mutants, and 34 saved drill projections / 46 logs
@@ -155,7 +155,7 @@ acknowledgment before a successful current-generation flush.
 The original ledgers classified these two issues as **model-external runtime
 findings**: there were no `dd-rename` or `df-head-parked` REFUTE rows to relabel.
 The matching fix adds those named HOLD checks and a `modify-delete` HOLD to the
-existing lifecycle model, with five independently red negative controls.
+existing lifecycle model, with six independently red negative controls.
 The historical drill projections remain unchanged.
 
 This refinement has six distinct paths: original source, two rename targets,
@@ -163,10 +163,16 @@ parked file, directory child and unrelated suffix lookalike. It distinguishes
 unmerged stages, absent entries and clean identities. DD offers only explicit
 deletion; either modify/delete direction offers deletion or the present side.
 D/F requires positive source-tree attribution before offering either namespace
-choice. An exact index/worktree plan is confirmed, rechecked, recovery-captured,
-applied, verified and recorded. One external edit before preflight and recovery
-failure both refuse without mutation. Full expected maps preserve unrelated
-paths and both rename targets; the kept file occupies the original namespace.
+choice. An exact index/worktree plan follows confirmation → single-owner
+repository admission → preflight → recovery snapshot → repeated preflight →
+index/worktree writes → verification → receipt. Recovery remains inside the
+admitted interval, matching #1746 D3's lease ordering. The namespace quotient
+assumes one admitted writer; it does not itself prove cross-process exclusion.
+One foreign edit before either preflight, including during snapshot creation,
+and recovery failure both refuse without mutation. Full expected maps preserve
+unrelated paths and both rename targets; the kept file occupies the original
+namespace. `namespaceRepreflight` removes only the post-snapshot state check:
+`df-post-snapshot-change-broken` must refute after a foreign edit during recovery.
 
 The invariants check **choice availability after classification**, not only
 success-implies-correctness, so removing the delete route cannot vacuously pass
@@ -273,6 +279,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `df-head-parked-broken` | `ParkedNamespaceCompletes` | REFUTE | literalParked | Negative control: stage the parked filename |
 | `df-suffix-only-broken` | `ParkedNamespaceCompletes` | REFUTE | suffixOnly | Negative control: infer ownership from suffix alone |
 | `df-worktree-residue-broken` | `ParkedNamespaceCompletes` | REFUTE | parkedResidue | Negative control: leave the parked worktree artifact |
+| `df-post-snapshot-change-broken` | `ParkedNamespaceCompletes` | REFUTE | namespaceRepreflight | Negative control: skip repeated preflight after snapshot; overwrite intervening foreign change |
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | HOLD | none | #1743 |
 | `merge-tree-broken` | `MergeCommitTreeIsApprovedTree` | REFUTE | mergePlan | Negative control for #1743 |
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | HOLD | none | #1744 |

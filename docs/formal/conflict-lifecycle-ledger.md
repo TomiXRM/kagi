@@ -237,7 +237,7 @@ API measurements, not end-to-end GUI frame timings.
 
 The baseline had no `dd-rename` or `df-head-parked` model rows. Both were runtime
 findings outside the initial extraction. The maintained lifecycle model now
-contains these named HOLD obligations and `modify-delete`, plus five deliberately
+contains these named HOLD obligations and `modify-delete`, plus six deliberately
 broken variants; this is an added extraction, not a retrospective claim that the
 2026-10-24 drill failures were TLC counterexamples.
 
@@ -250,25 +250,37 @@ file to its original path with source-tree and index identity, then resolves
 that whole namespace rather than saving the parked filename.
 
 `NamespaceNext` in `ConflictLifecycle.tla` extracts classification → exact plan →
-confirmation → preflight → recovery → index/worktree writes → verification
-→ receipt. It fixes index-before-worktree as an abstract order; production deletion
+confirmation → repository admission → preflight → recovery → repeated preflight
+→ index/worktree writes → verification → receipt. `NamespaceRecoveryAdmitted`
+requires admission and the first preflight before recovery or writes. This is
+a single-owner quotient, not a second proof of process exclusion: #1746 D3
+supplies the repository lease mapping. Integration must preserve its actor-model
+lease order and recovery invariant alongside these namespace transitions and
+the P2 frozen-tree/worker-receipt guards. `NamespaceRepreflight` corresponds to
+the second `preflight_dir_file_resolution` after snapshot creation; a foreign
+change during that potentially slow snapshot must be refused before index writes.
+The model fixes index-before-worktree as an abstract order; production deletion
 removes the worktree artifact before the index entry, while D/F writes the index
 first. No model action interleaves those writes, so this is not a partial-write
 ordering proof. It explores six paths (source, two rename destinations, parked file,
 child and an unrelated lookalike), both modify/delete orientations, DD with and
 without an artifact, both D/F choices, proven/unproven namespace ownership,
-cancel, one preflight-time external change and recovery success/failure.
+cancel, one foreign change before either preflight and recovery success/failure.
 `DeletionRouteCompletes` checks actual route availability after classification;
 `ParkedNamespaceCompletes` rejects unproven suffix mapping. Both require the
 complete approved index/worktree maps after mutation and a receipt at completion.
 They do not claim eventual execution, OS atomicity or exclusion of external Git
-after preflight. Unrelated lifecycle and pure-property assumptions are unchanged.
+after the last preflight. Unrelated lifecycle and pure-property assumptions are unchanged.
 
-The five red controls independently restore absent-side-only DD choices,
-deletion-as-empty-blob, literal parked-path staging, suffix-only attribution and
-leftover parked worktree content. Before P2 integration this amendment's matrix
-had **77 TLC checks / 29 negative controls**; the combined matrix now has **89 /
-40**. Generated full-suite receipts remain the source for observed verdicts.
+The six red controls independently restore absent-side-only DD choices,
+deletion-as-empty-blob, literal parked-path staging, suffix-only attribution,
+leftover parked worktree content, and omission of post-snapshot revalidation.
+`df-post-snapshot-change-broken` traverses the repeated-preflight boundary
+without comparing the current state, exposing an intervening foreign change.
+Before P2 integration this amendment's matrix had **77 TLC checks / 29 negative
+controls**; the combined matrix after that integration had **89 / 40**, and the
+repeated-preflight amendment has **90 / 41**. Generated full-suite receipts
+remain the source for observed verdicts.
 
 Observed on `fix/delete-routes-1734` before the P2 integration:
 the complete `formal/conflict/run.sh` exited 0 in **57.369 seconds**. All **77**

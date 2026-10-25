@@ -88,6 +88,7 @@ CHECKS = [
     ("df-head-parked-broken", "dfHeadParked", "ParkedNamespaceCompletes", "REFUTE", "literalParked"),
     ("df-suffix-only-broken", "dfHeadParked", "ParkedNamespaceCompletes", "REFUTE", "suffixOnly"),
     ("df-worktree-residue-broken", "dfHeadParked", "ParkedNamespaceCompletes", "REFUTE", "parkedResidue"),
+    ("df-post-snapshot-change-broken", "dfHeadParked", "ParkedNamespaceCompletes", "REFUTE", "namespaceRepreflight"),
     ("merge-tree", "merge", "MergeCommitTreeIsApprovedTree", "HOLD", "none"),
     ("merge-tree-broken", "merge", "MergeCommitTreeIsApprovedTree", "REFUTE", "mergePlan"),
     ("sibling-invalidation", "sibling", "SiblingWorktreesInvalidatedOnSharedRef", "HOLD", "none"),

@@ -69,12 +69,21 @@ for non-UTF8 witness bytes and absent/empty/error oplog regression coverage.
 No product rendering or behavior changes, so Tier B is not required.
 
 For #1746 use `KAGI_GUI_E2E_ONLY='repository_lock_'` with KEEP_GOING.
-The six scenarios cover Continue/Skip single-refusal ownership, quiet automatic
-Fetch, single staging refusal, requested-operation Pull/Commit receipts, and the
-queued repository-busy lifecycle. `repository_lock_user_receipts` invokes the
+The nine scenarios cover Continue/Skip single-refusal ownership, quiet automatic
+Fetch and PR-ref refresh, single staging refusal, requested-operation Pull/Commit
+receipts, failed-append acknowledgment, and the queued repository-busy lifecycle.
+Also run `pr_ref_fetch_` and `pr_paging_survives_periodic_tick` when changing PR
+fetch intent. `repository_lock_user_receipts` invokes the
 real Pull and Commit entry points under contention and requires one operation-
 specific Refused receipt plus one bounded Error toast per user attempt, no
 generic admission row, and unchanged HEAD/index/worktree.
+`repository_lock_admission_recording_failure` requires exactly one attempted UI
+row, no durable receipt and no ordinary toast beside the required acknowledgment
+in EN/JA. `repository_lock_legacy_plan_recording_failure` exercises the actual
+Abort and merge-commit planning owners under both repository and append locks.
+`repository_lock_silent_pr_refresh` checks manual `fetch-pr` refusal separately
+from a quiet automatic PR tick, released loading, and successful retry on the
+next unchanged list tick after the independent owner releases admission.
 `repository_lock_queue_retry` holds admission for five simulated seconds, checks
 one error toast and responsive dispatcher work, then exercises a second owner's
 re-contention between the probe and admission, bounded resumption with the

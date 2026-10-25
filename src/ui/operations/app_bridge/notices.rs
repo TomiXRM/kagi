@@ -52,7 +52,7 @@ impl KagiApp {
             path.display().to_string(),
             StateSummary {
                 head: "unobserved".into(),
-                dirty: "not admitted".into(),
+                dirty: "unobserved".into(),
             },
             OpOutcome::Refused {
                 blockers: vec![error.to_string()],
@@ -62,7 +62,6 @@ impl KagiApp {
         .with_nothing_moved();
         let recording = kagi_git::backend::recording::finalize(entry);
         self.notice_recording_failure(operation, &recording, path, None);
-        self.insert_recorded_row(&recording, cx);
         if matches!(
             recording,
             kagi_git::backend::recording::Recording::Failed { .. }
@@ -72,6 +71,7 @@ impl KagiApp {
             cx.notify();
             return;
         }
+        self.insert_recorded_row(&recording, cx);
         self.report_admission_refusal(error, cx);
     }
 

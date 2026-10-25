@@ -3557,6 +3557,18 @@ mod macos {
                 Box::new(crate::repository_lock::scenario_repository_lock_user_receipts),
             ),
             (
+                "repository_lock_admission_recording_failure",
+                Box::new(crate::repository_lock::scenario_repository_lock_admission_recording_failure),
+            ),
+            (
+                "repository_lock_silent_pr_refresh",
+                Box::new(crate::pr_viewed::scenario_repository_lock_silent_pr_refresh),
+            ),
+            (
+                "repository_lock_legacy_plan_recording_failure",
+                Box::new(crate::conflict_abort_slot::scenario_legacy_plan_recording_failure),
+            ),
+            (
                 "conflict_continue_refusal_result_owner",
                 Box::new(crate::app_conflict::scenario_conflict_continue_refusal_result_owner),
             ),

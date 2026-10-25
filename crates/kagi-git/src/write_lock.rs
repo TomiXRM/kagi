@@ -58,22 +58,23 @@ fn io(error: impl std::fmt::Display) -> GitError {
     GitError::Other(format!("repository write lock: {error}"))
 }
 
-/// Plans whose legacy callers only display preparation failures still need a
-/// durable refusal. Recorded conflict jobs use their existing receipt owner.
+/// Legacy planning attempts own one receipt; return it intact for presentation
+/// and required failed-append acknowledgment. Generic probes remain unrecorded.
 pub(crate) fn acquire_recorded(
     repo: &git2::Repository,
     path: &std::path::Path,
+    operation: &str,
 ) -> Result<RepositoryWriteLock, GitError> {
     match acquire(repo) {
         Ok(lock) => Ok(lock),
         Err(error) => {
             let recording = crate::backend::recording::finalize(
                 crate::oplog::OpLogEntry::new(
-                    "conflict-write-admission",
+                    operation,
                     path.display().to_string(),
                     crate::ops::StateSummary {
-                        head: "not started".into(),
-                        dirty: "unchanged".into(),
+                        head: "unobserved".into(),
+                        dirty: "unobserved".into(),
                     },
                     crate::oplog::OpOutcome::Refused {
                         blockers: vec![error.to_string()],
@@ -82,16 +83,10 @@ pub(crate) fn acquire_recorded(
                 .with_worktree(Some(path.display().to_string()))
                 .with_nothing_moved(),
             );
-            if let crate::backend::recording::Recording::Failed {
-                error: recording_error,
-                ..
-            } = recording
-            {
-                return Err(GitError::Other(format!(
-                    "{error}; refusal recording failed: {recording_error}"
-                )));
-            }
-            Err(error)
+            Err(GitError::Recorded {
+                error: Box::new(error),
+                recording: Box::new(recording),
+            })
         }
     }
 }

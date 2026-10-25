@@ -303,3 +303,109 @@ fn witness_after(repo: &Path) -> (String, Vec<u8>) {
         std::fs::read(repo.join(".git/index")).unwrap(),
     )
 }
+
+#[test]
+fn legacy_abort_and_merge_plans_return_one_operation_named_receipt() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for kind in ["merge", "cherry-pick"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = conflict(tmp.path());
+        if kind == "cherry-pick" {
+            git(&repo, &["merge", "--abort"]);
+            assert!(!git_succeeds(&repo, &["cherry-pick", "side"]));
+        }
+        let backend = Backend::open(&repo).unwrap();
+        let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+        let _owner = Owner::start(&repo);
+        for route in ["session-abort", "operation-abort", "merge-commit"] {
+            let before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len();
+            let error = match route {
+                "session-abort" => backend.plan_conflict_abort(&snapshot.session),
+                "operation-abort" => backend.plan_operation_abort(),
+                _ => backend.plan(&kagi_git::Operation::MergeCommit {
+                    message: "merge".into(),
+                }),
+            }
+            .unwrap_err();
+            busy(&error);
+            let expected = if route == "merge-commit" {
+                route.to_string()
+            } else {
+                format!("{kind}-abort")
+            };
+            let recording = error.recording().expect("retain attempted receipt");
+            assert!(matches!(
+                recording,
+                kagi_git::backend::recording::Recording::Appended { .. }
+            ));
+            let entries = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
+            assert_eq!(entries.len(), before + 1, "exactly one refusal per attempt");
+            assert_eq!(recording.entry().op, expected);
+            assert_eq!(entries.first().unwrap(), recording.entry());
+            assert!(matches!(
+                recording.entry().outcome,
+                OpOutcome::Refused { .. }
+            ));
+            assert_eq!(recording.entry().ref_moves, Some(Vec::new()));
+        }
+    }
+}
+
+#[test]
+fn legacy_plan_refusals_preserve_failed_recording_through_error_wrappers() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    // A directory at the append target fails even when tests run as root.
+    let log = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    std::fs::create_dir(log.join("operations.jsonl")).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = conflict(tmp.path());
+    let backend = Backend::open(&repo).unwrap();
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let before = witness(&repo);
+    let _owner = Owner::start(&repo);
+    for route in ["session-abort", "operation-abort", "merge-commit"] {
+        let error = match route {
+            "session-abort" => backend.plan_conflict_abort(&snapshot.session),
+            "operation-abort" => backend.plan_operation_abort(),
+            _ => backend.plan(&kagi_git::Operation::MergeCommit {
+                message: "merge".into(),
+            }),
+        }
+        .unwrap_err();
+        busy(&error);
+        let recording = error.recording().expect("failed receipt must reach UI");
+        let kagi_git::backend::recording::Recording::Failed {
+            attempted,
+            error: append_error,
+        } = recording
+        else {
+            panic!("expected failed append: {recording:?}");
+        };
+        assert!(!append_error.is_empty());
+        assert_eq!(
+            attempted.op,
+            if route == "merge-commit" {
+                "merge-commit"
+            } else {
+                "merge-abort"
+            }
+        );
+        assert_eq!(
+            std::fs::canonicalize(&attempted.repo).unwrap(),
+            std::fs::canonicalize(&repo).unwrap()
+        );
+        assert!(matches!(&attempted.outcome, OpOutcome::Refused { blockers }
+            if blockers == &["Another Kagi window is operating on this repository"]));
+        assert_eq!(attempted.ref_moves, Some(Vec::new()));
+        let original = recording.clone();
+        let wrapped = GitError::Preflight(Box::new(error));
+        busy(&wrapped);
+        assert_eq!(wrapped.recording(), Some(&original));
+        assert!(kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).is_empty());
+        assert_eq!(witness(&repo), before);
+    }
+}

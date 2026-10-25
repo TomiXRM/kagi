@@ -34,7 +34,7 @@ pub use recovery::RecoveryHandle;
 // ────────────────────────────────────────────────────────────
 
 /// The result of a git operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpOutcome {
     /// Side effects or process termination cannot be fully established.
     Unknown {
@@ -189,6 +189,7 @@ impl From<&crate::GitError> for FailureCode {
             // A preflight failure wraps the underlying error; that it was
             // refused *before* execution is the useful distinction here.
             GitError::Preflight(_) => FailureCode::Preflight,
+            GitError::Recorded { error, .. } => FailureCode::from(error.as_ref()),
             GitError::StashIdentityUnverified(_) => FailureCode::StashIdentityUnverified,
             GitError::RebaseCannotStartWithRepoSettingsDisabled(_) => {
                 FailureCode::RebaseBlockedByRepoSettings
@@ -314,7 +315,7 @@ pub enum RefScope {
 }
 
 /// One entry in the operation log.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpLogEntry {
     /// Monotonic sequence id, assigned at append time (ADR-0149 / #333). Gives
     /// a total order even for entries recorded in the same wall-clock second.

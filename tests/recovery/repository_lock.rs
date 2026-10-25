@@ -11,13 +11,13 @@ const BUSY: &str = "Another Kagi window is operating on this repository";
 /// Hold a separate descriptor on a scoped thread. The backend's
 /// conflict_write_lock_test owns the independent-process/death-release oracle;
 /// its child entry point is not available in the native runner binary.
-struct RepositoryLockOwner {
+pub(crate) struct RepositoryLockOwner {
     release: Option<std::sync::mpsc::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl RepositoryLockOwner {
-    fn acquire(repo: &Path) -> Self {
+    pub(crate) fn acquire(repo: &Path) -> Self {
         let repo = repo.to_owned();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (release, release_rx) = std::sync::mpsc::channel::<()>();
@@ -614,4 +614,77 @@ pub fn scenario_repository_lock_user_receipts(cx: &mut VisualTestAppContext) {
         assert_eq!(std::fs::read(repo.join("pending.txt")).unwrap(), pending);
     });
     unmount(cx, app, window);
+}
+
+pub fn scenario_repository_lock_admission_recording_failure(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{
+        i18n::{self, Lang},
+        FooterStatus,
+    };
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let remote = tempfile::tempdir().unwrap();
+        crate::fetch_owner::local_remote_with_change(&repo, remote.path());
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.set_lang(language, cx));
+        wait_idle(cx, &app);
+        let before = read_oplog_tail_for_repo(&repo, 100).len();
+        let log_lock = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+            .join("operations.jsonl.lock");
+        let append_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(log_lock)
+            .unwrap();
+        append_lock.lock().unwrap();
+        with_repository_lock(&repo, || {
+            app.update(cx, |app, cx| app.fetch_async(false, cx));
+            wait_idle(cx, &app);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let rows = state
+                    .op_log
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.op == "fetch" && entry.repo == repo.display().to_string())
+                    .collect::<Vec<_>>();
+                assert_eq!(rows.len(), 1, "a failed append appears once, not twice");
+                assert!(matches!(&rows[0].outcome, OpOutcome::Refused { .. }));
+                assert_eq!(rows[0].before.dirty, "unobserved");
+                let notice = state
+                    .app_notice()
+                    .expect("required failed-recording acknowledgment");
+                assert!(notice.message.contains(&repo.display().to_string()));
+                assert!(notice
+                    .message
+                    .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                assert!(
+                    state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .is_empty(),
+                    "no ordinary refusal beside required acknowledgment"
+                );
+                assert!(
+                    matches!(&state.status_footer, FooterStatus::Idle(text) if text.is_empty())
+                );
+                assert!(state.fetch_in_flight.is_none());
+                assert!(!state.app_sessions.has_leases());
+            });
+            assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+        });
+        drop(append_lock);
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(previous);
 }

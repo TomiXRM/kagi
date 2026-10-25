@@ -723,9 +723,19 @@ records its initial refused attempt once; probes and automatic re-contention
 do not append repeated receipts. Recording failure retains the existing required
 acknowledgment instead of presenting an ordinary refusal as durably recorded.
 Continue and Skip planning likewise return their blocker to their existing UI
-receipt owner; only legacy Abort/merge planning without a receipt owner records
-its own early refusal. Silent auto-fetch skips contention without a toast or
-receipt and retries on its next ordinary tick. A queued head waits with the same
+receipt owner. Legacy Abort/merge planning records its early refusal under the
+observed `<kind>-abort` or `merge-commit` name and carries the original attempted
+`Recording` through planning errors. Its UI owner presents that recording once;
+a failed append activates the required acknowledgment, never a second row or an
+ordinary refusal toast. Admission receipt states use the translated `unobserved`
+grammar; every admission-error variant has a bounded EN/JA summary while Details
+and Copy retain the full stored diagnostic.
+
+Silent auto-fetch and periodic PR-ref refresh skip contention without a toast or
+receipt and retry on their next ordinary tick. A manual PR opening remains a
+user attempt named `fetch-pr`. The PR fetch intent survives pending and stale
+retries; a quiet admission refusal releases loading so an unchanged next list
+tick can try again. A queued head waits with the same
 localized repository-busy explanation and one error toast per intent. Its retained,
 cancellable retry task probes with timeout zero on the background executor after
 250 ms, then 500 ms, 1 s and at most 2 s between probes. Contended probes neither

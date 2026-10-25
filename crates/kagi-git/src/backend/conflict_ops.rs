@@ -739,7 +739,11 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
     ) -> Result<OperationPlan, GitError> {
-        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
+        let _lock = crate::write_lock::acquire_recorded(
+            &self.repo,
+            &self.path,
+            &format!("{}-abort", session.op.slug()),
+        )?;
         conflicts::plan_conflict_abort(&self.repo, session)
     }
 
@@ -748,9 +752,13 @@ impl Backend {
     /// open the confirmation with no `ConflictView` and no conflict editor —
     /// the state the issue got stuck in.
     pub fn plan_operation_abort(&self) -> Result<OperationPlan, GitError> {
-        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
         let snapshot = observation(&self.repo)?
             .ok_or_else(|| GitError::Other("no operation is in progress".into()))?;
+        let _lock = crate::write_lock::acquire_recorded(
+            &self.repo,
+            &self.path,
+            &format!("{}-abort", snapshot.observation.kind.slug()),
+        )?;
         conflicts::plan_conflict_abort(&self.repo, &snapshot.session)
     }
 

@@ -371,6 +371,13 @@ pub enum GitError {
     /// A recorded attempt failed before execution. Display preserves the
     /// underlying error; callers can retain their preflight-specific UI label.
     Preflight(Box<GitError>),
+    /// A planning refusal whose receipt has already been attempted. UI owners
+    /// must present this recording, including failed-append acknowledgment,
+    /// rather than append a second receipt or flatten it into a diagnostic.
+    Recorded {
+        error: Box<GitError>,
+        recording: Box<backend::recording::Recording>,
+    },
     /// A refusal that carries the same typed note used by the plan surface.
     /// Display remains the English plan rendering for oplog and CLI consumers;
     /// UI delivery can localize the note before displaying it (#606).
@@ -417,7 +424,16 @@ impl GitError {
     pub fn blocker(&self) -> Option<&kagi_domain::plan_note::PlanNote> {
         match self {
             GitError::Blocked(note) => Some(note),
-            GitError::Preflight(error) => error.blocker(),
+            GitError::Preflight(error) | GitError::Recorded { error, .. } => error.blocker(),
+            _ => None,
+        }
+    }
+
+    /// The original attempted receipt, also retained through preflight wrappers.
+    pub fn recording(&self) -> Option<&backend::recording::Recording> {
+        match self {
+            GitError::Recorded { recording, .. } => Some(recording),
+            GitError::Preflight(error) => error.recording(),
             _ => None,
         }
     }
@@ -434,7 +450,9 @@ impl std::fmt::Display for GitError {
                 "repository is not trusted for writes (owned by another user): {}",
                 p
             ),
-            GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
+            GitError::Preflight(error) | GitError::Recorded { error, .. } => {
+                std::fmt::Display::fmt(error, f)
+            }
             GitError::Blocked(note) => f.write_str(&note.message_en()),
             GitError::Revision(error) => std::fmt::Display::fmt(error, f),
             GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason()),

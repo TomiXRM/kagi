@@ -300,3 +300,121 @@ pub fn scenario_conflict_abort_superseded_reload(cx: &mut VisualTestAppContext) 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_abort_superseded_reload");
 }
+
+/// Legacy synchronous planning preserves the failed receipt and activates its
+/// required acknowledgment, instead of losing it in a preparation-error toast.
+pub fn scenario_legacy_plan_recording_failure(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{e2e, i18n, FooterStatus};
+    use kagi_git::oplog::OpOutcome;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = i18n::lang();
+    for language in [i18n::Lang::En, i18n::Lang::Ja] {
+        for operation in ["merge-abort", "merge-commit"] {
+            let fixture = crate::app_conflict::stuck_merging_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            if operation == "merge-commit" {
+                std::fs::write(repo.join("file.txt"), "resolved for merge commit\n").unwrap();
+                crate::macos::git(&repo, &["add", "file.txt"]);
+            }
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                app.set_lang(language, cx);
+                app.set_window_active_for_e2e(false, cx);
+                app.detect_conflict_mode(cx);
+            });
+            cx.run_until_parked();
+            if operation == "merge-commit" {
+                click_control(cx, window, "conflict-continue");
+                wait_idle(cx, &app);
+                crate::busy_dismiss::ready(cx, &app);
+                assert!(cx.read(|cx| app.read(cx).ui().conflict_merge_pending));
+            }
+            let before = read_oplog_tail_for_repo(&repo, 100).len();
+            let toast_ids_before = cx.read(|cx| {
+                app.read(cx)
+                    .toast_stack
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .toasts()
+                    .iter()
+                    .map(|toast| toast.id)
+                    .collect::<Vec<_>>()
+            });
+            let fingerprint = crate::macos::repo_fingerprint(&repo);
+            let index = std::fs::read(repo.join(".git/index")).unwrap();
+            let merge_head = std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap();
+            let log_lock = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+                .join("operations.jsonl.lock");
+            let append_lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(log_lock)
+                .unwrap();
+            append_lock.lock().unwrap();
+            let owner = crate::repository_lock::RepositoryLockOwner::acquire(&repo);
+            if operation == "merge-abort" {
+                click_control(cx, window, "conflict-abort");
+            } else {
+                app.update(cx, |app, cx| {
+                    let owner = app.active_session().unwrap();
+                    app.open_commit_plan_modal(owner, cx);
+                });
+            }
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let rows = state.op_log.as_ref().unwrap().read(cx).entries();
+                let attempts: Vec<_> = rows.iter().filter(|row| row.op == operation).collect();
+                assert_eq!(attempts.len(), 1, "one attempted UI row for {operation}");
+                let attempted = attempts[0];
+                assert!(matches!(&attempted.outcome, OpOutcome::Refused { blockers }
+                    if blockers == &["Another Kagi window is operating on this repository"]));
+                assert_eq!(attempted.before.head, "unobserved");
+                assert_eq!(attempted.before.dirty, "unobserved");
+                let notice = state
+                    .app_notice()
+                    .expect("required recording-failure acknowledgment");
+                assert!(notice.message.contains(&repo.display().to_string()));
+                assert!(notice
+                    .message
+                    .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+                assert!(!e2e::queued_notice_contains(
+                    state,
+                    &repo.display().to_string()
+                ));
+                assert_eq!(
+                    state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .iter()
+                        .map(|toast| toast.id)
+                        .collect::<Vec<_>>(),
+                    toast_ids_before,
+                    "required acknowledgment adds no ordinary toast"
+                );
+                assert!(!matches!(
+                    state.status_footer,
+                    FooterStatus::Failed(_) | FooterStatus::Success(_)
+                ));
+                assert!(state.conflict_abort_modal().is_none());
+                assert!(!state.app_sessions.has_leases());
+            });
+            assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before);
+            assert_eq!(crate::macos::repo_fingerprint(&repo), fingerprint);
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+            assert_eq!(
+                std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
+                merge_head
+            );
+            drop(owner);
+            drop(append_lock);
+            unmount(cx, app, window);
+        }
+    }
+    i18n::set_lang(previous);
+}

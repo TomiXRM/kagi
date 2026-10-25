@@ -467,7 +467,13 @@ pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) -> Vec<PullRequest> {
         {
             let head_changed = tab.pr.head_sha != listed.head_sha;
             sync_open_pr_from_list(tab, listed);
-            if head_changed {
+            // An admission refusal leaves the fetched head behind the listed
+            // head. Retry on the next ordinary refresh, even if L1 is unchanged.
+            if head_changed
+                || (!tab.local_refs_loading
+                    && tab.local_refs_visit.is_none()
+                    && tab.head.0 != listed.head_sha)
+            {
                 moved.push(listed.clone());
             }
         }
@@ -524,7 +530,7 @@ impl KagiApp {
     ) {
         if owner_is_active {
             for pr in moved {
-                self.fetch_pr_for_open(pr.clone(), cx);
+                self.fetch_pr_for_open(pr.clone(), true, cx);
             }
         }
     }

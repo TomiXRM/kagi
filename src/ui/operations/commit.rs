@@ -1221,6 +1221,13 @@ impl KagiApp {
         let merge_plan = match repo.plan(&merge_op) {
             Ok(p) => p,
             Err(e) => {
+                if let Some(recording) = e.recording() {
+                    self.notice_recording_failure("merge-commit", recording, &repo_path, None);
+                    self.present_recorded(recording, true, cx);
+                    self.present_app_notice();
+                    cx.notify();
+                    return;
+                }
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::MergeCommit, e)),

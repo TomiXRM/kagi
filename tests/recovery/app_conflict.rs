@@ -205,7 +205,7 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
 /// merge, the resolution staged (what Continue does), then the commit panel's
 /// Unstage and Discard all can leave MERGING with no unmerged entries.
 /// The accepted observation still owns Continue and Abort in that state.
-fn stuck_merging_fixture() -> tempfile::TempDir {
+pub(crate) fn stuck_merging_fixture() -> tempfile::TempDir {
     let fixture = content_fixture();
     let repo = fixture.path();
     std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();

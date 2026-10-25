@@ -1,4 +1,4 @@
-//! Frozen staging must preserve Git's mode/filter semantics through recorded Save.
+//! Frozen staging preserves Git's mode/filter semantics through Save and Continue.
 use super::*;
 use kagi_domain::conflict_family::ConflictProgress;
 use kagi_git::{backend::ExecutionPolicy, oplog::OpOutcome, Backend};
@@ -112,4 +112,81 @@ fn recorded_save_cleans_frozen_crlf_only_when_git_policy_requires_it() {
         index.read(true).unwrap();
         assert_eq!(index.get_path(Path::new("file.txt"), 0).unwrap().id, before);
     }
+}
+
+#[test]
+fn continue_cleans_frozen_results_using_attributes_resolved_in_the_same_batch() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = TempDir::new().unwrap();
+    let path = fixture.path();
+    init_repo(path, "main");
+    git(path, &["config", "core.autocrlf", "false"]);
+    write_file(path, ".gitattributes", "*.txt -text\n");
+    write_file(path, "a.txt", "BASE\r\n");
+    git(path, &["add", "."]);
+    git(path, &["commit", "-qm", "base"]);
+    git(path, &["checkout", "-qb", "feature"]);
+    write_file(path, ".gitattributes", "*.txt text eol=lf\n");
+    write_file(path, "a.txt", "INCOMING\r\n");
+    git(path, &["commit", "-qam", "incoming"]);
+    git(path, &["checkout", "-q", "main"]);
+    write_file(path, ".gitattributes", "* -text\n");
+    write_file(path, "a.txt", "CURRENT\r\n");
+    git(path, &["commit", "-qam", "current"]);
+    assert!(!git_allow_fail(path, &["merge", "feature"]));
+    // Retain the current policy in the WT until Continue materializes Result.
+    write_file(path, ".gitattributes", "* -text\n");
+    let backend = Backend::open(path).unwrap();
+    let mut snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    assert_eq!(snapshot.session.files.len(), 2);
+    // Deliberately visit the dependent before its attributes, not lexical order.
+    snapshot.session.files.reverse();
+    assert_eq!(snapshot.session.files[0].path, Path::new("a.txt"));
+    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+    buffer
+        .set_manual_text(Path::new(".gitattributes"), "*.txt text eol=lf\n")
+        .unwrap();
+    buffer
+        .set_manual_text(Path::new("a.txt"), "APPROVED\r\n")
+        .unwrap();
+    let before = backend
+        .plan_conflict_continue(&snapshot.session, &buffer, &snapshot.observation.revision)
+        .unwrap()
+        .current;
+    let report = Backend::run_recorded_conflict_handoff(
+        path,
+        &snapshot.session,
+        &buffer,
+        &snapshot.observation.revision,
+        before,
+    );
+    report.result.unwrap();
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    let repo = Repository::open(path).unwrap();
+    let index = repo.index().unwrap();
+    assert!(!index.has_conflicts());
+    for (name, expected) in [
+        (".gitattributes", b"*.txt text eol=lf\n".as_slice()),
+        ("a.txt", b"APPROVED\n".as_slice()),
+    ] {
+        let entry = index.get_path(Path::new(name), 0).unwrap();
+        assert_eq!(repo.find_blob(entry.id).unwrap().content(), expected);
+    }
+    assert_eq!(std::fs::read(path.join("a.txt")).unwrap(), b"APPROVED\r\n");
+    let staged = index.get_path(Path::new("a.txt"), 0).unwrap().id;
+    git(path, &["add", "a.txt"]);
+    assert_eq!(
+        repo.index()
+            .unwrap()
+            .get_path(Path::new("a.txt"), 0)
+            .unwrap()
+            .id,
+        staged,
+        "ordinary restaging must not change the approved clean-filtered blob"
+    );
 }

@@ -1350,14 +1350,13 @@ fn stage_conflict_resolution_with_worktree_hook(
             }
         };
         let mode = original_file_mode(&workdir.join(&file.path));
-        let frozen = freeze_text_resolution(repo, &index, &file.path, &text, mode)?;
-        resolutions.push((file.path.clone(), text, mode, frozen));
+        resolutions.push((file.path.clone(), text, mode));
     }
 
     // Phase 1: write each resolution to `<name>.kagi-resolve-tmp-<n>` next to
     // its target (same filesystem → rename is atomic). Create parent dirs.
     let mut temps: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new(); // (temp, target_abs)
-    for (n, (rel, text, target_mode, _)) in resolutions.iter().enumerate() {
+    for (n, (rel, text, target_mode)) in resolutions.iter().enumerate() {
         let abs = workdir.join(rel);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -1419,11 +1418,13 @@ fn stage_conflict_resolution_with_worktree_hook(
         }
     }
 
-    after_worktree();
-    // Stage only the frozen Result, never bytes another writer put in the WT
-    // after materialization. Such edits remain unstaged for the next review.
-    for (rel, _, _, frozen) in &resolutions {
-        stage_raw_entry(&mut index, rel, *frozen)?;
+    // Materialize the whole batch before loading clean filters: a resolved
+    // .gitattributes may change the policy for another Result in this batch,
+    // regardless of session order. The filter still consumes only frozen text,
+    // never the materialized file or bytes supplied by another worktree writer.
+    for (rel, text, mode) in &resolutions {
+        let frozen = freeze_text_resolution(repo, &index, rel, text, *mode)?;
+        stage_raw_entry(&mut index, rel, frozen)?;
     }
     // Raw (binary / symlink / gitlink) resolutions: stage the chosen side's OID
     // at stage 0 directly (#297) — byte-identical to the chosen side, exec bit /
@@ -1431,6 +1432,7 @@ fn stage_conflict_resolution_with_worktree_hook(
     for (rel, raw) in &raw_stages {
         stage_raw_entry(&mut index, rel, *raw)?;
     }
+    after_worktree();
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;

@@ -91,10 +91,10 @@ pub(crate) fn acquire_recorded(
 }
 
 impl crate::Backend {
-    /// Probe the same backend gate before spawning an approved write.
+    /// Probe repository admission without recording: the operation owns its receipt.
     pub fn check_conflict_write_admission(path: &std::path::Path) -> Result<(), GitError> {
         let repo = git2::Repository::discover(path).map_err(io)?;
-        let _lock = acquire_recorded(&repo, path)?;
+        let _lock = acquire(&repo)?;
         Ok(())
     }
 }

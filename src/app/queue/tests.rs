@@ -275,6 +275,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         WaitReason::NeedsConfirmation,
         WaitReason::NeedsReconcile,
         WaitReason::Typing,
+        WaitReason::RepositoryBusy,
     ];
     let releases = [
         ReleaseEvent::LeaseReleased,
@@ -282,12 +283,16 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         ReleaseEvent::OwnerReturned,
         ReleaseEvent::ReconcileAcknowledged,
         ReleaseEvent::InputBlurred,
+        ReleaseEvent::RepositoryRetry,
     ];
     for (reason, release) in reasons.into_iter().zip(releases) {
         assert!(reason.released_by(release));
         let mut q = IntentQueue::new();
         q.apply(QueueEvent::OwnerReturned(session(1)));
         match reason {
+            WaitReason::RepositoryBusy => {
+                q.apply(QueueEvent::PlanSlotTaken);
+            }
             WaitReason::WriteRunning => {
                 q.apply(QueueEvent::WriteStarted(stamp(2, 99)));
             }
@@ -306,6 +311,15 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             }
         }
         let a = enqueue(&mut q, 1);
+        if reason == WaitReason::RepositoryBusy {
+            q.per_session
+                .get_mut(&session(1))
+                .unwrap()
+                .front_mut()
+                .unwrap()
+                .state = IntentState::Waiting { reason };
+            q.plan_slot_busy = false;
+        }
         let other = enqueue(&mut q, 2);
         assert_eq!(state(&q, 1), IntentState::Waiting { reason });
         let effects = match release {
@@ -317,6 +331,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             }
             ReleaseEvent::ModalSlotFree | ReleaseEvent::RevalidationDone => unreachable!(),
             ReleaseEvent::InputBlurred => q.apply(QueueEvent::InputBlurred),
+            ReleaseEvent::RepositoryRetry => q.apply(QueueEvent::RetryRepositoryBusy),
         };
         assert!(
             effects.contains(&QueueEffect::StartPlan(a)),

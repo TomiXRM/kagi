@@ -133,6 +133,84 @@ fn write(f: &Fixture, writer: Writer, guard: WriteGuard) {
 }
 
 #[test]
+fn repository_lock_owner_child() {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("KAGI_ADMISSION_LOCK_CHILD") else {
+        return;
+    };
+    let _lock =
+        kagi_git::advisory_lock::lock_exclusive(Path::new(&path), std::time::Duration::ZERO)
+            .unwrap();
+    println!("LOCKED");
+    std::io::stdout().flush().unwrap();
+    std::thread::park();
+}
+
+#[test]
+fn another_process_blocks_generic_writers_without_an_admission_receipt() {
+    use std::io::BufRead;
+    use std::process::{Command, Stdio};
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut sessions = Sessions::new();
+    let approved = f.approved(&mut sessions);
+    let mut owner = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "repository_lock_owner_child", "--nocapture"])
+        .env(
+            "KAGI_ADMISSION_LOCK_CHILD",
+            f.repo.join(".git/kagi-write.lock"),
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    struct Reap(std::process::Child);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stdout = owner.stdout.take().unwrap();
+    let owner = Reap(owner);
+    assert!(std::io::BufReader::new(stdout)
+        .lines()
+        .any(|line| line.unwrap() == "LOCKED"));
+    let before = (
+        std::fs::read(f.repo.join(".git/index")).unwrap(),
+        std::fs::read(f.linked.join("file")).unwrap(),
+        kagi_git::oplog::read_oplog_tail_for_repo(&f.repo, 100).len(),
+    );
+    for operation in ["stage", "pull", "commit", "fetch"] {
+        assert!(
+            matches!(
+                sessions.write_lease(&f.linked),
+                Err(AdmissionError::RepositoryBusy)
+            ),
+            "{operation} must refuse before its executor"
+        );
+        assert!(!sessions.has_leases());
+    }
+    assert!(matches!(
+        begin_write(&mut sessions, &approved),
+        Err(AdmissionError::RepositoryBusy),
+    ));
+    assert_eq!(std::fs::read(f.repo.join(".git/index")).unwrap(), before.0);
+    assert_eq!(std::fs::read(f.linked.join("file")).unwrap(), before.1);
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&f.repo, 100).len(),
+        before.2
+    );
+    assert!(kagi_git::oplog::read_oplog_tail_for_repo(&f.linked, 100).is_empty());
+    drop(owner);
+    sessions.write_lease(&f.linked).unwrap().complete();
+    let running = begin_write(&mut sessions, &approved).unwrap();
+    drop(running);
+}
+
+#[test]
 fn remove_first_refuses_every_writer_before_bytes_or_index_change() {
     if !crate::test_support::run_isolated() {
         return;

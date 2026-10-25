@@ -249,6 +249,16 @@ impl KagiApp {
                 Some(guard.for_op(name))
             }
             Err(error) => {
+                if name == "fetch"
+                    && owner.is_none()
+                    && error == app::AdmissionError::RepositoryBusy
+                {
+                    self.status_footer =
+                        FooterStatus::Idle(Msg::AdviceConflictsRepositoryBusy.t().into());
+                    klog!("auto-fetch: skipped (repository busy)");
+                    cx.notify();
+                    return None;
+                }
                 self.report_admission_refusal(error, cx);
                 None
             }

@@ -448,6 +448,10 @@ mod app_writer_admission;
 mod app_conflict;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/repository_lock.rs"]
+mod repository_lock;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_heading.rs"]
 mod home_heading;
 #[cfg(target_os = "macos")]
@@ -3527,6 +3531,22 @@ mod macos {
             (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
+            ),
+            (
+                "conflict_repository_lock_continue",
+                Box::new(crate::repository_lock::scenario_conflict_repository_lock_continue),
+            ),
+            (
+                "conflict_repository_lock_skip",
+                Box::new(crate::repository_lock::scenario_conflict_repository_lock_skip),
+            ),
+            (
+                "repository_lock_silent_auto_fetch",
+                Box::new(crate::repository_lock::scenario_repository_lock_silent_auto_fetch),
+            ),
+            (
+                "repository_lock_stage_receipt",
+                Box::new(crate::repository_lock::scenario_repository_lock_stage_receipt),
             ),
             (
                 "conflict_continue_refusal_result_owner",

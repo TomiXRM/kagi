@@ -158,6 +158,7 @@ impl KagiApp {
             let alive = this
                 .update(acx, |app, cx| {
                     app.sync_queue(cx);
+                    app.drive_queue(QueueEvent::RetryRepositoryBusy, cx);
                     // Redraw for the running row's elapsed seconds.
                     cx.notify();
                     if app.op_queue.queue.is_empty() {
@@ -181,6 +182,11 @@ impl KagiApp {
             IntentState::Queued => QueueText::Count,
             IntentState::Waiting { reason } => match reason {
                 WaitReason::WriteRunning => QueueText::WaitWrite,
+                WaitReason::RepositoryBusy => {
+                    return crate::ui::i18n::Msg::AdviceConflictsRepositoryBusy
+                        .t()
+                        .into();
+                }
                 WaitReason::PlanSlotBusy => QueueText::WaitPlan,
                 WaitReason::NeedsConfirmation => QueueText::WaitConfirm,
                 WaitReason::NeedsReconcile => QueueText::WaitReconcile,

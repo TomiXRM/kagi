@@ -439,7 +439,7 @@ impl Backend {
                     if session.files.is_empty() {
                         None
                     } else {
-                        Some(buffer.autosave()?)
+                        buffer.autosave().ok()
                     }
                 } else {
                     None
@@ -647,7 +647,7 @@ impl Backend {
         buffer: &ResolutionBuffer,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<OperationPlan, GitError> {
-        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
+        let _lock = crate::write_lock::acquire(&self.repo)?;
         conflicts::plan_conflict_continue(&self.repo, session, buffer, expected)
     }
 
@@ -658,7 +658,7 @@ impl Backend {
         current_branch: &str,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ContinueRoute, GitError> {
-        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
+        let _lock = crate::write_lock::acquire(&self.repo)?;
         conflicts::plan_conflict_continue_route(
             &self.repo,
             session,
@@ -778,7 +778,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ConflictSkipPlan, GitError> {
-        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path)?;
+        let _lock = crate::write_lock::acquire(&self.repo)?;
         conflicts::plan_conflict_skip(&self.repo, session, expected)
     }
 

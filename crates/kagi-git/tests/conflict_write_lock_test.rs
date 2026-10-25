@@ -95,7 +95,7 @@ fn busy(error: &GitError) {
 }
 
 #[test]
-fn child_lock_refuses_save_continue_abort_without_writes_and_death_releases_it() {
+fn child_lock_refuses_save_continue_skip_abort_without_writes_and_death_releases_it() {
     if !isolated::run_isolated() {
         return;
     }
@@ -140,7 +140,19 @@ fn child_lock_refuses_save_continue_abort_without_writes_and_death_releases_it()
         let owner = Owner::start(&repo);
         // Reads stay available while another process owns write admission.
         assert!(b.conflict_snapshot().unwrap().is_some());
+        let receipts_before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len();
+        let linked_receipts_before = kagi_git::oplog::read_oplog_tail_for_repo(&linked, 100).len();
         busy(&Backend::check_conflict_write_admission(&linked).unwrap_err());
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+            receipts_before,
+            "linked admission probe must leave receipt ownership to its caller"
+        );
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail_for_repo(&linked, 100).len(),
+            linked_receipts_before,
+            "linked admission probe must not append a worktree-local receipt"
+        );
         busy(&Backend::plan_recorded_conflict(&repo, request).unwrap_err());
         // The header's early Abort planning refusal has no recorded conflict
         // job yet: backend admission must persist it before returning to UI.
@@ -152,6 +164,8 @@ fn child_lock_refuses_save_continue_abort_without_writes_and_death_releases_it()
             if blockers == &["Another Kagi window is operating on this repository"]));
         assert_eq!(receipt.ref_moves, Some(Vec::new()));
         if route == "continue" {
+            // Planning returns the typed refusal; the caller owns its receipt.
+            let receipts_before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len();
             busy(
                 &b.plan_conflict_continue(
                     &snapshot.session,
@@ -159,6 +173,36 @@ fn child_lock_refuses_save_continue_abort_without_writes_and_death_releases_it()
                     &snapshot.observation.revision,
                 )
                 .unwrap_err(),
+            );
+            assert_eq!(
+                kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+                receipts_before,
+                "Continue planning must not append an admission receipt"
+            );
+            busy(
+                &b.plan_conflict_continue_route(
+                    &snapshot.session,
+                    &buffer,
+                    "main",
+                    &snapshot.observation.revision,
+                )
+                .unwrap_err(),
+            );
+            assert_eq!(
+                kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+                receipts_before,
+                "ContinueRoute planning must not append an admission receipt"
+            );
+            // A merge cannot be skipped: busy admission must win before
+            // operation validation, without creating a second refusal receipt.
+            busy(
+                &b.plan_conflict_skip(&snapshot.session, &snapshot.observation.revision)
+                    .unwrap_err(),
+            );
+            assert_eq!(
+                kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+                receipts_before,
+                "Skip planning must not append an admission receipt"
             );
             busy(
                 &b.execute_conflict_continue(

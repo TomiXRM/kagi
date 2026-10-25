@@ -40,6 +40,7 @@ pub enum CheckoutIntent {
 pub enum WaitReason {
     Typing,
     WriteRunning,
+    RepositoryBusy,
     PlanSlotBusy,
     NeedsConfirmation,
     NeedsReconcile,
@@ -56,11 +57,13 @@ pub enum ReleaseEvent {
     InputBlurred,
     RevalidationDone,
     ReconcileAcknowledged,
+    RepositoryRetry,
 }
 impl WaitReason {
     pub fn released_by(self, event: ReleaseEvent) -> bool {
         match self {
             Self::WriteRunning => matches!(event, ReleaseEvent::LeaseReleased),
+            Self::RepositoryBusy => matches!(event, ReleaseEvent::RepositoryRetry),
             Self::PlanSlotBusy => matches!(event, ReleaseEvent::PlanSlotFreed),
             Self::Typing => matches!(event, ReleaseEvent::InputBlurred),
             Self::NeedsConfirmation => matches!(
@@ -159,6 +162,8 @@ pub enum QueueEvent<'a> {
     PlanError(IntentId),
     Approve(IntentId),
     Reject(IntentId),
+    /// Retry an external repository owner on the bounded queue ticker.
+    RetryRepositoryBusy,
     Admission {
         id: IntentId,
         result: Result<OwnerStamp, super::AdmissionError>,
@@ -560,9 +565,7 @@ impl IntentQueue {
                                 self.modal_busy = false;
                                 effects.push(QueueEffect::CloseConfirm(id));
                             }
-                            Ok(_)
-                            | Err(super::AdmissionError::Identity(_))
-                            | Err(super::AdmissionError::RepositoryBusy) => {
+                            Ok(_) | Err(super::AdmissionError::Identity(_)) => {
                                 self.cancel_head(
                                     session,
                                     CancelReason::IdentityChanged,
@@ -578,6 +581,9 @@ impl IntentQueue {
                             }
                             Err(error) => {
                                 let reason = match error {
+                                    super::AdmissionError::RepositoryBusy => {
+                                        WaitReason::RepositoryBusy
+                                    }
                                     super::AdmissionError::Busy => {
                                         self.write_busy = true;
                                         WaitReason::WriteRunning
@@ -587,7 +593,6 @@ impl IntentQueue {
                                         WaitReason::NeedsReconcile
                                     }
                                     super::AdmissionError::Identity(_)
-                                    | super::AdmissionError::RepositoryBusy
                                     | super::AdmissionError::StaleApproval => unreachable!(),
                                 };
                                 self.per_session
@@ -732,6 +737,19 @@ impl IntentQueue {
                     }
                 }
                 self.gates.remove(&session);
+            }
+            E::RetryRepositoryBusy => {
+                for queue in self.per_session.values_mut() {
+                    if let Some(head) = queue.front_mut() {
+                        if head.state
+                            == (IntentState::Waiting {
+                                reason: WaitReason::RepositoryBusy,
+                            })
+                        {
+                            head.state = IntentState::Queued;
+                        }
+                    }
+                }
             }
             E::ModalSlotBusy => self.modal_busy = true,
             E::ModalSlotFree => self.modal_busy = false,

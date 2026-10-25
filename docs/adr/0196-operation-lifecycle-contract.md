@@ -710,6 +710,17 @@ through execution and verification; the approved full revision is checked again
 under that lock. Reads do not acquire it. Nested executor calls on the same
 thread reuse the descriptor; unrelated background writers do not share admission.
 
+Every local writer's Sessions admission also probes that repository lock, so
+stage, pull, commit and background fetch cannot start while another process is
+inside a conflict mutation. These generic probes never append an admission
+receipt: the operation's existing receipt owner records its refusal once.
+Continue and Skip planning likewise return their blocker to their existing UI
+receipt owner; only legacy Abort/merge planning without a receipt owner records
+its own early refusal. Silent auto-fetch skips contention without a toast or
+receipt and retries on its next ordinary tick. A queued head waits with the same
+localized repository-busy explanation and replans on the queue ticker; contention
+never claims an identity change or cancels its successors.
+
 Draft preservation is a preceding phase: capture live input and complete the
 background writer's `flush()` barrier (or blocking backend `autosave()`) and
 release `buffer.json.lock` before acquiring `kagi-write.lock`. `flush()` drains
@@ -717,6 +728,9 @@ queued captures, not uncaptured live input. Never hold both locks, in either ord
 After preservation, reacquire repository admission and repeat preflight; a changed
 approval refuses without mutation. This is advisory coordination among Kagi
 instances, not exclusion against arbitrary external Git/worktree writers.
+The existing best-effort Abort preservation policy is unchanged: failed draft
+autosave is not made fail-closed by this admission slice. The formal
+`preserve-abort` counterexample remains REFUTE pending the preservation work.
 
 Contention is `Refused`, never `Failed` or `Unknown`: durable English blocker
 \"Another Kagi window is operating on this repository\" and Japanese presentation

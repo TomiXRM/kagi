@@ -72,7 +72,21 @@ impl KagiApp {
             return;
         }
         self.insert_recorded_row(&recording, cx);
-        self.report_admission_refusal(error, cx);
+        if error == app::AdmissionError::RepositoryBusy {
+            let reason = Msg::AdviceConflictsRepositoryBusy.t();
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(reason.into()));
+            self.push_operation_result(
+                recording.entry(),
+                operation,
+                ToastKind::Error,
+                i18n::op::user_text::operations::failure_preview(operation, reason).into(),
+                cx,
+            );
+            cx.notify();
+        } else {
+            self.report_admission_refusal(error, cx);
+        }
     }
 
     /// A live writer refuses contextually; reconciliation still offers Inspect.

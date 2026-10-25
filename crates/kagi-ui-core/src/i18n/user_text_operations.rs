@@ -81,6 +81,7 @@ enum FailureCause {
     Network,
     Authentication,
     IndexLocked,
+    RepositoryBusy,
     Untrusted,
     Refused,
     Other,
@@ -140,6 +141,11 @@ impl FailureCause {
             "index がロック",
         ]) {
             Self::IndexLocked
+        } else if any(&[
+            crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+            crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+        ]) {
+            Self::RepositoryBusy
         } else if any(&[
             "not trusted",
             "untrusted repository",
@@ -203,6 +209,7 @@ impl FailureCause {
                 "The staging area is locked. Check for another Git operation before continuing.",
                 "ステージ領域がロックされています。続行する前に別の Git 操作が実行中でないか確認してください。",
             ),
+            Self::RepositoryBusy => crate::i18n::Msg::AdviceConflictsRepositoryBusy.t(),
             Self::Untrusted => text(
                 "The repository is not trusted for changes. Review its trust settings.",
                 "変更が許可されていないリポジトリです。信頼設定を確認してください。",
@@ -580,6 +587,16 @@ mod tests {
                 "stage-hunk",
                 "index.lock: File exists",
                 FailureCause::IndexLocked,
+            ),
+            (
+                "stage",
+                crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+                FailureCause::RepositoryBusy,
+            ),
+            (
+                "stage-all",
+                crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+                FailureCause::RepositoryBusy,
             ),
             (
                 "stash-push",

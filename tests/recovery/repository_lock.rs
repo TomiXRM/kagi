@@ -194,6 +194,7 @@ pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("lock-stage.txt"), "unstaged\n").unwrap();
     let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, _| app.set_window_active_for_e2e(true));
     let before = read_oplog_tail_for_repo(&repo, 100).len();
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     with_repository_lock(&repo, || {
@@ -208,7 +209,15 @@ pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
         let receipt = entries.iter().find(|entry| entry.op == "stage").unwrap();
         assert!(matches!(&receipt.outcome, OpOutcome::Refused { blockers }
             if blockers[0].contains("lock-stage.txt")));
-        assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(!state.app_sessions.has_leases());
+            assert!(
+                matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message)
+                    if message.contains(kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy.t())),
+                "active staging refusal retains the specific repository-busy cause"
+            );
+        });
     });
     unmount(cx, app, window);
 }
@@ -568,6 +577,13 @@ pub fn scenario_repository_lock_user_receipts(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.open_pull_modal(cx));
         wait_idle(cx, &app);
         assert_one_refusal(&repo, before, "pull");
+        cx.read(|cx| {
+            assert!(
+                matches!(&app.read(cx).status_footer, kagi::ui::FooterStatus::Failed(message)
+                    if message.as_ref() == kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy.t()),
+                "Pull must not overwrite repository contention with generic OpInProgress"
+            );
+        });
         app.update(cx, |app, cx| {
             e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
             e2e::set_commit_message(app, "user admission refusal", cx);
@@ -591,17 +607,29 @@ pub fn scenario_repository_lock_user_receipts(cx: &mut VisualTestAppContext) {
             let state = app.read(cx);
             assert!(!state.app_sessions.has_leases());
             assert!(state.fetch_in_flight.is_none());
+            let stack = state.toast_stack.as_ref().unwrap().read(cx);
+            let mut errors = 0;
+            for toast in stack
+                .toasts()
+                .iter()
+                .filter(|toast| toast.kind == ToastKind::Error)
+            {
+                errors += 1;
+                assert!(toast
+                    .message
+                    .contains(kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy.t()));
+                assert!(toast.result_key.is_some(), "recorded refusal is keyed");
+                assert!(
+                    matches!(
+                        &toast.action,
+                        Some(kagi::ui::ToastAction::OpenOperationLog(_))
+                    ),
+                    "recorded refusal links directly to its durable receipt"
+                );
+                assert!(!toast.message.contains(repo.to_str().unwrap()));
+            }
             assert_eq!(
-                state
-                    .toast_stack
-                    .as_ref()
-                    .unwrap()
-                    .read(cx)
-                    .toasts()
-                    .iter()
-                    .filter(|toast| toast.kind == ToastKind::Error)
-                    .count(),
-                2,
+                errors, 2,
                 "each user attempt gets one bounded error notification"
             );
         });

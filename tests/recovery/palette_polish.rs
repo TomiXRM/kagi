@@ -154,7 +154,7 @@ fn hover_target(
 fn highlight_case(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimensions: (f32, f32)) {
     let (app, window) = mount(cx, repo, dimensions);
     keys(cx, window, "cmd-p down");
-    let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+    let rows = cx.read(|cx| rows_for(app.read(cx), "", cx));
     let target = rows
         .iter()
         .position(|row| row.action == PaletteAction::Command("view.toggleSidebar"))
@@ -225,7 +225,7 @@ pub fn scenario_palette_highlight(cx: &mut VisualTestAppContext) {
 fn shortcut_case(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimensions: (f32, f32)) {
     let (app, window) = mount(cx, repo, dimensions);
     keys(cx, window, "cmd-p");
-    let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+    let rows = cx.read(|cx| rows_for(app.read(cx), "", cx));
     assert_shortcut_column(window, &rows);
     keys(cx, window, "escape");
     let before = cx.read(|cx| app.read(cx).sidebar.visible);
@@ -246,6 +246,7 @@ fn shortcut_case(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimensio
         rows_for(
             app.read(cx),
             kagi::ui::command_palette::command_label("repo.fetch", i18n::lang()),
+            cx,
         )
     });
     assert!(unbound
@@ -338,7 +339,7 @@ pub fn scenario_palette_sections(cx: &mut VisualTestAppContext) {
                     .unwrap_or_else(|| panic!("missing visible palette section heading: {name}"));
             assert!(bounds.size.height > px(0.));
         }
-        let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+        let rows = cx.read(|cx| rows_for(app.read(cx), "", cx));
         let ids: std::collections::HashSet<_> = rows.iter().map(|row| &row.id).collect();
         assert_eq!(ids.len(), rows.len(), "each action appears exactly once");
         assert_section_model(&rows, locale);
@@ -492,7 +493,7 @@ fn assert_flat_ranking(
         .filter_map(|(index, row)| fuzzy_match("a", &row.label).map(|score| (score, index, row)))
         .collect();
     expected.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    let filtered = cx.read(|cx| rows_for(app.read(cx), "a"));
+    let filtered = cx.read(|cx| rows_for(app.read(cx), "a", cx));
     assert_eq!(
         filtered,
         expected

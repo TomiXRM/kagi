@@ -30,6 +30,7 @@ pub use abort_admission::scenario_conflict_draft_abort_restore_admission;
 
 #[path = "conflict_draft_stale_failure.rs"]
 mod stale_failure;
+pub(crate) use stale_failure::DetectionHold;
 pub use stale_failure::{
     scenario_conflict_draft_fresh_restore_failure, scenario_conflict_draft_stale_restore_async,
     scenario_conflict_draft_stale_restore_failure, scenario_conflict_draft_stale_restore_success,

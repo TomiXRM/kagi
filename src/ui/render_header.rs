@@ -181,7 +181,7 @@ impl KagiApp {
         // id.  `$ty` is the gpui Action type; `$id` is the registry id string.
         macro_rules! menu_act {
             ($el:expr, $ty:ty, $id:literal) => {{
-                let enabled = cmds::is_enabled(self, $id);
+                let enabled = cmds::is_enabled(self, $id, cx);
                 $el.when(enabled, |el| {
                     el.on_action(cx.listener(|this, _: &$ty, window, cx| {
                         this.handle_menu_command($id, window, cx);
@@ -223,23 +223,29 @@ impl KagiApp {
         let el = menu_act!(el, cmds::Pull, "repo.pull");
         let el = menu_act!(el, cmds::Push, "repo.push");
         let el = menu_act!(el, cmds::CreateSnapshot, "repo.createSnapshot");
+        let el = menu_act!(el, cmds::ConflictAbort, "repo.conflictAbort");
+        let el = menu_act!(el, cmds::ConflictSkip, "repo.conflictSkip");
+        let el = menu_act!(el, cmds::ConflictContinue, "repo.conflictContinue");
         let el = menu_act!(el, cmds::OpenInFinder, "repo.openInFinder");
         let el = menu_act!(el, cmds::NewBranch, "branch.new");
         let el = menu_act!(el, cmds::CheckoutBranch, "branch.checkout");
         let el = menu_act!(el, cmds::RenameBranch, "branch.rename");
         let el = menu_act!(el, cmds::DeleteBranch, "branch.delete");
         let el = menu_act!(el, cmds::CopySelectedBranchName, "branch.copySelectedName");
-        let el = el.when(cmds::is_enabled(self, "branch.copySelectedName"), |el| {
-            el.on_action(
-                cx.listener(|this, _: &cmds::CopyGraphBranchName, window, cx| {
-                    if this.commit_list_has_focus(window, cx) {
-                        this.handle_menu_command("branch.copySelectedName", window, cx);
-                    } else {
-                        cx.propagate();
-                    }
-                }),
-            )
-        });
+        let el = el.when(
+            cmds::is_enabled(self, "branch.copySelectedName", cx),
+            |el| {
+                el.on_action(
+                    cx.listener(|this, _: &cmds::CopyGraphBranchName, window, cx| {
+                        if this.commit_list_has_focus(window, cx) {
+                            this.handle_menu_command("branch.copySelectedName", window, cx);
+                        } else {
+                            cx.propagate();
+                        }
+                    }),
+                )
+            },
+        );
         let el = menu_act!(el, cmds::CopyCommitHash, "commit.copyHash");
         let el = menu_act!(el, cmds::CheckoutCommit, "commit.checkout");
         let el = menu_act!(el, cmds::CreateBranchFromCommit, "commit.createBranch");
@@ -356,8 +362,8 @@ impl KagiApp {
         // neither said which one you'd land in — user report.)
         let pr_mode_on = self.repo_path.is_some() && kagi_git::github::gh_available();
         let mode = self.workspace_mode();
-        let conflict_strip = if self.conflict_body_visible() {
-            self.ui().conflict.clone().map(|view| {
+        if self.conflict_body_visible() {
+            if let Some(view) = self.ui().conflict.clone() {
                 if view.read(cx).operation_chrome_subscription.is_none() {
                     let mut previous = view.read(cx).operation_chrome_state();
                     let subscription = cx.observe(&view, move |app, view, cx| {
@@ -373,11 +379,8 @@ impl KagiApp {
                         view.operation_chrome_subscription = Some(subscription);
                     });
                 }
-                view.update(cx, |view, cx| view.render_operation_strip(cx))
-            })
-        } else {
-            None
-        };
+            }
+        }
         let graph_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.activate_toolbar(8, None, window, cx);
         });
@@ -480,7 +483,6 @@ impl KagiApp {
             _ => usize::MAX,
         };
         let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
-        self.toolbar_layout.operation_visible = conflict_strip.is_some();
         let pending_widths = self.toolbar_layout.pending(present, style_key);
         let show_sidebar_toggle = mode == WorkspaceMode::Prs && !super::compact::for_window(window);
         let hidden = self
@@ -861,11 +863,7 @@ impl KagiApp {
                             .w(theme::scaled_px(180.))
                             .min_w_0()
                             .when(icon_only, |el| {
-                                el.flex_shrink(1.).min_w(if conflict_strip.is_some() {
-                                    px(0.)
-                                } else {
-                                    theme::scaled_px(40.)
-                                })
+                                el.flex_shrink(1.).min_w(theme::scaled_px(40.))
                             })
                             .relative()
                             .when(!icon_only, |el| {
@@ -1050,18 +1048,6 @@ impl KagiApp {
                     .justify_end()
                     .flex_1()
                     .min_w(px(workspace_width))
-                    .children(conflict_strip.map(|strip| {
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_shrink_0()
-                            .child(toolbar_overflow::probe(
-                                layout_app.clone(),
-                                Some(17),
-                                style_key,
-                            ))
-                            .child(strip)
-                    }))
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(

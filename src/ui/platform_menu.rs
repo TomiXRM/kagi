@@ -72,7 +72,7 @@ impl KagiApp {
                     commands::CommandState::Disabled(Msg::NothingToSave.t())
                 }
             } else {
-                commands::command_state(this, id)
+                commands::command_state_in(this, id, cx)
             };
             let enabled = matches!(state, commands::CommandState::Enabled);
             // Selection is a separate renderer column, not part of the name.
@@ -110,7 +110,7 @@ impl KagiApp {
                     this.close_platform_menu(cx);
                     this.save_editor_file(cx);
                     cx.notify();
-                } else if commands::is_enabled(this, id) {
+                } else if commands::is_enabled(this, id, cx) {
                     this.close_platform_menu(cx);
                     this.handle_menu_command(id, window, cx);
                     cx.notify();

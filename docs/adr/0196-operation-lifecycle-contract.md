@@ -134,6 +134,30 @@ receipt の `after` に予測を書かない。
 `stopped == false` の間、scope の lease は解放されず、同 scope への `BeginWrite` は
 `NeedsReconcile` を返す。`ReconcileRead` が `stop_proven` を持って初めて解放する。
 
+**CLI 子孫が残る場合の repository admission（#1780 / #1746）**:
+上記の per-`Sessions` lease と、別 Kagi process も排除する repository advisory
+lock は別の所有権である。Continue / Skip を含め、repository lock 内の CLI が
+`TerminationUnknown` で戻っても、生きた process group がある間は後者を解放しない。
+`write_lock.rs` の同一 fd の共有所有権は `Arc` とし、`proc.rs::run_child` は保持中の
+repository lock の再入を禁止して**既存の janitor/reaper** へ共有所有権を渡す。
+新しい独立 monitor は作らない。quarantine 中の admission を次の command が再利用
+することはできない。weak entry は残し、既存 outer guard 内の別 child にも同じ fd を
+保持させるため、一つの group の停止で別の生存 writer の lock を解放しない。
+
+janitor は Sessions reconciliation と同じ `proc::supervisor::group_stopped` を使い、
+group の停止が証明されるまで lock を保持する。親 CLI の return / reap や stdout /
+stderr の EOF だけでは解放しない。停止証明が得られなければ fail-closed のままであり、
+timeout で admission を再開しない。repository lock の解放は process の停止証明に、
+Sessions lease の解放と reconcile の解決は既存の lifecycle 条件にそれぞれ従う。
+この保護は監視する Kagi process が存続し、writer が監視対象 group 内にいることを
+前提とする。Kagi の強制終了や group を脱出した任意の外部 writer まで保証しない。
+
+Continue / Skip の draft flush・preservation は repository lock の前に完了し、
+draft lock と入れ子にしない。D/F recovery snapshot の ref write はこれと異なり、
+repository admission と preflight の**後**に同じ repository lock 内で行う。
+有限モデルの `LiveWriterKeepsRepositoryLease` と early-release negative control は
+unknown return、pipe EOF、停止証明、Sessions reconciliation を別 transition とする。
+
 **観測不能な remote write の明示解放（#706、2026-09-23）**:
 通常の `acknowledge` は引き続き `stop_proven && resolved` だけを受け付ける。
 別 tier の `prepare_unobservable_release` → audit job → `acknowledge_unobserved`

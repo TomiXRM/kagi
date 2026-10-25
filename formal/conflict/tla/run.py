@@ -57,6 +57,8 @@ CHECKS = [
     ("draft-flush-lock-order-broken", "draftBarrier", "BarrierLocksNeverNested", "REFUTE", "flushLock"),
     ("two-instance-leases", "saveRace", "RepoHasAtMostOneLease", "HOLD", "none"),
     ("two-instance-leases-broken", "saveRace", "RepoHasAtMostOneLease", "REFUTE", "repoLock"),
+    ("writer-termination", "writerTermination", "LiveWriterKeepsRepositoryLease", "HOLD", "none"),
+    ("writer-termination-broken", "writerTermination", "LiveWriterKeepsRepositoryLease", "REFUTE", "earlyRepoRelease"),
     ("two-instance-stale-write", "saveRace", "StaleSnapshotNeverWrites", "HOLD", "none"),
     ("receipt-continue", "receiptContinue", "ReceiptFollowsMutation", "REFUTE", "none"),
     ("receipt-merge", "receiptMerge", "ReceiptFollowsMutation", "REFUTE", "none"),

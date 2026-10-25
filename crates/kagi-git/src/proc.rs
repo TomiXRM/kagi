@@ -308,10 +308,20 @@ pub fn run_child(
         job::watch_until_empty(stop_key);
     }
 
+    // A CLI can return with a live helper even after the direct child exited.
+    // Transfer repository admission before returning, and remove its lexical
+    // reentrancy permission so another call on this executor cannot bypass it.
+    let writer_locks = if group_stopped {
+        Vec::new()
+    } else {
+        crate::write_lock::retain_for_termination()
+    };
+
     // Hand off whenever something is still ours to own: an unreaped child, or a
     // read that has not ended. On the ordinary path the collectors are done, so
     // this join is immediate.
-    if io.is_err() || status.as_ref().err().is_some_and(|s| !s.reaped()) {
+    if !writer_locks.is_empty() || io.is_err() || status.as_ref().err().is_some_and(|s| !s.reaped())
+    {
         let child = child.reclaim();
         std::thread::spawn(move || {
             // Blocks for as long as the descendant lives — off the caller's
@@ -323,6 +333,15 @@ pub fn run_child(
             for t in threads {
                 let _ = t.join();
             }
+            // Pipe EOF and a reaped leader do not prove that every descendant
+            // stopped. Use the same whole-job/group stop proof as Sessions
+            // reconciliation, even when a helper closed its output early.
+            if !writer_locks.is_empty() {
+                while !supervisor::group_stopped(stop_key) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            drop(writer_locks);
         });
     } else {
         for t in threads {

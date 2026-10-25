@@ -3,16 +3,18 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed by the guard. There are 70 TLC configurations, 39 pure
-properties (1,695,651 input/property evaluations), 25 TLC negative controls,
+No product code is imported or changed by the guard. There are 72 TLC configurations, 39 pure
+properties (1,695,651 input/property evaluations), 26 TLC negative controls,
 36 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
 
-The #1746/#1784 merged guard matched all 70 lifecycle outcomes (64,371 summed
+The historical #1746/#1784 merged guard matched all 70 lifecycle outcomes (64,371 summed
 distinct states) and detected all 25 removed-guard controls (4,215 summed states).
 The pure properties, 36 mutants and historical drill projections also passed.
+The #1780 writer-termination refinement adds two configurations and one negative
+control; the historical totals above do not include that refinement.
 
 ## Run
 
@@ -112,6 +114,33 @@ and retain the original loss/destructive-progress counterexamples. Atomic draft
 replacement and interprocess serialization remain the separate #1732 properties;
 the pure hunk/draft compatibility predicates are intentionally unchanged.
 
+### Unknown CLI termination and repository ownership (#1780)
+
+`writer-termination` bounds two independent application instances to one CLI
+writer each. Approval, draft flush and successful preflight are fixed inputs;
+admission/spawn, unknown return, pipe EOF, confirmed group stop and Sessions
+reconciliation are separate transitions. `LiveWriterKeepsRepositoryLease`
+requires a live writer to retain repository admission, excludes an independent
+writer, and requires monitor ownership after return. The deliberately broken
+variant releases admission on unknown return while descendants remain live.
+Its expected REFUTATION leaves the Sessions reservation intact: a process-local
+reservation alone cannot protect against another app.
+
+The implementation shares the same lock fd's `Arc` ownership with the
+**existing `run_child` janitor**, not a second independent monitor. The janitor
+retains it until `proc::supervisor::group_stopped` proves the group empty, even
+after pipe EOF. Quarantine revokes the originating thread's reentrancy permission;
+its weak resource entry remains so every further child under an existing guard
+also retains the descriptor until its own stop proof. Sessions reconciliation
+uses the same stop predicate but owns a separate lease and may finish later.
+The model assumes a surviving monitoring app, cooperating lock users and sound
+process-group stop evidence; it does not prove escaped descendants, abrupt app
+death, OS lock semantics or arbitrary external Git cooperation. No eventual
+stop is assumed: an unproven stop keeps admission closed indefinitely.
+Continue/Skip draft preservation remains outside repository admission; D/F's
+snapshot ref remains after repository admission and preflight. Existing
+generation/lock-nonnesting and preservation invariants are unchanged.
+
 ### Background UI cutover (#1760)
 
 Ordinary Result edits and source selections call `queue_autosave()`; acceptance
@@ -201,6 +230,8 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-flush-lock-order-broken` | `BarrierLocksNeverNested` | REFUTE | flushLock | Negative control; acquire repository lock before flush |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | HOLD | none | #1746 D3: kernel writer ownership |
 | `two-instance-leases-broken` | `RepoHasAtMostOneLease` | REFUTE | repoLock | Negative control: remove repository lock |
+| `writer-termination` | `LiveWriterKeepsRepositoryLease` | HOLD | none | #1780: janitor retains admission until process-group stop |
+| `writer-termination-broken` | `LiveWriterKeepsRepositoryLease` | REFUTE | earlyRepoRelease | Negative control: unknown return drops admission with live descendants |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | HOLD | none | HOLD via #1746 D3 (lock); #1733 residual = external CLI |
 | `receipt-continue` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |
 | `receipt-merge` | `ReceiptFollowsMutation` | REFUTE | none | #1740 |

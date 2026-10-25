@@ -409,3 +409,280 @@ fn legacy_plan_refusals_preserve_failed_recording_through_error_wrappers() {
         assert_eq!(witness(&repo), before);
     }
 }
+
+/// A fresh executable, not another thread or another descriptor in this
+/// process: the oracle must exercise the OS sidecar lock independently.
+#[test]
+fn independent_lock_probe() {
+    let Some(path) = std::env::var_os("KAGI_WRITE_LOCK_PROBE") else {
+        return;
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let acquired = match file.try_lock() {
+        Ok(()) => true,
+        Err(std::fs::TryLockError::WouldBlock) => false,
+        Err(error) => panic!("unexpected lock probe error: {error}"),
+    };
+    assert_eq!(
+        acquired,
+        std::env::var("KAGI_WRITE_LOCK_EXPECT").unwrap() == "free"
+    );
+}
+
+#[cfg(unix)]
+fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready() {
+        assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(unix)]
+fn probe_sidecar(repo: &Path, free: bool) {
+    let mut child = Owner(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "independent_lock_probe", "--nocapture"])
+            .env("KAGI_WRITE_LOCK_PROBE", repo.join(".git/kagi-write.lock"))
+            .env("KAGI_WRITE_LOCK_EXPECT", if free { "free" } else { "busy" })
+            .spawn()
+            .unwrap(),
+    );
+    wait_until("independent lock probe exits", || {
+        child.0.try_wait().unwrap().is_some()
+    });
+    assert!(child.0.wait().unwrap().success(), "independent lock probe");
+}
+
+/// The fake Git leader exits only after its same-group descendant is ready.
+/// Release and pipe closure are independent handshakes, not elapsed sleeps.
+/// Linux adopts/reaps the orphan here rather than trusting container PID 1.
+/// Darwin's OS reaps the orphan; every Child handle we own is waited.
+#[cfg(unix)]
+struct LingeringGit {
+    root: PathBuf,
+    #[cfg(target_os = "linux")]
+    descendant_reaped: std::cell::Cell<bool>,
+}
+
+#[cfg(unix)]
+impl LingeringGit {
+    fn install(root: &Path, route: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        // Isolated test process only. Linux containers need not have a PID 1
+        // that reaps orphans, which would prevent an empty-group stop proof.
+        #[cfg(target_os = "linux")]
+        assert_eq!(unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) }, 0);
+        let fixture = Self {
+            root: root.join("lingering-git"),
+            #[cfg(target_os = "linux")]
+            descendant_reaped: std::cell::Cell::new(false),
+        };
+        std::fs::create_dir(&fixture.root).unwrap();
+        let real_git = Command::new("/bin/sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap();
+        assert!(real_git.status.success());
+        let real_git = String::from_utf8(real_git.stdout).unwrap();
+        // All shell paths travel as quoted environment values, including the
+        // real Git fallback used by preflight/read commands.
+        std::env::set_var("KAGI_LOCK_FIXTURE", &fixture.root);
+        std::env::set_var("KAGI_LOCK_REAL_GIT", real_git.trim());
+        std::env::set_var("KAGI_LOCK_ROUTE", format!("--{route}"));
+        std::fs::write(
+            fixture.root.join("descendant"),
+            r#"#!/bin/sh
+echo "$$" > "$KAGI_LOCK_FIXTURE/descendant-pid"
+: > "$KAGI_LOCK_FIXTURE/ready"
+# Bounded even if the isolated harness is killed before its Drop cleanup.
+n=0
+while [ ! -f "$KAGI_LOCK_FIXTURE/release" ] && [ "$n" -lt 1500 ]; do
+    if [ -f "$KAGI_LOCK_FIXTURE/close-pipes" ]; then
+        exec </dev/null >/dev/null 2>&1
+        : > "$KAGI_LOCK_FIXTURE/pipes-closed"
+    fi
+    sleep 0.02
+    n=$((n + 1))
+done
+"#,
+        )
+        .unwrap();
+        let git = fixture.root.join("git");
+        std::fs::write(
+            &git,
+            r#"#!/bin/sh
+case "$*" in
+  *"cherry-pick $KAGI_LOCK_ROUTE")
+    echo "$$" > "$KAGI_LOCK_FIXTURE/group"
+    /bin/sh "$KAGI_LOCK_FIXTURE/descendant" &
+    n=0
+    while [ ! -f "$KAGI_LOCK_FIXTURE/ready" ] && [ "$n" -lt 500 ]; do
+        sleep 0.02
+        n=$((n + 1))
+    done
+    test -f "$KAGI_LOCK_FIXTURE/ready" || exit 91
+    exit 0
+    ;;
+  *) exec "$KAGI_LOCK_REAL_GIT" "$@" ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(git, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut paths = vec![fixture.root.clone()];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        fixture
+    }
+
+    fn signal(&self, name: &str) {
+        std::fs::write(self.root.join(name), "").unwrap();
+    }
+
+    fn group(&self) -> u32 {
+        std::fs::read_to_string(self.root.join("group"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    fn reap_descendant(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            if self.descendant_reaped.get() {
+                return true;
+            }
+            let Some(pid) = std::fs::read_to_string(self.root.join("descendant-pid"))
+                .ok()
+                .and_then(|pid| pid.trim().parse::<i32>().ok())
+            else {
+                return false;
+            };
+            let mut status = 0;
+            // Exact adopted child only, never waitpid(-1): Git and the
+            // independent lock probes have separate owners.
+            if unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } == pid {
+                self.descendant_reaped.set(true);
+            }
+            self.descendant_reaped.get()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for LingeringGit {
+    fn drop(&mut self) {
+        let _ = std::fs::write(self.root.join("release"), "");
+        // No panic in cleanup, including a regression assertion's unwind.
+        if let Ok(group) = std::fs::read_to_string(self.root.join("group")) {
+            if let Ok(group) = group.trim().parse::<u32>() {
+                // Allow the shell's bounded self-failsafe as well as release.
+                // Never signal a cached group ID: it may already be recycled.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
+                loop {
+                    let reaped = self.reap_descendant();
+                    if (reaped && !kagi_git::proc::group_alive(group))
+                        || std::time::Instant::now() >= deadline
+                    {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn unaccounted_conflict_keeps_admission(route: &str) {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = conflict(tmp.path());
+    git(&repo, &["merge", "--abort"]);
+    assert!(!git_succeeds(&repo, &["cherry-pick", "side"]));
+    let backend = Backend::open(&repo).unwrap();
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+    let skip = backend
+        .plan_conflict_skip(&snapshot.session, &snapshot.observation.revision)
+        .unwrap();
+    if route == "continue" {
+        buffer
+            .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
+            .unwrap();
+    }
+    let fixture = LingeringGit::install(tmp.path(), route);
+    let error = if route == "continue" {
+        backend
+            .execute_conflict_continue(&snapshot.session, &buffer, &snapshot.observation.revision)
+            .unwrap_err()
+    } else {
+        backend.execute_conflict_skip(&skip, &buffer).unwrap_err()
+    };
+    let GitError::TerminationUnknown(kagi_git::Termination::Unaccounted { group, .. }) = error
+    else {
+        panic!("expected a real live-descendant termination: {error:?}");
+    };
+    assert_eq!(group, fixture.group());
+    assert!(fixture.root.join("ready").exists());
+    let descendant: i32 = std::fs::read_to_string(fixture.root.join("descendant-pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::getpgid(descendant) }, group as i32);
+    assert!(kagi_git::proc::group_alive(group));
+    probe_sidecar(&repo, false);
+    // Intentionally the same thread that ran Backend: a retained weak
+    // reentrancy entry must not grant fresh admission to quarantined ownership.
+    busy(&Backend::check_conflict_write_admission(&repo).unwrap_err());
+
+    fixture.signal("close-pipes");
+    wait_until("descendant closes inherited pipes", || {
+        fixture.root.join("pipes-closed").exists()
+    });
+    // Allow the collector/janitor to observe EOF. Group lifetime, not pipe
+    // lifetime, is the stop proof; the descendant still awaits explicit release.
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while std::time::Instant::now() < until {
+        assert!(kagi_git::proc::group_alive(group));
+        busy(&Backend::check_conflict_write_admission(&repo).unwrap_err());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    probe_sidecar(&repo, false);
+
+    fixture.signal("release");
+    wait_until("adopted descendant is reaped", || fixture.reap_descendant());
+    wait_until("descendant group stops", || {
+        !kagi_git::proc::group_alive(group)
+    });
+    // No Sessions reconciliation: the runner's janitor releases admission.
+    wait_until("janitor releases repository admission", || {
+        Backend::check_conflict_write_admission(&repo).is_ok()
+    });
+    probe_sidecar(&repo, true);
+}
+
+#[cfg(unix)]
+#[test]
+fn continue_unaccounted_descendant_keeps_repository_admission_until_group_stops() {
+    unaccounted_conflict_keeps_admission("continue");
+}
+
+#[cfg(unix)]
+#[test]
+fn skip_unaccounted_descendant_keeps_repository_admission_until_group_stops() {
+    unaccounted_conflict_keeps_admission("skip");
+}

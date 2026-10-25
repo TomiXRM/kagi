@@ -144,8 +144,8 @@ The eight `draft-flush-*` checks add a two-generation ordering refinement:
 failure cannot authorize progress, an older completion cannot approve a newer
 edit, close cannot precede durability, and the UI flush's draft transaction lock
 must be released before repository admission. Each HOLD has an independently
-removed-guard REFUTATION. The lifecycle model separately places required
-preservation before repository admission. It does not change `DraftNeverLost`: `draft-crash` remains REFUTE
+removed-guard REFUTATION. The lifecycle model separately places Abort/Skip draft
+preservation before repository admission, but D/F snapshot refs after locked preflight. It does not change `DraftNeverLost`: `draft-crash` remains REFUTE
 through the up-to-250 ms coalescing interval and any in-flight I/O. Explicit
 two-step Discard remains outside the no-intentional-loss scenarios.
 
@@ -178,6 +178,37 @@ controls (**4,215 summed states**). The pure lane passed **39 properties /
 remained admitted and forged Skip was rejected. Historical 58/17 and 69/24 totals
 describe their respective pre-merge runs, not this combined transition system.
 
+### #1780 unknown CLI writer termination — 2026-10-25
+
+The maintained runner now expects **72 lifecycle outcomes / 26 negative controls**.
+The two added configurations are `writer-termination` (HOLD) and
+`writer-termination-broken` (REFUTE), both checking
+`LiveWriterKeepsRepositoryLease`. The measured 70/25 totals above remain the
+historical merged run; they do not include this refinement.
+
+The focused quotient admits at most one CLI invocation per each of two independent
+apps. After admission and spawn, CLI return with a live descendant transfers
+repository ownership to the existing `proc.rs::run_child` janitor; pipe EOF is
+independent and cannot release it. Only explicit process-group stop proof releases
+repository ownership. Per-Sessions reconciliation is a later independent transition,
+not the cross-process lock. The invariant requires every live writer to retain its
+repository lock, excludes a competing app's admission and requires janitor ownership
+after return. `earlyRepoRelease` deliberately drops only the repository lock at
+unknown return, leaving the Sessions reservation intact.
+
+Rust uses shared same-fd `Arc` ownership and revokes the originating thread's
+reentrancy permission, so another command cannot reuse quarantined admission.
+Its weak entry remains to retain admission for any further child under an
+existing outer guard until that child's own stop proof. The existing janitor
+uses `proc::supervisor::group_stopped`, the same stop proof as Sessions
+reconciliation; this is not a second monitor.
+The quotient assumes successful approval/preflight and already-completed draft
+flush, cooperating lock users, a surviving monitoring app, and sound group-stop
+evidence. It does not model kernel internals, escaped descendants, abrupt app
+death or force arbitrary external Git to honor the lock. Stop need not eventually
+occur: indefinite fail-closed ownership is permitted. Existing HOLD sets and
+D/F snapshot-after-admission/preflight ordering remain unchanged.
+
 
 
 ---
@@ -189,7 +220,7 @@ describe their respective pre-merge runs, not this combined transition system.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model has **70** checks and **25** negative controls, retaining #1731's failed-close and preservation guards alongside #1732's atomic writer, #1746 D1/D2/D3 repository admission and #1760/#1784's off-thread generation-bound barriers; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Machine-readable evidence is generated under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained model has **72** checks and **26** negative controls, retaining #1731's failed-close and preservation guards alongside #1732's atomic writer, #1746 D1/D2/D3 repository admission, #1780's unknown-termination ownership and #1760/#1784's off-thread generation-bound barriers; see the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Machine-readable evidence is generated under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 
@@ -201,7 +232,7 @@ describe their respective pre-merge runs, not this combined transition system.
 
 ## Finite scope and honest model/code gaps
 
-- Two independent application instances share one repository and one draft file. Sessions reservations remain per-instance; #1746 D3 adds a distinct kernel writer lease before final preflight, released at verification. `RepoHasAtMostOneLease` counts kernel ownership, not UI reservations. Concurrent configs explore all enabled interleavings; single-route configs leave the second actor idle. A passive sibling view is represented by its invalidation bit.
+- Two independent application instances share one repository and one draft file. Sessions reservations remain per-instance; #1746 D3 adds a distinct kernel writer lease before final preflight, released at known-stop verification. #1780 separately models unknown return with a live process group: only confirmed group stop releases that lease. `RepoHasAtMostOneLease` counts kernel ownership, not UI reservations. Concurrent configs explore all enabled interleavings; single-route configs leave the second actor idle. A passive sibling view is represented by its invalidation bit.
 - At most two paths; one abstract hunk per edited text path; text/blob/namespace payloads are finite enums. Full revision is a tuple of bounded index/HEAD/metadata/operation revision counters. One operation per actor, one external CLI edit/replacement, at most one restart. No hash collisions, path aliases, or SHA internals are modelled.
 - Scenario selectors are **environment/scope restrictions**, not product guards. Index/HEAD/MERGE_MSG external edits are separate runs before final preflight; WT-only edits are before preflight or between WT write and add_path; index CLI interference and two-app interference also occur after final preflight. Observation is explicitly split into index/metadata/accept, but these configs do not claim exhaustive mid-observation metadata tearing coverage.
 - Read failures/trust/path/marker/identity validators unrelated to the witness are fixed to successful, known, compatible inputs. A failed preflight is a terminal nonmutating path (deadlock checking disabled); rejection UI text is outside this quotient. Continue has one resolved text path and no unexpected unmerged path. D/F has a namespace decision, not a fictitious text hunk. MergeCommit starts at an already resolved commit panel.
@@ -234,7 +265,7 @@ State counts separated by `/` follow the check/trace order in that row and come 
 | `BarrierFailureNeverApproved` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/conflict_view/draft_owner.rs::flush_drafts; ui/operations/conflict.rs::flush_conflict_drafts` | CONTRACT (#1760) | A failed off-thread flush retains the live pane and cannot authorize an operation. |
 | `BarrierApprovalCurrentGeneration` | HOLD | HELD (TLC exit 0) | 28 | — | `resolution/draft_writer.rs::DraftSave::is_current; ui/conflict_view/draft_owner.rs::flush_drafts` | CONTRACT (#1760) | Recheck the current ticket and pane revision after completion; superseded success is not storage failure or approval. |
 | `BarrierCloseDurable` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/editor_workspace/host_close.rs::save_host_dirty_guard_inner; ui/tabs.rs::close_tab` | CONTRACT (#1760) | Without explicit two-step Discard, close follows successful current-generation durability. |
-| `BarrierLocksNeverNested` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/operations/conflict.rs::flush_conflict_drafts; resolution/draft_writer.rs::DraftSave::flush` | CONTRACT (#1760 UI boundary) | Complete and release the UI flush's draft transaction before repository admission; required backend preservation also precedes admission in the lifecycle model. |
+| `BarrierLocksNeverNested` | HOLD | HELD (TLC exit 0) | 28 | — | `ui/operations/conflict.rs::flush_conflict_drafts; resolution/draft_writer.rs::DraftSave::flush` | CONTRACT (#1760 UI boundary) | Complete and release the UI flush's draft transaction before repository admission; Abort/Skip preservation precedes admission, while D/F snapshot refs follow locked preflight. |
 | `ReceiptFollowsMutation (Continue / merge handoff / Skip)` | REFUTE | REFUTED | 50 / 50 / 40 | [receipt-continue](#trace-receipt-continue), [receipt-merge](#trace-receipt-merge), [receipt-skip](#trace-receipt-skip) | `ui/operations/conflict.rs:404-448,653-698; ui/operations/conflict_skip.rs:100-149; app/session.rs:760-776` | BUG | Append/retain accounting in the mutation-owning worker before releasing its close gate. |
 | `ReceiptFollowsMutation (Save, append succeeds)` | HOLD | HELD | 71 | — | `backend/conflict_ops.rs:581-603; app/settle.rs:147-149` | CONTRACT | Keep backend-owned receipt before completion; no crash/fsync or append-failure guarantee is inferred. |
 | `SkipDropsOnlyApprovedStep` | HOLD | HELD after #1746 D2 | 135 | historical [skip-replacement](#trace-skip-replacement) | `conflicts.rs::preflight_skip_revision`, `execute_conflict_skip`; `conflict_view/actions.rs::skip_request_arm` | CONTRACT | Frozen full revision and operation survive plan/confirm/dispatch; both initial and immediately-pre-CLI checks refuse a replacement. Rust `skip_refuses_replaced_approved_step_and_preserves_the_next_conflict` proves step 2 survives. |
@@ -243,6 +274,7 @@ State counts separated by `/` follow the check/trace order in that row and come 
 | `SiblingWorktreesInvalidatedOnSharedRef` | REFUTE | REFUTED | 62 | [sibling-invalidation](#trace-sibling-invalidation) | `ops/conflict_abort.rs:367-400; app/flow.rs:78; app/settle.rs:272-300` | BUG | Mark ref-moving Abort as shared-ref-changing so retained sibling worktree views are invalidated. |
 | `ContinueEventuallyRecordedOrReported` | REFUTE | REFUTED | 79 | [continue-liveness](#trace-continue-liveness) | `ui/operations/conflict.rs:659-698; ui/operations/app_bridge.rs:751-758; ui/mod.rs:3661-3669` | BUG | Keep accounting alive beyond weak UI-owner destruction; fairness cannot revive a closed owner. |
 | `RepoHasAtMostOneLease (two independent apps)` | HOLD | HELD | 14337 | historical [two-instance-leases](#trace-two-instance-leases) | `write_lock.rs::acquire; backend/conflict_ops.rs::run_recorded_conflict` | #1746 D3 fixed | Kernel ownership spans final preflight→execute→verify; approval probes do not retain it through confirmation. |
+| `LiveWriterKeepsRepositoryLease (writer-termination)` | HOLD | Not yet measured | — | — | `write_lock.rs; proc.rs::run_child; proc::supervisor::group_stopped` | CONTRACT (#1780) | Live descendants retain repository admission across unknown return and EOF; a second app cannot enter. Sessions reconciliation remains separate. |
 | `StashAbortRestoresConflictedBytes (non-UTF-8)` | REFUTE | REFUTED | 44 | [stash-non-utf8](#trace-stash-non-utf8) | `ops/conflict_abort.rs:513-537,582-583; backend/conflict_observe.rs:443-467` | BUG | Keep raw path authority through checkout; verify restored WT/index bytes, not only HEAD/operation absence. |
 
 ## Load-bearing negative controls
@@ -263,6 +295,7 @@ These cfg files set `Broken` in the same source model; they are deliberate model
 | `DraftWriteAtomic (two-writer recovery)` | [`two-writer-recovery-broken.cfg`](../../formal/conflict/tla/two-writer-recovery-broken.cfg) | Compare recovery equality against the editor's pre-merge body | REFUTE (exit 12) | 4 |
 | `ReceiptFollowsMutation (Save)` | [`receipt-save-broken.cfg`](../../formal/conflict/tla/receipt-save-broken.cfg) | Remove append-before-release ordering gate | REFUTE (exit 12) | 47 |
 | `RepoHasAtMostOneLease` | [`two-instance-leases-broken.cfg`](../../formal/conflict/tla/two-instance-leases-broken.cfg) | Remove repository-level lock exclusion only | REFUTE (exit 12) | 2938 |
+| `LiveWriterKeepsRepositoryLease` | [`writer-termination-broken.cfg`](../../formal/conflict/tla/writer-termination-broken.cfg) | Release repository admission at unknown return while descendants remain live; keep Sessions lease | Expected REFUTE; not yet measured | — |
 | `DraftNeverLost (failed autosave + close)` | [`draft-io-quit-broken.cfg`](../../formal/conflict/tla/draft-io-quit-broken.cfg) | Remove only the failed-draft close hold, preserving the lease gate | REFUTE (exit 12) | 15 |
 | `NoDestructiveProgressAfterPreservationFailure (Abort)` | [`preserve-abort-broken.cfg`](../../formal/conflict/tla/preserve-abort-broken.cfg) | Ignore failed recovery and continue to destructive Abort | REFUTE (exit 12) | 36 |
 | `NoDestructiveProgressAfterPreservationFailure (Skip)` | [`preserve-skip-broken.cfg`](../../formal/conflict/tla/preserve-skip-broken.cfg) | Ignore failed recovery and run Skip | REFUTE (exit 12) | 32 |

@@ -40,6 +40,8 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
     lease |-> [a \in Actors |-> FALSE], preflight |-> [a \in Actors |-> FALSE],
     repoLease |-> [a \in Actors |-> FALSE],
+    writer |-> [a \in Actors |-> [phase |-> "admit", live |-> FALSE,
+        monitor |-> FALSE, pipesClosed |-> FALSE]],
     draftOwner |-> 0,
     recoveryStep |-> 0, recoveryPrimary |-> "none", recoveryHistory |-> {},
     executed |-> [a \in Actors |-> "none"], successful |-> [a \in Actors |-> FALSE],
@@ -150,7 +152,8 @@ Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
         !.event = <<"Approve(confirm)",a>>]
 \* #1746: write_lock.rs::acquire and conflict_ops.rs::run_recorded_conflict.
 \* Sessions leases remain per-process. The kernel writer lease is separate:
-\* final revision preflight follows acquisition, and Verify releases it.
+\* final revision preflight follows acquisition; known-stop Verify releases it.
+\* writerTermination below separately models unknown CLI return with live descendants.
 \* Abort/Skip draft preservation precedes this critical section in Rust; its
 \* separate draft lock is not represented in this writer-exclusion quotient.
 \* D/F recovery creates a snapshot ref after locked preflight, before index writes.
@@ -452,6 +455,47 @@ BarrierApprovalCurrentGeneration == ~s.barrier.badGeneration
 BarrierCloseDurable == ~s.barrier.badClose
 BarrierLocksNeverNested == ~(s.barrier.draftLock /\ s.barrier.repoLock)
 
+\* #1780: focused two-process quotient of a CLI under repository admission.
+\* Approval, draft flush (lock already released), and successful preflight are
+\* fixed inputs; no D/F snapshot ordering is changed by this scenario.
+\* Each actor launches once. Live means a process-group member may still write.
+WriterAdmit(a) == /\ s.writer[a].phase = "admit"
+    /\ \A b \in Actors : ~s.repoLease[b]
+    /\ s' = [s EXCEPT !.repoLease[a] = TRUE, !.lease[a] = TRUE,
+        !.writer[a].phase = "running", !.writer[a].live = TRUE,
+        !.event = <<"WriterAdmitAndSpawn",a>>]
+\* run_child transfers same-fd Arc ownership to its existing janitor and revokes
+\* the thread-local reentrancy permission before returning TerminationUnknown.
+WriterUnknownReturn(a) == /\ s.writer[a].phase = "running"
+    /\ s' = [s EXCEPT !.writer[a].phase = "returned",
+        !.writer[a].monitor = TRUE,
+        !.repoLease[a] = IF Broken = "earlyRepoRelease" THEN FALSE ELSE @,
+        !.event = <<"WriterUnknownReturn",a>>]
+\* EOF is independent of process-group stop and cannot release admission.
+WriterPipesClose(a) == /\ s.writer[a].phase \in {"running", "returned"}
+    /\ ~s.writer[a].pipesClosed
+    /\ s' = [s EXCEPT !.writer[a].pipesClosed = TRUE,
+        !.event = <<"WriterPipesClose",a>>]
+\* proc::supervisor::group_stopped is the sole stop proof, shared with Sessions.
+\* This transition quotients a confirmed empty group and the janitor's drop.
+WriterGroupStopped(a) == /\ s.writer[a].phase = "returned"
+    /\ s' = [s EXCEPT !.writer[a].live = FALSE,
+        !.writer[a].monitor = FALSE, !.writer[a].phase = "stopped",
+        !.repoLease[a] = FALSE, !.event = <<"WriterGroupStopped",a>>]
+\* Per-Sessions settlement/reconciliation is separate from kernel ownership.
+WriterReconcile(a) == /\ s.writer[a].phase = "stopped"
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.writer[a].phase = "done",
+        !.event = <<"WriterReconcile",a>>]
+WriterTerminationNext == \E a \in Actors :
+    WriterAdmit(a) \/ WriterUnknownReturn(a) \/ WriterPipesClose(a)
+        \/ WriterGroupStopped(a) \/ WriterReconcile(a)
+LiveWriterKeepsRepositoryLease ==
+    /\ \A a \in Actors : s.writer[a].live =>
+        (s.repoLease[a] /\ s.lease[a]
+         /\ (s.writer[a].phase = "returned" => s.writer[a].monitor)
+         /\ \A b \in Actors \ {a} : ~s.repoLease[b])
+    /\ Cardinality({a \in Actors : s.repoLease[a]}) <= 1
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
@@ -463,6 +507,7 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
 Next == IF Scenario = "draftBarrier" THEN DraftBarrierNext
     ELSE IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+    ELSE IF Scenario = "writerTermination" THEN WriterTerminationNext
     ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
         \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars

@@ -30,6 +30,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Serialize conflict writes across Kagi processes using a repository advisory lock. Save, directory/file resolution, Continue, Abort, Skip and merge finalization refuse busy repositories without blocking reads; process death releases admission automatically. (#1746)
+  - Keep repository admission held when a CLI returns `TerminationUnknown` with live descendants, including Continue/Skip and nested commands. Transfer same-fd lock ownership to the existing process janitor and remove the originating thread's reusable admission; only `supervisor::group_stopped` proof releases it, never pipe closure alone. Per-Sessions reconciliation remains separate; no second monitor is introduced. (#1780)
   - Keep repository admission probes non-recording so Continue, Skip and staging retain exactly one operation-specific refusal. Quietly skip contended auto-fetch until its next tick; retain queued successors and retry a repository-busy head instead of reporting an identity change.
   - Keep contended queued writes responsive with zero-wait background probes and capped retry backoff. Show one error notification per waiting intent, replan only after admission is available, and cancel retry tasks when their owner closes.
   - Re-arm the waiting head if another window wins admission immediately after a successful probe. Route non-contention probe failures through ordinary admission instead of leaving a misleading repository-busy wait.

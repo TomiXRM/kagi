@@ -1037,7 +1037,7 @@ pub struct SaveOutcome {
     pub path: PathBuf,
     /// Short hash of the resolved text that was written (for the oplog).
     pub after_short: String,
-    /// Blob identity frozen before materialization, after path-specific clean filters.
+    /// Frozen Result blob identity after clean filters using materialized attributes.
     pub(crate) staged_oid: git2::Oid,
 }
 
@@ -1720,12 +1720,15 @@ pub(crate) fn execute_conflict_save_with_progress(
             )));
         }
     }
-    let frozen = freeze_text_resolution(repo, &index, path, &text, original_file_mode(&abs))?;
+    let mode = original_file_mode(&abs);
     std::fs::write(&abs, text.as_bytes())
         .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
     progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten);
 
     // Stage the exact Result captured before materialization, not live WT bytes.
+    // A saved .gitattributes can change its own clean policy, so load filters
+    // after the write while still supplying the captured Result bytes.
+    let frozen = freeze_text_resolution(repo, &index, path, &text, mode)?;
     stage_raw_entry(&mut index, path, frozen)?;
     index
         .write()

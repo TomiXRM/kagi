@@ -3,15 +3,16 @@ use super::*;
 use kagi_domain::conflict_family::ConflictProgress;
 use kagi_git::{backend::ExecutionPolicy, oplog::OpOutcome, Backend};
 
-fn recorded_save(path: &Path, text: &str) {
+fn recorded_save(path: &Path, file: &str, text: &str) {
+    let file = Path::new(file);
     let backend = Backend::open(path).unwrap();
     let snapshot = backend.conflict_snapshot().unwrap().unwrap();
     let mut buffer = backend.resolution_buffer_from_repo().unwrap();
-    buffer.set_manual_text(Path::new("file.txt"), text).unwrap();
+    buffer.set_manual_text(file, text).unwrap();
     let request = Backend::conflict_save_request(
         snapshot.observation.revision,
         &buffer,
-        Path::new("file.txt"),
+        file,
         snapshot.observation.kind,
         "",
     )
@@ -58,7 +59,7 @@ fn recorded_save_plans_and_verifies_configured_filemode() {
                 )
                 .unwrap();
             }
-            recorded_save(path, "APPROVED\n");
+            recorded_save(path, "file.txt", "APPROVED\n");
             index.read(true).unwrap();
             let staged = index.get_path(Path::new("file.txt"), 0).unwrap();
             let expected = if !trust_filemode {
@@ -95,7 +96,7 @@ fn recorded_save_cleans_frozen_crlf_only_when_git_policy_requires_it() {
         if let Some(attributes) = attributes {
             write_file(path, ".gitattributes", attributes);
         }
-        recorded_save(path, "APPROVED\r\n");
+        recorded_save(path, "file.txt", "APPROVED\r\n");
         let before = repo
             .index()
             .unwrap()
@@ -111,6 +112,52 @@ fn recorded_save_cleans_frozen_crlf_only_when_git_policy_requires_it() {
         let mut index = repo.index().unwrap();
         index.read(true).unwrap();
         assert_eq!(index.get_path(Path::new("file.txt"), 0).unwrap().id, before);
+    }
+}
+
+#[test]
+fn recorded_save_filters_attributes_using_their_resolved_self_policy() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for name in [".gitattributes", "file.txt"] {
+        let fixture = TempDir::new().unwrap();
+        let path = fixture.path();
+        init_repo(path, "main");
+        git(path, &["config", "core.autocrlf", "false"]);
+        write_file(path, ".gitattributes", "* -text\n");
+        write_file(path, name, "* -text\n# base\n");
+        git(path, &["add", "."]);
+        git(path, &["commit", "-qm", "base"]);
+        git(path, &["checkout", "-qb", "feature"]);
+        write_file(path, name, "* -text\n# incoming\n");
+        git(path, &["commit", "-qam", "incoming"]);
+        git(path, &["checkout", "-q", "main"]);
+        write_file(path, name, "* -text\n# current\n");
+        git(path, &["commit", "-qam", "current"]);
+        assert!(!git_allow_fail(path, &["merge", "feature"]));
+        write_file(path, name, "* -text\n");
+
+        let result = "* text eol=lf\r\n";
+        recorded_save(path, name, result);
+        let repo = Repository::open(path).unwrap();
+        let mut index = repo.index().unwrap();
+        assert!(!index.has_conflicts());
+        let staged = index.get_path(Path::new(name), 0).unwrap();
+        let expected = if name == ".gitattributes" {
+            b"* text eol=lf\n".as_slice()
+        } else {
+            result.as_bytes()
+        };
+        assert_eq!(repo.find_blob(staged.id).unwrap().content(), expected);
+        assert_eq!(std::fs::read(path.join(name)).unwrap(), result.as_bytes());
+        git(path, &["add", name]);
+        index.read(true).unwrap();
+        assert_eq!(
+            index.get_path(Path::new(name), 0).unwrap().id,
+            staged.id,
+            "Save and ordinary restaging must apply the same clean policy"
+        );
     }
 }
 

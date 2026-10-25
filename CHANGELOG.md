@@ -29,6 +29,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native menu/queue regression coverage: explicitly edit the Markdown fixtures for code-input menus, the accessible-field inventory and PR Peek's real-input dirty guard, preserve the selected glyph during right-click, await reopened Commit Panel rows before capturing menu ownership, use a genuinely warned detached checkout for pending confirmation, and assert bounded single-surface checkout and palette-push refusals while retaining their exact durable blockers. Product behavior and safety gates are unchanged. (#1777)
 - Record conflict Continue, Skip and merge-to-Commit-Panel handoffs in the backend worker before releasing the write lease. Closing the host no longer discards their receipts; recording failures retain the attempted outcome. (#1740)
   - Preserve the next-conflict stop in the recording-failure acknowledgment when Continue succeeds at one replay but its receipt cannot be appended. Classify from the execution outcome, not the display row's recording-failure conversion. (#1775 review)
 - Freeze the approved merge commit plan through execution, refusing changed staging and re-presenting the new plan rather than silently committing the live index. Conflict staging writes the approved payload rather than rereading mutable worktree bytes, preserving index executable modes when `core.fileMode=false`. (#1743)

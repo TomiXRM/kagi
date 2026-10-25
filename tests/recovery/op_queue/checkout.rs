@@ -14,27 +14,45 @@ fn hold_checkout(
     release
 }
 
-fn static_refusal_matches(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    expected: &str,
-) -> (bool, bool) {
+fn assert_static_refusal(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, active: bool) {
+    // #1698 keeps the complete blocker in the receipt. A short active-window
+    // result belongs in the footer; an inactive one belongs in one notification.
+    let expected = match kagi_ui_core::i18n::lang() {
+        kagi_ui_core::i18n::Lang::En => "Checkout: The operation could not be completed. Review its details before continuing. See the Operation Log for details.",
+        kagi_ui_core::i18n::Lang::Ja => "checkout: 操作を完了できませんでした。続行する前に詳細を確認してください。 詳しくは操作ログを確認してください。",
+    };
     cx.read(|cx| {
         let state = app.read(cx);
-        let footer = matches!(
-            &state.status_footer,
-            kagi::ui::FooterStatus::Failed(text) if text.contains(expected)
+        if active {
+            match &state.status_footer {
+                kagi::ui::FooterStatus::Failed(text) => assert_eq!(text.as_ref(), expected),
+                other => panic!("expected the bounded checkout refusal, got {other:?}"),
+            }
+        } else {
+            assert!(matches!(&state.status_footer,
+                kagi::ui::FooterStatus::Idle(text) if text.is_empty()));
+        }
+        let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert_eq!(
+            toasts.len(),
+            usize::from(!active),
+            "one result surface only"
         );
-        let toast = state
-            .toast_stack
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .toasts()
-            .iter()
-            .any(|toast| toast.message.contains(expected));
-        (footer, toast)
-    })
+        if !active {
+            let repo_name = state
+                .repo_path
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy();
+            assert_eq!(
+                toasts[0].message.as_ref(),
+                format!("{expected} — {repo_name}")
+            );
+            assert!(matches!(toasts[0].kind, kagi::ui::ToastKind::Error));
+        }
+    });
 }
 
 /// A blocker derived from the tree during another checkout is not an
@@ -522,30 +540,32 @@ pub fn scenario_queue_checkout_missing_ref_refuses(cx: &mut VisualTestAppContext
     let release = hold_checkout(cx, &app, "a");
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
 
-    app.update(cx, |app, cx| app.open_plan_modal("missing", cx));
-    assert!(strip(cx, &app).is_none());
-    let expected = kagi::ui::i18n::plan_note_text(&kagi_domain::plan_note::PlanNote::Common(
-        kagi_domain::plan_note::CommonNote::BranchMissing {
-            name: "missing".into(),
-            in_repo: true,
-        },
-    ));
-    let (footer_matches, toast_matches) = static_refusal_matches(cx, &app, &expected);
-    assert!(footer_matches);
-    assert!(toast_matches);
-    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == "checkout")
-        .collect();
-    assert_eq!(entries.len(), 1);
-    assert!(matches!(
-        &entries[0].outcome,
-        OpOutcome::Refused { blockers } if blockers.len() == 1
-            && blockers[0].contains("missing")
-    ));
-    assert!(kagi_ui_core::klog::tail()
-        .iter()
-        .any(|line| { line.starts_with("[kagi] queue: refused checkout missing (static: ") }));
+    for (attempt, active) in [true, false].into_iter().enumerate() {
+        app.update(cx, |app, cx| {
+            app.set_window_active_for_e2e(active, cx);
+            app.open_plan_modal("missing", cx)
+        });
+        assert!(strip(cx, &app).is_none());
+        let blocker = kagi_domain::plan_note::PlanNote::Common(
+            kagi_domain::plan_note::CommonNote::BranchMissing {
+                name: "missing".into(),
+                in_repo: true,
+            },
+        );
+        assert_static_refusal(cx, &app, active);
+        let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "checkout")
+            .collect();
+        assert_eq!(entries.len(), attempt + 1);
+        assert!(matches!(
+            &entries[0].outcome,
+            OpOutcome::Refused { blockers } if blockers.as_slice() == [blocker.message_en()]
+        ));
+        assert!(kagi_ui_core::klog::tail()
+            .iter()
+            .any(|line| { line.starts_with("[kagi] queue: refused checkout missing (static: ") }));
+    }
     release.send(());
     cx.run_until_parked();
     unmount(cx, app, window);
@@ -581,27 +601,29 @@ pub fn scenario_queue_checkout_linked_worktree_refuses(cx: &mut VisualTestAppCon
     let release = hold_checkout(cx, &app, "a");
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
 
-    app.update(cx, |app, cx| app.open_plan_modal("b", cx));
-    assert!(
-        strip(cx, &app).is_none(),
-        "linked branch must not enter the queue"
-    );
-    let expected = kagi::ui::i18n::plan_note_text(&blocker);
-    let (footer_matches, toast_matches) = static_refusal_matches(cx, &app, &expected);
-    assert!(footer_matches);
-    assert!(toast_matches);
-    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
-        .into_iter()
-        .filter(|entry| entry.op == "checkout")
-        .collect();
-    assert_eq!(entries.len(), 1);
-    assert!(matches!(
-        &entries[0].outcome,
-        OpOutcome::Refused { blockers } if blockers.as_slice() == [blocker.message_en()]
-    ));
-    assert!(kagi_ui_core::klog::tail()
-        .iter()
-        .any(|line| { line.starts_with("[kagi] queue: refused checkout b (static: ") }));
+    for (attempt, active) in [true, false].into_iter().enumerate() {
+        app.update(cx, |app, cx| {
+            app.set_window_active_for_e2e(active, cx);
+            app.open_plan_modal("b", cx)
+        });
+        assert!(
+            strip(cx, &app).is_none(),
+            "linked branch must not enter the queue"
+        );
+        assert_static_refusal(cx, &app, active);
+        let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "checkout")
+            .collect();
+        assert_eq!(entries.len(), attempt + 1);
+        assert!(matches!(
+            &entries[0].outcome,
+            OpOutcome::Refused { blockers } if blockers.as_slice() == [blocker.message_en()]
+        ));
+        assert!(kagi_ui_core::klog::tail()
+            .iter()
+            .any(|line| { line.starts_with("[kagi] queue: refused checkout b (static: ") }));
+    }
     release.send(());
     cx.run_until_parked();
     assert_eq!(head(&repo), "a");

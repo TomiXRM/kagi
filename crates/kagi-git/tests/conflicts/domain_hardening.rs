@@ -186,6 +186,42 @@ fn assert_hunk_save(case: &HunkCase<'_>, recorded: bool) {
 }
 
 #[test]
+fn crlf_materialization_round_trips_choices_through_save() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for recorded in [false, true] {
+        for incoming in ["incoming\r\n", "incoming\n"] {
+            for (choice, body) in [
+                (HunkChoice::AcceptCurrent, "current\r\n".to_string()),
+                (HunkChoice::AcceptIncoming, incoming.to_string()),
+                (
+                    HunkChoice::BothCurrentFirst,
+                    format!("current\r\n{incoming}"),
+                ),
+                (
+                    HunkChoice::BothIncomingFirst,
+                    format!("{incoming}current\r\n"),
+                ),
+                (HunkChoice::Manual("manual\r\n".into()), "manual\r\n".into()),
+            ] {
+                assert_hunk_save(
+                    &HunkCase {
+                        current: "before\r\ncurrent\r\nafter\r\n",
+                        base: "before\r\nbase\r\nafter\r\n",
+                        incoming: &format!("before\r\n{incoming}after\r\n"),
+                        choices: &[choice],
+                        expected: &format!("before\r\n{body}after\r\n"),
+                        width: 7,
+                    },
+                    recorded,
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn literal_separator_source_is_content_in_both_hunk_save_paths() {
     if !test_support::run_isolated() {
         return;

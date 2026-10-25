@@ -194,6 +194,47 @@ fn marker_parser_preserves_a_literal_source_opener() {
 }
 
 #[test]
+fn crlf_marker_choices_preserve_source_endings() {
+    for width in [7, 10] {
+        // Marker endings are independent of source endings, including zdiff3's
+        // optional base marker and unlabeled delimiters.
+        for marker_ending in ["\n", "\r\n"] {
+            for incoming in ["incoming\r\n", "incoming\n"] {
+                let text = format!(
+                    "before\r\n{}{marker_ending}current\r\n{}{marker_ending}base\r\n{}{marker_ending}{incoming}{}{marker_ending}after\r\n",
+                    "<".repeat(width),
+                    "|".repeat(width),
+                    "=".repeat(width),
+                    ">".repeat(width),
+                );
+                let mut model = HunkModel::from_marker_text_with_width(&text, width);
+                assert_eq!(model.hunk_count(), 1);
+                assert_eq!(model.regions.len(), 3, "closer must end the hunk");
+                assert_eq!(model.hunks()[0].current, ["current\r"]);
+                assert_eq!(model.hunks()[0].base, ["base\r"]);
+                for (choice, body) in [
+                    (HunkChoice::AcceptCurrent, "current\r\n".to_string()),
+                    (HunkChoice::AcceptIncoming, incoming.to_string()),
+                    (
+                        HunkChoice::BothCurrentFirst,
+                        format!("current\r\n{incoming}"),
+                    ),
+                    (
+                        HunkChoice::BothIncomingFirst,
+                        format!("{incoming}current\r\n"),
+                    ),
+                    (HunkChoice::Manual("manual\r\n".into()), "manual\r\n".into()),
+                ] {
+                    assert!(model.set_choice(0, choice));
+                    assert!(model.all_resolved());
+                    assert_eq!(model.assembled_text(), format!("before\r\n{body}after\r\n"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn wide_markers_preserve_shorter_source_runs_and_unresolved_width() {
     for width in [10, 32] {
         let current = "<<<<<<< literal\n||||||| literal\n=======\n>>>>>>>> literal\n=========\n";

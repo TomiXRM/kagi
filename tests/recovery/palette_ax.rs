@@ -183,6 +183,7 @@ fn assert_conflict_admission(
     expected: [bool; 3],
 ) {
     let rows = cx.read(|cx| rows_for(app.read(cx), "", cx));
+    let menus = cx.read(commands::build_menus);
     let actions: [(&str, &dyn gpui::Action); 3] = [
         ("repo.conflictAbort", &commands::ConflictAbort),
         ("repo.conflictSkip", &commands::ConflictSkip),
@@ -199,6 +200,21 @@ fn assert_conflict_admission(
         assert_eq!(menu_enabled, expected, "menu admission for {id}");
         assert_eq!(row.enabled, menu_enabled, "palette/menu parity for {id}");
         assert_eq!(row.disabled_reason.is_none(), menu_enabled);
+        let menu_label = menus
+            .iter()
+            .flat_map(|menu| &menu.items)
+            .find_map(|item| match item {
+                gpui::MenuItem::Action {
+                    action: menu_action,
+                    name,
+                    ..
+                } if menu_action.as_any().type_id() == action.as_any().type_id() => {
+                    Some(name.as_ref())
+                }
+                _ => None,
+            })
+            .expect("registered menu command");
+        assert_eq!(row.label, menu_label, "palette/menu label parity for {id}");
     }
 }
 
@@ -212,19 +228,15 @@ fn activate_conflict_row(
 ) {
     native_ax::activate(cx);
     e2e::palette::take_executed();
-    open(
-        cx,
-        app,
-        win,
-        kagi::ui::command_palette::command_label(id, i18n::lang()),
-    );
-    let rows = cx.read(|cx| {
-        rows_for(
-            app.read(cx),
-            kagi::ui::command_palette::command_label(id, i18n::lang()),
-            cx,
-        )
+    let label = cx.read(|cx| {
+        rows_for(app.read(cx), "", cx)
+            .into_iter()
+            .find(|row| row.id == id)
+            .expect("conflict command")
+            .label
     });
+    open(cx, app, win, &label);
+    let rows = cx.read(|cx| rows_for(app.read(cx), &label, cx));
     let index = rows
         .iter()
         .position(|row| row.id == id)
@@ -338,6 +350,22 @@ pub fn scenario_palette_conflict_admission(cx: &mut VisualTestAppContext) {
                 .unwrap()
                 .skip_approval
                 .is_some()));
+            let expected = match lang {
+                Lang::En => "Confirm Skip",
+                Lang::Ja => "スキップを確定",
+            };
+            open(cx, &app, win, expected);
+            assert_conflict_admission(cx, &app, win, [true, true, false]);
+            let rows = cx.read(|cx| rows_for(app.read(cx), expected, cx));
+            let index = rows
+                .iter()
+                .position(|row| row.id == "repo.conflictSkip")
+                .expect("armed Skip must match its confirmation label");
+            assert_eq!(rows[index].label, expected);
+            let node = native_ax::node(cx, win, ("palette-row", index).into());
+            assert_eq!(node["aria"]["label"], expected);
+            cx.simulate_keystrokes(win, "escape");
+            draw(cx, win);
             assert_eq!(
                 repo_fingerprint(repo),
                 before,

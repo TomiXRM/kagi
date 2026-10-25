@@ -276,9 +276,14 @@ pub fn command_label(id: &str, lang: Lang) -> &'static str {
 /// language. Thin wrapper over [`build_rows`] used by the renderer.
 pub fn rows_for(app: &KagiApp, query: &str, cx: &App) -> Vec<PaletteRow> {
     let lang = i18n::lang();
+    let state = super::window_menu::current_state(cx);
     build_rows(
         query,
-        |id| command_label(id, lang).to_string(),
+        |id| {
+            super::window_menu::state_label(id, &state)
+                .unwrap_or_else(|| command_label(id, lang))
+                .to_string()
+        },
         |id| commands::command_state_in(app, id, cx),
         |id| commands::effective_keystroke(id).map(|k| commands::display_keystroke(&k)),
     )

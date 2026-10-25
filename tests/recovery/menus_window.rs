@@ -180,7 +180,8 @@ pub fn scenario_conflict_repository_menu(cx: &mut VisualTestAppContext) {
 }
 
 /// A saved merge first exposes the read-owned fallback, then #1755 mounts its
-/// overview. Menu and visible Abort share the checked-read/confirmation gates.
+/// overview. Continue retires that view for the real CommitPanel, where menu
+/// and strip Abort retain the same checked-read/confirmation gates.
 fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
     let fixture = crate::app_conflict::content_fixture();
     let repo = fixture.path();
@@ -215,6 +216,27 @@ fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
     cx.read(|cx| assert!(app.read(cx).ui().conflict.is_some()));
     assert!(e2e::control_bounds(win.window_id(), "operation-strip-abort").is_none());
     assert!(e2e::control_bounds(win.window_id(), "conflict-abort").is_some());
+    for name in ["cp-body", "cp-commit-action"] {
+        e2e::clear_control_bounds(win.window_id(), name);
+    }
+    crate::app_conflict::click_control(cx, win, "conflict-continue");
+    crate::app_conflict::wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
+    // The retained session entity must not leave its editor body on screen.
+    e2e::clear_control_bounds(win.window_id(), "conflict-abort");
+    draw(cx, win);
+    cx.read(|cx| {
+        let ui = app.read(cx).ui();
+        assert!(ui.conflict_merge_pending);
+        assert!(ui.commit_panel_open);
+    });
+    assert!(e2e::control_bounds(win.window_id(), "conflict-abort").is_none());
+    for name in ["cp-body", "cp-commit-action", "operation-strip-abort"] {
+        assert!(
+            e2e::control_bounds(win.window_id(), name).is_some(),
+            "{name} is painted over the real CommitPanel"
+        );
+    }
     app.update(cx, |app, cx| {
         app.planning = Some("merge-plan");
         cx.notify();
@@ -231,7 +253,7 @@ fn conflict_menu_saved_abort(cx: &mut VisualTestAppContext) {
         i18n::set_lang(lang);
         draw(cx, win);
         assert!(available(cx));
-        let abort = e2e::control_bounds(win.window_id(), "conflict-abort").unwrap();
+        let abort = e2e::control_bounds(win.window_id(), "operation-strip-abort").unwrap();
         cx.simulate_click(win, abort.center(), gpui::Modifiers::none());
         cx.run_until_parked();
         cx.read(|cx| assert!(app.read(cx).conflict_abort_modal().is_some()));

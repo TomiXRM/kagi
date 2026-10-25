@@ -735,13 +735,31 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         "[gui-e2e] operation_strip_abort: runtime verified mounted ConflictView before CommitPanel"
     );
     app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
-    })
-    .unwrap();
+    for name in ["cp-body", "cp-commit-action"] {
+        e2e::clear_control_bounds(window.window_id(), name);
+    }
+    click_control(cx, window, "conflict-continue");
     wait_idle(cx, &app);
     crate::busy_dismiss::ready(cx, &app);
-    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    cx.read(|cx| {
+        let ui = app.read(cx).ui();
+        assert!(ui.conflict_merge_pending);
+        assert!(ui.commit_panel_open);
+    });
+    // The session may retain its entity; pending must remove its rendered body.
+    e2e::clear_control_bounds(window.window_id(), "conflict-abort");
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "conflict-abort").is_none());
+    for name in ["cp-body", "cp-commit-action", "operation-strip-abort"] {
+        assert!(
+            e2e::control_bounds(window.window_id(), name).is_some(),
+            "{name} is painted over the real CommitPanel"
+        );
+    }
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.
@@ -767,7 +785,7 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         repo.join(".git/MERGE_HEAD").exists(),
         "and a refused abort mutates nothing"
     );
-    click_control(cx, window, "conflict-abort");
+    click_control(cx, window, "operation-strip-abort");
     cx.run_until_parked();
     assert!(
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),

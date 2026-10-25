@@ -832,27 +832,47 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.planning = Some("merge-plan");
+            app.status_footer =
+                kagi::ui::FooterStatus::Idle("Awaiting Abort planning refusal".into());
             let owner = app
                 .active_session()
                 .and_then(|session| app.app_sessions.attachment(session))
                 .expect("abort owner");
             app.open_conflict_abort_modal(owner, window, cx);
-            assert!(
-                app.conflict_abort_modal().is_none(),
-                "a plan in flight must refuse the abort confirmation (#283)"
-            );
             app.confirm_conflict_abort(cx);
-            app.planning = None;
         });
     })
     .unwrap();
     cx.run_until_parked();
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Abort refusal after the flush while planning",
+        |app| {
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(message)
+            if message.as_ref() == kagi::ui::i18n::Msg::OpInProgress.t())
+        },
+    );
+    cx.read(|cx| {
+        assert_eq!(app.read(cx).planning, Some("merge-plan"));
+        assert!(
+            app.read(cx).conflict_abort_modal().is_none(),
+            "a plan in flight refuses the completed Abort-open continuation (#283)"
+        );
+    });
     assert!(
         repo.join(".git/MERGE_HEAD").exists(),
         "and a refused abort mutates nothing"
     );
+    app.update(cx, |app, _| app.planning = None);
     click_control(cx, window, "operation-strip-abort");
     cx.run_until_parked();
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Abort plan opens after planning releases",
+        |app| app.conflict_abort_modal().is_some(),
+    );
     assert!(
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
         "the first click confirms nothing — it opens the plan"
@@ -1316,6 +1336,9 @@ pub fn scenario_conflict_confirm_continue_panic(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+        app.conflict_continue_modal().is_some()
+    });
     assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
     kagi::ui::KagiApp::panic_next_continue_confirm_for_e2e();
     app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
@@ -1352,12 +1375,22 @@ pub fn scenario_conflict_confirm_dismissed_still_reloads(cx: &mut VisualTestAppC
         });
     })
     .unwrap();
-    assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
-    app.update(cx, |app, cx| {
-        app.confirm_conflict_continue(cx);
-        app.cancel_conflict_continue();
+    crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+        app.conflict_continue_modal().is_some()
     });
-    cx.run_until_parked();
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+    crate::busy_dismiss::wait(
+        cx,
+        &app,
+        "Continue write admitted before dismissal",
+        |app| app.write_busy_op.is_some(),
+    );
+    app.update(cx, |app, _| app.cancel_conflict_continue());
+    release.send(());
+    wait_idle(cx, &app);
+    crate::busy_dismiss::ready(cx, &app);
     assert!(
         !repo.join(".git/CHERRY_PICK_HEAD").exists(),
         "the sequencer must have continued"
@@ -1806,12 +1839,20 @@ pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppCon
                     });
                 })
                 .unwrap();
+                crate::busy_dismiss::wait(cx, &app, "Continue plan after draft flush", |app| {
+                    app.conflict_continue_modal().is_some()
+                });
                 assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
                 let repo_before = crate::macos::repo_fingerprint(&repo);
                 let other_before = crate::macos::repo_fingerprint(&other_repo);
                 let (hold, release) = crate::evidence_support::deferred::<()>(cx);
                 kagi::ui::KagiApp::hold_next_continue_confirm_for_e2e(hold);
                 app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+                // Wait for flush admission before leaving or hiding the repository:
+                // the existing hold suspends the backend write, not draft persistence.
+                crate::busy_dismiss::wait(cx, &app, "Continue confirmation admitted", |app| {
+                    app.write_busy_op.is_some()
+                });
                 if departed {
                     app.update(cx, |app, cx| {
                         app.cancel_conflict_continue();
@@ -1843,7 +1884,9 @@ pub fn scenario_conflict_continue_failure_result_owner(cx: &mut VisualTestAppCon
                 });
                 std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
                 release.send(());
-                cx.run_until_parked();
+                crate::busy_dismiss::wait(cx, &app, "Continue backend-open failure", |app| {
+                    app.write_busy_op.is_none() && app.conflict_continue_modal().is_none()
+                });
                 std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
                 let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
                     .into_iter()

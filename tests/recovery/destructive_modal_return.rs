@@ -65,14 +65,18 @@ pub fn scenario_dirty_guard_focus_trap(cx: &mut VisualTestAppContext) {
             assert!(Instant::now() < deadline, "editor buffer did not load");
             std::thread::sleep(Duration::from_millis(2));
         }
+        editor.update(cx, |view, cx| view.set_markdown_preview(false, cx));
+        paint(cx, window);
         let input = cx.read(|cx| editor.read(cx).editor.clone().unwrap());
         cx.update_window(window, |_, window, cx| {
             window.focus(&input.read(cx).focus_handle(cx), cx);
             window.draw(cx).clear();
         })
         .unwrap();
-        cx.simulate_keystrokes(window, "x");
-        cx.run_until_parked();
+        cx.simulate_input(window, "x");
+        crate::busy_dismiss::wait_ui(cx, &app, "native typed editor becomes dirty", |_, cx| {
+            editor.read(cx).dirty
+        });
         assert!(cx.read(|cx| editor.read(cx).dirty));
         for cancel_key in ["escape", "enter"] {
             app.update(cx, |app, cx| app.show_graph_mode(cx));
@@ -111,7 +115,7 @@ pub fn scenario_dirty_guard_focus_trap(cx: &mut VisualTestAppContext) {
             assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
             paint(cx, window);
             let buffer_before = cx.read(|cx| input.read(cx).value().to_string());
-            cx.simulate_keystrokes(window, "z");
+            cx.simulate_input(window, "z");
             cx.run_until_parked();
             assert_ne!(
                 cx.read(|cx| input.read(cx).value().to_string()),

@@ -1825,6 +1825,7 @@ pub struct ConflictSkipPlan {
     // it rather than establishing a weaker second metadata fingerprint.
     revision: kagi_domain::conflict_family::ConflictRevision,
     op: ConflictOp,
+    preserve_buffer: bool,
 }
 
 fn preflight_skip_revision(
@@ -1901,6 +1902,7 @@ pub fn plan_conflict_skip(
         plan,
         revision: expected.clone(),
         op: session.op.clone(),
+        preserve_buffer: !session.files.is_empty(),
     })
 }
 
@@ -1929,7 +1931,15 @@ pub(crate) fn execute_conflict_skip(
     preflight_skip_revision(repo, &approved.op, &approved.revision)?;
 
     // 1. Preserve the buffer first (never lose partial work).
-    let buffer_preserved_at = buffer.autosave().ok();
+    let buffer_preserved_at = if !approved.preserve_buffer {
+        None
+    } else {
+        Some(
+            buffer
+                .autosave()
+                .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?,
+        )
+    };
 
     // 2. Run the skip, then judge it by the state git left behind (#540).
     //    The exit code alone cannot: `rebase --skip` that drops the step and

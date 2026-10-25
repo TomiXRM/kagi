@@ -119,10 +119,25 @@ UI は現在の buffer から unresolved / marker 等を投影して Continue �
   message / authorship / replay option / autostash を使うには、新しい明示 plan と承認が必要である。
 
 
-### Abort(常に可能 = 安全弁)
+### Abort（保持できる場合の安全弁）
 - 確認ダイアログを出す。**保存済み resolution が失われる可能性**を明示
-- `cleanup_state` + ORIG_HEAD 復帰(force/reset --hard/clean 不使用、ADR-0056/0057)。buffer は
-  oplog 参照付きで退避(完全には消さない)
+- `cleanup_state` + ORIG_HEAD 復帰(force/reset --hard/clean 不使用、ADR-0056/0057)。
+- Abort / stash abort / Skip は、現在の resolution buffer の recovery copy を実際に
+  保存できた場合だけ破壊的な repository 操作へ進む（#1731）。保存失敗を無視せず、
+  typed blocker `DraftPreservationFailed` と `Refused` を返す。JA は
+  「下書きを保持できないため実行できません」。index / WT / ref / operation metadata は変更しない。
+- live conflict がない場合は空 buffer で既存 autosave を上書きしない。既存の保存済み draft は残す。
+  計画は保持成功を無条件に約束せず、buffer の recovery copy と復元される WT の違いを明示する。
+- D/F の namespace 上書きも必要な recovery snapshot が失敗したら index / WT 変更前に拒否する。
+  この変更は保存形式を変更せず、従来の draft を引き続き読み込める。
+- UI の manual / hunk autosave 失敗では live draft を残し、Failed の記録と Error toast を出す。
+  Close / Quit / Relaunch / repository tab close（Cmd+W・tab ×、最後の tab → Welcome を含む）は既存の単一 dirty sheet で保留する。Retry は autosave 成功時だけ
+  failure を解消し、Discard は二度目の明示確認を必要とする。Cancel / Enter / Escape は安全側に倒す。
+  sheet は既存の `modal_card` / `modal_button` による compact warning とし、独自 geometry は追加しない。
+- Abort の plan 表示前と Confirm の両方で、対象 session の live `draft_persist_failed` を検査する。
+  保存先のアクセス権が直っても、古い disk buffer の保存成功を新しい live decisions の保存成功とは扱わない。
+  live view の Retry 成功まで同じ typed blocker で拒否する。tab close の Retry / Discard も対象 session だけに適用する。
+  Abort / Skip / D/F で共有する blocker の EN/JA は operation-neutral とし、保存先のアクセス権確認と再試行を案内する。
 
 ### Cherry-pick / revert sequence abort の開始点 (#1127)
 

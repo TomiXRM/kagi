@@ -757,6 +757,8 @@ impl KagiApp {
         self.set_editor_dirty_guard_modal(EditorDirtyGuardModal {
             intent,
             saving: None,
+            draft_save_token: None,
+            conflict_discard_armed: false,
         });
         klog!("editor-ws: dirty-guard");
         cx.notify();
@@ -780,6 +782,17 @@ impl KagiApp {
         }
         if self.host_dirty_guard_open() && !self.may_close_host() {
             self.explain_host_save_wait(cx);
+            return;
+        }
+        if self.dirty_guard_has_unflushed_conflict_draft(cx)
+            && self
+                .editor_dirty_guard_modal()
+                .is_some_and(|modal| !modal.conflict_discard_armed)
+        {
+            if let Some(modal) = self.editor_dirty_guard_modal_mut() {
+                modal.conflict_discard_armed = true;
+            }
+            cx.notify();
             return;
         }
         let Some(modal) = self.take_editor_dirty_guard_modal() else {
@@ -809,6 +822,7 @@ impl KagiApp {
                 // active tab's) so the close does not re-prompt, then close it.
                 if let Some(ui) = self.ui.get_mut(&session) {
                     ui.editor_workspace = None;
+                    ui.conflict = None;
                 }
                 self.close_tab_by_session(session, cx);
             }

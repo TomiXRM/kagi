@@ -39,6 +39,8 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     planTree |-> [a \in Actors |-> "unmerged"], planRev |-> [a \in Actors |-> <<0,0,0,0>>],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
     lease |-> [a \in Actors |-> FALSE], preflight |-> [a \in Actors |-> FALSE],
+    draftOwner |-> 0,
+    recoveryStep |-> 0, recoveryPrimary |-> "none", recoveryHistory |-> {},
     executed |-> [a \in Actors |-> "none"], successful |-> [a \in Actors |-> FALSE],
     receipt |-> [a \in Actors |-> FALSE], released |-> [a \in Actors |-> FALSE],
     reported |-> [a \in Actors |-> FALSE], mutated |-> [a \in Actors |-> FALSE],
@@ -79,30 +81,36 @@ LineToggle(a) == /\ At(a, "edit") /\ ~s.lease[a] /\ ~DraftScenario /\ Kind # "df
 \* ui/conflict_view/special.rs:125-129: D/F is a namespace decision, no text/hunks.
 ChooseNamespace(a) == /\ At(a, "edit") /\ Kind = "df" /\ ~s.lease[a]
     /\ s' = [s EXCEPT !.text[a] = "file", !.pc[a] = "ready", !.event = <<"ChooseNamespace",a>>]
-\* draft_owner.rs:13-18,180-187,210-230: Change captures AND autosaves now.
-\* Broken="capture": remove the changed-capture persistence call (old map bug).
+\* #1732 draft_writer.rs: queue_autosave captures immediately, not durably.
+\* Only the completed autosave/flush acknowledges the primary rename.
 ManualEdit(a) == /\ At(a, "edit") /\ ~s.lease[a] /\ DraftScenario
     /\ s' = [s EXCEPT !.text[a] = "manual", !.pc[a] = IF Broken = "capture" THEN "ready" ELSE "autosaveRead",
         !.captured = @ \cup {<<File(a),s.context[a],"manual">>}, !.event = <<"ManualEdit",a>>]
-\* resolution/drafts.rs:256-301: unlocked load/merge before write; distinct-file
-\* writers preserve each other's records ONLY if present in this read snapshot.
+\* #1732 draft_storage.rs::save_draft_document: acquire the OS sidecar lock
+\* before the checked content-CAS read/merge. This read observes the latest
+\* complete document, including any commit since this editor's original load.
 AutosaveRead(a) == /\ At(a, "autosaveRead")
+    /\ (Broken = "draftLock" \/ s.draftOwner \in {0, a})
     \* Schedule restriction isolates stale overwrite from the shorter torn-read bug.
     /\ (Scenario # "draftRaceLost" \/ s.diskValid)
     /\ s' = [s EXCEPT !.pending[a] = (IF s.diskValid THEN s.disk ELSE {}) \cup {Record(a)},
+        !.draftOwner = IF Broken = "draftLock" THEN @ ELSE a,
         !.readCorrupt = @ \/ ~s.diskValid, !.pc[a] = "autosaveStart", !.event = <<"AutosaveRead",a>>]
-\* resolution.rs:800-806 fs::write opens/truncates destination before write_all.
-\* Split syscall effects so another process or process death can observe a tear.
+\* #1732 draft_storage.rs::write_atomic: same-directory temp, sync_all, rename.
+\* Until rename, neither a reader nor process death can damage the old primary.
+\* Broken="draftAtomic" restores the old truncating destination write.
 AutosaveWriteStart(a) == /\ At(a, "autosaveStart")
-    /\ s' = [s EXCEPT !.diskValid = FALSE, !.disk = {},
-        !.pc[a] = "autosaveFinish", !.event = <<"AutosaveWriteStart(truncate)",a>>]
-\* resolution.rs:800-814: mark_saved only after complete successful fs::write.
+    /\ s' = [s EXCEPT !.diskValid = IF Broken = "draftAtomic" THEN FALSE ELSE @,
+        !.disk = IF Broken = "draftAtomic" THEN {} ELSE @,
+        !.pc[a] = "autosaveFinish", !.event = <<"AutosaveWriteStart(temp)",a>>]
+\* resolution.rs::autosave: mark_saved only after draft_storage's successful rename.
 AutosaveWrite(a) == /\ At(a, "autosaveFinish")
     /\ s' = [s EXCEPT !.diskValid = TRUE, !.disk = s.pending[a],
-        !.committed = @ \cup {Record(a)}, !.pc[a] = "ready", !.event = <<"AutosaveWrite",a>>]
+        !.draftOwner = IF s.draftOwner = a THEN 0 ELSE @,
+        !.committed = @ \cup {Record(a)}, !.pc[a] = "ready", !.event = <<"AutosaveWrite(rename)",a>>]
 \* draft_owner.rs:233-236 logs failure; actions.rs:145 ignores it. No close flush.
 AutosaveFailure(a) == /\ Scenario = "draftIO" /\ At(a, "autosaveStart")
-    /\ s' = [s EXCEPT !.pc[a] = "ready", !.event = <<"AutosaveFailure",a>>]
+    /\ s' = [s EXCEPT !.pc[a] = "ready", !.draftOwner = 0, !.event = <<"AutosaveFailure",a>>]
 \* backend/conflict_ops.rs:195-218,244-288: revision/payload-bound immutable plan.
 \* merge panel's shown staged set: ui/operations/commit.rs:1054-1065.
 Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
@@ -275,13 +283,14 @@ GracefulExit(a, reason) == /\ a \in Participants /\ s.life[a] = "open" /\ ~s.clo
 CloseWindow(a) == GracefulExit(a, "CloseWindow")
 \* ui/mod.rs:3661-3669 flushes settings/issue drafts, NOT conflict documents.
 Quit(a) == GracefulExit(a, "Quit")
-\* resolution.rs:800-806 non-atomic fs::write; environment may kill mid-syscall.
+\* #1732: a crash closes the draft lock fd; the kernel releases its advisory lock.
 \* Only draft crash scenarios allow abrupt exit; liveness uses graceful close.
 Crash(a) == /\ Scenario \in {"draftCrash","draftAtomic"} /\ a = 1
     /\ s.life[a] = "open" /\ s.pc[a] \in {"autosaveRead","autosaveStart","autosaveFinish","ready"}
     /\ s' = [s EXCEPT !.life[a] = "crashed", !.text[a] = "none", !.lease[a] = FALSE,
+        !.draftOwner = IF s.draftOwner = a THEN 0 ELSE @,
         !.event = <<"Crash",a>>]
-\* resolution.rs:817-822 corrupt => absent; drafts.rs:176-247 identity match only.
+\* #1732 draft_storage.rs::read: invalid primary recovers verified .prev or errors;
 \* conflict_detect.rs:78-84 rebuilds sides, restores compatible same-step draft.
 Restart(a) == /\ DraftScenario /\ a \in Participants /\ s.life[a] # "open" /\ ~s.restarted[a]
     /\ s' = [s EXCEPT !.life[a] = "open", !.restarted[a] = TRUE, !.pc[a] = "done",
@@ -354,6 +363,35 @@ MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "
     /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"MetadataRefused",a>>]
 
+\* #1732 drafts.rs::autosave_json + draft_merge.rs::matches_record.
+\* Quotient four successful, lock-serialized transactions after both editors
+\* loaded the same empty baseline. A and B collide on file 1; A then saves
+\* file 2 twice without changing its stale in-memory file-1 body.
+\* Disk includes both the primary and inspection-only recovery bodies.
+RecoveryA == <<1, 0, "A">>
+RecoveryB == <<1, 0, "B">>
+RecoveryOther == <<2, 0, "other">>
+DraftRecoveryNext ==
+    /\ Scenario = "draftRecovery"
+    /\ CASE s.recoveryStep = 0 ->
+          s' = [s EXCEPT !.recoveryPrimary = RecoveryA, !.disk = {RecoveryA},
+              !.committed = {RecoveryA}, !.recoveryStep = 1,
+              !.event = "RecoverySave(A primary)"]
+       [] s.recoveryStep = 1 ->
+          s' = [s EXCEPT !.recoveryPrimary = RecoveryB,
+              !.recoveryHistory = {RecoveryA}, !.disk = {RecoveryA, RecoveryB},
+              !.committed = {RecoveryA, RecoveryB}, !.recoveryStep = 2,
+              !.event = "RecoverySave(B primary, A recovery)"]
+       [] s.recoveryStep \in 2..3 ->
+          LET compared == IF Broken = "preMergeRecovery"
+                          THEN RecoveryA ELSE s.recoveryPrimary
+              kept == {r \in s.recoveryHistory : r # compared}
+          IN s' = [s EXCEPT !.recoveryHistory = kept,
+              !.disk = kept \cup {s.recoveryPrimary, RecoveryOther},
+              !.committed = @ \cup {RecoveryOther}, !.recoveryStep = @ + 1,
+              !.event = "RecoverySave(A other file, adopt B primary, dedup recoveries)"]
+       [] OTHER -> FALSE
+
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
@@ -362,8 +400,9 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
     \/ Depart(a) \/ CloseWindow(a) \/ Quit(a) \/ Crash(a) \/ Restart(a) \/ MetadataRefused(a)
-Next == (\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
-    \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure
+Next == IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+    ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
+        \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars
 \* Fair scheduling cannot save a callback whose weak owner has been destroyed.
 FairSpec == Spec /\ (\A a \in Participants : WF_vars(ActorNext(a)))
@@ -376,12 +415,12 @@ ApprovedRevisionFrozen == ~s.stagedDifferent /\ (s.committedTree = "none" \/ s.c
 ApprovedSavePayloadFrozen == \A a \in Participants : s.executed[a] = "none" \/ s.executed[a] = s.frozen[a]
 \* HOLD for pre-validation WT edits; REFUTE for the later CLI/concurrent window.
 StaleSnapshotNeverWrites == ~s.wroteStale
-\* REFUTE strong universal claim: captured edits may be lost on crash/I/O failure.
+\* REFUTE: abrupt death can interrupt coalescing/in-flight unacknowledged capture.
 DraftNeverLost == (\E a \in Participants : s.restarted[a]) => s.captured \subseteq s.restored
-\* REFUTE: torn JSON observed by another reader/restart, or committed distinct-file
-\* records overwritten by an older load/merge/write snapshot.
+\* HOLD with atomic replacement and the full read/merge/write sidecar lock;
+\* draftAtomic/draftLock negative controls retain the old corrupt/lost updates.
 DraftWriteAtomic == ~s.readCorrupt /\ (s.diskValid => s.committed \subseteq s.disk)
-\* HOLD in fault-free single-writer callback completion; obsolete map P1 is guarded.
+\* HOLD at fault-free writer completion, not at asynchronous queue acceptance.
 ManualCapturePersisted == s.pc[1] = "ready" => s.captured \subseteq s.disk
 \* HOLD with backend append before successful completion/release; no OS crash.
 ReceiptFollowsMutation == \A a \in Participants :

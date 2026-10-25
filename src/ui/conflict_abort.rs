@@ -139,10 +139,18 @@ impl KagiApp {
         self.clear_conflict_abort_modal();
     }
 
-    /// Stage two: hand the frozen request to the conflict family. The family
-    /// owns admission (`begin_write`), the live preflight, execution,
-    /// verification and the receipt — this method decides nothing.
+    /// Stage two: require the checked pane, then hand the frozen request to the
+    /// conflict family. The family owns writer admission (`begin_write`), live
+    /// preflight, execution, verification and the receipt.
     pub fn confirm_conflict_abort(&mut self, cx: &mut Context<Self>) {
+        if !self
+            .active_session()
+            .is_some_and(|owner| self.pane_mutation_admitted(owner))
+        {
+            self.clear_conflict_abort_modal();
+            cx.notify();
+            return;
+        }
         let Some(modal) = self.conflict_abort_modal().cloned() else {
             return;
         };

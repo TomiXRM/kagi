@@ -17,6 +17,28 @@ mod git_fixture;
 #[path = "conflict_draft_inspection_hold.rs"]
 mod inspection_hold;
 
+#[path = "conflict_draft_continue_admission.rs"]
+mod continue_admission;
+pub use continue_admission::{
+    scenario_conflict_draft_continue_restore_admission,
+    scenario_conflict_draft_recovered_save_frozen_payload,
+};
+
+#[path = "conflict_draft_abort_admission.rs"]
+mod abort_admission;
+pub use abort_admission::scenario_conflict_draft_abort_restore_admission;
+
+#[path = "conflict_draft_stale_failure.rs"]
+mod stale_failure;
+pub use stale_failure::{
+    scenario_conflict_draft_fresh_restore_failure, scenario_conflict_draft_stale_restore_async,
+    scenario_conflict_draft_stale_restore_failure, scenario_conflict_draft_stale_restore_success,
+};
+
+#[path = "conflict_draft_restore_io.rs"]
+mod restore_io;
+pub use restore_io::scenario_conflict_draft_restore_io_failure;
+
 const OTHER: &str = "OTHER REPOSITORY PRESERVED RESULT\n";
 
 // Like the existing theme_custom sandbox: restore the runner-owned environment
@@ -417,6 +439,67 @@ fn assert_empty_log(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     );
 }
 
+pub fn scenario_conflict_draft_corrupt_restore(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::presentation_support::Presentation::keep();
+    for language in [Lang::En, Lang::Ja] {
+        let _isolated = IsolatedLog::new();
+        let fixture = content_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.set_lang(language, cx));
+        let backend = kagi_git::Backend::open(&repo).unwrap();
+        let store = backend
+            .resolution_buffer_from_repo()
+            .unwrap()
+            .autosave()
+            .unwrap();
+        std::fs::remove_file(store.with_file_name("buffer.json.prev")).unwrap();
+        let torn = b"{\"files\":[damaged legacy draft";
+        std::fs::write(&store, torn).unwrap();
+        let before = RepositoryState::read(&repo);
+        detect(cx, &app, window);
+        let aside = store.with_file_name("buffer.json.corrupt");
+        assert_eq!(std::fs::read(&aside).unwrap(), torn);
+        assert_unresolved(cx, &app);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
+            let message = kagi_ui_core::i18n::Msg::conflict_draft_rescued("buffer.json.corrupt");
+            assert!(
+                toasts.iter().any(|toast| {
+                    toast.kind == kagi::ui::ToastKind::Error && toast.message.as_ref() == message
+                }),
+                "a damaged draft must announce its preserved file in {language:?}"
+            );
+        });
+        let entries = kagi_git::oplog::read_oplog_tail(100);
+        let rescues: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.op == "conflict-draft-restore")
+            .collect();
+        assert_eq!(rescues.len(), 1);
+        assert!(
+            matches!(&rescues[0].outcome, kagi_git::oplog::OpOutcome::Failed { error }
+            if error == &format!("Draft could not be read; the damaged file was moved aside as {}", aside.display()))
+        );
+        let input = crate::conflict_draft_revision::result_input(cx, &app, window);
+        crate::conflict_draft_revision::replace_result(cx, &app, window, &input, FIRST);
+        assert_eq!(
+            ResolutionBuffer::load(&repo)
+                .unwrap()
+                .resolved_text(Path::new(FILE))
+                .as_deref(),
+            Some(FIRST)
+        );
+        assert_eq!(
+            before.with_appended_oplog(rescues[0]),
+            RepositoryState::read(&repo),
+            "quarantine may append exactly its asserted receipt, but may not mutate Git"
+        );
+        drop(input);
+        unmount(cx, app, window);
+    }
+}
 pub fn scenario_conflict_draft_inspection_empty_legacy(cx: &mut VisualTestAppContext) {
     let _isolated = IsolatedLog::new();
     let fixture = content_fixture(); // Real CLI merge: no Kagi operation or receipt.

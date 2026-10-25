@@ -3,9 +3,10 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed. There are 64 TLC configurations, 38 pure
-properties (1,695,579 input/property evaluations), 23 TLC negative controls,
-35 pure mutants, and 34 saved drill projections with a forged-Skip negative control.
+No product code is imported or changed. The combined atomic-draft/P2 run passed
+69 TLC configurations (89,229 summed distinct states), all 27 TLC negative
+controls, 39 pure properties (1,695,651 evaluations), 36 pure mutants, and
+34 saved drill projections / 46 logs with a rejected forged-Skip negative control.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -157,11 +158,16 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stale-after-preflight` | `StaleSnapshotNeverWrites` | REFUTE | none | External CLI index-write TOCTOU after the last check; not closed by #1733 |
 | `manual-capture` | `ManualCapturePersisted` | HOLD | none | CONTRACT |
 | `manual-capture-broken` | `ManualCapturePersisted` | REFUTE | capture | Negative control; no product issue |
-| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1746 (owner QUESTION) |
+| `draft-crash` | `DraftNeverLost` | REFUTE | none | #1732; capture before acknowledged flush can be lost |
 | `draft-io-quit` | `DraftNeverLost` | REFUTE | none | #1731 |
-| `draft-torn` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-two-writers` | `DraftWriteAtomic` | REFUTE | none | #1732 |
-| `draft-lost-update` | `DraftWriteAtomic` | REFUTE | none | #1732 |
+| `draft-torn` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-torn-broken` | `DraftWriteAtomic` | REFUTE | draftAtomic | Negative control; truncate primary |
+| `draft-two-writers` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-two-writers-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; unlocked read/merge/write |
+| `draft-lost-update` | `DraftWriteAtomic` | HOLD | none | #1732 |
+| `draft-lost-update-broken` | `DraftWriteAtomic` | REFUTE | draftLock | Negative control; stale merge snapshot |
+| `two-writer-recovery` | `DraftWriteAtomic` | HOLD | none | #1732: retain an earlier body after stale-editor other-file autosave |
+| `two-writer-recovery-broken` | `DraftWriteAtomic` | REFUTE | preMergeRecovery | Negative control; deduplicate against the pre-merge editor |
 | `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
 | `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
 | `receipt-continue` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
@@ -191,6 +197,31 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `stash-verify-broken` | `StashAbortRestoresConflictedBytes` | REFUTE | stashVerify | Negative control for #1745: remove restore verification |
 | `continue-liveness` | `ContinueEventuallyRecordedOrReported` | HOLD | none | #1740 |
 | `continue-liveness-broken` | `ContinueEventuallyRecordedOrReported` | REFUTE | workerReceipt | Negative control for #1740 |
+
+The #1732 draft guards cite `resolution/draft_storage.rs`'s OS lock, checked
+content-CAS read, and ADR-0191 atomic temp/sync/rename writer. Its backend
+`draft_writer.rs` captures memory immediately and offers one ordered background
+writer with latest-snapshot coalescing for at most 250 ms before starting.
+An in-flight fsync can extend that window. Queue acceptance is **not** a durable
+acknowledgment: `DraftSave::wait()` / blocking `flush()` must return `Ok`.
+Consequently the unchanged strong `draft-crash` capture invariant remains
+REFUTE; the model retains the real pre-commit crash transition rather than
+quotienting it away. The preceding acknowledged document remains valid.
+This is not a power-loss guarantee. The lock quotient models successful
+acquisition, not the timeout's UI presentation; backend child tests cover the
+two-second error and SIGKILL release. GUI consumers must await barriers off-thread
+and preserve pending/failed close gates; the backend API alone does not wire them.
+
+`two-writer-recovery` refines the successful locked transaction into distinct
+primary and recovery bodies: A saves file 1, B replaces it while preserving A,
+then A saves file 2 twice while its own file-1 body remains unchanged. Recovery
+deduplication compares the actual post-merge primary, not that stale local body.
+The pure `TwoWriterRecoveryRetained` property also covers assembled-hunk body/state
+overrides and both body orderings. The Rust subprocess regression exercises both
+blocking/queued writers and commit orders, checks exact bytes and identity through
+the read-only inspector's owned recovery API, and rotates `.prev` repeatedly.
+
+
 
 ### Pure table (`pure/predict_*.py`)
 
@@ -226,6 +257,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `predict_drafts` | `UnknownOwnerCoalescenceIsFileOnly` | HOLD | CONTRACT |
 | `predict_drafts` | `OnlyPendingRecoveryOutranksDisk` | HOLD | CONTRACT |
 | `predict_drafts` | `DedupMovesLatestToTail` | HOLD | CONTRACT |
+| `predict_drafts` | `TwoWriterRecoveryRetained` | HOLD | #1732: post-merge recovery equality |
 | `predict_skip` | `SkipClassificationNoFalseSuccess` | HOLD | CONTRACT after #1746 C6 |
 | `predict_skip` | `BrokenSignalDominatesMovement` | HOLD | CONTRACT |
 | `predict_skip` | `NextConflictIsSuccessOnObservedMovement` | HOLD | CONTRACT |

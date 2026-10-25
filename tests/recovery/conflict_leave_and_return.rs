@@ -1,6 +1,6 @@
 //! #1748: workspace navigation changes the mounted body, never its draft owner.
 use super::*;
-use gpui::{point, px, ScrollStrategy};
+use gpui::{point, px, Focusable, ScrollStrategy};
 use kagi::ui::i18n::Msg;
 use kagi::ui::workspace_mode::WorkspaceMode;
 
@@ -74,7 +74,19 @@ fn leave_and_return(cx: &mut VisualTestAppContext, lang: Lang) {
     let old_revision = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().revision.clone());
 
     for external_change in [false, true] {
-        click_control(cx, window, "tb-graph-mode");
+        assert!(
+            cx.update_window(window, |_, window, cx| {
+                input.read(cx).focus_handle(cx).is_focused(window)
+            })
+            .unwrap(),
+            "depart from the actual Result input"
+        );
+        if external_change {
+            click_control(cx, window, "tb-graph-mode");
+        } else {
+            cx.simulate_keystrokes(window, "cmd-shift-g");
+            cx.run_until_parked();
+        }
         cx.read(|cx| {
             let state = app.read(cx);
             assert_eq!(state.workspace_mode(), WorkspaceMode::Graph);
@@ -83,6 +95,21 @@ fn leave_and_return(cx: &mut VisualTestAppContext, lang: Lang) {
             assert!(state.view().operation.is_some(), "leaving is not aborting");
         });
         assert!(!drawn(cx, window, "conflict-result-editor"));
+        if !external_change {
+            assert!(
+                cx.update_window(window, |_, window, cx| {
+                    app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
+                })
+                .unwrap(),
+                "keyboard departure retires the hidden Result focus"
+            );
+            cx.simulate_keystrokes(window, "end");
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert_eq!(state.ui().selected, Some(state.view().rows.len() - 1));
+            });
+        }
         crate::native_ax::activate(cx);
         assert!(drawn(cx, window, "operation-strip-back"));
         let back = crate::native_ax::node(cx, window, "operation-strip-back".into());
@@ -155,6 +182,13 @@ fn leave_and_return(cx: &mut VisualTestAppContext, lang: Lang) {
         click_control(cx, window, "operation-strip-back");
         assert!(drawn(cx, window, "conflict-result-editor"));
         assert!(!drawn(cx, window, "operation-strip-back"));
+        assert!(
+            cx.update_window(window, |_, window, cx| {
+                input.read(cx).focus_handle(cx).is_focused(window)
+            })
+            .unwrap(),
+            "Back returns focus to the retained Result editor"
+        );
         cx.read(|cx| {
             let state = app.read(cx);
             assert!(!state.ui().conflict_hidden);

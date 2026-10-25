@@ -662,7 +662,9 @@ impl KagiApp {
     pub(crate) fn leave_takeovers(&mut self, keep: WorkspaceMode) {
         // Keep the sole draft/selection/scroll owner alive while another view
         // occupies the body. Accepted re-detections refresh that owner in place.
-        self.with_ui(|ui| ui.conflict_hidden = ui.conflict.is_some());
+        // Without an operation there is no strip to bring a failed handoff back.
+        let return_available = self.view().operation.is_some();
+        self.with_ui(|ui| ui.conflict_hidden = return_available && ui.conflict.is_some());
         self.close_file_history();
         self.close_ecosystem_view();
         self.with_ui(|ui| ui.branch_cleanup_open = false);
@@ -697,7 +699,15 @@ impl KagiApp {
             return;
         };
         self.with_ui(|ui| ui.conflict_hidden = false);
-        entity.update(cx, |view, cx| view.focus_navigation(window, cx));
+        entity.update(cx, |view, cx| {
+            if let Some(inputs) = view.editor_inputs.as_ref().filter(|_| view.result_editing) {
+                inputs
+                    .result
+                    .update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                view.focus_navigation(window, cx);
+            }
+        });
         cx.notify();
     }
 

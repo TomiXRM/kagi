@@ -172,6 +172,10 @@ remains passive and Abort/Skip stay separate at the trailing edge. Do not add a
 toolbar item or copy drafts to implement navigation. Returning remounts the same
 entity, file/hunk selection, scrolled editors and unsaved Result; accepted
 background refreshes update the retained pane without taking over the body.
+Departure retires hidden Result focus to the workspace root so keyboard actions
+remain available; Back restores the same editing input's focus. If the operation
+ends externally before its draft can be preserved, reveal the retained Result
+while handoff is pending or failed: recovery must not depend on a vanished strip.
 
 #1016 PR B extends the same dialog-button contract to Clone, Remote Browse,
 Smart Commit, Update, App Notice, Trust Repo, PR field editing, and Editor

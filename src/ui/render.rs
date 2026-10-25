@@ -337,6 +337,23 @@ impl Render for KagiApp {
             )
         };
         self.sync_workspace_motion_visibility(center, cx);
+        // A retained Result is not in the next dispatch tree while away.
+        // Retire its focus just like hidden Home/Graph navigation stops.
+        if self.ui().conflict_hidden
+            && self.ui().conflict.as_ref().is_some_and(|pane| {
+                pane.read(cx).editor_inputs.as_ref().is_some_and(|inputs| {
+                    inputs
+                        .result
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                })
+            })
+        {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
+            }
+        }
         // A hidden Graph stop must not strand focus after a workspace takeover.
         let graph_hidden = center != Some(super::workspace::CenterPane::CommitList);
         if graph_hidden

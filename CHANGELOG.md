@@ -30,6 +30,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Make Graph, PR and Editor navigation leave the conflict workspace without discarding its live Result, selected file/hunk or scroll. Keep the in-progress operation and existing Abort/Skip actions visible below the toolbar, with one secondary Back to conflicts / conflict に戻る button that restores the same pane. Refresh retained conflicts in place while away; keep existing write-blocker explanations and admission guards. (#1748)
+  - Retire hidden Result input focus to the workspace root on keyboard/menu/swipe departure, and return focus to the same Result when Back restores it. If the operation ends externally while its draft is still pending or failed, reveal the retained pane instead of stranding it after the operation strip disappears.
 
 - Record conflict Continue, Skip and merge-to-Commit-Panel handoffs in the backend worker before releasing the write lease. Closing the host no longer discards their receipts; recording failures retain the attempted outcome. (#1740)
   - Preserve the next-conflict stop in the recording-failure acknowledgment when Continue succeeds at one replay but its receipt cannot be appended. Classify from the execution outcome, not the display row's recording-failure conversion. (#1775 review)

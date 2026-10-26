@@ -10,11 +10,13 @@ use super::{theme, MainDiffSource};
 use crate::ui::i18n::Msg;
 
 /// Worker-owned sources. An error is still a present version, never an absent side.
+#[derive(Clone)]
 pub(crate) struct PreparedPdfPair {
     pub old: PreparedPdfSide,
     pub new: PreparedPdfSide,
 }
 
+#[derive(Clone)]
 pub(crate) enum PreparedPdfSide {
     Absent,
     Source(PdfSource),
@@ -22,6 +24,7 @@ pub(crate) enum PreparedPdfSide {
 }
 
 impl PreparedPdfSide {
+    #[cfg(test)]
     pub(crate) fn from_read(expected: bool, bytes: Result<Option<Vec<u8>>, String>) -> Self {
         if !expected {
             return Self::Absent;
@@ -41,16 +44,18 @@ pub(crate) struct DiffPdfViewers {
     // The host redraws its header when the pair changes mode. Clones share the
     // subscription; dropping the last pair drops it and all child subscriptions.
     _observation: std::rc::Rc<Subscription>,
+    retired: std::rc::Rc<std::cell::Cell<bool>>,
+    subscriptions: std::rc::Rc<std::cell::RefCell<Vec<Subscription>>>,
 }
 
 struct PdfPairState {
     old: PdfSide,
     new: PdfSide,
     synchronized: bool,
-    retired: bool,
+    retired: std::rc::Rc<std::cell::Cell<bool>>,
     active_old: bool,
-    _scroll_subscriptions: Vec<Subscription>,
-    focus_subscriptions: Vec<Subscription>,
+    subscriptions: std::rc::Rc<std::cell::RefCell<Vec<Subscription>>>,
+    focus_installed: bool,
 }
 
 #[derive(Clone)]
@@ -62,6 +67,23 @@ enum PdfSide {
 
 impl DiffPdfViewers {
     pub(crate) fn new<V: 'static>(sources: PreparedPdfPair, cx: &mut Context<V>) -> Self {
+        Self::with_synchronization(sources, false, cx)
+    }
+
+    pub(crate) fn new_synchronized<V: 'static>(
+        sources: PreparedPdfPair,
+        cx: &mut Context<V>,
+    ) -> Self {
+        Self::with_synchronization(sources, true, cx)
+    }
+
+    fn with_synchronization<V: 'static>(
+        sources: PreparedPdfPair,
+        synchronized: bool,
+        cx: &mut Context<V>,
+    ) -> Self {
+        let retired = std::rc::Rc::new(std::cell::Cell::new(false));
+        let subscriptions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let state = cx.new(|cx| {
             let mut mount = |side| match side {
                 PreparedPdfSide::Absent => PdfSide::Absent,
@@ -74,13 +96,13 @@ impl DiffPdfViewers {
             };
             let old = mount(sources.old);
             let new = mount(sources.new);
-            let mut subscriptions = Vec::new();
+            let mut scroll_subscriptions = Vec::new();
             for (side, old_side) in [(&old, true), (&new, false)] {
                 if let PdfSide::Viewer(viewer) = side {
-                    subscriptions.push(cx.subscribe(
+                    scroll_subscriptions.push(cx.subscribe(
                         viewer,
                         move |this: &mut PdfPairState, _, event: &PdfScrollChanged, cx| {
-                            if this.retired {
+                            if this.retired.get() {
                                 return;
                             }
                             this.active_old = old_side;
@@ -91,20 +113,23 @@ impl DiffPdfViewers {
                     ));
                 }
             }
+            subscriptions.borrow_mut().extend(scroll_subscriptions);
             PdfPairState {
                 old,
                 new,
-                synchronized: false,
-                retired: false,
+                synchronized,
+                retired: retired.clone(),
                 active_old: true,
-                _scroll_subscriptions: subscriptions,
-                focus_subscriptions: Vec::new(),
+                subscriptions: subscriptions.clone(),
+                focus_installed: false,
             }
         });
         let observation = cx.observe(&state, |_, _, cx| cx.notify());
         Self {
             state,
             _observation: std::rc::Rc::new(observation),
+            retired,
+            subscriptions,
         }
     }
 
@@ -119,7 +144,7 @@ impl DiffPdfViewers {
         // Read failures may recover after fetching missing objects. Rebuild
         // those states, and any changed side presence, on an accepted re-read.
         let state = self.state.read(cx);
-        same_side(&state.old, &next.old) && same_side(&state.new, &next.new)
+        !self.retired.get() && same_side(&state.old, &next.old) && same_side(&state.new, &next.new)
     }
 
     /// Keep the focused body alive for the host's post-paint membership check,
@@ -145,17 +170,19 @@ impl DiffPdfViewers {
     }
 
     pub(crate) fn synchronized(&self, cx: &App) -> bool {
-        self.state.read(cx).synchronized
+        !self.retired.get() && self.state.read(cx).synchronized
+    }
+
+    pub(crate) fn retire_detached(&self) {
+        self.retired.set(true);
+        self.subscriptions.borrow_mut().clear();
     }
 
     pub(crate) fn retire(&self, cx: &mut App) {
-        self.state.update(cx, |state, _| {
-            // The previous frame may still retain the pair's render entity.
-            // Cancel at replacement, not when that frame finally releases it.
-            state.retired = true;
+        self.retire_detached();
+        self.state.update(cx, |state, cx| {
             state.synchronized = false;
-            state._scroll_subscriptions.clear();
-            state.focus_subscriptions.clear();
+            cx.notify();
         });
     }
 
@@ -193,14 +220,18 @@ impl DiffPdfViewers {
         ))
     }
 
-    pub(crate) fn render(&self) -> gpui::AnyElement {
-        self.state.clone().into_any_element()
+    pub(crate) fn render_side(&self, old: bool) -> gpui::AnyElement {
+        PdfSideBody {
+            state: self.state.clone(),
+            old,
+        }
+        .into_any_element()
     }
 }
 
 impl PdfPairState {
     fn can_synchronize(&self, cx: &App) -> bool {
-        !self.retired
+        !self.retired.get()
             && [&self.old, &self.new].into_iter().all(
                 |side| matches!(side, PdfSide::Viewer(viewer) if viewer.read(cx).page_count() > 0),
             )
@@ -238,79 +269,34 @@ impl PdfPairState {
     }
 }
 
-impl Render for PdfPairState {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.retired && self.focus_subscriptions.is_empty() {
-            for (side, old) in [(&self.old, true), (&self.new, false)] {
-                if let PdfSide::Viewer(viewer) = side {
-                    let focus = viewer.read(cx).focus_scope_handle();
-                    self.focus_subscriptions.push(cx.on_focus_in(
-                        &focus,
-                        window,
-                        move |this, _, _| this.active_old = old,
-                    ));
-                }
-            }
-        }
-        div()
-            .id("main-diff-pdf-panel")
-            .flex_1()
-            .min_h(px(0.))
-            .min_w(px(0.))
-            .overflow_hidden()
-            .flex()
-            .flex_row()
-            .child(self.old.column(
-                "main-diff-pdf-old",
-                Msg::DiffPdfPrevious,
-                Msg::DiffPdfNoPrevious,
-            ))
-            .child(
-                div()
-                    .w(px(1.))
-                    .h_full()
-                    .flex_shrink_0()
-                    .bg(rgb(theme::theme().surface)),
-            )
-            .child(self.new.column(
-                "main-diff-pdf-new",
-                Msg::DiffPdfCurrent,
-                Msg::DiffPdfNoCurrent,
-            ))
-            .into_any_element()
-    }
+#[derive(gpui::IntoElement)]
+struct PdfSideBody {
+    state: Entity<PdfPairState>,
+    old: bool,
 }
 
-impl PdfSide {
-    fn column(&self, id: &'static str, label: Msg, absent: Msg) -> gpui::AnyElement {
-        let label = SharedString::from(label.t());
-        div()
-            .id(id)
-            .role(gpui::Role::Group)
-            .aria_label(label.clone())
-            .aria_description(match self {
-                Self::Absent => absent.t(),
-                Self::Failed(_) => Msg::DiffPdfReadFailed.t(),
-                Self::Viewer(_) => Msg::DiffPdfPreview.t(),
-            })
-            .flex_1()
-            .min_w(px(0.))
-            .min_h(px(0.))
-            .h_full()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .text_color(rgb(theme::theme().text_sub))
-                    .child(label),
-            )
-            .child(match self {
-                Self::Viewer(viewer) => div()
+impl RenderOnce for PdfSideBody {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.state.update(cx, |state, cx| {
+            if !state.retired.get() && !state.focus_installed {
+                for (side, old) in [(&state.old, true), (&state.new, false)] {
+                    if let PdfSide::Viewer(viewer) = side {
+                        let focus = viewer.read(cx).focus_scope_handle();
+                        state.subscriptions.borrow_mut().push(cx.on_focus_in(
+                            &focus,
+                            window,
+                            move |this, _, _| {
+                                if !this.retired.get() {
+                                    this.active_old = old;
+                                }
+                            },
+                        ));
+                    }
+                }
+                state.focus_installed = true;
+            }
+            match if self.old { &state.old } else { &state.new } {
+                PdfSide::Viewer(viewer) => div()
                     .flex_1()
                     .min_h(px(0.))
                     .min_w(px(0.))
@@ -319,10 +305,18 @@ impl PdfSide {
                     .overflow_hidden()
                     .child(viewer.clone())
                     .into_any_element(),
-                Self::Absent => status(absent.t(), None),
-                Self::Failed(error) => status(Msg::DiffPdfReadFailed.t(), Some(error)),
-            })
-            .into_any_element()
+                PdfSide::Absent => status(
+                    if self.old {
+                        Msg::DiffPdfNoPrevious
+                    } else {
+                        Msg::DiffPdfNoCurrent
+                    }
+                    .t(),
+                    None,
+                ),
+                PdfSide::Failed(error) => status(Msg::DiffPdfReadFailed.t(), Some(error)),
+            }
+        })
     }
 }
 

@@ -4,7 +4,11 @@ use super::{
     build_main_diff_view, CompareTarget, DiffImagePair, Landed, MainDiffRead, MainDiffSource,
     MainDiffView,
 };
-use crate::ui::diff_view::pdf::{is_pdf_path, PreparedPdfPair, PreparedPdfSide};
+use crate::ui::diff_view::pdf::is_pdf_path;
+#[cfg(test)]
+use crate::ui::diff_view::pdf::PreparedPdfSide;
+use crate::ui::diff_view::{SideContent, SideFailure, SideHeader, SideMetadata, SidePair};
+use crate::ui::i18n::Msg;
 
 impl MainDiffRead {
     /// Open `repo` read-only and prepare the selected file's presentation,
@@ -129,7 +133,7 @@ impl MainDiffRead {
         };
         match result {
             Ok(file_diff) => {
-                let (pdfs, images) = prepare_diff_media(
+                let pair = prepare_diff_media(
                     &backend,
                     &file_diff,
                     &source,
@@ -137,7 +141,12 @@ impl MainDiffRead {
                     compare_head.as_ref(),
                     rename_from,
                 );
-                let view = if pdfs.is_some() {
+                let pdfs = pair.as_ref().and_then(SidePair::pdf_sources);
+                let images = pair.as_ref().and_then(image_pair);
+                let view = if pair
+                    .as_ref()
+                    .is_some_and(|pair| pair.headers[0].id == "main-diff-pdf-old")
+                {
                     // A PDF is a pair of documents, not text rows or hunk actions.
                     MainDiffView {
                         title: path.to_string_lossy().into_owned().into(),
@@ -146,13 +155,15 @@ impl MainDiffRead {
                         hunk_approvals: Default::default(),
                         height_source: Default::default(),
                         source,
-                        images: None,
+                        images,
+                        side_pair: pair,
                         lang: None,
                         highlighted: None,
                     }
                 } else {
                     let mut view = build_main_diff_view(&file_diff, path, file_index, source);
                     view.images = images;
+                    view.side_pair = pair;
                     view
                 };
                 Landed::Show(Box::new((file_diff, view, pdfs)))
@@ -162,8 +173,7 @@ impl MainDiffRead {
     }
 }
 
-/// Classify by extension first, then bounded signatures. Ordinary text never
-/// gets additional full old/new byte vectors just to decide its presentation.
+/// Source-faithful adapters feed the same independent classification as conflict.
 fn prepare_diff_media(
     backend: &kagi_git::Backend,
     file_diff: &kagi_git::FileDiff,
@@ -171,18 +181,16 @@ fn prepare_diff_media(
     path: &std::path::Path,
     compare_head: Option<&kagi_git::CommitId>,
     rename_from: Option<&std::path::Path>,
-) -> (Option<PreparedPdfPair>, Option<DiffImagePair>) {
+) -> Option<SidePair> {
     use kagi_git::backend::file_reads::FileReadSource;
 
     if matches!(
         source,
         MainDiffSource::Synthetic | MainDiffSource::Commit { commit: None, .. }
     ) {
-        return (None, None);
+        return None;
     }
     let (old_path, new_path) = side_paths(file_diff, path, rename_from);
-    let pdf_extension =
-        is_pdf_path(path) || old_path.is_some_and(is_pdf_path) || new_path.is_some_and(is_pdf_path);
     let parent = match source {
         MainDiffSource::Commit {
             commit: Some(commit),
@@ -228,93 +236,75 @@ fn prepare_diff_media(
         ),
         MainDiffSource::Synthetic | MainDiffSource::Commit { commit: None, .. } => unreachable!(),
     };
-    let prepared = prepare_side_pair(
-        backend,
-        [old, new],
-        PreparationPolicy::Diff {
-            pdf_extension,
-            binary: file_diff.is_binary,
-            expected: [old_path.is_some(), new_path.is_some()],
-        },
-    );
-    (prepared.pdfs, prepared.images)
+    // Keep ordinary text on its existing row/projection path without full copies.
+    let media = |side: &MediaSide<'_>| match side {
+        MediaSide::File(source, path) => {
+            is_pdf_path(path)
+                || matches!(
+                    backend.file_identity(*source, path),
+                    Ok(Some((_, 0o120000 | 0o160000)))
+                )
+                || matches!(probe_media(backend, *source, path), Ok(Some(_)))
+        }
+        _ => false,
+    };
+    if !file_diff.is_binary && !media(&old) && !media(&new) {
+        return None;
+    }
+    let [left, right] = prepare_content_pair(backend, [old, new]);
+    let pdf = matches!(left, SideContent::Pdf { .. })
+        || matches!(right, SideContent::Pdf { .. })
+        || old_path.is_some_and(is_pdf_path)
+        || new_path.is_some_and(is_pdf_path);
+    Some(SidePair {
+        left,
+        right,
+        headers: [
+            SideHeader {
+                label: (if pdf {
+                    Msg::DiffPdfPrevious
+                } else {
+                    Msg::DiffImageBefore
+                })
+                .t()
+                .into(),
+                accent: None,
+                id: if pdf {
+                    "main-diff-pdf-old"
+                } else {
+                    "main-diff-image-old"
+                },
+                absent: Msg::DiffPdfNoPrevious,
+            },
+            SideHeader {
+                label: (if pdf {
+                    Msg::DiffPdfCurrent
+                } else {
+                    Msg::DiffImageAfter
+                })
+                .t()
+                .into(),
+                accent: None,
+                id: if pdf {
+                    "main-diff-pdf-new"
+                } else {
+                    "main-diff-image-new"
+                },
+                absent: Msg::DiffPdfNoCurrent,
+            },
+        ],
+    })
 }
 
-pub(crate) enum PreparationPolicy {
-    Diff {
-        pdf_extension: bool,
-        binary: bool,
-        expected: [bool; 2],
-    },
-    Conflict(kagi_git::ConflictKind),
-}
+pub(crate) const IMAGE_SIZE_CAP: usize = 8 * 1024 * 1024;
+pub(crate) const PDF_SIZE_CAP: usize = 10 * 1024 * 1024;
 
-#[derive(Default)]
-pub(crate) struct PreparedSidePair {
-    pub pdfs: Option<PreparedPdfPair>,
-    pub images: Option<DiffImagePair>,
-    pub raw: Option<[crate::ui::conflict_binary_view::SideData; 2]>,
-}
-
-/// The only side-pair byte/media preparation boundary. Both callers invoke it
-/// in a background task; descriptors are frozen before leaving their owner.
-pub(crate) fn prepare_side_pair(
+/// Called only by host preparation workers. Each side has its own mode and budget.
+pub(crate) fn prepare_content_pair(
     backend: &kagi_git::Backend,
-    [old, new]: [MediaSide<'_>; 2],
-    policy: PreparationPolicy,
-) -> PreparedSidePair {
-    const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
-    let PreparationPolicy::Diff {
-        pdf_extension,
-        binary,
-        expected,
-    } = policy
-    else {
-        let PreparationPolicy::Conflict(kind) = policy else {
-            unreachable!()
-        };
-        return PreparedSidePair {
-            raw: Some([
-                prepare_raw_side(backend, old, kind),
-                prepare_raw_side(backend, new, kind),
-            ]),
-            ..Default::default()
-        };
-    };
-    let signature = |side: &MediaSide<'_>| {
-        matches!(
-            side.read(|source, path| backend.file_has_prefix(source, path, b"%PDF-")),
-            Ok(Some(true))
-        )
-    };
-    if pdf_extension || signature(&old) || signature(&new) {
-        return PreparedSidePair {
-            pdfs: Some(PreparedPdfPair {
-                old: PreparedPdfSide::from_read(
-                    expected[0],
-                    old.read(|source, path| backend.file_bytes(source, path, MAX_PDF_BYTES)),
-                ),
-                new: PreparedPdfSide::from_read(
-                    expected[1],
-                    new.read(|source, path| backend.file_bytes(source, path, MAX_PDF_BYTES)),
-                ),
-            }),
-            ..Default::default()
-        };
-    }
-    if !binary {
-        return PreparedSidePair::default();
-    }
-    // Only the existing binary-image path needs unrestricted encoded bytes.
-    let bytes = |side: &MediaSide<'_>| {
-        side.read(|source, path| backend.file_bytes(source, path, usize::MAX))
-            .ok()
-            .flatten()
-    };
-    PreparedSidePair {
-        images: image_pair_from_bytes(bytes(&old), bytes(&new)),
-        ..Default::default()
-    }
+    sides: [MediaSide<'_>; 2],
+) -> [SideContent; 2] {
+    sides.map(|side| prepare_content(backend, side))
 }
 
 pub(crate) enum MediaSide<'a> {
@@ -326,77 +316,188 @@ pub(crate) enum MediaSide<'a> {
     Failed(String),
 }
 
-impl MediaSide<'_> {
-    fn read<T>(
-        &self,
-        read: impl FnOnce(
-            kagi_git::backend::file_reads::FileReadSource<'_>,
-            &std::path::Path,
-        ) -> Result<Option<T>, kagi_git::GitError>,
-    ) -> Result<Option<T>, String> {
-        match self {
-            Self::Absent => Ok(None),
-            Self::File(source, path) => read(*source, path).map_err(|error| error.to_string()),
-            Self::Failed(error) => Err(error.clone()),
+fn prepare_content(backend: &kagi_git::Backend, side: MediaSide<'_>) -> SideContent {
+    use kagi_git::backend::file_reads::FileReadSource;
+    let mut meta = SideMetadata::default();
+    let (source, path) = match side {
+        MediaSide::Absent => return SideContent::Absent,
+        MediaSide::Failed(error) => {
+            meta.error = Some(SideFailure::Read(error.into()));
+            return SideContent::Binary(meta);
         }
+        MediaSide::File(source, path) => (source, path),
+    };
+    let conflict = matches!(source, FileReadSource::ConflictStage { .. });
+    let (oid, mode) = match backend.file_identity(source, path) {
+        Ok(Some(identity)) => identity,
+        Ok(None) => return SideContent::failed("Missing source"),
+        Err(error) => return SideContent::failed(error.to_string()),
+    };
+    let oid = oid.map(gpui::SharedString::from);
+    meta.oid = oid.clone();
+    if mode == 0o160000 {
+        return SideContent::Submodule(meta);
     }
+    let symlink = mode == 0o120000;
+    // Freeze index/HEAD reads to the identity just classified.
+    let source = match (source, oid.as_deref()) {
+        (FileReadSource::Workdir, _) => FileReadSource::Workdir,
+        (_, Some(oid)) => FileReadSource::ConflictStage { oid, mode },
+        _ => source,
+    };
+    let read = (|| {
+        meta.size = backend
+            .file_size(source, path)
+            .map_err(|e| SideFailure::Read(e.to_string().into()))?;
+        if meta.size.is_none() {
+            return Err(SideFailure::Read("Missing source".into()));
+        }
+        // Even a prefix read inflates an entire ODB blob in libgit2. Reject
+        // anything beyond the largest format budget using its header first.
+        if meta.size.is_some_and(|size| size > PDF_SIZE_CAP as u64) {
+            return Err(SideFailure::TooLarge);
+        }
+        let kind = if symlink {
+            None
+        } else {
+            probe_media(backend, source, path)
+                .map_err(|e| SideFailure::Read(e.to_string().into()))?
+        };
+        let pdf = !symlink
+            && (matches!(kind, Some(kagi_domain::diff::MediaKind::Pdf))
+                || (kind.is_none() && is_pdf_path(path)));
+        let cap = if pdf { PDF_SIZE_CAP } else { IMAGE_SIZE_CAP };
+        if meta.size.is_some_and(|size| size > cap as u64) {
+            return Err(SideFailure::TooLarge);
+        }
+        let bytes = backend
+            .file_bytes(source, path, cap)
+            .map_err(|e| SideFailure::Read(e.to_string().into()))?
+            .ok_or_else(|| SideFailure::Read("Missing source".into()))?;
+        Ok((bytes, pdf))
+    })();
+    let (bytes, pdf) = match read {
+        Ok(value) => value,
+        Err(error) => {
+            meta.error = Some(error);
+            return if symlink {
+                SideContent::Symlink { target: None, meta }
+            } else {
+                SideContent::Binary(meta)
+            };
+        }
+    };
+    if symlink {
+        return SideContent::Symlink {
+            target: Some(String::from_utf8_lossy(&bytes).into_owned().into()),
+            meta,
+        };
+    }
+    if pdf {
+        return SideContent::Pdf {
+            source: kagi_ui_editor::PdfSource::from_bytes(bytes),
+            meta,
+        };
+    }
+    content_from_bytes(path, bytes, meta, conflict)
 }
 
-fn prepare_raw_side(
+fn probe_media(
     backend: &kagi_git::Backend,
-    side: MediaSide<'_>,
-    kind: kagi_git::ConflictKind,
-) -> crate::ui::conflict_binary_view::SideData {
+    source: kagi_git::backend::file_reads::FileReadSource<'_>,
+    path: &std::path::Path,
+) -> Result<Option<kagi_domain::diff::MediaKind>, kagi_git::GitError> {
+    let mut prefix = [0; 12];
+    Ok(backend
+        .file_prefix(source, path, &mut prefix)?
+        .and_then(|count| kagi_domain::diff::media_kind(&prefix[..count])))
+}
+
+fn content_from_bytes(
+    path: &std::path::Path,
+    bytes: Vec<u8>,
+    mut meta: SideMetadata,
+    conflict: bool,
+) -> SideContent {
     use crate::ui::avatar_fetch::{classify_image, ImageClassification};
-    use crate::ui::conflict_binary_view::{viewer_mode, BinaryViewMode, SideData, IMAGE_SIZE_CAP};
-    use kagi_git::backend::file_reads::FileReadSource;
-    let MediaSide::File(source @ FileReadSource::ConflictStage { oid, .. }, path) = side else {
-        return SideData::absent();
-    };
-    let mut data = SideData {
-        present: true,
-        oid_short: oid.chars().take(7).collect(),
-        size: None,
-        mode: viewer_mode(kind, false, None),
-        image: None,
-        symlink_target: None,
-        error: None,
-    };
-    match backend.file_size(source, path) {
-        Ok(size) => data.size = size,
-        Err(error) => {
-            data.error = Some(error.to_string());
-            return data;
-        }
-    }
-    if kind == kagi_git::ConflictKind::Submodule {
-        return data;
-    }
-    if kind != kagi_git::ConflictKind::Symlink && data.size.is_none_or(|size| size > IMAGE_SIZE_CAP)
-    {
-        return data;
-    }
-    match backend.file_bytes(source, path, IMAGE_SIZE_CAP as usize) {
-        Ok(Some(bytes)) if kind == kagi_git::ConflictKind::Symlink => {
-            data.symlink_target = Some(String::from_utf8_lossy(&bytes).into_owned());
-        }
-        Ok(Some(bytes)) => {
-            if let Some(fmt) = classify_image(path, &bytes, ImageClassification::ExtensionThenMagic)
-            {
-                klog!(
-                    "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
-                    data.oid_short,
-                    fmt,
-                    bytes.len()
-                );
-                data.image = Some(std::sync::Arc::new(gpui::Image::from_bytes(fmt, bytes)));
-                data.mode = BinaryViewMode::Image;
+    if let Some(fmt) = classify_image(path, &bytes, ImageClassification::FilePreview) {
+        let decoded = decode_image(&bytes);
+        let (decoded, dimensions) = match decoded {
+            Ok((image, dimensions)) => (Ok(image), Some(dimensions)),
+            Err(error) => {
+                meta.error = Some(SideFailure::Decode);
+                (Err(error), None)
             }
+        };
+        if conflict {
+            let oid_short: String = meta.oid.as_deref().unwrap_or("").chars().take(7).collect();
+            klog!(
+                "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
+                oid_short,
+                fmt,
+                bytes.len()
+            );
         }
-        Ok(None) => {}
-        Err(error) => data.error = Some(error.to_string()),
+        return SideContent::Image {
+            encoded: std::sync::Arc::new(gpui::Image::from_bytes(fmt, bytes)),
+            decoded,
+            dimensions,
+            meta,
+        };
     }
-    data
+    // This text is rendered by the same selectable TextView as oplog details.
+    if bytes.len() <= crate::ui::oplog_render::SELECTABLE_DETAIL_MAX && !bytes.contains(&0) {
+        if let Ok(text) = String::from_utf8(bytes) {
+            return SideContent::Text {
+                text: text.into(),
+                meta,
+            };
+        }
+    }
+    SideContent::Binary(meta)
+}
+
+fn decode_image(
+    bytes: &[u8],
+) -> Result<(std::sync::Arc<gpui::RenderImage>, (u32, u32)), gpui::SharedString> {
+    use image::AnimationDecoder as _;
+    let frames = (|| -> Result<Vec<image::Frame>, image::ImageError> {
+        match kagi_domain::diff::media_kind(bytes) {
+            Some(kagi_domain::diff::MediaKind::Gif) => {
+                image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))?
+                    .into_frames()
+                    .collect_frames()
+            }
+            Some(kagi_domain::diff::MediaKind::Webp) => {
+                let decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes))?;
+                if decoder.has_animation() {
+                    decoder.into_frames().collect_frames()
+                } else {
+                    Ok(vec![image::Frame::new(
+                        image::DynamicImage::from_decoder(decoder)?.into_rgba8(),
+                    )])
+                }
+            }
+            _ => Ok(vec![image::Frame::new(
+                image::load_from_memory(bytes)?.into_rgba8(),
+            )]),
+        }
+    })();
+    let mut frames = frames.map_err(|error| gpui::SharedString::from(error.to_string()))?;
+    let dimensions = frames
+        .first()
+        .ok_or_else(|| gpui::SharedString::from("No image frames"))?
+        .buffer()
+        .dimensions();
+    for frame in &mut frames {
+        for pixel in frame.buffer_mut().pixels_mut() {
+            pixel.0.swap(0, 2);
+        }
+    }
+    Ok((
+        std::sync::Arc::new(gpui::RenderImage::new(frames)),
+        dimensions,
+    ))
 }
 
 /// Honor the actual delta's distinct paths, never look up a renamed old blob
@@ -419,23 +520,27 @@ fn side_paths<'a>(
     (old, new)
 }
 
-fn image_pair_from_bytes(old: Option<Vec<u8>>, new: Option<Vec<u8>>) -> Option<DiffImagePair> {
-    let pair = DiffImagePair {
-        old_exists: old.is_some(),
-        new_exists: new.is_some(),
-        old: old.and_then(crate::ui::avatar_fetch::image_from_bytes),
-        new: new.and_then(crate::ui::avatar_fetch::image_from_bytes),
+fn image_pair(pair: &SidePair) -> Option<DiffImagePair> {
+    let encoded = |side: &SideContent| match side {
+        SideContent::Image { encoded, .. } => Some(encoded.clone()),
+        _ => None,
     };
-    (pair.old.is_some() || pair.new.is_some()).then_some(pair)
+    let images = DiffImagePair {
+        old_exists: pair.left.is_present(),
+        new_exists: pair.right.is_present(),
+        old: encoded(&pair.left),
+        new: encoded(&pair.right),
+    };
+    (images.old.is_some() || images.new.is_some()).then_some(images)
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn shared_preparation_preserves_diff_media_snapshot() {
-        use super::*;
-        use kagi_git::backend::file_reads::FileReadSource;
-        use std::path::Path;
+    use super::*;
+    use kagi_git::backend::file_reads::FileReadSource;
+    use std::path::Path;
+
+    fn repository() -> (tempfile::TempDir, kagi_git::Backend) {
         let temp = tempfile::tempdir().unwrap();
         assert!(std::process::Command::new("git")
             .args(["init", "-q"])
@@ -444,96 +549,194 @@ mod tests {
             .unwrap()
             .success());
         let backend = kagi_git::Backend::open(temp.path()).unwrap();
+        (temp, backend)
+    }
+
+    #[test]
+    fn bm_text_keeps_ordinary_diff_hunks() {
+        let (temp, backend) = repository();
+        let path = Path::new("ordinary.txt");
+        for prefix in ["BMI,height", "BM25 ranking"] {
+            std::fs::write(temp.path().join(path), format!("{prefix}\nold\n")).unwrap();
+            assert!(std::process::Command::new("git")
+                .args(["add", "ordinary.txt"])
+                .current_dir(temp.path())
+                .status()
+                .unwrap()
+                .success());
+            std::fs::write(temp.path().join(path), format!("{prefix}\nnew\n")).unwrap();
+            let diff = backend.unstaged_file_diff(path).unwrap();
+            assert!(!diff.is_binary && !diff.hunks.is_empty());
+            assert!(prepare_diff_media(
+                &backend,
+                &diff,
+                &MainDiffSource::Unstaged { path: path.into() },
+                path,
+                None,
+                None,
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn selectable_text_budget_is_inclusive_and_preserves_metadata() {
+        let cap = crate::ui::oplog_render::SELECTABLE_DETAIL_MAX;
+        for size in [cap - 1, cap, cap + 1, IMAGE_SIZE_CAP] {
+            let side = content_from_bytes(
+                Path::new("text"),
+                vec![b'x'; size],
+                SideMetadata {
+                    size: Some(size as u64),
+                    oid: Some("frozen".into()),
+                    ..SideMetadata::default()
+                },
+                false,
+            );
+            assert_eq!(side.metadata().unwrap().size, Some(size as u64));
+            assert_eq!(side.metadata().unwrap().oid.as_deref(), Some("frozen"));
+            assert!(side.metadata().unwrap().error.is_none());
+            if size <= cap {
+                assert!(matches!(side, SideContent::Text { text, .. } if text.len() == size));
+            } else {
+                assert!(matches!(side, SideContent::Binary(_)));
+            }
+        }
+    }
+
+    #[test]
+    fn attributed_large_utf8_diff_uses_binary_metadata() {
+        let (temp, backend) = repository();
+        let path = Path::new("data.json");
+        std::fs::write(temp.path().join(".gitattributes"), "data.json -diff\n").unwrap();
+        let text = "é".repeat(crate::ui::oplog_render::SELECTABLE_DETAIL_MAX);
+        std::fs::write(temp.path().join(path), &text).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["add", ".gitattributes", "data.json"])
+            .current_dir(temp.path())
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(temp.path().join(path), format!("{text}\n")).unwrap();
+        let diff = backend.unstaged_file_diff(path).unwrap();
+        assert!(diff.is_binary);
+        let pair = prepare_diff_media(
+            &backend,
+            &diff,
+            &MainDiffSource::Unstaged { path: path.into() },
+            path,
+            None,
+            None,
+        )
+        .unwrap();
+        for (side, size) in [(&pair.left, text.len()), (&pair.right, text.len() + 1)] {
+            assert!(matches!(side, SideContent::Binary(_)));
+            assert_eq!(side.metadata().unwrap().size, Some(size as u64));
+            assert!(side.metadata().unwrap().error.is_none());
+        }
+        assert!(pair.left.metadata().unwrap().oid.is_some());
+    }
+
+    #[test]
+    fn oversized_frozen_blob_is_rejected_before_payload_probe() {
+        let (temp, backend) = repository();
+        let size = PDF_SIZE_CAP + 1;
+        std::fs::write(temp.path().join("blob"), vec![b'x'; size]).unwrap();
+        let output = std::process::Command::new("git")
+            .args(["hash-object", "-w", "blob"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let oid = String::from_utf8(output.stdout).unwrap();
+        let oid = oid.trim();
+        let object = temp
+            .path()
+            .join(".git/objects")
+            .join(&oid[..2])
+            .join(&oid[2..]);
+        // Keep the complete deflate stream and readable ODB header, but damage
+        // its checksum. A payload probe must fail; truncating the stream instead
+        // can leave libgit2's inflater waiting indefinitely for its missing end.
+        let mut compressed = std::fs::read(&object).unwrap();
+        *compressed.last_mut().unwrap() ^= 1;
+        // Git creates read-only loose objects; replace this fixture object.
+        std::fs::remove_file(&object).unwrap();
+        std::fs::write(&object, &compressed).unwrap();
+        let source = FileReadSource::ConflictStage {
+            oid,
+            mode: 0o100644,
+        };
+        assert_eq!(
+            backend.file_size(source, Path::new("blob")).unwrap(),
+            Some(size as u64)
+        );
+        let side = prepare_content(&backend, MediaSide::File(source, Path::new("blob")));
+        assert!(matches!(
+            side,
+            SideContent::Binary(SideMetadata {
+                size: Some(actual),
+                error: Some(SideFailure::TooLarge),
+                ..
+            }) if actual == size as u64
+        ));
+        assert!(backend
+            .file_prefix(source, Path::new("blob"), &mut [0; 12])
+            .is_err());
+    }
+
+    #[test]
+    fn shared_preparation_preserves_diff_media_snapshot() {
+        let (temp, backend) = repository();
         let path = Path::new("image.png");
         let png = b"\x89PNG\r\n\x1a\n";
         std::fs::write(temp.path().join(path), png).unwrap();
-        let prepared = prepare_side_pair(
+        let [absent, image] = prepare_content_pair(
             &backend,
             [
                 MediaSide::Absent,
                 MediaSide::File(FileReadSource::Workdir, path),
             ],
-            PreparationPolicy::Diff {
-                pdf_extension: false,
-                binary: true,
-                expected: [false, true],
-            },
         );
-        let images = prepared.images.unwrap();
-        // Frozen pre-refactor MainDiffView.images snapshot: added PNG, one image.
-        assert_eq!(
-            (
-                images.old_exists,
-                images.new_exists,
-                images.old.is_some(),
-                images.new.is_some()
-            ),
-            (false, true, false, true)
-        );
-        assert!(prepared.pdfs.is_none());
-        std::fs::write(
-            temp.path().join(path),
-            b"BM legacy diff does not recognize BMP",
-        )
-        .unwrap();
-        let prepared = prepare_side_pair(
+        assert!(matches!(absent, SideContent::Absent));
+        let SideContent::Image {
+            encoded,
+            decoded,
+            dimensions,
+            meta,
+        } = image
+        else {
+            panic!("PNG signature");
+        };
+        assert_eq!(encoded.bytes(), png);
+        assert!(decoded.is_err() && dimensions.is_none());
+        assert!(matches!(meta.error, Some(SideFailure::Decode)));
+        // A BM text prefix is not a BMP header, even with an image extension.
+        std::fs::write(temp.path().join(path), b"BM invalid").unwrap();
+        let [_, bmp] = prepare_content_pair(
             &backend,
             [
                 MediaSide::Absent,
                 MediaSide::File(FileReadSource::Workdir, path),
             ],
-            PreparationPolicy::Diff {
-                pdf_extension: false,
-                binary: true,
-                expected: [false, true],
-            },
         );
-        assert!(prepared.images.is_none() && prepared.pdfs.is_none());
+        assert!(matches!(bmp, SideContent::Text { text, .. } if text.as_ref() == "BM invalid"));
         std::fs::write(temp.path().join(path), b"%PDF-invalid document").unwrap();
-        let prepared = prepare_side_pair(
+        let [absent, pdf] = prepare_content_pair(
             &backend,
             [
                 MediaSide::Absent,
                 MediaSide::File(FileReadSource::Workdir, path),
             ],
-            PreparationPolicy::Diff {
-                pdf_extension: false,
-                binary: true,
-                expected: [false, true],
-            },
         );
-        let pdfs = prepared.pdfs.unwrap();
-        // Signature still wins over image extension; parse failure stays a PDF source.
-        assert!(matches!(pdfs.old, PreparedPdfSide::Absent));
-        assert!(matches!(pdfs.new, PreparedPdfSide::Source(_)));
-        assert!(prepared.images.is_none());
-        let prepared = prepare_side_pair(
-            &backend,
-            [MediaSide::Absent, MediaSide::Failed("read failed".into())],
-            PreparationPolicy::Diff {
-                pdf_extension: true,
-                binary: true,
-                expected: [false, true],
-            },
-        );
-        let pdfs = prepared.pdfs.unwrap();
-        assert!(matches!(pdfs.old, PreparedPdfSide::Absent));
-        assert!(matches!(&pdfs.new, PreparedPdfSide::Failed(error) if error == "read failed"));
+        assert!(matches!(absent.pdf_source(), PreparedPdfSide::Absent));
+        assert!(matches!(pdf.pdf_source(), PreparedPdfSide::Source(_)));
     }
 
     #[test]
     fn conflict_preparation_preserves_absence_and_read_failure() {
-        use super::*;
-        use kagi_git::backend::file_reads::FileReadSource;
-        let temp = tempfile::tempdir().unwrap();
-        assert!(std::process::Command::new("git")
-            .args(["init", "-q"])
-            .arg(temp.path())
-            .status()
-            .unwrap()
-            .success());
-        let backend = kagi_git::Backend::open(temp.path()).unwrap();
-        let prepared = prepare_side_pair(
+        let (_temp, backend) = repository();
+        let [absent, failed] = prepare_content_pair(
             &backend,
             [
                 MediaSide::Absent,
@@ -542,29 +745,230 @@ mod tests {
                         oid: "invalid",
                         mode: 0o100644,
                     },
-                    std::path::Path::new("image.png"),
+                    Path::new("image.png"),
                 ),
             ],
-            PreparationPolicy::Conflict(kagi_git::ConflictKind::Binary),
         );
-        let [absent, failed] = prepared.raw.unwrap();
-        assert!(!absent.present && absent.error.is_none());
-        assert!(failed.present && failed.error.is_some());
+        assert!(!absent.is_present() && absent.metadata().is_none());
+        assert!(
+            failed.is_present()
+                && matches!(failed.metadata().unwrap().error, Some(SideFailure::Read(_)))
+        );
+        let [absent, failed] = prepare_content_pair(
+            &backend,
+            [MediaSide::Absent, MediaSide::Failed("read failed".into())],
+        );
+        assert!(!absent.is_present() && absent.metadata().is_none());
+        assert!(failed.is_present());
+        assert!(
+            matches!(&failed.metadata().unwrap().error, Some(SideFailure::Read(error)) if error.as_ref() == "read failed")
+        );
     }
 
     #[test]
-    fn image_classification_policies_preserve_both_existing_surfaces() {
+    fn frozen_mode_classifies_each_side_without_gitlink_object_lookup() {
+        let (_temp, backend) = repository();
+        let missing_oid = "1111111111111111111111111111111111111111";
+        let [gitlink, blob] = prepare_content_pair(
+            &backend,
+            [0o160000, 0o100644].map(|mode| {
+                MediaSide::File(
+                    FileReadSource::ConflictStage {
+                        oid: missing_oid,
+                        mode,
+                    },
+                    Path::new("mixed"),
+                )
+            }),
+        );
+        assert!(matches!(gitlink, SideContent::Submodule(_)));
+        assert!(gitlink.is_present() && gitlink.metadata().unwrap().error.is_none());
+        assert_eq!(
+            gitlink.metadata().unwrap().oid.as_deref(),
+            Some(missing_oid)
+        );
+        assert!(matches!(blob, SideContent::Binary(_)));
+        assert!(blob.is_present() && blob.metadata().unwrap().error.is_some());
+    }
+
+    #[test]
+    fn shared_caps_are_inclusive_and_failures_remain_present() {
+        let (temp, backend) = repository();
+        for (magic, cap, pdf) in [
+            (b"\x89PNG\r\n\x1a\n".as_slice(), IMAGE_SIZE_CAP, false),
+            (b"%PDF-".as_slice(), PDF_SIZE_CAP, true),
+        ] {
+            for size in [cap, cap + 1] {
+                let mut bytes = vec![0; size];
+                bytes[..magic.len()].copy_from_slice(magic);
+                std::fs::write(temp.path().join("media"), bytes).unwrap();
+                let [side, absent] = prepare_content_pair(
+                    &backend,
+                    [
+                        MediaSide::File(FileReadSource::Workdir, Path::new("media")),
+                        MediaSide::Absent,
+                    ],
+                );
+                assert!(side.is_present() && !absent.is_present());
+                assert_eq!(side.metadata().unwrap().size, Some(size as u64));
+                if size > cap {
+                    assert!(matches!(
+                        side,
+                        SideContent::Binary(SideMetadata {
+                            error: Some(SideFailure::TooLarge),
+                            ..
+                        })
+                    ));
+                } else if pdf {
+                    assert!(matches!(side, SideContent::Pdf { .. }));
+                } else {
+                    assert!(matches!(
+                        side,
+                        SideContent::Image {
+                            decoded: Err(_),
+                            ..
+                        }
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn genuine_pixels_decode_once_even_with_misleading_extension() {
+        for format in [
+            image::ImageFormat::Png,
+            image::ImageFormat::Jpeg,
+            image::ImageFormat::Gif,
+            image::ImageFormat::WebP,
+            image::ImageFormat::Bmp,
+        ] {
+            let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                3,
+                2,
+                image::Rgb([255, 0, 0]),
+            ));
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image.write_to(&mut bytes, format).unwrap();
+            let bytes = bytes.into_inner();
+            let path = if format == image::ImageFormat::Png {
+                "wrong.jpg"
+            } else {
+                "wrong.pdf"
+            };
+            let side = content_from_bytes(
+                Path::new(path),
+                bytes.clone(),
+                SideMetadata::default(),
+                false,
+            );
+            let SideContent::Image {
+                encoded,
+                decoded,
+                dimensions,
+                meta,
+            } = side.clone()
+            else {
+                panic!("real image");
+            };
+            assert_eq!(encoded.bytes(), bytes.as_slice());
+            assert_eq!(dimensions, Some((3, 2)));
+            assert!(meta.error.is_none());
+            let SideContent::Image {
+                decoded: Ok(other), ..
+            } = side
+            else {
+                panic!("decoded image");
+            };
+            assert!(std::sync::Arc::ptr_eq(decoded.as_ref().unwrap(), &other));
+        }
+    }
+
+    #[test]
+    fn animated_gif_retains_all_decoded_frames_and_delays() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            encoder
+                .encode_frames([[255, 0, 0, 255], [0, 255, 0, 255]].map(|color| {
+                    image::Frame::from_parts(
+                        image::RgbaImage::from_pixel(2, 2, image::Rgba(color)),
+                        0,
+                        0,
+                        image::Delay::from_numer_denom_ms(50, 1),
+                    )
+                }))
+                .unwrap();
+        }
+        let (image, dimensions) = decode_image(&bytes).unwrap();
+        assert_eq!(dimensions, (2, 2));
+        assert_eq!(image.frame_count(), 2);
+        assert_eq!(&image.as_bytes(0).unwrap()[..4], &[0, 0, 255, 255]);
+        assert_eq!(&image.as_bytes(1).unwrap()[..4], &[0, 255, 0, 255]);
+        assert_eq!(std::time::Duration::from(image.delay(0)).as_millis(), 50);
+    }
+
+    #[test]
+    fn frozen_symlink_bytes_are_not_followed_or_classified_as_images() {
+        let (temp, backend) = repository();
+        let bytes = b"\x89PNG\r\n\x1a\n";
+        std::fs::write(temp.path().join("blob"), bytes).unwrap();
+        let output = std::process::Command::new("git")
+            .args(["hash-object", "-w", "blob"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let oid = String::from_utf8(output.stdout).unwrap();
+        let sides = prepare_content_pair(
+            &backend,
+            [0o120000, 0o100644].map(|mode| {
+                MediaSide::File(
+                    FileReadSource::ConflictStage {
+                        oid: oid.trim(),
+                        mode,
+                    },
+                    Path::new("link.png"),
+                )
+            }),
+        );
+        assert!(
+            matches!(&sides[0], SideContent::Symlink { target: Some(target), meta }
+            if target.as_ref() == String::from_utf8_lossy(bytes) && meta.error.is_none())
+        );
+        assert!(matches!(
+            &sides[1],
+            SideContent::Image {
+                decoded: Err(_),
+                ..
+            }
+        ));
+        let plain = content_from_bytes(
+            Path::new("false.png"),
+            b"ordinary text".to_vec(),
+            SideMetadata::default(),
+            false,
+        );
+        assert!(matches!(plain, SideContent::Text { .. }));
+        let binary = content_from_bytes(
+            Path::new("false.png"),
+            vec![0, 1, 2],
+            SideMetadata::default(),
+            false,
+        );
+        assert!(matches!(binary, SideContent::Binary(_)));
+    }
+
+    #[test]
+    fn file_preview_magic_wins_without_changing_avatar_recognition() {
         use crate::ui::avatar_fetch::{classify_image, ImageClassification};
         use gpui::ImageFormat;
         use std::path::Path;
         for extension in ["png", "PNG", "jpg", "jpeg", "gif", "webp", "bmp"] {
             let name = format!("image.{extension}");
-            assert!(classify_image(
-                Path::new(&name),
-                &[],
-                ImageClassification::ExtensionThenMagic
-            )
-            .is_some());
+            assert!(
+                classify_image(Path::new(&name), &[], ImageClassification::FilePreview).is_none()
+            );
             assert!(
                 classify_image(Path::new(&name), &[], ImageClassification::MagicOnly).is_none()
             );
@@ -574,39 +978,71 @@ mod tests {
             classify_image(
                 Path::new("image.jpg"),
                 png,
-                ImageClassification::ExtensionThenMagic
+                ImageClassification::FilePreview
             ),
-            Some(ImageFormat::Jpeg)
+            Some(ImageFormat::Png)
         );
         assert_eq!(
             classify_image(Path::new("image.jpg"), png, ImageClassification::MagicOnly),
             Some(ImageFormat::Png)
         );
-        assert_eq!(
-            classify_image(
-                Path::new("image"),
-                b"BM",
-                ImageClassification::ExtensionThenMagic
-            ),
-            Some(ImageFormat::Bmp)
+        assert!(
+            classify_image(Path::new("image"), b"BM", ImageClassification::FilePreview).is_none()
         );
         assert!(
             classify_image(Path::new("image"), b"BM", ImageClassification::MagicOnly).is_none()
         );
     }
     #[test]
-    fn partially_previewable_modified_image_keeps_both_versions() {
-        let png = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10];
-        let bmp = b"BM unsupported preview encoding".to_vec();
-        for (old, new) in [(bmp.clone(), png.clone()), (png.clone(), bmp.clone())] {
-            let pair = super::image_pair_from_bytes(Some(old), Some(new)).unwrap();
-            assert!(pair.old_exists && pair.new_exists);
-            assert_ne!(pair.old.is_some(), pair.new.is_some());
+    fn mixed_image_pdf_and_absence_keep_independent_modes() {
+        let (temp, backend) = repository();
+        std::fs::write(temp.path().join("one"), b"\x89PNG\r\n\x1a\n").unwrap();
+        std::fs::write(temp.path().join("two"), b"%PDF-invalid").unwrap();
+        let [left, right] = prepare_content_pair(
+            &backend,
+            ["one", "two"].map(|path| MediaSide::File(FileReadSource::Workdir, Path::new(path))),
+        );
+        assert!(matches!(left, SideContent::Image { .. }));
+        assert!(matches!(right, SideContent::Pdf { .. }));
+        let headers = [
+            SideHeader {
+                label: "old".into(),
+                accent: None,
+                id: "old",
+                absent: Msg::DiffPdfNoPrevious,
+            },
+            SideHeader {
+                label: "new".into(),
+                accent: None,
+                id: "new",
+                absent: Msg::DiffPdfNoCurrent,
+            },
+        ];
+        for (left, right, expected) in [
+            (left.clone(), right, (true, true, true, false)),
+            (
+                left.clone(),
+                SideContent::Absent,
+                (true, false, true, false),
+            ),
+            (SideContent::Absent, left, (false, true, false, true)),
+        ] {
+            let pair = image_pair(&SidePair {
+                left,
+                right,
+                headers: headers.clone(),
+            })
+            .unwrap();
+            assert_eq!(
+                (
+                    pair.old_exists,
+                    pair.new_exists,
+                    pair.old.is_some(),
+                    pair.new.is_some()
+                ),
+                expected
+            );
         }
-        let added = super::image_pair_from_bytes(None, Some(png.clone())).unwrap();
-        assert!(!added.old_exists && added.new_exists);
-        let deleted = super::image_pair_from_bytes(Some(png), None).unwrap();
-        assert!(deleted.old_exists && !deleted.new_exists);
     }
 
     #[test]

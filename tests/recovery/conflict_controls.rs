@@ -95,7 +95,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 );
                 view.conflict_editor_set_hunk_side(Path::new(path), 0, side, true);
             }
-            view.conflict_select_file(0);
+            view.conflict_select_file(0, cx);
             if navigation == "conflict-prev-hunk" {
                 view.conflict_editor_select_hunk(1);
             }
@@ -175,7 +175,7 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
             assert_eq!(mode.buffer.resolved_text(Path::new("a.txt")), a_before);
         });
         conflict.update(cx, |view, cx| {
-            view.conflict_select_file(0);
+            view.conflict_select_file(0, cx);
             assert!(view.reset_all_target.is_none());
             cx.notify();
         });

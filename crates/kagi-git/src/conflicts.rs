@@ -829,18 +829,31 @@ fn entry_has_mode(entry: Option<&git2::IndexEntry>, mode: u32) -> bool {
     matches!(entry, Some(e) if e.mode == mode)
 }
 
-/// Probe whether an index entry's blob is binary.  A missing entry or
-/// unreadable blob is treated as non-binary (best effort).
-fn entry_is_binary(repo: &Repository, entry: Option<&git2::IndexEntry>) -> bool {
+/// Authoritative binary/media predicate for both session classification and the
+/// resolution buffer. Media uses frozen raw identity even when entirely ASCII
+/// (notably PDFs); unknown formats retain the binary/NUL heuristic.
+pub(crate) fn entry_is_binary(repo: &Repository, entry: Option<&git2::IndexEntry>) -> bool {
     let entry = match entry {
         Some(e) => e,
         None => return false,
     };
+    if entry
+        .path
+        .rsplit(|byte| *byte == b'.')
+        .next()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(b"pdf"))
+    {
+        return true;
+    }
     if entry.id.is_zero() {
         return false;
     }
     match repo.find_blob(entry.id) {
-        Ok(blob) => blob.is_binary() || blob_has_nul(blob.content()),
+        Ok(blob) => {
+            kagi_domain::diff::media_kind(blob.content()).is_some()
+                || blob.is_binary()
+                || blob_has_nul(blob.content())
+        }
         Err(_) => false,
     }
 }
@@ -2285,6 +2298,114 @@ mod frozen_staging_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A complete, font-free ASCII PDF, including its cross-reference table.
+    fn ascii_pdf() -> Vec<u8> {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 480] /Resources << >> >>",
+        ];
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(bytes.len());
+            bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+        }
+        let xref = bytes.len();
+        bytes.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        );
+        bytes
+    }
+
+    #[test]
+    fn ascii_documents_take_the_frozen_raw_resolution_path() {
+        use crate::resolution::{RawResolution, ResolutionChoice};
+
+        let temp = tempfile::tempdir().unwrap();
+        let repo = Repository::init(temp.path()).unwrap();
+        let mut index = repo.index().unwrap();
+        let pdf = ascii_pdf();
+        assert!(pdf.is_ascii());
+        for (name, bytes, expected) in [
+            ("pair.pdf", pdf.as_slice(), true),
+            ("document.txt", pdf.as_slice(), true),
+            ("broken.PDF", b"unreadable document".as_slice(), true),
+            ("image.data", b"GIF89a".as_slice(), true),
+            ("ordinary.txt", b"ordinary text\n".as_slice(), false),
+            ("ordinary.csv", b"BMI,height\n22,180\n".as_slice(), false),
+            (
+                "ranking.md",
+                b"BM25 ranks ordinary text\n".as_slice(),
+                false,
+            ),
+            ("short.txt", b"BM".as_slice(), false),
+            ("invalid.bmp", b"BM invalid".as_slice(), false),
+        ] {
+            let path = Path::new(name);
+            std::fs::write(temp.path().join(path), bytes).unwrap();
+            index.add_path(path).unwrap();
+            let mut entry = index.get_path(path, 0).unwrap();
+            assert!(!repo.find_blob(entry.id).unwrap().is_binary());
+            assert_eq!(entry_is_binary(&repo, Some(&entry)), expected, "{name}");
+            index.remove_path(path).unwrap();
+            // Distinct identities and modes make either side's accidental
+            // substitution observable, even though every source is ASCII.
+            let mut source = bytes.to_vec();
+            for stage in 1..=3 {
+                source.push(b'\n');
+                entry.id = repo.blob(&source).unwrap();
+                entry.flags = (entry.flags & !0x3000) | (stage << 12);
+                entry.mode = if stage == 3 { 0o100755 } else { 0o100644 };
+                index.add(&entry).unwrap();
+            }
+        }
+        index.write().unwrap();
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        for conflict in index.conflicts().unwrap() {
+            let conflict = conflict.unwrap();
+            let current = conflict.our.as_ref().unwrap();
+            let path = bytes_to_pathbuf(&current.path).unwrap();
+            let expected = !matches!(
+                path.to_str().unwrap(),
+                "ordinary.txt" | "ordinary.csv" | "ranking.md" | "short.txt" | "invalid.bmp"
+            );
+            let kind = classify_kind(&repo, &conflict, &path, &[]);
+            assert_eq!(kind == ConflictKind::Binary, expected, "{path:?}");
+            assert_eq!(buffer.is_raw(&path), expected, "{path:?}");
+            if expected {
+                assert_eq!(buffer.sides(&path), Some((None, None)));
+            }
+            assert_eq!(buffer.raw_resolution(&path), None);
+            for (choice, side) in [
+                (ResolutionChoice::Current, current),
+                (ResolutionChoice::Incoming, conflict.their.as_ref().unwrap()),
+            ] {
+                buffer.apply_choice(&path, choice).unwrap();
+                assert_eq!(
+                    buffer.raw_resolution(&path),
+                    expected.then_some(RawResolution {
+                        oid: side.id,
+                        mode: side.mode,
+                    }),
+                    "{path:?}"
+                );
+                if !expected {
+                    let blob = repo.find_blob(side.id).unwrap();
+                    assert_eq!(
+                        buffer.resolved_text(&path).unwrap().as_bytes(),
+                        blob.content()
+                    );
+                }
+            }
+        }
+        assert!(!entry_is_binary(&repo, None));
+    }
 
     #[test]
     fn slugs_are_stable() {

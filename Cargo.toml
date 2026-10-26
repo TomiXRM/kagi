@@ -74,6 +74,8 @@ serde_json = "1"
 # Already in the tree transitively; `clock` pulls iana-time-zone for a
 # soundness-safe local UTC offset (no localtime_r footgun in this MT app).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Decode shared file previews once on the preparation worker (also used by screenshots).
+image = "0.25"
 
 # Shell-only macOS accessibility notifications; already pinned transitively by GPUI.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -90,9 +92,7 @@ winresource = "0.1"
 
 # `gpui/test-support` must not be an unconditional dev-dependency feature:
 # that would compile it even when the visual runner skips at runtime.
-# `image` matches gpui's transitive version for screenshot encoding.
 [dev-dependencies]
-image = "0.25"
 # #509: the CLI/MCP shared-contract test drives both agent entry points in one
 # process to prove they emit the same plan JSON. Workspace path dep — no download.
 kagi-mcp = { path = "crates/kagi-mcp" }

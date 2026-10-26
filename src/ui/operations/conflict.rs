@@ -690,7 +690,7 @@ impl KagiApp {
                             });
                         }
                         if let Some(conflict) = app.ui().conflict.clone() {
-                            conflict.update(cx, |view, _| view.retire_raw_preview());
+                            conflict.update(cx, |view, cx| view.retire_raw_preview(cx));
                         }
                         if let Some(ui) = app.ui_mut() {
                             ui.conflict_merge_pending = true;

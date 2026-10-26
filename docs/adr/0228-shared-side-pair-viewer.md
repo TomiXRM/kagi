@@ -1,6 +1,6 @@
 # ADR-0228: Shared side-pair viewer
 
-- Status: Accepted architecture; implementation scoped to step ① preparation consolidation
+- Status: Accepted architecture; steps ②–④ implemented and native functional acceptance passed; independent final HIG review pending
 - Date: 2026-10-24
 - References: [#1742](https://github.com/TomiXRM/kagi/issues/1742), [initial architecture review](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6381625496), ADR-0226, ADR-0227; deletion prerequisite #1734
 
@@ -253,3 +253,108 @@ The original fixture's 25/26-byte PNG inputs do not decode; the valid-PNG
 variant separately proves actual image rendering. This step does not claim
 new controls, PDF conflict presentation, native AX/IME coverage or completion
 of steps ②–④ or #1742.
+
+## Steps ②–④ implementation amendment (2026-10-26)
+
+The implementation extends `diff_view.rs` with `SidePair { left, right, headers }`
+and independently typed side content. Existing diff source adapters and the
+conflict attachment both call the preparation owner; neither rendering nor
+adoption reads Git. Signature recognition is pure domain logic shared with the
+backend conflict detector, so an all-ASCII PDF also takes the authoritative raw
+resolution path rather than a lossy text Result. Recognized bytes outrank an
+extension, and successful decode is distinct from merely recognizing a signature.
+
+The common renderer owns source headers, body placeholders, metadata and image
+geometry. Conflict alone supplies action rows. A decision is derived from the
+buffer's raw OID/mode; Change clears that decision in `ResolutionBuffer`, preserving
+the source identities and marking the unresolved draft for normal autosave.
+No viewer-local chosen-side flag or alternative Save writer is introduced.
+The raw Save pipeline and its contract log lines remain unchanged: the selected
+OID/mode is staged, while worktree bytes and mode are intentionally left untouched
+(#297/#298). Native acceptance compares both the exact stage-0 identity and that
+unchanged worktree; any resulting index/worktree difference is not a new writer
+behavior introduced by this viewer.
+
+The accepted conflict preview owns its PDF pair. Conflict starts synchronized;
+diff retains its independent initial state. Retirement immediately disables
+callbacks and clears subscriptions even when an earlier frame retains cloned
+viewer handles. The root's existing retiring-focus handoff also observes conflict
+PDF bodies and does not steal unrelated input focus.
+
+HIG design gate: the independent review rejected the initial sketch; Main approved
+the revised matrix with final corrections recorded in
+[the v3 proposal](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6413001918).
+The source header has no controls; an aligned action row sits below it, using
+existing NeutralTinted tool buttons and outline-only Used / Not used labels.
+The unchosen body remains full contrast. PDF keeps the Editor toolbar and one
+pair-level sync control in the file header, without a second shared size/OID
+footer, matching the approved PDF figure. Its source metadata stays in the model;
+the existing PDF viewer owns document status and errors. An extra fixed footer
+can exhaust the narrow/high-zoom body allocation, clipping the document viewport
+and routing body clicks to the footer instead. Other side kinds retain their
+shared metadata summaries. External comparison belongs to a shared row outside
+both source groups. EN headers use Current / Incoming.
+Selectable symlink targets and full gitlink OIDs remain source content, not paths
+to follow. The figure's contrast calculations cover Apple Light/Dark, not all
+themes or native assistive-technology delivery.
+
+`tests/gui_e2e/side_pair.rs` adds image/PDF Use → Save acceptance coverage, including
+image Change → Use, with independently captured stage OIDs/modes/bytes and stage-0 oracles.
+The initial native run passed all 21 scenarios selected by `conflict_side_pair_`,
+`conflict_delete`, `conflict_dir_file`, `binary_diff_prepared`, `diff_binary_states`,
+`conflict_image_zoom`, `commit_pdf_`, `pdf_media_` and `pdf_focus_retirement`.
+This includes the compact JA 167% PDF fit/focus regression. After integrating
+#1734, the absent-side button freezes a deletion intent and defers it to the
+existing application confirmation boundary. It never adopts an empty blob;
+ancestor-only deletion keeps the single Remove from Index action. The real PNG
+modify/delete scenario covers both absent sides in EN/JA, inert root Return,
+Escape cancellation, unchanged preconfirmation index/worktree, and confirmed
+absence of stages 0–3 with one successful receipt.
+
+Native evidence for source commit `86bcfba9` is attached to
+[#1742](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6423133480).
+The plain build (features `[]`) used real Git merges with genuine PNG/JPEG/PDF,
+isolated profiles and a 1392×883 logical viewport on a 2× display. EN Light and
+JA Dark captures cover undecided/decided images, PDF toolbar/synchronized page
+navigation, explicit fallback metadata and the modify/delete confirmation sheet.
+EN additionally demonstrates independent PDF page navigation. Native EN and JA
+Saves independently verify the selected PNG/PDF stage-0 OID/mode and unchanged
+worktree bytes/mode. Physical root Return and Escape leave the pending deletion's
+index/worktree unchanged; confirmed deletion execution is covered by Tier A.
+EN Dark and JA Light add the malformed-image/binary/submodule/absent-side
+cross-checks, completing the four visual combinations required by #1773.
+All owned apps exited normally. These captures do not claim native VoiceOver/AX
+announcements or IME coverage, nor substitute for independent final HIG review.
+
+The first independent code/HIG review required the following corrections before
+merge. BMP recognition must validate its reserved header bytes, not just `BM`,
+so ordinary CSV/Markdown remain text conflicts and retain diff hunks. Frozen
+source sizes above the maximum preview budget are rejected from the ODB header
+before any payload probe. A UTF-8 side admitted through a binary diff is rendered
+as selectable text only within the existing selectable-detail bound; larger
+content keeps its immutable metadata instead. Accepted decoded image handles
+must be explicitly evicted from GPUI's atlas on replacement and retirement,
+including owner release, just like the existing PDF raster lifecycle.
+
+Only decoded images and PDFs consume flexible body height. Non-PDF bodies have
+horizontal/top padding; metadata and failure reasons stay immediately below
+their heading, and symlinks retain a visible target label. Accessibility
+descriptions use the same typed failure reason as visible captions. Read failures
+retain their actual diagnostic and do not claim an unknown source is a binary
+file or promise an unavailable external-editor action. The PDF sync control uses
+the existing measured `HeaderFit` policy to show its label when space permits.
+The corrected native frames and gate results are attached to
+[#1742](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6425754052)
+for independent HIG re-review. They render production commit `c54126d5`; the
+following test-only commit makes the oversized-PDF AX oracle require the precise
+preview-limit reason instead of generic read failure. The expanded native filter
+first passed 27 of 28 scenarios, then the corrected limit oracle passed its focused
+rerun. All 28 selected scenarios have therefore passed, including deferred image
+cleanup on replacement/retirement/release and rejected-result isolation.
+Workspace tests passed 3,954 tests (184 suites, 49 ignored); formatting, default
+build, Clippy, repository invariants and native-runner compilation passed.
+Fresh EN Light/JA Dark captures and EN Dark/JA Light cross-checks supersede the
+pre-review frames. Both primary locales again verify exact PNG/PDF stage-0 choices
+and unchanged worktree bytes/mode. Every owned native app exited normally.
+OS VoiceOver delivery and IME remain unclaimed; source-level reason mapping and
+the native Tier A limit-description oracle are not substitutes for those checks.

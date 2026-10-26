@@ -570,13 +570,19 @@ fn workdir_symlinks_are_not_previewed_as_their_targets() {
         ("outside-link.pdf", outside.path().join("outside.pdf")),
         ("dangling-link.pdf", outside.path().join("missing.pdf")),
     ] {
-        std::os::unix::fs::symlink(target, fixture.temp.path().join(name)).unwrap();
-        assert!(backend
-            .file_has_prefix(FileReadSource::Workdir, Path::new(name), b"%PDF-")
-            .is_err());
-        assert!(backend
-            .file_bytes(FileReadSource::Workdir, Path::new(name), LIMIT)
-            .is_err());
+        std::os::unix::fs::symlink(&target, fixture.temp.path().join(name)).unwrap();
+        assert_eq!(
+            backend
+                .file_has_prefix(FileReadSource::Workdir, Path::new(name), b"%PDF-")
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            backend
+                .file_bytes(FileReadSource::Workdir, Path::new(name), LIMIT)
+                .unwrap(),
+            Some(target.as_os_str().as_encoded_bytes().to_vec())
+        );
     }
     assert_eq!(
         backend

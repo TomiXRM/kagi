@@ -7,6 +7,80 @@ use std::path::PathBuf;
 
 use crate::status::ChangeKind;
 
+/// Source-byte recognition shared by conflict classification and media previews.
+/// A recognized signature is a format hint, never proof of successful decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaKind {
+    Png,
+    Jpeg,
+    Gif,
+    Webp,
+    Bmp,
+    Pdf,
+}
+
+/// Inspect only the signature; filenames never override recognized source bytes.
+pub fn media_kind(bytes: &[u8]) -> Option<MediaKind> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some(MediaKind::Png)
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some(MediaKind::Jpeg)
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some(MediaKind::Gif)
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some(MediaKind::Webp)
+    } else if bytes.len() >= 12 && bytes.starts_with(b"BM") && bytes[6..10] == [0; 4] {
+        Some(MediaKind::Bmp)
+    } else if bytes.starts_with(b"%PDF-") {
+        Some(MediaKind::Pdf)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn media_signatures_are_shared_and_do_not_claim_decoding() {
+    for (prefix, expected) in [
+        (b"\x89PNG\r\n\x1a\n".as_slice(), MediaKind::Png),
+        (b"\xff\xd8\xff".as_slice(), MediaKind::Jpeg),
+        (b"GIF87a".as_slice(), MediaKind::Gif),
+        (b"GIF89a".as_slice(), MediaKind::Gif),
+        (b"RIFFxxxxWEBP".as_slice(), MediaKind::Webp),
+        (
+            b"BM\x00\x00\x00\x00\x00\x00\x00\x00\x36\x00".as_slice(),
+            MediaKind::Bmp,
+        ),
+        (b"%PDF-1.7\n".as_slice(), MediaKind::Pdf),
+    ] {
+        assert_eq!(media_kind(prefix), Some(expected));
+        assert_eq!(
+            media_kind(&prefix[..prefix.len() - 1]),
+            if expected == MediaKind::Pdf {
+                Some(MediaKind::Pdf)
+            } else {
+                None
+            }
+        );
+    }
+    assert_eq!(media_kind(b"ordinary text"), None);
+    assert_eq!(media_kind(b"RIFFxxxxWAVE"), None);
+    for text in [
+        b"BM".as_slice(),
+        b"BM invalid",
+        b"BMI,height\n22,180\n",
+        b"BM25 ranks ordinary text",
+    ] {
+        assert_eq!(media_kind(text), None);
+    }
+    let mut bmp = *b"BM\x00\x00\x00\x00\x00\x00\x00\x00\x36\x00";
+    for reserved in 6..10 {
+        bmp[reserved] = 1;
+        assert_eq!(media_kind(&bmp), None);
+        bmp[reserved] = 0;
+    }
+}
+
 /// The kind of a diff line: unchanged context, a newly-added line, or a
 /// removed line.
 #[derive(Debug, Clone, PartialEq, Eq)]

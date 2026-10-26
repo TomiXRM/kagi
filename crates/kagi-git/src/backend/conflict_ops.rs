@@ -86,6 +86,7 @@ impl ConflictPlan {
             ConflictPreparedAction::DirFile(plan) => {
                 let mut changes = ConflictPathChanges {
                     remove_worktree: plan.removal_paths.clone(),
+                    remove_directories: plan.removed_directories(),
                     ..Default::default()
                 };
                 match plan.choice {
@@ -101,7 +102,7 @@ impl ConflictPlan {
                         changes.remove_index = plan.dir_children.clone();
                         if plan.file_path != plan.path {
                             changes.remove_index.push(plan.file_path.clone());
-                            changes.restore.push(plan.path.clone());
+                            changes.moves.push((plan.file_path.clone(), plan.path.clone()));
                         } else {
                             changes.keep.push(plan.path.clone());
                         }
@@ -136,6 +137,10 @@ pub enum ConflictFaultPoint {
     /// The one case the receipt must call `Unknown` rather than success or a
     /// retryable failure — there is no other way to reach it deterministically.
     AbortAfterStateUnreadable,
+    /// Mutation finished, but its resulting repository state cannot be measured.
+    AfterStateUnreadable,
+    /// Stop after a real working-tree write and make the final measurement fail.
+    AfterWorktreeWriteUnreadable,
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +156,26 @@ pub struct ConflictReport {
 /// blocks a restore across it the way a missing record does.
 fn nothing_moved(entry: crate::oplog::OpLogEntry) -> crate::oplog::OpLogEntry {
     entry.with_nothing_moved()
+}
+
+fn check_namespace_mutation_fault(
+    progress: ConflictProgress,
+    fault: Option<ConflictFaultPoint>,
+) -> Result<(), GitError> {
+    if progress == ConflictProgress::WorktreeWritten
+        && matches!(
+            fault,
+            Some(
+                ConflictFaultPoint::AfterWorktreeWrite
+                    | ConflictFaultPoint::AfterWorktreeWriteUnreadable
+            )
+        )
+    {
+        return Err(GitError::Other(
+            "injected failure after conflict working-tree mutation".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl Backend {
@@ -567,7 +592,10 @@ impl Backend {
                         recovery = Some(ops::conflict_delete::execute_conflict_delete(
                             &backend.repo,
                             delete,
-                            |value| progress = value,
+                            |value| {
+                                progress = value;
+                                check_namespace_mutation_fault(value, fault)
+                            },
                         )?);
                     }
                     ConflictPreparedAction::Save {
@@ -605,7 +633,10 @@ impl Backend {
                         recovery = Some(ops::apply_dir_file_resolution_with_progress(
                             &backend.repo,
                             dir_file,
-                            |value| progress = value,
+                            |value| {
+                                progress = value;
+                                check_namespace_mutation_fault(value, fault)
+                            },
                         )?);
                         verify_dir_file(&backend.repo, dir_file)?;
                     }
@@ -661,11 +692,16 @@ impl Backend {
             .err()
             .map(ToString::to_string)
             .unwrap_or_else(|| recovery.clone().unwrap_or_else(|| "verified".into()));
-        // #704 / ADR-0196: abort records what the repository *is*, measured
-        // after the attempt. `after` above cannot stand in for it — for an
-        // abort `None` is the successful outcome, so it says nothing about
-        // whether the repository could be read at all.
-        let after_state = if fault == Some(ConflictFaultPoint::AbortAfterStateUnreadable) {
+        // A conflict observation is not an after-state measurement: None can
+        // mean successful completion. Measure the actual repository separately.
+        let after_state = if matches!(
+            fault,
+            Some(
+                ConflictFaultPoint::AbortAfterStateUnreadable
+                    | ConflictFaultPoint::AfterStateUnreadable
+                    | ConflictFaultPoint::AfterWorktreeWriteUnreadable
+            )
+        ) {
             Err(GitError::Other("injected unreadable after-state".into()))
         } else {
             conflicts::current_state_summary(&backend.repo)
@@ -674,10 +710,13 @@ impl Backend {
             ConflictRequest::Save {
                 draft: ConflictDraft::Delete,
                 ..
-            } => ops::StateSummary {
-                head: "deleted from index and worktree".into(),
-                dirty: "resolved deletion".into(),
-            },
+            }
+            | ConflictRequest::ResolveDirFile { .. } => {
+                after_state.clone().unwrap_or_else(|_| ops::StateSummary {
+                    head: "repository state after conflict resolution is unreadable".into(),
+                    dirty: "unknown".into(),
+                })
+            }
             ConflictRequest::Save {
                 draft, before_hash, ..
             } => ops::StateSummary {
@@ -691,10 +730,6 @@ impl Backend {
                 ),
                 dirty: "clean".into(),
             },
-            ConflictRequest::ResolveDirFile { path, choice, .. } => ops::StateSummary {
-                head: format!("kept {} side of {}", choice.slug(), path.display()),
-                dirty: "staged (stage 0)".into(),
-            },
             ConflictRequest::Abort { kind, .. } => {
                 after_state.clone().unwrap_or_else(|_| ops::StateSummary {
                     head: format!("{}: state after the abort is unreadable", kind.slug()),
@@ -702,18 +737,22 @@ impl Backend {
                 })
             }
         };
-        // A restore whose result cannot be measured is `Unknown`, never a
-        // retryable `Failed`: retrying an abort that may already have moved
-        // the ref is the way to lose the commits it detached. `apply` parks a
-        // reconcile entry for it (ADR-0196 決定 2).
-        let unmeasurable = matches!(plan.request, ConflictRequest::Abort { .. })
+        // Once a mutation has started, an unreadable resulting state cannot
+        // safely be called Success, Partial, or a retryable refusal.
+        let requires_measured_after = matches!(
+            plan.request,
+            ConflictRequest::Abort { .. }
+                | ConflictRequest::ResolveDirFile { .. }
+                | ConflictRequest::Save { draft: ConflictDraft::Delete, .. }
+        );
+        let unmeasurable = requires_measured_after
             && progress != ConflictProgress::NotStarted
             && after_state.is_err();
         let outcome = match &result {
             _ if unmeasurable => crate::oplog::OpOutcome::Unknown {
                 after: observed_after,
                 evidence: format!(
-                    "{}: the abort had started when the repository became unreadable",
+                    "{}: conflict mutation had started when the repository became unreadable",
                     detail
                 ),
             },

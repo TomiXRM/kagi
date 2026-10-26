@@ -376,6 +376,21 @@ impl KagiApp {
                 return false;
             };
             let changes = plan.path_changes();
+            use crate::ui::modals::conflict_resolution::ResolutionKind;
+            use kagi_domain::resolution::DirFileChoice;
+            let (kind, path) = match plan.request() {
+                ConflictRequest::Save { path, draft: ConflictDraft::Delete, .. } => {
+                    (ResolutionKind::Remove, path.clone())
+                }
+                ConflictRequest::ResolveDirFile { path, choice, .. } => (
+                    match choice {
+                        DirFileChoice::KeepDirectory => ResolutionKind::KeepDirectory,
+                        DirFileChoice::KeepFile => ResolutionKind::KeepFile,
+                    },
+                    path.clone(),
+                ),
+                _ => return false,
+            };
             let revision = plan.request().revision().clone();
             let Some(intent_token) = self
                 .ui()
@@ -392,6 +407,8 @@ impl KagiApp {
                     revision,
                     intent_token,
                     changes,
+                    kind,
+                    path,
                 },
             );
             cx.notify();

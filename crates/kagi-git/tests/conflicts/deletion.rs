@@ -2,7 +2,7 @@ use super::*;
 use kagi_domain::conflict_family::{ConflictProgress, Resolution};
 use kagi_git::{backend::ExecutionPolicy, Backend};
 
-fn fixture(rename: bool, delete_current: bool) -> TempDir {
+pub(super) fn fixture(rename: bool, delete_current: bool) -> TempDir {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     init_repo(root, "main");
@@ -32,7 +32,7 @@ fn fixture(rename: bool, delete_current: bool) -> TempDir {
     tmp
 }
 
-fn plan(root: &Path, path: &Path) -> kagi_git::backend::conflict_ops::ConflictPlan {
+pub(super) fn plan(root: &Path, path: &Path) -> kagi_git::backend::conflict_ops::ConflictPlan {
     let backend = Backend::open(root).unwrap();
     let snapshot = backend.conflict_snapshot().unwrap().unwrap();
     let buffer = backend.resolution_buffer_from_repo().unwrap();
@@ -279,4 +279,79 @@ fn deletion_refuses_gitlink_stages() {
     .unwrap();
     assert!(Backend::plan_recorded_conflict(tmp.path(), request).is_err());
     assert!(tmp.path().join(path).exists());
+}
+
+#[test]
+fn deletion_refuses_unaffected_index_drift_without_losing_external_update() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for rename in [false, true] {
+        for change in ["oid", "mode", "stage", "added", "removed"] {
+            let tmp = fixture(rename, false);
+            let approved = plan(tmp.path(), Path::new("renamed-src.ts"));
+            let repo = Repository::open(tmp.path()).unwrap();
+            let mut index = repo.index().unwrap();
+            let mut entry = index.get_path(Path::new("unrelated.txt"), 0).unwrap();
+            match change {
+                "oid" => entry.id = repo.blob(b"external staged update\n").unwrap(),
+                "mode" => entry.mode = 0o100755,
+                "stage" => {
+                    index.remove(Path::new("unrelated.txt"), 0).unwrap();
+                    entry.flags |= 2 << 12;
+                }
+                "added" => entry.path = b"external-added".to_vec(),
+                "removed" => { index.remove(Path::new("unrelated.txt"), 0).unwrap(); }
+                _ => unreachable!(),
+            }
+            if change != "removed" { index.add(&entry).unwrap(); }
+            index.write().unwrap();
+            let before = std::fs::read(repo.path().join("index")).unwrap();
+            assert_eq!(execute(&approved), ConflictProgress::NotStarted, "{change}");
+            assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
+            assert_eq!(std::fs::read(tmp.path().join("unrelated.txt")).unwrap(), b"preserve\n");
+            if rename {
+                assert!(tmp.path().join("current.ts").exists());
+                assert!(tmp.path().join("incoming.ts").exists());
+            } else {
+                assert!(tmp.path().join("renamed-src.ts").exists());
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn dd_refuses_symlink_parent_without_touching_outside_ancestor_artifact() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = fixture(true, false);
+    let repo = Repository::open(tmp.path()).unwrap();
+    let mut index = repo.index().unwrap();
+    let source = Path::new("renamed-src.ts");
+    let mut ancestor = index.get_path(source, 1).unwrap();
+    index.conflict_remove(source).unwrap();
+    ancestor.path = b"parent/renamed-src.ts".to_vec();
+    index.add(&ancestor).unwrap();
+    index.write().unwrap();
+    let outside = TempDir::new().unwrap();
+    write_file(outside.path(), "renamed-src.ts", "export const value = 1;\n");
+    std::os::unix::fs::symlink(outside.path(), tmp.path().join("parent")).unwrap();
+    let before = std::fs::read(repo.path().join("index")).unwrap();
+    let backend = Backend::open(tmp.path()).unwrap();
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let buffer = backend.resolution_buffer_from_repo().unwrap();
+    let request = Backend::conflict_delete_request(
+        snapshot.observation.revision,
+        &buffer,
+        Path::new("parent/renamed-src.ts"),
+        snapshot.observation.kind,
+    ).unwrap();
+    let error = Backend::plan_recorded_conflict(tmp.path(), request).unwrap_err();
+    assert!(error.to_string().contains("parent"), "{error}");
+    assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
+    assert_eq!(std::fs::read(outside.path().join("renamed-src.ts")).unwrap(), b"export const value = 1;\n");
+    assert!(tmp.path().join("current.ts").exists());
+    assert!(tmp.path().join("incoming.ts").exists());
 }

@@ -32,6 +32,7 @@ use crate::conflicts::path_to_index_bytes;
 use crate::oplog::{append_oplog, OpLogEntry, OpOutcome};
 use crate::ops::StateSummary;
 use crate::GitError;
+use super::conflict_index::{ConflictIndexTransaction, IndexIdentity};
 
 pub use kagi_domain::resolution::DirFileChoice;
 
@@ -62,6 +63,23 @@ pub struct DirFilePlan {
     pub kept_children: Vec<DirFileEntry>,
     file_stage: u16,
     worktree: Vec<(PathBuf, u32, git2::Oid)>,
+    unaffected: IndexIdentity,
+}
+
+impl DirFilePlan {
+    /// Approved directory removals, derived only from the captured namespace.
+    pub fn removed_directories(&self) -> Vec<PathBuf> {
+        self.removal_paths.iter().filter(|path| {
+            self.worktree.iter().any(|(p, mode, _)| p == *path && *mode == 0o040000)
+        }).cloned().collect()
+    }
+
+    fn affects(&self, bytes: &[u8]) -> bool {
+        let original = self.path.as_os_str().as_encoded_bytes();
+        bytes == self.file_path.as_os_str().as_encoded_bytes()
+            || bytes == original
+            || (bytes.starts_with(original) && bytes.get(original.len()) == Some(&b'/'))
+    }
 }
 
 /// Captured index identity; stat-cache changes do not invalidate approval.
@@ -173,9 +191,8 @@ pub fn plan_dir_file_resolution(
     path: &Path,
     choice: DirFileChoice,
 ) -> Result<DirFilePlan, GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    let mut index = repo.index().map_err(git_error)?;
+    index.read(true).map_err(git_error)?;
     let file_path = parked_dir_file_paths(repo, &index)
         .into_iter()
         .find_map(|(original, parked)| (original == path).then_some(parked))
@@ -280,6 +297,11 @@ pub fn plan_dir_file_resolution(
         .collect();
 
     Ok(DirFilePlan {
+        unaffected: IndexIdentity::capture(&index, |bytes| {
+            bytes == file_path.as_os_str().as_encoded_bytes()
+                || bytes == path.as_os_str().as_encoded_bytes()
+                || bytes.starts_with(&prefix)
+        }),
         path: path.to_path_buf(),
         choice,
         file_oid: file.id,
@@ -312,6 +334,7 @@ pub fn preflight_dir_file_resolution(
         || fresh.kept_children != plan.kept_children
         || fresh.worktree != plan.worktree
         || fresh.removal_paths != plan.removal_paths
+        || fresh.unaffected != plan.unaffected
     {
         return Err(GitError::Other(format!(
             "{} changed since it was planned — re-plan before executing",
@@ -392,13 +415,13 @@ pub(crate) fn apply_dir_file_resolution(
     repo: &Repository,
     plan: &DirFilePlan,
 ) -> Result<String, GitError> {
-    apply_dir_file_resolution_with_progress(repo, plan, |_| {})
+    apply_dir_file_resolution_with_progress(repo, plan, |_| Ok(()))
 }
 
 pub(crate) fn apply_dir_file_resolution_with_progress(
     repo: &Repository,
     plan: &DirFilePlan,
-    mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
+    mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress) -> Result<(), GitError>,
 ) -> Result<String, GitError> {
     preflight_dir_file_resolution(repo, plan)?;
 
@@ -411,27 +434,27 @@ pub(crate) fn apply_dir_file_resolution_with_progress(
         ),
     ) {
         Ok(s) => {
-            progress(kagi_domain::conflict_family::ConflictProgress::RecoveryCaptured);
+            progress(kagi_domain::conflict_family::ConflictProgress::RecoveryCaptured)?;
             format!("snapshot={} commit={}", s.id, s.commit)
         }
         Err(_) => return Err(crate::ops::conflict_abort::draft_preservation_failed()),
     };
     // Recovery can be slow; it does not authorize changes made while it ran.
+    let transaction = ConflictIndexTransaction::acquire(repo)?;
     preflight_dir_file_resolution(repo, plan)?;
-    apply_to_index(repo, plan)?;
-    progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);
+    apply_to_index(&transaction, plan)?;
+    progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten)?;
     reconcile_worktree(repo, plan)?;
+    progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten)?;
     verify_dir_file_resolution(repo, plan)?;
-    progress(kagi_domain::conflict_family::ConflictProgress::IndexAndWorktreeWritten);
+    progress(kagi_domain::conflict_family::ConflictProgress::IndexAndWorktreeWritten)?;
     Ok(recovery)
 }
 
 /// The index surgery, kept separate so [`execute_dir_file_resolution`] can log
 /// both success and failure around it.
-fn apply_to_index(repo: &Repository, plan: &DirFilePlan) -> Result<(), GitError> {
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+fn apply_to_index(transaction: &ConflictIndexTransaction, plan: &DirFilePlan) -> Result<(), GitError> {
+    let mut index = transaction.read()?;
     index.conflict_remove(&plan.file_path).map_err(git_error)?;
     for child in &plan.child_entries {
         index
@@ -473,9 +496,7 @@ fn apply_to_index(repo: &Repository, plan: &DirFilePlan) -> Result<(), GitError>
         }
     }
 
-    index
-        .write()
-        .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))
+    transaction.write(&mut index)
 }
 
 /// Reconcile the working tree with the index at the resolved path (#407): remove
@@ -576,7 +597,9 @@ fn checkout_paths(repo: &Repository, paths: &[PathBuf]) -> Result<(), GitError> 
     for p in paths {
         cb.path(p);
     }
-    repo.checkout_index(None, Some(&mut cb))
+    let mut index = repo.index().map_err(git_error)?;
+    index.read(true).map_err(git_error)?;
+    repo.checkout_index(Some(&mut index), Some(&mut cb))
         .map_err(|e| GitError::Other(format!("reconcile: checkout_index failed: {}", e.message())))
 }
 
@@ -687,7 +710,11 @@ pub(crate) fn verify_dir_file_resolution(
     repo: &Repository,
     plan: &DirFilePlan,
 ) -> Result<(), GitError> {
-    let index = repo.index().map_err(git_error)?;
+    let mut index = repo.index().map_err(git_error)?;
+    index.read(true).map_err(git_error)?;
+    if IndexIdentity::capture(&index, |p| plan.affects(p)) != plan.unaffected {
+        return Err(GitError::Other("unaffected index changed during directory/file resolution".into()));
+    }
     let root = repo
         .workdir()
         .ok_or_else(|| GitError::Other("bare repository".into()))?;
@@ -707,7 +734,9 @@ pub(crate) fn verify_dir_file_resolution(
         return Err(fail());
     }
     let mut actual = Vec::new();
-    capture_worktree(root, &plan.path, &mut actual)?;
+    if plan.choice == DirFileChoice::KeepFile {
+        capture_worktree(root, &plan.path, &mut actual)?;
+    }
     let prefix = path_to_index_bytes(&plan.path).ok_or_else(fail)?;
     let count = index
         .iter()
@@ -729,11 +758,21 @@ pub(crate) fn verify_dir_file_resolution(
             count == 1 && identity_matches(&plan.path, plan.file_oid, plan.file_mode)
         }
         DirFileChoice::KeepDirectory => {
+            let mut expected = git2::Index::new().map_err(git_error)?;
+            let mut options = git2::DiffOptions::new();
+            options.disable_pathspec_match(true).include_untracked(true)
+                .recurse_untracked_dirs(true).include_typechange(true);
+            for child in &plan.kept_children {
+                stage_identity(&mut expected, child)?;
+                options.pathspec(&child.path);
+            }
             count == plan.kept_children.len()
-                && plan
-                    .kept_children
-                    .iter()
-                    .all(|e| identity_matches(&e.path, e.oid, e.mode))
+                && plan.kept_children.iter().all(|child| {
+                    index.get_path(&child.path, 0)
+                        .is_some_and(|e| e.id == child.oid && e.mode == child.mode)
+                })
+                && repo.diff_index_to_workdir(Some(&expected), Some(&mut options))
+                    .map_err(git_error)?.deltas().len() == 0
         }
     };
     if !verified {

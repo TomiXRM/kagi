@@ -100,9 +100,31 @@ store, and recovery capture may fail even for keep-directory. Both choices refus
 at planning rather than promising unavailable recovery. Preflight repeats after
 recovery capture and before the first write.
 
+The repeated-preflight boundary acquires the real Git `index.lock`, distinct
+from Kagi's repository writer lease. Freeze every unaffected index entry's raw
+path, stage, OID and mode under that lock, preserve the complete private index,
+publish it atomically and retain the lock through verification. Exact unaffected
+entry equality is mandatory; a post-write comparison alone cannot detect an
+external update already overwritten by a stale in-memory index. Compliant Git
+writers cannot enter that read/write window. A noncooperating writer is not
+covered by Git's lock protocol and must not be described as excluded by Kagi's
+repository lease.
+
+Directory checkout verification uses filter-aware index-to-worktree comparison,
+not raw file hashes: `eol=crlf`, `ident` and `core.autocrlf` may legitimately
+change checked-out bytes. Nested directories are removed child-before-parent;
+symlinks inside the namespace are unlinked, never traversed, and symlinked
+ancestors are refused.
+
+Delete and D/F receipts use a real post-execution repository summary. A measured
+failed mutation is Partial; once mutation starts, an unreadable after-state is
+Unknown, not Success or an invented successful deletion string. Deterministic
+fault points cover both completed and interrupted mutations with unreadable
+after-state, and an interrupted working-tree mutation with a readable partial state.
+
 The existing conflict-family values also express deletion explicitly:
 `Resolution::Delete` is a family choice and `ConflictDraft::Delete` is the frozen
-request. DD has only Confirm deletion (deleted on both sides); either
+request. DD has only Remove from Index… with a separate deleted-on-both-branches hint; either
 modify/delete orientation has Use deleted side and Use modified side. Neither
 an absent-side blob nor a zero-byte Result represents deletion. The delete
 operation uses its own plan/preflight/execute/verify triple under the same
@@ -111,9 +133,13 @@ conflict entries/artifacts. The two renamed destinations of a DD source are
 not deletion targets.
 
 File-local compact actions open the standard plan sheet for deletion and both
-D/F choices. It names exact removed/kept/restored paths in EN/JA, with no command
-syntax. Delete is destructive, never primary; Cancel/Escape are safe and Return
-does not implicitly confirm a destructive plan. Confirmation retains the frozen
+D/F choices. It names the action and target in its title, the result verb on its
+confirm button, and exact removed/kept/moved paths in EN/JA, with no command
+syntax. Directory entries end in `/`; parked-file restoration is one move row.
+The trigger is Secondary. Confirmation is Primary for index-only removal and
+Destructive only when working files are removed; only that latter case shows
+the working-file warning. Cancel/Escape are safe and root Return confirms neither
+role implicitly. Confirmation retains the frozen
 owner and plan token through the existing draft-flush and writer-admission
 boundaries; a changed repository requires a new plan, not renewed approval.
 The sidebar remains navigation and session actions retain #1764's placement.

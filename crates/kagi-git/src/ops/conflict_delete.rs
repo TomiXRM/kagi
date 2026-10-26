@@ -5,6 +5,7 @@ use git2::{Oid, Repository};
 use kagi_domain::conflict_family::ConflictProgress;
 
 use crate::GitError;
+use super::conflict_index::{ConflictIndexTransaction, IndexIdentity};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Target {
@@ -21,6 +22,7 @@ pub(crate) struct ConflictDeletePlan {
     pub removal_paths: Vec<PathBuf>,
     stages: [Option<(Oid, u32)>; 3],
     target: Option<Target>,
+    unaffected: IndexIdentity,
 }
 
 fn error(message: &str) -> GitError {
@@ -149,6 +151,7 @@ pub(crate) fn plan_conflict_delete(
         },
         stages,
         target,
+        unaffected: IndexIdentity::capture(&index, |p| p == path.as_os_str().as_encoded_bytes()),
     })
 }
 
@@ -160,6 +163,7 @@ pub(crate) fn preflight_conflict_delete(
     if live.stages != plan.stages
         || live.target != plan.target
         || live.removal_paths != plan.removal_paths
+        || live.unaffected != plan.unaffected
     {
         return Err(error("deletion targets changed after approval"));
     }
@@ -169,7 +173,7 @@ pub(crate) fn preflight_conflict_delete(
 pub(crate) fn execute_conflict_delete(
     repo: &Repository,
     plan: &ConflictDeletePlan,
-    mut progress: impl FnMut(ConflictProgress),
+    mut progress: impl FnMut(ConflictProgress) -> Result<(), GitError>,
 ) -> Result<String, GitError> {
     preflight_conflict_delete(repo, plan)?;
     let snapshot = super::create_snapshot(
@@ -180,20 +184,20 @@ pub(crate) fn execute_conflict_delete(
         ),
     )
     .map_err(|_| super::conflict_abort::draft_preservation_failed())?;
-    progress(ConflictProgress::RecoveryCaptured);
+    progress(ConflictProgress::RecoveryCaptured)?;
     // Snapshot acquisition is not permission to overwrite a concurrent edit.
+    let transaction = ConflictIndexTransaction::acquire(repo)?;
     preflight_conflict_delete(repo, plan)?;
     for path in &plan.removal_paths {
         std::fs::remove_file(target_path(repo, path)?).map_err(|e| error(&e.to_string()))?;
-        progress(ConflictProgress::WorktreeWritten);
+        progress(ConflictProgress::WorktreeWritten)?;
     }
-    let mut index = repo.index().map_err(|e| error(&e.to_string()))?;
-    index.read(true).map_err(|e| error(&e.to_string()))?;
+    let mut index = transaction.read()?;
     index
         .conflict_remove(&plan.path)
         .map_err(|e| error(&e.to_string()))?;
-    index.write().map_err(|e| error(&e.to_string()))?;
-    progress(ConflictProgress::IndexAndWorktreeWritten);
+    transaction.write(&mut index)?;
+    progress(ConflictProgress::IndexAndWorktreeWritten)?;
     verify_conflict_delete(repo, plan)?;
     Ok(format!(
         "snapshot={} commit={}",
@@ -207,6 +211,11 @@ pub(crate) fn verify_conflict_delete(
 ) -> Result<(), GitError> {
     let mut index = repo.index().map_err(|e| error(&e.to_string()))?;
     index.read(true).map_err(|e| error(&e.to_string()))?;
+    if IndexIdentity::capture(&index, |p| p == plan.path.as_os_str().as_encoded_bytes())
+        != plan.unaffected
+    {
+        return Err(error("unaffected index changed during deletion"));
+    }
     if (0..=3).any(|stage| index.get_path(&plan.path, stage).is_some())
         || target(repo, &plan.path)?.is_some()
     {

@@ -34,6 +34,8 @@ All notable changes to Kagi are documented here. Format loosely follows
   - Add deletion/parked-namespace formal obligations and independently red missing-route, empty-blob, parked-path, suffix-attribution and leftover-artifact controls.
   - Reserve the confirmation path viewport's capped row-count height so flex compression cannot hide the deletion target; check actual filename containment in both languages.
   - Model admitted recovery followed by a second preflight before namespace writes; retain a red mutant that overwrites a foreign change made during snapshot creation.
+  - Use a neutral Remove from Index… action with a separate DD explanation; name the action/path in each sheet, reserve destructive confirmation for working-file removal, and show parked restoration as one move with directory `/` markers. / DD の状況説明をボタンから分離し、操作と対象を確認シートに明示。作業ファイル削除時だけ破壊的な確定ボタンを使い、退避ファイルの復元は移動1行で示す。
+  - Preserve every unrelated index entry under Git's actual index lock, verify checked-out directory children through Git filters, and record measured Partial or Unknown outcomes instead of a predicted successful deletion. Cover nested directories, symlink boundaries and post-mutation measurement faults.
 - Recognize CRLF conflict delimiters, including zdiff3 base markers, without removing source-line CR bytes. Per-hunk Current, Incoming, both orders and manual Results preserve original CRLF/mixed endings through Save. / CRLF の conflict marker を正しく認識し、採用・両方・手動編集から保存まで元の改行を保持する。 (#1756)
   - Block pasted CRLF marker residue in manual Results and recognize CRLF separators in the staged checklist without changing source provenance or the checklist's seven-wide policy. / 手動 Result の CRLF marker 残留を保存前に拒否し、staged checklist でも CRLF 区切りを検出する。
 

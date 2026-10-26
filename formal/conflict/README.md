@@ -183,6 +183,18 @@ extraction, not a fairness claim, filesystem race proof or Rust execution.
 Deletion is an explicit confirmed request, not a persisted empty Result, so the
 text/raw draft-readiness pure models do not change.
 
+The subsequent exact-head review adds concrete guards that this six-path
+quotient does **not** prove: the real Git `index.lock` encloses the repeated
+preflight, private index publication and unaffected-entry verification; full
+raw-path/stage/OID/mode snapshots prevent unrelated index entries being silently
+lost. The repository admission lease alone does not exclude external Git.
+Checkout-filter-aware directory verification, multilevel/symlink boundaries and
+measured Partial/Unknown receipts are exercised by the Rust namespace and
+`conflicts/namespace_receipts.rs` tests. In particular, the model's completed
+receipt does not establish that production after-state measurement succeeded.
+Do not describe existing HOLD verdicts or historical native captures as proof
+of those implementation-level refinements.
+
 
 ### Saved runtime projections
 

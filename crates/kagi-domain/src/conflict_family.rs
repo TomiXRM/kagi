@@ -61,7 +61,10 @@ pub struct ConflictPathChanges {
     pub remove_index: Vec<PathBuf>,
     pub remove_worktree: Vec<PathBuf>,
     pub keep: Vec<PathBuf>,
-    pub restore: Vec<PathBuf>,
+    /// Directory nodes among `remove_worktree`, captured by the approved plan.
+    pub remove_directories: Vec<PathBuf>,
+    /// File content retained by moving from an artifact to its original path.
+    pub moves: Vec<(PathBuf, PathBuf)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

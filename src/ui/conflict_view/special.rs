@@ -144,12 +144,14 @@ pub(super) fn render_center(
             .gap_2()
             .px(theme::scaled_px(12.))
             .py(theme::scaled_px(8.))
+            .border_b_1()
+            .border_color(rgb(theme().surface))
             .child(super::e2e::measure_control(
                 "conflict-delete",
                 super::toolbar::compact_button(
                     "conflict-delete",
                     delete_label.t(),
-                    ButtonRole::Danger,
+                    ButtonRole::Secondary,
                     cx,
                 )
                 .disabled(writer_busy)
@@ -191,6 +193,15 @@ pub(super) fn render_center(
             .flex_grow(1.)
             .h_full()
             .child(choices)
+            .when(resolutions.len() == 1, |pane| {
+                pane.child(
+                    div()
+                        .p(theme::scaled_px(12.))
+                        .text_size(theme::scaled_px(13.))
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(Msg::ConflictDeletedBothHint.t())),
+                )
+            })
             .when(resolutions.len() > 1, |pane| {
                 pane.child(render_preview(
                     mode,

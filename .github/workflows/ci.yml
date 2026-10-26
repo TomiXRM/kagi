@@ -215,6 +215,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: formal/conflict/uv.lock
+      # run.py owns the stable TLC version/cache and verifies its hash before Java.
       - name: Check conflict models and broken variants
         run: uv run --frozen --project formal/conflict formal/conflict/run.sh
 

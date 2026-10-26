@@ -193,6 +193,22 @@ pub fn scenario_create_branch_feedback(cx: &mut VisualTestAppContext) {
                 alert(cx, window, Msg::BranchNameEmpty.t(), true);
                 disabled(sheet, Msg::BranchNameEmpty.t());
                 sheet.focused(cx, &app, window);
+                cx.read(|cx| {
+                    assert!(
+                        app.read(cx)
+                            .toast_stack
+                            .as_ref()
+                            .unwrap()
+                            .read(cx)
+                            .toasts()
+                            .is_empty(),
+                        "Return on an empty field shows no operation toast"
+                    );
+                });
+                assert!(
+                    kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).is_empty(),
+                    "Return on an empty field is not an operation-log entry"
+                );
                 let single_line =
                     e2e::control_bounds(window.window_id(), "input-branch-name-error").unwrap();
                 assert!(single_line.size.height > px(0.));

@@ -116,6 +116,11 @@ impl KagiApp {
         if let Some(modal) = self.create_branch_modal_mut() {
             modal.branch_name_interacted = true;
             cx.notify();
+            // An unfilled form is field feedback, not an operation attempt.
+            // Keep nonempty names on the full refusal/preflight pipeline.
+            if modal.input.is_empty() {
+                return;
+            }
         }
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.

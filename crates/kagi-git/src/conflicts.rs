@@ -491,6 +491,7 @@ fn collect_conflict_files(
     // stage-0 children never appear in `index.conflicts()`, so detecting the
     // collision needs the full entry list, not just the conflict iterator.
     let all_paths: Vec<Vec<u8>> = index.iter().map(|e| e.path).collect();
+    let parked = crate::ops::parked_dir_file_paths(repo, index);
 
     let mut files: Vec<ConflictFile> = Vec::new();
     for entry in conflicts {
@@ -499,6 +500,12 @@ fn collect_conflict_files(
             Some(p) => p,
             None => continue,
         };
+        if parked
+            .iter()
+            .any(|(original, file)| &path == file || path.starts_with(original))
+        {
+            continue;
+        }
         let kind = classify_kind(repo, &conflict, &path, &all_paths);
         files.push(ConflictFile {
             path,
@@ -506,6 +513,11 @@ fn collect_conflict_files(
             status: ConflictStatus::Unresolved,
         });
     }
+    files.extend(parked.into_iter().map(|(path, _)| ConflictFile {
+        path,
+        kind: ConflictKind::DirFile,
+        status: ConflictStatus::Unresolved,
+    }));
 
     files.sort_by(|a, b| a.path.cmp(&b.path));
     // Collapse only *exact* duplicate entries (same path AND kind). Keying the
@@ -535,25 +547,127 @@ fn collect_resolved_files(
     if listed.is_empty() {
         return Vec::new();
     }
-    let mut resolved: Vec<ResolvedConflictFile> = listed
-        .iter()
-        .filter_map(|listed_path| {
-            let path = bytes_to_pathbuf(listed_path)?;
-            if unmerged.iter().any(|file| file.path == path) {
-                return None;
-            }
-            // `get_path(path, 0)` is the stage-0 entry only; an unmerged path has
-            // no stage 0 and an untracked/deleted path has no entry at all.
-            let entry = index.get_path(&path, 0)?;
-            Some(ResolvedConflictFile {
+    let mut resolved = Vec::new();
+    for listed_path in &listed {
+        let Some(path) = bytes_to_pathbuf(listed_path) else {
+            continue;
+        };
+        if unmerged.iter().any(|file| file.path == path) {
+            continue;
+        }
+        if let Some(entry) = index.get_path(&path, 0) {
+            resolved.push(ResolvedConflictFile {
                 path,
                 oid: entry.id.to_string(),
-            })
-        })
-        .collect();
+            });
+            continue;
+        }
+        let Some((original, separator)) = resolved_parked_original(repo, index, listed_path, &path)
+        else {
+            continue;
+        };
+        if unmerged.iter().any(|file| file.path.starts_with(&original)) {
+            continue;
+        }
+        if let Some(entry) = index.get_path(&original, 0) {
+            resolved.push(ResolvedConflictFile {
+                path: original,
+                oid: entry.id.to_string(),
+            });
+        } else {
+            // Add/add D/F leaves directory children at stage 0; Git lists
+            // only the parked file, so the children also need attribution.
+            let prefix = &listed_path[..separator];
+            for entry in index.iter().filter(|entry| {
+                entry.flags & 0x3000 == 0
+                    && entry
+                        .path
+                        .strip_prefix(prefix)
+                        .is_some_and(|suffix| suffix.starts_with(b"/"))
+            }) {
+                let Some(path) = bytes_to_pathbuf(&entry.path) else {
+                    continue;
+                };
+                resolved.push(ResolvedConflictFile {
+                    path,
+                    oid: entry.id.to_string(),
+                });
+            }
+        }
+    }
     resolved.sort_by(|a, b| a.path.cmp(&b.path));
     resolved.dedup_by(|a, b| a.path == b.path);
     resolved
+}
+
+/// Read-only presentation evidence after the parked entry has been removed.
+/// Side trees distinguish Git's D/F artifact from an ordinary tilde filename.
+fn resolved_parked_original(
+    repo: &Repository,
+    index: &git2::Index,
+    listed_path: &[u8],
+    parked: &Path,
+) -> Option<(PathBuf, usize)> {
+    if (1..=3).any(|stage| index.get_path(parked, stage).is_some()) {
+        return None;
+    }
+    // Git flattens '/' in parking labels, so only the final component can
+    // contain the boundary. Never enumerate untrusted MERGE_MSG separators.
+    let component_start = listed_path
+        .iter()
+        .rposition(|byte| *byte == b'/')
+        .map_or(0, |offset| offset + 1);
+    let component = &listed_path[component_start..];
+    let current = repo.head().ok()?.peel_to_tree().ok()?;
+    let incoming = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"]
+        .into_iter()
+        .find_map(|name| repo.revparse_single(name).ok()?.peel_to_tree().ok())?;
+    let (current, incoming) = if component_start == 0 {
+        (current, incoming)
+    } else {
+        let parent = bytes_to_pathbuf(&listed_path[..component_start - 1])?;
+        (
+            repo.find_tree(current.get_path(&parent).ok()?.id()).ok()?,
+            repo.find_tree(incoming.get_path(&parent).ok()?.id()).ok()?,
+        )
+    };
+    if incoming.iter().any(|entry| entry.name_bytes() == component) {
+        return None;
+    }
+    let mut matched = None;
+    for current_entry in current.iter() {
+        let name = current_entry.name_bytes();
+        if name == component {
+            return None;
+        }
+        let Some(label) = component
+            .strip_prefix(name)
+            .and_then(|suffix| suffix.strip_prefix(b"~"))
+        else {
+            continue;
+        };
+        if label.is_empty() {
+            continue;
+        }
+        let Some(incoming_entry) = incoming.get_name_bytes(name) else {
+            continue;
+        };
+        if matches!(
+            (current_entry.kind(), incoming_entry.kind()),
+            (Some(git2::ObjectType::Blob), Some(git2::ObjectType::Tree))
+                | (Some(git2::ObjectType::Tree), Some(git2::ObjectType::Blob))
+        ) {
+            // Both paths and labels can contain tildes: require uniqueness,
+            // with candidate work bounded by the parent tree's entries.
+            if matched.is_some() {
+                return None;
+            }
+            let separator = component_start + name.len();
+            let original = bytes_to_pathbuf(&listed_path[..separator])?;
+            matched = Some((original, separator));
+        }
+    }
+    matched
 }
 
 /// Bounded read of `MERGE_MSG` only when it is a regular file: a FIFO would

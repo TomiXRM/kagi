@@ -3,15 +3,16 @@
 This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
-No product code is imported or changed by the guard. The reconciled inventory is
-84 TLC configurations and 37 negative controls, retaining P2, D3 repository
-admission, #1780 writer termination and #1731/#1784 draft-preservation/flush guards.
-The maintained pure inventory is 40 properties (1,695,747 evaluations), 37 mutants,
-and 34 saved drill projections / 46 logs plus a forged-Skip control.
-The full harness matched all 84 expected lifecycle outcomes (80,775 summed
-distinct states) and detected all 37 removed-guard controls (15,387 summed
-states). Pure properties, mutants and saved drill projections also passed.
-Predecessor measurements remain explicitly historical in the lifecycle ledger.
+No product code is imported or changed by the harness. The maintained union has
+93 TLC configurations and 43 negative controls, retaining P2 lifecycle guards,
+#1746 D3 repository admission, #1780 writer termination, #1731/#1784 preservation
+and off-thread flush guards, and #1734/#1735 explicit deletion and parked-namespace
+routes. Including #1756's CRLF manual-residue
+predicate, there are 40 pure properties (1,695,747 evaluations), 37 pure mutants,
+and 34 saved drill projections / 46 logs
+with a forged-Skip negative control. Earlier 77-check deletion, 81-check P2,
+84-check D3 and 90-check namespace runs are historical evidence in the lifecycle
+ledger; generated receipts record the current combined verdicts.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
@@ -76,7 +77,7 @@ uv run --project formal/conflict python formal/conflict/pure/predict_ready.py --
 ## Expected outcomes and update policy
 
 **Expected REFUTATIONS are green at the harness level.** They preserve known
-holes/questions tracked by **#1732–#1733 and #1746 (model-external runtime findings: #1734–#1738)**,
+holes/questions tracked by **#1732–#1733 and #1746 (model-external runtime findings: #1736–#1738)**,
 not promises that those holes are acceptable. The Issue columns below distinguish
 product holes, owner questions, deliberate negative controls, and runtime contracts.
 TLC itself exits 12 (safety counterexample) or 13 (temporal
@@ -200,6 +201,50 @@ off-thread within GPUI's shared 200 ms shutdown budget; slow/failing storage can
 still exceed it. That path does not strengthen `draft-crash` to HOLD or claim an
 acknowledgment before a successful current-generation flush.
 
+### Deletion and Git-parked namespace routes (#1734 / #1735)
+
+The original ledgers classified these two issues as **model-external runtime
+findings**: there were no `dd-rename` or `df-head-parked` REFUTE rows to relabel.
+The matching fix adds those named HOLD checks and a `modify-delete` HOLD to the
+existing lifecycle model, with six independently red negative controls.
+The historical drill projections remain unchanged.
+
+This refinement has six distinct paths: original source, two rename targets,
+parked file, directory child and unrelated suffix lookalike. It distinguishes
+unmerged stages, absent entries and clean identities. DD offers only explicit
+deletion; either modify/delete direction offers deletion or the present side.
+D/F requires positive source-tree attribution before offering either namespace
+choice. An exact index/worktree plan follows confirmation → single-owner
+repository admission → preflight → recovery snapshot → repeated preflight →
+index/worktree writes → verification → receipt. Recovery remains inside the
+admitted interval, matching #1746 D3's lease ordering. The namespace quotient
+assumes one admitted writer; it does not itself prove cross-process exclusion.
+One foreign edit before either preflight, including during snapshot creation,
+and recovery failure both refuse without mutation. Full expected maps preserve
+unrelated paths and both rename targets; the kept file occupies the original
+namespace. `namespaceRepreflight` removes only the post-snapshot state check:
+`df-post-snapshot-change-broken` must refute after a foreign edit during recovery.
+
+The invariants check **choice availability after classification**, not only
+success-implies-correctness, so removing the delete route cannot vacuously pass
+by leaving no enabled action. They also check complete index/worktree outcomes
+after mutation and a receipt at completion. This is a finite route/safety
+extraction, not a fairness claim, filesystem race proof or Rust execution.
+Deletion is an explicit confirmed request, not a persisted empty Result, so the
+text/raw draft-readiness pure models do not change.
+
+The subsequent exact-head review adds concrete guards that this six-path
+quotient does **not** prove: the real Git `index.lock` encloses the repeated
+preflight, private index publication and unaffected-entry verification; full
+raw-path/stage/OID/mode snapshots prevent unrelated index entries being silently
+lost. The repository admission lease alone does not exclude external Git.
+Checkout-filter-aware directory verification, multilevel/symlink boundaries and
+measured Partial/Unknown receipts are exercised by the Rust namespace and
+`conflicts/namespace_receipts.rs` tests. In particular, the model's completed
+receipt does not establish that production after-state measurement succeeded.
+Do not describe existing HOLD verdicts or historical native captures as proof
+of those implementation-level refinements.
+
 
 ### Saved runtime projections
 
@@ -292,6 +337,15 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `preserve-skip-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
 | `preserve-dir-file` | `NoDestructiveProgressAfterPreservationFailure` | HOLD | none | #1731 fixed |
 | `preserve-dir-file-broken` | `NoDestructiveProgressAfterPreservationFailure` | REFUTE | preservation | Negative control for #1731 |
+| `dd-rename` | `DeletionRouteCompletes` | HOLD | none | #1734 explicit deletion; rename targets preserved |
+| `dd-rename-broken` | `DeletionRouteCompletes` | REFUTE | missingDelete | Negative control: absent-side choices replace deletion |
+| `dd-empty-blob-broken` | `DeletionRouteCompletes` | REFUTE | deleteAsEmpty | Negative control: deletion incorrectly stages an empty blob |
+| `modify-delete` | `DeletionRouteCompletes` | HOLD | none | #1734 both one-sided stage patterns |
+| `df-head-parked` | `ParkedNamespaceCompletes` | HOLD | none | #1735 both original-namespace outcomes |
+| `df-head-parked-broken` | `ParkedNamespaceCompletes` | REFUTE | literalParked | Negative control: stage the parked filename |
+| `df-suffix-only-broken` | `ParkedNamespaceCompletes` | REFUTE | suffixOnly | Negative control: infer ownership from suffix alone |
+| `df-worktree-residue-broken` | `ParkedNamespaceCompletes` | REFUTE | parkedResidue | Negative control: leave the parked worktree artifact |
+| `df-post-snapshot-change-broken` | `ParkedNamespaceCompletes` | REFUTE | namespaceRepreflight | Negative control: skip repeated preflight after snapshot; overwrite intervening foreign change |
 | `merge-tree` | `MergeCommitTreeIsApprovedTree` | HOLD | none | #1743 |
 | `merge-tree-broken` | `MergeCommitTreeIsApprovedTree` | REFUTE | mergePlan | Negative control for #1743 |
 | `sibling-invalidation` | `SiblingWorktreesInvalidatedOnSharedRef` | HOLD | none | #1744 |

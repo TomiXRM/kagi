@@ -71,11 +71,15 @@ witnesses are named there; those local artifacts are not committed).
 Run the maintained guard from the repository root with
 `uv run --project formal/conflict formal/conflict/run.sh`; see
 [scope and expected outcomes](../../formal/conflict/README.md). Known model
-REFUTATIONS remain harness-green while tracked by #1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738).
-The maintained tables now mark C1–C4 fixed by #1746; C6 remains an owner
-QUESTION. C5 is CONTRACT at runtime (metadata guard,
+REFUTATIONS remain harness-green while tracked by #1732–#1733 and #1746 (model-external runtime findings: #1736–#1738).
+The maintained tables mark C1–C4 and C6 fixed by #1746.
+C5 is CONTRACT at runtime (metadata guard,
 `continue-metadata-read` HOLD), not an end-to-end fail-open issue.
 Unless explicitly amended below, the historical evidence keeps its original classifications.
+The #1734/#1735 [lifecycle amendment](conflict-lifecycle-ledger.md#1734--1735-deletion-and-parked-namespace-amendment--2026-10-25)
+adds deletion/namespace checks for formerly model-external findings. Explicit
+deletion is a confirmed operation, not persisted empty text; these text/raw
+draft-readiness predicates and their negative controls are intentionally unchanged.
 Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
@@ -187,7 +191,7 @@ Observed after the #1746 amendment: **38 properties; 1,695,579 baseline property
 | draft serialization | OnlyPendingRecoveryOutranksDisk (HOLD) | exhaustive | 3160 | HOLD | none in domain | crates/kagi-git/src/resolution/drafts.rs:260-267,303-311 | CONTRACT | crates/kagi-git/tests/conflicts/draft_revision.rs:659; crates/kagi-git/tests/conflicts/draft_recency.rs:7 |
 | draft preservation | DedupMovesLatestToTail (HOLD) | exhaustive | 504 | HOLD | none in domain | crates/kagi-git/src/resolution/drafts.rs:160-173 | CONTRACT | crates/kagi-git/tests/conflicts/draft_revision.rs:659 |
 | draft serialization | TwoWriterRecoveryRetained (HOLD) | exhaustive | 72 | HOLD in maintained guard | none in domain; pre-merge mutant drops the first recovery | `resolution/drafts.rs::autosave_json; resolution/draft_merge.rs::matches_record` | CONTRACT (#1732 P1) | `resolution/draft_storage_tests.rs::two_writer_recovery_survives_other_file_autosaves`; independent-hunk merge both orderings |
-| Skip classification | SkipClassificationNoFalseSuccess (HOLD) | exhaustive | 1152 | HOLD | none in domain after #1746 C6 | crates/kagi-domain/src/sequencer_skip.rs:125-151; src/ui/operations/conflict_skip.rs::skip_outcome | CONTRACT | `zero_exit_requires_observed_movement_while_operation_remains`; `zero_exit_without_movement_maps_to_warning_not_success` |
+| Skip classification | SkipClassificationNoFalseSuccess (HOLD) | exhaustive | 1152 | HOLD | none in domain after #1746 C6 | crates/kagi-domain/src/sequencer_skip.rs:125-151; crates/kagi-git/src/backend/conflict_continue.rs::conflict_skip_outcome | CONTRACT | `zero_exit_requires_observed_movement_while_operation_remains`; `zero_exit_without_movement_maps_to_warning_not_success` |
 | Skip evidence | BrokenSignalDominatesMovement (HOLD) | exhaustive | 1152 | HOLD | none in domain | crates/kagi-domain/src/sequencer_skip.rs:87-102 | CONTRACT | crates/kagi-domain/src/sequencer_skip.rs:263-334 |
 | Skip classification | NextConflictIsSuccessOnObservedMovement (HOLD) | exhaustive | 46 | HOLD | none in domain | crates/kagi-domain/src/sequencer_skip.rs:139-146 | CONTRACT | crates/kagi-domain/src/sequencer_skip.rs:176,186 |
 | Skip classification | FinishedRequiresCleanRepository (HOLD) | exhaustive | 1152 | HOLD | none in domain | crates/kagi-domain/src/sequencer_skip.rs:126-138 | CONTRACT | crates/kagi-domain/src/sequencer_skip.rs:218 |

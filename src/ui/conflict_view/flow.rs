@@ -167,7 +167,13 @@ pub(super) fn render(
         })
         .bg(rgb(theme().bg_base));
     if let Some(file) = file {
-        if mode.buffer.hunk_model(&file.path).is_some() {
+        let deletion_choice = mode
+            .buffer
+            .file_resolutions(&file.path)
+            .is_some_and(|choices| {
+                choices.contains(&kagi_domain::conflict_family::Resolution::Delete)
+            });
+        if !deletion_choice && mode.buffer.hunk_model(&file.path).is_some() {
             body = body.child(super::super::conflict_editor::render_editor(
                 mode, chrome, &file.path, cx,
             ));

@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{IndexEntry, Repository};
 
 use super::GitError;
+use crate::conflicts::entry_is_binary;
 use kagi_domain::conflict_family::ConflictRevision;
 use serde_json::Value;
 
@@ -361,11 +362,13 @@ impl ResolutionBuffer {
                 drafts::file_identity(git_dir, context, &path, &conflict)
             });
             fr.worktree_fingerprint = worktree_state::fingerprint(&workdir.join(&path)).ok();
-            fr.current_text = blob_text(repo, conflict.our.as_ref());
-            fr.incoming_text = blob_text(repo, conflict.their.as_ref());
             fr.binary = entry_is_binary(repo, conflict.our.as_ref())
                 || entry_is_binary(repo, conflict.their.as_ref())
                 || entry_is_binary(repo, conflict.ancestor.as_ref());
+            if !fr.binary {
+                fr.current_text = blob_text(repo, conflict.our.as_ref());
+                fr.incoming_text = blob_text(repo, conflict.their.as_ref());
+            }
             // #297: structurally-unmergeable conflicts (binary / symlink /
             // gitlink) are resolved by staging a side's blob OID directly.
             // Record each present side's (oid, mode) and mark the file `raw` so
@@ -1069,25 +1072,6 @@ fn side_raw(entry: Option<&IndexEntry>) -> Option<RawResolution> {
         oid: e.id,
         mode: e.mode,
     })
-}
-
-/// Whether an index entry's blob is binary.
-fn entry_is_binary(repo: &Repository, entry: Option<&IndexEntry>) -> bool {
-    let entry = match entry {
-        Some(e) => e,
-        None => return false,
-    };
-    if entry.id.is_zero() {
-        return false;
-    }
-    match repo.find_blob(entry.id) {
-        Ok(blob) => {
-            let content = blob.content();
-            let probe = &content[..content.len().min(8 * 1024)];
-            blob.is_binary() || probe.contains(&0u8)
-        }
-        Err(_) => false,
-    }
 }
 
 // ────────────────────────────────────────────────────────────

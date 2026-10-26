@@ -115,7 +115,13 @@ pub(crate) fn side_pair(
                     .bg(rgb(theme().surface)),
             );
         }
-        let metadata = content.metadata().cloned();
+        // PDF already owns its toolbar/status presentation. A second fixed
+        // metadata footer can consume the document viewport at narrow/high-zoom
+        // sizes, leaving its scroll bounds outside the clipped body.
+        let metadata = match &content {
+            SideContent::Pdf { .. } => None,
+            _ => content.metadata().cloned(),
+        };
         let dimensions = match &content {
             SideContent::Image { dimensions, .. } => *dimensions,
             _ => None,
@@ -211,13 +217,15 @@ pub(crate) fn side_pair(
             })),
         );
     }
-    row.child(image_overlay(
-        images,
-        image_labels,
-        probes,
-        extent,
-        viewports,
-    ))
+    row.when(images.iter().any(Option::is_some), |row| {
+        row.child(image_overlay(
+            images,
+            image_labels,
+            probes,
+            extent,
+            viewports,
+        ))
+    })
     .into_any_element()
 }
 

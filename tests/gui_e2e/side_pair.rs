@@ -68,6 +68,7 @@ fn wait_preview(
     window: AnyWindowHandle,
     conflict: &Entity<ConflictView>,
 ) {
+    crate::recovery_diff_presentation::resize_image_frame(cx, window, (1392., 883.));
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         cx.run_until_parked();
@@ -134,6 +135,11 @@ fn choose_and_save(
     pdf: bool,
 ) {
     let repo = fixture.path().canonicalize().unwrap();
+    let worktree_bytes = std::fs::read(repo.join(path)).unwrap();
+    let worktree_mode = std::fs::metadata(repo.join(path))
+        .unwrap()
+        .permissions()
+        .mode();
     let ancestor = index_blob(&repo, path, 1);
     let current = index_blob(&repo, path, 2);
     let incoming = index_blob(&repo, path, 3);
@@ -205,7 +211,15 @@ fn choose_and_save(
         expected,
         "{path}/{side}: exact chosen blob, mode and bytes"
     );
-    assert_eq!(std::fs::read(repo.join(path)).unwrap(), expected.bytes);
+    // Raw Save stages the frozen blob, deliberately never rewriting the worktree.
+    assert_eq!(std::fs::read(repo.join(path)).unwrap(), worktree_bytes);
+    assert_eq!(
+        std::fs::metadata(repo.join(path))
+            .unwrap()
+            .permissions()
+            .mode(),
+        worktree_mode
+    );
     let repository = git2::Repository::open(&repo).unwrap();
     let index = repository.index().unwrap();
     for stage in [1, 2, 3] {

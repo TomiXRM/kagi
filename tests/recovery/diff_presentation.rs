@@ -424,7 +424,11 @@ fn conflict_images_fixture(paths: &[&str]) -> tempfile::TempDir {
     fixture
 }
 
-fn resize_image_frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
+pub(crate) fn resize_image_frame(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    dimensions: (f32, f32),
+) {
     let wanted = gpui::size(gpui::px(dimensions.0), gpui::px(dimensions.1));
     cx.update_window(win, |_, window, _| window.resize(wanted))
         .unwrap();

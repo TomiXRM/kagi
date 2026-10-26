@@ -269,7 +269,11 @@ geometry. Conflict alone supplies action rows. A decision is derived from the
 buffer's raw OID/mode; Change clears that decision in `ResolutionBuffer`, preserving
 the source identities and marking the unresolved draft for normal autosave.
 No viewer-local chosen-side flag or alternative Save writer is introduced.
-The raw Save pipeline and its contract log lines remain unchanged.
+The raw Save pipeline and its contract log lines remain unchanged: the selected
+OID/mode is staged, while worktree bytes and mode are intentionally left untouched
+(#297/#298). Native acceptance compares both the exact stage-0 identity and that
+unchanged worktree; any resulting index/worktree difference is not a new writer
+behavior introduced by this viewer.
 
 The accepted conflict preview owns its PDF pair. Conflict starts synchronized;
 diff retains its independent initial state. Retirement immediately disables
@@ -283,8 +287,13 @@ the revised matrix with final corrections recorded in
 The source header has no controls; an aligned action row sits below it, using
 existing NeutralTinted tool buttons and outline-only Used / Not used labels.
 The unchosen body remains full contrast. PDF keeps the Editor toolbar and one
-pair-level sync control in the file header. External comparison belongs to a
-shared row outside both source groups. EN headers use Current / Incoming.
+pair-level sync control in the file header, without a second shared size/OID
+footer, matching the approved PDF figure. Its source metadata stays in the model;
+the existing PDF viewer owns document status and errors. An extra fixed footer
+can exhaust the narrow/high-zoom body allocation, clipping the document viewport
+and routing body clicks to the footer instead. Other side kinds retain their
+shared metadata summaries. External comparison belongs to a shared row outside
+both source groups. EN headers use Current / Incoming.
 Selectable symlink targets and full gitlink OIDs remain source content, not paths
 to follow. The figure's contrast calculations cover Apple Light/Dark, not all
 themes or native assistive-technology delivery.

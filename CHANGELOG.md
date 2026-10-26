@@ -8,7 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - Preserve conflict lifecycle and pure-predicate formal models as an advisory CI regression guard, with pinned TLC, explicit issue-mapped expected outcomes, red broken-variant checks, and runtime-reconciled ledgers. (#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738))
-  - Replay 34 saved native-drill projections, reject a forged unarmed Skip, and retain explicit evidence gaps. Refine refreshed-Skip and unreadable-metadata guards; run the 48 lifecycle checks in bounded batches.
+  - Replay 34 saved native-drill projections, reject a forged unarmed Skip, and retain explicit evidence gaps. Refine refreshed-Skip and unreadable-metadata guards; run the 84 lifecycle checks in bounded batches and validate 40 pure properties against 37 pure mutants.
 
 ### Internal
 
@@ -29,6 +29,15 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Serialize conflict writes across Kagi processes using a repository advisory lock. Save, directory/file resolution, Continue, Abort, Skip and merge finalization refuse busy repositories without blocking reads; process death releases admission automatically. (#1746)
+  - Keep repository admission held when a CLI returns `TerminationUnknown` with live descendants, including Continue/Skip and nested commands. Transfer same-fd lock ownership to the existing process janitor and remove the originating thread's reusable admission; only whole-group stop proof releases it, never pipe closure alone. Probe without retiring an executing supervisor job, so later commands remain supervised. Known-success hooks with closed stdio do not quarantine admission; their helpers remain tracked by the existing group sweeper. Per-Sessions reconciliation remains separate; no second monitor is introduced. (#1780)
+  - Keep repository admission probes non-recording so Continue, Skip and staging retain exactly one operation-specific refusal. Quietly skip contended auto-fetch until its next tick; retain queued successors and retry a repository-busy head instead of reporting an identity change.
+  - Preserve Pull's specific repository-busy footer, show a short localized cause and retry-later guidance within the bounded refusal preview, and link recorded notifications directly to their Operation Log receipt. Clear only stale repository-busy Idle/Failed footers on later successful write/stage admission, including reworded or previous-language previews; preserve unrelated statuses. Keep staging's single path-bearing refusal and quiet auto-fetch unchanged.
+  - Keep contended queued writes responsive with zero-wait background probes and capped retry backoff. Show one error notification per waiting intent, replan only after admission is available, and cancel retry tasks when their owner closes.
+  - Re-arm the waiting head if another window wins admission immediately after a successful probe. Route non-contention probe failures through ordinary admission instead of leaving a misleading repository-busy wait.
+  - Record user-initiated admission refusals under the requested operation's name, including Pull before its preparatory Fetch and Commit before execution. Keep one contention refusal per queued intent rather than per retry; silent auto-fetch remains receipt-free.
+  - Preserve operation-named Abort/merge planning receipts through failed appends and show their required acknowledgment once, without duplicate log rows. Keep automatic PR-ref refresh quiet under contention and retry on its next tick; localize admission states and all error variants in EN/JA while retaining raw details.
+  - Retain frozen, clean-filtered conflict staging inside the repository guard from revision preflight through index publication, including the private interleaving-hook path. Keep Abort's restored-path and raw stash index/worktree verification under the same guard; draft preservation still precedes admission, while directory/file snapshot refs follow locked preflight. (#1746, #1775)
 - Recognize CRLF conflict delimiters, including zdiff3 base markers, without removing source-line CR bytes. Per-hunk Current, Incoming, both orders and manual Results preserve original CRLF/mixed endings through Save. / CRLF の conflict marker を正しく認識し、採用・両方・手動編集から保存まで元の改行を保持する。 (#1756)
   - Block pasted CRLF marker residue in manual Results and recognize CRLF separators in the staged checklist without changing source provenance or the checklist's seven-wide policy. / 手動 Result の CRLF marker 残留を保存前に拒否し、staged checklist でも CRLF 区切りを検出する。
 

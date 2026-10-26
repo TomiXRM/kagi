@@ -42,6 +42,9 @@ pub(crate) const ADVICE_CONFLICTS_SKIP_DISCARDS_STEP: &str =
 /// Japanese rendering of one conflicts note.
 pub fn note_ja(note: &ConflictsNote) -> String {
     match note {
+        ConflictsNote::RepositoryBusy => {
+            super::advice_text(Msg::AdviceConflictsRepositoryBusy, &[])
+        }
         ConflictsNote::ObservationChanged => {
             super::advice_text(Msg::AdviceConflictsObservationChanged, &[])
         }

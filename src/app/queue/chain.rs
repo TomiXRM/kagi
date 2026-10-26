@@ -172,6 +172,15 @@ impl IntentQueue {
                 .get_mut(&session)
                 .and_then(VecDeque::front_mut)
                 .expect("candidate exists");
+            // External owners have no local lease-release event. Keep their
+            // chain intact until the ticker explicitly retries admission.
+            if head.state
+                == (IntentState::Waiting {
+                    reason: WaitReason::RepositoryBusy,
+                })
+            {
+                continue;
+            }
             if !matches!(
                 head.state,
                 IntentState::Queued | IntentState::Waiting { .. }

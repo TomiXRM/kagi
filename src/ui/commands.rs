@@ -2726,7 +2726,14 @@ impl KagiApp {
         let superseded_read = self.reads.is_loading(owner);
         // A quiet fetch is background work, never this tab's `&&` predecessor.
         let queue_owner = (!silent).then_some(owner);
-        let Some(lease) = self.reserve_write_for("fetch", &repo_path, queue_owner, cx) else {
+        let refusal_name = if pull_confirm.is_some() {
+            "pull"
+        } else {
+            "fetch"
+        };
+        let Some(lease) =
+            self.reserve_write_for("fetch", refusal_name, &repo_path, queue_owner, cx)
+        else {
             return false;
         };
         let before = kagi_git::StateSummary {

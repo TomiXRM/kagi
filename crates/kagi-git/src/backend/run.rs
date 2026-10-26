@@ -143,9 +143,18 @@ impl Backend {
                 .as_ref()
                 .err()
                 .and_then(GitError::blocker)
-                .filter(|_| {
+                .filter(|note| {
                     partial_after.is_none()
-                        && matches!(op, Operation::Push | Operation::PushBranch { .. })
+                        && (matches!(op, Operation::Push | Operation::PushBranch { .. })
+                            || matches!(
+                                (op, *note),
+                                (
+                                    Operation::MergeCommit { .. },
+                                    kagi_domain::plan_note::PlanNote::Conflicts(
+                                        kagi_domain::plan_note::ConflictsNote::RepositoryBusy
+                                    )
+                                )
+                            ))
                 })
         {
             // Ordinary Push's typed guards run before sending or setting an
@@ -197,6 +206,11 @@ impl Backend {
         fault: Option<stash::StashFaultPoint>,
         backup_refs: &mut Vec<String>,
     ) -> Result<OperationOutcome, GitError> {
+        let _write_lock = if matches!(op, Operation::MergeCommit { .. }) {
+            Some(crate::write_lock::acquire(&self.repo)?)
+        } else {
+            None
+        };
         // ── Owner-trust gate (ADR-0160). libgit2 does not enforce
         // safe.directory, so a foreign-owned repo opened via git2 reaches here
         // untrusted. Reads already ran; every *mutating* op stops here until the

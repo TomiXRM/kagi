@@ -87,6 +87,14 @@ consume them are later work.
   persistence; it retains both mutation outcome and the required acknowledgement.
   This closes the host/callback lifetime gap, not an OS crash between Git's
   mutation and the oplog append.
+  Repository-wide admission remains a separate lifetime from the caller's
+  Sessions lease (#1746/#1780): generic admission probes are quiet/non-recording,
+  and the actual operation finalizes its one attempted receipt. Draft preservation
+  finishes before repository locking. Unknown-stop descendants retain the same-fd
+  kernel resource in the existing janitor until process-group stop proof;
+  recording or UI destruction cannot substitute for that proof.
+  This supersedes the remaining-conflict-UI-recorder statement above for these
+  migrated entry points; it does not reintroduce UI append/retry ownership.
 
 ### Schema fields (#333)
 

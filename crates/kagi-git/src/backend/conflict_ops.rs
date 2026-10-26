@@ -61,6 +61,9 @@ impl ConflictPlan {
     pub fn repo(&self) -> &Path {
         &self.repo
     }
+    pub fn operation_name(&self) -> &str {
+        &self.op_name
+    }
 
     pub fn common_dir(&self) -> &kagi_domain::remove::RepoId {
         &self.common_dir
@@ -249,6 +252,7 @@ impl Backend {
         request: ConflictRequest,
     ) -> Result<ConflictPlan, GitError> {
         let backend = Self::open(path)?;
+        let _lock = crate::write_lock::acquire(&backend.repo)?;
         let repo =
             std::fs::canonicalize(&backend.path).map_err(|e| GitError::Other(e.to_string()))?;
         let worktree = backend.write_worktree_id()?;
@@ -440,6 +444,26 @@ impl Backend {
         // HEAD back; a save moves nothing and records `Some(空)`).
         let (result, ref_moves) = backend.observe_ref_moves(|_| {
             (|| -> Result<(), GitError> {
+                let preserved =
+                    if let ConflictPreparedAction::Abort { session, .. } = &plan.action {
+                        // A failed draft read is not an empty buffer: refuse before
+                        // repository admission rather than overwrite partial work.
+                        let buffer = backend
+                            .resolution_buffer_from_repo_with_autosave()
+                            .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?;
+                        if session.files.is_empty() {
+                            None
+                        } else {
+                            Some(buffer.autosave().map_err(|_| {
+                                crate::ops::conflict_abort::draft_preservation_failed()
+                            })?)
+                        }
+                    } else {
+                        None
+                    };
+                // Never nest buffer.json.lock and kagi-write.lock. Revalidate
+                // the full approved revision only after preservation finishes.
+                let _lock = crate::write_lock::acquire(&backend.repo)?;
                 backend.require_trust()?;
                 if backend.write_worktree_id()? != plan.worktree
                     || backend.write_repo_id()? != plan.common_dir
@@ -499,33 +523,22 @@ impl Backend {
                         )?);
                         verify_dir_file(&backend.repo, dir_file)?;
                     }
-                    // #704: the partial resolution is preserved by the executor
-                    // (ADR-0057) from the buffer on disk — the editor autosaves
-                    // every edit, so this is the same bytes the UI held, and the
-                    // abort is admissible with no editor open at all.
+                    // Draft preservation finished before the repository lock.
                     ConflictPreparedAction::Abort { session, restore } => {
-                        // Not `unwrap_or_else(empty)`: a buffer we failed to read
-                        // is not an empty buffer, and treating it as one would
-                        // hand the executor something to save over the user's
-                        // drafts. Refusing before any mutation is the safe half of
-                        // that choice (#707 review).
-                        let buffer = backend
-                            .resolution_buffer_from_repo_with_autosave()
-                            .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?;
                         let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
                         let restored = if stash {
-                            crate::ops::conflict_abort::execute_stash_conflict_abort_with_progress(
+                            crate::ops::conflict_abort::execute_stash_conflict_abort_preserved(
                                 &backend.repo,
                                 session,
-                                &buffer,
+                                preserved,
                                 |value| progress = value,
                             )?
                         } else {
-                            crate::ops::conflict_abort::execute_conflict_abort_expecting(
+                            crate::ops::conflict_abort::execute_conflict_abort_preserved(
                                 &backend.repo,
                                 session,
-                                &buffer,
                                 restore.as_ref(),
+                                preserved,
                                 |value| progress = value,
                             )?
                         };
@@ -651,6 +664,7 @@ impl Backend {
         buffer: &ResolutionBuffer,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire(&self.repo)?;
         conflicts::plan_conflict_continue(&self.repo, session, buffer, expected)
     }
 
@@ -661,6 +675,7 @@ impl Backend {
         current_branch: &str,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ContinueRoute, GitError> {
+        let _lock = crate::write_lock::acquire(&self.repo)?;
         conflicts::plan_conflict_continue_route(
             &self.repo,
             session,
@@ -738,6 +753,11 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
     ) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(
+            &self.repo,
+            &self.path,
+            &format!("{}-abort", session.op.slug()),
+        )?;
         conflicts::plan_conflict_abort(&self.repo, session)
     }
 
@@ -748,6 +768,11 @@ impl Backend {
     pub fn plan_operation_abort(&self) -> Result<OperationPlan, GitError> {
         let snapshot = observation(&self.repo)?
             .ok_or_else(|| GitError::Other("no operation is in progress".into()))?;
+        let _lock = crate::write_lock::acquire_recorded(
+            &self.repo,
+            &self.path,
+            &format!("{}-abort", snapshot.observation.kind.slug()),
+        )?;
         conflicts::plan_conflict_abort(&self.repo, &snapshot.session)
     }
 
@@ -778,6 +803,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         expected: &kagi_domain::conflict_family::ConflictRevision,
     ) -> Result<conflicts::ConflictSkipPlan, GitError> {
+        let _lock = crate::write_lock::acquire(&self.repo)?;
         conflicts::plan_conflict_skip(&self.repo, session, expected)
     }
 

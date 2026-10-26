@@ -115,6 +115,34 @@ Keep the runner's shared-state and window-leak checks enabled. Run
 for non-UTF8 witness bytes and absent/empty/error oplog regression coverage.
 No product rendering or behavior changes, so Tier B is not required.
 
+For #1746 use `KAGI_GUI_E2E_ONLY='repository_lock_'` with KEEP_GOING.
+The nine scenarios cover Continue/Skip single-refusal ownership, quiet automatic
+Fetch and PR-ref refresh, single staging refusal, requested-operation Pull/Commit
+receipts, failed-append acknowledgment, and the queued repository-busy lifecycle.
+Also run `pr_ref_fetch_` and `pr_paging_survives_periodic_tick` when changing PR
+fetch intent. `repository_lock_user_receipts` invokes the
+real Pull and Commit entry points under contention and requires one operation-
+specific Refused receipt plus one bounded Error toast per user attempt, no
+generic admission row, and unchanged HEAD/index/worktree.
+`repository_lock_admission_recording_failure` requires exactly one attempted UI
+row, no durable receipt and no ordinary toast beside the required acknowledgment
+in EN/JA. `repository_lock_legacy_plan_recording_failure` exercises the actual
+Abort and merge-commit planning owners under both repository and append locks.
+`repository_lock_silent_pr_refresh` checks manual `fetch-pr` refusal separately
+from a quiet automatic PR tick, released loading, and successful retry on the
+next unchanged list tick after the independent owner releases admission.
+`repository_lock_queue_retry` holds admission for five simulated seconds, checks
+one error toast and responsive dispatcher work, then exercises a second owner's
+re-contention between the probe and admission, bounded resumption with the
+successor intact, immediate owner-close cancellation, and a non-contention
+sidecar I/O failure returning to ordinary admission. Its one-shot
+`before_next_repository_resume_for_e2e` hook only interleaves the independent
+descriptor owner after a real background probe; it does not replace production
+planning, admission or locking. The backend tests separately own the independent
+process/death-release oracle. Tier B uses an isolated plain app and independent
+lock owner for Pull/Stage/Commit, unchanged held-lock repository witnesses,
+operation-specific receipts and admission after the owner exits.
+
 For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_detail_select_copy'`
 with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
 selecting both Nagi presets, checks native focus-ring and graph-selection

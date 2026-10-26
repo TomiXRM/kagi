@@ -24,6 +24,31 @@ pub(super) fn diagnostic(value: &str) -> Option<String> {
     if value == "NeedsReconcile" {
         return Some(Msg::AppReconcileRequired.t().into());
     }
+    if value == "Busy" {
+        return Some(Msg::OpInProgress.t().into());
+    }
+    if value == "StaleApproval" {
+        return Some(
+            text(
+                "The operation changed. Review it again before continuing.",
+                "操作の内容が変わりました。続行する前にもう一度確認してください。",
+            )
+            .into(),
+        );
+    }
+    if (value.starts_with("Identity(\"") && value.ends_with("\")"))
+        || value.starts_with("repository write lock: ")
+    {
+        // The receipt retains the full cause for Details/Copy; its summary
+        // must not expose a Debug wrapper, raw I/O cause or absolute path.
+        return Some(
+            text(
+                "Could not start the operation. Review its details in Operation Log.",
+                "操作を開始できませんでした。操作ログで詳細を確認してください。",
+            )
+            .into(),
+        );
+    }
     let fixed = match value {
         "worktree identity changed; reopen the repository" => Some((
             "The repository changed. Reopen it before continuing.",
@@ -248,5 +273,54 @@ mod tests {
         .unwrap();
         assert!(shown.ends_with(present(reason).as_ref()), "{shown}");
         assert!(shown.contains(text("Do not retry it yet.", "まだ再試行しないでください。",)));
+    }
+
+    #[test]
+    fn every_admission_error_has_a_localized_summary() {
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            crate::i18n::set_lang_no_persist(language);
+            let cases = [
+                ("Busy", Msg::OpInProgress.t()),
+                ("NeedsReconcile", Msg::AppReconcileRequired.t()),
+                (
+                    "StaleApproval",
+                    text(
+                        "The operation changed. Review it again before continuing.",
+                        "操作の内容が変わりました。続行する前にもう一度確認してください。",
+                    ),
+                ),
+                (
+                    r#"Identity("repository write lock: /private/repo: permission denied")"#,
+                    text(
+                        "Could not start the operation. Review its details in Operation Log.",
+                        "操作を開始できませんでした。操作ログで詳細を確認してください。",
+                    ),
+                ),
+                (
+                    kagi_domain::advice_template_en!(ConflictsRepositoryBusy),
+                    Msg::AdviceConflictsRepositoryBusy.t(),
+                ),
+            ];
+            for (raw, expected) in cases {
+                let shown = present(raw);
+                assert_eq!(shown.as_ref(), expected);
+                assert!(!shown.contains("/private/") && !shown.contains("Identity("));
+            }
+            let shown =
+                present("git error: repository write lock: /private/repo: permission denied");
+            assert!(!shown.contains("/private/") && !shown.contains("permission denied"));
+            assert!(shown.contains(text(
+                "Could not start the operation. Review its details in Operation Log.",
+                "操作を開始できませんでした。操作ログで詳細を確認してください。",
+            )));
+            let shown = super::super::state_text("unobserved");
+            assert_eq!(
+                shown.as_ref(),
+                text("State unavailable", "状態を確認できません")
+            );
+        }
+        crate::i18n::set_lang_no_persist(previous);
     }
 }

@@ -40,6 +40,7 @@ pub enum CheckoutIntent {
 pub enum WaitReason {
     Typing,
     WriteRunning,
+    RepositoryBusy,
     PlanSlotBusy,
     NeedsConfirmation,
     NeedsReconcile,
@@ -56,11 +57,13 @@ pub enum ReleaseEvent {
     InputBlurred,
     RevalidationDone,
     ReconcileAcknowledged,
+    RepositoryRetry,
 }
 impl WaitReason {
     pub fn released_by(self, event: ReleaseEvent) -> bool {
         match self {
             Self::WriteRunning => matches!(event, ReleaseEvent::LeaseReleased),
+            Self::RepositoryBusy => matches!(event, ReleaseEvent::RepositoryRetry),
             Self::PlanSlotBusy => matches!(event, ReleaseEvent::PlanSlotFreed),
             Self::Typing => matches!(event, ReleaseEvent::InputBlurred),
             Self::NeedsConfirmation => matches!(
@@ -159,6 +162,8 @@ pub enum QueueEvent<'a> {
     PlanError(IntentId),
     Approve(IntentId),
     Reject(IntentId),
+    /// A background, zero-wait probe found repository admission available.
+    RepositoryAvailable(IntentId),
     Admission {
         id: IntentId,
         result: Result<OwnerStamp, super::AdmissionError>,
@@ -248,6 +253,17 @@ impl IntentQueue {
     }
     pub fn intents(&self, session: SessionId) -> Option<&VecDeque<QueuedIntent>> {
         self.per_session.get(&session)
+    }
+    pub fn repository_waiters(&self) -> impl Iterator<Item = &QueuedIntent> {
+        self.per_session
+            .values()
+            .filter_map(VecDeque::front)
+            .filter(|head| {
+                head.state
+                    == (IntentState::Waiting {
+                        reason: WaitReason::RepositoryBusy,
+                    })
+            })
     }
     pub fn cancelled(&self, session: SessionId) -> Option<&VecDeque<QueuedIntent>> {
         self.cancelled.get(&session)
@@ -576,6 +592,9 @@ impl IntentQueue {
                             }
                             Err(error) => {
                                 let reason = match error {
+                                    super::AdmissionError::RepositoryBusy => {
+                                        WaitReason::RepositoryBusy
+                                    }
                                     super::AdmissionError::Busy => {
                                         self.write_busy = true;
                                         WaitReason::WriteRunning
@@ -729,6 +748,21 @@ impl IntentQueue {
                     }
                 }
                 self.gates.remove(&session);
+            }
+            E::RepositoryAvailable(id) => {
+                if let Some(head) = self
+                    .head(id)
+                    .and_then(|session| self.per_session.get_mut(&session))
+                    .and_then(VecDeque::front_mut)
+                {
+                    if head.state
+                        == (IntentState::Waiting {
+                            reason: WaitReason::RepositoryBusy,
+                        })
+                    {
+                        head.state = IntentState::Queued;
+                    }
+                }
             }
             E::ModalSlotBusy => self.modal_busy = true,
             E::ModalSlotFree => self.modal_busy = false,

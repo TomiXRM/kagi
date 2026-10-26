@@ -1039,6 +1039,18 @@ impl KagiApp {
                 let message = i18n::op::op_plan_failed_contract(i18n::Op::Commit, detail);
                 // Failed planning cannot leave a previous approval executable.
                 self.cancel_commit_plan_modal(cx);
+                if let Some(recording) = e.recording() {
+                    self.notice_recording_failure(
+                        &recording.entry().op,
+                        recording,
+                        std::path::Path::new(&recording.entry().repo),
+                        None,
+                    );
+                    self.present_recorded(recording, true, cx);
+                    self.present_app_notice();
+                    cx.notify();
+                    return;
+                }
                 self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
                     SharedString::from(message.clone()),
                 ));

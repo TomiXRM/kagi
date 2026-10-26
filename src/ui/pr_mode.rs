@@ -54,6 +54,7 @@ pub struct PrTab {
     pub local_refs_generation: u64,
     /// Visit that admitted the currently tracked local-ref fetch. A reopened
     /// PR can reuse the same generation, but an old visit must not clear it.
+    /// None also marks a silent admission refusal eligible for the next list tick.
     pub local_refs_visit: Option<u64>,
     /// merge-base(base, head) — the diff base for the whole-PR view.
     pub base: CommitId,
@@ -297,7 +298,7 @@ impl KagiApp {
             cx.notify();
             self.prioritize_pr_details(pr.key(), cx);
             if !local_ready {
-                self.fetch_pr_for_open(pr.clone(), cx);
+                self.fetch_pr_for_open(pr.clone(), false, cx);
             } else if let Some((true, conflicts_missing, preview_missing)) =
                 self.pr_mode().and_then(|mode| {
                     mode.tabs.get(ix).map(|tab| {
@@ -359,7 +360,7 @@ impl KagiApp {
         cx.notify();
         self.prioritize_pr_details(pr.key(), cx);
         self.pr_mode_load_conversation(pr, cx);
-        self.fetch_pr_for_open(pr.clone(), cx);
+        self.fetch_pr_for_open(pr.clone(), false, cx);
     }
 
     /// Fetch reviews + comments, and separately the merge status, for `pr`

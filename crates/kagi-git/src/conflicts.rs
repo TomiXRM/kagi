@@ -611,25 +611,45 @@ fn resolved_parked_original(
     if (1..=3).any(|stage| index.get_path(parked, stage).is_some()) {
         return None;
     }
+    // Git flattens '/' in parking labels, so only the final component can
+    // contain the boundary. Never enumerate untrusted MERGE_MSG separators.
+    let component_start = listed_path
+        .iter()
+        .rposition(|byte| *byte == b'/')
+        .map_or(0, |offset| offset + 1);
+    let component = &listed_path[component_start..];
     let current = repo.head().ok()?.peel_to_tree().ok()?;
     let incoming = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"]
         .into_iter()
         .find_map(|name| repo.revparse_single(name).ok()?.peel_to_tree().ok())?;
-    if current.get_path(parked).is_ok() || incoming.get_path(parked).is_ok() {
+    let (current, incoming) = if component_start == 0 {
+        (current, incoming)
+    } else {
+        let parent = bytes_to_pathbuf(&listed_path[..component_start - 1])?;
+        (
+            repo.find_tree(current.get_path(&parent).ok()?.id()).ok()?,
+            repo.find_tree(incoming.get_path(&parent).ok()?.id()).ok()?,
+        )
+    };
+    if incoming.iter().any(|entry| entry.name_bytes() == component) {
         return None;
     }
     let mut matched = None;
-    for (separator, byte) in listed_path.iter().enumerate() {
-        if *byte != b'~' || separator + 1 == listed_path.len() {
+    for current_entry in current.iter() {
+        let name = current_entry.name_bytes();
+        if name == component {
+            return None;
+        }
+        let Some(label) = component
+            .strip_prefix(name)
+            .and_then(|suffix| suffix.strip_prefix(b"~"))
+        else {
+            continue;
+        };
+        if label.is_empty() {
             continue;
         }
-        let Some(original) = bytes_to_pathbuf(&listed_path[..separator]) else {
-            continue;
-        };
-        let Ok(current_entry) = current.get_path(&original) else {
-            continue;
-        };
-        let Ok(incoming_entry) = incoming.get_path(&original) else {
+        let Some(incoming_entry) = incoming.get_name_bytes(name) else {
             continue;
         };
         if matches!(
@@ -637,11 +657,13 @@ fn resolved_parked_original(
             (Some(git2::ObjectType::Blob), Some(git2::ObjectType::Tree))
                 | (Some(git2::ObjectType::Tree), Some(git2::ObjectType::Blob))
         ) {
-            // Labels and original paths can both contain tildes. Attribute
-            // only a unique source-tree match, never an arbitrary boundary.
+            // Both paths and labels can contain tildes: require uniqueness,
+            // with candidate work bounded by the parent tree's entries.
             if matched.is_some() {
                 return None;
             }
+            let separator = component_start + name.len();
+            let original = bytes_to_pathbuf(&listed_path[..separator])?;
             matched = Some((original, separator));
         }
     }

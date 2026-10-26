@@ -1,25 +1,15 @@
 //! Directory/file conflict resolution (#320 / ADR-0164).
 //!
-//! Keep this module's `plan_*`, `preflight_*`, and `execute_*` checks aligned:
-//! drift can replace the file namespace when the confirmed plan chose the
-//! directory namespace, or vice versa.
+//! Keep plan/preflight/execute aligned with the confirmed namespace choice.
+//! libgit2 records a one-sided unmerged file at `path` (stage 2 if ours, 3 if
+//! theirs) and clean stage-0 directory children at `path/…`.
+//! CLI Git may park the file at `path~<side>` and leave unmerged children.
+//! Index and side-tree identities attribute it to the original namespace;
+//! the suffix alone never authorizes grouping or removal.
 //!
-//! A directory/file ("D/F") conflict is a path that one side committed as a
-//! **file** and the other as a **directory** (entries under `path/`). libgit2's
-//! `repo.merge` records it (both merge directions, verified) as:
-//!
-//! - a **one-sided** unmerged entry at `path` — the file that lost the race
-//!   (stage 2 if ours, stage 3 if theirs), and
-//! - clean **stage-0** entries under `path/…` — the directory side.
-//!
-//! CLI Git may instead park the file at `path~<side>` and leave unmerged
-//! directory children. Side-tree identities attribute that parking path to the
-//! original namespace; the suffix alone never authorizes grouping or removal.
-//!
-//! The namespaces cannot coexist: resolution is one [`DirFileChoice`]. This
-//! module owns the plan/preflight/execute triple. D/F resolution belongs to the
-//! conflict lane rather than [`crate::Backend::run`], so `execute_` records
-//! exactly one oplog entry.
+//! The namespaces cannot coexist: resolution is one [`DirFileChoice`].
+//! This conflict-lane triple sits outside [`crate::Backend::run`];
+//! its execution boundary records exactly one oplog entry.
 
 use std::path::{Path, PathBuf};
 
@@ -347,24 +337,13 @@ pub fn preflight_dir_file_resolution(
     Ok(())
 }
 
-/// Apply a directory/file resolution to the index and record it to the oplog.
-///
-/// - **KeepDirectory**: drop the unmerged file entry; the clean `path/…`
-///   children remain, so the resulting tree keeps the directory.
-/// - **KeepFile**: remove every `path/…` child and the unmerged file entry, then
-///   stage the file blob (OID + mode) at stage 0, so the tree keeps the file.
-///
-/// After the index surgery the working tree is **reconciled** so it agrees with
-/// the index at `path` (#407): the losing namespace is removed from disk and the
-/// kept side is written back (a kept symlink file side is written as a symlink,
-/// never dereferenced — #298). The two namespaces cannot coexist,
-/// so leaving the working tree holding the other side would make `git status`
-/// report a spurious deletion + untracked leftover and break a later checkout.
-///
-/// A savepoint under `refs/kagi/snapshots/` is taken first (#408) — a real commit
-/// capturing worktree + index (`add -A`) so every removed blob (including the
-/// untracked directory-side children) stays referenced and gc-safe. Its id is
-/// the recovery handle recorded in the oplog.
+/// Resolve the index/worktree namespace and record the outcome.
+/// KeepDirectory removes the parked file and stages the directory children;
+/// KeepFile removes those children and stages the file at its original path.
+/// Reconcile disk with the index, preserving symlinks without dereferencing.
+/// First capture worktree/index and untracked children in a real snapshot
+/// commit, pinned by a mandatory backup root. Hand its identity to the receipt
+/// owner before fallible callbacks so failed writes retain recovery.
 pub(crate) fn execute_dir_file_resolution(
     repo: &Repository,
     repo_path: &Path,

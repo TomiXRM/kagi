@@ -98,9 +98,11 @@ Saved-file presentation maps a removed Git parking name in `MERGE_MSG` back to
 the original stage-0 file. Retained directory children also appear when Git listed
 only the parking name, with duplicate paths removed. Source trees reject ordinary
 tilde filenames; this read-only mapping does not authorize any mutation.
-Every `~` position is a candidate boundary because revision labels and commit
-subjects may themselves contain `~`. Load side trees once and require an
-unambiguous file/tree namespace match rather than assuming the last separator.
+Git flattens `/` in parking labels. Resolve both sides' parent trees once, then
+consider their entry names `N` when the final component begins with `N~` and a
+nonempty label. Require an unambiguous file/tree match. This handles tildes in
+names and labels without work proportional to the number of tildes in untrusted
+`MERGE_MSG` data; a 100,000-tilde regression must remain fast and unattributed.
 Plans refuse unsupported gitlink/special modes and nested repository metadata
 before mutation: the ordinary worktree snapshot cannot preserve a nested object
 store, and recovery capture may fail even for keep-directory. Both choices refuse

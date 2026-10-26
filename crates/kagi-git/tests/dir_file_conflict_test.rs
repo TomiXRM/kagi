@@ -215,6 +215,62 @@ fn cli_cherry_pick_subject_with_tilde_keeps_both_choices_saved() {
     assert_tilde_label_choices_remain_saved(true);
 }
 
+#[test]
+fn pathological_merge_message_tildes_are_bounded_and_unattributed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (td, repo) = df_conflict_with_cli("file-side", "dir-side", true);
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    execute_dir_file_resolution(&repo, td.path(), &plan).unwrap();
+    let message = format!("Merge\n\n# Conflicts:\n#\tmissing{}\n", "~".repeat(100_000));
+    std::fs::write(repo.path().join("MERGE_MSG"), message).unwrap();
+    let started = std::time::Instant::now();
+    let session = detect_conflict_session(&repo).unwrap();
+    let elapsed = started.elapsed();
+    assert!(session.files.is_empty());
+    assert!(session.resolved.is_empty());
+    assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+}
+
+#[test]
+fn nested_parked_namespace_uses_each_parent_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for choice in [DirFileChoice::KeepDirectory, DirFileChoice::KeepFile] {
+        let (td, repo) = df_repo_options("file-side", true, false, false, false);
+        let root = td.path();
+        for branch in ["file-side", "dir-side"] {
+            git(root, &["checkout", "-q", branch]);
+            std::fs::create_dir_all(root.join("parent~dir")).unwrap();
+            git(root, &["mv", "thing", "parent~dir/thing"]);
+            git(root, &["commit", "-qm", "nested ~ namespace"]);
+        }
+        let result = Command::new("git")
+            .args(["merge", "--no-edit", "file-side"])
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", root)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(1), "{result:?}");
+        let plan = plan_dir_file_resolution(&repo, Path::new("parent~dir/thing"), choice).unwrap();
+        execute_dir_file_resolution(&repo, root, &plan).unwrap();
+        let session = detect_conflict_session(&repo).unwrap();
+        assert!(session.files.is_empty());
+        assert_eq!(session.resolved.len(), 1);
+        assert_eq!(
+            session.resolved[0].path,
+            Path::new(match choice {
+                DirFileChoice::KeepFile => "parent~dir/thing",
+                DirFileChoice::KeepDirectory => "parent~dir/thing/child",
+            }),
+        );
+    }
+}
+
 fn blob_text(repo: &Repository, oid: git2::Oid) -> String {
     let blob = repo.find_blob(oid).unwrap();
     String::from_utf8_lossy(blob.content()).into_owned()

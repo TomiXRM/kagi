@@ -10,9 +10,13 @@ pub(super) struct IndexIdentity(Vec<(Vec<u8>, u16, Oid, u32)>);
 
 impl IndexIdentity {
     pub(super) fn capture(index: &Index, affected: impl Fn(&[u8]) -> bool) -> Self {
-        Self(index.iter().filter(|e| !affected(&e.path)).map(|e| {
-            (e.path, (e.flags >> 12) & 3, e.id, e.mode)
-        }).collect())
+        Self(
+            index
+                .iter()
+                .filter(|e| !affected(&e.path))
+                .map(|e| (e.path, (e.flags >> 12) & 3, e.id, e.mode))
+                .collect(),
+        )
     }
 }
 
@@ -30,14 +34,31 @@ pub(super) struct ConflictIndexTransaction {
 impl ConflictIndexTransaction {
     pub(super) fn acquire(repo: &Repository) -> Result<Self, GitError> {
         let index = repo.index().map_err(git_error)?;
-        let index_path = index.path().ok_or_else(|| GitError::Other("index has no disk path".into()))?.to_path_buf();
+        let index_path = index
+            .path()
+            .ok_or_else(|| GitError::Other("index has no disk path".into()))?
+            .to_path_buf();
         let mut lock_name = index_path.as_os_str().to_os_string();
         lock_name.push(".lock");
         let lock_path = PathBuf::from(lock_name);
-        let parent = index_path.parent().ok_or_else(|| GitError::Other("index has no parent".into()))?;
-        let temporary = tempfile::Builder::new().prefix("kagi-conflict-index-").tempdir_in(parent).map_err(io_error)?;
-        let lock = std::fs::OpenOptions::new().write(true).create_new(true).open(&lock_path).map_err(io_error)?;
-        Ok(Self { lock_path, _lock: lock, index_path, temporary })
+        let parent = index_path
+            .parent()
+            .ok_or_else(|| GitError::Other("index has no parent".into()))?;
+        let temporary = tempfile::Builder::new()
+            .prefix("kagi-conflict-index-")
+            .tempdir_in(parent)
+            .map_err(io_error)?;
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .map_err(io_error)?;
+        Ok(Self {
+            lock_path,
+            _lock: lock,
+            index_path,
+            temporary,
+        })
     }
 
     pub(super) fn read(&self) -> Result<Index, GitError> {
@@ -48,8 +69,12 @@ impl ConflictIndexTransaction {
 
     pub(super) fn write(&self, index: &mut Index) -> Result<(), GitError> {
         index.write().map_err(git_error)?;
-        let private: &Path = index.path().ok_or_else(|| GitError::Other("private index has no path".into()))?;
-        std::fs::File::open(private).and_then(|file| file.sync_all()).map_err(io_error)?;
+        let private: &Path = index
+            .path()
+            .ok_or_else(|| GitError::Other("private index has no path".into()))?;
+        std::fs::File::open(private)
+            .and_then(|file| file.sync_all())
+            .map_err(io_error)?;
         std::fs::rename(private, &self.index_path).map_err(io_error)
     }
 }
@@ -60,14 +85,18 @@ impl Drop for ConflictIndexTransaction {
     }
 }
 
-fn git_error(error: git2::Error) -> GitError { GitError::Other(error.to_string()) }
-fn io_error(error: std::io::Error) -> GitError { GitError::Other(error.to_string()) }
+fn git_error(error: git2::Error) -> GitError {
+    GitError::Other(error.to_string())
+}
+fn io_error(error: std::io::Error) -> GitError {
+    GitError::Other(error.to_string())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kagi_domain::conflict_family::ConflictProgress;
     use crate::ops::{conflict_delete, dir_file_conflict};
+    use kagi_domain::conflict_family::ConflictProgress;
 
     fn fixture(directory: bool) -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -80,7 +109,8 @@ mod tests {
         index.write().unwrap();
         let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
         let signature = git2::Signature::now("T", "t@example.com").unwrap();
-        repo.commit(Some("HEAD"), &signature, &signature, "base", &tree, &[]).unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "base", &tree, &[])
+            .unwrap();
         drop(tree);
         let mut file = index.get_path(Path::new("thing"), 0).unwrap();
         index.remove(Path::new("thing"), 0).unwrap();
@@ -99,11 +129,16 @@ mod tests {
     fn external_update(repo: &Repository) -> std::process::Output {
         let oid = repo.blob(b"external update\n").unwrap();
         std::process::Command::new("git")
-            .args(["update-index", "--cacheinfo", &format!("100644,{oid},unaffected")])
+            .args([
+                "update-index",
+                "--cacheinfo",
+                &format!("100644,{oid},unaffected"),
+            ])
             .current_dir(repo.workdir().unwrap())
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("HOME", repo.workdir().unwrap())
-            .output().unwrap()
+            .output()
+            .unwrap()
     }
 
     #[test]
@@ -149,16 +184,24 @@ mod tests {
                 Ok(())
             };
             let result = if let Some(choice) = choice {
-                let plan = dir_file_conflict::plan_dir_file_resolution(
-                    &repo, Path::new("thing"), choice,
-                ).unwrap();
-                dir_file_conflict::apply_dir_file_resolution_with_progress(&repo, &plan, &mut progress)
+                let plan =
+                    dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
+                        .unwrap();
+                dir_file_conflict::apply_dir_file_resolution_with_progress(
+                    &repo,
+                    &plan,
+                    &mut progress,
+                )
             } else {
-                let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
+                let plan =
+                    conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
                 conflict_delete::execute_conflict_delete(&repo, &plan, &mut progress)
             };
             assert!(result.is_err());
-            assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), captured.unwrap());
+            assert_eq!(
+                std::fs::read(repo.path().join("index")).unwrap(),
+                captured.unwrap()
+            );
             let path = if directory { "thing/child" } else { "thing" };
             assert!(tmp.path().join(path).exists());
             assert!(!repo.path().join("index.lock").exists());
@@ -173,7 +216,11 @@ mod tests {
             let (tmp, repo) = fixture(directory);
             let mut reached = false;
             let mut progress = |value| {
-                let boundary = if directory { ConflictProgress::IndexWritten } else { ConflictProgress::WorktreeWritten };
+                let boundary = if directory {
+                    ConflictProgress::IndexWritten
+                } else {
+                    ConflictProgress::WorktreeWritten
+                };
                 if value == boundary {
                     reached = true;
                     assert!(!external_update(&repo).status.success());
@@ -182,17 +229,24 @@ mod tests {
                 Ok(())
             };
             let result = if let Some(choice) = choice {
-                let plan = dir_file_conflict::plan_dir_file_resolution(
-                    &repo, Path::new("thing"), choice,
-                ).unwrap();
-                dir_file_conflict::apply_dir_file_resolution_with_progress(&repo, &plan, &mut progress)
+                let plan =
+                    dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
+                        .unwrap();
+                dir_file_conflict::apply_dir_file_resolution_with_progress(
+                    &repo,
+                    &plan,
+                    &mut progress,
+                )
             } else {
-                let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
+                let plan =
+                    conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
                 conflict_delete::execute_conflict_delete(&repo, &plan, &mut progress)
             };
             assert!(reached);
             assert!(result.is_err());
-            if !directory { assert!(!tmp.path().join("thing").exists()); }
+            if !directory {
+                assert!(!tmp.path().join("thing").exists());
+            }
             assert!(!repo.path().join("index.lock").exists());
             assert!(external_update(&repo).status.success());
         }
@@ -204,12 +258,15 @@ mod tests {
         for choice in [None, Some(KeepFile), Some(KeepDirectory)] {
             let (_tmp, repo) = fixture(choice.is_some());
             if let Some(choice) = choice {
-                let plan = dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
+                let plan =
+                    dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
+                        .unwrap();
                 dir_file_conflict::apply_dir_file_resolution(&repo, &plan).unwrap();
                 assert!(external_update(&repo).status.success());
                 assert!(dir_file_conflict::verify_dir_file_resolution(&repo, &plan).is_err());
             } else {
-                let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
+                let plan =
+                    conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
                 conflict_delete::execute_conflict_delete(&repo, &plan, |_| Ok(())).unwrap();
                 assert!(external_update(&repo).status.success());
                 assert!(conflict_delete::verify_conflict_delete(&repo, &plan).is_err());
@@ -229,7 +286,14 @@ mod tests {
             index.add(&entry).unwrap();
         }
         let captured = IndexIdentity::capture(&index, |p| p == b"thing");
-        assert_eq!(captured.0.iter().filter(|(p, _, _, _)| p == b"raw-\xff").count(), 3);
+        assert_eq!(
+            captured
+                .0
+                .iter()
+                .filter(|(p, _, _, _)| p == b"raw-\xff")
+                .count(),
+            3
+        );
         entry.flags = (entry.flags & !0x3000) | (2 << 12);
         entry.id = repo.blob(b"changed stage two\n").unwrap();
         index.add(&entry).unwrap();

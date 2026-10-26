@@ -107,7 +107,10 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
                 modal.kind,
                 kagi::ui::modals::conflict_resolution::ResolutionKind::Remove
             );
-            assert_eq!(modal.changes.remove_worktree.is_empty(), !current && !incoming);
+            assert_eq!(
+                modal.changes.remove_worktree.is_empty(),
+                !current && !incoming
+            );
         });
         let (title, confirm) = match lang {
             Lang::En => ("Remove “file.txt” from the Index?", "Remove"),
@@ -215,10 +218,15 @@ fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
         if keep_file {
             assert_eq!(
                 changes.moves,
-                vec![(parked.strip_prefix(repo).unwrap().to_path_buf(), "thing".into())]
+                vec![(
+                    parked.strip_prefix(repo).unwrap().to_path_buf(),
+                    "thing".into()
+                )]
             );
             assert!(changes.remove_directories.contains(&"thing".into()));
-            assert!(changes.remove_worktree.contains(&parked.strip_prefix(repo).unwrap().to_path_buf()));
+            assert!(changes
+                .remove_worktree
+                .contains(&parked.strip_prefix(repo).unwrap().to_path_buf()));
         } else {
             assert!(changes.moves.is_empty());
             assert!(changes.keep.contains(&"thing/child".into()));
@@ -227,7 +235,10 @@ fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
     let (title, confirm) = match (lang, keep_file) {
         (Lang::En, false) => ("Keep Directory “thing/”?", "Keep Directory"),
         (Lang::En, true) => ("Keep File “thing”?", "Keep File"),
-        (Lang::Ja, false) => ("ディレクトリ「thing/」を採用しますか？", "ディレクトリを採用"),
+        (Lang::Ja, false) => (
+            "ディレクトリ「thing/」を採用しますか？",
+            "ディレクトリを採用",
+        ),
         (Lang::Ja, true) => ("ファイル「thing」を採用しますか？", "ファイルを採用"),
     };
     assert_resolution_dialog(title, confirm, true);
@@ -241,7 +252,8 @@ fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
         let moved = e2e::control_bounds(
             window.window_id(),
             &format!("modal-path-name-{move_text}-{move_text}"),
-        ).expect("one source-to-destination move row");
+        )
+        .expect("one source-to-destination move row");
         assert!(moved.size.width > gpui::px(0.));
         assert!(moved.origin.y >= list.origin.y && moved.bottom() <= list.bottom());
     }
@@ -285,7 +297,14 @@ fn assert_resolution_dialog(title: &str, confirm: &str, destructive: bool) {
     let dialog = kagi::ui::dialog_a11y::recorded_dialog("conflict-resolution-card")
         .expect("painted resolution dialog");
     assert_eq!(dialog.label, title);
-    assert_eq!(dialog.role, if destructive { gpui::Role::AlertDialog } else { gpui::Role::Dialog });
+    assert_eq!(
+        dialog.role,
+        if destructive {
+            gpui::Role::AlertDialog
+        } else {
+            gpui::Role::Dialog
+        }
+    );
     assert_eq!(dialog.actions[0].1, confirm);
     let button = kagi::ui::button_style::recorded_modal_button("conflict-resolution-confirm")
         .expect("painted result action");

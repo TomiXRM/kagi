@@ -301,15 +301,22 @@ fn deletion_refuses_unaffected_index_drift_without_losing_external_update() {
                     entry.flags |= 2 << 12;
                 }
                 "added" => entry.path = b"external-added".to_vec(),
-                "removed" => { index.remove(Path::new("unrelated.txt"), 0).unwrap(); }
+                "removed" => {
+                    index.remove(Path::new("unrelated.txt"), 0).unwrap();
+                }
                 _ => unreachable!(),
             }
-            if change != "removed" { index.add(&entry).unwrap(); }
+            if change != "removed" {
+                index.add(&entry).unwrap();
+            }
             index.write().unwrap();
             let before = std::fs::read(repo.path().join("index")).unwrap();
             assert_eq!(execute(&approved), ConflictProgress::NotStarted, "{change}");
             assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
-            assert_eq!(std::fs::read(tmp.path().join("unrelated.txt")).unwrap(), b"preserve\n");
+            assert_eq!(
+                std::fs::read(tmp.path().join("unrelated.txt")).unwrap(),
+                b"preserve\n"
+            );
             if rename {
                 assert!(tmp.path().join("current.ts").exists());
                 assert!(tmp.path().join("incoming.ts").exists());
@@ -336,7 +343,11 @@ fn dd_refuses_symlink_parent_without_touching_outside_ancestor_artifact() {
     index.add(&ancestor).unwrap();
     index.write().unwrap();
     let outside = TempDir::new().unwrap();
-    write_file(outside.path(), "renamed-src.ts", "export const value = 1;\n");
+    write_file(
+        outside.path(),
+        "renamed-src.ts",
+        "export const value = 1;\n",
+    );
     std::os::unix::fs::symlink(outside.path(), tmp.path().join("parent")).unwrap();
     let before = std::fs::read(repo.path().join("index")).unwrap();
     let backend = Backend::open(tmp.path()).unwrap();
@@ -347,11 +358,15 @@ fn dd_refuses_symlink_parent_without_touching_outside_ancestor_artifact() {
         &buffer,
         Path::new("parent/renamed-src.ts"),
         snapshot.observation.kind,
-    ).unwrap();
+    )
+    .unwrap();
     let error = Backend::plan_recorded_conflict(tmp.path(), request).unwrap_err();
     assert!(error.to_string().contains("parent"), "{error}");
     assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
-    assert_eq!(std::fs::read(outside.path().join("renamed-src.ts")).unwrap(), b"export const value = 1;\n");
+    assert_eq!(
+        std::fs::read(outside.path().join("renamed-src.ts")).unwrap(),
+        b"export const value = 1;\n"
+    );
     assert!(tmp.path().join("current.ts").exists());
     assert!(tmp.path().join("incoming.ts").exists());
 }

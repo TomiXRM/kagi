@@ -79,7 +79,7 @@ screen with no siblings to copy (#934's worktree row).
 
 Use the existing dense, file-local `compact_button` role, not window toolbar or
 sidebar session controls. DD has one secondary Remove from Index… / index から削除…
-action and a separate Deleted on both branches. / 両方のブランチで削除されています。
+action and a separate Deleted on both branches. / 両方の branch で削除されています。
 hint below its action row. Modify/delete offers secondary Use deleted side… and
 Use modified side. D/F has equal secondary Keep directory… / Keep file… choices.
 Ellipses identify plan-opening actions. Keep existing geometry,

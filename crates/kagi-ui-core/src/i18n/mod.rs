@@ -3156,7 +3156,7 @@ impl Msg {
             (En, ConflictKeepFileConfirm) => "Keep File",
             (Ja, ConflictKeepFileConfirm) => "ファイルを採用",
             (En, ConflictDeletedBothHint) => "Deleted on both branches.",
-            (Ja, ConflictDeletedBothHint) => "両方のブランチで削除されています。",
+            (Ja, ConflictDeletedBothHint) => "両方の branch で削除されています。",
             (En, ConflictResolutionConsequence) => "Only the paths below will change. The operation remains in progress; {continue} reviews the next step.",
             (Ja, ConflictResolutionConsequence) => "変更されるのは以下のパスのみです。操作は進行中のままです。次のステップは {continue} で確認できます。",
             (En, ConflictWorkingFilesConsequence) => "The working files listed for removal will be deleted.",

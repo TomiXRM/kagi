@@ -691,9 +691,14 @@ fn keep_directory_verifies_filtered_crlf_checkout() {
     }
     for cli in [false, true] {
         let (td, repo) = df_conflict_options("file-side", "dir-side", cli, false, true);
-        let plan = plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory).unwrap();
+        let plan =
+            plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory)
+                .unwrap();
         execute_dir_file_resolution(&repo, td.path(), &plan).unwrap();
-        assert_eq!(std::fs::read(td.path().join("thing/child")).unwrap(), b"inside dir\r\n");
+        assert_eq!(
+            std::fs::read(td.path().join("thing/child")).unwrap(),
+            b"inside dir\r\n"
+        );
         let index = repo.index().unwrap();
         let child = index.get_path(Path::new("thing/child"), 0).unwrap();
         assert_eq!(repo.find_blob(child.id).unwrap().content(), b"inside dir\n");
@@ -712,11 +717,15 @@ fn nested_namespace_choices_do_not_follow_internal_or_external_symlinks() {
             let (td, repo) = df_conflict_options(current, incoming, true, true, false);
             let outside = TempDir::new().unwrap();
             std::fs::write(outside.path().join("treasure"), b"outside\n").unwrap();
-            std::os::unix::fs::symlink(outside.path(), td.path().join("thing/a/b/outside")).unwrap();
+            std::os::unix::fs::symlink(outside.path(), td.path().join("thing/a/b/outside"))
+                .unwrap();
             let plan = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
             let directories = plan.removed_directories();
             if choice == DirFileChoice::KeepFile {
-                assert_eq!(directories, ["thing/a/b", "thing/a", "thing"].map(PathBuf::from));
+                assert_eq!(
+                    directories,
+                    ["thing/a/b", "thing/a", "thing"].map(PathBuf::from)
+                );
             } else {
                 assert!(directories.is_empty());
             }
@@ -729,21 +738,45 @@ fn nested_namespace_choices_do_not_follow_internal_or_external_symlinks() {
             }
             match choice {
                 DirFileChoice::KeepFile => {
-                    assert_eq!(std::fs::read(td.path().join("thing")).unwrap(), b"i am a file\n");
-                    assert_eq!(index.get_path(Path::new("thing"), 0).unwrap().id, plan.file_oid);
+                    assert_eq!(
+                        std::fs::read(td.path().join("thing")).unwrap(),
+                        b"i am a file\n"
+                    );
+                    assert_eq!(
+                        index.get_path(Path::new("thing"), 0).unwrap().id,
+                        plan.file_oid
+                    );
                     assert!(!index.iter().any(|e| e.path.starts_with(b"thing/")));
                 }
                 DirFileChoice::KeepDirectory => {
-                    assert_eq!(std::fs::read(td.path().join("thing/a/b/c")).unwrap(), b"inside dir\n");
-                    assert_eq!(std::fs::read_link(td.path().join("thing/a/b/link")).unwrap(), Path::new("../../../base.txt"));
-                    assert_eq!(std::fs::read_link(td.path().join("thing/a/b/outside")).unwrap(), outside.path());
+                    assert_eq!(
+                        std::fs::read(td.path().join("thing/a/b/c")).unwrap(),
+                        b"inside dir\n"
+                    );
+                    assert_eq!(
+                        std::fs::read_link(td.path().join("thing/a/b/link")).unwrap(),
+                        Path::new("../../../base.txt")
+                    );
+                    assert_eq!(
+                        std::fs::read_link(td.path().join("thing/a/b/outside")).unwrap(),
+                        outside.path()
+                    );
                     assert!(index.get_path(Path::new("thing"), 0).is_none());
-                    assert_eq!(index.get_path(Path::new("thing/a/b/link"), 0).unwrap().mode, 0o120000);
+                    assert_eq!(
+                        index.get_path(Path::new("thing/a/b/link"), 0).unwrap().mode,
+                        0o120000
+                    );
                 }
             }
             index.write_tree().unwrap();
-            assert_eq!(std::fs::read(td.path().join("base.txt")).unwrap(), b"base\n");
-            assert_eq!(std::fs::read(outside.path().join("treasure")).unwrap(), b"outside\n");
+            assert_eq!(
+                std::fs::read(td.path().join("base.txt")).unwrap(),
+                b"base\n"
+            );
+            assert_eq!(
+                std::fs::read(outside.path().join("treasure")).unwrap(),
+                b"outside\n"
+            );
         }
     }
 }
@@ -767,17 +800,30 @@ fn dir_file_refuses_unaffected_index_drift() {
                     entry.flags |= 2 << 12;
                 }
                 "added" => entry.path = b"external-added".to_vec(),
-                "removed" => { index.remove(Path::new("base.txt"), 0).unwrap(); }
+                "removed" => {
+                    index.remove(Path::new("base.txt"), 0).unwrap();
+                }
                 _ => unreachable!(),
             }
-            if change != "removed" { index.add(&entry).unwrap(); }
+            if change != "removed" {
+                index.add(&entry).unwrap();
+            }
             index.write().unwrap();
             let before = std::fs::read(repo.path().join("index")).unwrap();
             let parked = std::fs::read(td.path().join(&plan.file_path)).unwrap();
-            assert!(execute_dir_file_resolution(&repo, td.path(), &plan).is_err(), "{change}");
+            assert!(
+                execute_dir_file_resolution(&repo, td.path(), &plan).is_err(),
+                "{change}"
+            );
             assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
-            assert_eq!(std::fs::read(td.path().join(&plan.file_path)).unwrap(), parked);
-            assert_eq!(std::fs::read(td.path().join("thing/child")).unwrap(), b"inside dir\n");
+            assert_eq!(
+                std::fs::read(td.path().join(&plan.file_path)).unwrap(),
+                parked
+            );
+            assert_eq!(
+                std::fs::read(td.path().join("thing/child")).unwrap(),
+                b"inside dir\n"
+            );
         }
     }
 }
@@ -789,7 +835,8 @@ fn dir_file_refuses_symlinked_namespace_ancestor() {
         return;
     }
     let (td, repo) = df_conflict_with_cli("file-side", "dir-side", true);
-    let initial = plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    let initial =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
     let mut index = repo.index().unwrap();
     let entries: Vec<_> = index.iter().collect();
     index.clear().unwrap();
@@ -817,5 +864,8 @@ fn dir_file_refuses_symlinked_namespace_ancestor() {
         assert!(error.to_string().contains("unsafe ancestor"), "{error}");
     }
     assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), before);
-    assert_eq!(std::fs::read(outside.path().join("thing/child")).unwrap(), b"outside child\n");
+    assert_eq!(
+        std::fs::read(outside.path().join("thing/child")).unwrap(),
+        b"outside child\n"
+    );
 }

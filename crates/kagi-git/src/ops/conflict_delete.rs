@@ -4,8 +4,8 @@ use std::path::{Component, Path, PathBuf};
 use git2::{Oid, Repository};
 use kagi_domain::conflict_family::ConflictProgress;
 
-use crate::GitError;
 use super::conflict_index::{ConflictIndexTransaction, IndexIdentity};
+use crate::GitError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Target {

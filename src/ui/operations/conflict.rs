@@ -379,9 +379,11 @@ impl KagiApp {
             use crate::ui::modals::conflict_resolution::ResolutionKind;
             use kagi_domain::resolution::DirFileChoice;
             let (kind, path) = match plan.request() {
-                ConflictRequest::Save { path, draft: ConflictDraft::Delete, .. } => {
-                    (ResolutionKind::Remove, path.clone())
-                }
+                ConflictRequest::Save {
+                    path,
+                    draft: ConflictDraft::Delete,
+                    ..
+                } => (ResolutionKind::Remove, path.clone()),
                 ConflictRequest::ResolveDirFile { path, choice, .. } => (
                     match choice {
                         DirFileChoice::KeepDirectory => ResolutionKind::KeepDirectory,

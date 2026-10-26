@@ -32,7 +32,9 @@ impl ConflictResolutionModal {
             ResolutionKind::KeepDirectory => (Msg::ConflictKeepDirectoryTitle, "/"),
             ResolutionKind::KeepFile => (Msg::ConflictKeepFileTitle, ""),
         };
-        message.t().replace("{path}", &format!("{}{suffix}", self.path.display()))
+        message
+            .t()
+            .replace("{path}", &format!("{}{suffix}", self.path.display()))
     }
 
     pub fn confirm_label(&self) -> &'static str {
@@ -148,7 +150,11 @@ pub(crate) fn render(
         (Msg::ConflictKeepPaths, &modal.changes.keep),
     ] {
         let visible = |path: &&std::path::PathBuf| {
-            !modal.changes.moves.iter().any(|(source, _)| source == *path)
+            !modal
+                .changes
+                .moves
+                .iter()
+                .any(|(source, _)| source == *path)
         };
         let visible_count = group.iter().filter(visible).count();
         if visible_count == 0 {
@@ -177,9 +183,10 @@ pub(crate) fn render(
                     .w_full()
                     .flex()
                     .items_center()
-                    .child(modal_path_text(SharedString::from(
-                        format!("{}{suffix}", path.display()),
-                    ))),
+                    .child(modal_path_text(SharedString::from(format!(
+                        "{}{suffix}",
+                        path.display()
+                    )))),
             );
         }
     }
@@ -201,22 +208,27 @@ pub(crate) fn render(
                     .flex()
                     .items_center()
                     .child(modal_path_text(SharedString::from(format!(
-                        "{} → {}", source.display(), destination.display()
+                        "{} → {}",
+                        source.display(),
+                        destination.display()
                     )))),
             );
         }
     }
     let body = modal_body()
         .child(
-            div()
-                .text_sm()
-                .child(Msg::ConflictResolutionConsequence.t().replace(
-                    "{continue}",
-                    Msg::ConflictReviewContinue.t(),
-                )),
+            div().text_sm().child(
+                Msg::ConflictResolutionConsequence
+                    .t()
+                    .replace("{continue}", Msg::ConflictReviewContinue.t()),
+            ),
         )
         .when(destructive, |body| {
-            body.child(div().text_sm().child(Msg::ConflictWorkingFilesConsequence.t()))
+            body.child(
+                div()
+                    .text_sm()
+                    .child(Msg::ConflictWorkingFilesConsequence.t()),
+            )
         })
         .child(ui::e2e::measure_leaf(
             "conflict-resolution-paths",

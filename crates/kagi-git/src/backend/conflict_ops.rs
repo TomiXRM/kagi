@@ -102,7 +102,9 @@ impl ConflictPlan {
                         changes.remove_index = plan.dir_children.clone();
                         if plan.file_path != plan.path {
                             changes.remove_index.push(plan.file_path.clone());
-                            changes.moves.push((plan.file_path.clone(), plan.path.clone()));
+                            changes
+                                .moves
+                                .push((plan.file_path.clone(), plan.path.clone()));
                         } else {
                             changes.keep.push(plan.path.clone());
                         }
@@ -743,7 +745,10 @@ impl Backend {
             plan.request,
             ConflictRequest::Abort { .. }
                 | ConflictRequest::ResolveDirFile { .. }
-                | ConflictRequest::Save { draft: ConflictDraft::Delete, .. }
+                | ConflictRequest::Save {
+                    draft: ConflictDraft::Delete,
+                    ..
+                }
         );
         let unmeasurable = requires_measured_after
             && progress != ConflictProgress::NotStarted

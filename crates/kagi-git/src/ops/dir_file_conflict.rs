@@ -28,11 +28,11 @@ use std::path::{Path, PathBuf};
 
 use git2::Repository;
 
+use super::conflict_index::{ConflictIndexTransaction, IndexIdentity};
 use crate::conflicts::path_to_index_bytes;
 use crate::oplog::{append_oplog, OpLogEntry, OpOutcome};
 use crate::ops::StateSummary;
 use crate::GitError;
-use super::conflict_index::{ConflictIndexTransaction, IndexIdentity};
 
 pub use kagi_domain::resolution::DirFileChoice;
 
@@ -69,9 +69,15 @@ pub struct DirFilePlan {
 impl DirFilePlan {
     /// Approved directory removals, derived only from the captured namespace.
     pub fn removed_directories(&self) -> Vec<PathBuf> {
-        self.removal_paths.iter().filter(|path| {
-            self.worktree.iter().any(|(p, mode, _)| p == *path && *mode == 0o040000)
-        }).cloned().collect()
+        self.removal_paths
+            .iter()
+            .filter(|path| {
+                self.worktree
+                    .iter()
+                    .any(|(p, mode, _)| p == *path && *mode == 0o040000)
+            })
+            .cloned()
+            .collect()
     }
 
     fn affects(&self, bytes: &[u8]) -> bool {
@@ -453,7 +459,10 @@ pub(crate) fn apply_dir_file_resolution_with_progress(
 
 /// The index surgery, kept separate so [`execute_dir_file_resolution`] can log
 /// both success and failure around it.
-fn apply_to_index(transaction: &ConflictIndexTransaction, plan: &DirFilePlan) -> Result<(), GitError> {
+fn apply_to_index(
+    transaction: &ConflictIndexTransaction,
+    plan: &DirFilePlan,
+) -> Result<(), GitError> {
     let mut index = transaction.read()?;
     index.conflict_remove(&plan.file_path).map_err(git_error)?;
     for child in &plan.child_entries {
@@ -713,7 +722,9 @@ pub(crate) fn verify_dir_file_resolution(
     let mut index = repo.index().map_err(git_error)?;
     index.read(true).map_err(git_error)?;
     if IndexIdentity::capture(&index, |p| plan.affects(p)) != plan.unaffected {
-        return Err(GitError::Other("unaffected index changed during directory/file resolution".into()));
+        return Err(GitError::Other(
+            "unaffected index changed during directory/file resolution".into(),
+        ));
     }
     let root = repo
         .workdir()
@@ -760,19 +771,27 @@ pub(crate) fn verify_dir_file_resolution(
         DirFileChoice::KeepDirectory => {
             let mut expected = git2::Index::new().map_err(git_error)?;
             let mut options = git2::DiffOptions::new();
-            options.disable_pathspec_match(true).include_untracked(true)
-                .recurse_untracked_dirs(true).include_typechange(true);
+            options
+                .disable_pathspec_match(true)
+                .include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .include_typechange(true);
             for child in &plan.kept_children {
                 stage_identity(&mut expected, child)?;
                 options.pathspec(&child.path);
             }
             count == plan.kept_children.len()
                 && plan.kept_children.iter().all(|child| {
-                    index.get_path(&child.path, 0)
+                    index
+                        .get_path(&child.path, 0)
                         .is_some_and(|e| e.id == child.oid && e.mode == child.mode)
                 })
-                && repo.diff_index_to_workdir(Some(&expected), Some(&mut options))
-                    .map_err(git_error)?.deltas().len() == 0
+                && repo
+                    .diff_index_to_workdir(Some(&expected), Some(&mut options))
+                    .map_err(git_error)?
+                    .deltas()
+                    .len()
+                    == 0
         }
     };
     if !verified {

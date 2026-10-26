@@ -1,7 +1,10 @@
 use super::*;
 use kagi_domain::conflict_family::{ConflictProgress, ConflictRequest};
 use kagi_git::{
-    backend::{conflict_ops::{ConflictFaultPoint, ConflictPlan}, ExecutionPolicy},
+    backend::{
+        conflict_ops::{ConflictFaultPoint, ConflictPlan},
+        ExecutionPolicy,
+    },
     Backend, DirFileChoice, OpOutcome,
 };
 
@@ -65,7 +68,10 @@ fn assert_worktree_mutated(route: Route, root: &Path) {
     match route {
         Route::Delete => assert!(!root.join("renamed-src.ts").exists()),
         Route::KeepDirectory => {
-            assert_eq!(std::fs::read(root.join("thing/child")).unwrap(), b"kept child\n");
+            assert_eq!(
+                std::fs::read(root.join("thing/child")).unwrap(),
+                b"kept child\n"
+            );
             assert!(!root.join("thing~HEAD").exists());
         }
         Route::KeepFile => {
@@ -92,19 +98,32 @@ fn check_receipt(fault: Option<ConflictFaultPoint>) {
             Some(ConflictFaultPoint::AfterWorktreeWrite) => {
                 assert_eq!(report.evidence.progress, ConflictProgress::WorktreeWritten);
                 let OpOutcome::Partial { after, .. } = &entry.outcome else {
-                    panic!("{route:?}: measured failed mutation is Partial: {:?}", entry.outcome);
+                    panic!(
+                        "{route:?}: measured failed mutation is Partial: {:?}",
+                        entry.outcome
+                    );
                 };
                 assert_eq!(*after, measured_state(tmp.path()));
                 if matches!(route, Route::Delete) {
-                    assert!(Repository::open(tmp.path()).unwrap().index().unwrap().has_conflicts());
+                    assert!(Repository::open(tmp.path())
+                        .unwrap()
+                        .index()
+                        .unwrap()
+                        .has_conflicts());
                     assert!(after.dirty.contains("conflict"));
                     assert_ne!(after.head, "deleted from index and worktree");
                 }
             }
-            Some(ConflictFaultPoint::AfterStateUnreadable | ConflictFaultPoint::AfterWorktreeWriteUnreadable) => {
+            Some(
+                ConflictFaultPoint::AfterStateUnreadable
+                | ConflictFaultPoint::AfterWorktreeWriteUnreadable,
+            ) => {
                 assert_ne!(report.evidence.progress, ConflictProgress::NotStarted);
                 let OpOutcome::Unknown { after, evidence } = &entry.outcome else {
-                    panic!("{route:?}: unmeasurable mutated state is Unknown: {:?}", entry.outcome);
+                    panic!(
+                        "{route:?}: unmeasurable mutated state is Unknown: {:?}",
+                        entry.outcome
+                    );
                 };
                 assert_eq!(after.dirty, "unknown");
                 assert!(after.head.contains("unreadable"));

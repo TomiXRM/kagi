@@ -329,6 +329,39 @@ impl SideContent {
     }
 }
 
+/// Retire only accepted presentation images, not rejected worker results. Defer
+/// atlas eviction until an in-flight Window/frame has returned to App, just as
+/// PdfViewer does. RenderImage's Arc lifetime alone does not evict atlas tiles.
+pub(crate) fn retire_side_images<'a>(
+    sides: impl IntoIterator<Item = &'a SideContent>,
+    cx: &mut gpui::App,
+) {
+    for side in sides {
+        if let SideContent::Image {
+            decoded: Ok(image), ..
+        } = side
+        {
+            let image = image.clone();
+            cx.defer(move |cx| {
+                cx.drop_image(image, None);
+                #[cfg(feature = "gui-e2e")]
+                RETIRED_SIDE_IMAGES.with(|count| count.set(count.get() + 1));
+            });
+        }
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static RETIRED_SIDE_IMAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Completed atlas evictions, not just retirement requests.
+#[cfg(feature = "gui-e2e")]
+pub fn retired_side_image_count_for_e2e() -> usize {
+    RETIRED_SIDE_IMAGES.with(std::cell::Cell::get)
+}
+
 #[derive(Clone)]
 pub struct SideHeader {
     pub label: SharedString,

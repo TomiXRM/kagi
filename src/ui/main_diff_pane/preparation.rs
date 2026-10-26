@@ -352,6 +352,11 @@ fn prepare_content(backend: &kagi_git::Backend, side: MediaSide<'_>) -> SideCont
         if meta.size.is_none() {
             return Err(SideFailure::Read("Missing source".into()));
         }
+        // Even a prefix read inflates an entire ODB blob in libgit2. Reject
+        // anything beyond the largest format budget using its header first.
+        if meta.size.is_some_and(|size| size > PDF_SIZE_CAP as u64) {
+            return Err(SideFailure::TooLarge);
+        }
         let kind = if symlink {
             None
         } else {
@@ -440,7 +445,8 @@ fn content_from_bytes(
             meta,
         };
     }
-    if !bytes.contains(&0) {
+    // This text is rendered by the same selectable TextView as oplog details.
+    if bytes.len() <= crate::ui::oplog_render::SELECTABLE_DETAIL_MAX && !bytes.contains(&0) {
         if let Ok(text) = String::from_utf8(bytes) {
             return SideContent::Text {
                 text: text.into(),
@@ -547,6 +553,139 @@ mod tests {
     }
 
     #[test]
+    fn bm_text_keeps_ordinary_diff_hunks() {
+        let (temp, backend) = repository();
+        let path = Path::new("ordinary.txt");
+        for prefix in ["BMI,height", "BM25 ranking"] {
+            std::fs::write(temp.path().join(path), format!("{prefix}\nold\n")).unwrap();
+            assert!(std::process::Command::new("git")
+                .args(["add", "ordinary.txt"])
+                .current_dir(temp.path())
+                .status()
+                .unwrap()
+                .success());
+            std::fs::write(temp.path().join(path), format!("{prefix}\nnew\n")).unwrap();
+            let diff = backend.unstaged_file_diff(path).unwrap();
+            assert!(!diff.is_binary && !diff.hunks.is_empty());
+            assert!(prepare_diff_media(
+                &backend,
+                &diff,
+                &MainDiffSource::Unstaged { path: path.into() },
+                path,
+                None,
+                None,
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn selectable_text_budget_is_inclusive_and_preserves_metadata() {
+        let cap = crate::ui::oplog_render::SELECTABLE_DETAIL_MAX;
+        for size in [cap - 1, cap, cap + 1, IMAGE_SIZE_CAP] {
+            let side = content_from_bytes(
+                Path::new("text"),
+                vec![b'x'; size],
+                SideMetadata {
+                    size: Some(size as u64),
+                    oid: Some("frozen".into()),
+                    ..SideMetadata::default()
+                },
+                false,
+            );
+            assert_eq!(side.metadata().unwrap().size, Some(size as u64));
+            assert_eq!(side.metadata().unwrap().oid.as_deref(), Some("frozen"));
+            assert!(side.metadata().unwrap().error.is_none());
+            if size <= cap {
+                assert!(matches!(side, SideContent::Text { text, .. } if text.len() == size));
+            } else {
+                assert!(matches!(side, SideContent::Binary(_)));
+            }
+        }
+    }
+
+    #[test]
+    fn attributed_large_utf8_diff_uses_binary_metadata() {
+        let (temp, backend) = repository();
+        let path = Path::new("data.json");
+        std::fs::write(temp.path().join(".gitattributes"), "data.json -diff\n").unwrap();
+        let text = "é".repeat(crate::ui::oplog_render::SELECTABLE_DETAIL_MAX);
+        std::fs::write(temp.path().join(path), &text).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["add", ".gitattributes", "data.json"])
+            .current_dir(temp.path())
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(temp.path().join(path), format!("{text}\n")).unwrap();
+        let diff = backend.unstaged_file_diff(path).unwrap();
+        assert!(diff.is_binary);
+        let pair = prepare_diff_media(
+            &backend,
+            &diff,
+            &MainDiffSource::Unstaged { path: path.into() },
+            path,
+            None,
+            None,
+        )
+        .unwrap();
+        for (side, size) in [(&pair.left, text.len()), (&pair.right, text.len() + 1)] {
+            assert!(matches!(side, SideContent::Binary(_)));
+            assert_eq!(side.metadata().unwrap().size, Some(size as u64));
+            assert!(side.metadata().unwrap().error.is_none());
+        }
+        assert!(pair.left.metadata().unwrap().oid.is_some());
+    }
+
+    #[test]
+    fn oversized_frozen_blob_is_rejected_before_payload_probe() {
+        let (temp, backend) = repository();
+        let size = PDF_SIZE_CAP + 1;
+        std::fs::write(temp.path().join("blob"), vec![b'x'; size]).unwrap();
+        let output = std::process::Command::new("git")
+            .args(["hash-object", "-w", "blob"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let oid = String::from_utf8(output.stdout).unwrap();
+        let oid = oid.trim();
+        let object = temp
+            .path()
+            .join(".git/objects")
+            .join(&oid[..2])
+            .join(&oid[2..]);
+        // Keep the complete deflate stream and readable ODB header, but damage
+        // its checksum. A payload probe must fail; truncating the stream instead
+        // can leave libgit2's inflater waiting indefinitely for its missing end.
+        let mut compressed = std::fs::read(&object).unwrap();
+        *compressed.last_mut().unwrap() ^= 1;
+        // Git creates read-only loose objects; replace this fixture object.
+        std::fs::remove_file(&object).unwrap();
+        std::fs::write(&object, &compressed).unwrap();
+        let source = FileReadSource::ConflictStage {
+            oid,
+            mode: 0o100644,
+        };
+        assert_eq!(
+            backend.file_size(source, Path::new("blob")).unwrap(),
+            Some(size as u64)
+        );
+        let side = prepare_content(&backend, MediaSide::File(source, Path::new("blob")));
+        assert!(matches!(
+            side,
+            SideContent::Binary(SideMetadata {
+                size: Some(actual),
+                error: Some(SideFailure::TooLarge),
+                ..
+            }) if actual == size as u64
+        ));
+        assert!(backend
+            .file_prefix(source, Path::new("blob"), &mut [0; 12])
+            .is_err());
+    }
+
+    #[test]
     fn shared_preparation_preserves_diff_media_snapshot() {
         let (temp, backend) = repository();
         let path = Path::new("image.png");
@@ -572,7 +711,7 @@ mod tests {
         assert_eq!(encoded.bytes(), png);
         assert!(decoded.is_err() && dimensions.is_none());
         assert!(matches!(meta.error, Some(SideFailure::Decode)));
-        // Explicit step-two policy: BMP is now recognized; corrupt pixels remain a failure.
+        // A BM text prefix is not a BMP header, even with an image extension.
         std::fs::write(temp.path().join(path), b"BM invalid").unwrap();
         let [_, bmp] = prepare_content_pair(
             &backend,
@@ -581,13 +720,7 @@ mod tests {
                 MediaSide::File(FileReadSource::Workdir, path),
             ],
         );
-        assert!(matches!(
-            bmp,
-            SideContent::Image {
-                decoded: Err(_),
-                ..
-            }
-        ));
+        assert!(matches!(bmp, SideContent::Text { text, .. } if text.as_ref() == "BM invalid"));
         std::fs::write(temp.path().join(path), b"%PDF-invalid document").unwrap();
         let [absent, pdf] = prepare_content_pair(
             &backend,
@@ -853,9 +986,8 @@ mod tests {
             classify_image(Path::new("image.jpg"), png, ImageClassification::MagicOnly),
             Some(ImageFormat::Png)
         );
-        assert_eq!(
-            classify_image(Path::new("image"), b"BM", ImageClassification::FilePreview),
-            Some(ImageFormat::Bmp)
+        assert!(
+            classify_image(Path::new("image"), b"BM", ImageClassification::FilePreview).is_none()
         );
         assert!(
             classify_image(Path::new("image"), b"BM", ImageClassification::MagicOnly).is_none()

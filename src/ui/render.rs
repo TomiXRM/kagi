@@ -394,7 +394,7 @@ impl Render for KagiApp {
                     focused_pdf = Some(focus);
                 }
                 if Some(*owner) != active || !self.conflict_body_visible() {
-                    conflict.update(cx, |view, _| view.retire_raw_preview());
+                    conflict.update(cx, |view, cx| view.retire_raw_preview(cx));
                 }
             }
             if Some(*owner) != active || self.home_in_front() {

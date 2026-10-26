@@ -153,7 +153,7 @@ fn choose_and_save(
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
     conflict.update(cx, |view, cx| {
-        view.conflict_select_file(0);
+        view.conflict_select_file(0, cx);
         cx.notify();
     });
     assert_presentation(cx, window, &conflict, pdf);
@@ -300,7 +300,7 @@ pub fn scenario_conflict_side_pair_modify_delete(cx: &mut VisualTestAppContext) 
             cx.run_until_parked();
             let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
             conflict.update(cx, |view, cx| {
-                view.conflict_select_file(0);
+                view.conflict_select_file(0, cx);
                 cx.notify();
             });
             wait_preview(cx, window, &conflict);

@@ -52,7 +52,7 @@ impl ConflictView {
         editing_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        self.retire_raw_preview();
+        self.retire_raw_preview(cx);
         let mut previous = self.mode.take();
         if self.result_editing {
             if let (Some(previous), Some(path)) = (previous.as_mut(), self.editing.as_deref()) {
@@ -149,7 +149,7 @@ impl ConflictView {
             self.conflict_open_saved(saved, cx);
         } else if !same_context {
             if let Some(pending) = pending {
-                self.conflict_select_file(pending);
+                self.conflict_select_file(pending, cx);
             }
         }
         cx.notify();

@@ -21,6 +21,14 @@ pub(crate) fn caption(message: Msg) -> Div {
         .child(SharedString::from(text))
 }
 
+fn failure_message(error: &SideFailure) -> Msg {
+    match error {
+        SideFailure::TooLarge => Msg::SidePreviewTooLarge,
+        SideFailure::Decode => Msg::SidePreviewDecodeFailed,
+        SideFailure::Read(_) => Msg::SidePreviewReadFailed,
+    }
+}
+
 pub(crate) fn side_header(label: SharedString, accent: Option<u32>) -> Div {
     use crate::ui::theme::scaled_px;
     div()
@@ -126,18 +134,17 @@ pub(crate) fn side_pair(
             SideContent::Image { dimensions, .. } => *dimensions,
             _ => None,
         };
-        let description = match &content {
-            SideContent::Absent => header.absent.t(),
-            SideContent::Loading => "",
-            SideContent::Pdf { .. } => Msg::DiffPdfPreview.t(),
-            SideContent::Symlink {
-                target: Some(_), ..
-            } => Msg::ConflictSymlinkTarget.t(),
-            _ if metadata.as_ref().is_some_and(|meta| meta.error.is_some()) => {
-                Msg::DiffPdfReadFailed.t()
-            }
-            _ => "",
-        };
+        let description =
+            if let Some(error) = content.metadata().and_then(|meta| meta.error.as_ref()) {
+                failure_message(error).t()
+            } else {
+                match &content {
+                    SideContent::Absent => header.absent.t(),
+                    SideContent::Pdf { .. } => Msg::DiffPdfPreview.t(),
+                    SideContent::Symlink { .. } => Msg::ConflictSymlinkTarget.t(),
+                    _ => "",
+                }
+            };
         let body = body(content, &header, viewports.clone(), pdfs, index == 0, probe);
         let mut column = div()
             .id(header.id)
@@ -201,11 +208,10 @@ pub(crate) fn side_pair(
                 ));
             }
             if let Some(error) = meta.error {
-                summary = summary.child(caption(match error {
-                    SideFailure::TooLarge => Msg::SidePreviewTooLarge,
-                    SideFailure::Decode => Msg::SidePreviewDecodeFailed,
-                    SideFailure::Read(_) => Msg::SidePreviewReadFailed,
-                }));
+                summary = summary.child(caption(failure_message(&error)));
+                if let SideFailure::Read(detail) = error {
+                    summary = summary.child(div().text_sm().child(detail));
+                }
             }
             column = column.child(summary);
         }
@@ -237,7 +243,15 @@ fn body(
     old: bool,
     probe: &'static str,
 ) -> gpui::AnyElement {
-    let image = matches!(content, SideContent::Image { .. });
+    let image = matches!(
+        content,
+        SideContent::Image {
+            decoded: Ok(_),
+            dimensions: Some(_),
+            ..
+        }
+    );
+    let pdf = matches!(content, SideContent::Pdf { .. });
     let text = matches!(
         content,
         SideContent::Text { .. } | SideContent::Symlink { .. }
@@ -264,32 +278,47 @@ fn body(
             Some(pdfs) => pdfs.render_side(old),
             None => caption(Msg::SidePreviewReadFailed).into_any_element(),
         },
-        SideContent::Text { text, .. }
-        | SideContent::Symlink {
+        SideContent::Text { text, .. } => {
+            super::super::oplog_render::selectable_text(format!("{probe}-text"), &text)
+                .font_family(crate::ui::MONO_FONT)
+                .into_any_element()
+        }
+        SideContent::Symlink {
             target: Some(text), ..
-        } => super::super::oplog_render::selectable_text(format!("{probe}-text"), &text)
+        } => div()
+            .flex()
+            .flex_col()
+            .child(caption(Msg::ConflictSymlinkTarget))
+            .child(
+                super::super::oplog_render::selectable_text(format!("{probe}-text"), &text)
+                    .font_family(crate::ui::MONO_FONT),
+            )
             .into_any_element(),
         SideContent::Symlink { target: None, .. } => {
             caption(Msg::SidePreviewReadFailed).into_any_element()
         }
         SideContent::Submodule(_) => caption(Msg::ConflictSubmoduleCommit).into_any_element(),
-        SideContent::Binary(_) => caption(Msg::DiffBinaryNoText).into_any_element(),
+        SideContent::Binary(meta) => caption(if meta.error.is_some() {
+            Msg::DiffImagePreviewUnavailable
+        } else {
+            Msg::DiffBinaryNoText
+        })
+        .into_any_element(),
     };
     let element = div()
         .id(probe)
         .role(gpui::Role::Group)
         .aria_label(header.label.clone())
         .relative()
-        .flex_1()
+        .when(image || pdf, |el| el.flex_1())
+        .when(!pdf, |el| el.px_2().pt_1())
         .min_h(px(0.))
         .min_w(px(0.))
         .overflow_hidden()
         .flex()
         .flex_col()
         .when(image, |el| el.max_h(crate::ui::theme::scaled_px(260.)))
-        .when(text, |el| {
-            el.overflow_y_scroll().font_family(crate::ui::MONO_FONT)
-        })
+        .when(text, |el| el.overflow_y_scroll())
         .child(body)
         .child(super::super::e2e::measure_inside(probe));
     element.into_any_element()
@@ -353,6 +382,23 @@ fn image_overlay(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn accessible_failure_matches_the_visible_reason() {
+        use super::{failure_message, Msg, SideFailure};
+        assert!(matches!(
+            failure_message(&SideFailure::TooLarge),
+            Msg::SidePreviewTooLarge
+        ));
+        assert!(matches!(
+            failure_message(&SideFailure::Decode),
+            Msg::SidePreviewDecodeFailed
+        ));
+        assert!(matches!(
+            failure_message(&SideFailure::Read("missing frozen object".into())),
+            Msg::SidePreviewReadFailed
+        ));
+    }
+
     #[test]
     fn unequal_images_use_one_scale_and_origin() {
         assert_eq!(

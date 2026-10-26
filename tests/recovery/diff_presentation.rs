@@ -5,6 +5,7 @@ use crate::macos::{build_fixture, git, mount, unmount};
 use crate::recovery_layout::{draw, GlobalSettings};
 use gpui::{AnyWindowHandle, Modifiers, VisualTestAppContext};
 use kagi::ui::conflict_view::ConflictView;
+use kagi::ui::diff_view::retired_side_image_count_for_e2e;
 use kagi::ui::e2e;
 use kagi_ui_core::{i18n, theme};
 use std::sync::atomic::Ordering;
@@ -87,6 +88,7 @@ pub fn scenario_diff_binary_states(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     frame(cx, win);
+    let mut previous_images = 0;
     for locale in ["en", "ja"] {
         std::env::set_var("KAGI_LANG", locale);
         i18n::init_lang();
@@ -98,12 +100,30 @@ pub fn scenario_diff_binary_states(cx: &mut VisualTestAppContext) {
         ] {
             e2e::diff_presentation::clear();
             let index = commit_image_index(cx, &app, path);
+            let retired = retired_side_image_count_for_e2e();
             app.update(cx, |app, cx| app.open_main_diff_commit(index, cx));
             frame(cx, win);
+            assert_eq!(
+                retired_side_image_count_for_e2e(),
+                retired + previous_images,
+                "{locale}/{path}: replacement evicts every previous decoded side"
+            );
+            previous_images = match path {
+                "changed.png" => 2,
+                "added.png" | "deleted.png" => 1,
+                _ => 0,
+            };
             assert_eq!(e2e::diff_presentation::description().as_deref(), Some(if locale == "en" { en } else { ja }), "{locale}/{path}: explanation must render");
         }
     }
+    let retired = retired_side_image_count_for_e2e();
     unmount(cx, app, win);
+    cx.run_until_parked();
+    assert_eq!(
+        retired_side_image_count_for_e2e(),
+        retired + previous_images,
+        "destroying the main diff evicts its last accepted image"
+    );
     drop(restore);
     eprintln!("[gui-e2e] PASS diff_binary_states");
 }
@@ -141,7 +161,7 @@ pub(crate) fn assert_conflict_binary_states(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
         conflict.update(cx, |view, cx| {
-            view.conflict_select_file(0);
+            view.conflict_select_file(0, cx);
             cx.notify();
         });
         frame(cx, win);
@@ -187,7 +207,7 @@ pub fn scenario_conflict_image_zoom(cx: &mut VisualTestAppContext) {
             cx.run_until_parked();
             let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
             conflict.update(cx, |view, cx| {
-                view.conflict_select_file(0);
+                view.conflict_select_file(0, cx);
                 cx.notify();
             });
             for dimensions in [(940., 660.), (1392., 883.)] {
@@ -270,17 +290,28 @@ pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext
 
     for transition in ["selection", "revision", "retirement"] {
         conflict.update(cx, |view, cx| {
-            view.conflict_select_file(0);
+            view.conflict_select_file(0, cx);
             cx.notify();
         });
         frame(cx, win);
         let (hold, release) = deferred::<()>(cx);
         let completion = ConflictView::hold_next_raw_preview_for_e2e(hold);
+        let retired = retired_side_image_count_for_e2e();
         conflict.update(cx, |view, cx| {
-            view.retire_raw_preview_for_e2e();
+            view.retire_raw_preview_for_e2e(cx);
+            assert_eq!(
+                retired_side_image_count_for_e2e(),
+                retired,
+                "atlas eviction waits until the current update/frame finishes"
+            );
             cx.notify();
         });
         frame(cx, win);
+        assert_eq!(
+            retired_side_image_count_for_e2e(),
+            retired + 2,
+            "{transition}: retiring the accepted pair evicts both images"
+        );
         assert_eq!(
             completion.load(Ordering::SeqCst),
             1,
@@ -290,7 +321,7 @@ pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext
 
         match transition {
             "selection" => conflict.update(cx, |view, cx| {
-                view.conflict_select_file(1);
+                view.conflict_select_file(1, cx);
                 cx.notify();
             }),
             "revision" => {
@@ -307,7 +338,7 @@ pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext
             "retirement" => conflict.update(cx, |view, cx| {
                 // Identical file/revision on re-admission: only the attachment
                 // generation distinguishes this request from its predecessor.
-                view.retire_raw_preview_for_e2e();
+                view.retire_raw_preview_for_e2e(cx);
                 cx.notify();
             }),
             _ => unreachable!(),
@@ -316,8 +347,14 @@ pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext
         let shown = conflict
             .read_with(cx, |view, _| view.raw_preview_identity_for_e2e())
             .unwrap();
+        let retired = retired_side_image_count_for_e2e();
         release.send(());
         frame(cx, win);
+        assert_eq!(
+            retired_side_image_count_for_e2e(),
+            retired,
+            "{transition}: rejected never-painted completion has no atlas tiles to evict"
+        );
         assert_eq!(
             completion.load(Ordering::SeqCst),
             3,
@@ -329,8 +366,15 @@ pub fn scenario_conflict_preview_owner_transitions(cx: &mut VisualTestAppContext
             "{transition}: late result must not replace the shown pair"
         );
     }
+    let retired = retired_side_image_count_for_e2e();
     drop(conflict);
     unmount(cx, app, win);
+    cx.run_until_parked();
+    assert_eq!(
+        retired_side_image_count_for_e2e(),
+        retired + 2,
+        "destroying the conflict owner evicts its last accepted pair"
+    );
     drop(restore);
     eprintln!("[gui-e2e] PASS conflict_preview_owner_transitions");
 }
@@ -345,7 +389,7 @@ pub fn scenario_conflict_preview_read_retry(cx: &mut VisualTestAppContext) {
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
     std::fs::rename(repo.join(".git"), repo.join(".git-held")).unwrap();
     conflict.update(cx, |view, cx| {
-        view.retire_raw_preview_for_e2e();
+        view.retire_raw_preview_for_e2e(cx);
         cx.notify();
     });
     frame(cx, win);

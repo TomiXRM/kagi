@@ -30,9 +30,9 @@ impl ConflictView {
         self.page = page;
     }
 
-    pub fn conflict_open_file(&mut self, idx: usize, cx: &Context<Self>) {
+    pub fn conflict_open_file(&mut self, idx: usize, cx: &mut Context<Self>) {
         self.capture_result_for_navigation(cx);
-        self.conflict_select_file(idx);
+        self.conflict_select_file(idx, cx);
         self.show_tools = false;
     }
 

@@ -148,6 +148,26 @@ impl ConflictView {
         };
         #[cfg(feature = "gui-e2e")]
         FILE_HEADER_STATUS.with(|value| value.borrow_mut().clone_from(&status));
+        // Measure the space left by file/session controls rather than forcing
+        // the PDF action to an ambiguous icon at every window size.
+        let pdf_control = self.raw_preview.pdfs.as_ref().and_then(|pdfs| {
+            let control = pdfs.control(self.file_header_fit.compact(), self.writer_busy, cx)?;
+            let label = if pdfs.synchronized(cx) {
+                Msg::DiffPdfScrollSynchronized
+            } else {
+                Msg::DiffPdfScrollIndependent
+            };
+            Some(
+                div()
+                    .relative()
+                    .flex_grow(1.)
+                    .flex()
+                    .items_center()
+                    .child(self.file_header_fit.control("conflict-pdf-sync", control))
+                    .children(self.file_header_fit.probes(&[label.t().into()], &[]))
+                    .into_any_element(),
+            )
+        });
         let mut header = div()
             .relative()
             .flex()
@@ -190,14 +210,7 @@ impl ConflictView {
                     ))
                     .child(status),
             )
-            .when_some(
-                self.raw_preview
-                    .pdfs
-                    .as_ref()
-                    .and_then(|pdfs| pdfs.control(true, self.writer_busy, cx)),
-                |header, control| header.child(control),
-            )
-            .child(div().flex_1());
+            .child(pdf_control.unwrap_or_else(|| div().flex_1().into_any_element()));
         if saved && !mode.session.files.is_empty() {
             header = header.child(e2e::measure_control(
                 "conflict-next-file",

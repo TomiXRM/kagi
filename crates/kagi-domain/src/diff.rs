@@ -29,7 +29,7 @@ pub fn media_kind(bytes: &[u8]) -> Option<MediaKind> {
         Some(MediaKind::Gif)
     } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
         Some(MediaKind::Webp)
-    } else if bytes.starts_with(b"BM") {
+    } else if bytes.len() >= 12 && bytes.starts_with(b"BM") && bytes[6..10] == [0; 4] {
         Some(MediaKind::Bmp)
     } else if bytes.starts_with(b"%PDF-") {
         Some(MediaKind::Pdf)
@@ -47,7 +47,10 @@ fn media_signatures_are_shared_and_do_not_claim_decoding() {
         (b"GIF87a".as_slice(), MediaKind::Gif),
         (b"GIF89a".as_slice(), MediaKind::Gif),
         (b"RIFFxxxxWEBP".as_slice(), MediaKind::Webp),
-        (b"BM".as_slice(), MediaKind::Bmp),
+        (
+            b"BM\x00\x00\x00\x00\x00\x00\x00\x00\x36\x00".as_slice(),
+            MediaKind::Bmp,
+        ),
         (b"%PDF-1.7\n".as_slice(), MediaKind::Pdf),
     ] {
         assert_eq!(media_kind(prefix), Some(expected));
@@ -62,6 +65,20 @@ fn media_signatures_are_shared_and_do_not_claim_decoding() {
     }
     assert_eq!(media_kind(b"ordinary text"), None);
     assert_eq!(media_kind(b"RIFFxxxxWAVE"), None);
+    for text in [
+        b"BM".as_slice(),
+        b"BM invalid",
+        b"BMI,height\n22,180\n",
+        b"BM25 ranks ordinary text",
+    ] {
+        assert_eq!(media_kind(text), None);
+    }
+    let mut bmp = *b"BM\x00\x00\x00\x00\x00\x00\x00\x00\x36\x00";
+    for reserved in 6..10 {
+        bmp[reserved] = 1;
+        assert_eq!(media_kind(&bmp), None);
+        bmp[reserved] = 0;
+    }
 }
 
 /// The kind of a diff line: unchanged context, a newly-added line, or a

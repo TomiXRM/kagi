@@ -62,8 +62,8 @@ impl ConflictView {
             .detach();
     }
 
-    pub fn retire_raw_preview_for_e2e(&mut self) {
-        self.retire_raw_preview();
+    pub fn retire_raw_preview_for_e2e(&mut self, cx: &mut gpui::App) {
+        self.retire_raw_preview(cx);
     }
 
     pub fn raw_preview_state_for_e2e(&self) -> (&'static str, u8) {

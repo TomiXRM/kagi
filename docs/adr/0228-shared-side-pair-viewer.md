@@ -325,3 +325,23 @@ EN Dark and JA Light add the malformed-image/binary/submodule/absent-side
 cross-checks, completing the four visual combinations required by #1773.
 All owned apps exited normally. These captures do not claim native VoiceOver/AX
 announcements or IME coverage, nor substitute for independent final HIG review.
+
+The first independent code/HIG review required the following corrections before
+merge. BMP recognition must validate its reserved header bytes, not just `BM`,
+so ordinary CSV/Markdown remain text conflicts and retain diff hunks. Frozen
+source sizes above the maximum preview budget are rejected from the ODB header
+before any payload probe. A UTF-8 side admitted through a binary diff is rendered
+as selectable text only within the existing selectable-detail bound; larger
+content keeps its immutable metadata instead. Accepted decoded image handles
+must be explicitly evicted from GPUI's atlas on replacement and retirement,
+including owner release, just like the existing PDF raster lifecycle.
+
+Only decoded images and PDFs consume flexible body height. Non-PDF bodies have
+horizontal/top padding; metadata and failure reasons stay immediately below
+their heading, and symlinks retain a visible target label. Accessibility
+descriptions use the same typed failure reason as visible captions. Read failures
+retain their actual diagnostic and do not claim an unknown source is a binary
+file or promise an unavailable external-editor action. The PDF sync control uses
+the existing measured `HeaderFit` policy to show its label when space permits.
+The frames above predate these corrections; native rerun and independent HIG
+re-review must use the corrected head.

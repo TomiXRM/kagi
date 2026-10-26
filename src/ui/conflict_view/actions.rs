@@ -348,7 +348,7 @@ impl ConflictView {
 
     /// Select a file and open its matching content editor (or binary preview).
     /// All row and navigation activations use this path.
-    pub fn conflict_select_file(&mut self, idx: usize) {
+    pub fn conflict_select_file(&mut self, idx: usize, cx: &mut gpui::App) {
         let Some(mode) = self.mode.as_mut() else {
             return;
         };
@@ -356,7 +356,7 @@ impl ConflictView {
             return;
         };
         if mode.selected_file != Some(idx) {
-            self.raw_preview.retire();
+            self.raw_preview.retire(cx);
         }
         let open_path = matches!(file.kind, ConflictKind::Content | ConflictKind::AddAdd)
             .then(|| file.path.clone());
@@ -375,7 +375,7 @@ impl ConflictView {
     }
 
     /// Move the selection to the previous / next unresolved file, wrapping.
-    pub fn conflict_nav_unresolved(&mut self, dir: i32) {
+    pub fn conflict_nav_unresolved(&mut self, dir: i32, cx: &mut gpui::App) {
         let Some(c) = self.mode.as_ref() else {
             return;
         };
@@ -400,7 +400,7 @@ impl ConflictView {
                     (start + n - 1) % n
                 }
             });
-        self.conflict_select_file(next);
+        self.conflict_select_file(next, cx);
     }
 
     /// Apply a per-file side choice to the in-memory resolution buffer, emit the

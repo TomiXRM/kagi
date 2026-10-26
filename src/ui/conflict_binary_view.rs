@@ -40,7 +40,7 @@ pub(crate) struct RawPreview {
 }
 
 impl RawPreview {
-    pub(crate) fn retire(&mut self) {
+    pub(crate) fn retire(&mut self, cx: &mut gpui::App) {
         if let Some(pdfs) = self.pdfs.take() {
             pdfs.retire_detached();
         }
@@ -48,7 +48,13 @@ impl RawPreview {
         self.task = None;
         self.key = None;
         self.failed = None;
-        self.state = PreviewState::Loading;
+        self.replace_state(PreviewState::Loading, cx);
+    }
+
+    fn replace_state(&mut self, state: PreviewState, cx: &mut gpui::App) {
+        if let PreviewState::Ready(pair) = std::mem::replace(&mut self.state, state) {
+            super::diff_view::retire_side_images(pair.iter(), cx);
+        }
     }
 }
 
@@ -61,8 +67,8 @@ pub(crate) struct PreviewKey {
 }
 
 impl ConflictView {
-    pub(crate) fn retire_raw_preview(&mut self) {
-        self.raw_preview.retire();
+    pub(crate) fn retire_raw_preview(&mut self, cx: &mut gpui::App) {
+        self.raw_preview.retire(cx);
     }
 
     pub(crate) fn focused_pdf_body(
@@ -140,7 +146,7 @@ impl ConflictView {
                     0
                 }
             });
-        self.retire_raw_preview();
+        self.retire_raw_preview(cx);
         let Some(key) = key else { return };
         self.raw_preview.key = Some(key.clone());
         let generation = self.raw_preview.generation;
@@ -197,12 +203,14 @@ impl ConflictView {
                                 cx,
                             ));
                         }
-                        view.raw_preview.state = PreviewState::Ready(Arc::new(pair));
+                        view.raw_preview
+                            .replace_state(PreviewState::Ready(Arc::new(pair)), cx);
                     }
                     Err(error) => {
                         view.raw_preview.key = None;
                         view.raw_preview.failed = Some((key, failures + 1));
-                        view.raw_preview.state = PreviewState::Failed(error.to_string().into());
+                        view.raw_preview
+                            .replace_state(PreviewState::Failed(error.to_string().into()), cx);
                     }
                 }
                 cx.notify();

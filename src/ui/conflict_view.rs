@@ -235,6 +235,7 @@ pub struct ConflictView {
     /// dropped on conflict-clear / repo or tab switch). Used for the read-only
     /// marker materialization in `conflict_open_editor`.
     pub(crate) repo_path: PathBuf,
+    pub(crate) file_header_fit: super::render_helpers::HeaderFit,
 }
 
 impl ConflictView {
@@ -247,6 +248,8 @@ impl ConflictView {
         owner: crate::app::Attachment,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|view, cx| view.retire_raw_preview(cx))
+            .detach();
         Self {
             window_activation_subscription: None,
             _draft_quit_subscription: cx.on_app_quit(|view, cx| view.flush_drafts_on_quit(cx)),
@@ -302,6 +305,7 @@ impl ConflictView {
             owner,
             app,
             repo_path,
+            file_header_fit: Default::default(),
         }
     }
 

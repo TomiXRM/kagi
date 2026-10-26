@@ -2338,6 +2338,14 @@ mod tests {
             ("broken.PDF", b"unreadable document".as_slice(), true),
             ("image.data", b"GIF89a".as_slice(), true),
             ("ordinary.txt", b"ordinary text\n".as_slice(), false),
+            ("ordinary.csv", b"BMI,height\n22,180\n".as_slice(), false),
+            (
+                "ranking.md",
+                b"BM25 ranks ordinary text\n".as_slice(),
+                false,
+            ),
+            ("short.txt", b"BM".as_slice(), false),
+            ("invalid.bmp", b"BM invalid".as_slice(), false),
         ] {
             let path = Path::new(name);
             std::fs::write(temp.path().join(path), bytes).unwrap();
@@ -2363,7 +2371,10 @@ mod tests {
             let conflict = conflict.unwrap();
             let current = conflict.our.as_ref().unwrap();
             let path = bytes_to_pathbuf(&current.path).unwrap();
-            let expected = path != Path::new("ordinary.txt");
+            let expected = !matches!(
+                path.to_str().unwrap(),
+                "ordinary.txt" | "ordinary.csv" | "ranking.md" | "short.txt" | "invalid.bmp"
+            );
             let kind = classify_kind(&repo, &conflict, &path, &[]);
             assert_eq!(kind == ConflictKind::Binary, expected, "{path:?}");
             assert_eq!(buffer.is_raw(&path), expected, "{path:?}");

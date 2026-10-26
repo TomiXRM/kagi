@@ -276,9 +276,7 @@ impl KagiApp {
     pub(super) fn clear_repository_busy_footer(&mut self, cx: &mut Context<Self>) {
         let busy = match &self.status_footer {
             FooterStatus::Idle(message) | FooterStatus::Failed(message) => {
-                [i18n::Lang::En, i18n::Lang::Ja]
-                    .into_iter()
-                    .any(|lang| message.contains(Msg::AdviceConflictsRepositoryBusy.t_for(lang)))
+                i18n::op::user_text::operations::is_repository_busy_message(message)
             }
             _ => false,
         };

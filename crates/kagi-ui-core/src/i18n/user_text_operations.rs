@@ -17,6 +17,13 @@ pub fn completed(op: &str) -> String {
     }
 }
 
+/// Recognize the stable admission cause in previews and after a locale change.
+pub fn is_repository_busy_message(message: &str) -> bool {
+    [Lang::En, Lang::Ja].into_iter().any(|language| {
+        message.contains(crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(language))
+    })
+}
+
 pub fn failed(op: &str, reason: &str) -> String {
     let label = operation_label(op);
     let reason = diagnostic(reason);
@@ -514,9 +521,18 @@ mod tests {
             set_lang_no_persist(language);
             let reason = crate::i18n::Msg::AdviceConflictsRepositoryBusy.t();
             assert_eq!(FailureCause::classify(reason), FailureCause::RepositoryBusy);
+            for stored_language in [Lang::En, Lang::Ja] {
+                assert!(is_repository_busy_message(
+                    crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(stored_language),
+                ));
+            }
+            assert!(!is_repository_busy_message(""));
+            assert!(!is_repository_busy_message("unrelated failure information"));
             for operation in ["pull", "stage-all", "commit"] {
+                let preview = failure_preview(operation, reason);
+                assert!(is_repository_busy_message(&preview), "{preview}");
                 assert!(
-                    failure_preview(operation, reason).contains(expected),
+                    preview.contains(expected),
                     "{operation}: {language:?}"
                 );
                 for shown in [

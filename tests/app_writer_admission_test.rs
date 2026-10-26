@@ -206,8 +206,7 @@ fn another_process_blocks_generic_writers_without_an_admission_receipt() {
     assert!(kagi_git::oplog::read_oplog_tail_for_repo(&f.linked, 100).is_empty());
     drop(owner);
     sessions.write_lease(&f.linked).unwrap().complete();
-    let running = begin_write(&mut sessions, &approved).unwrap();
-    drop(running);
+    let _ = begin_write(&mut sessions, &approved).unwrap();
 }
 
 #[test]

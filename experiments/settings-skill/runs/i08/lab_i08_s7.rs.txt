@@ -1,0 +1,455 @@
+//! UI lab I08/S7 — a theme-editor sheet over the Themes settings page.
+//!
+//! The reusable settings-shell parts come from `settings_kit`.  `swatch`,
+//! `theme_name_field`, and `sheet_button` are page-local kit gaps: the kit has
+//! neither colour-value editors, a text-field look, nor a primary footer action.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    capsule_button, detail_page, group, icon_tile, ink, pt, ring, search_field, section,
+    section_action, settings_window, sidebar, sidebar_gap, sidebar_item, switch, Forced, Hue, Row,
+    Tint,
+};
+use kagi::ui::theme::{theme, theme_by_slug};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i08-s7",
+    states: &["default", "focus-name"],
+    size: (1080., 800.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rgb24((red, green, blue): (u8, u8, u8)) -> u32 {
+    (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue)
+}
+
+fn hex(color: (u8, u8, u8)) -> String {
+    format!("#{:02X}{:02X}{:02X}", color.0, color.1, color.2)
+}
+
+/// Page-local colour editor gap. Its displayed hexadecimal value is always
+/// derived from the same RGB tuple that paints the swatch.
+fn swatch(color: (u8, u8, u8), label: &'static str, forced: Forced) -> AnyElement {
+    let value = hex(color);
+    let color = rgb24(color);
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(4.))
+        .child(
+            div()
+                .truncate()
+                .text_size(pt(11.5))
+                .text_color(ink::secondary())
+                .child(label),
+        )
+        .child(ring(
+            div()
+                .id(format!("swatch-{label}"))
+                .h(pt(30.))
+                .rounded(pt(6.))
+                .border_1()
+                .border_color(rgb(ink::hairline()))
+                .bg(rgb(color))
+                .role(Role::Button)
+                .aria_label(format!("{label}: {value}")),
+            forced == Forced::Focus,
+            6.,
+        ))
+        .child(
+            div()
+                .id(format!("swatch-value-{label}"))
+                .h(pt(24.))
+                .px(pt(7.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(5.))
+                .bg(rgb(ink::control()))
+                .border_1()
+                .border_color(rgb(ink::hairline()))
+                .text_size(pt(10.5))
+                .text_color(ink::secondary())
+                .role(Role::Status)
+                .child(value),
+        )
+        .into_any_element()
+}
+
+/// Page-local text-field look gap. The forced focus state is captured without
+/// changing the field value, mirroring the gallery's other forced states.
+fn theme_name_field(value: &'static str, forced: Forced) -> AnyElement {
+    ring(
+        div()
+            .id("theme-name")
+            .h(pt(36.))
+            .w_full()
+            .min_w_0()
+            .px(pt(10.))
+            .flex()
+            .items_center()
+            .rounded(pt(7.))
+            .bg(rgb(ink::control()))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .role(Role::TextInput)
+            .aria_label("New Theme Name")
+            .aria_value(value)
+            .child(value),
+        forced == Forced::Focus,
+        7.,
+    )
+    .into_any_element()
+}
+
+/// Page-local footer action gap: the kit's capsule button is intentionally
+/// neutral, whereas this sheet needs exactly one primary Save & Apply action.
+fn sheet_button(
+    id: &'static str,
+    label: &'static str,
+    primary: bool,
+    forced: Forced,
+) -> AnyElement {
+    let fill = if primary {
+        theme().ui_accent()
+    } else {
+        ink::control()
+    };
+    let text = if primary {
+        rgb(theme().on_accent()).into()
+    } else {
+        ink::text()
+    };
+    ring(
+        div()
+            .id(id)
+            .h(pt(30.))
+            .px(pt(13.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(pt(8.))
+            .bg(rgb(fill))
+            .text_color(text)
+            .role(Role::Button)
+            .aria_label(label)
+            .child(label),
+        forced == Forced::Focus,
+        8.,
+    )
+    .into_any_element()
+}
+
+fn themes_sidebar() -> AnyElement {
+    let item = |id: &'static str, icon, hue, label: &'static str, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        item("general", IconName::Settings2, Hue::Gray, "General", false),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes", true),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Terminal",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "network",
+            IconName::Globe,
+            Hue::Blue,
+            "Network & Sync",
+            false,
+        ),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+            false,
+        ),
+        item(
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+fn themes_page() -> AnyElement {
+    settings_window(
+        themes_sidebar(),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [
+                section(
+                    "Theme Library",
+                    Some("Choose the colours Kagi uses across its interface.".into()),
+                    Some(
+                        section_action("new-theme", IconName::Plus, "New", Forced::Rest)
+                            .into_any_element(),
+                    ),
+                    group([
+                        Row::new("Apple Dark")
+                            .subtitle("Dark theme")
+                            .leading(icon_tile(IconName::Moon, Tint::Hue(Hue::Indigo), 26.))
+                            .trailing(capsule_button("current-theme", "Current", Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Apple Light")
+                            .subtitle("Light theme")
+                            .leading(icon_tile(IconName::Sun, Tint::Hue(Hue::Blue), 26.))
+                            .trailing(capsule_button("select-light", "Select", Forced::Rest))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Terminal",
+                    None,
+                    None,
+                    group([Row::new("Use theme colours")
+                        .subtitle("Apply terminal palette changes immediately.")
+                        .trailing(switch(
+                            "use-theme-colours",
+                            "Use theme colours",
+                            true,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}
+
+fn swatch_row(colors: &[((u8, u8, u8), &'static str)], forced: Forced) -> AnyElement {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .gap(pt(8.))
+        .children(colors.iter().map(|(color, label)| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(swatch(*color, label, forced))
+        }))
+        .into_any_element()
+}
+
+fn palette_group(
+    title: &'static str,
+    colors: &[((u8, u8, u8), &'static str)],
+    forced: Forced,
+) -> AnyElement {
+    group([div()
+        .py(pt(10.))
+        .flex()
+        .flex_col()
+        .gap(pt(9.))
+        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
+        .child(swatch_row(colors, forced))
+        .into_any_element()])
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let apple_dark = theme_by_slug("apple-dark").expect("Apple Dark is a built-in theme");
+    let terminal = [
+        (apple_dark.term_bg, "Background"),
+        (apple_dark.term_fg, "Text"),
+        (apple_dark.term_cursor, "Cursor"),
+        (apple_dark.term_fg, "Cursor Text"),
+        (
+            (
+                apple_dark.term_selection.0,
+                apple_dark.term_selection.1,
+                apple_dark.term_selection.2,
+            ),
+            "Selection",
+        ),
+        (apple_dark.term_fg, "Selected Text"),
+    ];
+    let ansi_standard = [
+        (apple_dark.term_black, "Black"),
+        (apple_dark.term_red, "Red"),
+        (apple_dark.term_green, "Green"),
+        (apple_dark.term_yellow, "Yellow"),
+        (apple_dark.term_blue, "Blue"),
+        (apple_dark.term_magenta, "Magenta"),
+        (apple_dark.term_cyan, "Cyan"),
+        (apple_dark.term_white, "White"),
+    ];
+    let ansi_bright = [
+        (apple_dark.term_bright_black, "Black"),
+        (apple_dark.term_bright_red, "Red"),
+        (apple_dark.term_bright_green, "Green"),
+        (apple_dark.term_bright_yellow, "Yellow"),
+        (apple_dark.term_bright_blue, "Blue"),
+        (apple_dark.term_bright_magenta, "Magenta"),
+        (apple_dark.term_bright_cyan, "Cyan"),
+        (apple_dark.term_bright_white, "White"),
+    ];
+    let name_state = if cx.state == "focus-name" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let sheet = div()
+        .w(pt(900.))
+        .max_h_full()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .rounded(pt(18.))
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .bg(rgb(theme().elevated_surface(ink::card())))
+        .shadow_lg()
+        .child(
+            div()
+                .px(pt(24.))
+                .py(pt(18.))
+                .flex()
+                .items_center()
+                .gap(pt(14.))
+                .border_b_1()
+                .border_color(rgb(ink::hairline()))
+                .child(icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 32.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(pt(5.))
+                        .child(
+                            div()
+                                .text_size(pt(11.5))
+                                .text_color(ink::secondary())
+                                .child("New Theme Name"),
+                        )
+                        .child(theme_name_field("Apple Dark Copy", name_state)),
+                )
+                .child(capsule_button("dark-theme", "Dark Theme", Forced::Rest)),
+        )
+        .child(
+            div()
+                .px(pt(24.))
+                .py(pt(16.))
+                .flex()
+                .flex_col()
+                .gap(pt(14.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().font_weight(gpui::FontWeight::BOLD).child("Colors"))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(pt(8.))
+                                .child("Preview")
+                                .child(switch(
+                                    "preview",
+                                    "Preview",
+                                    true,
+                                    Forced::Rest,
+                                    |_, _, _| {},
+                                )),
+                        ),
+                )
+                .child(palette_group("Terminal", &terminal, Forced::Rest))
+                .child(palette_group("ANSI Standard", &ansi_standard, Forced::Rest))
+                .child(palette_group("ANSI Bright", &ansi_bright, Forced::Rest))
+                .child(
+                    div()
+                        .id("show-extended-palette")
+                        .h(pt(32.))
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(pt(8.))
+                        .bg(rgb(ink::control()))
+                        .role(Role::Button)
+                        .aria_label("Show extended palette")
+                        .child("Show extended palette"),
+                ),
+        )
+        .child(
+            div()
+                .px(pt(24.))
+                .py(pt(16.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .border_t_1()
+                .border_color(rgb(ink::hairline()))
+                .child(capsule_button("revert", "Revert…", Forced::Rest))
+                .child(
+                    div()
+                        .flex()
+                        .gap(pt(8.))
+                        .child(sheet_button("cancel", "Cancel", false, Forced::Rest))
+                        .child(sheet_button(
+                            "save-apply",
+                            "Save & Apply",
+                            true,
+                            Forced::Rest,
+                        )),
+                ),
+        );
+    div()
+        .size_full()
+        .relative()
+        .child(div().size_full().opacity(0.48).child(themes_page()))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .left_0()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.52),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .left_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p(pt(22.))
+                .child(sheet),
+        )
+        .into_any_element()
+}

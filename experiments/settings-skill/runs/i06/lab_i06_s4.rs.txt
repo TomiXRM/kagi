@@ -1,0 +1,521 @@
+//! Apple Sound, composed from the settings kit. Page-local gaps: device table
+//! and speaker symbols. The kit's segmented cells have intrinsic widths.
+use gpui::{canvas, div, point, prelude::*, rgb, AnyElement, App, Div, PathBuilder, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Lang;
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i06-s4",
+    states: &[
+        "default",
+        "focus-slider",
+        "hover-play",
+        "slider-min",
+        "slider-max",
+    ],
+    size: (900., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn text(lang: Lang, en: &'static str, ja: &'static str) -> &'static str {
+    if lang == Lang::Ja {
+        ja
+    } else {
+        en
+    }
+}
+
+fn apple_sidebar(lang: Lang) -> AnyElement {
+    let mut items =
+        vec![search_field("search", text(lang, "Search Settings", "検索")).into_any_element()];
+    for (id, icon, hue, en, ja) in [
+        (
+            "spotlight",
+            IconName::Search,
+            Hue::Blue,
+            "Spotlight",
+            "Spotlight",
+        ),
+        (
+            "accessibility",
+            IconName::User,
+            Hue::Blue,
+            "Accessibility",
+            "アクセシビリティ",
+        ),
+        (
+            "displays",
+            IconName::Sun,
+            Hue::Blue,
+            "Displays",
+            "ディスプレイ",
+        ),
+        (
+            "desktop",
+            IconName::PanelBottom,
+            Hue::Gray,
+            "Desktop & Dock",
+            "デスクトップとDock",
+        ),
+        (
+            "menu",
+            IconName::Menu,
+            Hue::Gray,
+            "Menu Bar",
+            "メニューバー",
+        ),
+        (
+            "appearance",
+            IconName::Palette,
+            Hue::Indigo,
+            "Appearance",
+            "外観",
+        ),
+        ("wallpaper", IconName::Frame, Hue::Teal, "Wallpaper", "壁紙"),
+        (
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            "通知",
+        ),
+        ("sound", IconName::Play, Hue::Pink, "Sound", "サウンド"),
+        ("focus", IconName::Moon, Hue::Indigo, "Focus", "集中モード"),
+        (
+            "screen-time",
+            IconName::ChartPie,
+            Hue::Purple,
+            "Screen Time",
+            "スクリーンタイム",
+        ),
+        (
+            "lock",
+            IconName::EyeOff,
+            Hue::Gray,
+            "Lock Screen",
+            "ロック画面",
+        ),
+        (
+            "privacy",
+            IconName::Heart,
+            Hue::Blue,
+            "Privacy & Security",
+            "プライバシーとセキュリティ",
+        ),
+        (
+            "passwords",
+            IconName::Asterisk,
+            Hue::Gray,
+            "Touch ID & Password",
+            "Touch IDとパスワード",
+        ),
+        (
+            "users",
+            IconName::CircleUser,
+            Hue::Blue,
+            "Users & Groups",
+            "ユーザとグループ",
+        ),
+        (
+            "accounts",
+            IconName::Globe,
+            Hue::Orange,
+            "Internet Accounts",
+            "インターネットアカウント",
+        ),
+        (
+            "games",
+            IconName::GalleryVerticalEnd,
+            Hue::Pink,
+            "Game Center",
+            "Game Center",
+        ),
+        ("cloud", IconName::Network, Hue::Blue, "iCloud", "iCloud"),
+        (
+            "wallet",
+            IconName::Inbox,
+            Hue::Orange,
+            "Wallet & Apple Pay",
+            "ウォレットとApple Pay",
+        ),
+        (
+            "keyboard",
+            IconName::CaseSensitive,
+            Hue::Gray,
+            "Keyboard",
+            "キーボード",
+        ),
+        (
+            "trackpad",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Trackpad",
+            "トラックパッド",
+        ),
+    ] {
+        if matches!(id, "notifications" | "lock" | "accounts" | "keyboard") {
+            items.push(sidebar_gap());
+        }
+        items.push(
+            sidebar_item(
+                id,
+                icon_tile(icon, Tint::Hue(hue), 20.),
+                text(lang, en, ja),
+                None,
+                id == "sound",
+                Forced::Rest,
+            )
+            .into_any_element(),
+        );
+    }
+    sidebar(items)
+        .min_h_0()
+        .overflow_y_scroll()
+        .into_any_element()
+}
+
+/// Kit gap: IconName has no speaker. Both endpoints share this symbol part.
+fn speaker(loud: bool) -> AnyElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| {
+            let p = |x, y| bounds.origin + point(pt(x), pt(y));
+            let mut cone = PathBuilder::fill();
+            cone.move_to(p(1., 6.));
+            for (x, y) in [(4., 6.), (8., 2.), (8., 16.), (4., 12.), (1., 12.)] {
+                cone.line_to(p(x, y));
+            }
+            cone.close();
+            if let Ok(path) = cone.build() {
+                window.paint_path(path, ink::secondary());
+            }
+            if loud {
+                let mut waves = PathBuilder::stroke(pt(1.2));
+                for (x, top, bottom, reach) in [(10., 5., 13., 13.), (13., 2., 16., 18.)] {
+                    waves.move_to(p(x, top));
+                    waves.curve_to(p(x, bottom), p(reach, 9.));
+                }
+                if let Ok(path) = waves.build() {
+                    window.paint_path(path, ink::secondary());
+                }
+            }
+        },
+    )
+    .w(pt(18.))
+    .h(pt(18.))
+    .into_any_element()
+}
+
+enum Ends {
+    Speakers,
+    Captions(&'static str, &'static str),
+}
+
+/// All three sliders use the kit's single mapping for fill, thumb and ticks.
+fn sound_slider(
+    id: &'static str,
+    value: f32,
+    ticks: Option<usize>,
+    ends: Ends,
+    width: f32,
+    forced: Forced,
+) -> AnyElement {
+    let slider = Slider::new(id, value)
+        .ticks(ticks.unwrap_or(0))
+        .width(width)
+        .forced(forced);
+    match ends {
+        Ends::Speakers => div()
+            .flex()
+            .items_start()
+            .gap(pt(8.))
+            .child(speaker(false))
+            .child(slider)
+            .child(speaker(true))
+            .into_any_element(),
+        Ends::Captions(left, right) => slider
+            .ends(SliderEnds::Captions(left.into(), right.into()))
+            .into_any_element(),
+    }
+}
+
+struct Device {
+    name: &'static str,
+    kind: &'static str,
+}
+
+/// Kit gap: a two-column device table. Selection is one row index and uses
+/// the same theme selection role as the kit's sidebar and segmented cells.
+fn device_table(devices: &[Device], selected: usize, lang: Lang, forced: Forced) -> Div {
+    let cells = |name: &'static str, kind: &'static str| {
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(pt(12.))
+            .child(div().flex_1().min_w_0().truncate().child(name))
+            .child(
+                div()
+                    .w(gpui::relative(0.34))
+                    .flex_shrink_0()
+                    .truncate()
+                    .child(kind),
+            )
+    };
+    let header = div()
+        .h(pt(metrics::ROW - 10.))
+        .flex()
+        .items_center()
+        .px(pt(8.))
+        .bg(rgb(ink::control()))
+        .text_color(ink::secondary())
+        .text_size(pt(metrics::SECONDARY))
+        .child(cells(
+            text(lang, "Name", "名前"),
+            text(lang, "Type", "種類"),
+        ));
+    let mut table = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .pb(pt(6.))
+        .child(header);
+    for (index, device) in devices.iter().enumerate() {
+        let row = div()
+            .id(format!("device-{index}"))
+            .w_full()
+            .min_w_0()
+            .h(pt(metrics::ROW - 10.))
+            .px(pt(8.))
+            .flex()
+            .items_center()
+            .rounded(pt(4.))
+            .when(index == selected, |el| el.bg(ink::selected()))
+            .when(index != selected && index % 2 == 1, |el| {
+                el.bg(rgb(ink::control()))
+            })
+            .child(cells(device.name, device.kind));
+        table = table.child(ring(row, index == selected && forced == Forced::Focus, 4.));
+    }
+    table
+}
+
+fn effects(cx: &GalleryContext, width: f32) -> AnyElement {
+    let lang = cx.lang;
+    let play = if cx.state == "hover-play" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+    let focus = if cx.state == "focus-slider" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let value = slider_value(cx, 0.94);
+    let mut rows = vec![
+        Row::new(text(lang, "Alert sound", "通知音"))
+            .trailing(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(pt(8.))
+                    .child(popup_value("alert-sound", "Boop", Forced::Rest))
+                    .child(capsule_button("play-alert", "▶", play)),
+            )
+            .into_any_element(),
+        Row::new(text(
+            lang,
+            "Play sound effects through",
+            "サウンドエフェクトの再生装置",
+        ))
+        .trailing(popup_value(
+            "effects-device",
+            text(lang, "MacBook Pro Speakers", "MacBook Proのスピーカー"),
+            Forced::Rest,
+        ))
+        .into_any_element(),
+        Row::new(text(lang, "Alert volume", "通知音の音量"))
+            .trailing(sound_slider(
+                "alert-volume",
+                value,
+                Some(7),
+                Ends::Speakers,
+                width,
+                focus,
+            ))
+            .into_any_element(),
+    ];
+    for (id, en, ja, checked) in [
+        (
+            "startup",
+            "Play sound on startup",
+            "起動時にサウンドを再生",
+            true,
+        ),
+        (
+            "interface",
+            "Play user interface sound effects",
+            "ユーザインターフェイスのサウンドエフェクトを再生",
+            true,
+        ),
+        (
+            "feedback",
+            "Play feedback when volume is changed",
+            "音量を変更するときにフィードバックを再生",
+            false,
+        ),
+    ] {
+        let label = text(lang, en, ja);
+        rows.push(
+            Row::new(label)
+                .trailing(switch(id, label, checked, Forced::Rest, |_, _, _| {}))
+                .into_any_element(),
+        );
+    }
+    section(
+        text(lang, "Sound Effects", "サウンドエフェクト"),
+        None,
+        None,
+        group(rows),
+    )
+}
+
+fn slider_value(cx: &GalleryContext, default: f32) -> f32 {
+    match cx.state {
+        "slider-min" => 0.,
+        "slider-max" => 1.,
+        _ => default,
+    }
+}
+
+fn output_input(cx: &GalleryContext) -> AnyElement {
+    let lang = cx.lang;
+    let devices = [
+        Device {
+            name: "DELL U2723QE",
+            kind: "DisplayPort",
+        },
+        Device {
+            name: "Shure MV7",
+            kind: "USB",
+        },
+        Device {
+            name: text(lang, "MacBook Pro Speakers", "MacBook Proのスピーカー"),
+            kind: text(lang, "Built-in", "内蔵"),
+        },
+        Device {
+            name: "AirPods Pro",
+            kind: "Bluetooth",
+        },
+        Device {
+            name: "AirMac Express",
+            kind: "AirPlay",
+        },
+        Device {
+            name: "tomixrm-m1",
+            kind: "AirPlay",
+        },
+    ];
+    section(
+        text(lang, "Output & Input", "出力と入力"),
+        None,
+        None,
+        group([
+            // The kit currently exposes no width/flex option for its cells.
+            // Retain the owner control rather than redraw a second segmented.
+            div()
+                .w_full()
+                .min_w_0()
+                .py(pt(10.))
+                .flex()
+                .justify_center()
+                .child(Segmented::new(
+                    "output-input",
+                    [text(lang, "Output", "出力"), text(lang, "Input", "入力")],
+                    0,
+                ))
+                .into_any_element(),
+            device_table(&devices, 2, lang, Forced::Rest).into_any_element(),
+        ]),
+    )
+}
+
+fn levels(cx: &GalleryContext, width: f32) -> AnyElement {
+    let lang = cx.lang;
+    group([
+        Row::new(text(lang, "Output volume", "出力音量"))
+            .trailing(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(pt(8.))
+                    .child(sound_slider(
+                        "output-volume",
+                        slider_value(cx, 0.04),
+                        None,
+                        Ends::Speakers,
+                        width,
+                        Forced::Rest,
+                    ))
+                    .child(checkbox(
+                        "mute",
+                        text(lang, "Mute", "消音"),
+                        true,
+                        Forced::Rest,
+                    )),
+            )
+            .into_any_element(),
+        Row::new(text(lang, "Balance", "バランス"))
+            .trailing(sound_slider(
+                "balance",
+                slider_value(cx, 0.5),
+                None,
+                Ends::Captions(text(lang, "Left", "左"), text(lang, "Right", "右")),
+                width + 52.,
+                Forced::Rest,
+            ))
+            .into_any_element(),
+    ])
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, window: &mut Window, _: &mut App) -> AnyElement {
+    let width = if window.viewport_size().width < pt(800.) {
+        150.
+    } else {
+        210.
+    };
+    settings_window(
+        apple_sidebar(cx.lang),
+        div()
+            .flex_1()
+            .min_w_0()
+            .relative()
+            .flex()
+            .flex_col()
+            .pb(pt(50.))
+            .child(detail_page(
+                "sound-scroll",
+                text(cx.lang, "Sound", "サウンド"),
+                [effects(cx, width), output_input(cx), levels(cx, width)],
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .right(pt(18.))
+                    .bottom(pt(20.))
+                    .child(capsule_button("help", "?", Forced::Rest)),
+            ),
+    )
+    .into_any_element()
+}

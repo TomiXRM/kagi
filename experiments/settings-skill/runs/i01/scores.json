@@ -1,0 +1,150 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    "both PNGs, exit 0"
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "only position_picker local; no hex/px"
+   ],
+   [
+    "3 structure",
+    1,
+    false,
+    "order, subtitle, last switch off match"
+   ],
+   [
+    "4 picker reusable",
+    1,
+    false,
+    "fn(selected, forced), theme tokens, rest/selected/focus states"
+   ],
+   [
+    "5 kit geometry",
+    1,
+    false,
+    "single trailing edge, kit row heights"
+   ],
+   [
+    "6 named states",
+    1,
+    false,
+    "4 states, distinct captures"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    "commands, PNGs, not observed"
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: state `position-rest` draws no selected cell although the page value is bottom-right (state semantics invented by implementer)."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "choice_tile, tick_slider local and reported"
+   ],
+   [
+    "3 choice tile",
+    1,
+    false,
+    "fn(preview,label,selected,forced); ring + bold label; divider"
+   ],
+   [
+    "4 segmented",
+    1,
+    false,
+    "kit, text-only, equal widths"
+   ],
+   [
+    "5 slider + pop-ups",
+    0.5,
+    false,
+    "slider thumb drawn after the track end, detached from the fill at value 3/5 (self-check said ○)"
+   ],
+   [
+    "6 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": [
+   "Evaluator: sidebar tiles use five fixed colours (Success/Tag/Danger/Remote) despite skill §3 \"Tint::Accent unless colour carries meaning\" — rule not applied (C2 sibling mismatch with S1/S3).",
+   "Evaluator: preview tiles are filled with the accent colour, so all five previews look alike; the selected ring is the only differentiator."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 render EN dark, JA light, JA 720",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "no local parts"
+   ],
+   [
+    "3 Msg strings",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 JA / 720 wrapping",
+    1,
+    false,
+    "no clipping; long descriptions wrap beside controls"
+   ],
+   [
+    "5 sidebar",
+    1,
+    false,
+    "accent tiles, one selected"
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: JA wrap puts \"。\" at a line start (GPUI line breaking, not the page) — recorded as a kit/engine observation, not scored."
+  ]
+ }
+}

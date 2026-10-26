@@ -1,0 +1,388 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    "value states named for their value"
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Category hues; picker readable in light."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    "kit Slider thumb visible on the light card after F3"
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S3": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Self-reported: v6 §3 asks for domain panes while S3 fixes a General pane with Graph/Network sections — the child kept S3 (L10)."
+  ]
+ },
+ "S4": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    "kit Slider; speaker symbols are −/+ (no speaker icon in the catalog)"
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    "Output/Input spans the group (`.full_width()`)"
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S5": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    "three C1/C2 findings self-reported and fixed"
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S6": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S7": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    "sheet fits the window, scrim behind"
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S8": {
+  "items": [
+   [
+    "1 render every pane",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 every setting once",
+    1,
+    true,
+    "all 19 settings incl. three theme actions and Reset… found in code and captures"
+   ],
+   [
+    "3 General / domains",
+    0.5,
+    false,
+    "Graph and Network moved out, but a \"Behaviour\" grab-bag pane remains (⌘C copies, Markdown mode, terminal lock, motion) and Language became a one-setting pane while General holds Appearance"
+   ],
+   [
+    "4 placement table",
+    1,
+    false,
+    "table with a reason per row"
+   ],
+   [
+    "5 order + two levels",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 kit + hues",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": [
+   "Evaluator: the Custom themes actions sit outside their group card (C2)."
+  ]
+ }
+}

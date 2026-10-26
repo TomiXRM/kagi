@@ -1,0 +1,249 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 structure",
+    1,
+    false,
+    "900×820: every group visible (L4 held)"
+   ],
+   [
+    "4 picker reusable",
+    1,
+    false,
+    "cells visible in both themes"
+   ],
+   [
+    "5 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 named states",
+    1,
+    false,
+    "7 states, value state `selected-top-left` separate"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "All sidebar tiles accent (L7 held)."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 choice tile",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 segmented",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 slider + pop-ups",
+    0.5,
+    false,
+    "tick dots unevenly spaced and clustered left of the thumb; the track is a filled box, not a track"
+   ],
+   [
+    "6 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    "self-critique reported no C1"
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": [
+   "All sidebar tiles accent (L7 held). Third different hand-made slider in five S2 runs."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 render EN dark, JA light, JA 720",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 Msg strings",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 JA / 720 wrapping",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 sidebar",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S4": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "slider, table, checkbox, full-width two-choice local and reported"
+   ],
+   [
+    "3 slider fn",
+    1,
+    false,
+    "one function, thumbs on values; speaker symbols replaced by tiny glyphs (no speaker icon exists)"
+   ],
+   [
+    "4 device table",
+    1,
+    false,
+    "header, aligned columns, one selected row"
+   ],
+   [
+    "5 two-choice + Mute",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 Alert sound row",
+    1,
+    false,
+    "pop-up + \"Play\" capsule share the trailing edge"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: sidebar lists invented categories rather than Apple's; not scored."
+  ]
+ },
+ "S5": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "progress bar, badge, status dot local"
+   ],
+   [
+    "3 card grid",
+    1,
+    false,
+    "3 equal columns, equal heights"
+   ],
+   [
+    "4 progress bar",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 value nav rows",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 section header",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: cards are loose on the page instead of inside a group card as in the reference; not a checklist item."
+  ]
+ }
+}

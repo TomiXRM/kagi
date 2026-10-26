@@ -1,0 +1,38 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i06/s7/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s7/focus-name-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s7/focus-swatch-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s7/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "focus-name",
+  "focus-swatch"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 33,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 5,
+  ".rounded(": 5,
+  "Switch::new": 0,
+  "fn ": 10
+ },
+ "loc": 483
+}

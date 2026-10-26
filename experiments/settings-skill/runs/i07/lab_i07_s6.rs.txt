@@ -1,0 +1,245 @@
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    caption, detail_page, group, icon_tile, ink, pt, ring, search_field, section, section_action,
+    settings_window, sidebar, sidebar_gap, sidebar_item, switch, Forced, Hue, Row, Tint,
+};
+use kagi::ui::theme::{self, Theme};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i07-s6",
+    states: &["default", "hover-apple-light", "hover-apple-dark"],
+    size: (1060., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn kagi_sidebar() -> AnyElement {
+    let item = |id, icon, tint, label, selected| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(tint), 20.),
+            label,
+            None,
+            selected,
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        item("general", IconName::Settings2, Hue::Gray, "General", false),
+        item(
+            "appearance",
+            IconName::LayoutDashboard,
+            Hue::Indigo,
+            "Appearance",
+            false,
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes", true),
+        sidebar_gap(),
+        item("graph", IconName::ChartPie, Hue::Orange, "Graph", false),
+        item(
+            "network-sync",
+            IconName::Network,
+            Hue::Blue,
+            "Network & Sync",
+            false,
+        ),
+        item(
+            "editor-terminal",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Editor & Terminal",
+            false,
+        ),
+        sidebar_gap(),
+        item(
+            "smart-commit",
+            IconName::Bot,
+            Hue::Purple,
+            "Smart Commit",
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+fn terminal_rgb((red, green, blue): (u8, u8, u8)) -> u32 {
+    (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue)
+}
+
+fn ansi_dots(theme: &Theme) -> Vec<gpui::Div> {
+    [
+        theme.term_black,
+        theme.term_red,
+        theme.term_green,
+        theme.term_yellow,
+        theme.term_blue,
+        theme.term_magenta,
+        theme.term_cyan,
+        theme.term_white,
+    ]
+    .into_iter()
+    .map(|color| {
+        div()
+            .size(pt(13.))
+            .rounded_full()
+            .bg(rgb(terminal_rgb(color)))
+    })
+    .collect::<Vec<_>>()
+}
+
+/// Page-local card preview: `settings_kit` has no theme-preview card component.
+fn theme_card(theme: &Theme, selected: bool, forced: Forced) -> AnyElement {
+    let preview = div()
+        .h(pt(122.))
+        .p(pt(18.))
+        .flex()
+        .flex_col()
+        .justify_between()
+        .rounded(pt(10.))
+        .bg(rgb(theme.bg_base))
+        .border_1()
+        .border_color(rgb(theme.surface))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(pt(38.))
+                        .text_color(rgb(theme.text_main))
+                        .child("Aa"),
+                )
+                .child(
+                    div()
+                        .px(pt(10.))
+                        .py(pt(5.))
+                        .rounded(pt(6.))
+                        .bg(rgb(terminal_rgb(theme.term_bg)))
+                        .text_color(rgb(terminal_rgb(theme.term_fg)))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("~/"),
+                )
+                .child(div().size(pt(24.)).rounded(pt(5.)).bg(rgb(theme.accent))),
+        )
+        .child(div().flex().gap(pt(4.)).children(ansi_dots(theme)));
+    let card = div()
+        .id(format!("theme-card-{}", theme.slug))
+        .w(pt(194.))
+        .flex_shrink_0()
+        .p(pt(4.))
+        .rounded(pt(12.))
+        .when(forced == Forced::Hover, |element| {
+            element.bg(rgb(ink::control_hover()))
+        })
+        .when(forced == Forced::Pressed, |element| {
+            element.bg(rgb(ink::control_pressed()))
+        })
+        .when(forced == Forced::Disabled, |element| {
+            element.opacity(ink::disabled_opacity())
+        })
+        .child(preview)
+        .child(
+            div()
+                .h(pt(32.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(pt(12.))
+                .when(selected, |element| {
+                    element.font_weight(FontWeight::SEMIBOLD)
+                })
+                .when(!selected, |element| element.text_color(ink::secondary()))
+                .child(theme.display_name().to_owned()),
+        );
+    ring(card, selected || forced == Forced::Focus, 12.).into_any_element()
+}
+
+fn theme_strip(dark: bool, selected_slug: &str, forced_slug: Option<&str>) -> AnyElement {
+    let cards = theme::themes_by_name()
+        .into_iter()
+        .filter(|theme| theme.dark == dark)
+        .map(|theme| {
+            let forced = if forced_slug == Some(theme.slug.as_ref()) {
+                Forced::Hover
+            } else {
+                Forced::Rest
+            };
+            theme_card(&theme, theme.slug == selected_slug, forced)
+        })
+        .collect::<Vec<_>>();
+    div()
+        .id(if dark {
+            "dark-theme-strip"
+        } else {
+            "light-theme-strip"
+        })
+        .w_full()
+        .min_w_0()
+        .overflow_x_scroll()
+        .child(div().flex().gap(pt(12.)).children(cards))
+        .into_any_element()
+}
+
+fn theme_section(
+    title: &str,
+    dark: bool,
+    selected_slug: &str,
+    forced_slug: Option<&str>,
+) -> AnyElement {
+    section(
+        title,
+        None,
+        Some(
+            section_action(
+                if dark { "new-dark" } else { "new-light" },
+                IconName::Plus,
+                "New",
+                Forced::Rest,
+            )
+            .into_any_element(),
+        ),
+        group([
+            caption("Built-in").into_any_element(),
+            theme_strip(dark, selected_slug, forced_slug),
+            Row::new("Use extended theme palette")
+                .trailing(switch(
+                    if dark {
+                        "extended-palette-dark"
+                    } else {
+                        "extended-palette-light"
+                    },
+                    "Use extended theme palette",
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ]),
+    )
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let light_forced = (cx.state == "hover-apple-light").then_some("apple-light");
+    let dark_forced = (cx.state == "hover-apple-dark").then_some("apple-dark");
+    settings_window(
+        kagi_sidebar(),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [
+                theme_section("Light Mode", false, "apple-light", light_forced),
+                theme_section("Dark Mode — Active", true, "apple-dark", dark_forced),
+            ],
+        ),
+    )
+    .into_any_element()
+}

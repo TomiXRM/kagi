@@ -1,0 +1,406 @@
+//! S8: settings grouped by the object they affect. Capture-only fixture values.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Role, SharedString, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::{Lang, Msg};
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i08-s8",
+    states: &[
+        "default",
+        "pane-appearance",
+        "pane-graph",
+        "pane-smart-commit",
+        "pane-editor",
+        "pane-terminal",
+        "pane-network",
+        "pane-general",
+        "pane-analyze",
+    ],
+    size: (980., 900.),
+    render,
+}];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Appearance,
+    Graph,
+    SmartCommit,
+    Editor,
+    Terminal,
+    Network,
+    General,
+    Analyze,
+}
+
+impl Pane {
+    // Frequent visual/workflow preferences precede infrastructure and analysis.
+    const ALL: [Self; 8] = [
+        Self::Appearance,
+        Self::Graph,
+        Self::SmartCommit,
+        Self::Editor,
+        Self::Terminal,
+        Self::Network,
+        Self::General,
+        Self::Analyze,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Appearance => "appearance",
+            Self::Graph => "graph",
+            Self::SmartCommit => "smart-commit",
+            Self::Editor => "editor",
+            Self::Terminal => "terminal",
+            Self::Network => "network",
+            Self::General => "general",
+            Self::Analyze => "analyze",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Appearance => Msg::SettingsAppearance.t(),
+            Self::Graph => Msg::SettingsGraph.t(),
+            Self::SmartCommit => Msg::SettingsSmartCommit.t(),
+            Self::Editor => Msg::ToolbarEditor.t(),
+            Self::Terminal => Msg::ToolbarTerminal.t(),
+            Self::Network => Msg::SettingsNetwork.t(),
+            Self::General => Msg::SettingsGeneral.t(),
+            Self::Analyze => Msg::SettingsAnalyze.t(),
+        }
+    }
+
+    fn tile(self) -> (IconName, Hue) {
+        match self {
+            Self::Appearance => (IconName::Palette, Hue::Indigo),
+            Self::Graph => (IconName::GalleryVerticalEnd, Hue::Orange),
+            Self::SmartCommit => (IconName::Bot, Hue::Purple),
+            Self::Editor => (IconName::File, Hue::Teal),
+            Self::Terminal => (IconName::SquareTerminal, Hue::Gray),
+            Self::Network => (IconName::Network, Hue::Blue),
+            Self::General => (IconName::Settings2, Hue::Gray),
+            Self::Analyze => (IconName::ChartPie, Hue::Teal),
+        }
+    }
+}
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let pane = cx
+        .state
+        .strip_prefix("pane-")
+        .and_then(|id| Pane::ALL.into_iter().find(|pane| pane.id() == id))
+        .unwrap_or(Pane::Appearance);
+    let mut items = vec![search_field(
+        "settings-search",
+        if cx.lang == Lang::Ja {
+            "設定を検索"
+        } else {
+            "Search Settings"
+        },
+    )
+    .into_any_element()];
+    for destination in Pane::ALL {
+        let (icon, hue) = destination.tile();
+        items.push(
+            sidebar_item(
+                destination.id(),
+                icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+                destination.title(),
+                None,
+                pane == destination,
+                Forced::Rest,
+            )
+            .into_any_element(),
+        );
+    }
+    let sections = match pane {
+        Pane::Appearance => appearance(),
+        Pane::Graph => graph(),
+        Pane::SmartCommit => smart_commit(),
+        Pane::Editor => vec![section(
+            "Markdown",
+            None,
+            None,
+            group([Row::new(Msg::SettingsMarkdownDefaultView.t())
+                .subtitle(Msg::SettingsMarkdownDefaultViewDesc.t())
+                .trailing(Segmented::new(
+                    "markdown-mode",
+                    [
+                        Msg::MarkdownDefaultPreview.t(),
+                        Msg::MarkdownDefaultSource.t(),
+                    ],
+                    0,
+                ))
+                .into_any_element()]),
+        )],
+        Pane::Terminal => vec![section(
+            "Worktrees",
+            None,
+            None,
+            group([toggle_row(
+                "terminal-lock",
+                Msg::SettingsTerminalAutoLock,
+                Msg::SettingsTerminalAutoLockSummary,
+                false,
+            )]),
+        )],
+        Pane::Network => vec![section(
+            "Remote history",
+            None,
+            None,
+            group([toggle_row(
+                "auto-fetch",
+                Msg::SettingsAutoFetch,
+                Msg::SettingsAutoFetchSummary,
+                true,
+            )]),
+        )],
+        Pane::General => vec![section(
+            Msg::SettingsLanguage.t(),
+            None,
+            None,
+            group([Row::new(Msg::SettingsInterfaceLang.t())
+                .subtitle(Msg::SettingsInterfaceLangDesc.t())
+                .trailing(Segmented::new("language", ["English", "日本語"], 0))
+                .into_any_element()]),
+        )],
+        Pane::Analyze => analyze(),
+    };
+    settings_window(
+        sidebar(items),
+        detail_page("pane-scroll", pane.title(), sections),
+    )
+    .into_any_element()
+}
+
+fn toggle_row(id: &'static str, title: Msg, subtitle: Msg, checked: bool) -> AnyElement {
+    Row::new(title.t())
+        .subtitle(subtitle.t())
+        .trailing(switch(id, title.t(), checked, Forced::Rest, |_, _, _| {}))
+        .into_any_element()
+}
+
+fn appearance() -> Vec<AnyElement> {
+    vec![
+        section(
+            "Colours",
+            None,
+            None,
+            group([
+                Row::new(Msg::SettingsTheme.t())
+                    .subtitle(Msg::SettingsThemeDesc.t())
+                    .trailing(popup_value("theme", "Apple Dark", Forced::Rest))
+                    .into_any_element(),
+                Row::new(Msg::SettingsAccent.t())
+                    .trailing(Segmented::new(
+                        "accent",
+                        [Msg::SettingsAccentSystem.t(), Msg::SettingsAccentTheme.t()],
+                        1,
+                    ))
+                    .into_any_element(),
+            ]),
+        ),
+        section(
+            "Interface",
+            None,
+            None,
+            group([
+                Row::new(Msg::SettingsToolbarDisplay.t())
+                    .subtitle(Msg::SettingsToolbarDisplayDesc.t())
+                    .trailing(Segmented::new(
+                        "toolbar",
+                        [Msg::ToolbarIconAndText.t(), Msg::ToolbarIconOnly.t()],
+                        1,
+                    ))
+                    .into_any_element(),
+                Row::new(Msg::SettingsZoom.t())
+                    .subtitle(Msg::SettingsZoomDesc.t())
+                    .trailing(stepper("zoom", "100%", true, true, None))
+                    .into_any_element(),
+                Row::new(Msg::SettingsCompactThreshold.t())
+                    .subtitle(Msg::SettingsCompactThresholdDesc.t())
+                    .trailing(stepper("compact-threshold", "70rem", true, true, None))
+                    .into_any_element(),
+                toggle_row(
+                    "reduce-motion",
+                    Msg::SettingsReduceMotion,
+                    Msg::SettingsReduceMotionSummary,
+                    false,
+                ),
+            ]),
+        ),
+        section(
+            Msg::SettingsCustomThemes.t(),
+            Some(Msg::SettingsCustomThemesDesc.t().into()),
+            None,
+            group([
+                Row::new("~/.kagi/themes")
+                    .subtitle(Msg::SettingsCustomThemesSummary.t())
+                    .leading(icon_tile(IconName::Folder, Tint::Hue(Hue::Teal), 26.))
+                    .into_any_element(),
+                Row::new(Msg::SettingsCustomThemesOpen.t())
+                    .trailing(capsule_button(
+                        "open-theme-folder",
+                        format!("{}…", Msg::SettingsCustomThemesOpen.t()),
+                        Forced::Rest,
+                    ))
+                    .into_any_element(),
+                Row::new(Msg::SettingsCustomThemesReload.t())
+                    .trailing(capsule_button(
+                        "reload-themes",
+                        Msg::SettingsCustomThemesReload.t(),
+                        Forced::Rest,
+                    ))
+                    .into_any_element(),
+                Row::new(Msg::SettingsCustomThemesGuide.t())
+                    .trailing(capsule_button(
+                        "theme-guide",
+                        format!("{}…", Msg::SettingsCustomThemesGuide.t()),
+                        Forced::Rest,
+                    ))
+                    .into_any_element(),
+            ]),
+        ),
+    ]
+}
+
+fn graph() -> Vec<AnyElement> {
+    vec![
+        section(
+            "Commit display",
+            None,
+            None,
+            group([
+                toggle_row(
+                    "compact-graph",
+                    Msg::SettingsCompact,
+                    Msg::SettingsCompactDesc,
+                    false,
+                ),
+                toggle_row(
+                    "avatar-nodes",
+                    Msg::SettingsLaneCompact,
+                    Msg::SettingsLaneCompactSummary,
+                    true,
+                ),
+            ]),
+        ),
+        section(
+            "Clipboard",
+            None,
+            None,
+            group([Row::new(Msg::SettingsGraphCopy.t())
+                .subtitle(Msg::SettingsGraphCopySummary.t())
+                .trailing(Segmented::new("graph-copy", ["Hash", "Branch"], 0))
+                .into_any_element()]),
+        ),
+    ]
+}
+
+fn smart_commit() -> Vec<AnyElement> {
+    vec![section(
+        "Message drafting",
+        None,
+        None,
+        group([
+            toggle_row(
+                "smart-enable",
+                Msg::SettingsSmartEnable,
+                Msg::SettingsSmartEnableSummary,
+                true,
+            ),
+            Row::new(Msg::SettingsSmartProvider.t())
+                .subtitle(Msg::SettingsSmartProviderSummary.t())
+                .trailing(popup_value("smart-provider", "Ollama", Forced::Rest))
+                .into_any_element(),
+            Row::new(Msg::SettingsSmartModel.t())
+                .subtitle(Msg::SettingsSmartModelDesc.t())
+                .trailing(popup_value("smart-model", "qwen2.5-coder:7b", Forced::Rest))
+                .into_any_element(),
+        ]),
+    )]
+}
+
+fn analyze() -> Vec<AnyElement> {
+    vec![section(
+        Msg::SettingsAnalyzeIgnore.t(),
+        Some(Msg::SettingsAnalyzeIgnoreSummary.t().into()),
+        None,
+        group([
+            Row::new(Msg::SettingsAnalyzeIgnore.t())
+                .subtitle(Msg::SettingsAnalyzeIgnoreDesc.t())
+                .into_any_element(),
+            multiline_patterns(
+                "analyze-patterns",
+                "target/\nnode_modules/\nvendor/\n*.lock\n**/generated/**",
+                false,
+                Forced::Rest,
+            ),
+            Row::new(Msg::SettingsAnalyzeIgnoreSave.t())
+                .trailing(capsule_button(
+                    "save-ignore",
+                    Msg::SettingsAnalyzeIgnoreSave.t(),
+                    Forced::Rest,
+                ))
+                .into_any_element(),
+            Row::new(Msg::SettingsAnalyzeIgnoreReset.t())
+                .trailing(capsule_button(
+                    "reset-ignore",
+                    format!("{}…", Msg::SettingsAnalyzeIgnoreReset.t()),
+                    Forced::Rest,
+                ))
+                .into_any_element(),
+        ]),
+    )]
+}
+
+/// Kit gap: multiline text-field appearance. Fixture text, no edit/persist path.
+/// No positional indicator: selection/focus is a ring around the entire field.
+fn multiline_patterns(
+    id: &'static str,
+    value: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::control(),
+    };
+    div()
+        .w_full()
+        .min_w_0()
+        .py(pt(metrics::GROUP_PADDING_X))
+        .child(
+            ring(
+                div()
+                    .id(id)
+                    .w_full()
+                    .min_w_0()
+                    .p(pt(metrics::GROUP_PADDING_X))
+                    .bg(rgb(fill))
+                    .text_size(pt(metrics::BODY))
+                    .text_color(ink::text())
+                    .role(Role::TextInput)
+                    .aria_label(Msg::SettingsAnalyzeIgnore.t())
+                    .aria_value(SharedString::from(value))
+                    .flex()
+                    .flex_col()
+                    .gap(pt(6.))
+                    .children(value.lines().map(|line| div().child(line))),
+                selected || forced == Forced::Focus,
+                metrics::CONTROL_RADIUS,
+            )
+            .when(forced == Forced::Disabled, |el| {
+                el.opacity(ink::disabled_opacity())
+            }),
+        )
+        .into_any_element()
+}

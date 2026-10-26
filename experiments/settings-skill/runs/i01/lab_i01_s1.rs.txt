@@ -1,0 +1,321 @@
+//! Rex Notifications, composed from the Kagi settings kit.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Div, Role, SharedString, Stateful, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Lang;
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i01-s1",
+    states: &[
+        "default",
+        "position-rest",
+        "position-selected",
+        "position-focus",
+    ],
+    size: (900., 744.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn text(cx: &GalleryContext, en: &'static str, ja: &'static str) -> &'static str {
+    if cx.lang == Lang::Ja {
+        ja
+    } else {
+        en
+    }
+}
+
+fn rex_sidebar(cx: &GalleryContext) -> AnyElement {
+    let item = |id: &'static str, icon, en, ja| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Accent, metrics::TILE),
+            text(cx, en, ja),
+            None,
+            id == "notifications",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("search", text(cx, "Search Settings", "設定を検索")).into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Accent, metrics::TILE_LARGE),
+            text(cx, "Server", "サーバー"),
+            Some(text(cx, "Running", "実行中").into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            "Interface",
+            "操作画面",
+        ),
+        item("themes", IconName::Palette, "Themes", "テーマ"),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            "Terminal",
+            "ターミナル",
+        ),
+        item(
+            "shortcuts",
+            IconName::Asterisk,
+            "Shortcuts",
+            "ショートカット",
+        ),
+        item("integrations", IconName::Github, "Integrations", "連携"),
+        item("notifications", IconName::Bell, "Notifications", "通知"),
+        item("remote", IconName::Globe, "Remote Hosts", "リモートホスト"),
+        sidebar_gap(),
+        item("developer", IconName::Settings2, "Developer", "開発者"),
+    ])
+    .into_any_element()
+}
+
+/// Kit gap: spatial notification-position picker. Cells run left to right,
+/// top row then bottom row; `None` previews its unselected rest appearance.
+/// Fixed dimensions fit inside the kit's standard two-line row.
+fn position_picker(
+    id: &'static str,
+    selected_cell: Option<usize>,
+    forced: Forced,
+    labels: [&'static str; 6],
+) -> Stateful<Div> {
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::control(),
+    };
+    let mut picker = div()
+        .id(id)
+        .w(pt(110.))
+        .h(pt(metrics::ROW_WITH_SUBTITLE - 14.))
+        .p(pt(3.))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .justify_between()
+        .bg(rgb(fill))
+        .role(Role::RadioGroup)
+        .aria_label(labels.join(", "));
+    for row in 0..2 {
+        let mut cells = div().flex().justify_between();
+        for column in 0..3 {
+            let index = row * 3 + column;
+            let selected = selected_cell == Some(index);
+            let cell = div()
+                .id(SharedString::from(format!("{id}-{index}")))
+                .w(pt(28.))
+                .h(pt(11.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(metrics::CONTROL_RADIUS))
+                .bg(if selected {
+                    ink::accent()
+                } else {
+                    rgb(ink::card()).into()
+                })
+                .text_color(ink::text())
+                .role(Role::RadioButton)
+                .aria_label(labels[index])
+                .aria_selected(selected)
+                .when(selected, |cell| {
+                    cell.child(icon_tile(IconName::Check, Tint::Accent, 11.))
+                });
+            cells = cells.child(cell);
+        }
+        picker = picker.child(cells);
+    }
+    ring(picker, forced == Forced::Focus, metrics::CONTROL_RADIUS)
+        .when(forced == Forced::Disabled, |picker| {
+            picker.opacity(ink::disabled_opacity())
+        })
+}
+
+fn notification_position(cx: &GalleryContext) -> AnyElement {
+    let (selected, forced, description) = match cx.state {
+        "position-rest" => (
+            None,
+            Forced::Rest,
+            text(cx, "Choose a position", "表示位置を選択"),
+        ),
+        "position-selected" => (
+            Some(2),
+            Forced::Pressed,
+            text(cx, "Displayed top right", "右上に表示"),
+        ),
+        "position-focus" => (
+            Some(5),
+            Forced::Focus,
+            text(cx, "Displayed bottom right", "右下に表示"),
+        ),
+        _ => (
+            Some(5),
+            Forced::Rest,
+            text(cx, "Displayed bottom right", "右下に表示"),
+        ),
+    };
+    let labels = if cx.lang == Lang::Ja {
+        ["左上", "上中央", "右上", "左下", "下中央", "右下"]
+    } else {
+        [
+            "Top left",
+            "Top center",
+            "Top right",
+            "Bottom left",
+            "Bottom center",
+            "Bottom right",
+        ]
+    };
+    section(
+        text(cx, "In-App Notifications", "アプリ内通知"),
+        None,
+        None,
+        group([
+            Row::new(text(cx, "Notification position", "通知の表示位置"))
+                .subtitle(description)
+                .trailing(position_picker("position", selected, forced, labels))
+                .into_any_element(),
+        ]),
+    )
+}
+
+fn activity_switches(cx: &GalleryContext) -> AnyElement {
+    let rows = [
+        (
+            "activity-tabs",
+            "Show activity in tabs",
+            "タブにアクティビティを表示",
+        ),
+        (
+            "system-notifications",
+            "Show system notifications",
+            "システム通知を表示",
+        ),
+        (
+            "dock-badge",
+            "Badge Dock icon",
+            "Dockアイコンにバッジを表示",
+        ),
+        ("sounds", "Play sounds", "サウンドを再生"),
+    ];
+    group(rows.map(|(id, en, ja)| {
+        let label = text(cx, en, ja);
+        Row::new(label)
+            .trailing(switch(id, label, true, Forced::Rest, |_, _, _| {}))
+            .into_any_element()
+    }))
+    .into_any_element()
+}
+
+fn activity_statuses(cx: &GalleryContext) -> AnyElement {
+    let rows = [
+        (
+            "working",
+            "Working",
+            "実行中",
+            IconName::Ellipsis,
+            Tint::Accent,
+        ),
+        (
+            "blocked",
+            "Blocked",
+            "ブロック中",
+            IconName::CircleX,
+            Tint::Warning,
+        ),
+        (
+            "error",
+            "Error",
+            "エラー",
+            IconName::TriangleAlert,
+            Tint::Danger,
+        ),
+        ("done", "Done", "完了", IconName::CircleCheck, Tint::Success),
+    ];
+    group(rows.map(|(id, en, ja, icon, tint)| {
+        let subtitle = if id == "working" {
+            text(cx, "Tabs", "タブ")
+        } else {
+            text(
+                cx,
+                "Tabs, Notifications, Dock Badge, Sound",
+                "タブ、通知、Dockバッジ、サウンド",
+            )
+        };
+        Row::new(text(cx, en, ja))
+            .subtitle(subtitle)
+            .leading(icon_tile(icon, tint, 26.))
+            .navigation(id, Forced::Rest)
+            .into_any_element()
+    }))
+    .into_any_element()
+}
+
+fn process_switches(cx: &GalleryContext) -> AnyElement {
+    group(
+        [
+            (
+                "idle-processes",
+                "Include idle processes in activity",
+                "待機中のプロセスをアクティビティに含める",
+                true,
+            ),
+            (
+                "each-process",
+                "Show each process in tabs",
+                "各プロセスをタブに表示",
+                false,
+            ),
+        ]
+        .map(|(id, en, ja, checked)| {
+            let label = text(cx, en, ja);
+            Row::new(label)
+                .trailing(switch(id, label, checked, Forced::Rest, |_, _, _| {}))
+                .into_any_element()
+        }),
+    )
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    settings_window(
+        rex_sidebar(cx),
+        detail_page(
+            "notifications-scroll",
+            text(cx, "Notifications", "通知"),
+            [
+                notification_position(cx),
+                section(
+                    text(cx, "Program Activity", "プログラムのアクティビティ"),
+                    Some(
+                        text(
+                            cx,
+                            "How status from processes and agents is handled",
+                            "プロセスとエージェントの状態の扱い方",
+                        )
+                        .into(),
+                    ),
+                    None,
+                    div().flex().flex_col().gap(pt(10.)).children([
+                        activity_switches(cx),
+                        activity_statuses(cx),
+                        process_switches(cx),
+                    ]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

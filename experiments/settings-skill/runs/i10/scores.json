@@ -1,0 +1,431 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S2": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Self-reported: S2 never states the slider range; the child declared 1–5 (scenario ambiguity, not a skill issue)."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S4": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S5": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S6": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S7": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S8": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Custom themes is one \"Theme folder\" row plus a capsule row (Open theme folder… / Reload Themes / Theme file guide…) — no title repeated (L11 held)."
+  ]
+ },
+ "H": {
+  "items": [
+   [
+    "1 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 item",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 item",
+    0.5,
+    false,
+    "swatch card is reusable with a selected ring, but \"Default\" and \"Built-in\" are separated by a dot, not the divider the reference uses"
+   ],
+   [
+    "5 item",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 item",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 92,
+  "success": true,
+  "notes": [
+   "Hold-out: the cards fill their previews with saturated invented colours instead of quiet theme-like previews — weaker than S6, but every checklist item but one holds."
+  ]
+ }
+}

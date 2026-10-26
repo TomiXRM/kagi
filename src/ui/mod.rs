@@ -67,6 +67,7 @@ pub mod file_history;
 pub mod file_menu;
 mod fonts;
 mod front_layer;
+pub mod gallery_host;
 mod github;
 mod github_issue_state;
 mod github_issues;
@@ -166,6 +167,7 @@ mod overlay_focus;
 mod picker_failure;
 mod settings_analyze;
 mod settings_controls;
+pub mod settings_kit;
 mod settings_theme_folder;
 pub mod settings_view;
 #[cfg(target_os = "macos")]

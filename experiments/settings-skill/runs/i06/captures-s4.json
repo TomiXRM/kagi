@@ -1,0 +1,48 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i06/s4/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s4/focus-slider-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s4/hover-play-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s4/slider-min-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s4/slider-max-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i06/s4/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "focus-slider",
+  "hover-play",
+  "slider-min",
+  "slider-max"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 12,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 2,
+  ".rounded(": 1,
+  "Switch::new": 0,
+  "fn ": 11
+ },
+ "loc": 521
+}

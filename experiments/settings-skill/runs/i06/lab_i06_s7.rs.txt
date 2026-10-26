@@ -1,0 +1,483 @@
+//! S7 — a theme-editor sheet over the Themes settings page.
+//!
+//! The gallery host captures deterministic, non-interactive states. Standard
+//! settings parts remain owned by `settings_kit`; the sheet, field, swatches,
+//! and footer actions are local gaps because the kit intentionally has no
+//! equivalents for them yet.
+use gpui::{div, prelude::*, rgb, AnyElement, App, ElementId, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    capsule_button, detail_page, group, icon_tile, ink, pt, ring, search_field, section,
+    settings_window, sidebar, sidebar_gap, sidebar_item, switch, Forced, Hue, Row, Tint,
+};
+use kagi::ui::theme::theme;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i06-s7",
+    states: &["default", "focus-name", "focus-swatch"],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn hex(color: (u8, u8, u8)) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2)
+}
+
+/// A reusable palette cell. Its colour and hex label are both derived from the
+/// active theme's terminal value, not a duplicated string constant.
+fn swatch(
+    id: impl Into<ElementId>,
+    color: (u8, u8, u8),
+    label: &'static str,
+    forced: Forced,
+) -> impl IntoElement {
+    let hex = hex(color);
+    let chip = div()
+        .h(pt(34.))
+        .rounded(pt(6.))
+        .bg(rgb(((color.0 as u32) << 16)
+            | ((color.1 as u32) << 8)
+            | color.2 as u32))
+        .border_1()
+        .border_color(rgb(ink::hairline()));
+    let cell = div()
+        .id(id)
+        .min_w_0()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap(pt(4.))
+        .role(Role::Button)
+        .aria_label(format!("{label}, {hex}"))
+        .child(div().text_size(pt(11.5)).truncate().child(label))
+        .child(chip)
+        .child(
+            div()
+                .text_size(pt(10.5))
+                .text_color(ink::secondary())
+                .child(hex),
+        );
+    ring(cell, forced == Forced::Focus, 7.)
+}
+
+fn swatch_row(
+    prefix: &'static str,
+    colors: &[(&'static str, (u8, u8, u8))],
+    focus_name: Option<&str>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .gap(pt(10.))
+        .children(colors.iter().map(|(label, color)| {
+            let id = format!("{prefix}-{label}");
+            let forced = if focus_name == Some(*label) {
+                Forced::Focus
+            } else {
+                Forced::Rest
+            };
+            swatch(id, *color, label, forced).into_any_element()
+        }))
+}
+
+/// The kit has a sidebar-item owner; the page merely supplies this scenario's
+/// destinations and their category hues.
+fn themes_sidebar() -> AnyElement {
+    let item = |id, icon, tint, label| {
+        sidebar_item(
+            id,
+            icon_tile(icon, tint, 20.),
+            label,
+            None,
+            id == "themes",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("settings-search", "Search Settings").into_any_element(),
+        item(
+            "general",
+            IconName::Settings2,
+            Tint::Hue(Hue::Gray),
+            "General",
+        ),
+        item(
+            "appearance",
+            IconName::LayoutDashboard,
+            Tint::Hue(Hue::Indigo),
+            "Appearance",
+        ),
+        item(
+            "themes",
+            IconName::Palette,
+            Tint::Hue(Hue::Indigo),
+            "Themes",
+        ),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Tint::Hue(Hue::Gray),
+            "Terminal",
+        ),
+        item(
+            "integrations",
+            IconName::Github,
+            Tint::Hue(Hue::Orange),
+            "Integrations",
+        ),
+        item(
+            "remote",
+            IconName::Globe,
+            Tint::Hue(Hue::Blue),
+            "Remote Hosts",
+        ),
+    ])
+    .into_any_element()
+}
+
+fn dimmed_themes() -> AnyElement {
+    settings_window(
+        themes_sidebar(),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [
+                section(
+                    "Appearance",
+                    Some("Choose the look of Kagi.".into()),
+                    None,
+                    group([
+                        Row::new("Apple Dark")
+                            .subtitle("Active theme")
+                            .leading(icon_tile(IconName::Moon, Tint::Hue(Hue::Indigo), 32.))
+                            .trailing(capsule_button("edit-theme", "Edit…", Forced::Rest))
+                            .into_any_element(),
+                        Row::new("Apple Light")
+                            .leading(icon_tile(IconName::Sun, Tint::Hue(Hue::Yellow), 32.))
+                            .trailing(capsule_button(
+                                "duplicate-theme",
+                                "Duplicate…",
+                                Forced::Rest,
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Terminal",
+                    None,
+                    None,
+                    group([Row::new("Use terminal palette")
+                        .trailing(switch(
+                            "terminal-palette",
+                            "Use terminal palette",
+                            true,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}
+
+/// Page-local field look: `settings_kit` has a search field but no editable
+/// form field. The forced focus state makes its native-window capture stable.
+fn name_field(forced: Forced) -> impl IntoElement {
+    ring(
+        div()
+            .id("theme-name")
+            .h(pt(30.))
+            .px(pt(9.))
+            .flex()
+            .items_center()
+            .rounded(pt(7.))
+            .bg(rgb(ink::control()))
+            .role(Role::TextInput)
+            .aria_label("New Theme Name")
+            .child("Apple Dark Copy"),
+        forced == Forced::Focus,
+        7.,
+    )
+}
+
+/// Page-local footer actions: settings_kit only supplies neutral capsule
+/// actions, while a sheet needs a single clearly primary completion action.
+fn sheet_button(id: &'static str, label: &'static str, primary: bool) -> impl IntoElement {
+    let fill = if primary { Some(ink::accent()) } else { None };
+    let foreground = if primary {
+        rgb(theme().on_accent())
+    } else {
+        rgb(theme().text_main)
+    };
+    div()
+        .id(id)
+        .h(pt(28.))
+        .px(pt(12.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(pt(7.))
+        .role(Role::Button)
+        .aria_label(label)
+        .text_color(foreground)
+        .when_some(fill, |el, fill| el.bg(fill))
+        .when(!primary, |el| el.bg(rgb(ink::control())))
+        .child(label)
+}
+
+fn editor_sheet(cx: &GalleryContext) -> AnyElement {
+    let palette = theme();
+    let name_forced = if cx.state == "focus-name" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let focused_swatch = (cx.state == "focus-swatch").then_some("Cursor");
+    let terminal = [
+        ("Background", palette.term_bg),
+        ("Text", palette.term_fg),
+        ("Cursor", palette.term_cursor),
+        ("Cursor Text", palette.term_fg),
+        (
+            "Selection",
+            (
+                palette.term_selection.0,
+                palette.term_selection.1,
+                palette.term_selection.2,
+            ),
+        ),
+        ("Selected Text", palette.term_fg),
+    ];
+    let ansi = [
+        ("Black", palette.term_black),
+        ("Red", palette.term_red),
+        ("Green", palette.term_green),
+        ("Yellow", palette.term_yellow),
+        ("Blue", palette.term_blue),
+        ("Magenta", palette.term_magenta),
+        ("Cyan", palette.term_cyan),
+        ("White", palette.term_white),
+    ];
+    let bright = [
+        ("Black", palette.term_bright_black),
+        ("Red", palette.term_bright_red),
+        ("Green", palette.term_bright_green),
+        ("Yellow", palette.term_bright_yellow),
+        ("Blue", palette.term_bright_blue),
+        ("Magenta", palette.term_bright_magenta),
+        ("Cyan", palette.term_bright_cyan),
+        ("White", palette.term_bright_white),
+    ];
+
+    div()
+        .w(pt(690.))
+        .rounded(pt(13.))
+        .bg(rgb(theme().modal))
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .shadow_lg()
+        .overflow_hidden()
+        .child(
+            div()
+                .px(pt(20.))
+                .pt(pt(18.))
+                .pb(pt(14.))
+                .flex()
+                .flex_col()
+                .gap(pt(16.))
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .justify_between()
+                        .gap(pt(16.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(pt(10.))
+                                .child(icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 30.))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(pt(4.))
+                                        .child(
+                                            div()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .child("Theme Editor"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(pt(11.5))
+                                                .text_color(ink::secondary())
+                                                .child("Customize this palette for your terminal."),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .h(pt(24.))
+                                .px(pt(9.))
+                                .flex()
+                                .items_center()
+                                .rounded_full()
+                                .bg(rgb(ink::control()))
+                                .text_size(pt(11.5))
+                                .text_color(ink::secondary())
+                                .child("Dark Theme"),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(pt(6.))
+                        .child(
+                            div()
+                                .text_size(pt(11.5))
+                                .text_color(ink::secondary())
+                                .child("New Theme Name"),
+                        )
+                        .child(name_field(name_forced)),
+                )
+                .child(section(
+                    "Colors",
+                    None,
+                    Some(
+                        switch(
+                            "palette-preview",
+                            "Preview",
+                            true,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        )
+                        .into_any_element(),
+                    ),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(pt(12.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(pt(7.))
+                                .child(
+                                    div()
+                                        .text_size(pt(11.5))
+                                        .text_color(ink::secondary())
+                                        .child("Terminal"),
+                                )
+                                .child(group([div()
+                                    .py(pt(10.))
+                                    .flex()
+                                    .flex_col()
+                                    .child(swatch_row("terminal", &terminal, focused_swatch))
+                                    .into_any_element()])),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(pt(7.))
+                                .child(
+                                    div()
+                                        .text_size(pt(11.5))
+                                        .text_color(ink::secondary())
+                                        .child("ANSI Standard"),
+                                )
+                                .child(group([div()
+                                    .py(pt(10.))
+                                    .flex()
+                                    .flex_col()
+                                    .child(swatch_row("ansi", &ansi, None))
+                                    .into_any_element()])),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(pt(7.))
+                                .child(
+                                    div()
+                                        .text_size(pt(11.5))
+                                        .text_color(ink::secondary())
+                                        .child("ANSI Bright"),
+                                )
+                                .child(group([div()
+                                    .py(pt(10.))
+                                    .flex()
+                                    .flex_col()
+                                    .child(swatch_row("bright", &bright, None))
+                                    .into_any_element()])),
+                        )
+                        .child(
+                            div()
+                                .id("extended-palette")
+                                .h(pt(28.))
+                                .w_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(pt(7.))
+                                .bg(rgb(ink::control()))
+                                .role(Role::Button)
+                                .aria_label("Show extended palette")
+                                .child("Show extended palette"),
+                        ),
+                )),
+        )
+        .child(
+            div()
+                .h(pt(52.))
+                .px(pt(20.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .border_t_1()
+                .border_color(rgb(ink::hairline()))
+                .child(sheet_button("revert", "Revert…", false))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(pt(8.))
+                        .child(sheet_button("cancel", "Cancel", false))
+                        .child(sheet_button("save-apply", "Save & Apply", true)),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    div()
+        .size_full()
+        .relative()
+        .child(dimmed_themes())
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(rgb(theme().modal_overlay))
+                .opacity(0.52),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(editor_sheet(cx)),
+        )
+        .into_any_element()
+}

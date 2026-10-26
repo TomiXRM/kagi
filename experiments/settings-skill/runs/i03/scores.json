@@ -1,0 +1,149 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 structure",
+    1,
+    false,
+    "900×760 page shows all four blocks (L4 not repeated)"
+   ],
+   [
+    "4 picker reusable",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 named states",
+    1,
+    false,
+    "default/rest/selected/hover/focus"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: state `rest` draws no selected cell and swaps the subtitle to \"Choose a position\" — L3 again (rule still pending).",
+   "Evaluator: in Apple Light the selected picker cell is a pale grey check on a pale cell; the §5 \"both themes read\" line did not catch it (L1 class)."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 choice tile",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 segmented",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 slider + pop-ups",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: non-selected sidebar tiles neutral, selected accent — v2 row \"its tile is always Tint::Accent\" read as the selected tile only (L7).",
+   "Evaluator: Interface-style cluster spreads Glass and Classic to opposite edges while Color scheme is packed — a sibling-layout mismatch the critique did not flag."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 render EN dark, JA light, JA 720",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 Msg strings",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 JA / 720 wrapping",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 sidebar",
+    1,
+    false,
+    "all accent tiles"
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ }
+}

@@ -1,0 +1,513 @@
+//! S7: a theme-editor sheet composed with the settings kit.
+//! The local gaps are the sheet, text-field look and colour swatches.
+use gpui::{div, prelude::*, rgb, rgba, AnyElement, App, Div, FontWeight, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Lang;
+use kagi::ui::settings_kit::*;
+use kagi::ui::theme;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i07-s7",
+    states: &["default", "focus-name", "focus-swatch"],
+    size: (900., 740.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn text(cx: &GalleryContext, en: &'static str, ja: &'static str) -> &'static str {
+    if cx.lang == Lang::Ja {
+        ja
+    } else {
+        en
+    }
+}
+
+/// Kit gap: a text-field look, with explicit value and capture state.
+/// This gallery does not install an editing model or claim real input focus.
+fn name_field(value: &'static str, forced: Forced) -> impl IntoElement {
+    ring(
+        div()
+            .id("theme-name")
+            .w_full()
+            .min_w_0()
+            .h(pt(34.))
+            .px(pt(8.))
+            .flex()
+            .items_center()
+            .bg(rgb(match forced {
+                Forced::Hover => ink::control_hover(),
+                Forced::Pressed => ink::control_pressed(),
+                _ => ink::control(),
+            }))
+            .rounded(pt(metrics::CONTROL_RADIUS))
+            .role(Role::TextInput)
+            .aria_label("New Theme Name")
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(value),
+            ),
+        forced == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    )
+    .when(forced == Forced::Disabled, |el| {
+        el.opacity(ink::disabled_opacity())
+    })
+}
+
+type Color = (u8, u8, u8, u8);
+
+fn opaque((r, g, b): (u8, u8, u8)) -> Color {
+    (r, g, b, u8::MAX)
+}
+
+/// Kit gap: a colour well with its label above and computed hex below.
+/// Alpha is retained in both the preview and hex (RRGGBBAA when translucent).
+/// The focus indicator is inset in this same well, never in a neighbouring cell.
+fn swatch(color: Color, label: &'static str, forced: Forced) -> AnyElement {
+    let (r, g, b, a) = color;
+    let packed = u32::from_be_bytes([r, g, b, a]);
+    let hex = if a == u8::MAX {
+        format!("#{r:02X}{g:02X}{b:02X}")
+    } else {
+        format!("#{packed:08X}")
+    };
+    let well = ring(
+        div()
+            .id(format!("swatch-{label}"))
+            .w_full()
+            .h(pt(metrics::CONTROL_HEIGHT + 2.))
+            .p(pt(1.))
+            .bg(rgb(ink::hairline()))
+            .role(Role::Button)
+            .aria_label(format!("{label} {hex}"))
+            .child(
+                div()
+                    .size_full()
+                    .rounded(pt(metrics::CONTROL_RADIUS - 2.))
+                    .bg(rgba(packed)),
+            ),
+        forced == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    );
+    div()
+        .flex_1()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(6.))
+        .child(caption(label).text_size(pt(11.)))
+        .child(well)
+        .child(
+            div()
+                .w_full()
+                .h(pt(metrics::CONTROL_HEIGHT - 2.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(pt(metrics::CONTROL_RADIUS))
+                .border_1()
+                .border_color(rgb(ink::hairline()))
+                .bg(rgb(ink::control()))
+                .font_family(theme::MONO_FONT)
+                .text_size(pt(10.5))
+                .child(hex),
+        )
+        .into_any_element()
+}
+
+fn palette_group(
+    title: &'static str,
+    entries: impl IntoIterator<Item = (&'static str, Color)>,
+    focused: Option<&str>,
+) -> AnyElement {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .py(pt(12.))
+        .child(section(
+            title,
+            None,
+            None,
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .gap(pt(8.))
+                .children(entries.into_iter().map(|(label, color)| {
+                    swatch(
+                        color,
+                        label,
+                        if focused == Some(label) {
+                            Forced::Focus
+                        } else {
+                            Forced::Rest
+                        },
+                    )
+                })),
+        ))
+        .into_any_element()
+}
+
+fn themes_page(cx: &GalleryContext) -> Div {
+    let item = |id, icon, hue, en, ja| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            text(cx, en, ja),
+            None,
+            id == "themes",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    settings_window(
+        sidebar([
+            search_field("search", text(cx, "Search Settings", "設定を検索")).into_any_element(),
+            sidebar_item(
+                "server",
+                icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 32.),
+                text(cx, "Server", "サーバー"),
+                Some(text(cx, "Running", "実行中").into()),
+                false,
+                Forced::Rest,
+            )
+            .into_any_element(),
+            sidebar_gap(),
+            item(
+                "interface",
+                IconName::LayoutDashboard,
+                Hue::Gray,
+                "Interface",
+                "インターフェース",
+            ),
+            item("themes", IconName::Palette, Hue::Indigo, "Themes", "テーマ"),
+            sidebar_gap(),
+            item(
+                "terminal",
+                IconName::SquareTerminal,
+                Hue::Gray,
+                "Terminal",
+                "ターミナル",
+            ),
+            item(
+                "shortcuts",
+                IconName::CaseSensitive,
+                Hue::Blue,
+                "Shortcuts",
+                "ショートカット",
+            ),
+            item(
+                "integrations",
+                IconName::Github,
+                Hue::Orange,
+                "Integrations",
+                "連携",
+            ),
+            item(
+                "notifications",
+                IconName::Bell,
+                Hue::Red,
+                "Notifications",
+                "通知",
+            ),
+            item(
+                "remote",
+                IconName::Globe,
+                Hue::Blue,
+                "Remote Hosts",
+                "リモートホスト",
+            ),
+            sidebar_gap(),
+            item(
+                "developer",
+                IconName::Settings2,
+                Hue::Gray,
+                "Developer",
+                "開発者",
+            ),
+        ]),
+        detail_page(
+            "themes-scroll",
+            text(cx, "Themes", "テーマ"),
+            [
+                section(
+                    text(cx, "Built-in Themes", "組み込みテーマ"),
+                    None,
+                    Some(
+                        section_action(
+                            "new-theme",
+                            IconName::Plus,
+                            text(cx, "New", "新規"),
+                            Forced::Rest,
+                        )
+                        .into_any_element(),
+                    ),
+                    group([
+                        Row::new("Apple Dark")
+                            .subtitle(text(cx, "Dark appearance", "ダークの外観"))
+                            .leading(icon_tile(IconName::Moon, Tint::Hue(Hue::Indigo), 32.))
+                            .trailing(capsule_button(
+                                "duplicate-dark",
+                                text(cx, "Duplicate…", "複製…"),
+                                Forced::Rest,
+                            ))
+                            .into_any_element(),
+                        Row::new("Apple Light")
+                            .subtitle(text(cx, "Light appearance", "ライトの外観"))
+                            .leading(icon_tile(IconName::Sun, Tint::Hue(Hue::Yellow), 32.))
+                            .trailing(capsule_button(
+                                "duplicate-light",
+                                text(cx, "Duplicate…", "複製…"),
+                                Forced::Rest,
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    text(cx, "Custom Themes", "カスタムテーマ"),
+                    None,
+                    None,
+                    group([Row::new("Apple Dark Copy")
+                        .leading(icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 32.))
+                        .trailing(capsule_button(
+                            "import-theme",
+                            text(cx, "Import…", "読み込む…"),
+                            Forced::Rest,
+                        ))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    // Palette values stay Apple Dark even when inspecting light-mode chrome.
+    let palette = theme::theme_by_slug("apple-dark").expect("built-in Apple Dark theme");
+    let focus_name = if cx.state == "focus-name" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let background_label = text(cx, "Background", "背景");
+    let focused = (cx.state == "focus-swatch").then_some(background_label);
+    let terminal = palette_group(
+        text(cx, "Terminal", "ターミナル"),
+        [
+            (background_label, opaque(palette.term_bg)),
+            (text(cx, "Text", "テキスト"), opaque(palette.term_fg)),
+            (text(cx, "Cursor", "カーソル"), opaque(palette.term_cursor)),
+            // Theme has no separate cursor-text or selected-text fields.
+            (
+                text(cx, "Cursor Text", "カーソル文字"),
+                opaque(palette.term_bg),
+            ),
+            (text(cx, "Selection", "選択範囲"), palette.term_selection),
+            (
+                text(cx, "Selected Text", "選択文字"),
+                opaque(palette.term_fg),
+            ),
+        ],
+        focused,
+    );
+    let names = [
+        text(cx, "Black", "黒"),
+        text(cx, "Red", "赤"),
+        text(cx, "Green", "緑"),
+        text(cx, "Yellow", "黄"),
+        text(cx, "Blue", "青"),
+        text(cx, "Magenta", "マゼンタ"),
+        text(cx, "Cyan", "シアン"),
+        text(cx, "White", "白"),
+    ];
+    let standard = [
+        palette.term_black,
+        palette.term_red,
+        palette.term_green,
+        palette.term_yellow,
+        palette.term_blue,
+        palette.term_magenta,
+        palette.term_cyan,
+        palette.term_white,
+    ];
+    let bright = [
+        palette.term_bright_black,
+        palette.term_bright_red,
+        palette.term_bright_green,
+        palette.term_bright_yellow,
+        palette.term_bright_blue,
+        palette.term_bright_magenta,
+        palette.term_bright_cyan,
+        palette.term_bright_white,
+    ];
+    let colors = section(
+        text(cx, "Colors", "カラー"),
+        None,
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(pt(8.))
+                .child(text(cx, "Preview", "プレビュー"))
+                .child(switch(
+                    "preview",
+                    text(cx, "Preview", "プレビュー"),
+                    true,
+                    Forced::Rest,
+                    |_, _, _| {},
+                ))
+                .into_any_element(),
+        ),
+        group([
+            terminal,
+            palette_group(
+                text(cx, "ANSI Standard", "ANSI 標準色"),
+                names.into_iter().zip(standard.map(opaque)),
+                None,
+            ),
+            palette_group(
+                text(cx, "ANSI Bright", "ANSI 高輝度色"),
+                names.into_iter().zip(bright.map(opaque)),
+                None,
+            ),
+        ])
+        .w_full()
+        .min_w_0(),
+    );
+    let sheet = div()
+        .id("theme-editor-sheet")
+        .w_full()
+        .min_w_0()
+        .max_w(pt(704.))
+        .flex()
+        .flex_col()
+        .bg(rgb(ink::window()))
+        .rounded(pt(20.))
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .shadow_xl()
+        .overflow_hidden()
+        .role(Role::Dialog)
+        .aria_label(text(cx, "New Theme", "新規テーマ"))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .p(pt(20.))
+                .flex()
+                .items_center()
+                .gap(pt(16.))
+                .child(icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), 32.))
+                .child(
+                    div()
+                        .flex_1()
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(pt(6.))
+                        .child(caption(text(cx, "New Theme Name", "新しいテーマ名")))
+                        .child(name_field("Apple Dark Copy", focus_name)),
+                )
+                .child(
+                    caption(text(cx, "☾  Dark Theme", "☾  ダークテーマ"))
+                        .flex_shrink_0()
+                        .px(pt(10.))
+                        .py(pt(5.))
+                        .rounded(pt(13.))
+                        .bg(rgb(ink::control())),
+                ),
+        )
+        .child(div().h(pt(1.)).bg(rgb(ink::hairline())))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .p(pt(20.))
+                .flex()
+                .flex_col()
+                .gap(pt(14.))
+                .child(colors)
+                .child(
+                    capsule_button(
+                        "extended",
+                        text(cx, "Show extended palette", "拡張パレットを表示"),
+                        Forced::Rest,
+                    )
+                    .w_full()
+                    .justify_center(),
+                ),
+        )
+        .child(div().h(pt(1.)).bg(rgb(ink::hairline())))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .p(pt(16.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(pt(12.))
+                .child(capsule_button(
+                    "revert",
+                    text(cx, "Revert…", "元に戻す…"),
+                    Forced::Rest,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(pt(8.))
+                        .child(capsule_button(
+                            "cancel",
+                            text(cx, "Cancel", "キャンセル"),
+                            Forced::Rest,
+                        ))
+                        // Extend the kit capsule's appearance; retain its geometry.
+                        .child(
+                            capsule_button(
+                                "save",
+                                text(cx, "Save & Apply", "保存して適用"),
+                                Forced::Rest,
+                            )
+                            .bg(ink::accent())
+                            .text_color(rgb(theme::theme().on_accent())),
+                        ),
+                ),
+        );
+    let scrim = if theme::theme().dark {
+        gpui::Hsla::from(rgb(ink::window()))
+    } else {
+        ink::text()
+    };
+    div()
+        .size_full()
+        .relative()
+        .text_color(ink::text())
+        .text_size(pt(metrics::BODY))
+        .font(theme::ui_font())
+        .child(themes_page(cx))
+        .child(div().absolute().inset_0().bg(scrim.opacity(0.50)))
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .p(pt(16.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(sheet),
+        )
+        .into_any_element()
+}

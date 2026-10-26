@@ -1,0 +1,258 @@
+//! Gallery reconstruction of macOS Sound settings (I09/S4).
+use gpui::{div, prelude::*, AnyElement, App, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    capsule_button, checkbox, detail_page, group, icon_tile, ink, metrics, popup_value, pt,
+    search_field, section, settings_window, sidebar, sidebar_gap, sidebar_item, switch, Forced,
+    Hue, Row, Segmented, Slider, SliderEnds, Tint,
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i09-s4",
+    states: &["default", "focus-alert-volume", "hover-play"],
+    size: (900., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let alert_slider_state = if cx.state == "focus-alert-volume" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let play_state = if cx.state == "hover-play" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        sound_sidebar(),
+        detail_page(
+            "sound-scroll",
+            "Sound",
+            [
+                section(
+                    "Sound Effects",
+                    None,
+                    None,
+                    group([
+                        Row::new("Alert sound")
+                            .trailing(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(pt(8.))
+                                    .child(popup_value("alert-sound", "Boop", Forced::Rest))
+                                    .child(capsule_button("play-alert", "Play", play_state)),
+                            )
+                            .into_any_element(),
+                        Row::new("Play sound effects through")
+                            .trailing(popup_value(
+                                "effects-device",
+                                "MacBook Pro Speakers",
+                                Forced::Rest,
+                            ))
+                            .into_any_element(),
+                        Row::new("Alert volume")
+                            .trailing(sound_slider(
+                                "alert-volume",
+                                0.92,
+                                Some(6),
+                                SliderEnds::Symbols(IconName::Bell, IconName::Bell),
+                                alert_slider_state,
+                            ))
+                            .into_any_element(),
+                        Row::new("Play sound on startup")
+                            .trailing(switch(
+                                "startup-sound",
+                                "Play sound on startup",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Play user interface sound effects")
+                            .trailing(switch(
+                                "interface-sounds",
+                                "Play user interface sound effects",
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new("Play feedback when volume is changed")
+                            .trailing(switch(
+                                "volume-feedback",
+                                "Play feedback when volume is changed",
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    "Output & Input",
+                    None,
+                    None,
+                    group([
+                        Segmented::new("output-input", ["Output", "Input"], 0)
+                            .full_width()
+                            .into_any_element(),
+                        device_table(),
+                    ]),
+                ),
+                group([
+                    Row::new("Output volume")
+                        .trailing(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_end()
+                                .gap(pt(6.))
+                                .child(sound_slider(
+                                    "output-volume",
+                                    0.08,
+                                    Some(6),
+                                    SliderEnds::Symbols(IconName::Bell, IconName::Bell),
+                                    Forced::Rest,
+                                ))
+                                .child(checkbox("mute", "Mute", true, Forced::Rest)),
+                        )
+                        .into_any_element(),
+                    Row::new("Balance")
+                        .trailing(sound_slider(
+                            "balance",
+                            0.5,
+                            None,
+                            SliderEnds::Captions("Left".into(), "Right".into()),
+                            Forced::Rest,
+                        ))
+                        .into_any_element(),
+                ])
+                .into_any_element(),
+                div().flex_1().min_h(pt(12.)).into_any_element(),
+                div()
+                    .w_full()
+                    .flex()
+                    .justify_end()
+                    .child(capsule_button("sound-help", "?", Forced::Rest))
+                    .into_any_element(),
+            ],
+        ),
+    )
+    .into_any_element()
+}
+
+/// A page-level wrapper keeps all Sound sliders on the kit's one value-to-x mapping.
+fn sound_slider(
+    id: &'static str,
+    value: f32,
+    ticks: Option<usize>,
+    ends: SliderEnds,
+    forced: Forced,
+) -> Slider {
+    let slider = Slider::new(id, value).width(250.).ends(ends).forced(forced);
+    match ticks {
+        Some(count) => slider.ticks(count),
+        None => slider,
+    }
+}
+
+/// Kit gap: the Sound pane needs an aligned, selectable two-column device table.
+fn device_table() -> AnyElement {
+    let devices = [
+        ("DELL U2723QE", "DisplayPort", false),
+        ("Shure MV7", "USB", false),
+        ("MacBook Pro Speakers", "Built-in", true),
+        ("AirPods Pro", "Bluetooth", false),
+        ("AirMac Express", "AirPlay", false),
+        ("tomixrm-m1", "AirPlay", false),
+    ];
+    let mut table = div()
+        .w_full()
+        .overflow_hidden()
+        .rounded(pt(metrics::GROUP_RADIUS))
+        .bg(gpui::rgb(ink::card()))
+        .child(device_table_row("Name", "Type", true, false));
+    for (name, kind, selected) in devices {
+        table = table.child(device_table_row(name, kind, false, selected));
+    }
+    table.into_any_element()
+}
+
+fn device_table_row(name: &str, kind: &str, header: bool, selected: bool) -> gpui::Div {
+    div()
+        .w_full()
+        .h(pt(if header { 28. } else { metrics::ROW - 8. }))
+        .px(pt(metrics::GROUP_PADDING_X))
+        .flex()
+        .items_center()
+        .when(header, |el| {
+            el.bg(gpui::rgb(ink::control()))
+                .font_weight(FontWeight::SEMIBOLD)
+        })
+        .when(selected, |el| el.bg(ink::selected()))
+        .child(div().flex_1().min_w_0().truncate().child(name.to_owned()))
+        .child(div().w(pt(150.)).flex_shrink_0().child(kind.to_owned()))
+}
+
+fn sound_sidebar() -> AnyElement {
+    let item = |id: &'static str, icon, hue, label: &'static str| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            id == "sound",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("sound-search", "Search Settings").into_any_element(),
+        item("spotlight", IconName::Search, Hue::Blue, "Spotlight"),
+        item("accessibility", IconName::User, Hue::Blue, "Accessibility"),
+        item("display", IconName::Maximize, Hue::Blue, "Displays"),
+        item(
+            "desktop",
+            IconName::LayoutDashboard,
+            Hue::Indigo,
+            "Desktop & Dock",
+        ),
+        item("menu-bar", IconName::Menu, Hue::Gray, "Menu Bar"),
+        item("appearance", IconName::Palette, Hue::Indigo, "Appearance"),
+        item("wallpaper", IconName::Frame, Hue::Teal, "Wallpaper"),
+        sidebar_gap(),
+        item("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        item("sound", IconName::Bell, Hue::Pink, "Sound"),
+        item("focus", IconName::Moon, Hue::Indigo, "Focus"),
+        item(
+            "screen-time",
+            IconName::Calendar,
+            Hue::Purple,
+            "Screen Time",
+        ),
+        sidebar_gap(),
+        item("lock-screen", IconName::Eye, Hue::Gray, "Lock Screen"),
+        item("privacy", IconName::EyeOff, Hue::Blue, "Privacy & Security"),
+        item(
+            "touch-id",
+            IconName::CircleUser,
+            Hue::Red,
+            "Touch ID & Password",
+        ),
+        item("users", IconName::User, Hue::Blue, "Users & Groups"),
+        item("internet", IconName::Globe, Hue::Blue, "Internet Accounts"),
+        item("game-center", IconName::Star, Hue::Green, "Game Center"),
+        item("icloud", IconName::Globe, Hue::Blue, "iCloud"),
+        item("keyboard", IconName::ALargeSmall, Hue::Gray, "Keyboard"),
+    ])
+    .into_any_element()
+}

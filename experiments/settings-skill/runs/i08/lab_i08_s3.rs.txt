@@ -1,0 +1,170 @@
+//! Gallery reconstruction of Kagi's General settings pane (I08/S3).
+use gpui::{prelude::*, AnyElement, App, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::{
+    detail_page, group, icon_tile, popup_value, section, settings_window, sidebar, sidebar_gap,
+    sidebar_item, stepper, switch, Forced, Hue, Row, Segmented, Tint,
+};
+use kagi_ui_core::i18n::Msg;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i08-s3",
+    states: &["default", "focus-avatar-switch", "hover-theme"],
+    size: (900., 820.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn msg(message: Msg) -> &'static str {
+    message.t()
+}
+
+fn kagi_sidebar() -> AnyElement {
+    sidebar([
+        sidebar_item(
+            "general",
+            icon_tile(IconName::Settings2, Tint::Hue(Hue::Gray), 20.),
+            msg(Msg::SettingsGeneral),
+            None,
+            true,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_item(
+            "language",
+            icon_tile(IconName::Globe, Tint::Hue(Hue::Blue), 20.),
+            msg(Msg::SettingsLanguage),
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        sidebar_item(
+            "smart-commit",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 20.),
+            msg(Msg::SettingsSmartCommit),
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_item(
+            "analyze",
+            icon_tile(IconName::ChartPie, Tint::Hue(Hue::Teal), 20.),
+            msg(Msg::SettingsAnalyze),
+            None,
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+    ])
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let theme_state = if cx.state == "hover-theme" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+    let avatar_switch_state = if cx.state == "focus-avatar-switch" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        kagi_sidebar(),
+        detail_page(
+            "general-scroll",
+            msg(Msg::SettingsGeneral),
+            [
+                section(
+                    msg(Msg::SettingsAppearance),
+                    None,
+                    None,
+                    group([
+                        Row::new(msg(Msg::SettingsTheme))
+                            .subtitle(msg(Msg::SettingsThemeDesc))
+                            .trailing(popup_value("theme", "Apple Dark", theme_state))
+                            .into_any_element(),
+                        Row::new(msg(Msg::SettingsAccent))
+                            .trailing(Segmented::new(
+                                "accent",
+                                [
+                                    msg(Msg::SettingsAccentSystem),
+                                    msg(Msg::SettingsAccentTheme),
+                                ],
+                                1,
+                            ))
+                            .into_any_element(),
+                        Row::new(msg(Msg::SettingsToolbarDisplay))
+                            .subtitle(msg(Msg::SettingsToolbarDisplayDesc))
+                            .trailing(Segmented::new(
+                                "toolbar",
+                                [msg(Msg::ToolbarIconAndText), msg(Msg::ToolbarIconOnly)],
+                                1,
+                            ))
+                            .into_any_element(),
+                        Row::new(msg(Msg::SettingsZoom))
+                            .subtitle(msg(Msg::SettingsZoomDesc))
+                            .trailing(stepper("ui-zoom", "100%", true, true, None))
+                            .into_any_element(),
+                        Row::new(msg(Msg::SettingsCompactThreshold))
+                            .subtitle(msg(Msg::SettingsCompactThresholdDesc))
+                            .trailing(stepper("compact-threshold", "70rem", true, true, None))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    msg(Msg::SettingsGraph),
+                    None,
+                    None,
+                    group([
+                        Row::new(msg(Msg::SettingsCompact))
+                            .subtitle(msg(Msg::SettingsCompactDesc))
+                            .trailing(switch(
+                                "compact-graph",
+                                msg(Msg::SettingsCompact),
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new(msg(Msg::SettingsLaneCompact))
+                            .subtitle(msg(Msg::SettingsLaneCompactDesc))
+                            .trailing(switch(
+                                "avatar-commit-nodes",
+                                msg(Msg::SettingsLaneCompact),
+                                true,
+                                avatar_switch_state,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    msg(Msg::SettingsNetwork),
+                    None,
+                    None,
+                    group([Row::new(msg(Msg::SettingsAutoFetch))
+                        .subtitle(msg(Msg::SettingsAutoFetchDesc))
+                        .trailing(switch(
+                            "auto-fetch",
+                            msg(Msg::SettingsAutoFetch),
+                            true,
+                            Forced::Rest,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

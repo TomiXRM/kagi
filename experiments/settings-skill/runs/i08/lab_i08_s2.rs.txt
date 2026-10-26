@@ -1,0 +1,469 @@
+//! Rex Interface, composed from the settings kit. The preview choice tile is
+//! the only kit gap; all form and navigation controls retain their kit owner.
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Role, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i08-s2",
+    states: &[
+        "default",
+        "hover-choice",
+        "focus-choice",
+        "focus-slider",
+        "icons-minimum",
+        "icons-maximum",
+    ],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+#[derive(Clone, Copy)]
+enum Preview {
+    Auto,
+    Light,
+    Dark,
+    Glass,
+    Classic,
+}
+
+/// A miniature of the affected surface, rather than an icon segment. Light
+/// and dark swatches both come from the kit palette in either host theme.
+fn preview(value: Preview) -> AnyElement {
+    let window = rgb(ink::window()).into();
+    let text = ink::text();
+    let (light, dark) = if text.l > 0.5 {
+        (text, window)
+    } else {
+        (window, text)
+    };
+    let surface =
+        match value {
+            Preview::Glass | Preview::Classic => div()
+                .size(pt(40.))
+                .rounded_full()
+                .bg(dark.opacity(if matches!(value, Preview::Glass) {
+                    0.65
+                } else {
+                    1.
+                }))
+                .border_1()
+                .border_color(light.opacity(0.25))
+                .into_any_element(),
+            _ => {
+                let fill = if matches!(value, Preview::Light) {
+                    light
+                } else {
+                    dark
+                };
+                div()
+                    .relative()
+                    .w(pt(44.))
+                    .h(pt(40.))
+                    .rounded(pt(6.))
+                    .overflow_hidden()
+                    .bg(fill)
+                    .when(matches!(value, Preview::Auto), |el| {
+                        el.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_1_2()
+                                .h_full()
+                                .rounded_tl(pt(6.))
+                                .rounded_bl(pt(6.))
+                                .bg(light),
+                        )
+                    })
+                    .child(
+                        div()
+                            .relative()
+                            .size_full()
+                            .p(pt(4.))
+                            .flex()
+                            .flex_col()
+                            .gap(pt(3.))
+                            .child(div().flex().gap(pt(2.)).children(
+                                [Hue::Red, Hue::Yellow, Hue::Green].map(|hue| {
+                                    div()
+                                        .size(pt(3.))
+                                        .rounded_full()
+                                        .bg(rgb(Tint::Hue(hue).color()))
+                                }),
+                            ))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .flex_1()
+                                    .rounded(pt(3.))
+                                    .border_1()
+                                    .border_color(ink::secondary().opacity(0.6)),
+                            )
+                            .child(div().h(pt(10.)).flex().gap(pt(3.)).children((0..2).map(
+                                |_| {
+                                    div()
+                                        .flex_1()
+                                        .h_full()
+                                        .rounded(pt(3.))
+                                        .border_1()
+                                        .border_color(ink::secondary().opacity(0.6))
+                                },
+                            ))),
+                    )
+                    .into_any_element()
+            }
+        };
+    div()
+        .relative()
+        .w_full()
+        .min_w_0()
+        .h(pt(78.))
+        .rounded(pt(metrics::CONTROL_RADIUS))
+        .overflow_hidden()
+        .bg(rgb(Tint::Hue(Hue::Blue).color()))
+        .child(
+            div()
+                .absolute()
+                .right_0()
+                .top_0()
+                .w_1_2()
+                .h_full()
+                .rounded_tr(pt(metrics::CONTROL_RADIUS))
+                .rounded_br(pt(metrics::CONTROL_RADIUS))
+                .bg(rgb(Tint::Hue(Hue::Indigo).color()).opacity(0.55)),
+        )
+        .child(
+            div()
+                .relative()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(surface),
+        )
+        .into_any_element()
+}
+
+/// Kit gap: a reusable visual choice with its caption below the preview.
+/// Selection is always the ring of this same cell; forced state never changes
+/// the selected value or label. Both wrapper axes retain their available width.
+fn choice_tile(
+    id: &'static str,
+    preview: AnyElement,
+    label: &'static str,
+    selected: bool,
+    forced: Forced,
+) -> AnyElement {
+    let surround = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::card(),
+    };
+    div()
+        .id(id)
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(4.))
+        .role(Role::RadioButton)
+        .aria_label(label)
+        .aria_selected(selected)
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        })
+        .child(ring(
+            div()
+                .w_full()
+                .min_w_0()
+                .p(pt(2.))
+                .bg(rgb(surround))
+                .child(preview),
+            selected || forced == Forced::Focus,
+            metrics::CONTROL_RADIUS + 4.,
+        ))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .text_center()
+                .text_size(pt(metrics::SECONDARY))
+                .text_color(if selected {
+                    ink::text()
+                } else {
+                    ink::secondary()
+                })
+                .when(selected, |el| el.font_weight(FontWeight::SEMIBOLD))
+                .child(label),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let ja = cx.lang.slug() == "ja";
+    let t = |en: &'static str, jp: &'static str| if ja { jp } else { en };
+    let choice_state = match cx.state {
+        "hover-choice" => Forced::Hover,
+        "focus-choice" => Forced::Focus,
+        _ => Forced::Rest,
+    };
+    let icons = match cx.state {
+        "icons-minimum" => 1,
+        "icons-maximum" => 5,
+        _ => 3,
+    };
+    let item = |id, icon, hue, en, jp| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+            t(en, jp),
+            None,
+            id == "interface",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    let navigation = sidebar([
+        search_field("search", t("Search Settings", "設定を検索")).into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), metrics::TILE_LARGE),
+            t("Server", "サーバ"),
+            Some(t("Running", "稼働中").into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Blue,
+            "Interface",
+            "インターフェイス",
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes", "テーマ"),
+        sidebar_gap(),
+        item(
+            "terminal",
+            IconName::SquareTerminal,
+            Hue::Gray,
+            "Terminal",
+            "ターミナル",
+        ),
+        item(
+            "shortcuts",
+            IconName::CaseSensitive,
+            Hue::Gray,
+            "Shortcuts",
+            "ショートカット",
+        ),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+            "連携",
+        ),
+        item(
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            "通知",
+        ),
+        item(
+            "remote",
+            IconName::Globe,
+            Hue::Blue,
+            "Remote Hosts",
+            "リモートホスト",
+        ),
+        sidebar_gap(),
+        item(
+            "developer",
+            IconName::Settings2,
+            Hue::Gray,
+            "Developer",
+            "開発者",
+        ),
+    ]);
+    let cluster = |title, weight, choices: Vec<AnyElement>| {
+        div()
+            .id(title)
+            .w_full()
+            .min_w_0()
+            .flex_basis(pt((weight - 1.) * 8.))
+            .flex_grow(weight)
+            .flex()
+            .flex_col()
+            .gap(pt(6.))
+            .role(Role::RadioGroup)
+            .aria_label(title)
+            .child(caption(title))
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .gap(pt(8.))
+                    .children(choices),
+            )
+    };
+    let appearance = group([
+        div()
+            .w_full()
+            .min_w_0()
+            .py(pt(10.))
+            .flex()
+            .gap(pt(12.))
+            .child(cluster(
+                t("Color scheme", "カラースキーム"),
+                3.,
+                vec![
+                    choice_tile(
+                        "auto",
+                        preview(Preview::Auto),
+                        t("Auto", "自動"),
+                        true,
+                        Forced::Rest,
+                    ),
+                    choice_tile(
+                        "light",
+                        preview(Preview::Light),
+                        t("Light", "ライト"),
+                        false,
+                        choice_state,
+                    ),
+                    choice_tile(
+                        "dark",
+                        preview(Preview::Dark),
+                        t("Dark", "ダーク"),
+                        false,
+                        Forced::Rest,
+                    ),
+                ],
+            ))
+            .child(vertical_divider())
+            .child(cluster(
+                t("Interface style", "インターフェイススタイル"),
+                2.,
+                vec![
+                    choice_tile(
+                        "glass",
+                        preview(Preview::Glass),
+                        t("Glass", "ガラス"),
+                        false,
+                        Forced::Rest,
+                    ),
+                    choice_tile(
+                        "classic",
+                        preview(Preview::Classic),
+                        t("Classic", "クラシック"),
+                        true,
+                        Forced::Rest,
+                    ),
+                ],
+            ))
+            .into_any_element(),
+        Row::new(t("Tint with theme", "テーマの色を適用"))
+            .trailing(switch(
+                "tint",
+                t("Tint with theme", "テーマの色を適用"),
+                true,
+                Forced::Rest,
+                |_, _, _| {},
+            ))
+            .into_any_element(),
+    ]);
+    let tabs = group([
+        Row::new(t("Tab style", "タブスタイル"))
+            .trailing(Segmented::new(
+                "tab-style",
+                [
+                    t("Above", "上部"),
+                    t("Left Side", "左側"),
+                    t("Right Side", "右側"),
+                ],
+                0,
+            ))
+            .into_any_element(),
+        Row::new(t("Fill available space", "利用可能な幅を埋める"))
+            .trailing(switch(
+                "fill",
+                t("Fill available space", "利用可能な幅を埋める"),
+                false,
+                Forced::Rest,
+                |_, _, _| {},
+            ))
+            .into_any_element(),
+        Row::new(t("Show tab icons", "タブアイコンの表示"))
+            .trailing(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(pt(8.))
+                    .child(
+                        Slider::new("tab-icons", (icons - 1) as f32 / 4.)
+                            .ticks(5)
+                            .width(156.)
+                            .forced(if cx.state == "focus-slider" {
+                                Forced::Focus
+                            } else {
+                                Forced::Rest
+                            }),
+                    )
+                    .child(caption(icons.to_string())),
+            )
+            .into_any_element(),
+        Row::new(t("Use color for tab icons", "タブアイコンの色を使用"))
+            .trailing(popup_value("tab-colors", t("Always", "常に"), Forced::Rest))
+            .into_any_element(),
+        Row::new(t("Shell icon theme", "シェルアイコンのテーマ"))
+            .trailing(popup_value(
+                "shell-theme",
+                t("Default", "デフォルト"),
+                Forced::Rest,
+            ))
+            .into_any_element(),
+    ]);
+    let panes = group([
+        Row::new(t("Pane style", "ペインスタイル"))
+            .trailing(Segmented::new(
+                "pane-style",
+                [t("Comfortable", "ゆったり"), t("Compact", "コンパクト")],
+                0,
+            ))
+            .into_any_element(),
+        Row::new(t("Show pane headers", "ペインヘッダを表示"))
+            .trailing(switch(
+                "pane-headers",
+                t("Show pane headers", "ペインヘッダを表示"),
+                true,
+                Forced::Rest,
+                |_, _, _| {},
+            ))
+            .into_any_element(),
+    ]);
+    settings_window(
+        navigation,
+        detail_page(
+            "interface-scroll",
+            t("Interface", "インターフェイス"),
+            [
+                section(t("Appearance", "外観"), None, None, appearance),
+                section(t("Tabs", "タブ"), None, None, tabs),
+                section(t("Panes", "ペイン"), None, None, panes),
+            ],
+        ),
+    )
+    .into_any_element()
+}

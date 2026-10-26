@@ -1,0 +1,271 @@
+//! Rex Notifications composed with the Kagi settings kit.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Div, ElementId, Role, Window};
+use gpui_component::{Icon, IconName, Sizable, Size};
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i07-s1",
+    states: &[
+        "default",
+        "rest-position",
+        "selected-top-left",
+        "selected-top-right",
+        "selected-bottom-right",
+        "focus-position",
+        "hover-position",
+        "focus-switch",
+    ],
+    size: (900., 780.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn rex_sidebar() -> AnyElement {
+    let item = |id: &'static str, icon, hue, label: &'static str| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), 20.),
+            label,
+            None,
+            id == "notifications",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("search", "Search Settings").into_any_element(),
+        sidebar_item(
+            "server",
+            icon_tile(IconName::Bot, Tint::Hue(Hue::Purple), 20.),
+            "Server",
+            Some("Running".into()),
+            false,
+            Forced::Rest,
+        )
+        .into_any_element(),
+        sidebar_gap(),
+        item(
+            "interface",
+            IconName::LayoutDashboard,
+            Hue::Blue,
+            "Interface",
+        ),
+        item("themes", IconName::Palette, Hue::Indigo, "Themes"),
+        sidebar_gap(),
+        item("terminal", IconName::SquareTerminal, Hue::Gray, "Terminal"),
+        item("shortcuts", IconName::Asterisk, Hue::Gray, "Shortcuts"),
+        item(
+            "integrations",
+            IconName::Github,
+            Hue::Orange,
+            "Integrations",
+        ),
+        item("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        item("remote", IconName::Globe, Hue::Blue, "Remote Hosts"),
+        sidebar_gap(),
+        item("developer", IconName::Settings2, Hue::Gray, "Developer"),
+    ])
+    .into_any_element()
+}
+
+const POSITIONS: [&str; 6] = [
+    "top left",
+    "top center",
+    "top right",
+    "bottom left",
+    "bottom center",
+    "bottom right",
+];
+
+/// A single row-major value → cell mapping places every cell and its check.
+/// Indices 0, 2 and 5 exercise the minimum, middle and maximum gallery values.
+fn position_cell(value: usize) -> (f32, f32) {
+    ((value % 3) as f32 * 34., (value / 3) as f32 * 18.)
+}
+
+/// Kit gap: a spatial 3×2 choice preview, rather than text segments.
+/// `selected` is a row-major cell in 0..6. Forced states never change it.
+fn position_picker(selected: usize, forced: Forced) -> gpui::Stateful<Div> {
+    let selected = selected.min(5);
+    let fill = match forced {
+        Forced::Hover => ink::control_hover(),
+        Forced::Pressed => ink::control_pressed(),
+        _ => ink::control(),
+    };
+    let cells = POSITIONS.iter().enumerate().map(|(value, label)| {
+        let (x, y) = position_cell(value);
+        div()
+            .id(ElementId::NamedInteger(
+                "position-cell".into(),
+                value as u64,
+            ))
+            .absolute()
+            .left(pt(x))
+            .top(pt(y))
+            .w(pt(28.))
+            .h(pt(12.))
+            .rounded(pt(6.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .role(Role::RadioButton)
+            .aria_label(format!("Notification position: {label}"))
+            .aria_selected(value == selected)
+            .bg(if value == selected {
+                ink::accent()
+            } else {
+                rgb(ink::control_pressed()).into()
+            })
+            .text_color(rgb(ink::window()))
+            .when(value == selected, |el| {
+                el.child(Icon::new(IconName::Check).with_size(Size::Size(pt(10.))))
+            })
+    });
+    ring(
+        div()
+            .id("position-picker")
+            .w(pt(108.))
+            .h(pt(38.))
+            .p(pt(4.) - pt(metrics::RING))
+            .bg(rgb(fill))
+            .role(Role::RadioGroup)
+            .aria_label("Notification position")
+            .child(div().relative().w_full().min_w_0().h_full().children(cells)),
+        forced == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    )
+    .when(forced == Forced::Disabled, |el| {
+        el.opacity(ink::disabled_opacity())
+    })
+}
+
+fn toggle_row(id: &'static str, title: &'static str, checked: bool, forced: Forced) -> AnyElement {
+    Row::new(title)
+        .trailing(switch(id, title, checked, forced, |_, _, _| {}))
+        .into_any_element()
+}
+
+fn activity_status(
+    id: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    icon: IconName,
+    tint: Tint,
+) -> AnyElement {
+    Row::new(title)
+        .subtitle(subtitle)
+        .leading(icon_tile(icon, tint, 26.))
+        .navigation(id, Forced::Rest)
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let selected = match cx.state {
+        "selected-top-left" => 0,
+        "selected-top-right" => 2,
+        _ => 5,
+    };
+    let picker_state = match cx.state {
+        "focus-position" => Forced::Focus,
+        "hover-position" => Forced::Hover,
+        _ => Forced::Rest,
+    };
+    let switch_state = if cx.state == "focus-switch" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+    let delivery = "Tabs, Notifications, Dock Badge, Sound";
+    // Wrappers retain the full width so section headings and trailing edges
+    // remain owned by the surrounding kit scaffold.
+    let activity = div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(12.))
+        .child(group([
+            toggle_row("activity-tabs", "Show activity in tabs", true, switch_state),
+            toggle_row(
+                "system-notifications",
+                "Show system notifications",
+                true,
+                Forced::Rest,
+            ),
+            toggle_row("dock-badge", "Badge Dock icon", true, Forced::Rest),
+            toggle_row("sounds", "Play sounds", true, Forced::Rest),
+        ]))
+        .child(group([
+            activity_status(
+                "working",
+                "Working",
+                "Tabs",
+                IconName::Ellipsis,
+                Tint::Hue(Hue::Blue),
+            ),
+            activity_status(
+                "blocked",
+                "Blocked",
+                delivery,
+                IconName::Pause,
+                Tint::Warning,
+            ),
+            activity_status(
+                "error",
+                "Error",
+                delivery,
+                IconName::TriangleAlert,
+                Tint::Danger,
+            ),
+            activity_status(
+                "done",
+                "Done",
+                delivery,
+                IconName::CircleCheck,
+                Tint::Success,
+            ),
+        ]))
+        .child(group([
+            toggle_row(
+                "include-idle",
+                "Include idle processes in activity",
+                true,
+                Forced::Rest,
+            ),
+            toggle_row(
+                "each-process",
+                "Show each process in tabs",
+                false,
+                Forced::Rest,
+            ),
+        ]));
+    settings_window(
+        rex_sidebar(),
+        detail_page(
+            "notifications-scroll",
+            "Notifications",
+            [
+                section(
+                    "In-App Notifications",
+                    None,
+                    None,
+                    group([Row::new("Notification position")
+                        .subtitle(format!("Displayed {}", POSITIONS[selected]))
+                        .trailing(position_picker(selected, picker_state))
+                        .into_any_element()]),
+                ),
+                section(
+                    "Program Activity",
+                    Some("How status from processes and agents is handled".into()),
+                    None,
+                    activity,
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

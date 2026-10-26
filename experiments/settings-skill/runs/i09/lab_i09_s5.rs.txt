@@ -1,0 +1,515 @@
+//! iCloud reference composition. Placement suggestions (fixed reference layout):
+//! | Setting | Pane | Section |
+//! | Storage / Manage | iCloud | Storage |
+//! | Photos, Drive, Passwords, Notes, Messages, Mail | iCloud | Saved to iCloud |
+//! | Plan, Family, Invitations, Relay, Email, Domain | iCloud | iCloud+ Features |
+//! | Advanced Data Protection, Web Access | iCloud | Data access |
+//! State contract: all forced states retain the default content and values.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Div, FontWeight, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Lang;
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i09-s5",
+    states: &["default", "focus-card", "hover-manage", "focus-navigation"],
+    size: (900., 1040.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn text(ja: bool, en: &'static str, jp: &'static str) -> &'static str {
+    if ja {
+        jp
+    } else {
+        en
+    }
+}
+
+fn pane_sidebar(ja: bool) -> AnyElement {
+    let item = |id, icon, hue, en, jp| {
+        sidebar_item(
+            id,
+            icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+            text(ja, en, jp),
+            None,
+            id == "icloud",
+            Forced::Rest,
+        )
+        .into_any_element()
+    };
+    sidebar([
+        search_field("search", text(ja, "Search Settings", "設定を検索")).into_any_element(),
+        item(
+            "spotlight",
+            IconName::Search,
+            Hue::Blue,
+            "Spotlight",
+            "Spotlight",
+        ),
+        item(
+            "accessibility",
+            IconName::CircleUser,
+            Hue::Blue,
+            "Accessibility",
+            "アクセシビリティ",
+        ),
+        item(
+            "displays",
+            IconName::Sun,
+            Hue::Blue,
+            "Displays",
+            "ディスプレイ",
+        ),
+        item(
+            "desktop",
+            IconName::PanelBottom,
+            Hue::Gray,
+            "Desktop & Dock",
+            "デスクトップとDock",
+        ),
+        item(
+            "menu",
+            IconName::Menu,
+            Hue::Gray,
+            "Menu Bar",
+            "メニューバー",
+        ),
+        item(
+            "appearance",
+            IconName::Palette,
+            Hue::Indigo,
+            "Appearance",
+            "外観",
+        ),
+        item(
+            "wallpaper",
+            IconName::GalleryVerticalEnd,
+            Hue::Blue,
+            "Wallpaper",
+            "壁紙",
+        ),
+        sidebar_gap(),
+        item(
+            "notifications",
+            IconName::Bell,
+            Hue::Red,
+            "Notifications",
+            "通知",
+        ),
+        item("sound", IconName::Play, Hue::Pink, "Sound", "サウンド"),
+        item("focus", IconName::Moon, Hue::Indigo, "Focus", "集中モード"),
+        item(
+            "screen-time",
+            IconName::Calendar,
+            Hue::Purple,
+            "Screen Time",
+            "スクリーンタイム",
+        ),
+        sidebar_gap(),
+        item(
+            "lock",
+            IconName::EyeOff,
+            Hue::Gray,
+            "Lock Screen",
+            "ロック画面",
+        ),
+        item(
+            "privacy",
+            IconName::Eye,
+            Hue::Blue,
+            "Privacy & Security",
+            "プライバシーとセキュリティ",
+        ),
+        item(
+            "passwords",
+            IconName::Asterisk,
+            Hue::Gray,
+            "Touch ID & Password",
+            "Touch IDとパスワード",
+        ),
+        item(
+            "users",
+            IconName::User,
+            Hue::Blue,
+            "Users & Groups",
+            "ユーザとグループ",
+        ),
+        sidebar_gap(),
+        item(
+            "accounts",
+            IconName::Globe,
+            Hue::Blue,
+            "Internet Accounts",
+            "インターネットアカウント",
+        ),
+        item(
+            "games",
+            IconName::Star,
+            Hue::Pink,
+            "Game Center",
+            "Game Center",
+        ),
+        item("icloud", IconName::Network, Hue::Blue, "iCloud", "iCloud"),
+        item(
+            "wallet",
+            IconName::Inbox,
+            Hue::Orange,
+            "Wallet & Apple Pay",
+            "ウォレットとApple Pay",
+        ),
+        sidebar_gap(),
+        item(
+            "keyboard",
+            IconName::CaseSensitive,
+            Hue::Gray,
+            "Keyboard",
+            "キーボード",
+        ),
+        item(
+            "trackpad",
+            IconName::Frame,
+            Hue::Teal,
+            "Trackpad",
+            "トラックパッド",
+        ),
+    ])
+    .into_any_element()
+}
+
+/// Kit gap: a round decorative account badge, containing a kit symbol tile.
+fn cloud_badge() -> Div {
+    div()
+        .size(pt(52.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .border_1()
+        .border_color(rgb(ink::hairline()))
+        .bg(rgb(ink::card()))
+        .child(icon_tile(IconName::Network, Tint::Hue(Hue::Blue), 32.))
+}
+
+fn account_header() -> AnyElement {
+    div()
+        .w_full()
+        .min_w_0()
+        .h(pt(64.))
+        .px(pt(metrics::GROUP_PADDING_X))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .text_size(pt(23.))
+                .font_weight(FontWeight::BOLD)
+                .child("iCloud+")
+                .child(div().text_color(ink::secondary()).child("Tomioka Daiki")),
+        )
+        .child(cloud_badge())
+        .into_any_element()
+}
+
+/// Kit gap: reusable destination card composition from group, row and tile.
+/// Fixed outer height reserves space for a wrapped title above the subtitle.
+fn cloud_card(
+    id: &'static str,
+    symbol: IconName,
+    hue: Hue,
+    title: &'static str,
+    subtitle: &'static str,
+    forced: Forced,
+) -> AnyElement {
+    let card = group([Row::new(title)
+        .subtitle(subtitle)
+        .leading(icon_tile(symbol, Tint::Hue(hue), 26.))
+        .into_any_element()])
+    .id(id)
+    .w_full()
+    .min_w_0()
+    .h(pt(104.))
+    .justify_center()
+    .bg(rgb(ink::control()))
+    .when(forced == Forced::Hover, |el| {
+        el.bg(rgb(ink::control_hover()))
+    })
+    .when(forced == Forced::Pressed, |el| {
+        el.bg(rgb(ink::control_pressed()))
+    })
+    .when(forced == Forced::Disabled, |el| {
+        el.opacity(ink::disabled_opacity())
+    });
+    let card = ring(card, forced == Forced::Focus, metrics::GROUP_RADIUS)
+        .when(forced != Forced::Focus, |el| {
+            el.border(pt(1.)).border_color(rgb(ink::hairline()))
+        });
+    div().flex_1().min_w_0().child(card).into_any_element()
+}
+
+fn card_grid(cards: [AnyElement; 6]) -> Div {
+    let mut cards = cards.into_iter();
+    let rows = (0..2)
+        .map(|_| {
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .gap(pt(8.))
+                .children(cards.by_ref().take(3).collect::<Vec<_>>())
+        })
+        .collect::<Vec<_>>();
+    group([div()
+        .w_full()
+        .min_w_0()
+        .py(pt(12.))
+        .flex()
+        .flex_col()
+        .gap(pt(8.))
+        .children(rows)
+        .into_any_element()])
+    .w_full()
+    .min_w_0()
+}
+
+/// Kit gap: the section API has no leading accessory. Keep its real heading
+/// and trailing accessory, with a status dot immediately before the heading.
+fn saved_section(ja: bool, cards: [AnyElement; 6]) -> AnyElement {
+    div()
+        .relative()
+        .w_full()
+        .min_w_0()
+        .child(section(
+            text(ja, "Saved to iCloud", "iCloudに保存済み"),
+            None,
+            Some(
+                capsule_button("see-all", text(ja, "See All", "すべて見る"), Forced::Rest)
+                    .into_any_element(),
+            ),
+            card_grid(cards),
+        ))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top(pt(11.))
+                .size(pt(6.))
+                .rounded_full()
+                .bg(rgb(Tint::Success.color())),
+        )
+        .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let ja = cx.lang == Lang::Ja;
+    let forced = |name| {
+        if cx.state == name {
+            Forced::Focus
+        } else {
+            Forced::Rest
+        }
+    };
+    let manage = if cx.state == "hover-manage" {
+        Forced::Hover
+    } else {
+        Forced::Rest
+    };
+    let card = |id, icon, hue, en, jp, sub_en, sub_jp| {
+        cloud_card(
+            id,
+            icon,
+            hue,
+            text(ja, en, jp),
+            text(ja, sub_en, sub_jp),
+            if id == "photos" {
+                forced("focus-card")
+            } else {
+                Forced::Rest
+            },
+        )
+    };
+    let saved = [
+        card(
+            "photos",
+            IconName::GalleryVerticalEnd,
+            Hue::Pink,
+            "Photos",
+            "写真",
+            "111 items",
+            "111個の項目",
+        ),
+        card(
+            "drive",
+            IconName::Folder,
+            Hue::Blue,
+            "Drive",
+            "Drive",
+            "35.2 GB",
+            "35.2 GB",
+        ),
+        card(
+            "saved-passwords",
+            IconName::Asterisk,
+            Hue::Gray,
+            "Passwords",
+            "パスワード",
+            "On",
+            "オン",
+        ),
+        card(
+            "notes",
+            IconName::BookOpen,
+            Hue::Yellow,
+            "Notes",
+            "メモ",
+            "706 items",
+            "706個の項目",
+        ),
+        card(
+            "messages",
+            IconName::Inbox,
+            Hue::Green,
+            "Messages",
+            "メッセージ",
+            "921.6 MB",
+            "921.6 MB",
+        ),
+        card(
+            "mail",
+            IconName::Inbox,
+            Hue::Blue,
+            "Mail",
+            "メール",
+            "677.1 MB",
+            "677.1 MB",
+        ),
+    ];
+    let features = [
+        card(
+            "plan",
+            IconName::HardDrive,
+            Hue::Teal,
+            "Manage Plan",
+            "プランを管理",
+            "50 GB",
+            "50 GB",
+        ),
+        card(
+            "family",
+            IconName::User,
+            Hue::Orange,
+            "Family",
+            "ファミリー",
+            "Start sharing",
+            "共有を開始",
+        ),
+        card(
+            "invitations",
+            IconName::Calendar,
+            Hue::Purple,
+            "Apple Invitations",
+            "Appleインビテーション",
+            "Create event",
+            "イベントを作成",
+        ),
+        card(
+            "relay",
+            IconName::Globe,
+            Hue::Blue,
+            "Private Relay",
+            "プライベートリレー",
+            "On",
+            "オン",
+        ),
+        card(
+            "hide-email",
+            IconName::EyeOff,
+            Hue::Gray,
+            "Hide My Email",
+            "メールを非公開",
+            "14 addresses",
+            "14件のアドレス",
+        ),
+        card(
+            "domain",
+            IconName::Globe,
+            Hue::Blue,
+            "Custom Email Domain",
+            "カスタムメールドメイン",
+            "Manage",
+            "管理",
+        ),
+    ];
+    settings_window(
+        pane_sidebar(ja),
+        detail_page(
+            "icloud-scroll",
+            "iCloud",
+            [
+                account_header(),
+                group([div()
+                    .w_full()
+                    .min_w_0()
+                    .pb(pt(12.))
+                    .child(
+                        Row::new(text(
+                            ja,
+                            "Storage: 46.5 / 50 GB used",
+                            "ストレージ：46.5 / 50 GB使用済み",
+                        ))
+                        .trailing(capsule_button(
+                            "manage",
+                            text(ja, "Manage…", "管理…"),
+                            manage,
+                        )),
+                    )
+                    .child(progress_bar(0.93, Tint::Hue(Hue::Green)))
+                    .into_any_element()])
+                .into_any_element(),
+                saved_section(ja, saved),
+                section(
+                    text(ja, "iCloud+ Features", "iCloud+の機能"),
+                    None,
+                    None,
+                    card_grid(features),
+                ),
+                group([
+                    Row::new(text(ja, "Advanced Data Protection", "高度なデータ保護"))
+                        .trailing(caption(text(ja, "Off", "オフ")))
+                        .navigation("data-protection", forced("focus-navigation"))
+                        .into_any_element(),
+                    Row::new(text(
+                        ja,
+                        "Access iCloud Data on the Web",
+                        "WebでiCloudデータにアクセス",
+                    ))
+                    .trailing(caption(text(ja, "On", "オン")))
+                    .navigation("web-access", Forced::Rest)
+                    .into_any_element(),
+                ])
+                .into_any_element(),
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex_1()
+                    .min_h(pt(metrics::CONTROL_HEIGHT))
+                    .px(pt(metrics::GROUP_PADDING_X))
+                    .flex()
+                    .items_end()
+                    .justify_end()
+                    .child(capsule_button("help", "?", Forced::Rest))
+                    .into_any_element(),
+            ],
+        ),
+    )
+    .into_any_element()
+}

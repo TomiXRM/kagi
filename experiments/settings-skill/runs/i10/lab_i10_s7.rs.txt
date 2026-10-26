@@ -1,0 +1,536 @@
+use gpui::{div, prelude::*, rgb, AnyElement, App, FontWeight, Hsla, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+use kagi::ui::theme::theme;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i10-s7",
+    states: &["default", "focus-name"],
+    size: (1100., 820.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    div()
+        .size_full()
+        .relative()
+        .child(themes_page())
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(Hsla::from(rgb(0x000000)).opacity(0.48)),
+        )
+        .child(theme_editor_sheet(cx.state == "focus-name"))
+        .into_any_element()
+}
+
+fn themes_page() -> AnyElement {
+    settings_window(
+        sidebar([
+            search_field("settings-search", "Search Settings").into_any_element(),
+            sidebar_item(
+                "appearance",
+                icon_tile(IconName::Palette, Tint::Hue(Hue::Indigo), metrics::TILE),
+                "Appearance",
+                None,
+                false,
+                Forced::Rest,
+            )
+            .into_any_element(),
+            sidebar_item(
+                "themes",
+                icon_tile(IconName::Palette, Tint::Hue(Hue::Purple), metrics::TILE),
+                "Themes",
+                None,
+                true,
+                Forced::Rest,
+            )
+            .into_any_element(),
+            sidebar_item(
+                "terminal",
+                icon_tile(
+                    IconName::SquareTerminal,
+                    Tint::Hue(Hue::Gray),
+                    metrics::TILE,
+                ),
+                "Terminal",
+                None,
+                false,
+                Forced::Rest,
+            )
+            .into_any_element(),
+            sidebar_gap(),
+            sidebar_item(
+                "network",
+                icon_tile(IconName::Network, Tint::Hue(Hue::Blue), metrics::TILE),
+                "Network & Sync",
+                None,
+                false,
+                Forced::Rest,
+            )
+            .into_any_element(),
+            sidebar_item(
+                "integrations",
+                icon_tile(IconName::Github, Tint::Hue(Hue::Orange), metrics::TILE),
+                "Integrations",
+                None,
+                false,
+                Forced::Rest,
+            )
+            .into_any_element(),
+        ]),
+        detail_page(
+            "themes-scroll",
+            "Themes",
+            [
+                section(
+                    "Current theme",
+                    Some("Themes change the terminal and application palette.".into()),
+                    None,
+                    group([Row::new("Apple Dark")
+                        .subtitle("Dark Theme")
+                        .leading(icon_tile(
+                            IconName::Moon,
+                            Tint::Hue(Hue::Indigo),
+                            metrics::TILE_LARGE,
+                        ))
+                        .trailing(capsule_button("customize", "Customize…", Forced::Rest))
+                        .into_any_element()]),
+                ),
+                section(
+                    "Custom themes",
+                    Some("Make a copy before changing any colours.".into()),
+                    Some(
+                        section_action("new-theme", IconName::Plus, "New", Forced::Rest)
+                            .into_any_element(),
+                    ),
+                    group([Row::new("Apple Dark Copy")
+                        .subtitle("Dark Theme")
+                        .leading(icon_tile(
+                            IconName::Palette,
+                            Tint::Hue(Hue::Purple),
+                            metrics::TILE_LARGE,
+                        ))
+                        .navigation("open-editor", Forced::Rest)
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}
+
+fn theme_editor_sheet(name_has_focus: bool) -> AnyElement {
+    let palette = terminal_palette();
+    div()
+        .absolute()
+        .inset_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .p(pt(26.))
+        .child(
+            div()
+                .id("theme-editor-sheet")
+                .w(pt(980.))
+                .max_h_full()
+                .flex()
+                .flex_col()
+                .rounded(pt(18.))
+                .bg(rgb(ink::window()))
+                .border_1()
+                .border_color(rgb(ink::hairline()))
+                .shadow_lg()
+                .overflow_hidden()
+                .child(sheet_header(name_has_focus))
+                .child(
+                    div().px(pt(20.)).py(pt(18.)).child(section(
+                        "Colors",
+                        None,
+                        Some(
+                            div()
+                                .h(pt(metrics::CONTROL_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .gap(pt(8.))
+                                .child("Preview")
+                                .child(switch(
+                                    "theme-preview",
+                                    "Preview",
+                                    true,
+                                    Forced::Rest,
+                                    |_, _, _| {},
+                                ))
+                                .into_any_element(),
+                        ),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(pt(12.))
+                            .child(group([
+                                palette_group("Terminal", &palette.terminal, Forced::Rest),
+                                palette_group("ANSI Standard", &palette.standard, Forced::Rest),
+                                palette_group("ANSI Bright", &palette.bright, Forced::Rest),
+                            ]))
+                            .child(wide_action_button(
+                                "show-extended-palette",
+                                "Show extended palette",
+                                Forced::Rest,
+                            )),
+                    )),
+                )
+                .child(sheet_footer()),
+        )
+        .into_any_element()
+}
+
+fn sheet_header(name_has_focus: bool) -> AnyElement {
+    div()
+        .w_full()
+        .p(pt(20.))
+        .flex()
+        .items_start()
+        .gap(pt(12.))
+        .border_b_1()
+        .border_color(rgb(ink::hairline()))
+        .child(icon_tile(
+            IconName::Palette,
+            Tint::Hue(Hue::Indigo),
+            metrics::TILE_LARGE,
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(pt(5.))
+                .child(
+                    div()
+                        .text_size(pt(metrics::SECONDARY))
+                        .text_color(ink::secondary())
+                        .child("New Theme Name"),
+                )
+                .child(theme_name_field(
+                    "Apple Dark Copy",
+                    if name_has_focus {
+                        Forced::Focus
+                    } else {
+                        Forced::Rest
+                    },
+                )),
+        )
+        .child(capsule_button("dark-theme", "Dark Theme", Forced::Rest))
+        .into_any_element()
+}
+
+fn sheet_footer() -> AnyElement {
+    div()
+        .w_full()
+        .p(pt(16.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .border_t_1()
+        .border_color(rgb(ink::hairline()))
+        .child(capsule_button("revert", "Revert…", Forced::Rest))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(pt(8.))
+                .child(capsule_button("cancel", "Cancel", Forced::Rest))
+                .child(primary_button("save-apply", "Save & Apply", Forced::Rest)),
+        )
+        .into_any_element()
+}
+
+struct Palette {
+    terminal: [Swatch; 6],
+    standard: [Swatch; 8],
+    bright: [Swatch; 8],
+}
+
+#[derive(Clone, Copy)]
+struct Swatch {
+    id: &'static str,
+    label: &'static str,
+    color: (u8, u8, u8),
+}
+
+fn terminal_palette() -> Palette {
+    let active = theme();
+    Palette {
+        terminal: [
+            Swatch {
+                id: "background",
+                label: "Background",
+                color: active.term_bg,
+            },
+            Swatch {
+                id: "text",
+                label: "Text",
+                color: active.term_fg,
+            },
+            Swatch {
+                id: "cursor",
+                label: "Cursor",
+                color: active.term_cursor,
+            },
+            Swatch {
+                id: "cursor-text",
+                label: "Cursor Text",
+                color: active.term_bg,
+            },
+            Swatch {
+                id: "selection",
+                label: "Selection",
+                color: (
+                    active.term_selection.0,
+                    active.term_selection.1,
+                    active.term_selection.2,
+                ),
+            },
+            Swatch {
+                id: "selected-text",
+                label: "Selected Text",
+                color: active.term_fg,
+            },
+        ],
+        standard: [
+            Swatch {
+                id: "black",
+                label: "Black",
+                color: active.term_black,
+            },
+            Swatch {
+                id: "red",
+                label: "Red",
+                color: active.term_red,
+            },
+            Swatch {
+                id: "green",
+                label: "Green",
+                color: active.term_green,
+            },
+            Swatch {
+                id: "yellow",
+                label: "Yellow",
+                color: active.term_yellow,
+            },
+            Swatch {
+                id: "blue",
+                label: "Blue",
+                color: active.term_blue,
+            },
+            Swatch {
+                id: "magenta",
+                label: "Magenta",
+                color: active.term_magenta,
+            },
+            Swatch {
+                id: "cyan",
+                label: "Cyan",
+                color: active.term_cyan,
+            },
+            Swatch {
+                id: "white",
+                label: "White",
+                color: active.term_white,
+            },
+        ],
+        bright: [
+            Swatch {
+                id: "bright-black",
+                label: "Black",
+                color: active.term_bright_black,
+            },
+            Swatch {
+                id: "bright-red",
+                label: "Red",
+                color: active.term_bright_red,
+            },
+            Swatch {
+                id: "bright-green",
+                label: "Green",
+                color: active.term_bright_green,
+            },
+            Swatch {
+                id: "bright-yellow",
+                label: "Yellow",
+                color: active.term_bright_yellow,
+            },
+            Swatch {
+                id: "bright-blue",
+                label: "Blue",
+                color: active.term_bright_blue,
+            },
+            Swatch {
+                id: "bright-magenta",
+                label: "Magenta",
+                color: active.term_bright_magenta,
+            },
+            Swatch {
+                id: "bright-cyan",
+                label: "Cyan",
+                color: active.term_bright_cyan,
+            },
+            Swatch {
+                id: "bright-white",
+                label: "White",
+                color: active.term_bright_white,
+            },
+        ],
+    }
+}
+
+fn palette_group(title: &'static str, swatches: &[Swatch], forced: Forced) -> AnyElement {
+    div()
+        .w_full()
+        .px(pt(metrics::GROUP_PADDING_X))
+        .py(pt(10.))
+        .flex()
+        .flex_col()
+        .gap(pt(8.))
+        .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_start()
+                .gap(pt(8.))
+                .children(swatches.iter().map(|swatch| color_swatch(*swatch, forced))),
+        )
+        .into_any_element()
+}
+
+fn color_swatch(swatch: Swatch, forced: Forced) -> AnyElement {
+    let hex = hex(swatch.color);
+    ring(
+        div()
+            .id(format!("swatch-{}", swatch.id))
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(pt(4.))
+            .child(
+                div()
+                    .text_size(pt(metrics::SECONDARY))
+                    .text_color(ink::secondary())
+                    .truncate()
+                    .child(swatch.label),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .h(pt(metrics::CONTROL_HEIGHT))
+                    .rounded(pt(metrics::CONTROL_RADIUS))
+                    .bg(rgb(rgb_value(swatch.color)))
+                    .border_1()
+                    .border_color(rgb(ink::hairline())),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_size(pt(metrics::SECONDARY))
+                    .text_color(ink::secondary())
+                    .truncate()
+                    .child(hex),
+            ),
+        forced == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    )
+    .into_any_element()
+}
+
+fn theme_name_field(value: &'static str, forced: Forced) -> AnyElement {
+    ring(
+        div()
+            .id("theme-name")
+            .h(pt(30.))
+            .px(pt(9.))
+            .flex()
+            .items_center()
+            .rounded(pt(metrics::CONTROL_RADIUS))
+            .bg(rgb(ink::control()))
+            .border_1()
+            .border_color(rgb(ink::hairline()))
+            .when(forced == Forced::Hover, |el| {
+                el.bg(rgb(ink::control_hover()))
+            })
+            .when(forced == Forced::Pressed, |el| {
+                el.bg(rgb(ink::control_pressed()))
+            })
+            .when(forced == Forced::Disabled, |el| {
+                el.opacity(ink::disabled_opacity())
+            })
+            .child(value),
+        forced == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    )
+    .into_any_element()
+}
+
+fn wide_action_button(id: &'static str, label: &'static str, forced: Forced) -> AnyElement {
+    ring(
+        div()
+            .id(id)
+            .w_full()
+            .h(pt(metrics::CONTROL_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(pt(metrics::CONTROL_RADIUS))
+            .bg(rgb(ink::control()))
+            .when(forced == Forced::Hover, |el| {
+                el.bg(rgb(ink::control_hover()))
+            })
+            .when(forced == Forced::Pressed, |el| {
+                el.bg(rgb(ink::control_pressed()))
+            })
+            .when(forced == Forced::Disabled, |el| {
+                el.opacity(ink::disabled_opacity())
+            })
+            .child(label),
+        forced == Forced::Focus,
+        metrics::CONTROL_RADIUS,
+    )
+    .into_any_element()
+}
+
+fn primary_button(id: &'static str, label: &'static str, forced: Forced) -> AnyElement {
+    let active = theme();
+    ring(
+        div()
+            .id(id)
+            .h(pt(metrics::CONTROL_HEIGHT))
+            .px(pt(12.))
+            .flex()
+            .items_center()
+            .rounded(pt(metrics::CONTROL_HEIGHT / 2.))
+            .bg(rgb(active.ui_accent()))
+            .text_color(Hsla::from(rgb(active.on_accent())))
+            .when(forced == Forced::Disabled, |el| {
+                el.opacity(ink::disabled_opacity())
+            })
+            .child(label),
+        forced == Forced::Focus,
+        metrics::CONTROL_HEIGHT / 2.,
+    )
+    .into_any_element()
+}
+
+fn rgb_value((red, green, blue): (u8, u8, u8)) -> u32 {
+    ((red as u32) << 16) | ((green as u32) << 8) | blue as u32
+}
+
+fn hex(color: (u8, u8, u8)) -> String {
+    format!("#{:02X}{:02X}{:02X}", color.0, color.1, color.2)
+}

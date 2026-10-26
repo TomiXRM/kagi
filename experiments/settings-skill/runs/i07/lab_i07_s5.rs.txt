@@ -1,0 +1,301 @@
+//! iCloud gallery composition. Page-local gaps: summary cards, round badge,
+//! and a leading status marker on the kit section heading.
+use gpui::{div, prelude::*, rgb, AnyElement, App, Div, FontWeight, Role, Window};
+use gpui_component::{Icon, IconName, Sizable, Size};
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i07-s5",
+    states: &[
+        "default",
+        "hover-card",
+        "pressed-card",
+        "focus-card",
+        "disabled-card",
+        "focus-manage",
+        "hover-nav",
+    ],
+    size: (900., 1000.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn forced(cx: &GalleryContext, part: &str) -> Forced {
+    cx.state
+        .strip_suffix(part)
+        .and_then(|state| state.strip_suffix('-'))
+        .and_then(Forced::parse)
+        .unwrap_or(Forced::Rest)
+}
+
+fn cloud_sidebar() -> AnyElement {
+    let destinations = [
+        ("general", IconName::Settings2, Hue::Gray, "General"),
+        ("appearance", IconName::Palette, Hue::Indigo, "Appearance"),
+        ("accessibility", IconName::Eye, Hue::Blue, "Accessibility"),
+        ("notifications", IconName::Bell, Hue::Red, "Notifications"),
+        ("sound", IconName::Heart, Hue::Pink, "Sound"),
+        ("focus", IconName::Moon, Hue::Indigo, "Focus"),
+        (
+            "privacy",
+            IconName::CircleCheck,
+            Hue::Gray,
+            "Privacy & Security",
+        ),
+        (
+            "accounts",
+            IconName::CircleUser,
+            Hue::Orange,
+            "Internet Accounts",
+        ),
+        ("icloud", IconName::Globe, Hue::Blue, "iCloud"),
+        ("keyboard", IconName::SquareTerminal, Hue::Gray, "Keyboard"),
+    ];
+    sidebar(
+        [search_field("search", "Search Settings").into_any_element()]
+            .into_iter()
+            .chain(destinations.into_iter().map(|(id, icon, hue, title)| {
+                sidebar_item(
+                    id,
+                    icon_tile(icon, Tint::Hue(hue), metrics::TILE),
+                    title,
+                    None,
+                    id == "icloud",
+                    Forced::Rest,
+                )
+                .into_any_element()
+            })),
+    )
+    .into_any_element()
+}
+
+/// Kit gap: a round, noninteractive identity badge (not a symbol tile).
+fn account_badge(symbol: IconName, tint: Tint, diameter: f32) -> AnyElement {
+    div()
+        .id("account-badge")
+        .size(pt(diameter))
+        .flex_shrink_0()
+        .rounded_full()
+        .border(pt(1.))
+        .border_color(rgb(tint.color()))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(tint.color()))
+        .role(Role::Image)
+        .aria_label("iCloud+ account")
+        .child(Icon::new(symbol).with_size(Size::Size(pt(diameter * 0.55))))
+        .into_any_element()
+}
+
+/// Kit gap: equal-height summary cards. The kit still owns their group,
+/// row, symbol tile and focus ring. Text stays in normal flow when wrapped.
+fn cloud_card(
+    symbol: IconName,
+    hue: Hue,
+    title: &'static str,
+    subtitle: &'static str,
+    forced: Forced,
+) -> AnyElement {
+    let content = group([Row::new(title)
+        .subtitle(subtitle)
+        .leading(icon_tile(symbol, Tint::Hue(hue), 26.))
+        .into_any_element()])
+    .w_full()
+    .min_w_0()
+    .flex_1()
+    .justify_center()
+    .when(forced == Forced::Hover, |el| {
+        el.bg(rgb(ink::control_hover()))
+    })
+    .when(forced == Forced::Pressed, |el| {
+        el.bg(rgb(ink::control_pressed()))
+    });
+    let card = div()
+        .w_full()
+        .min_w_0()
+        .flex_1()
+        .flex_basis(gpui::relative(0.))
+        .h(pt(100.))
+        .flex()
+        .child(content)
+        .when(forced == Forced::Disabled, |el| {
+            el.opacity(ink::disabled_opacity())
+        });
+    ring(card, forced == Forced::Focus, metrics::GROUP_RADIUS).into_any_element()
+}
+
+type Card = (IconName, Hue, &'static str, &'static str);
+
+fn card_grid(cards: [Card; 6], first_forced: Forced) -> Div {
+    let mut rows = Vec::new();
+    for (row_index, row) in cards.chunks(3).enumerate() {
+        rows.push(div().w_full().min_w_0().flex().gap(pt(10.)).children(
+            row.iter().enumerate().map(|(column, card)| {
+                cloud_card(
+                    card.0.clone(),
+                    card.1,
+                    card.2,
+                    card.3,
+                    if row_index == 0 && column == 0 {
+                        first_forced
+                    } else {
+                        Forced::Rest
+                    },
+                )
+            }),
+        ));
+    }
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(pt(10.))
+        .children(rows)
+}
+
+/// Kit gap: section() has no leading status accessory. An em-space reserves
+/// the marker's cell. Return the kit section directly to the detail column;
+/// a nested section wrapper loses the heading's intrinsic width.
+fn saved_section(body: impl IntoElement) -> AnyElement {
+    section(
+        "\u{2003} Saved to iCloud",
+        None,
+        Some(
+            capsule_button("see-all", "See All", Forced::Rest)
+                .flex_shrink_0()
+                .into_any_element(),
+        ),
+        div()
+            .w_full()
+            .min_w_0()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(body)
+            .child(
+                div()
+                    .id("icloud-status")
+                    .absolute()
+                    .left(pt(metrics::GROUP_PADDING_X))
+                    .top(-pt(20.))
+                    .size(pt(8.))
+                    .rounded_full()
+                    .bg(rgb(Tint::Success.color()))
+                    .role(Role::Image)
+                    .aria_label("iCloud is up to date"),
+            ),
+    )
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let account = div()
+        .w_full()
+        .min_w_0()
+        .h(pt(72.))
+        .flex_shrink_0()
+        .px(pt(metrics::GROUP_PADDING_X))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .text_size(pt(24.))
+                .font_weight(FontWeight::BOLD)
+                .child("iCloud+")
+                .child(div().text_color(ink::secondary()).child("Tomioka Daiki")),
+        )
+        .child(account_badge(IconName::Globe, Tint::Hue(Hue::Blue), 52.))
+        .into_any_element();
+    let storage = group([
+        Row::new("Storage: 46.5 / 50 GB used")
+            .trailing(capsule_button("manage", "Manage…", forced(cx, "manage")))
+            .into_any_element(),
+        div()
+            .w_full()
+            .min_w_0()
+            .py(pt(12.))
+            .child(progress_bar(0.93, Tint::Success))
+            .into_any_element(),
+    ])
+    .w_full()
+    .min_w_0()
+    .into_any_element();
+    let saved = saved_section(card_grid(
+        [
+            (IconName::Sun, Hue::Pink, "Photos", "111 items"),
+            (IconName::Folder, Hue::Teal, "Drive", "35.2 GB"),
+            (IconName::Asterisk, Hue::Gray, "Passwords", "On"),
+            (IconName::BookOpen, Hue::Yellow, "Notes", "706 items"),
+            (IconName::Inbox, Hue::Green, "Messages", "921.6 MB"),
+            (IconName::Inbox, Hue::Blue, "Mail", "677.1 MB"),
+        ],
+        forced(cx, "card"),
+    ));
+    let features = section(
+        "iCloud+ Features",
+        None,
+        None,
+        card_grid(
+            [
+                (IconName::ChartPie, Hue::Teal, "Manage Plan", "50 GB"),
+                (IconName::CircleUser, Hue::Orange, "Family", "Start sharing"),
+                (
+                    IconName::Calendar,
+                    Hue::Pink,
+                    "Apple Invitations",
+                    "Create event",
+                ),
+                (IconName::Globe, Hue::Blue, "Private Relay", "On"),
+                (IconName::EyeOff, Hue::Gray, "Hide My Email", "14 addresses"),
+                (
+                    IconName::Globe,
+                    Hue::Orange,
+                    "Custom Email Domain",
+                    "Manage",
+                ),
+            ],
+            Forced::Rest,
+        ),
+    );
+    let navigation = group([
+        Row::new("Advanced Data Protection")
+            .trailing(caption("Off"))
+            .navigation("protection", forced(cx, "nav"))
+            .into_any_element(),
+        Row::new("Access iCloud Data on the Web")
+            .trailing(caption("On"))
+            .navigation("web-access", Forced::Rest)
+            .into_any_element(),
+    ])
+    .w_full()
+    .min_w_0()
+    .into_any_element();
+    let help = div()
+        .w_full()
+        .min_w_0()
+        .px(pt(metrics::GROUP_PADDING_X))
+        .flex()
+        .justify_end()
+        .child(capsule_button("help", "?", Forced::Rest))
+        .into_any_element();
+    settings_window(
+        cloud_sidebar(),
+        detail_page(
+            "icloud-scroll",
+            "iCloud",
+            [account, storage, saved, features, navigation, help],
+        ),
+    )
+    .into_any_element()
+}

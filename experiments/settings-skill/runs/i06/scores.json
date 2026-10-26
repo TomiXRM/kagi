@@ -1,0 +1,341 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    "Astra offscreen render"
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 structure",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 picker reusable",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 named states",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    "final captures marked not observed (refused), honestly"
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Sidebar tiles in category hues (v5 held)."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "kit Slider used"
+   ],
+   [
+    "3 choice tile",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 segmented",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 slider + pop-ups",
+    0.5,
+    false,
+    "kit Slider thumb is white on the white light card and disappears (foundation defect F1, fixed as F2)"
+   ],
+   [
+    "6 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": []
+ },
+ "S3": {
+  "items": [
+   [
+    "1 render EN dark, JA light, JA 720",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 Msg strings",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 JA / 720 wrapping",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 sidebar",
+    1,
+    false,
+    "category hues"
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S4": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 slider fn",
+    1,
+    false,
+    "one wrapper around the kit Slider; min/max states"
+   ],
+   [
+    "4 device table",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 two-choice + Mute",
+    0.5,
+    false,
+    "Output/Input does not span the group (kit Segmented has intrinsic widths); reported as a planning conflict"
+   ],
+   [
+    "6 Alert sound row",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": [
+   "Evaluator: the \"Output & Input\" heading collapses to one letter per line inside a page-local wrapper — the v5 `w_full()/min_w_0()` rule was not applied (L8 recurs)."
+  ]
+ },
+ "S5": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    "kit progress_bar used"
+   ],
+   [
+    "3 card grid",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 progress bar",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 value nav rows",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 section header",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": []
+ },
+ "S6": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 theme card",
+    1,
+    false,
+    "previews from each theme's own fields; identical under both host themes"
+   ],
+   [
+    "4 every theme once",
+    1,
+    false,
+    "split by dark, name order"
+   ],
+   [
+    "5 selection + scroll",
+    1,
+    false,
+    "ring + bold name; strip scrolls"
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: \"Color Vision (Blue / Orange)\" wraps mid-word under its card; the child also re-planned the sidebar (Git, AI, Language panes) unprompted."
+  ]
+ },
+ "S7": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 swatches",
+    1,
+    false,
+    "hex computed from term_* values; columns aligned"
+   ],
+   [
+    "4 name field",
+    1,
+    false,
+    "focus-name state"
+   ],
+   [
+    "5 footer",
+    1,
+    false,
+    "Revert… leading; Cancel + one primary trailing"
+   ],
+   [
+    "6 sheet surface",
+    0.5,
+    false,
+    "the sheet is taller than the window: its top edge and title touch the window edge"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 93,
+  "success": true,
+  "notes": [
+   "Evaluator: the \"Preview\" label of the Colors switch is missing."
+  ]
+ }
+}

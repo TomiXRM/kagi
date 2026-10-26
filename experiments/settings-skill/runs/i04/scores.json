@@ -1,0 +1,150 @@
+{
+ "S1": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 structure",
+    0.5,
+    false,
+    "900×692 page again cuts off the last group in every capture"
+   ],
+   [
+    "4 picker reusable",
+    0.5,
+    false,
+    "unselected cells are drawn in the card colour and vanish; only the selected cell is visible"
+   ],
+   [
+    "5 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 named states",
+    1,
+    false,
+    "7 states; `rest` keeps the data (L3 held)"
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 86,
+  "success": true,
+  "notes": [
+   "Evaluator: the child never saw a light/dark capture (host refused: display occluded) yet self-scored the visual items ○.",
+   "Evaluator: only the selected sidebar tile is accent (L7 recurs)."
+  ]
+ },
+ "S2": {
+  "items": [
+   [
+    "1 render dark+light",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 choice tile",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 segmented",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 slider + pop-ups",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 kit geometry",
+    1,
+    false,
+    ""
+   ],
+   [
+    "7 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "All sidebar tiles accent; seven interaction states, data unchanged."
+  ]
+ },
+ "S3": {
+  "items": [
+   [
+    "1 render EN dark, JA light, JA 720",
+    1,
+    true,
+    ""
+   ],
+   [
+    "2 kit reuse",
+    1,
+    true,
+    ""
+   ],
+   [
+    "3 Msg strings",
+    1,
+    false,
+    ""
+   ],
+   [
+    "4 JA / 720 wrapping",
+    1,
+    false,
+    ""
+   ],
+   [
+    "5 sidebar",
+    1,
+    false,
+    ""
+   ],
+   [
+    "6 report",
+    1,
+    false,
+    ""
+   ]
+  ],
+  "accuracy": 100,
+  "success": true,
+  "notes": [
+   "Evaluator: non-selected sidebar tiles neutral (L7 recurs)."
+  ]
+ }
+}

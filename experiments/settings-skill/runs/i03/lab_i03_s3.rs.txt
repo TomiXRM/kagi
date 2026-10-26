@@ -1,0 +1,137 @@
+//! Static, localized General settings composed entirely from settings-kit parts.
+use gpui::{prelude::*, AnyElement, App, Window};
+use gpui_component::IconName;
+use kagi::ui::gallery_host::{self, GalleryContext, GalleryPage};
+use kagi::ui::i18n::Msg;
+use kagi::ui::settings_kit::*;
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i03-s3",
+    states: &["default"],
+    size: (900., 692.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn panes() -> AnyElement {
+    sidebar(
+        [
+            ("general", IconName::Settings2, Msg::SettingsGeneral, true),
+            ("language", IconName::Globe, Msg::SettingsLanguage, false),
+            (
+                "smart-commit",
+                IconName::Bot,
+                Msg::SettingsSmartCommit,
+                false,
+            ),
+            ("analyze", IconName::Search, Msg::SettingsAnalyze, false),
+        ]
+        .map(|(id, icon, label, selected)| {
+            sidebar_item(
+                id,
+                icon_tile(icon, Tint::Accent, metrics::TILE),
+                label.t(),
+                None,
+                selected,
+                Forced::Rest,
+            )
+            .into_any_element()
+        }),
+    )
+    .into_any_element()
+}
+
+fn appearance() -> AnyElement {
+    section(
+        Msg::SettingsAppearance.t(),
+        None,
+        None,
+        group([
+            Row::new(Msg::SettingsTheme.t())
+                .subtitle(Msg::SettingsThemeDesc.t())
+                .trailing(popup_value("theme", "Apple Dark", Forced::Rest))
+                .into_any_element(),
+            Row::new(Msg::SettingsAccent.t())
+                .trailing(Segmented::new(
+                    "accent",
+                    [Msg::SettingsAccentSystem.t(), Msg::SettingsAccentTheme.t()],
+                    1,
+                ))
+                .into_any_element(),
+            Row::new(Msg::SettingsToolbarDisplay.t())
+                .subtitle(Msg::SettingsToolbarDisplayDesc.t())
+                .trailing(Segmented::new(
+                    "toolbar",
+                    [Msg::ToolbarIconAndText.t(), Msg::ToolbarIconOnly.t()],
+                    1,
+                ))
+                .into_any_element(),
+            Row::new(Msg::SettingsZoom.t())
+                .subtitle(Msg::SettingsZoomDesc.t())
+                .trailing(stepper("zoom", "100%", true, true, None))
+                .into_any_element(),
+            Row::new(Msg::SettingsCompactThreshold.t())
+                .subtitle(Msg::SettingsCompactThresholdDesc.t())
+                .trailing(stepper("compact-threshold", "70rem", true, true, None))
+                .into_any_element(),
+        ]),
+    )
+}
+
+fn graph() -> AnyElement {
+    section(
+        Msg::SettingsGraph.t(),
+        None,
+        None,
+        group([
+            toggle_row(
+                "compact-graph",
+                Msg::SettingsCompact,
+                Msg::SettingsCompactDesc,
+                false,
+            ),
+            toggle_row(
+                "avatar-nodes",
+                Msg::SettingsLaneCompact,
+                Msg::SettingsLaneCompactDesc,
+                true,
+            ),
+        ]),
+    )
+}
+
+fn toggle_row(id: &'static str, title: Msg, description: Msg, checked: bool) -> AnyElement {
+    Row::new(title.t())
+        .subtitle(description.t())
+        .trailing(switch(id, title.t(), checked, Forced::Rest, |_, _, _| {}))
+        .into_any_element()
+}
+
+fn render(_: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    settings_window(
+        panes(),
+        detail_page(
+            "general-scroll",
+            Msg::SettingsGeneral.t(),
+            [
+                appearance(),
+                graph(),
+                section(
+                    Msg::SettingsNetwork.t(),
+                    None,
+                    None,
+                    group([toggle_row(
+                        "auto-fetch",
+                        Msg::SettingsAutoFetch,
+                        Msg::SettingsAutoFetchDesc,
+                        true,
+                    )]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

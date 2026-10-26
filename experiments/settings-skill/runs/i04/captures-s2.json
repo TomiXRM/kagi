@@ -1,0 +1,58 @@
+{
+ "build_rc": 0,
+ "build_out": "",
+ "captures": [
+  {
+   "file": "shots/i04/s2/default-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/hover-choice-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/pressed-choice-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/focus-choice-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/disabled-choice-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/focus-slider-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/focus-switch-apple-dark-en.png",
+   "rc": 0
+  },
+  {
+   "file": "shots/i04/s2/default-apple-light-en.png",
+   "rc": 0
+  }
+ ],
+ "states": [
+  "default",
+  "hover-choice",
+  "pressed-choice",
+  "focus-choice",
+  "disabled-choice",
+  "focus-slider",
+  "focus-switch"
+ ],
+ "unknown_state_rc": 2,
+ "src_stats": {
+  "div()": 23,
+  "rgb(0x": 0,
+  "hsla(": 0,
+  "px(": 0,
+  ".rounded(": 10,
+  "Switch::new": 0,
+  "fn ": 6
+ },
+ "loc": 512
+}

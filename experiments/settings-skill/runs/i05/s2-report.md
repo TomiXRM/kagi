@@ -1,0 +1,15 @@
+- Deliverable / evidence: [examples/lab_i05_s2.rs](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/examples/lab_i05_s2.rs); ran `rustfmt --edition 2021`, `cargo build --example lab_i05_s2`, `target/debug/examples/lab_i05_s2 --list`, and native gallery captures on `ad1ab626`. PNGs: [dark default](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i05/s2/lab-i05-s2-default-dark.png), [dark focus](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i05/s2/lab-i05-s2-focus-choice-dark.png), [light default](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i05/s2/lab-i05-s2-default-light.png), [light focus](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i05/s2/lab-i05-s2-focus-choice-light.png)
+- Requirement self-check:
+  - ○ Apple Dark and Light EN host renders succeeded.
+  - ○ Standard controls are composed from `settings_kit`.
+  - ○ Reusable `choice_tile(preview, label, selected, forced)` with selected accent rings; clusters share one group and vertical divider.
+  - ○ Kit text-only equal-width segmented controls show selected values.
+  - ○ Five-tick slider and trailing value `3`; pop-up rows use `popup_value`.
+  - ○ Captures show kit row/group geometry and aligned trailing edges.
+  - ○ Report includes commands, paths, gaps, retries, and unobserved behavior.
+  - [C1] Initially, accent tile fills obscured selection rings; changed previews to the neutral control fill and recaptured. [C2] none.
+- Unclear points: none
+- Discretionary fills: used simplified semantic preview icons/shapes for the reference’s detailed visual thumbnails; added a `focus-choice` gallery state that focuses Light without changing Auto’s selected value.
+- Kit gaps: page-local visual choice tile and discrete five-tick slider.
+- Retries: 4 — two compile API corrections, one invisible-window capture retry, and one capture-review visual correction.
+- Not observed: real pointer hover, live keyboard focus traversal, VoiceOver/AX delivery, Japanese localization, and narrow-width behavior.

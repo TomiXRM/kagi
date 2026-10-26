@@ -1,0 +1,14 @@
+- Deliverable / evidence: [examples/lab_i08_s7.rs](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/examples/lab_i08_s7.rs). Ran `rustfmt --edition 2021 examples/lab_i08_s7.rs`, `cargo build --example lab_i08_s7 --features gui-e2e`, `target/debug/examples/lab_i08_s7 --list`, and four offscreen gallery captures. PNGs: [dark default](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i08/s7/lab-i08-s7-default-dark.png), [light default](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i08/s7/lab-i08-s7-default-light.png), [dark focus](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i08/s7/lab-i08-s7-focus-name-dark.png), [light focus](/Users/tomixrm/.t3/worktrees/git-client/experiment-kagi-settings-skill/target/ui-lab/runs/i08/s7/lab-i08-s7-focus-name-light.png).
+- Requirement self-check:
+  - ○ Apple Dark and Apple Light EN host renders succeeded.
+  - ○ Standard settings controls reuse `settings_kit`.
+  - ○ Reusable swatches take colour, label, and forced state; hex text derives from RGB; group columns align.
+  - ○ Reusable name-field look has `focus-name`, visibly ringed.
+  - ○ Footer has one primary action; Cancel immediately precedes it and Revert… remains leading.
+  - ○ Parent page is dimmed; sheet uses rounded elevated surface and shadow.
+  - ○ Commands, evidence paths, and unobserved behavior are listed here.
+- Unclear points: none
+- Discretionary fills: used Apple Dark’s terminal palette in both host themes so theme-editor values remain stable; created a minimal dimmed Themes page behind the sheet.
+- Kit gaps: `swatch`, `theme_name_field`, and primary/secondary `sheet_button` are page-local because the kit lacks colour editors, text input appearance, and primary footer actions.
+- Retries: 2 — corrected compile-time API assumptions, then added the missing visible Preview label found during capture review. Cargo briefly waited for the shared build lock, then completed.
+- Not observed: real pointer hover, live keyboard focus/input, Escape/Return routing, VoiceOver, and interactive save/revert behavior.

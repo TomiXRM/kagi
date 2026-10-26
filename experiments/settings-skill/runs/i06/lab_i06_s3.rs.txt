@@ -1,0 +1,184 @@
+//! Gallery reconstruction of Kagi's localized General settings pane.
+use gpui::{prelude::*, AnyElement, App, Window};
+use gpui_component::IconName;
+use kagi::ui::{
+    gallery_host::{self, GalleryContext, GalleryPage},
+    i18n::Msg,
+    settings_kit::{
+        detail_page, group, icon_tile, popup_value, search_field, section, settings_window,
+        sidebar, sidebar_gap, sidebar_item, stepper, switch, Forced, Hue, Row, Segmented,
+        StepperPart, Tint,
+    },
+};
+
+static PAGES: [GalleryPage; 1] = [GalleryPage {
+    name: "lab-i06-s3",
+    states: &["default", "focus-auto-fetch"],
+    size: (900., 900.),
+    render,
+}];
+
+fn main() {
+    gallery_host::run(&PAGES);
+}
+
+fn pane_item(id: &'static str, icon: IconName, hue: Hue, label: Msg, selected: bool) -> AnyElement {
+    sidebar_item(
+        id,
+        icon_tile(icon, Tint::Hue(hue), 20.),
+        label.t(),
+        None,
+        selected,
+        Forced::Rest,
+    )
+    .into_any_element()
+}
+
+fn kagi_sidebar() -> AnyElement {
+    sidebar([
+        search_field("search", Msg::SettingsTitle.t()).into_any_element(),
+        pane_item(
+            "general",
+            IconName::Settings2,
+            Hue::Gray,
+            Msg::SettingsGeneral,
+            true,
+        ),
+        pane_item(
+            "language",
+            IconName::Globe,
+            Hue::Blue,
+            Msg::SettingsLanguage,
+            false,
+        ),
+        sidebar_gap(),
+        pane_item(
+            "smart-commit",
+            IconName::Bot,
+            Hue::Purple,
+            Msg::SettingsSmartCommit,
+            false,
+        ),
+        pane_item(
+            "analyze",
+            IconName::ChartPie,
+            Hue::Teal,
+            Msg::SettingsAnalyze,
+            false,
+        ),
+    ])
+    .into_any_element()
+}
+
+fn render(cx: &GalleryContext, _: &mut Window, _: &mut App) -> AnyElement {
+    let auto_fetch_state = if cx.state == "focus-auto-fetch" {
+        Forced::Focus
+    } else {
+        Forced::Rest
+    };
+
+    settings_window(
+        kagi_sidebar(),
+        detail_page(
+            "general-scroll",
+            Msg::SettingsGeneral.t(),
+            [
+                section(
+                    Msg::SettingsAppearance.t(),
+                    None,
+                    None,
+                    group([
+                        Row::new(Msg::SettingsTheme.t())
+                            .subtitle(Msg::SettingsThemeDesc.t())
+                            .trailing(popup_value("theme", "Apple Dark", Forced::Rest))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsAccent.t())
+                            .trailing(
+                                Segmented::new(
+                                    "accent",
+                                    [Msg::SettingsAccentSystem.t(), Msg::SettingsAccentTheme.t()],
+                                    1,
+                                )
+                                .forced(1, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new(Msg::SettingsToolbarDisplay.t())
+                            .subtitle(Msg::SettingsToolbarDisplayDesc.t())
+                            .trailing(
+                                Segmented::new(
+                                    "toolbar-display",
+                                    [Msg::ToolbarIconAndText.t(), Msg::ToolbarIconOnly.t()],
+                                    1,
+                                )
+                                .forced(1, Forced::Rest),
+                            )
+                            .into_any_element(),
+                        Row::new(Msg::SettingsZoom.t())
+                            .subtitle(Msg::SettingsZoomDesc.t())
+                            .trailing(stepper(
+                                "zoom",
+                                "100%",
+                                true,
+                                true,
+                                Some((StepperPart::Increase, Forced::Rest)),
+                            ))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsCompactThreshold.t())
+                            .subtitle(Msg::SettingsCompactThresholdDesc.t())
+                            .trailing(stepper(
+                                "compact-threshold",
+                                "70rem",
+                                true,
+                                true,
+                                Some((StepperPart::Increase, Forced::Rest)),
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    Msg::SettingsGraph.t(),
+                    None,
+                    None,
+                    group([
+                        Row::new(Msg::SettingsCompact.t())
+                            .subtitle(Msg::SettingsCompactDesc.t())
+                            .trailing(switch(
+                                "compact-graph",
+                                Msg::SettingsCompact.t(),
+                                false,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                        Row::new(Msg::SettingsLaneCompact.t())
+                            .subtitle(Msg::SettingsLaneCompactDesc.t())
+                            .trailing(switch(
+                                "avatar-nodes",
+                                Msg::SettingsLaneCompact.t(),
+                                true,
+                                Forced::Rest,
+                                |_, _, _| {},
+                            ))
+                            .into_any_element(),
+                    ]),
+                ),
+                section(
+                    Msg::SettingsNetwork.t(),
+                    None,
+                    None,
+                    group([Row::new(Msg::SettingsAutoFetch.t())
+                        .subtitle(Msg::SettingsAutoFetchDesc.t())
+                        .trailing(switch(
+                            "auto-fetch",
+                            Msg::SettingsAutoFetch.t(),
+                            true,
+                            auto_fetch_state,
+                            |_, _, _| {},
+                        ))
+                        .into_any_element()]),
+                ),
+            ],
+        ),
+    )
+    .into_any_element()
+}

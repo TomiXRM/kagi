@@ -4,11 +4,11 @@
 //! preflight and keeps the descriptor through verification. An unconfirmed
 //! subprocess hands ownership to its reaper until the whole group stops.
 //! Never unlink this sidecar: replacing its inode would split exclusion.
+use crate::advisory_lock::AdvisoryLock;
 use crate::GitError;
 use kagi_domain::plan_note::{ConflictsNote, PlanNote};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs::File;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -17,7 +17,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 pub(crate) struct RepositoryLockFile {
-    _file: File,
+    _file: AdvisoryLock,
     active_guards: AtomicUsize,
     reentrant: AtomicBool,
 }
@@ -208,5 +208,24 @@ mod tests {
         .unwrap());
         drop(second_run);
         drop(acquire_with_timeout(&repo, Duration::ZERO).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn final_retained_handle_releases_lock_while_unrelated_fork_is_alive() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(root.path()).unwrap();
+        let outer = acquire(&repo).unwrap();
+        let retained = retain_for_termination();
+        drop(outer);
+        let admission = crate::advisory_lock::tests::with_unrelated_fork(|| {
+            drop(retained);
+            acquire_with_timeout(&repo, Duration::ZERO)
+        });
+        drop(
+            admission.expect(
+                "final retained handle must release admission before an unrelated fork execs",
+            ),
+        );
     }
 }

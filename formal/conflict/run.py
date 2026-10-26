@@ -15,7 +15,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent
-RELEASE = "v1.8.0"
+RELEASE = "v1.7.4"
 URL = f"https://github.com/tlaplus/tlaplus/releases/download/{RELEASE}/tla2tools.jar"
 
 

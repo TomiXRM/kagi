@@ -83,6 +83,55 @@ screen with no siblings to copy (#934's worktree row).
 | **State of an existing part** — a new disabled/loading/error state, a keyboard path, an AX name | Steps 3–6 for that part only; the reference may be omitted. |
 | **Wording only**, or no visible change | Nothing from this file. |
 
+### Conflict deletion and namespace choices (#1734 / #1735)
+
+Use the existing dense, file-local `compact_button` role, not window toolbar or
+sidebar session controls. DD has one secondary Remove from Index… / index から削除…
+action and a separate Deleted on both branches. / 両方の branch で削除されています。
+hint below its action row. Modify/delete offers secondary Use deleted side… and
+Use modified side. D/F has equal secondary Keep directory… / Keep file… choices.
+Ellipses identify plan-opening actions. Keep existing geometry,
+hover/pressed/focus-visible states and writer-busy admission; do not introduce a
+second control style or infer side presence from empty text.
+
+The standard plan sheet names the action and target in a sentence-style title,
+and uses the result verb (Remove, Delete, Keep Directory, Keep File) for explicit
+confirmation. Index-only removal asks “Remove ‘{path}’ from the index?”; removing
+a working file instead asks “Delete ‘{path}’?” and confirms with Delete / 削除.
+It discloses exact index removals, worktree removals and retained paths in EN/JA;
+directory nodes have a trailing `/`, and parked-file restoration is one
+`source → original destination` move, not duplicate removal/restoration entries.
+Confirmation is Primary when no working file is removed, Destructive otherwise;
+the working-file warning is likewise conditional. Neither role has a default
+root Return route; Cancel/Escape preserve the repository. Freeze the continuation
+label when opening the sheet: Review commit / commit を確認 for the last merge
+conflict, otherwise Review to continue / 確認へ進む. The body names that exact
+label without quotation marks and says the operation remains in progress until
+the user chooses it.
+The immutable plan token and owner survive until explicit confirmation.
+Test target-bearing titles and both languages at narrow widths; genuine keyboard/AX
+delivery and EN Light / JA Dark screenshots remain Tier B evidence, not renderer assertions.
+Before/after Return captures must both visibly contain the same open sheet;
+unchanged index state alone is not proof if a watcher refresh dismissed it.
+Path rows use the shared fixed-height dense row around `modal_path_text`; its
+horizontal flex sizing must never collapse a vertically stacked filename.
+The path scroller reserves its capped row-count height without flex compression.
+Path and group-label line boxes use that same scaled row height; inherited
+typography must not overflow the viewport at fractional UI zoom.
+The native regression checks filename bounds inside the path scroller. DD has
+no absent-side preview or instruction to choose a nonexistent side.
+After D/F resolution, the surviving original file or directory-side paths remain
+in Saved and can be opened for review before advancing, even when Git's conflict
+message named the now-removed parking artifact instead of the restored file.
+Deletion and D/F receipts retain their captured recovery snapshot even if a later
+write or verification fails. The Operation Log remains the durable recovery entry
+point for Partial and Unknown outcomes, not only successful resolutions.
+Reference: macOS Finder confirmation hierarchy, without importing mobile
+spacing into the dense file row.
+[Design figure and HIG quotations](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317);
+[independent design approval](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394580602).
+
+
 ## The procedure
 
 1. **Name the role and the density.** Which role from the table below? Is the

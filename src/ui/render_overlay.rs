@@ -644,6 +644,9 @@ impl KagiApp {
                             cx,
                         ))
                     })
+                    .when_some(self.conflict_resolution_modal().cloned(), |el, modal| {
+                        el.child(super::modals::conflict_resolution::render(modal, cx))
+                    })
                     // ── Abort confirmation (#704) — read from `self`, not passed in: the
                     //    operation strip can open it with no conflict view in existence. ──
                     .when_some(self.conflict_abort_modal().cloned(), |el, modal| {

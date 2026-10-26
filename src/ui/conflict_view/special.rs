@@ -4,10 +4,9 @@ use super::*;
 // Center pane: per-file choose + Result preview (W30; W32 supersedes)
 // ────────────────────────────────────────────────────────────
 
-/// Center pane for a directory/file conflict (#320): a hint plus the two keep
-/// buttons. Each defers to the parent `KagiApp::resolve_dir_file`, which runs the
-/// git-layer plan/execute (index stage + oplog) and re-detects — the reload
-/// pattern is why this must go through the parent, not the leased entity.
+/// Directory/file choices freeze an owner-bound intent. The parent prepares
+/// the exact namespace changes and opens the shared confirmation sheet; no
+/// index or working-tree mutation occurs before its explicit confirmation.
 fn render_dir_file_center(
     path: &std::path::Path,
     writer_busy: bool,
@@ -61,22 +60,24 @@ fn render_dir_file_center(
         ))
         .child(super::e2e::measure_control(
             "conflict-keep-directory",
-            choose_button(
-                Msg::ConflictKeepDirectory.t().to_string(),
-                ButtonRole::SideCurrent,
-                keep_dir,
+            super::toolbar::compact_button(
+                "conflict-keep-directory",
+                Msg::ConflictKeepDirectory.t(),
+                ButtonRole::Secondary,
                 cx,
             )
+            .on_click(keep_dir)
             .disabled(writer_busy),
         ))
         .child(super::e2e::measure_control(
             "conflict-keep-file",
-            choose_button(
-                Msg::ConflictKeepFile.t().to_string(),
-                ButtonRole::SideIncoming,
-                keep_file,
+            super::toolbar::compact_button(
+                "conflict-keep-file",
+                Msg::ConflictKeepFile.t(),
+                ButtonRole::Secondary,
                 cx,
             )
+            .on_click(keep_file)
             .disabled(writer_busy),
         ));
 
@@ -127,11 +128,95 @@ pub(super) fn render_center(
     let kind = file.kind;
     let path = file.path.clone();
 
-    // #320 directory/file conflict: no text merge / buffer choice — it is a single
-    // keep-directory-vs-keep-file decision that stages straight into the index via
-    // the parent app (`resolve_dir_file`), then re-detects (like conflict-save).
+    // Directory/file choices use the same prepared-plan confirmation as deletion.
     if kind == ConflictKind::DirFile {
         return render_dir_file_center(&path, writer_busy, cx);
+    }
+
+    use kagi_domain::conflict_family::Resolution;
+    let resolutions = mode.buffer.file_resolutions(&path).unwrap_or_default();
+    if resolutions.contains(&Resolution::Delete) {
+        let delete_label = if resolutions.len() == 1 {
+            Msg::ConflictConfirmDeletion
+        } else {
+            Msg::ConflictUseDeletedSide
+        };
+        let delete_path = path.clone();
+        let mut choices = div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .px(theme::scaled_px(12.))
+            .py(theme::scaled_px(8.))
+            .border_b_1()
+            .border_color(rgb(theme().surface))
+            .child(super::e2e::measure_control(
+                "conflict-delete",
+                super::toolbar::compact_button(
+                    "conflict-delete",
+                    delete_label.t(),
+                    ButtonRole::Secondary,
+                    cx,
+                )
+                .disabled(writer_busy)
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    let intent = view.freeze_delete_intent(&delete_path);
+                    let app = view.app.clone();
+                    cx.spawn_in(window, async move |_, cx| {
+                        let _ =
+                            app.update_in(cx, |app, _, cx| app.accept_conflict_intent(intent, cx));
+                    })
+                    .detach();
+                })),
+            ));
+        let side = resolutions.iter().find_map(|resolution| match resolution {
+            Resolution::Current => Some(kagi_git::resolution::ResolutionChoice::Current),
+            Resolution::Incoming => Some(kagi_git::resolution::ResolutionChoice::Incoming),
+            Resolution::Delete => None,
+        });
+        if let Some(side) = side {
+            let modified_path = path.clone();
+            choices = choices.child(super::e2e::measure_control(
+                "conflict-use-modified",
+                super::toolbar::compact_button(
+                    "conflict-use-modified",
+                    Msg::ConflictUseModifiedSide.t(),
+                    ButtonRole::Secondary,
+                    cx,
+                )
+                .disabled(writer_busy)
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    view.conflict_apply_choice(&modified_path, side, cx);
+                    cx.notify();
+                })),
+            ));
+        }
+        return div()
+            .flex()
+            .flex_col()
+            .flex_grow(1.)
+            .h_full()
+            .child(choices)
+            .when(resolutions.len() == 1, |pane| {
+                pane.child(
+                    div()
+                        .p(theme::scaled_px(12.))
+                        .text_size(theme::scaled_px(13.))
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(Msg::ConflictDeletedBothHint.t())),
+                )
+            })
+            .when(resolutions.len() > 1, |pane| {
+                pane.child(render_preview(
+                    mode,
+                    &path,
+                    kind,
+                    raw_preview_scroll,
+                    raw_preview,
+                    cx,
+                ))
+            })
+            .into_any_element();
     }
 
     let keep_current_label = format!("{} ({})", Msg::ConflictKeepCurrent.t(), labels.current.name);

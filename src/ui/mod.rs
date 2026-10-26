@@ -3301,10 +3301,10 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Explicit approval of the active modal. The root keyboard router selects
-    /// Cancel instead for destructive defaults. Returns `true` if a modal was
-    /// open, preventing fall-through to commit checkout. Each confirm method
-    /// self-guards on blockers and its own two-stage arming; approval can
+    /// Explicit approval of the active modal. No-default sheets stop root Return
+    /// before this router; their focused controls still dispatch approval.
+    /// Returns `true` when a modal was open, preventing commit-checkout fallback.
+    /// Each confirm method self-guards on blockers and two-stage arming; approval can
     /// neither execute a blocked plan nor skip a stage. View-only/multi-choice overlays (update,
     /// menu/settings) are consumed but not actioned.
     ///
@@ -3399,6 +3399,7 @@ impl KagiApp {
             M::BranchCleanup(_) => self.confirm_branch_cleanup(cx),
             M::Discard(_) => self.start_discard(cx),
             M::ConflictContinue(_) => self.confirm_conflict_continue(cx),
+            M::ConflictResolution(_) => self.confirm_conflict_resolution(cx),
             M::ConflictAbort(_) => self.confirm_conflict_abort(cx),
             M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
             M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
@@ -3484,6 +3485,7 @@ impl KagiApp {
             M::BranchCleanup(_) => self.cancel_branch_cleanup_modal(),
             M::Discard(_) => self.cancel_discard_modal(),
             M::ConflictContinue(_) => self.cancel_conflict_continue(),
+            M::ConflictResolution(_) => self.cancel_conflict_resolution(),
             M::ConflictAbort(_) => self.cancel_conflict_abort(),
             M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
             M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),

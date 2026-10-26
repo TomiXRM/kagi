@@ -267,6 +267,7 @@ impl KagiApp {
         self.clear_cherry_pick_modal();
         self.clear_revert_modal();
         self.clear_conflict_continue_modal();
+        self.clear_conflict_resolution_modal();
         // #755: the abort confirmation is the same kind of plan — it froze the
         // observation the user saw (`ConflictAbortModal::operation`), so once a
         // reload has moved the repository the card describes an older state.

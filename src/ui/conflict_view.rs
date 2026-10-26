@@ -41,6 +41,8 @@ pub use saved::SavedPreview;
 mod tests;
 #[cfg(feature = "gui-e2e")]
 pub use toolbar::continue_primary_for_e2e;
+#[cfg(feature = "gui-e2e")]
+pub use toolbar::take_compact_labels_for_e2e;
 mod draft_owner;
 pub(super) mod flow;
 pub use flow::ConflictPage;
@@ -521,6 +523,32 @@ impl Render for ConflictView {
 }
 
 impl ConflictView {
+    pub(crate) fn freeze_delete_intent(&self, path: &std::path::Path) -> FrozenConflictIntent {
+        let mode = self.mode.as_ref().expect("rendered conflict has a mode");
+        match kagi_git::Backend::conflict_delete_request(
+            mode.revision.clone(),
+            &mode.buffer,
+            path,
+            mode.session.op.kind(),
+        ) {
+            Ok(request) => FrozenConflictIntent::Request {
+                token: self.intent_token,
+                request: crate::app::ConflictAppRequest {
+                    owner: self.owner.clone(),
+                    request,
+                },
+            },
+            Err(error) => FrozenConflictIntent::SaveRefusal {
+                token: self.intent_token,
+                owner: self.owner.clone(),
+                revision: mode.revision.clone(),
+                operation: mode.session.op.slug().to_string(),
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            },
+        }
+    }
+
     pub(crate) fn freeze_save_intent(&self, path: &std::path::Path) -> FrozenConflictIntent {
         let mode = self.mode.as_ref().expect("rendered conflict has a mode");
         let before = self

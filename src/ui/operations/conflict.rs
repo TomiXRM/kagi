@@ -318,9 +318,9 @@ impl KagiApp {
         }
     }
 
-    /// Plan → approve → dispatch one conflict-family request. `false` = the
-    /// request never became a job (closed pane admission, refused plan, stale
-    /// approval). A closed pane gate retains its already-presented failure.
+    /// Prepare one conflict-family request. Ordinary Save retains its explicit
+    /// Save approval; deletion and directory/file choices require the frozen
+    /// plan sheet's separate confirmation before dispatch.
     pub(crate) fn start_conflict_request(
         &mut self,
         request: app::ConflictAppRequest,
@@ -329,6 +329,15 @@ impl KagiApp {
         if !self.pane_mutation_admitted(request.owner.session) {
             return false;
         }
+        use kagi_domain::conflict_family::{ConflictDraft, ConflictRequest};
+        let needs_confirmation = matches!(
+            &request.request,
+            ConflictRequest::Save {
+                draft: ConflictDraft::Delete,
+                ..
+            } | ConflictRequest::ResolveDirFile { .. }
+        );
+        let attachment = request.owner.clone();
         let policy = crate::ui::blocking_ops::execution_policy();
         let owner = request.owner.session;
         let action = request.request.action();
@@ -358,6 +367,62 @@ impl KagiApp {
             }
             _ => return false,
         };
+        if needs_confirmation {
+            let app::PlanState::Ready {
+                prepared: app::Planned::Conflict { plan, .. },
+                ..
+            } = self.app_sessions.plan_state()
+            else {
+                return false;
+            };
+            let changes = plan.path_changes();
+            use crate::ui::modals::conflict_resolution::ResolutionKind;
+            use kagi_domain::resolution::DirFileChoice;
+            let (kind, path) = match plan.request() {
+                ConflictRequest::Save {
+                    path,
+                    draft: ConflictDraft::Delete,
+                    ..
+                } => (ResolutionKind::Remove, path.clone()),
+                ConflictRequest::ResolveDirFile { path, choice, .. } => (
+                    match choice {
+                        DirFileChoice::KeepDirectory => ResolutionKind::KeepDirectory,
+                        DirFileChoice::KeepFile => ResolutionKind::KeepFile,
+                    },
+                    path.clone(),
+                ),
+                _ => return false,
+            };
+            let revision = plan.request().revision().clone();
+            let Some((intent_token, continuation)) = self.ui().conflict.as_ref().and_then(|pane| {
+                let pane = pane.read(cx);
+                let mode = pane.mode.as_ref()?;
+                let continuation = if mode.session.files.len() == 1
+                    && matches!(mode.session.op, kagi_git::ConflictOp::Merge { .. })
+                {
+                    Msg::ConflictToCommit
+                } else {
+                    Msg::ConflictReviewContinue
+                };
+                Some((pane.intent_token, continuation))
+            }) else {
+                return false;
+            };
+            self.set_conflict_resolution_modal(
+                crate::ui::modals::conflict_resolution::ConflictResolutionModal {
+                    token,
+                    owner: attachment,
+                    revision,
+                    intent_token,
+                    changes,
+                    kind,
+                    path,
+                    continuation,
+                },
+            );
+            cx.notify();
+            return true;
+        }
         match app::approve(&mut self.app_sessions, token, app::Policy::Conflict(policy)) {
             Ok(approved) => {
                 self.dispatch_job(approved, cx);

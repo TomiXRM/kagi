@@ -245,47 +245,29 @@ fn write_disk_cache(url: &str, bytes: &[u8]) {
 // Image decoding helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Input policy retained during the side-pair preparation cutover (ADR-0228).
+/// Avatar recognition remains deliberately narrower than file previews.
 #[derive(Clone, Copy)]
 pub(crate) enum ImageClassification {
     MagicOnly,
-    ExtensionThenMagic,
+    FilePreview,
 }
 
-/// One classifier; the policy preserves today's avatar/diff and conflict formats.
+/// Recognized magic always wins over a filename; file previews also support BMP.
 pub(crate) fn classify_image(
-    path: &std::path::Path,
+    _path: &std::path::Path,
     bytes: &[u8],
     policy: ImageClassification,
 ) -> Option<ImageFormat> {
-    if matches!(policy, ImageClassification::ExtensionThenMagic) {
-        match path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("png") => return Some(ImageFormat::Png),
-            Some("jpg" | "jpeg") => return Some(ImageFormat::Jpeg),
-            Some("gif") => return Some(ImageFormat::Gif),
-            Some("webp") => return Some(ImageFormat::Webp),
-            Some("bmp") => return Some(ImageFormat::Bmp),
-            _ => {}
+    use kagi_domain::diff::{media_kind, MediaKind};
+    match media_kind(bytes)? {
+        MediaKind::Png => Some(ImageFormat::Png),
+        MediaKind::Jpeg => Some(ImageFormat::Jpeg),
+        MediaKind::Gif => Some(ImageFormat::Gif),
+        MediaKind::Webp => Some(ImageFormat::Webp),
+        MediaKind::Bmp if matches!(policy, ImageClassification::FilePreview) => {
+            Some(ImageFormat::Bmp)
         }
-    }
-    if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
-        Some(ImageFormat::Png)
-    } else if bytes.len() >= 3 && bytes[..3] == [0xff, 0xd8, 0xff] {
-        Some(ImageFormat::Jpeg)
-    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        Some(ImageFormat::Webp)
-    } else if bytes.len() >= 6 && (&bytes[..6] == b"GIF87a" || &bytes[..6] == b"GIF89a") {
-        Some(ImageFormat::Gif)
-    } else if matches!(policy, ImageClassification::ExtensionThenMagic) && bytes.starts_with(b"BM")
-    {
-        Some(ImageFormat::Bmp)
-    } else {
-        None
+        MediaKind::Bmp | MediaKind::Pdf => None,
     }
 }
 

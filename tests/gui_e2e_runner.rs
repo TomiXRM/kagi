@@ -57,6 +57,10 @@ mod open_picker;
 mod conflict_open;
 
 #[cfg(target_os = "macos")]
+#[path = "gui_e2e/side_pair.rs"]
+mod side_pair;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/ref_validation.rs"]
 mod ref_validation;
 
@@ -3566,6 +3570,18 @@ mod macos {
             (
                 "conflict_preview_read_retry",
                 Box::new(crate::recovery_diff_presentation::scenario_conflict_preview_read_retry),
+            ),
+            (
+                "conflict_side_pair_image",
+                Box::new(crate::side_pair::scenario_conflict_side_pair_image),
+            ),
+            (
+                "conflict_side_pair_pdf",
+                Box::new(crate::side_pair::scenario_conflict_side_pair_pdf),
+            ),
+            (
+                "conflict_side_pair_modify_delete",
+                Box::new(crate::side_pair::scenario_conflict_side_pair_modify_delete),
             ),
             (
                 "conflict_save_boundary",

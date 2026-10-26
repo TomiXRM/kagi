@@ -102,6 +102,7 @@ pub(super) fn render_center(
     writer_busy: bool,
     raw_preview_scroll: &gpui::ScrollHandle,
     raw_preview: &conflict_binary_view::PreviewState,
+    pdfs: Option<&crate::ui::diff_view::pdf::DiffPdfViewers>,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
@@ -132,9 +133,21 @@ pub(super) fn render_center(
     if kind == ConflictKind::DirFile {
         return render_dir_file_center(&path, writer_busy, cx);
     }
-
     use kagi_domain::conflict_family::Resolution;
     let resolutions = mode.buffer.file_resolutions(&path).unwrap_or_default();
+    if kind.is_raw() && resolutions.iter().any(|r| *r != Resolution::Delete) {
+        return super::conflict_binary_view::render_raw_preview(
+            raw_preview,
+            mode,
+            &path,
+            &labels,
+            raw_preview_scroll,
+            pdfs,
+            writer_busy,
+            cx,
+        );
+    }
+
     if resolutions.contains(&Resolution::Delete) {
         let delete_label = if resolutions.len() == 1 {
             Msg::ConflictConfirmDeletion
@@ -207,14 +220,7 @@ pub(super) fn render_center(
                 )
             })
             .when(resolutions.len() > 1, |pane| {
-                pane.child(render_preview(
-                    mode,
-                    &path,
-                    kind,
-                    raw_preview_scroll,
-                    raw_preview,
-                    cx,
-                ))
+                pane.child(render_preview(mode, &path))
             })
             .into_any_element();
     }
@@ -292,7 +298,7 @@ pub(super) fn render_center(
         ));
     }
 
-    let preview = render_preview(mode, &path, kind, raw_preview_scroll, raw_preview, cx);
+    let preview = render_preview(mode, &path);
 
     div()
         .flex()
@@ -319,23 +325,7 @@ where
 }
 
 /// Read-only plain-text Result preview for whole-file choices.
-fn render_preview(
-    mode: &ConflictMode,
-    path: &std::path::Path,
-    kind: ConflictKind,
-    raw_preview_scroll: &gpui::ScrollHandle,
-    raw_preview: &conflict_binary_view::PreviewState,
-    cx: &mut Context<ConflictView>,
-) -> gpui::AnyElement {
-    // #321: binary / symlink / submodule get an informative side-by-side viewer.
-    if kind.is_raw() {
-        return super::conflict_binary_view::render_raw_preview(
-            raw_preview,
-            path,
-            raw_preview_scroll,
-            cx,
-        );
-    }
+fn render_preview(mode: &ConflictMode, path: &std::path::Path) -> gpui::AnyElement {
     let body: gpui::AnyElement = if let Some(text) = mode.buffer.resolved_text(path) {
         let mut col = div().flex().flex_col();
         for line in text.split('\n') {

@@ -189,6 +189,14 @@ pub(crate) fn conflicted_base_oid(
     index: &git2::Index,
     path: &Path,
 ) -> Result<Option<Option<git2::Oid>>, GitError> {
+    conflicted_base_entry(index, path).map(|entry| entry.map(|entry| entry.map(|entry| entry.id)))
+}
+
+/// The same selected base, retaining its frozen mode for media projection.
+pub(crate) fn conflicted_base_entry(
+    index: &git2::Index,
+    path: &Path,
+) -> Result<Option<Option<git2::IndexEntry>>, GitError> {
     if !index.has_conflicts() {
         return Ok(None);
     }
@@ -203,7 +211,7 @@ pub(crate) fn conflicted_base_oid(
             .flatten()
             .any(|entry| entry.path.as_slice() == path.as_os_str().as_encoded_bytes())
         {
-            return Ok(Some(entry.our.or(entry.ancestor).map(|entry| entry.id)));
+            return Ok(Some(entry.our.or(entry.ancestor)));
         }
     }
     Ok(None)

@@ -62,7 +62,13 @@ pub struct MainDiffPane {
 }
 
 impl MainDiffPane {
-    pub fn new(view: MainDiffView, app: WeakEntity<KagiApp>, owner: crate::app::SessionId) -> Self {
+    pub fn new(
+        view: MainDiffView,
+        app: WeakEntity<KagiApp>,
+        owner: crate::app::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        cx.on_release(|pane, cx| pane.retire_images(cx)).detach();
         Self {
             view,
             scroll: new_diff_list_state(),
@@ -92,7 +98,14 @@ impl MainDiffPane {
             }
             self.pdfs = pdfs.map(|sources| DiffPdfViewers::new(sources, cx));
         }
+        self.retire_images(cx);
         self.view.adopt(view);
+    }
+
+    fn retire_images(&mut self, cx: &mut gpui::App) {
+        if let Some(pair) = self.view.side_pair.take() {
+            super::diff_view::retire_side_images([&pair.left, &pair.right], cx);
+        }
     }
 
     pub(crate) fn focused_pdf_body(
@@ -312,7 +325,7 @@ impl KagiApp {
                     .expect("main diff requires an attached session");
                 let pane = cx.new(|cx| {
                     let pdfs = pdfs.map(|sources| DiffPdfViewers::new(sources, cx));
-                    let mut pane = MainDiffPane::new(view, weak, owner);
+                    let mut pane = MainDiffPane::new(view, weak, owner, cx);
                     pane.pdfs = pdfs;
                     pane
                 });

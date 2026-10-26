@@ -686,6 +686,18 @@ pub fn scenario_commit_pdf_fit_width(cx: &mut VisualTestAppContext) {
                 old_refit.scroll.bounds().center(),
                 Modifiers::none(),
             );
+            let (body_focused, focused, body_focus) = cx
+                .update_window(window, |_, window, cx| {
+                    use gpui::Focusable as _;
+                    let focus = old.read(cx).focus_handle(cx);
+                    (focus.is_focused(window), window.focused(cx), focus)
+                })
+                .unwrap();
+            assert!(
+                body_focused,
+                "clicking the fitted PDF body must own keyboard focus; bounds={:?}, focused={focused:?}, body={body_focus:?}",
+                old_refit.scroll.bounds(),
+            );
             keys(cx, window, "end");
             let last = wait_pdf(cx, &old, window);
             assert_eq!(

@@ -1,7 +1,7 @@
 //! Borderless source documents, aligned decision gutter, and direct Result editor.
 use super::*;
 
-pub(super) fn tool_button<H>(
+pub(crate) fn tool_button<H>(
     id: &str,
     label: &str,
     role: ButtonRole,

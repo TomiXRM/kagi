@@ -108,6 +108,7 @@ pub struct EditorChrome {
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     pub raw_preview_scroll: gpui::ScrollHandle,
     pub(crate) raw_preview: conflict_binary_view::PreviewState,
+    pub(crate) raw_pdfs: Option<super::diff_view::pdf::DiffPdfViewers>,
     /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
     /// Interior-mutable so the render path can fill it lazily; keyed by
     /// (path, theme slug) — row TEXT never changes within a session, only the
@@ -236,6 +237,7 @@ pub struct ConflictView {
     /// dropped on conflict-clear / repo or tab switch). Used for the read-only
     /// marker materialization in `conflict_open_editor`.
     pub(crate) repo_path: PathBuf,
+    pub(crate) file_header_fit: super::render_helpers::HeaderFit,
 }
 
 impl ConflictView {
@@ -248,6 +250,8 @@ impl ConflictView {
         owner: crate::app::Attachment,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|view, cx| view.retire_raw_preview(cx))
+            .detach();
         Self {
             window_activation_subscription: None,
             _draft_quit_subscription: cx.on_app_quit(|view, cx| view.flush_drafts_on_quit(cx)),
@@ -304,6 +308,7 @@ impl ConflictView {
             owner,
             app,
             repo_path,
+            file_header_fit: Default::default(),
         }
     }
 
@@ -634,6 +639,7 @@ impl ConflictView {
             ab_geom: self.ab_geom.clone(),
             raw_preview_scroll: self.raw_preview_scroll.clone(),
             raw_preview: self.raw_preview.state.clone(),
+            raw_pdfs: self.raw_preview.pdfs.clone(),
             hl_cache: self.hl_cache.clone(),
         }
     }

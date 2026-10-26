@@ -1,108 +1,30 @@
-//! #321 — informative side-by-side viewer for binary / symlink / submodule
-//! conflicts inside Conflict Mode.
-//!
-//! Backend resolution (take a side by raw OID) stays authoritative. ConflictView
-//! retains an accepted, off-thread prepared pair; rendering never opens Backend.
-//! Choice controls and the existing side layout remain unchanged in ADR-0228 step ①.
-//!
-//! Per side we render one of four modes:
-//!   - **Image** (png/jpg/jpeg/gif/webp/bmp, within a size cap): the decoded
-//!     image, current | incoming.
-//!   - **Symlink**: the link target string (the blob content of a 120000 entry
-//!     IS the target path).
-//!   - **Submodule**: the side's commit OID (short).
-//!   - **Binary** (and images beyond the cap): size + short OID, plus a shared
-//!     "open both sides in external editor" action to compare.
+//! Conflict-owned admission, adoption and lifetime for the shared side-pair viewer.
+//! Preparation and content rendering are shared with diff. Decisions and Save
+//! remain authoritative in ResolutionBuffer; preview bytes never enter Save.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, px, rgb, Context, Image, SharedString};
+use gpui::{div, prelude::*, px, rgb, Context, SharedString};
+use gpui_component::Disableable as _;
 
 use kagi_git::conflicts::{ConflictKind, SideLabels};
 use kagi_git::resolution::SelectionSide;
 
 use super::conflict_view::ConflictView;
+use super::diff_view::pdf::{DiffPdfViewers, PreparedPdfPair};
+use super::diff_view::{SideContent, SideHeader, SidePair};
 use super::i18n::Msg;
 use super::theme::{self, theme};
 
 #[cfg(feature = "gui-e2e")]
 mod test_support;
 
-/// Decode budget: images larger than this are not decoded inline (shown as a
-/// binary side with an "open externally" affordance instead). Keeps a huge blob
-/// from being handed to the image decoder every session.
-pub(crate) const IMAGE_SIZE_CAP: u64 = 8 * 1024 * 1024;
-/// Max on-screen box for a previewed image side.
-const IMAGE_MAX_PX: f32 = 260.;
-
-// ────────────────────────────────────────────────────────────
-// Pure helpers (unit-tested) — no gpui / git2 / I/O
-// ────────────────────────────────────────────────────────────
-
-/// The four viewer modes for a structurally-unmergeable conflict side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryViewMode {
-    /// Render the side's blob as an image.
-    Image,
-    /// Show the side's link target string.
-    Symlink,
-    /// Show the side's commit OID.
-    Submodule,
-    /// Show size + OID; offer external-editor compare.
-    Binary,
-}
-
-/// Decide the viewer mode for a conflict side. Submodule and Symlink follow the
-/// conflict kind directly; a Binary conflict renders as an image only when the
-/// blob is detected as one AND within the size cap, otherwise as a raw binary.
-pub fn viewer_mode(kind: ConflictKind, is_image: bool, size: Option<u64>) -> BinaryViewMode {
-    match kind {
-        ConflictKind::Submodule => BinaryViewMode::Submodule,
-        ConflictKind::Symlink => BinaryViewMode::Symlink,
-        _ => {
-            let within_cap = size.map(|s| s <= IMAGE_SIZE_CAP).unwrap_or(false);
-            if is_image && within_cap {
-                BinaryViewMode::Image
-            } else {
-                BinaryViewMode::Binary
-            }
-        }
-    }
-}
-
-/// Everything the viewer needs for one side, resolved once via the backend.
-#[derive(Clone)]
-pub(crate) struct SideData {
-    pub(crate) present: bool,
-    pub(crate) oid_short: String,
-    pub(crate) size: Option<u64>,
-    pub(crate) mode: BinaryViewMode,
-    pub(crate) image: Option<Arc<Image>>,
-    pub(crate) symlink_target: Option<String>,
-    /// A present side can fail preparation; it must never become `Absent`.
-    pub(crate) error: Option<String>,
-}
-
-impl SideData {
-    pub(crate) fn absent() -> Self {
-        SideData {
-            present: false,
-            oid_short: String::new(),
-            size: None,
-            mode: BinaryViewMode::Binary,
-            image: None,
-            symlink_target: None,
-            error: None,
-        }
-    }
-}
-
 #[derive(Clone, Default)]
 pub(crate) enum PreviewState {
     #[default]
     Loading,
-    Ready(Arc<[SideData; 2]>),
+    Ready(Arc<[SideContent; 2]>),
     Failed(Arc<str>),
 }
 
@@ -110,6 +32,7 @@ pub(crate) enum PreviewState {
 #[derive(Default)]
 pub(crate) struct RawPreview {
     pub(crate) state: PreviewState,
+    pub(crate) pdfs: Option<DiffPdfViewers>,
     key: Option<PreviewKey>,
     task: Option<gpui::Task<()>>,
     generation: u64,
@@ -117,12 +40,21 @@ pub(crate) struct RawPreview {
 }
 
 impl RawPreview {
-    pub(crate) fn retire(&mut self) {
+    pub(crate) fn retire(&mut self, cx: &mut gpui::App) {
+        if let Some(pdfs) = self.pdfs.take() {
+            pdfs.retire_detached();
+        }
         self.generation += 1;
         self.task = None;
         self.key = None;
         self.failed = None;
-        self.state = PreviewState::Loading;
+        self.replace_state(PreviewState::Loading, cx);
+    }
+
+    fn replace_state(&mut self, state: PreviewState, cx: &mut gpui::App) {
+        if let PreviewState::Ready(pair) = std::mem::replace(&mut self.state, state) {
+            super::diff_view::retire_side_images(pair.iter(), cx);
+        }
     }
 }
 
@@ -135,8 +67,25 @@ pub(crate) struct PreviewKey {
 }
 
 impl ConflictView {
-    pub(crate) fn retire_raw_preview(&mut self) {
-        self.raw_preview.retire();
+    pub(crate) fn retire_raw_preview(&mut self, cx: &mut gpui::App) {
+        self.raw_preview.retire(cx);
+    }
+
+    pub(crate) fn focused_pdf_body(
+        &self,
+        window: &gpui::Window,
+        cx: &gpui::App,
+    ) -> Option<gpui::FocusHandle> {
+        self.raw_preview.pdfs.as_ref()?.focused_body(window, cx)
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn pdf_viewer_for_e2e(
+        &self,
+        old: bool,
+        cx: &gpui::App,
+    ) -> Option<gpui::Entity<kagi_ui_editor::PdfViewer>> {
+        self.raw_preview.pdfs.as_ref()?.viewer(old, cx)
     }
 
     fn selected_raw_key(&self) -> Option<PreviewKey> {
@@ -197,7 +146,7 @@ impl ConflictView {
                     0
                 }
             });
-        self.retire_raw_preview();
+        self.retire_raw_preview(cx);
         let Some(key) = key else { return };
         self.raw_preview.key = Some(key.clone());
         let generation = self.raw_preview.generation;
@@ -205,9 +154,7 @@ impl ConflictView {
         let owner = self.owner.clone();
         let input = key.clone();
         let task = cx.background_spawn(async move {
-            use super::main_diff_pane::preparation::{
-                prepare_side_pair, MediaSide, PreparationPolicy,
-            };
+            use super::main_diff_pane::preparation::{prepare_content_pair, MediaSide};
             use kagi_git::backend::file_reads::FileReadSource;
             let backend = kagi_git::Backend::open(&repo)?;
             let sides = input.sides.each_ref().map(|side| match side {
@@ -217,11 +164,7 @@ impl ConflictView {
                 ),
                 None => MediaSide::Absent,
             });
-            Ok::<_, kagi_git::GitError>(
-                prepare_side_pair(&backend, sides, PreparationPolicy::Conflict(input.kind))
-                    .raw
-                    .expect("conflict preparation returns a raw pair"),
-            )
+            Ok::<_, kagi_git::GitError>(prepare_content_pair(&backend, sides))
         });
         #[cfg(feature = "gui-e2e")]
         let hold = test_support::take_hold();
@@ -247,11 +190,27 @@ impl ConflictView {
                     return;
                 }
                 match result {
-                    Ok(pair) => view.raw_preview.state = PreviewState::Ready(Arc::new(pair)),
+                    Ok(pair) => {
+                        if pair
+                            .iter()
+                            .any(|side| matches!(side, SideContent::Pdf { .. }))
+                        {
+                            view.raw_preview.pdfs = Some(DiffPdfViewers::new_synchronized(
+                                PreparedPdfPair {
+                                    old: pair[0].pdf_source(),
+                                    new: pair[1].pdf_source(),
+                                },
+                                cx,
+                            ));
+                        }
+                        view.raw_preview
+                            .replace_state(PreviewState::Ready(Arc::new(pair)), cx);
+                    }
                     Err(error) => {
                         view.raw_preview.key = None;
                         view.raw_preview.failed = Some((key, failures + 1));
-                        view.raw_preview.state = PreviewState::Failed(error.to_string().into());
+                        view.raw_preview
+                            .replace_state(PreviewState::Failed(error.to_string().into()), cx);
                     }
                 }
                 cx.notify();
@@ -264,309 +223,255 @@ impl ConflictView {
 // Render
 // ────────────────────────────────────────────────────────────
 
-/// The side-by-side viewer for a raw (binary / symlink / submodule) conflict.
-/// Keep side identities outside the persistent notification lane and scroll body.
+/// Side identities stay above the persistent notification lane and scroll body.
 pub(crate) fn render_raw_headers(labels: &SideLabels) -> gpui::AnyElement {
-    let header = |label: String, probe| {
-        div()
+    let header = |label: String, accent, probe| {
+        super::render_helpers::diff_state::side_header(label.into(), Some(accent))
             .relative()
-            .w(theme::scaled_px(IMAGE_MAX_PX))
-            .flex_shrink(1.)
+            .flex_1()
             .min_w(px(0.))
-            .text_size(theme::scaled_px(11.))
-            .text_color(rgb(theme().text_label))
             .child(super::e2e::measure_inside(probe))
-            .child(SharedString::from(label))
     };
     div()
         .relative()
         .flex()
         .flex_shrink_0()
-        .justify_center()
-        .gap(theme::scaled_px(12.))
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
         .child(super::e2e::measure_inside("conflict-raw-headers"))
         .child(header(
-            format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
+            format!("{} — {}", labels.current.name, Msg::EditorCurrentSide.t()),
+            theme().color_branch,
             "conflict-image-current-header",
         ))
+        .child(div().w(px(1.)).flex_shrink_0().bg(rgb(theme().surface)))
         .child(header(
-            format!(
-                "{} · {}",
-                Msg::ConflictRoleIncoming.t(),
-                labels.incoming.name
-            ),
+            format!("{} — {}", labels.incoming.name, Msg::EditorIncomingSide.t()),
+            theme().color_remote,
             "conflict-image-incoming-header",
         ))
         .into_any_element()
 }
 
-/// Rendered below the unchanged take-current / take-incoming buttons.
+/// Source presence determines whether adoption or the deletion confirmation owns
+/// a side's action. The latter is wired through #1734's frozen intent boundary.
+#[derive(Clone, Copy)]
+enum RawSideTarget {
+    Adopt(SelectionSide),
+    Deleted,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_raw_preview(
     state: &PreviewState,
+    mode: &super::conflict_view::ConflictMode,
     path: &Path,
+    labels: &SideLabels,
     scroll: &gpui::ScrollHandle,
-    _cx: &mut Context<ConflictView>,
+    pdfs: Option<&DiffPdfViewers>,
+    writer_busy: bool,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let (pair, failure) = match state {
-        PreviewState::Loading => (None, None),
-        PreviewState::Ready(pair) => (Some(pair.as_ref()), None),
-        PreviewState::Failed(error) => (None, Some(error.as_ref())),
+    let contents = match state {
+        PreviewState::Loading => [SideContent::Loading, SideContent::Loading],
+        PreviewState::Ready(pair) => pair.as_ref().clone(),
+        PreviewState::Failed(error) => [
+            SideContent::failed(SharedString::from(error.to_string())),
+            SideContent::failed(SharedString::from(error.to_string())),
+        ],
     };
-    let current = pair.map(|pair| &pair[0]);
-    let incoming = pair.map(|pair| &pair[1]);
-    // Loading retains the two headers without claiming absence or failure.
-    let image_layout = pair.is_none()
-        || pair.is_some_and(|pair| pair.iter().any(|side| side.mode == BinaryViewMode::Image));
-    let show_external =
-        pair.is_some_and(|pair| pair.iter().any(|side| side.mode == BinaryViewMode::Binary));
-
+    let show_external = matches!(state, PreviewState::Ready(_))
+        && contents.iter().any(SideContent::needs_external_compare);
+    let [left, right] = contents;
+    let pair = SidePair {
+        left,
+        right,
+        headers: [
+            SideHeader {
+                label: format!("{} — {}", labels.current.name, Msg::EditorCurrentSide.t()).into(),
+                accent: Some(theme().color_branch),
+                id: "conflict-raw-current",
+                absent: Msg::ConflictSideDeleted,
+            },
+            SideHeader {
+                label: format!("{} — {}", labels.incoming.name, Msg::EditorIncomingSide.t()).into(),
+                accent: Some(theme().color_remote),
+                id: "conflict-raw-incoming",
+                absent: Msg::ConflictSideDeleted,
+            },
+        ],
+    };
+    let actions = [SelectionSide::Current, SelectionSide::Incoming]
+        .map(|side| raw_action_row(mode, path, side, writer_busy, cx));
     #[cfg(feature = "gui-e2e")]
     super::e2e::diff_presentation::record_conflict_scroll(scroll.clone());
-    let mut col = div()
+    div()
         .id("conflict-raw-preview")
+        .relative()
         .flex()
         .flex_col()
         .flex_1()
-        .min_h(px(0.))
         .min_w(px(0.))
-        .self_stretch()
+        .min_h(px(0.))
+        .overflow_hidden()
         .overflow_y_scroll()
         .track_scroll(scroll)
-        .gap(theme::scaled_px(8.))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .when(image_layout, |row| row.flex_1().min_h(px(0.)))
-                .self_stretch()
-                .justify_center()
-                .gap(theme::scaled_px(12.))
-                .child(side_column(current, failure, "conflict-image-current"))
-                .child(side_column(incoming, failure, "conflict-image-incoming")),
-        );
 
-    if show_external {
-        col = col.child(super::e2e::measure_control(
-            "conflict-open-both-external",
-            external_compare_button(path, _cx),
-        ));
-    }
-
-    // Padding belongs to the bounded pane, not the scroll content: fractional
-    // zoom padding must not become a spurious horizontal scroll extent.
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w(px(0.))
-        .min_h(px(0.))
-        .px(theme::scaled_px(12.))
-        .py(theme::scaled_px(8.))
         .child(super::e2e::measure_inside("conflict-image-pane"))
-        .child(col)
-        .into_any_element()
-}
-
-fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
-    if let Some(error) = &data.error {
-        return read_error(error);
-    }
-    if !data.present {
-        muted(Msg::ConflictBinaryNoPreview.t())
-    } else {
-        match data.mode {
-            BinaryViewMode::Image => match &data.image {
-                // Match the bounded absolute-image layout in diff_state: image
-                // intrinsic dimensions must not contribute to the flex minimum.
-                Some(img) => div()
-                    .w_full()
-                    .relative()
-                    .child(super::e2e::measure_inside(probe))
-                    .aspect_ratio(1.)
-                    .flex_shrink(1.)
-                    .min_h(px(0.))
-                    .max_h(theme::scaled_px(IMAGE_MAX_PX))
-                    .overflow_hidden()
-                    .child(
-                        gpui::img(gpui::ImageSource::Image(img.clone()))
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    )
-                    .into_any_element(),
-                None => muted(Msg::ConflictImageTooLarge.t()),
-            },
-            BinaryViewMode::Symlink => div()
-                .flex()
-                .flex_col()
-                .gap(theme::scaled_px(2.))
-                .child(label_line(Msg::ConflictSymlinkTarget.t()))
-                .child(mono(data.symlink_target.clone().unwrap_or_default()))
-                .into_any_element(),
-            BinaryViewMode::Submodule => div()
-                .flex()
-                .flex_col()
-                .gap(theme::scaled_px(2.))
-                .child(label_line(Msg::ConflictSubmoduleCommit.t()))
-                .child(mono(data.oid_short.clone()))
-                .into_any_element(),
-            BinaryViewMode::Binary => div()
-                .relative()
-                .child(super::e2e::measure_inside(
-                    if probe == "conflict-image-current" {
-                        "conflict-binary-current-body"
-                    } else {
-                        "conflict-binary-incoming-body"
-                    },
-                ))
-                .flex()
-                .flex_col()
-                .gap(theme::scaled_px(2.))
-                .child(mono(format!(
-                    "{} · {}",
-                    size_text(data.size),
-                    data.oid_short
-                )))
-                .child(super::render_helpers::diff_state::caption(
-                    Msg::DiffBinaryNoText,
-                ))
-                .into_any_element(),
-        }
-    }
-}
-
-/// One side's mode-specific body; identities stay above the notification lane.
-fn side_column(
-    data: Option<&SideData>,
-    failure: Option<&str>,
-    probe: &'static str,
-) -> gpui::AnyElement {
-    let body = match (data, failure) {
-        (Some(data), _) => side_body(data, probe),
-        (None, Some(error)) => read_error(error),
-        (None, None) => div().into_any_element(),
-    };
-
-    // Keep adjacent preferred-width columns, shrinking both equally at high
-    // zoom rather than allowing the pair to overflow the available pane.
-    div()
-        .flex()
-        .relative()
-        .child(super::e2e::measure_inside(
-            if probe == "conflict-image-current" {
-                "conflict-image-current-column"
-            } else {
-                "conflict-image-incoming-column"
-            },
+        .child(super::render_helpers::diff_state::side_pair(
+            pair,
+            actions,
+            pdfs,
+            ["conflict-image-current", "conflict-image-incoming"],
+            false,
         ))
-        .flex_col()
-        .w(theme::scaled_px(IMAGE_MAX_PX))
-        .flex_shrink(1.)
-        .when(
-            data.is_none_or(|data| data.mode == BinaryViewMode::Image),
-            |column| column.h_full(),
-        )
-        .min_h(px(0.))
-        .min_w(px(0.))
-        .gap(theme::scaled_px(4.))
-        .child(body)
-        .when_some(
-            data.and_then(|data| data.image.as_ref()),
-            |column, image| {
-                let data = data.expect("image belongs to a prepared side");
-                column.child(ImageMetadata {
-                    image: image.clone(),
-                    size: data.size,
-                    probe,
-                })
-            },
-        )
+        .when(show_external, |column| {
+            column.child(
+                div()
+                    .id("conflict-raw-shared-actions")
+                    .role(gpui::Role::Group)
+                    .aria_label(Msg::ConflictOpenBothExternal.t())
+                    .flex()
+                    .flex_shrink_0()
+                    .px(theme::scaled_px(12.))
+                    .py(theme::scaled_px(6.))
+                    .child(super::e2e::measure_control(
+                        "conflict-open-both-external",
+                        external_compare_button(path, cx),
+                    )),
+            )
+        })
         .into_any_element()
 }
 
-#[derive(gpui::IntoElement)]
-struct ImageMetadata {
-    image: Arc<Image>,
-    size: Option<u64>,
-    probe: &'static str,
-}
-
-impl gpui::RenderOnce for ImageMetadata {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
-        let dimensions = self
-            .image
-            .use_render_image(window, cx)
-            .map(|image| image.size(0));
-        let mut text = format!("{}: {}", Msg::ImageFileSize.t(), size_text(self.size));
-        if let Some(size) = dimensions {
-            use std::fmt::Write as _;
-            let _ = write!(
-                text,
-                " · {}: {} × {} px",
-                Msg::ImageDimensions.t(),
-                size.width.0,
-                size.height.0
-            );
-        }
+fn raw_action_row(
+    mode: &super::conflict_view::ConflictMode,
+    path: &Path,
+    side: SelectionSide,
+    writer_busy: bool,
+    cx: &mut Context<ConflictView>,
+) -> Option<gpui::AnyElement> {
+    let source = mode.buffer.side_raw_meta(path, side);
+    let target = if source.is_some() {
+        RawSideTarget::Adopt(side)
+    } else {
+        RawSideTarget::Deleted
+    };
+    let key = match side {
+        SelectionSide::Current => "current",
+        SelectionSide::Incoming => "incoming",
+    };
+    let resolution = mode.buffer.raw_resolution(path);
+    let used = resolution.is_some_and(|resolution| {
+        source.as_ref().is_some_and(|(oid, mode)| {
+            resolution.oid.to_string() == *oid && resolution.mode == *mode
+        })
+    });
+    let decided = resolution.is_some();
+    let mut row = div().flex().items_center().gap(theme::scaled_px(8.));
+    if decided {
+        let message = if used {
+            Msg::ConflictUsed
+        } else {
+            Msg::ConflictNotUsed
+        };
+        let id = format!("conflict-raw-{key}-state");
         #[cfg(feature = "gui-e2e")]
-        super::e2e::diff_presentation::record_image_caption(self.probe, &text);
-        div()
-            .relative()
-            .child(super::e2e::measure_inside(
-                if self.probe == "conflict-image-current" {
-                    "conflict-image-current-caption"
-                } else {
-                    "conflict-image-incoming-caption"
-                },
-            ))
-            .text_size(theme::scaled_px(11.))
-            .text_color(rgb(theme().text_muted))
-            .child(text)
+        super::conflict_editor_a11y::record_status(&id, message.t());
+        row = row.child(
+            div()
+                .id(SharedString::from(id.clone()))
+                .role(gpui::Role::Status)
+                .aria_label(message.t())
+                .text_size(theme::scaled_px(11.5))
+                .text_color(rgb(theme().text_main))
+                .border_1()
+                .border_color(rgb(theme().text_main))
+                .rounded(theme::scaled_px(4.))
+                .px(theme::scaled_px(5.))
+                .child(message.t())
+                .relative()
+                .child(super::e2e::measure_inside(id)),
+        );
     }
-}
-
-fn size_text(size: Option<u64>) -> String {
-    match size {
-        Some(n) => format!("{} B", n),
-        None => "—".to_string(),
-    }
-}
-
-fn label_line(text: &str) -> gpui::AnyElement {
-    div()
-        .text_size(theme::scaled_px(11.))
-        .text_color(rgb(theme().text_label))
-        .child(SharedString::from(text.to_string()))
-        .into_any_element()
-}
-
-fn mono(text: String) -> gpui::AnyElement {
-    div()
-        .text_size(theme::scaled_px(12.))
-        .text_color(rgb(theme().text_main))
-        .child(SharedString::from(text))
-        .into_any_element()
-}
-
-fn muted(text: &str) -> gpui::AnyElement {
-    div()
-        .text_size(theme::scaled_px(12.))
-        .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(text.to_string()))
-        .into_any_element()
-}
-
-fn read_error(error: &str) -> gpui::AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .child(muted(Msg::DiffPdfReadFailed.t()))
-        .child(muted(error))
-        .into_any_element()
+    let id = format!(
+        "conflict-raw-{key}-{}",
+        if decided { "change" } else { "use" }
+    );
+    // Caption/probe changes must not replace the focused push button's identity.
+    let button_id = format!("conflict-raw-{key}-action");
+    let label = if decided {
+        Msg::ConflictChange
+    } else {
+        match target {
+            RawSideTarget::Adopt(_) => Msg::ConflictUseThisSide,
+            RawSideTarget::Deleted => Msg::ConflictUseDeletedSide,
+        }
+    };
+    let name = if decided {
+        Msg::ConflictChangeAccessible
+    } else {
+        match target {
+            RawSideTarget::Adopt(_) => Msg::ConflictUseThisSideAccessible,
+            RawSideTarget::Deleted => Msg::ConflictUseDeletedSide,
+        }
+    };
+    #[cfg(feature = "gui-e2e")]
+    super::conflict_editor_a11y::record(&id, name.t(), label.t(), "");
+    let path = path.to_path_buf();
+    let revision = mode.revision.clone();
+    let button = super::conflict_editor::tool_button(
+        &button_id,
+        label.t(),
+        super::button_style::ButtonRole::NeutralTinted,
+        cx.listener(move |view, _, window, cx| {
+            if view.writer_busy
+                || !view.mode.as_ref().is_some_and(|mode| {
+                    mode.revision == revision
+                        && mode
+                            .selected_file
+                            .and_then(|i| mode.session.files.get(i))
+                            .is_some_and(|file| file.path == path)
+                })
+            {
+                return;
+            }
+            if decided {
+                view.conflict_change_raw_choice(&path);
+            } else {
+                match target {
+                    RawSideTarget::Adopt(side) => view.conflict_apply_choice(
+                        &path,
+                        match side {
+                            SelectionSide::Current => kagi_git::ResolutionChoice::Current,
+                            SelectionSide::Incoming => kagi_git::ResolutionChoice::Incoming,
+                        },
+                        cx,
+                    ),
+                    RawSideTarget::Deleted => {
+                        let intent = view.freeze_delete_intent(&path);
+                        let app = view.app.clone();
+                        cx.spawn_in(window, async move |_, cx| {
+                            let _ = app
+                                .update_in(cx, |app, _, cx| app.accept_conflict_intent(intent, cx));
+                        })
+                        .detach();
+                    }
+                }
+            }
+            cx.notify();
+        }),
+        cx,
+    )
+    .aria_label(name.t())
+    .disabled(writer_busy)
+    .aria_description(if writer_busy {
+        Msg::OpInProgress.t()
+    } else {
+        ""
+    });
+    Some(
+        row.child(super::e2e::measure_control(id, button))
+            .into_any_element(),
+    )
 }
 
 // ────────────────────────────────────────────────────────────
@@ -642,43 +547,4 @@ fn external_compare_button(path: &Path, cx: &mut Context<ConflictView>) -> impl 
     .on_click(cx.listener(move |view: &mut ConflictView, _e, _w, cx| {
         view.open_raw_sides_external(&path, cx);
     }))
-}
-
-// ────────────────────────────────────────────────────────────
-// Tests — pure helpers only (the render path needs a gpui window; see #321
-// acceptance: GUI-verify the rendering).
-// ────────────────────────────────────────────────────────────
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn viewer_mode_follows_kind() {
-        assert_eq!(
-            viewer_mode(ConflictKind::Submodule, false, None),
-            BinaryViewMode::Submodule
-        );
-        assert_eq!(
-            viewer_mode(ConflictKind::Symlink, false, Some(10)),
-            BinaryViewMode::Symlink
-        );
-    }
-
-    #[test]
-    fn viewer_mode_image_only_when_image_and_within_cap() {
-        assert_eq!(
-            viewer_mode(ConflictKind::Binary, true, Some(1024)),
-            BinaryViewMode::Image
-        );
-        // Image but over the cap → binary (external-compare) fallback.
-        assert_eq!(
-            viewer_mode(ConflictKind::Binary, true, Some(IMAGE_SIZE_CAP + 1)),
-            BinaryViewMode::Binary
-        );
-        // Not an image → binary.
-        assert_eq!(
-            viewer_mode(ConflictKind::Binary, false, Some(1024)),
-            BinaryViewMode::Binary
-        );
-    }
 }

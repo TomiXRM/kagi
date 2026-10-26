@@ -31,7 +31,8 @@ mod rows;
 mod syntax;
 #[cfg(test)]
 mod tests;
-use pages::{render_panes, tool_button};
+use pages::render_panes;
+pub(super) use pages::tool_button;
 pub(super) use result::render_saved_preview;
 pub use result::ResultHlCache;
 use result::*;
@@ -85,6 +86,7 @@ fn pane(id: &'static str, editor: impl IntoElement) -> gpui::Stateful<gpui::Div>
         .min_h(px(0.))
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
+
         .child(
             div()
                 .flex()
@@ -127,35 +129,9 @@ pub(super) fn source_headers(mode: &ConflictMode) -> Option<gpui::AnyElement> {
 }
 
 fn pane_header(label: String, accent: u32) -> gpui::Div {
-    div()
-        .flex()
+    crate::ui::render_helpers::diff_state::side_header(label.into(), Some(accent))
         .flex_1()
         .min_w(px(0.))
-        .items_center()
-        .gap(theme::scaled_px(8.))
-        .h(theme::scaled_px(26.))
-        .flex_shrink_0()
-        .px(theme::scaled_px(12.))
-        .bg(rgb(theme().panel))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .size(theme::scaled_px(8.))
-                .rounded_full()
-                .bg(rgb(accent))
-                .flex_shrink_0(),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .truncate()
-                .text_size(theme::scaled_px(11.5))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(rgb(theme().text_main))
-                .child(label),
-        )
 }
 
 /// Save alone freezes the existing revision-bound request and defers to its owner.

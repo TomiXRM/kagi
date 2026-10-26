@@ -328,6 +328,7 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
         height_source: Default::default(),
         source: MainDiffSource::Synthetic,
         images: None,
+        side_pair: None,
         lang: super::diff_view::lang_for_path(&f.path),
         highlighted: Some(theme_key),
     };

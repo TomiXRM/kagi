@@ -237,7 +237,7 @@ impl KagiApp {
     pub(crate) fn depart_active_tab(&mut self, cx: &mut Context<Self>) {
         self.close_departing_screen_overlays();
         if let Some(conflict) = self.ui().conflict.clone() {
-            conflict.update(cx, |view, _| view.retire_raw_preview());
+            conflict.update(cx, |view, cx| view.retire_raw_preview(cx));
         }
         if let Some(session) = self.active_session() {
             super::diff_selection::retire_session(session);

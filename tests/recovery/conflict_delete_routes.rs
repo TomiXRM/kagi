@@ -75,9 +75,28 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
     cx.run_until_parked();
     kagi::ui::conflict_view::take_compact_labels_for_e2e();
     click_control(cx, window, "conflict-row-0");
-    assert!(e2e::control_bounds(window.window_id(), "conflict-delete").is_some());
+    let raw_pair = raw && (current || incoming);
+    let delete_control = if raw_pair {
+        if current {
+            "conflict-raw-incoming-use"
+        } else {
+            "conflict-raw-current-use"
+        }
+    } else {
+        "conflict-delete"
+    };
+    assert!(e2e::control_bounds(window.window_id(), delete_control).is_some());
     if current || incoming {
-        assert!(e2e::control_bounds(window.window_id(), "conflict-use-modified").is_some());
+        let modified_control = if raw_pair {
+            if current {
+                "conflict-raw-current-use"
+            } else {
+                "conflict-raw-incoming-use"
+            }
+        } else {
+            "conflict-use-modified"
+        };
+        assert!(e2e::control_bounds(window.window_id(), modified_control).is_some());
     }
     let labels = kagi::ui::conflict_view::take_compact_labels_for_e2e();
     let expected_delete = match (lang, current || incoming) {
@@ -86,13 +105,25 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
         (Lang::En, true) => "Use deleted side…",
         (Lang::Ja, true) => "削除側を採用…",
     };
-    assert_eq!(labels.get("conflict-delete"), Some(&expected_delete));
-    assert_eq!(
-        labels.contains_key("conflict-use-modified"),
-        current || incoming
-    );
+    if raw_pair {
+        let (role, name, label) = kagi::ui::conflict_editor_a11y::control(delete_control)
+            .expect("rendered raw deletion action");
+        assert_eq!(role, gpui::Role::Button);
+        assert_eq!(name, expected_delete);
+        assert_eq!(label, expected_delete);
+        assert!(
+            !labels.contains_key("conflict-delete"),
+            "no duplicate file-wide deletion action"
+        );
+    } else {
+        assert_eq!(labels.get("conflict-delete"), Some(&expected_delete));
+        assert_eq!(
+            labels.contains_key("conflict-use-modified"),
+            current || incoming
+        );
+    }
     for cancel in ["button", "enter", "escape"] {
-        click_control(cx, window, "conflict-delete");
+        click_control(cx, window, delete_control);
         cx.read(|cx| {
             let app = app.read(cx);
             let modal = app
@@ -149,7 +180,7 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
         }
         assert!(cx.read(|cx| app.read(cx).conflict_resolution_modal().is_none()));
     }
-    click_control(cx, window, "conflict-delete");
+    click_control(cx, window, delete_control);
     click_control(cx, window, "conflict-resolution-confirm");
     wait_idle(cx, &app);
     assert!(!repo.join("file.txt").exists());

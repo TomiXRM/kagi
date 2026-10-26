@@ -165,6 +165,7 @@ mod tests {
             height_source: Default::default(),
             source: MainDiffSource::Synthetic,
             images: None,
+            side_pair: None,
             lang: None,
             highlighted: None,
         };

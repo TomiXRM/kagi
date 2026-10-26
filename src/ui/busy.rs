@@ -276,7 +276,9 @@ impl KagiApp {
         let partition = match placement {
             ToastPlacement::Repository => super::toast_stack::ToastPartition::All,
             ToastPlacement::PersistentLane => super::toast_stack::ToastPartition::Persistent,
-            ToastPlacement::Transient => super::toast_stack::ToastPartition::Transient,
+            ToastPlacement::Transient | ToastPlacement::RepositoryTransient => {
+                super::toast_stack::ToastPartition::Transient
+            }
         };
         toast_stack.update(cx, |stack, _| {
             stack.set_trailing_placement(
@@ -288,9 +290,13 @@ impl KagiApp {
         let mut stack = toast_container(placement)
             .max_h(gpui::px(f32::from(window.viewport_size().height) * 0.30))
             .min_h(gpui::px(0.))
-            .when(placement == ToastPlacement::Transient, |el| {
-                el.child(super::e2e::measure_inside("toast-transient-overlay"))
-            });
+            .when(
+                matches!(
+                    placement,
+                    ToastPlacement::Transient | ToastPlacement::RepositoryTransient
+                ),
+                |el| el.child(super::e2e::measure_inside("toast-transient-overlay")),
+            );
         if placement == ToastPlacement::PersistentLane {
             return Some(
                 stack
@@ -563,6 +569,7 @@ mod tests {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ToastPlacement {
     Repository,
+    RepositoryTransient,
     PersistentLane,
     Transient,
 }
@@ -570,13 +577,19 @@ pub(super) enum ToastPlacement {
 /// The repository parent is the actual center content, never the window.
 pub(super) fn toast_container(placement: ToastPlacement) -> gpui::Div {
     div()
-        .when(placement == ToastPlacement::Repository, |el| {
-            el.absolute()
-                .top(theme::scaled_px(super::TOAST_INSET_PX))
-                .bottom(theme::scaled_px(super::TOAST_INSET_PX))
-                .right(theme::scaled_px(super::TOAST_INSET_PX))
-                .max_h(gpui::relative(1.0))
-        })
+        .when(
+            matches!(
+                placement,
+                ToastPlacement::Repository | ToastPlacement::RepositoryTransient
+            ),
+            |el| {
+                el.absolute()
+                    .top(theme::scaled_px(super::TOAST_INSET_PX))
+                    .bottom(theme::scaled_px(super::TOAST_INSET_PX))
+                    .right(theme::scaled_px(super::TOAST_INSET_PX))
+                    .max_h(gpui::relative(1.0))
+            },
+        )
         .when(placement == ToastPlacement::PersistentLane, |el| {
             el.flex_shrink_0()
                 .my(theme::scaled_px(super::TOAST_INSET_PX))

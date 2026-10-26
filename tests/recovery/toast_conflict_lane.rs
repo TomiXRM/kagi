@@ -107,7 +107,7 @@ fn assert_safe_lane(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
             "conflict-image-current-header",
             "conflict-image-incoming-header",
         ],
-        "saved" => &["conflict-saved-header"],
+        "saved" => &["conflict-saved-source-header"],
         "directory-file" => &["conflict-content-header"],
         _ => unreachable!(),
     };
@@ -167,6 +167,17 @@ fn exercise_lane(
         draw(cx, window);
         assert_eq!(assert_safe_lane(window, layout), lane);
         assert_eq!(control_bounds(window, layout), shifted);
+        let body = bounds(window, "conflict-pane-content");
+        let transient_bounds = bounds(window, "toast-transient-stack");
+        assert!(
+            transient_bounds.top() >= body.top() + theme::scaled_px(12.) - px(1.)
+                && transient_bounds.top() >= lane.bottom(),
+            "repository transients remain below the persistent lane"
+        );
+        assert!(
+            (body.right() - transient_bounds.right() - theme::scaled_px(12.)).abs() <= px(1.),
+            "repository transients retain their top-trailing inset"
+        );
         stack.update(cx, |stack, cx| stack.begin_exit(transient, cx));
         cx.advance_clock(Duration::from_secs(1));
         cx.run_until_parked();

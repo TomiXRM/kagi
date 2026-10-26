@@ -565,6 +565,11 @@ stay overlaid even while that lane is open. Assert identical full lane/control b
 after transient arrival, expiry/removal and a real held read's busy feedback;
 separate `toast-persistent-stack`, `toast-transient-stack` and outer
 `toast-transient-overlay` probes prevent mixed-host measurement collisions.
+Repository transients retain top-trailing placement and trailing slide inside
+`conflict-pane-content`, below and outside the persistent lane. Measure their
+inset against that body, not the whole conflict view. The centre saved-source
+header probe is `conflict-saved-source-header`; never reuse the sidebar's
+`conflict-saved-header` probe. Include `conflict_file_selection` when touching it.
 Keep Settings' last control reachable. The saved-conflict failure has separate
 repository identity and full Operation Log / Refresh Repository labels; failed
 refresh retains it, accepted successful recovery dismisses only its own card.

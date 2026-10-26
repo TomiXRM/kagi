@@ -144,6 +144,9 @@ hunk/whole-file choices must never be covered. Directory/file layouts without
 column headers place the lane before their choices. Persistent cards keep
 × / Escape dismissal. Home/Settings likewise open a lane only for Error/action-
 bearing cards; transient feedback stays overlaid and must not move controls.
+Repository transients retain their top-trailing overlay and trailing slide in
+the pane body below the persistent lane; Home/Settings retain their existing
+transient overlay positions.
 Recovery captions reuse the existing command name,
 and a failed or unfinished refresh must not dismiss the failure preview.
 Any accepted successful read for the captured owner resolves that preview,

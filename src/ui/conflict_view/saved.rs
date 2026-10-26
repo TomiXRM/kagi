@@ -202,7 +202,7 @@ impl ConflictView {
                             .unwrap_or_default(),
                     )),
             )
-            .child(e2e::measure_inside("conflict-saved-header"))
+            .child(e2e::measure_inside("conflict-saved-source-header"))
             .into_any_element()
     }
 

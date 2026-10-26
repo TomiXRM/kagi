@@ -111,6 +111,16 @@ impl ConflictView {
                             .child(header),
                     )
                     .children(source_headers)
+                    .children(self.notification_lane.take().map(|lane| {
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_shrink_0()
+                            .justify_end()
+                            .child(e2e::measure_inside("conflict-notification-lane"))
+                            .child(e2e::measure_inside("toast-content-anchor"))
+                            .child(lane)
+                    }))
                     .child(
                         div()
                             .relative()
@@ -119,16 +129,7 @@ impl ConflictView {
                             .flex_1()
                             .min_w(px(0.))
                             .min_h(px(0.))
-                            .child(e2e::measure_inside("toast-content-anchor"))
-                            .children(self.notification_lane.take().map(|lane| {
-                                div()
-                                    .relative()
-                                    .flex()
-                                    .flex_shrink_0()
-                                    .justify_end()
-                                    .child(e2e::measure_inside("conflict-notification-lane"))
-                                    .child(lane)
-                            }))
+                            .child(e2e::measure_inside("conflict-pane-content"))
                             .child(body)
                             .children(self.notifications.take()),
                     ),

@@ -1005,7 +1005,7 @@ impl Render for KagiApp {
                         .flatten();
                     let notifications = self.render_toasts(
                         window,
-                        super::busy::ToastPlacement::Transient,
+                        super::busy::ToastPlacement::RepositoryTransient,
                         true,
                         cx,
                     );

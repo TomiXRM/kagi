@@ -244,7 +244,7 @@ pub fn scenario_pdf_media_sources(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pdf_media_sources");
 }
 
-fn assert_failed_side(
+fn assert_oversized_side(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -262,8 +262,8 @@ fn assert_failed_side(
     };
     assert_eq!(
         native_ax::node(cx, window, id.into())["aria"]["description"],
-        Msg::DiffPdfReadFailed.t(),
-        "unreadable present side must be a read failure, not absence or another file's preview"
+        Msg::SidePreviewTooLarge.t(),
+        "oversized present side must name the preview limit, not read failure or absence"
     );
 }
 
@@ -346,7 +346,7 @@ pub fn scenario_pdf_media_bounds(cx: &mut VisualTestAppContext) {
     {
         let index = commit_image_index(cx, &app, path);
         app.update(cx, |app, cx| app.open_main_diff_commit(index, cx));
-        assert_failed_side(cx, &app, window, failed_old);
+        assert_oversized_side(cx, &app, window, failed_old);
         assert_eq!(
             dimensions(cx, &app, window, !failed_old),
             (valid_width as f32, 200.)
@@ -356,7 +356,7 @@ pub fn scenario_pdf_media_bounds(cx: &mut VisualTestAppContext) {
         e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
     });
     wip_open(cx, &app, window, SIGNATURE, false);
-    assert_failed_side(cx, &app, window, false);
+    assert_oversized_side(cx, &app, window, false);
     assert_eq!(dimensions(cx, &app, window, true), (500., 200.));
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pdf_media_bounds");

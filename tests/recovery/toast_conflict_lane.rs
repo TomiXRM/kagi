@@ -50,7 +50,7 @@ fn run_case(cx: &mut VisualTestAppContext, layout: &str, lang: i18n::Lang, prese
         if layout == "saved" {
             view.conflict_open_saved(0, cx);
         } else {
-            view.conflict_select_file(0);
+            view.conflict_select_file(0, cx);
         }
         cx.notify();
     });
@@ -390,7 +390,7 @@ pub(crate) fn assert_settings_subject_isolation(
     });
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
     conflict.update(cx, |view, cx| {
-        view.conflict_select_file(0);
+        view.conflict_select_file(0, cx);
         cx.notify();
     });
     drop(conflict);

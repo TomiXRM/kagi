@@ -175,6 +175,7 @@ pub(crate) fn execute_conflict_delete(
     plan: &ConflictDeletePlan,
     mut progress: impl FnMut(ConflictProgress) -> Result<(), GitError>,
 ) -> Result<String, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     preflight_conflict_delete(repo, plan)?;
     let snapshot = super::create_snapshot(
         repo,

@@ -57,6 +57,84 @@ pub(crate) fn pr_at(head: &str) -> PullRequest {
     }
 }
 
+/// #1746: periodic PR ref admission is silent and retries on the next tick.
+pub fn scenario_repository_lock_silent_pr_refresh(cx: &mut VisualTestAppContext) {
+    use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+    use std::time::Duration;
+
+    let _gh = OfflineGh::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = remote_dir.path().join("repo.git");
+    git(remote_dir.path(), &["init", "-q", "--bare", "repo.git"]);
+    git(&repo, &["push", "-q", remote.to_str().unwrap(), "main"]);
+    let url = "https://github.com/example/repo.git";
+    git(&repo, &["remote", "add", "origin", url]);
+    let file_url = format!("file://{}", remote.display());
+    git(
+        &repo,
+        &["config", &format!("url.{file_url}.insteadOf"), url],
+    );
+    let head1 = push_pr_head(&repo, &remote, "main", &[("a.txt", "first\n")]);
+    let head2 = push_pr_head(&repo, &remote, &head1, &[("a.txt", "second\n")]);
+    let (app, window) = mount(cx, &repo);
+    let lock = crate::repository_lock::RepositoryLockOwner::acquire(&repo);
+    let before = read_oplog_tail_for_repo(&repo, 100).len();
+    e2e::queue_github_pr_conversation(gpui::Task::ready((
+        Ok((Vec::new(), Vec::new())),
+        Ok(Vec::new()),
+    )));
+    app.update(cx, |app, cx| app.pr_mode_open(&pr_at(&head1), cx));
+    cx.run_until_parked();
+    let receipts = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(receipts.len(), before + 1, "one manual refusal");
+    assert!(receipts.iter().any(|entry| {
+        entry.op == "fetch-pr"
+            && matches!(&entry.outcome, OpOutcome::Refused { blockers }
+                if blockers.iter().any(|text| text.contains("Another Kagi window")))
+    }));
+    let toasts = cx.read(|cx| {
+        app.read(cx)
+            .toast_stack
+            .as_ref()
+            .map_or(0, |stack| stack.read(cx).toasts().len())
+    });
+    let queue_head = || {
+        e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+            vec![pr_at(&head2)],
+            "",
+            None,
+        ))));
+    };
+    queue_head();
+    app.update(cx, |app, cx| app.ensure_github_ticker(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.github_ticker_alive);
+        let tab = &state.pr_mode().unwrap().tabs[0];
+        assert_eq!(tab.pr.head_sha, head2);
+        assert!(!tab.local_refs_loading);
+        assert!(tab.head.0.is_empty());
+        assert!(!state.app_sessions.has_leases());
+        assert_eq!(
+            state
+                .toast_stack
+                .as_ref()
+                .map_or(0, |stack| stack.read(cx).toasts().len()),
+            toasts
+        );
+    });
+    assert_eq!(read_oplog_tail_for_repo(&repo, 100).len(), before + 1);
+    drop(lock);
+    queue_head();
+    cx.advance_clock(Duration::from_secs(60));
+    wait_loaded(cx, &app, &head2);
+    assert!(!cx.read(|cx| app.read(cx).pr_mode().unwrap().tabs[0].local_refs_loading));
+    unmount(cx, app, window);
+}
+
 pub(crate) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {

@@ -250,6 +250,18 @@ fn t_switches_with_set_lang() {
 }
 
 #[test]
+fn conflict_repository_busy_names_the_other_window_in_both_languages() {
+    assert_eq!(
+        Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+        "Another Kagi window is operating on this repository"
+    );
+    assert_eq!(
+        Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+        "別の Kagi ウィンドウがこの repository を操作中です"
+    );
+}
+
+#[test]
 fn domain_words_stay_english_in_both_langs() {
     let _g = LOCK.lock();
     set_lang_no_persist(Lang::Ja);

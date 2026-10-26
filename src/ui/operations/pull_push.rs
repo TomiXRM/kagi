@@ -191,7 +191,11 @@ impl KagiApp {
         // Neither an executable preview nor an up-to-date claim may rely on
         // cached tracking refs, regardless of working-tree dirtiness. Admission
         // refusal is not freshness: never fall back to the stale local plan.
-        if !self.fetch_async_for(false, Some(crate::ui::commands::PullTarget::Current), cx) {
+        if !self.fetch_async_for(false, Some(crate::ui::commands::PullTarget::Current), cx)
+            && self.fetch_in_flight.is_some()
+        {
+            // A different in-flight scope cannot accept this waiter. Admission
+            // refusals already own their specific footer and must retain it.
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
         }
     }

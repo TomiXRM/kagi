@@ -153,6 +153,18 @@ impl KagiApp {
         let plan = match repo.plan_operation_abort() {
             Ok(plan) => plan,
             Err(error) => {
+                if let Some(recording) = error.recording() {
+                    self.notice_recording_failure(
+                        &recording.entry().op,
+                        recording,
+                        std::path::Path::new(&recording.entry().repo),
+                        None,
+                    );
+                    self.present_recorded(recording, true, cx);
+                    self.present_app_notice();
+                    cx.notify();
+                    return;
+                }
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from(super::i18n::op_plan_failed(super::i18n::Op::Abort, error)),

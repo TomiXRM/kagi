@@ -100,6 +100,7 @@ pub fn plan_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
 ) -> Result<OperationPlan, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
@@ -273,7 +274,7 @@ pub(crate) fn execute_conflict_abort_expecting(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
     expected: Option<&RestoreRef>,
-    mut progress: impl FnMut(ConflictProgress),
+    progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
     // Before anything at all, including the buffer autosave: an expectation
     // that names a ref this session does not restore is a caller trying to
@@ -285,7 +286,7 @@ pub(crate) fn execute_conflict_abort_expecting(
             expected.map_or("a detached restore", |expected| expected.name.as_str())
         )));
     }
-    let orig_sha = preflight_conflict_abort(repo, session)?;
+    preflight_conflict_abort(repo, session)?;
     // 1. Preserve the buffer BEFORE touching the repo (never lose partial
     //    work) — but only when there IS live work to preserve.
     //
@@ -299,6 +300,23 @@ pub(crate) fn execute_conflict_abort_expecting(
     } else {
         Some(buffer.autosave().map_err(|_| draft_preservation_failed())?)
     };
+    execute_conflict_abort_preserved(repo, session, expected, buffer_preserved_at, progress)
+}
+
+/// Draft persistence has finished before this mutation boundary takes the lock.
+pub(crate) fn execute_conflict_abort_preserved(
+    repo: &Repository,
+    session: &ConflictSession,
+    expected: Option<&RestoreRef>,
+    buffer_preserved_at: Option<std::path::PathBuf>,
+    mut progress: impl FnMut(ConflictProgress),
+) -> Result<AbortOutcome, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
+    let destination = restore_ref(repo, session);
+    if expected.map(|expected| &expected.name) != destination.as_ref().map(|live| &live.name) {
+        return Err(GitError::Other("abort destination changed".into()));
+    }
+    let orig_sha = preflight_conflict_abort(repo, session)?;
 
     // 3. Restore the working tree + index to the recorded starting tree,
     //    then move the branch ref back.
@@ -450,14 +468,15 @@ pub(crate) fn execute_conflict_abort_expecting(
         }
     }
 
-    // No `Verified` here: verification is `verify_abort`, which the Backend
-    // runs after this returns. Claiming it from the executor would record a
-    // verified abort for a restore that verification then rejected.
-    Ok(AbortOutcome {
+    // Verify before releasing repository admission. The backend still owns
+    // the Verified progress stamp and durable outcome classification.
+    let outcome = AbortOutcome {
         restored_to: orig_sha,
         buffer_preserved_at,
         restored_paths: Vec::new(),
-    })
+    };
+    crate::backend::conflict_ops::conflict_observe::verify_abort(repo, &outcome)?;
+    Ok(outcome)
 }
 
 /// Abort a stash-conflict (#309 / ADR-0148): restore HEAD's content for the
@@ -492,7 +511,7 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
-    mut progress: impl FnMut(ConflictProgress),
+    progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
     // 1. Preserve the buffer BEFORE touching the repo (never lose partial
     //    work) — but only when there IS live work to preserve.
@@ -507,6 +526,16 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     } else {
         Some(buffer.autosave().map_err(|_| draft_preservation_failed())?)
     };
+    execute_stash_conflict_abort_preserved(repo, session, buffer_preserved_at, progress)
+}
+
+pub(crate) fn execute_stash_conflict_abort_preserved(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer_preserved_at: Option<std::path::PathBuf>,
+    mut progress: impl FnMut(ConflictProgress),
+) -> Result<AbortOutcome, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
 
     if repo.workdir().is_none() {
         return Err(GitError::Other(
@@ -543,14 +572,15 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     checkout_paths_from_tree(repo, &tree, &paths)?;
     progress(ConflictProgress::IndexAndWorktreeWritten);
 
-    // NOTE: no `cleanup_state`, no ref move, no ORIG_HEAD — there is none. The
-    // stash entry is deliberately left intact. `Verified` is the Backend's to
-    // set, after `verify_abort`.
-    Ok(AbortOutcome {
+    // No cleanup_state/ref move for stash. Verify while admission is held;
+    // only the backend publishes the Verified progress stamp.
+    let outcome = AbortOutcome {
         restored_to: Some(head_commit.id().to_string()),
         buffer_preserved_at,
         restored_paths: paths,
-    })
+    };
+    crate::backend::conflict_ops::conflict_observe::verify_abort(repo, &outcome)?;
+    Ok(outcome)
 }
 
 /// Keep checkout and its verification receipt byte-faithful, including paths

@@ -429,6 +429,7 @@ pub(crate) fn apply_dir_file_resolution_with_progress(
     plan: &DirFilePlan,
     mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress) -> Result<(), GitError>,
 ) -> Result<String, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     preflight_dir_file_resolution(repo, plan)?;
 
     let recovery = match crate::ops::create_snapshot(

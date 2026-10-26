@@ -41,6 +41,23 @@ fn assert_frozen_staging(continue_all: bool) {
     let head = git_output(path, &["rev-parse", "HEAD"]);
     let merge_head = std::fs::read(path.join(".git/MERGE_HEAD")).unwrap();
     let interfere = || {
+        // Even the private hook route holds repository admission at the
+        // worktree/index boundary; a separate Kagi writer cannot enter here.
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let contender = Repository::open(path).unwrap();
+                    let error = crate::write_lock::acquire(&contender)
+                        .err()
+                        .expect("staging must retain repository admission");
+                    assert_eq!(
+                        error.blocker(),
+                        Some(&PlanNote::Conflicts(ConflictsNote::RepositoryBusy))
+                    );
+                })
+                .join()
+                .unwrap();
+        });
         // Two independent external writes after Kagi materializes Result. Neither
         // writer's bytes or changed executable bit may become approved staging.
         write_file(path, "file.txt", "WRITER ONE\n");

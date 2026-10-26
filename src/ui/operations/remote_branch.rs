@@ -301,12 +301,13 @@ impl KagiApp {
         .detach();
     }
 
-    /// Fetch the base and GitHub synthetic head ref, then finish opening the
-    /// PR tab that was shown immediately by the click. The owner and PR head
-    /// are frozen before the background work starts.
+    /// Fetch local refs for an opened PR. Automatic list refreshes pass `silent`
+    /// so repository contention is not presented as a user attempt. The owner,
+    /// PR head, and intent remain frozen through pending retries.
     pub(crate) fn fetch_pr_for_open(
         &mut self,
         pr: kagi_domain::github::PullRequest,
+        silent: bool,
         cx: &mut Context<Self>,
     ) {
         let (Some(owner), Some(repo_path)) = (self.active_session(), self.repo_path.clone()) else {
@@ -338,9 +339,10 @@ impl KagiApp {
         } else {
             return;
         };
-        self.start_pr_ref_fetch(owner, visit, repo_path, pr, generation, cx);
+        self.start_pr_ref_fetch(owner, visit, repo_path, pr, generation, silent, cx);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_pr_ref_fetch(
         &mut self,
         owner: crate::app::SessionId,
@@ -348,6 +350,7 @@ impl KagiApp {
         repo_path: std::path::PathBuf,
         pr: kagi_domain::github::PullRequest,
         generation: u64,
+        silent: bool,
         cx: &mut Context<Self>,
     ) {
         if self.app_sessions.visit(owner) != Some(visit)
@@ -374,14 +377,34 @@ impl KagiApp {
                     .timer(std::time::Duration::from_millis(200))
                     .await;
                 let _ = this.update(acx, |app, cx| {
-                    app.start_pr_ref_fetch(owner, visit, retry_repo, retry_pr, generation, cx);
+                    app.start_pr_ref_fetch(
+                        owner, visit, retry_repo, retry_pr, generation, silent, cx,
+                    );
                 });
             })
             .detach();
             return;
         }
-        let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
+        let lease = if silent {
+            self.reserve_write_for("fetch", "fetch", &repo_path, None, cx)
+        } else {
+            self.reserve_write_for("fetch", "fetch-pr", &repo_path, Some(owner), cx)
+        };
+        let Some(lease) = lease else {
             self.finish_pr_ref_load(owner, visit, generation, &pr, None, cx);
+            // No worker owns this generation. Leave it eligible for the next
+            // list tick, without making execution failures retry immediately.
+            if silent {
+                if let Some(tab) = self.ui.get_mut(&owner).and_then(|ui| {
+                    ui.pr_mode.as_mut()?.tabs.iter_mut().find(|tab| {
+                        tab.pr.number == pr.number
+                            && tab.pr.base_repo == pr.base_repo
+                            && tab.local_refs_generation == generation
+                    })
+                }) {
+                    tab.local_refs_visit = None;
+                }
+            }
             return;
         };
         let abandonment = lease.abandonment();
@@ -473,7 +496,7 @@ impl KagiApp {
                         app.reload(cx);
                     }
                     if !applied {
-                        app.retry_stale_pr_ref_load(owner, visit, &pr, cx);
+                        app.retry_stale_pr_ref_load(owner, visit, &pr, silent, cx);
                     }
                     klog!("pr-mode: fetch #{} ok", pr.number);
                     klog!(
@@ -519,7 +542,7 @@ impl KagiApp {
                         cx,
                     );
                     if !applied {
-                        app.retry_stale_pr_ref_load(owner, visit, &pr, cx);
+                        app.retry_stale_pr_ref_load(owner, visit, &pr, silent, cx);
                     } else if app.app_sessions.visit(owner) == Some(visit) {
                         app.refresh_github_prs_for(owner, recorded_repo, cx);
                     }
@@ -603,6 +626,7 @@ impl KagiApp {
         owner: crate::app::SessionId,
         visit: u64,
         stale: &kagi_domain::github::PullRequest,
+        silent: bool,
         cx: &mut Context<Self>,
     ) {
         if self.active_session() != Some(owner) {
@@ -625,7 +649,7 @@ impl KagiApp {
                 .map(|tab| tab.pr.clone())
         });
         if let Some(latest) = latest {
-            self.fetch_pr_for_open(latest, cx);
+            self.fetch_pr_for_open(latest, silent, cx);
         }
     }
 

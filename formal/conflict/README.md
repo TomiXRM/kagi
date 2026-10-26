@@ -4,17 +4,24 @@ This is the playbook §5 home for the 2026-10-24 investigation: finite lifecycle
 interleavings in TLA+/TLC, plus exhaustive finite-domain Python checks for hunk
 assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission.
 No product code is imported or changed by the harness. The maintained union has
-90 TLC configurations and 41 negative controls, retaining P2 lifecycle guards,
-#1731/#1784 preservation and off-thread flush guards, and #1734/#1735 explicit
-deletion and parked-namespace routes. Including #1756's CRLF manual-residue
+93 TLC configurations and 43 negative controls, retaining P2 lifecycle guards,
+#1746 D3 repository admission, #1780 writer termination, #1731/#1784 preservation
+and off-thread flush guards, and #1734/#1735 explicit deletion and parked-namespace
+routes. Including #1756's CRLF manual-residue
 predicate, there are 40 pure properties (1,695,747 evaluations), 37 pure mutants,
 and 34 saved drill projections / 46 logs
-with a forged-Skip negative control. Earlier 77-check deletion and 81-check P2
-runs are historical evidence in the lifecycle ledger; generated receipts record
-the current combined verdicts.
+with a forged-Skip negative control. Earlier 77-check deletion, 81-check P2,
+84-check D3 and 90-check namespace runs are historical evidence in the lifecycle
+ledger; generated receipts record the current combined verdicts.
 Bounds, extracted source citations, and witnesses are in
 [the lifecycle ledger](../../docs/formal/conflict-lifecycle-ledger.md) and
 [the pure ledger](../../docs/formal/conflict-pure-ledger.md).
+
+The historical #1746/#1784 merged guard matched all 70 lifecycle outcomes (64,371 summed
+distinct states) and detected all 25 removed-guard controls (4,215 summed states).
+The pure properties, 36 mutants and historical drill projections also passed.
+The #1780 writer-termination refinement adds two configurations and one negative
+control; the historical totals above do not include that refinement.
 
 ## Run
 
@@ -116,6 +123,12 @@ Each original flaw remains refutable through the new broken configs below.
 These are maintained expectations, not a claim that this edit ran TLC; current
 run evidence is produced by the parent validation command.
 
+In the two-app schedule, either frozen staging or D3 exclusion independently
+prevents the old unapproved-payload race. `approved-two-writers-broken` therefore
+explicitly removes both (`stagePayloadRepoLock`), without narrowing `saveRace`.
+The single-guard `stagePayload` external-CLI and `repoLock` exclusion controls
+remain separate; this combined control is not evidence that either alone fails.
+
 #1731 makes `draft-io-quit` and the three `preserve-*` checks HOLD. The extracted
 close path retains the failed-autosave flag and live text while its sheet offers
 Retry or Cancel; a successful retry clears the hold. `DraftNeverLost` is unchanged:
@@ -127,6 +140,43 @@ repository mutation. Four `*-broken` controls independently remove those guards
 and retain the original loss/destructive-progress counterexamples. Atomic draft
 replacement and interprocess serialization remain the separate #1732 properties;
 the pure hunk/draft compatibility predicates are intentionally unchanged.
+
+### Unknown CLI termination and repository ownership (#1780)
+
+`writer-termination` bounds two independent application instances to one CLI
+writer each. Approval, draft flush and successful preflight are fixed inputs;
+admission/spawn, unknown return, pipe EOF, confirmed group stop and Sessions
+reconciliation are separate transitions. `LiveWriterKeepsRepositoryLease`
+requires a live writer to retain repository admission, excludes an independent
+writer, and requires monitor ownership after return. The deliberately broken
+variant releases admission on unknown return while descendants remain live.
+Its expected REFUTATION leaves the Sessions reservation intact: a process-local
+reservation alone cannot protect against another app.
+
+The implementation shares the same lock fd's `Arc` ownership with the
+**existing `run_child` janitor**, not a second independent monitor. The janitor
+retains it until `proc::group_alive` returns false for its group, even
+after pipe EOF. Quarantine revokes the originating thread's reentrancy permission;
+its weak resource entry remains so every further child under an existing guard
+also retains the descriptor until its own stop proof. Sessions reconciliation
+uses the same underlying group-liveness evidence but owns a separate lease and
+may finish later. The janitor never retires a still-executing supervisor job,
+so that job's later commands remain registered for abandonment/reaping.
+
+Transfer is limited to an unconfirmed process wait or output collection:
+`!group_stopped && (status.is_err() || io.is_err())`. A successful CLI with
+complete collectors, including a post-commit hook's background helper with closed
+stdio, keeps ADR-0196's existing Success settlement and releases admission.
+The existing group sweeper still watches that helper without quarantining writes.
+A real-Git hook regression covers this boundary; this quotient models Unknown
+termination, not successful background hooks.
+The model assumes a surviving monitoring app, cooperating lock users and sound
+process-group stop evidence; it does not prove escaped descendants, abrupt app
+death, OS lock semantics or arbitrary external Git cooperation. No eventual
+stop is assumed: an unproven stop keeps admission closed indefinitely.
+Abort/Skip draft preservation remains outside repository admission; D/F's
+snapshot ref remains after repository admission and preflight. Existing
+generation/lock-nonnesting and preservation invariants are unchanged.
 
 ### Background UI cutover (#1760)
 
@@ -229,7 +279,7 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `approved-index-race` | `ApprovedRevisionFrozen` | HOLD | none | #1743 |
 | `approved-index-race-broken` | `ApprovedRevisionFrozen` | REFUTE | stagePayload | Negative control for #1743: reread WT |
 | `approved-two-writers` | `ApprovedRevisionFrozen` | HOLD | none | #1743 |
-| `approved-two-writers-broken` | `ApprovedRevisionFrozen` | REFUTE | stagePayload | Negative control for #1743: reread WT |
+| `approved-two-writers-broken` | `ApprovedRevisionFrozen` | REFUTE | stagePayloadRepoLock | Combined negative control: reread WT and remove D3 exclusion |
 | `stale-worktree` | `StaleSnapshotNeverWrites` | HOLD | none | #1733 fixed: captured WT provenance checked before mutation |
 | `stale-worktree-broken` | `StaleSnapshotNeverWrites` | REFUTE | worktree | Negative control; remove #1733 WT provenance guard |
 | `stale-worktree-before-choice` | `StaleSnapshotNeverWrites` | HOLD | none | #1733: watcher refresh before any choice retains original WT provenance |
@@ -262,8 +312,11 @@ external drill artifacts; ordinary runs require no live app or external files.
 | `draft-flush-close-broken` | `BarrierCloseDurable` | REFUTE | flushClose | Negative control; close while pending |
 | `draft-flush-lock-order` | `BarrierLocksNeverNested` | HOLD | none | #1760 / #1746: flush before repository admission |
 | `draft-flush-lock-order-broken` | `BarrierLocksNeverNested` | REFUTE | flushLock | Negative control; acquire repository lock before flush |
-| `two-instance-leases` | `RepoHasAtMostOneLease` | REFUTE | none | #1746 (owner QUESTION) |
-| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | REFUTE | none | Two-instance HOLD expected via #1746 D3 repository lock; external CLI residual stays REFUTE |
+| `two-instance-leases` | `RepoHasAtMostOneLease` | HOLD | none | #1746 D3: kernel writer ownership |
+| `two-instance-leases-broken` | `RepoHasAtMostOneLease` | REFUTE | repoLock | Negative control: remove repository lock |
+| `writer-termination` | `LiveWriterKeepsRepositoryLease` | HOLD | none | #1780: janitor retains admission until process-group stop |
+| `writer-termination-broken` | `LiveWriterKeepsRepositoryLease` | REFUTE | earlyRepoRelease | Negative control: unknown return drops admission with live descendants |
+| `two-instance-stale-write` | `StaleSnapshotNeverWrites` | HOLD | none | HOLD via #1746 D3 (lock); #1733 residual = external CLI |
 | `receipt-continue` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
 | `receipt-continue-broken` | `ReceiptFollowsMutation` | REFUTE | workerReceipt | Negative control for #1740 |
 | `receipt-merge` | `ReceiptFollowsMutation` | HOLD | none | #1740 |
@@ -410,6 +463,9 @@ isolated model counterexamples. See both reconciliation headers for exact scope.
 
 The models do not run Rust, emulate the GUI, or establish model/code equivalence.
 HOLD is bounded by the finite equality/order quotients and vector/text bounds;
-leases are per modeled instance, crashes are explicit events, and cached marker
-verdicts are supplied inputs. The advisory `formal-conflict` CI job runs this same
+Sessions reservations remain per modeled instance; `repoLease` separately models
+the kernel writer lease acquired before final preflight and released at verification.
+`RepoHasAtMostOneLease` counts that writer lease, not approval/UI reservations.
+The broken-lock variant removes only kernel exclusion. Crashes are explicit events,
+and cached marker verdicts are supplied inputs. The advisory `formal-conflict` CI job runs this same
 entry point with a five-minute job limit; it is not part of `blocking-ci`.

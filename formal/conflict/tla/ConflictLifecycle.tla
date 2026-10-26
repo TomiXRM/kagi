@@ -60,6 +60,9 @@ Init == s = [pc |-> [a \in Actors |-> "observeIndex"],
     planTree |-> [a \in Actors |-> "unmerged"], planRev |-> [a \in Actors |-> <<0,0,0,0>>],
     approvedStep |-> ActorInit, approved |-> [a \in Actors |-> FALSE],
     lease |-> [a \in Actors |-> FALSE], preflight |-> [a \in Actors |-> FALSE],
+    repoLease |-> [a \in Actors |-> FALSE],
+    writer |-> [a \in Actors |-> [phase |-> "admit", live |-> FALSE,
+        monitor |-> FALSE, pipesClosed |-> FALSE]],
     draftOwner |-> 0,
     recoveryStep |-> 0, recoveryPrimary |-> "none", recoveryHistory |-> {},
     executed |-> [a \in Actors |-> "none"], successful |-> [a \in Actors |-> FALSE],
@@ -171,7 +174,19 @@ Freeze(a) == /\ At(a, "ready") /\ ~DraftScenario /\ s.attached[a]
 Approve(a) == /\ At(a, "approve") /\ s.attached[a] /\ ~s.lease[a]
     /\ ~s.refreshPending
     /\ s' = [s EXCEPT !.approved[a] = Broken # "approval", !.lease[a] = TRUE,
-        !.pc[a] = "preflight", !.event = <<"Approve(confirm)",a>>]
+        !.pc[a] = IF Kind \in {"skip","abort","stashAbort"} THEN "preserve" ELSE "admit",
+        !.event = <<"Approve(confirm)",a>>]
+\* #1746: write_lock.rs::acquire and conflict_ops.rs::run_recorded_conflict.
+\* Sessions leases remain per-process. The kernel writer lease is separate:
+\* final revision preflight follows acquisition; known-stop Verify releases it.
+\* writerTermination below separately models unknown CLI return with live descendants.
+\* Abort/Skip draft preservation precedes this critical section in Rust; its
+\* separate draft lock is not represented in this writer-exclusion quotient.
+\* D/F recovery creates a snapshot ref after locked preflight, before index writes.
+AcquireRepositoryLease(a) == /\ At(a, "admit")
+    /\ ((\A b \in Actors : ~s.repoLease[b]) \/ Broken \in {"repoLock","stagePayloadRepoLock"})
+    /\ s' = [s EXCEPT !.repoLease[a] = TRUE,
+        !.pc[a] = "preflight", !.event = <<"AcquireRepositoryLease",a>>]
 \* #1743: execute the approved merge plan; only the mutant silently replans.
 RenewMergePlan(a) == /\ At(a, "preflight") /\ Kind = "mergeCommit"
     /\ s' = [s EXCEPT !.planTree[a] = IF Broken = "mergePlan" THEN s.index[1] ELSE @,
@@ -188,12 +203,14 @@ Preflight(a) == /\ At(a, IF Kind = "mergeCommit" THEN "mergePreflight" ELSE "pre
     /\ (Kind # "mergeCommit" \/ s.planTree[a] = s.index[1])
     /\ s' = [s EXCEPT !.preflight[a] = TRUE,
         !.metadataFailOpen = @ \/ (~s.metadataReadable /\ Kind = "continue"),
-        !.pc[a] = CASE Kind \in {"skip","abort","stashAbort","df"} -> "preserve"
+        !.pc[a] = CASE Kind = "skip" -> "skip"
+                  [] Kind \in {"abort","stashAbort"} -> "abort"
+                  [] Kind = "df" -> "preserve"
                   [] Kind = "mergeCommit" -> "commit" [] OTHER -> "wtValidate",
         !.event = <<"Preflight",a>>]
 MergeRefused(a) == /\ At(a, "mergePreflight") /\ Kind = "mergeCommit"
     /\ (s.planRev[a] # Revision \/ s.planTree[a] # s.index[1])
-    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.repoLease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"MergeRefused(drift)",a>>]
 \* #1733 conflict_boundary.rs::validate_save_binding / validate_current_paths;
 \* worktree_state.rs::validate accepts only the original WT or exact frozen bytes.
@@ -206,26 +223,24 @@ ValidateFile(a) == /\ At(a, "wtValidate")
 FileRefused(a) == /\ At(a, "wtValidate")
     /\ ((s.planRev[a] # Revision /\ Broken # "revision") \/
         (s.materializedWT[a] # s.wt[File(a)] /\ s.frozen[a] # s.wt[File(a)] /\ Broken # "worktree"))
-    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.repoLease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"FileRefused",a>>]
 \* #1731 conflict_abort.rs: execute_conflict_abort_expecting, conflicts.rs:
 \* execute_conflict_skip, dir_file_conflict.rs: apply_dir_file_resolution_with_progress.
 \* Required recovery failure returns Blocked before destructive repository work.
 Preserve(a) == /\ At(a, "preserve")
     /\ s' = [s EXCEPT !.preservationFailed[a] = Scenario \in {"preserveAbort","preserveSkip","preserveDF"},
-        \* A possible fs::write error AFTER truncation destroys even an older save.
-        \* resolution.rs:800-806; atomic draft replacement is tracked by #1732.
-        !.diskValid = IF Scenario \in {"preserveAbort","preserveSkip"} THEN FALSE ELSE @,
-        !.disk = IF Scenario \in {"preserveAbort","preserveSkip"} THEN {} ELSE @,
-        !.pc[a] = CASE Scenario \in {"preserveAbort","preserveSkip","preserveDF"}
-                          /\ Broken # "preservation" -> "refused"
-                  [] Kind = "skip" -> "skip"
-                  [] Kind \in {"abort","stashAbort"} -> "abort" [] OTHER -> "index",
+        \* #1732 atomic replacement retains the preceding acknowledged draft
+        \* on Abort/Skip preservation failure before repository admission.
+        \* D/F snapshot creation instead stays under its preflighted repository lease.
+        !.pc[a] = IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"}
+                          /\ Broken # "preservation" THEN "refused"
+                  ELSE IF Kind = "df" THEN "index" ELSE "admit",
         !.event = <<"Preserve",a,IF Scenario \in {"preserveAbort","preserveSkip","preserveDF"} THEN "failed" ELSE "ok">>]
 \* backend/conflict_ops.rs:562-581 and UI conflict_skip.rs:138-152 map errors
 \* to Refused; neither admission settlement nor presentation mutates the repo.
 RefusePreservation(a) == /\ At(a, "refused") /\ s.preservationFailed[a]
-    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.receipt[a] = TRUE,
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.repoLease[a] = FALSE, !.receipt[a] = TRUE,
         !.reported[a] = TRUE, !.pc[a] = "done", !.event = <<"RefusePreservation",a>>]
 \* conflicts.rs:1646-1648 Save; :1380-1404 Continue rename; dir_file_conflict.rs:315-324.
 \* #1745: stash checkout retains raw path authority, including non-UTF-8.
@@ -248,14 +263,14 @@ WTWrite(a) == \E payload \in {s.frozen[a], "tampered"} :
 \* conflicts.rs:1650-1656 and :1406-1420; conflict_abort.rs:342-351,519-531;
 \* dir_file_conflict.rs:219-222. Each index flush is atomic, not whole lifecycle.
 IndexWrite(a) == /\ At(a, "index") /\ s.preflight[a]
-    \* #1743 conflicts.rs::freeze_text_resolution captures blob/mode before WT write;
-    \* stage_raw_entry stages that approved blob. The mutant restores add_path.
+    \* #1743 stages the approved frozen payload (after materialization/filtering).
+    \* The two-writer mutant also removes D3 exclusion, which independently masks the race.
     /\ s' = [s EXCEPT !.index[1] = CASE Kind = "stashAbort" -> "absent"
             [] Kind = "abort" -> "original"
             [] Kind = "df" -> s.frozen[a]
-            [] OTHER -> IF Broken = "stagePayload" THEN s.wt[1] ELSE s.frozen[a],
+            [] OTHER -> IF Broken \in {"stagePayload","stagePayloadRepoLock"} THEN s.wt[1] ELSE s.frozen[a],
         !.stagedDifferent = @ \/ (Kind \in {"save","continue","mergeContinue"}
-            /\ Broken = "stagePayload" /\ s.wt[1] # s.frozen[a]),
+            /\ Broken \in {"stagePayload","stagePayloadRepoLock"} /\ s.wt[1] # s.frozen[a]),
         !.index[2] = IF Kind = "df" THEN "absent" ELSE @,
         !.indexRev = @ + 1, !.mutated[a] = TRUE, !.wroteUnapproved = @ \/ ~s.approved[a],
         !.destructiveAfterFailure = @ \/ s.preservationFailed[a],
@@ -294,7 +309,7 @@ Verify(a) == /\ At(a, "verify")
     /\ (Kind # "save" \/ (s.wt[1] = s.frozen[a] /\ s.index[1] = s.frozen[a]))
     /\ (Kind # "stashAbort" \/ Broken \in {"stashRestore","stashVerify"}
         \/ (s.wt[1] = "original" /\ s.index[1] = "original"))
-    /\ s' = [s EXCEPT !.successful[a] = TRUE,
+    /\ s' = [s EXCEPT !.successful[a] = TRUE, !.repoLease[a] = FALSE,
         !.pc[a] = IF DeferredReceipt THEN "release" ELSE "append",
         !.event = <<"Verify",a>>]
 \* Backend-owned append is independent of a live UI callback.
@@ -334,7 +349,8 @@ GracefulExit(a, reason) == /\ a \in Participants /\ s.life[a] = "open" /\ ~s.clo
         !.text[a] = "none", !.abandoned = @ \/ (s.successful[a] /\ ~s.receipt[a] /\ ~s.lease[a]),
         !.event = <<reason,a>>]
 CloseWindow(a) == GracefulExit(a, "CloseWindow")
-\* Host/tab close flush durability is additionally modeled by DraftBarrierNext.
+\* The same failed/pending-draft gate applies to app-owned quit;
+\* host/tab close flush durability is additionally modeled by DraftBarrierNext.
 Quit(a) == GracefulExit(a, "Quit")
 \* #1732: a crash closes the draft lock fd; the kernel releases its advisory lock.
 \* Only draft crash scenarios allow abrupt exit; liveness uses graceful close.
@@ -413,7 +429,7 @@ MetadataReadFailure == /\ Scenario = "metadataUnreadable" /\ ~s.external
     /\ s' = [s EXCEPT !.metadataReadable = FALSE, !.external = TRUE,
         !.event = "MetadataReadFailure(MERGE_MSG unreadable)"]
 MetadataRefused(a) == /\ At(a, "preflight") /\ ~s.metadataReadable /\ Broken # "metadata"
-    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.pc[a] = "done",
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.repoLease[a] = FALSE, !.pc[a] = "done",
         !.event = <<"MetadataRefused",a>>]
 
 \* #1732 drafts.rs::autosave_json + draft_merge.rs::matches_record.
@@ -623,12 +639,52 @@ ParkedNamespaceCompletes ==
     /\ (N.phase \in {"verify", "record", "done"} =>
         N.index = NamespaceExpectedIndex /\ N.wt = NamespaceExpectedWT)
     /\ (N.phase = "done" => N.receipt)
+\* #1780: focused two-process quotient of a CLI under repository admission.
+\* Approval, draft flush (lock already released), and successful preflight are
+\* fixed inputs; no D/F snapshot ordering is changed by this scenario.
+\* Each actor launches once. Live means a process-group member may still write.
+WriterAdmit(a) == /\ s.writer[a].phase = "admit"
+    /\ \A b \in Actors : ~s.repoLease[b]
+    /\ s' = [s EXCEPT !.repoLease[a] = TRUE, !.lease[a] = TRUE,
+        !.writer[a].phase = "running", !.writer[a].live = TRUE,
+        !.event = <<"WriterAdmitAndSpawn",a>>]
+\* run_child transfers same-fd Arc ownership to its existing janitor and revokes
+\* the thread-local reentrancy permission before returning TerminationUnknown.
+WriterUnknownReturn(a) == /\ s.writer[a].phase = "running"
+    /\ s' = [s EXCEPT !.writer[a].phase = "returned",
+        !.writer[a].monitor = TRUE,
+        !.repoLease[a] = IF Broken = "earlyRepoRelease" THEN FALSE ELSE @,
+        !.event = <<"WriterUnknownReturn",a>>]
+\* EOF is independent of process-group stop and cannot release admission.
+WriterPipesClose(a) == /\ s.writer[a].phase \in {"running", "returned"}
+    /\ ~s.writer[a].pipesClosed
+    /\ s' = [s EXCEPT !.writer[a].pipesClosed = TRUE,
+        !.event = <<"WriterPipesClose",a>>]
+\* proc::supervisor::group_stopped is the sole stop proof, shared with Sessions.
+\* This transition quotients a confirmed empty group and the janitor's drop.
+WriterGroupStopped(a) == /\ s.writer[a].phase = "returned"
+    /\ s' = [s EXCEPT !.writer[a].live = FALSE,
+        !.writer[a].monitor = FALSE, !.writer[a].phase = "stopped",
+        !.repoLease[a] = FALSE, !.event = <<"WriterGroupStopped",a>>]
+\* Per-Sessions settlement/reconciliation is separate from kernel ownership.
+WriterReconcile(a) == /\ s.writer[a].phase = "stopped"
+    /\ s' = [s EXCEPT !.lease[a] = FALSE, !.writer[a].phase = "done",
+        !.event = <<"WriterReconcile",a>>]
+WriterTerminationNext == \E a \in Actors :
+    WriterAdmit(a) \/ WriterUnknownReturn(a) \/ WriterPipesClose(a)
+        \/ WriterGroupStopped(a) \/ WriterReconcile(a)
+LiveWriterKeepsRepositoryLease ==
+    /\ \A a \in Actors : s.writer[a].live =>
+        (s.repoLease[a] /\ s.lease[a]
+         /\ (s.writer[a].phase = "returned" => s.writer[a].monitor)
+         /\ \A b \in Actors \ {a} : ~s.repoLease[b])
+    /\ Cardinality({a \in Actors : s.repoLease[a]}) <= 1
 
 ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFile(a)
     \/ Choose(a) \/ ChooseNamespace(a) \/ LineToggle(a) \/ ManualEdit(a) \/ AutosaveRead(a)
     \/ AutosaveWriteStart(a) \/ AutosaveWrite(a) \/ AutosaveFailure(a)
     \/ OpenCloseSheet(a) \/ RetryDraft(a) \/ CancelCloseSheet(a)
-    \/ Freeze(a) \/ Approve(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
+    \/ Freeze(a) \/ Approve(a) \/ AcquireRepositoryLease(a) \/ RenewMergePlan(a) \/ Preflight(a) \/ Preserve(a)
     \/ RefusePreservation(a) \/ ValidateFile(a) \/ FileRefused(a) \/ MergeRefused(a)
     \/ WTWrite(a) \/ IndexWrite(a) \/ Abort(a) \/ RefCAS(a) \/ Skip(a) \/ Continue(a)
     \/ MergeCommit(a) \/ Verify(a) \/ AppendReceipt(a) \/ ReleaseLease(a) \/ Deliver(a)
@@ -636,6 +692,7 @@ ActorNext(a) == ObserveIndex(a) \/ ObserveMetadata(a) \/ AcceptRead(a) \/ OpenFi
 Next == IF NamespaceScenario THEN NamespaceNext
     ELSE IF Scenario = "draftBarrier" THEN DraftBarrierNext
     ELSE IF Scenario = "draftRecovery" THEN DraftRecoveryNext
+    ELSE IF Scenario = "writerTermination" THEN WriterTerminationNext
     ELSE ((\E a \in Participants : ActorNext(a)) \/ ExternalGit \/ ReplaceOperation
         \/ WatcherRefresh \/ WatcherFileRefresh \/ MetadataReadFailure)
 Spec == Init /\ [][Next]_vars
@@ -666,12 +723,16 @@ SkipRefreshDisarmsChangedStep ==
     ~(Scenario = "skipRefresh" /\ s.external /\ ~s.refreshPending
       /\ s.pc[1] = "approve" /\ s.approvedStep[1] # s.operation)
 MetadataReadErrorNeverAdmitted == ~s.metadataFailOpen
-NoDestructiveProgressAfterPreservationFailure == ~s.destructiveAfterFailure
+NoDestructiveProgressAfterPreservationFailure ==
+    /\ ~s.destructiveAfterFailure
+    /\ (Kind = "df" =>
+        \A a \in Actors : At(a, "preserve") => (s.repoLease[a] /\ s.preflight[a]))
 MergeCommitTreeIsApprovedTree == s.committedTree = "none" \/ s.committedTree = s.shownTree[1]
 SiblingWorktreesInvalidatedOnSharedRef ==
     (s.sharedMoved /\ s.pc[1] = "done") => s.siblingInvalidated
-\* REFUTE: leases are per application, not a repository-global lock.
-RepoHasAtMostOneLease == Cardinality({a \in Actors : s.lease[a]}) <= 1
+\* HOLD: count kernel writer leases, not the process-local UI reservations.
+\* Broken="repoLock" restores the old independent-process writer admission.
+RepoHasAtMostOneLease == Cardinality({a \in Actors : s.repoLease[a]}) <= 1
 \* HOLD: raw-path stash restoration is verified before success.
 StashAbortRestoresConflictedBytes ==
     (Kind = "stashAbort" /\ s.successful[1]) =>

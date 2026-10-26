@@ -998,6 +998,7 @@ impl Backend {
     /// change between plan and execute (ADR-0104). The conflict-resolution save
     /// IS the substantive work; this plan is the safety gate around it.
     pub fn plan_merge_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
+        let _lock = crate::write_lock::acquire_recorded(&self.repo, &self.path, "merge-commit")?;
         // Reuse plan_commit's HEAD snapshot + status capture; the merge-commit
         // message is informational (not validated against the staged tree).
         let mut plan = self.plan_commit(message)?;

@@ -134,6 +134,36 @@ receipt の `after` に予測を書かない。
 `stopped == false` の間、scope の lease は解放されず、同 scope への `BeginWrite` は
 `NeedsReconcile` を返す。`ReconcileRead` が `stop_proven` を持って初めて解放する。
 
+**CLI 子孫が残る場合の repository admission（#1780 / #1746）**:
+上記の per-`Sessions` lease と、別 Kagi process も排除する repository advisory
+lock は別の所有権である。Continue / Skip を含め、repository lock 内の CLI が
+`TerminationUnknown` で戻っても、生きた process group がある間は後者を解放しない。
+`write_lock.rs` の同一 fd の共有所有権は `Arc` とし、`proc.rs::run_child` は保持中の
+repository lock の再入を禁止して**既存の janitor/reaper** へ共有所有権を渡す。
+新しい独立 monitor は作らない。quarantine 中の admission を次の command が再利用
+することはできない。weak entry は残し、既存 outer guard 内の別 child にも同じ fd を
+保持させるため、一つの group の停止で別の生存 writer の lock を解放しない。
+
+共有所有権の移譲は process wait または output collection が Err の未確定実行に限る
+（`!group_stopped && (status.is_err() || io.is_err())`）。stdio を閉じた background
+helper を post-commit hook が残しても、CLI と collector が正常終了した既知の Success
+は本 ADR の settlement 表どおり解放し、repository admission だけを quarantine しない。
+その helper の group handle は既存の sweeper が引き続き管理する。
+
+janitor は Sessions reconciliation と共通の group-liveness evidence を用い、
+実行中の supervisor job を retire しない `proc::group_alive` で空を確認するまで lock を保持する。親 CLI の return / reap や stdout /
+stderr の EOF だけでは解放しない。停止証明が得られなければ fail-closed のままであり、
+timeout で admission を再開しない。quarantine 中の repository lock の解放は process の停止証明に、
+Sessions lease の解放と reconcile の解決は既存の lifecycle 条件にそれぞれ従う。
+この保護は監視する Kagi process が存続し、writer が監視対象 group 内にいることを
+前提とする。Kagi の強制終了や group を脱出した任意の外部 writer まで保証しない。
+
+Continue / Skip の draft flush・preservation は repository lock の前に完了し、
+draft lock と入れ子にしない。D/F recovery snapshot の ref write はこれと異なり、
+repository admission と preflight の**後**に同じ repository lock 内で行う。
+有限モデルの `LiveWriterKeepsRepositoryLease` と early-release negative control は
+unknown return、pipe EOF、停止証明、Sessions reconciliation を別 transition とする。
+
 **観測不能な remote write の明示解放（#706、2026-09-23）**:
 通常の `acknowledge` は引き続き `stop_proven && resolved` だけを受け付ける。
 別 tier の `prepare_unobservable_release` → audit job → `acknowledge_unobserved`
@@ -689,4 +719,86 @@ policies; this change does not rewrite Git configuration or their admission.
 - Closing progress never dismisses terminal feedback. Failed/Unknown/Partial
   and oplog append failure keep the one-request/result and inspect/ack contracts
   above. Natural completion retires the work; hiding is not completion evidence.
+
+
+## Repository-scoped conflict write admission (#1746)
+
+The process-local Sessions lease is not cross-process exclusion. Conflict Save,
+directory/file resolution, Continue (including merge staging), Abort, Skip and
+merge finalization additionally use the backend's repository advisory lock at
+`<common-gitdir>/kagi-write.lock`; linked worktrees share that repository scope.
+On Unix this is an fd-based `flock`, not `O_EXCL` or a PID marker. Never unlink
+the persistent sidecar. Closing the final descriptor (including process death)
+releases ownership in the kernel.
+Both draft and repository admission use `kagi_git::advisory_lock::lock_exclusive`;
+the caller supplies the distinct path and timeout, not a second flock implementation.
+
+Read-only conflict plans probe the same lock with nonblocking attempts, retrying
+for at most 100 ms. Generic application admission uses one zero-timeout probe,
+never a lock sleep on the UI thread. The confirmation modal retains no lock.
+The mutation owner reacquires before final preflight and retains the descriptor
+through execution and verification; the approved full revision is checked again
+under that lock. Reads do not acquire it. Nested executor calls on the same
+thread reuse the descriptor; unrelated background writers do not share admission.
+
+Every local writer's Sessions admission also probes that repository lock, so
+stage, pull, commit and background fetch cannot start while another process is
+inside a conflict mutation. These generic probes never append an admission
+receipt themselves. User-facing dispatch owns a single `Refused` receipt under
+the requested operation's name (Pull, Commit, checkout, manual Fetch, snapshot,
+Editor save, etc.); a Pull refused before its preparatory Fetch is named `pull`,
+not `fetch`. Continue, Skip and staging retain their existing receipt owners.
+No `conflict-write-admission` receipt is synthesized. A waiting queued intent
+records its initial refused attempt once; probes and automatic re-contention
+do not append repeated receipts. Recording failure retains the existing required
+acknowledgment instead of presenting an ordinary refusal as durably recorded.
+Continue and Skip planning likewise return their blocker to their existing UI
+receipt owner. Legacy Abort/merge planning records its early refusal under the
+observed `<kind>-abort` or `merge-commit` name and carries the original attempted
+`Recording` through planning errors. Its UI owner presents that recording once;
+a failed append activates the required acknowledgment, never a second row or an
+ordinary refusal toast. Admission receipt states use the translated `unobserved`
+grammar; every admission-error variant has a bounded EN/JA summary while Details
+and Copy retain the full stored diagnostic.
+
+Silent auto-fetch and periodic PR-ref refresh skip contention without a toast or
+receipt and retry on their next ordinary tick. A manual PR opening remains a
+user attempt named `fetch-pr`. The PR fetch intent survives pending and stale
+retries; a quiet admission refusal releases loading so an unchanged next list
+tick can try again. A queued head waits with the same
+localized repository-busy explanation and one error toast per intent. Its retained,
+cancellable retry task probes with timeout zero on the background executor after
+250 ms, then 500 ms, 1 s and at most 2 s between probes. Contended probes neither
+replan nor renew approval nor emit another toast. Successful availability returns
+that specific head to Queued for a fresh plan. Before emitting availability the
+task removes and detaches its own handle, so reentrant admission that loses to
+another process can retain a new retry for the same head. A non-blocker probe
+error also returns the head to normal planning/admission, which reports the actual
+failure rather than waiting indefinitely as contention. Closing its owner or
+removing the head drops the task; late results cannot revive it. Contention never
+claims an identity change or cancels successors.
+
+Draft preservation is a preceding phase: capture live input and complete the
+background writer's `flush()` barrier (or blocking backend `autosave()`) and
+release `buffer.json.lock` before acquiring `kagi-write.lock`. `flush()` drains
+queued captures, not uncaptured live input. Never hold both locks, in either order.
+After preservation, reacquire repository admission and repeat preflight; a changed
+approval refuses without mutation. This is advisory coordination among Kagi
+instances, not exclusion against arbitrary external Git/worktree writers.
+The integrated #1731/#1760 preservation policy is fail-closed: a failed capture or
+durable draft flush refuses Abort, Skip and directory/file replacement before
+repository admission. The formal `preserve-abort`, `preserve-skip` and
+`preserve-dir-file` guarantees now remain HOLD alongside repository-wide admission.
+Directory/file recovery snapshots are separate from this draft barrier: their ref
+write follows repository acquisition and preflight while the lock remains held,
+before destructive index/worktree changes.
+
+Contention is `Refused`, never `Failed` or `Unknown`: the durable English blocker
+remains "Another Kagi window is operating on this repository". Display-only
+refusal previews use short, punctuated EN/JA cause and retry-later sentences that
+fit the bounded toast beside its action; Unknown/Partial previews omit retry advice.
+Successful generic/stage admission clears only an Idle/Failed footer containing
+that repository-busy cause (including a localized staging preview), retaining
+unrelated statuses. Operation Log and bounded-toast delivery remain unchanged;
+no new modal or retry queue is added.
 

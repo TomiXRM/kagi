@@ -75,7 +75,7 @@ impl KagiApp {
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
-                self.report_admission_refusal(error, cx);
+                self.report_write_admission_refusal("pull", &repo_path, error, cx);
                 return false;
             }
         };

@@ -170,6 +170,42 @@ mod tests {
     }
 
     #[test]
+    fn deletion_keeps_repository_admission_across_recovery_and_index_write() {
+        let (_tmp, repo) = fixture(false);
+        let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
+        let mut boundaries = Vec::new();
+        conflict_delete::execute_conflict_delete(&repo, &plan, |progress| {
+            let root = repo.workdir().unwrap().to_path_buf();
+            let blocked = std::thread::spawn(move || {
+                let other = Repository::open(root).unwrap();
+                crate::write_lock::acquire(&other)
+                    .err()
+                    .is_some_and(|error| {
+                        error.blocker()
+                            == Some(&kagi_domain::plan_note::PlanNote::Conflicts(
+                                kagi_domain::plan_note::ConflictsNote::RepositoryBusy,
+                            ))
+                    })
+            })
+            .join()
+            .unwrap();
+            assert!(blocked, "repository admission must be held at {progress:?}");
+            boundaries.push(progress);
+            Ok(())
+        })
+        .unwrap();
+        assert!(boundaries.contains(&ConflictProgress::RecoveryCaptured));
+        assert!(boundaries.contains(&ConflictProgress::WorktreeWritten));
+        assert!(boundaries.contains(&ConflictProgress::IndexAndWorktreeWritten));
+        let root = repo.workdir().unwrap().to_path_buf();
+        assert!(std::thread::spawn(move || {
+            crate::write_lock::acquire(&Repository::open(root).unwrap()).is_ok()
+        })
+        .join()
+        .unwrap());
+    }
+
+    #[test]
     fn repeated_preflight_refuses_non_target_update_during_recovery() {
         use dir_file_conflict::DirFileChoice::{KeepDirectory, KeepFile};
         for choice in [None, Some(KeepFile), Some(KeepDirectory)] {

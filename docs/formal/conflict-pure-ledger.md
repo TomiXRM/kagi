@@ -1,5 +1,13 @@
 # Pure conflict predicate counterexample ledger
 
+## Current maintained union — #1746 / #1756 / #1780
+
+The required full harness at `e2df85aa` passes **40 properties / 1,695,747
+baseline property/input evaluations**, detecting all **37** deliberate mutants.
+The 96-case `CRLFManualMarkerResidue` check and its CR-retention mutant account
+for the increase over the historical #1732 totals below. This remains a bounded
+predicate extraction, not a proof of marker parsing or Rust/model equivalence.
+
 ## CRLF parser scope — #1756
 
 `pure/predict_hunks.py` enumerates selections, source-token assembly and
@@ -114,8 +122,9 @@ when the opposite side is deselected. All five amended negative controls exit 1:
 
 ### #1732 post-merge recovery equality amendment — 2026-10-25
 
-The complete maintained pure run passes **39 properties / 1,695,651 baseline
-property/input evaluations**, detecting all **36** deliberate mutants.
+At the historical #1732 post-merge amendment, the pure run passed **39 properties /
+1,695,651 baseline property/input evaluations**, detecting all **36** deliberate
+mutants. These are pre-CRLF measurements; current-union totals are above.
 
 `TwoWriterRecoveryRetained` adds 72 finite evaluations: two known identities,
 both orderings of distinct bodies from three representatives, disk adoption or

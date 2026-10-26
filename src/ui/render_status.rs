@@ -182,14 +182,18 @@ impl KagiApp {
         });
 
         // ── Footer message colour ──────────────────────────────
+        let colors = theme();
         let (footer_color, footer_text) = match &status_footer {
-            FooterStatus::Success(msg) => (theme().color_success, msg.clone()),
-            FooterStatus::Failed(msg) => (theme().color_blocker, msg.clone()),
-            FooterStatus::Idle(msg) => (theme().text_muted, msg.clone()),
+            FooterStatus::Success(msg) => (
+                colors.status_label_text_on(colors.color_success, colors.panel, colors.panel),
+                msg.clone(),
+            ),
+            FooterStatus::Failed(msg) => (colors.color_blocker, msg.clone()),
+            FooterStatus::Idle(msg) => (colors.text_muted, msg.clone()),
             // The spinner is an element, not a glyph: the ⟳ in the text never
             // turned, so a running operation looked like a stuck one (user
             // report). See `render_overlay::sync_spinner`.
-            FooterStatus::Busy(msg) => (theme().accent_text_on(theme().panel), msg.clone()),
+            FooterStatus::Busy(msg) => (colors.accent_text_on(colors.panel), msg.clone()),
         };
 
         // ── Status chips (view-model — ADR-0076 / issue #13 P5) ──

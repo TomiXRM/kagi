@@ -237,6 +237,11 @@ Sizes remain logical px at the pinned gpui-component scale; Kagi's new 100% base
 Conflict-footer Skip/Hide/Show controls fit the footer's **content box**, not
 its outer height: neutral dark chrome reserves an unscaled 1px top border.
 Keep their painted bounds inside that content box at fractional UI zoom.
+Success footer ink uses the semantic status-label contrast helper, with at
+least 4.5:1 against the actual chrome. Theme reload captures its invoking
+window: palette results stay in repository/Home, Settings results stay there,
+and startup errors remain app-level unless emitted in Settings. Escape filters
+by the same window audience before choosing its newest notification.
 
 Conflict operation status stays in its existing #704 strip below the toolbar
 when Graph, PRs, Issues or Editor replaces the conflict body (#1748). While the

@@ -226,6 +226,15 @@ fn exercise_lane(
             status.label.as_deref(),
             Some("Unrelated transient fixture…")
         );
+        if kind == kagi::ui::ToastKind::Success {
+            let text = e2e::control_paint(window.window_id(), "status-footer-text").unwrap();
+            let ink = u32::from(text.text_color.to_rgb()) >> 8;
+            let background = theme::theme().chrome_surface();
+            assert!(
+                theme::contrast_ratio(ink, background) >= 4.5,
+                "actual Success footer ink must reach AA on its painted chrome"
+            );
+        }
         stack.update(cx, |stack, _| {
             stack.advance_age_for_e2e(Duration::from_secs(4));
             assert!(stack.expiring_ids().contains(&transient));
@@ -423,6 +432,33 @@ pub(crate) fn assert_settings_subject_isolation(
     draw(cx, repository);
     assert!(bounds(repository, &rescue_probe).size.height > px(0.));
     assert!(e2e::control_bounds(repository.window_id(), &theme_probe).is_none());
+    // Escape in the repository must ignore the newer, invisible Settings
+    // notices, dismiss its own rescue, then leave Settings untouched.
+    cx.update_window(repository, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(repository, "escape");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let stack = stack.read(cx);
+        assert!(stack
+            .toasts()
+            .iter()
+            .find(|toast| toast.id == rescue)
+            .is_none_or(|toast| toast.dismissing.is_some()));
+        assert!(stack
+            .toasts()
+            .iter()
+            .any(|toast| toast.id == theme_error && toast.dismissing.is_none()));
+    });
+    cx.simulate_keystrokes(repository, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| stack
+        .read(cx)
+        .toasts()
+        .iter()
+        .any(|toast| toast.id == theme_error && toast.dismissing.is_none())));
     cx.update_window(settings, |_, window, _| window.remove_window())
         .unwrap();
     cx.run_until_parked();

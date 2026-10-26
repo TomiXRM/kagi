@@ -273,11 +273,15 @@ impl KagiApp {
             if workspace_fallbacks && this.cancel_workspace_overlay(window, cx) {
                 return;
             }
-            if this
-                .toast_stack
-                .clone()
-                .is_some_and(|stack| stack.update(cx, |stack, cx| stack.dismiss_newest(cx)))
-            {
+            let audience = match this.toast_subject_for_window(window, cx) {
+                super::toast_stack::ToastSubject::Settings => {
+                    super::toast_stack::ToastAudience::Settings
+                }
+                _ => super::toast_stack::ToastAudience::Repository,
+            };
+            if this.toast_stack.clone().is_some_and(|stack| {
+                stack.update(cx, |stack, cx| stack.dismiss_newest(audience, cx))
+            }) {
                 return;
             }
             if workspace_fallbacks && super::compact_sidebar::is_open(window, cx) {

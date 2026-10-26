@@ -94,8 +94,8 @@ fn stopped_for(language: Lang, count: Option<usize>) -> String {
 
 fn draft_rescued_for(language: Lang) -> &'static str {
     match language {
-        Lang::En => "Couldn't read this repository's saved conflict edits. The unreadable copy was kept — see the Operation Log.",
-        Lang::Ja => "この repository の conflict 編集の保存内容を読み込めませんでした。読めなかったコピーは残してあります（詳細は操作ログ）。",
+        Lang::En => "Saved conflict edits for this repository were damaged and weren't restored. The damaged copy was kept — see the Operation Log.",
+        Lang::Ja => "この repository に保存していた conflict 編集は破損していたため復元していません。破損したコピーは残してあります（詳細は操作ログ）。",
     }
 }
 
@@ -143,16 +143,17 @@ mod tests {
     fn damaged_draft_notice_keeps_internal_file_identity_in_the_log_only() {
         assert_eq!(
             draft_rescued_for(Lang::En),
-            "Couldn't read this repository's saved conflict edits. The unreadable copy was kept — see the Operation Log."
+            "Saved conflict edits for this repository were damaged and weren't restored. The damaged copy was kept — see the Operation Log."
         );
         assert_eq!(
             draft_rescued_for(Lang::Ja),
-            "この repository の conflict 編集の保存内容を読み込めませんでした。読めなかったコピーは残してあります（詳細は操作ログ）。"
+            "この repository に保存していた conflict 編集は破損していたため復元していません。破損したコピーは残してあります（詳細は操作ログ）。"
         );
         for language in [Lang::En, Lang::Ja] {
             let preview = draft_rescued_for(language);
             assert!(!preview.contains("buffer.json") && !preview.contains(".corrupt"));
             assert!(!preview.contains('/') && !preview.contains('\n'));
+            assert_ne!(preview, draft_restore_failed_for(language));
         }
     }
 

@@ -14,7 +14,7 @@ use gpui_component::select::SelectEvent;
 use gpui_component::ActiveTheme as _;
 use kagi::ui::command_palette::{self, PaletteAction};
 use kagi::ui::settings_view::ThemeOption;
-use kagi::ui::{commands, i18n, settings, theme, KagiApp, ToastKind};
+use kagi::ui::{commands, e2e, i18n, settings, theme, KagiApp, ToastKind};
 use serde_json::{json, Value};
 
 use crate::macos::{build_fixture, mount, unmount};
@@ -143,6 +143,48 @@ fn toast_ids(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>) -> Vec<u64> 
     })
 }
 
+fn assert_notice_visible_in_invoking_window(
+    cx: &mut VisualTestAppContext,
+    kagi: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    subject: kagi::ui::toast_stack::ToastSubject,
+    kind: ToastKind,
+) {
+    assert!(cx.read(|cx| cx
+        .windows()
+        .iter()
+        .all(|host| host.window_id() == window.window_id())));
+    let id = cx.read(|cx| {
+        kagi.read(cx)
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .rev()
+            .find(|toast| toast.kind == kind && toast.subject == subject)
+            .expect("the invoking window owns the actual theme notice")
+            .id
+    });
+    let probe = format!("toast-dismiss-{id}");
+    e2e::clear_control_bounds(window.window_id(), &probe);
+    e2e::clear_control_bounds(window.window_id(), "settings-page-controls");
+    kagi.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        e2e::control_bounds(window.window_id(), &probe).is_some_and(|bounds| bounds.size.width
+            > gpui::px(0.)
+            && bounds.size.height > gpui::px(0.)),
+        "the actual notice is painted with Settings closed"
+    );
+    assert!(e2e::control_bounds(window.window_id(), "settings-page-controls").is_none());
+}
+
 /// Type `query` into the real command palette and run its top row, the way
 /// Enter does. Returns the row that ran.
 fn run_palette(
@@ -256,6 +298,13 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
         1,
         "one toast names the broken file"
     );
+    assert_notice_visible_in_invoking_window(
+        cx,
+        &kagi,
+        window,
+        kagi::ui::toast_stack::ToastSubject::App,
+        ToastKind::Error,
+    );
     assert!(theme::theme_by_slug("e2e-broken").is_none());
     assert_every_surface_lists(cx, &kagi, window, INHERITED, "E2E Inherited");
     assert_every_surface_lists(cx, &kagi, window, STANDALONE, "E2E Standalone");
@@ -331,6 +380,13 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     assert_eq!(gpui_background(cx), expected_background(0x306090));
     assert_eq!(select_shows(cx, &kagi).as_deref(), Some(STANDALONE));
     assert_eq!(toasts_naming(cx, &kagi, BROKEN_FILE), broken_before + 1);
+    assert_notice_visible_in_invoking_window(
+        cx,
+        &kagi,
+        window,
+        kagi::ui::toast_stack::ToastSubject::Repository,
+        ToastKind::Error,
+    );
 
     // A completed older read must never replace the newer edit or issue a
     // duplicate success/error toast when reload is clicked twice in flight.
@@ -423,6 +479,26 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     assert_eq!(settings::read_setting("theme").as_deref(), Some(STANDALONE));
     assert!(!menu_lists(INHERITED) && !menu_lists(STANDALONE));
     assert!(!select_lists(cx, &kagi, window, STANDALONE));
+    assert_notice_visible_in_invoking_window(
+        cx,
+        &kagi,
+        window,
+        kagi::ui::toast_stack::ToastSubject::Repository,
+        ToastKind::Success,
+    );
+    {
+        let _gh = crate::pr_fields_focus::OfflineGh::install();
+        run_palette(cx, &kagi, window, "New Tab");
+        assert!(cx.read(|cx| kagi.read(cx).home_in_front()));
+        run_palette(cx, &kagi, window, "Reload Themes");
+        assert_notice_visible_in_invoking_window(
+            cx,
+            &kagi,
+            window,
+            kagi::ui::toast_stack::ToastSubject::App,
+            ToastKind::Success,
+        );
+    }
 
     kagi.update(cx, |app, cx| app.set_theme(&before, cx));
     unmount(cx, kagi, window);

@@ -502,13 +502,13 @@ impl ToastStack {
         }
     }
 
-    /// Escape dismisses only the newest still-visible notification.
-    pub fn dismiss_newest(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Escape dismisses only the newest notification visible to this audience.
+    pub fn dismiss_newest(&mut self, audience: ToastAudience, cx: &mut Context<Self>) -> bool {
         let Some(id) = self
             .toasts
             .iter()
             .rev()
-            .find(|t| t.dismissing.is_none())
+            .find(|t| t.dismissing.is_none() && audience.includes(t))
             .map(|t| t.id)
         else {
             return false;
@@ -1032,6 +1032,33 @@ mod tests {
                 stack.start_exit(settings);
                 assert!(!stack.persistent_lane_open(ToastAudience::Settings));
                 assert!(stack.persistent_lane_open(ToastAudience::Repository));
+            });
+        });
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    #[gpui::test]
+    fn escape_dismisses_only_its_window_audience(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+        cx.update(|cx| {
+            let stack = cx.new(|_| ToastStack::new());
+            stack.update(cx, |stack, cx| {
+                stack.push(ToastKind::Error, "Same caption");
+                let repository = stack.toasts().last().unwrap().id;
+                stack.set_subject(repository, ToastSubject::Repository, cx);
+                stack.push(ToastKind::Error, "Same caption");
+                let settings = stack.toasts().last().unwrap().id;
+                stack.set_subject(settings, ToastSubject::Settings, cx);
+                assert!(stack.dismiss_newest(ToastAudience::Repository, cx));
+                assert!(stack.toasts()[0].dismissing.is_some());
+                assert!(stack.toasts()[1].dismissing.is_none());
+                assert!(!stack.dismiss_newest(ToastAudience::Repository, cx));
+                assert!(stack.toasts()[1].dismissing.is_none());
+                assert!(stack.dismiss_newest(ToastAudience::Settings, cx));
+                assert!(!stack.dismiss_newest(ToastAudience::Settings, cx));
+                stack.push(ToastKind::Info, "App notice");
+                assert!(!stack.dismiss_newest(ToastAudience::Settings, cx));
+                assert!(stack.dismiss_newest(ToastAudience::Repository, cx));
             });
         });
     }

@@ -146,16 +146,21 @@ routine Info/Success feedback uses the existing fixed-height footer text slot:
 newest message only, one truncated line, the shared four-second lifetime and
 Role::Status arrival announcement. Busy uses that footer's existing spinner;
 slow-read Skip and Hide sit at the trailing end (owner ruling, #1768).
+Success footer text uses contrast-adjusted semantic ink, at least 4.5:1 against
+its actual chrome; the unadjusted success token alone is not text-safe.
 No transient or busy card may cover conflict content or change its geometry.
 Home/Settings/Graph retain their existing placement policies.
 House rule: notifications appear only in the window that owns their subject
-(owner, #1806). Settings shows only typed theme/settings notices, repository
-results/rescued drafts/refresh stay with their repository root. A standalone
-Home root keeps app-level notices; a repository root's Home tab is still the
-same owning window and retains its repository notices/recovery. Never infer
-ownership or draft-rescue cause from text.
-Draft-rescue previews explain preservation and point to Operation Log; internal
-storage names/paths belong only in the log detail.
+(owner, #1806). Settings shows its own typed theme/settings notices; repository
+results/rescued drafts/refresh stay with their repository root. Theme commands
+capture their invoking window, including repository/Home palette invocation;
+startup theme errors are app-level unless produced in Settings itself.
+A standalone Home root keeps app-level notices; a repository root's Home tab
+retains its repository notices/recovery. Escape considers only that window's
+audience, never dismissing an invisible foreign card or consuming its key.
+Never infer ownership or draft-rescue cause from text. Draft-rescue previews
+say the saved edits were damaged and not restored, the damaged copy was kept,
+and details are in Operation Log; internal storage names/paths stay in log detail.
 Recovery captions reuse the existing command name,
 and a failed or unfinished refresh must not dismiss the failure preview.
 Any accepted successful read for the captured owner resolves that preview,

@@ -582,12 +582,19 @@ with hunk/whole-file controls. Exercise automatic four-second expiry and verify
 the prior footer returns without re-announcing an older persistent error. Busy
 uses the existing footer spinner; held slow-read Skip/Hide remain inside the
 trailing end of that line. Include `slow_write_conflict_continue`.
+Read the actual Success footer paint and require at least 4.5:1 against its
+chrome background, not merely a semantic colour token.
 Home/Settings/Graph retain their current placement; their lanes still contain
 only persistent cards. Scope all hosts by typed subject (owner, #1806): with a
 real repository draft-rescue card live, native Settings must show no repository
-card, its repository window must still show it, and a real theme JSON error must
-appear only in Settings. Include `conflict_draft_corrupt_restore`; previews must
-not expose internal storage names, while the durable rescue detail retains them.
+card, its repository window must still show it, and a real theme JSON error
+invoked in Settings must appear only there. Include
+`conflict_draft_corrupt_restore`; its root Escape must dismiss only the
+repository rescue and leave newer invisible Settings notices untouched.
+Rescue copy must distinguish damaged/not-restored edits from a refreshable
+read failure, without exposing internal names; durable detail retains them.
+`theme_custom` checks startup error visibility and palette Reload Themes error
+and success paint in the invoking repository/Home window with Settings closed.
 A repository root's same-window Home tab must retain its repository notices and
 captured-owner recovery; do not mistake a view switch for a new owning window.
 The centre saved-source header probe is `conflict-saved-source-header`; never

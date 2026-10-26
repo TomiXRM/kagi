@@ -1,6 +1,6 @@
 # ADR-0228: Shared side-pair viewer
 
-- Status: Accepted architecture; shared preparation, rendering and adoption implemented; native acceptance pending
+- Status: Accepted architecture; steps ②–④ implemented and native functional acceptance passed; independent final HIG review pending
 - Date: 2026-10-24
 - References: [#1742](https://github.com/TomiXRM/kagi/issues/1742), [initial architecture review](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6381625496), ADR-0226, ADR-0227; deletion prerequisite #1734
 
@@ -300,12 +300,28 @@ themes or native assistive-technology delivery.
 
 `tests/gui_e2e/side_pair.rs` adds image/PDF Use → Save acceptance coverage, including
 image Change → Use, with independently captured stage OIDs/modes/bytes and stage-0 oracles.
-Compilation is not native execution evidence. The integrating owner must still
-run the full existing regression filters above and record real-window,
-keyboard/AX and narrow/zoom evidence before closing #1742. After integrating
+The final native run passed all 21 scenarios selected by `conflict_side_pair_`,
+`conflict_delete`, `conflict_dir_file`, `binary_diff_prepared`, `diff_binary_states`,
+`conflict_image_zoom`, `commit_pdf_`, `pdf_media_` and `pdf_focus_retirement`.
+This includes the compact JA 167% PDF fit/focus regression. After integrating
 #1734, the absent-side button freezes a deletion intent and defers it to the
 existing application confirmation boundary. It never adopts an empty blob;
 ancestor-only deletion keeps the single Remove from Index action. The real PNG
 modify/delete scenario covers both absent sides in EN/JA, inert root Return,
 Escape cancellation, unchanged preconfirmation index/worktree, and confirmed
 absence of stages 0–3 with one successful receipt.
+
+Native evidence for source commit `86bcfba9` is attached to
+[#1742](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6423133480).
+The plain build (features `[]`) used real Git merges with genuine PNG/JPEG/PDF,
+isolated profiles and a 1392×883 logical viewport on a 2× display. EN Light and
+JA Dark captures cover undecided/decided images, PDF toolbar/synchronized page
+navigation, explicit fallback metadata and the modify/delete confirmation sheet.
+EN additionally demonstrates independent PDF page navigation. Native EN and JA
+Saves independently verify the selected PNG/PDF stage-0 OID/mode and unchanged
+worktree bytes/mode. Physical root Return and Escape leave the pending deletion's
+index/worktree unchanged; confirmed deletion execution is covered by Tier A.
+EN Dark and JA Light add the malformed-image/binary/submodule/absent-side
+cross-checks, completing the four visual combinations required by #1773.
+All owned apps exited normally. These captures do not claim native VoiceOver/AX
+announcements or IME coverage, nor substitute for independent final HIG review.

@@ -104,6 +104,21 @@ actual GPUI shutdown hook without first draining autosave, and checks both durab
 bodies. Non-cancellable OS termination has a shared 200 ms budget, not an unlimited
 durability guarantee; storage errors/slow I/O retain an unacknowledged crash window.
 
+For #1774 use
+`KAGI_GUI_E2E_ONLY='create_branch_feedback,create_branch_after_unchanged,create_branch_cancel_reopen,create_branch_warnings'`.
+The feedback matrix covers EN/JA and Apple Light/Dark for both creation sheets:
+pristine/reopened empty, same-frame Return, erased names, actual CreateInvalidRef
+copy and natural wrapping at normal/enlarged scale. `input-branch-name-error`
+measures the actual field reason; AX assertions use the complete Alert label.
+The AFTER scenario checks the renderer-fed sentence and group name plus
+`plan_clipboard_text_for_e2e`, which calls the production Copy all projection:
+input sheets have no Copy all button, so this is not a native clipboard-click
+claim. Keep checkout-on predictions and repository-state witnesses.
+Pair with `input_field_error_ink_meets_aa_on_all_theme_modal_surfaces` in UI core.
+Tier B captures untouched, Return-empty, invalid-ref and checkout-off AFTER in
+EN Apple Light and JA Apple Dark with an isolated plain app. Preserve the actual
+validator and inspect the wrapped repair instruction, focus and pinned footer.
+
 For #1706 W3 use
 `KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. Shared helpers own byte-exact repository

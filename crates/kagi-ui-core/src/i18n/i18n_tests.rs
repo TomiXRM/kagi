@@ -418,20 +418,14 @@ fn keyed_validation_localizes() {
     use kagi_domain::plan::{BranchNameError as B, WorktreePathError as W};
     let _g = LOCK.lock();
     set_lang_no_persist(Lang::En);
-    assert_eq!(
-        branch_name_error(&B::EmptyCreate),
-        "Branch name must not be empty."
-    );
+    assert_eq!(branch_name_error(&B::EmptyCreate), "Enter a branch name.");
     assert_eq!(
         worktree_path_error(&W::Empty),
         "Worktree path must not be empty."
     );
     set_lang_no_persist(Lang::Ja);
     // Localized — no longer the English sentence, and the name stays verbatim.
-    assert_ne!(
-        branch_name_error(&B::EmptyCreate),
-        "Branch name must not be empty."
-    );
+    assert_ne!(branch_name_error(&B::EmptyCreate), "Enter a branch name.");
     assert!(branch_name_error(&B::CreateExists("feat".into())).contains("feat"));
     assert!(worktree_path_error(&W::Exists("/p".into())).contains("/p"));
     set_lang_no_persist(Lang::En);

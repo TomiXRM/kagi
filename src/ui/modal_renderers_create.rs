@@ -9,7 +9,8 @@ use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_current_predicted, ModalIcon};
 use super::modal_renderers_input::{
-    render_input_modal_field, render_input_modal_heading, render_input_modal_path_field,
+    create_branch_name_reason, render_input_modal_field, render_input_modal_heading,
+    render_input_modal_path_field,
 };
 use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
@@ -48,7 +49,8 @@ pub(crate) fn render_create_branch_modal(
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
+        .unwrap_or(true)
+        || modal.branch_name_composing;
     let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     // ── Cancel handler ──────────────────────────────────────
@@ -65,7 +67,9 @@ pub(crate) fn render_create_branch_modal(
     // T-BP-003: return focus to root_focus after confirm.
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_create_branch(cx);
-        if let Some(fh) = this.root_focus.clone() {
+        if this.create_branch_modal().is_some() {
+            this.focus_empty_create_branch_name(window, cx);
+        } else if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
@@ -102,13 +106,11 @@ pub(crate) fn render_create_branch_modal(
         .child(render_input_modal_field(
             Msg::InputBranchName.t(),
             modal.input_state.as_ref(),
-            plan.as_ref()
-                .and_then(|p| {
-                    p.blockers.iter().find(|b| {
-                        matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
-                    })
-                })
-                .map(|b| SharedString::from(plan_note_text(b))),
+            create_branch_name_reason(
+                plan.as_deref().filter(|_| !modal.branch_name_composing),
+                &modal.input,
+                modal.branch_name_interacted,
+            ),
         ))
         .child(super::e2e::measure_control(
             "create-branch-checkout-after",
@@ -121,8 +123,8 @@ pub(crate) fn render_create_branch_modal(
         ));
 
     if let Some(ref p) = plan {
-        // Branch creation leaves HEAD and the working tree unchanged; show
-        // both states using the same stacked comparison as every plan card.
+        // Ref-only creation summarizes unchanged state once; checkout-on
+        // retains the shared comparison's actual plan-derived effects.
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         if !p.warnings.is_empty() {
@@ -244,7 +246,8 @@ pub(crate) fn render_create_worktree_modal(
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
+        .unwrap_or(true)
+        || modal.branch_name_composing;
     let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
@@ -256,7 +259,9 @@ pub(crate) fn render_create_worktree_modal(
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.start_create_worktree(cx);
-        if let Some(fh) = this.root_focus.clone() {
+        if this.create_worktree_modal().is_some() {
+            this.focus_empty_create_branch_name(window, cx);
+        } else if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
@@ -282,16 +287,11 @@ pub(crate) fn render_create_worktree_modal(
                 Msg::InputNewBranchName.t()
             },
             modal.branch_state.as_ref(),
-            plan.as_ref()
-                // Empty is an input request, not a user-generated name error.
-                // The plan's blocker still keeps Create disabled.
-                .filter(|_| !modal.branch_input.trim().is_empty())
-                .and_then(|p| {
-                    p.blockers.iter().find(|b| {
-                        matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
-                    })
-                })
-                .map(|b| SharedString::from(plan_note_text(b))),
+            create_branch_name_reason(
+                plan.as_deref().filter(|_| !modal.branch_name_composing),
+                &modal.branch_input,
+                modal.branch_name_interacted,
+            ),
         ))
         .child(render_input_modal_path_field(
             Msg::InputWorktreePath.t(),

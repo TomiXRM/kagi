@@ -81,6 +81,19 @@ pub fn after_state_detail<'a>(title: &PlanTitle, predicted: &'a str) -> std::bor
     }
 }
 
+/// Ref-only branch creation has one consequence, not a duplicate status tally.
+/// This remains true for blocked names; it is not a claim of successful creation.
+pub fn branch_creation_unchanged_after(title: &PlanTitle) -> Option<&'static str> {
+    matches!(
+        title,
+        PlanTitle::Branch(BranchTitle::CreateBranch {
+            checkout: false,
+            ..
+        })
+    )
+    .then(|| Msg::InputBranchWorkingTreeUnchanged.t())
+}
+
 /// Neutral AFTER context comes from the approved plan, never its warning list.
 /// Keep this projection shared by the visible card, accessibility and Copy all.
 pub fn plan_after_state_detail(
@@ -97,6 +110,9 @@ pub fn plan_after_state_detail(
 
     if plan.rebase_scope.is_some() {
         return Cow::Borrowed(Msg::PlanRebaseResultUnknown.t());
+    }
+    if let Some(detail) = branch_creation_unchanged_after(&plan.title) {
+        return Cow::Borrowed(detail);
     }
     let detail = after_state_detail(&plan.title, &plan.predicted.dirty);
     // Do not promise effects for a blocked or no-op operation.

@@ -26,6 +26,8 @@ impl KagiApp {
             at,
             start_title,
             input: String::new(),
+            branch_name_interacted: false,
+            branch_name_composing: false,
             // Each opening owns a fresh editor, including when no Window is
             // available yet. Never retain the cancelled editor's text/caret.
             input_state: None,
@@ -111,6 +113,10 @@ impl KagiApp {
     ///
     /// Only verified success dismisses the form; failures retain its input.
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = self.create_branch_modal_mut() {
+            modal.branch_name_interacted = true;
+            cx.notify();
+        }
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
         self.run_modal_replans(cx);

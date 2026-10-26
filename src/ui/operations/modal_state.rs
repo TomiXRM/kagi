@@ -856,6 +856,26 @@ impl KagiApp {
 // Moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001): lazy InputState creation +
 // per-frame string sync for the input-bearing modals.
 impl KagiApp {
+    /// A refused empty-name submission keeps its instruction and focus together.
+    pub(crate) fn focus_empty_create_branch_name(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self
+            .create_branch_modal()
+            .filter(|modal| modal.input.is_empty() && modal.branch_name_interacted)
+            .and_then(|modal| modal.input_state.clone())
+            .or_else(|| {
+                self.create_worktree_modal()
+                    .filter(|modal| modal.branch_input.is_empty() && modal.branch_name_interacted)
+                    .and_then(|modal| modal.branch_state.clone())
+            });
+        if let Some(input) = input {
+            input.update(cx, |state, cx| state.focus(window, cx));
+        }
+    }
+
     /// Lazily create + sync the real text inputs of the create-branch /
     /// create-worktree / stash-push modals (gpui-component `InputState`).
     ///
@@ -879,6 +899,11 @@ impl KagiApp {
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }
+            m.branch_name_composing = m.input_state.as_ref().is_some_and(|input| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::marked_text_range(state, window, cx).is_some()
+                })
+            });
             let v = m
                 .input_state
                 .as_ref()
@@ -886,6 +911,7 @@ impl KagiApp {
                 .unwrap_or_default();
             if v != m.input {
                 m.input = v;
+                m.branch_name_interacted = true;
                 m.error = None;
                 self.schedule_modal_replan(cx);
             }
@@ -961,6 +987,11 @@ impl KagiApp {
                 });
                 m.path_state = Some(st);
             }
+            m.branch_name_composing = m.branch_state.as_ref().is_some_and(|input| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::marked_text_range(state, window, cx).is_some()
+                })
+            });
             let branch_v = m
                 .branch_state
                 .as_ref()
@@ -980,6 +1011,7 @@ impl KagiApp {
             }
             if branch_v != m.branch_input {
                 m.branch_input = branch_v.clone();
+                m.branch_name_interacted = true;
                 if !m.path_touched {
                     set_path = Some(branch_v);
                 }

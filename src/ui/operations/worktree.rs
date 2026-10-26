@@ -38,6 +38,8 @@ impl KagiApp {
             at,
             start_title,
             branch_input,
+            branch_name_interacted: false,
+            branch_name_composing: false,
             branch_state: None, // lazy (render)
             path_input,
             path_state: None, // lazy (render)
@@ -217,6 +219,10 @@ impl KagiApp {
     /// footer/toast carry the error (the modal is already closed, matching the
     /// stash async path).
     pub fn start_create_worktree(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = self.create_worktree_modal_mut() {
+            modal.branch_name_interacted = true;
+            cx.notify();
+        }
         // Rebuild from the latest input so a fast type-then-click can't execute
         // a stale plan.
         self.run_modal_replans(cx);
@@ -228,8 +234,8 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        // An unfilled new-name request is not an attempted operation. Return
-        // must remain as quiet as the disabled Create button.
+        // An empty name still cannot start an operation; the attempted submit
+        // now reveals its instruction beside the field.
         if !modal.allow_existing_branch && modal.branch_input.trim().is_empty() {
             return;
         }

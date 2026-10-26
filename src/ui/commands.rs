@@ -3033,15 +3033,11 @@ impl KagiApp {
                                     let key =
                                         format!("{}\0fetch\0success", repo_path_guard.display());
                                     stack.update(cx, |stack, cx| {
-                                        let id = stack.push_keyed_notify(
+                                        stack.push_keyed_notify(
+                                            super::toast_stack::ToastSubject::Repository,
                                             ToastKind::Success,
                                             text,
                                             Some(key),
-                                            cx,
-                                        );
-                                        stack.set_subject(
-                                            id,
-                                            super::toast_stack::ToastSubject::Repository,
                                             cx,
                                         );
                                     });

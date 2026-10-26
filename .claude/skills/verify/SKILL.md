@@ -618,7 +618,13 @@ invoked in Settings must appear only there. Include
 `conflict_draft_corrupt_restore`; its root Escape must dismiss only the
 repository rescue and leave newer invisible Settings notices untouched.
 Rescue copy must distinguish damaged/not-restored edits from a refreshable
-read failure, without exposing internal names; durable detail retains them.
+read failure and label the frozen repository even while another tab is current.
+Its ordinary card must exclude internal names. Hold the real append lock:
+the required acknowledgment must retain rescued-file detail and recording error
+without promising an Operation Log entry, and no extra receipt may appear.
+`toast_dismiss` also completes a held real Settings reload after Settings closes
+while a collapsed Repository notice owns focus. The original control must survive
+before repaint; the production removal subscriber must not focus root.
 `theme_custom` checks startup error visibility and palette Reload Themes error
 and success paint in the invoking repository/Home window with Settings closed.
 A repository root's same-window Home tab must retain its repository notices and

@@ -1752,8 +1752,7 @@ impl KagiApp {
                 std::borrow::Cow::Owned(display) => display.into(),
             };
             stack.update(cx, |stack, cx| {
-                let id = stack.push_keyed_notify(kind, message, None, cx);
-                stack.set_subject(id, subject, cx);
+                stack.push_keyed_notify(subject, kind, message, None, cx);
             });
         }
     }
@@ -1827,8 +1826,13 @@ impl KagiApp {
         self.toast_stack.clone().map(|stack| {
             let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
             stack.update(cx, |stack, cx| {
-                let id = stack.push_keyed_notify(kind, message, Some(key), cx);
-                stack.set_subject(id, toast_stack::ToastSubject::Repository, cx);
+                let id = stack.push_keyed_notify(
+                    toast_stack::ToastSubject::Repository,
+                    kind,
+                    message,
+                    Some(key),
+                    cx,
+                );
                 if matches!(kind, ToastKind::Error | ToastKind::Info) {
                     stack.set_action(
                         id,

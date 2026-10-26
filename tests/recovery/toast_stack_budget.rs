@@ -458,13 +458,13 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                             assert_eq!(stack.toasts().len(), 1);
                             assert_eq!(stack.toasts()[0].subject, ToastSubject::Repository);
                             for n in 0..3 {
-                                stack.push_notify(
+                                stack.push_keyed_notify(
+                                    ToastSubject::Settings,
                                     kagi::ui::ToastKind::Error,
                                     format!("Settings layout fixture {n}"),
+                                    None,
                                     cx,
                                 );
-                                let id = stack.toasts().last().unwrap().id;
-                                stack.set_subject(id, ToastSubject::Settings, cx);
                             }
                         });
                     });
@@ -893,9 +893,8 @@ fn assert_mixed_lane_stability(
     };
     for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
         let id = stack.update(cx, |stack, cx| {
-            stack.push_notify(kind, "Mixed-lane transient fixture", cx);
-            let id = stack.toasts().last().unwrap().id;
-            stack.set_subject(id, subject, cx);
+            let id =
+                stack.push_keyed_notify(subject, kind, "Mixed-lane transient fixture", None, cx);
             assert!(stack.persistent_lane_open(audience));
             id
         });
@@ -1055,9 +1054,13 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         let original = e2e::control_bounds(window.window_id(), controls_id).unwrap();
         let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
         stack.update(cx, |stack, cx| {
-            stack.push_notify(kagi::ui::ToastKind::Info, "Transient layout fixture", cx);
-            let id = stack.toasts().last().unwrap().id;
-            stack.set_subject(id, subject, cx);
+            stack.push_keyed_notify(
+                subject,
+                kagi::ui::ToastKind::Info,
+                "Transient layout fixture",
+                None,
+                cx,
+            );
             assert!(!stack.persistent_lane_open(audience));
         });
         cx.run_until_parked();
@@ -1072,10 +1075,13 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         let transient = e2e::control_bounds(window.window_id(), "toast-stack").unwrap();
         assert!((transient.left() - theme::scaled_px(12.)).abs() <= px(1.));
         let error = stack.update(cx, |stack, cx| {
-            stack.push_notify(kagi::ui::ToastKind::Error, "Persistent layout fixture", cx);
-            let id = stack.toasts().last().unwrap().id;
-            stack.set_subject(id, subject, cx);
-            id
+            stack.push_keyed_notify(
+                subject,
+                kagi::ui::ToastKind::Error,
+                "Persistent layout fixture",
+                None,
+                cx,
+            )
         });
         cx.run_until_parked();
         draw(cx, window);
@@ -1094,9 +1100,13 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         stack.update(cx, |stack, cx| {
             stack.advance_age_for_e2e(Duration::from_secs(60));
             assert!(!stack.expiring_ids().contains(&error), "errors persist");
-            stack.push_notify(kagi::ui::ToastKind::Success, "Later transient fixture", cx);
-            let id = stack.toasts().last().unwrap().id;
-            stack.set_subject(id, subject, cx);
+            stack.push_keyed_notify(
+                subject,
+                kagi::ui::ToastKind::Success,
+                "Later transient fixture",
+                None,
+                cx,
+            );
             assert!(
                 stack.persistent_lane_open(audience),
                 "transients leave the persistent lane open"

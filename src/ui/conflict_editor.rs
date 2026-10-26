@@ -86,7 +86,6 @@ fn pane(id: &'static str, editor: impl IntoElement) -> gpui::Stateful<gpui::Div>
         .min_h(px(0.))
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
-
         .child(
             div()
                 .flex()

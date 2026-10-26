@@ -155,12 +155,17 @@ House rule: notifications appear only in the window that owns their subject
 results/rescued drafts/refresh stay with their repository root. Theme commands
 capture their invoking window, including repository/Home palette invocation;
 startup theme errors are app-level unless produced in Settings itself.
+Assign the subject at insertion, before lane refresh or focus repair; a Settings
+arrival must never retire a Repository control or steal its focus.
 A standalone Home root keeps app-level notices; a repository root's Home tab
 retains its repository notices/recovery. Escape considers only that window's
 audience, never dismissing an invisible foreign card or consuming its key.
-Never infer ownership or draft-rescue cause from text. Draft-rescue previews
-say the saved edits were damaged and not restored, the damaged copy was kept,
-and details are in Operation Log; internal storage names/paths stay in log detail.
+Never infer ownership or draft-rescue cause from text. Persistent rescue cards
+append their frozen repository label, even when another tab is current.
+Previews say saved edits were damaged and not restored and the damaged copy
+was kept. When recorded, details are in Operation Log and internal storage
+names/paths stay there. If recording fails, the required acknowledgment carries
+the rescued-file detail and recording error without promising a log entry.
 Recovery captions reuse the existing command name,
 and a failed or unfinished refresh must not dismiss the failure preview.
 Any accepted successful read for the captured owner resolves that preview,

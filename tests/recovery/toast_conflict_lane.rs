@@ -359,7 +359,23 @@ pub(crate) fn assert_settings_subject_isolation(
     ]);
     let _host = crate::settings_window::SettingsHostGuard::native(cx);
     let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
-    let rescue_caption = kagi_ui_core::i18n::Msg::conflict_draft_rescued();
+    let rescue_caption = cx.read(|cx| {
+        let state = app.read(cx);
+        format!(
+            "{}\n{}",
+            kagi_ui_core::i18n::Msg::conflict_draft_rescued(),
+            kagi_ui_core::i18n::Msg::conflict_draft_repository(
+                state
+                    .repo_path
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            )
+        )
+    });
     let rescue = cx.read(|cx| {
         stack
             .read(cx)
@@ -464,4 +480,76 @@ pub(crate) fn assert_settings_subject_isolation(
     cx.run_until_parked();
     std::fs::remove_file(path).unwrap();
     assert!(theme::reload_custom_themes().is_empty());
+}
+
+/// The real restore quarantines bytes even when its receipt cannot be appended.
+pub(crate) fn assert_rescue_recording_failure(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    repo: &std::path::Path,
+    store: &std::path::Path,
+    torn: &[u8],
+) {
+    let previous = store.with_file_name("buffer.json.prev");
+    if previous.exists() {
+        std::fs::remove_file(previous).unwrap();
+    }
+    std::fs::write(store, torn).unwrap();
+    let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+        .join("operations.jsonl.lock");
+    let lock = kagi_git::advisory_lock::lock_exclusive(&lock_path, Duration::ZERO).unwrap();
+    let payload = e2e::detect_payload_for_test(repo, "main");
+    drop(lock);
+    let aside = store.with_file_name("buffer.json.corrupt.1");
+    assert_eq!(std::fs::read(&aside).unwrap(), torn);
+    let toast_count = cx.read(|cx| {
+        app.read(cx)
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .len()
+    });
+    app.update(cx, |app, cx| {
+        let owner = app
+            .app_sessions
+            .attachment(app.active_session().unwrap())
+            .unwrap();
+        app.apply_conflict_detect(owner, payload, cx);
+    });
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let notice = state
+            .app_notice()
+            .expect("unrecorded rescue requires acknowledgment");
+        let expected = format!(
+            "{}\n{}\n\n",
+            kagi_ui_core::i18n::Msg::conflict_draft_rescued_detail(&aside.to_string_lossy()),
+            kagi_ui_core::i18n::Msg::conflict_draft_repository(
+                repo.file_name().unwrap().to_str().unwrap()
+            )
+        );
+        assert!(notice.message.starts_with(&expected));
+        assert!(notice
+            .message
+            .contains(&std::fs::TryLockError::WouldBlock.to_string()));
+        assert!(notice.message.contains(aside.to_str().unwrap()));
+        assert!(!notice.message.contains("Operation Log"));
+        assert!(!notice.message.contains("操作ログ"));
+        assert_eq!(
+            state.toast_stack.as_ref().unwrap().read(cx).toasts().len(),
+            toast_count,
+            "the unrecorded rescue must not also create an ordinary card"
+        );
+    });
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(repo, 100)
+            .iter()
+            .filter(|entry| entry.op == "conflict-draft-restore")
+            .count(),
+        1,
+        "only the earlier, recorded rescue has a receipt"
+    );
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
 }

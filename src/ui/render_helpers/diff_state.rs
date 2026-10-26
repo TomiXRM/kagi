@@ -79,6 +79,8 @@ fn image_scale(extent: (u32, u32), viewport: (f32, f32)) -> f32 {
 type ImageViewports = std::rc::Rc<std::cell::Cell<[Option<gpui::Bounds<gpui::Pixels>>; 2]>>;
 type SizedImage = (std::sync::Arc<gpui::RenderImage>, (u32, u32));
 
+/// Conflict hosts keep the shared headers above their in-flow notification lane;
+/// ordinary diff hosts render them inline with `show_headers`.
 pub(crate) fn side_pair(
     pair: SidePair,
     actions: [Option<gpui::AnyElement>; 2],

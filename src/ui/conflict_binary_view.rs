@@ -314,7 +314,6 @@ pub(crate) fn render_raw_preview(
         .overflow_hidden()
         .overflow_y_scroll()
         .track_scroll(scroll)
-
         .child(super::e2e::measure_inside("conflict-image-pane"))
         .child(super::render_helpers::diff_state::side_pair(
             pair,

@@ -199,6 +199,7 @@ impl KagiApp {
 
     fn present_conflict_restore_warnings(
         &mut self,
+        repository: &Path,
         outcome: &mut ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
@@ -212,11 +213,17 @@ impl KagiApp {
             return;
         }
         for warning in warnings {
-            let message = Msg::conflict_draft_rescued();
+            let repository = Msg::conflict_draft_repository(
+                repository
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(""),
+            );
             if let Some(error) = warning.recording_error {
                 self.app_notices.push_back(
                     format!(
-                        "{message}\n\n{}",
+                        "{}\n{repository}\n\n{}",
+                        Msg::conflict_draft_rescued_detail(&warning.rescued_path.to_string_lossy()),
                         i18n::op_failed(i18n::Op::RecordOperation, error)
                     )
                     .into(),
@@ -224,7 +231,12 @@ impl KagiApp {
                 self.present_app_notice();
                 continue;
             }
-            self.push_toast(ToastKind::Error, SharedString::from(message), cx);
+            let preview = Msg::conflict_draft_rescued();
+            self.push_toast(
+                ToastKind::Error,
+                SharedString::from(format!("{preview}\n{repository}")),
+                cx,
+            );
         }
         cx.notify();
     }
@@ -246,7 +258,7 @@ impl KagiApp {
         mut outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
-        self.present_conflict_restore_warnings(&mut outcome, cx);
+        self.present_conflict_restore_warnings(&owner.path, &mut outcome, cx);
         // The result belongs to its frozen attachment. A completion from the
         // visit that just departed may refresh its inactive owner's retained
         // pane, but it cannot become authoritative after that owner is active
@@ -720,7 +732,7 @@ impl KagiApp {
                         .get(&owner.session)
                         .is_none_or(|ui| ui.conflict_detect_generation != generation)
                 {
-                    app.present_conflict_restore_warnings(&mut outcome, cx);
+                    app.present_conflict_restore_warnings(&owner.path, &mut outcome, cx);
                     return;
                 }
                 app.apply_conflict_detect(owner, outcome, cx);

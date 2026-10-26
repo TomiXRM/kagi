@@ -242,6 +242,12 @@ least 4.5:1 against the actual chrome. Theme reload captures its invoking
 window: palette results stay in repository/Home, Settings results stay there,
 and startup errors remain app-level unless emitted in Settings. Escape filters
 by the same window audience before choosing its newest notification.
+Assign a notice's typed subject before insertion, lane refresh or focus repair,
+so a Settings arrival cannot retire a collapsed Repository control or steal focus.
+Persistent draft-rescue cards append the frozen repository label across tab
+switches. They describe damaged edits not restored, with their copy retained.
+Only recorded rescues point to Operation Log; if recording fails, the required
+acknowledgment keeps rescued-file detail and the error without promising a log entry.
 
 Conflict operation status stays in its existing #704 strip below the toolbar
 when Graph, PRs, Issues or Editor replaces the conflict body (#1748). While the

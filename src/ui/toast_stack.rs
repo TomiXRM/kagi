@@ -258,6 +258,9 @@ impl ToastStack {
         });
     }
 
+    /// Relabel an existing result when clone completion transfers it to the app.
+    /// Producers must pass their captured subject at insertion, not use this to
+    /// route a new notification after lane visibility has already been repaired.
     pub fn set_subject(&mut self, id: u64, subject: ToastSubject, cx: &mut Context<Self>) {
         if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
             toast.subject = subject;
@@ -337,12 +340,14 @@ impl ToastStack {
 
     /// Push a new toast; cap eviction considers existing cards, not the new one.
     pub fn push(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
-        self.push_keyed(kind, message, None);
+        self.push_keyed(ToastSubject::App, kind, message, None);
     }
 
     /// Replace repeated results without increasing the notification count.
+    /// Ownership is part of insertion, including replacement, before lane refresh.
     pub fn push_keyed(
         &mut self,
+        subject: ToastSubject,
         kind: ToastKind,
         message: impl Into<SharedString>,
         result_key: Option<String>,
@@ -368,6 +373,7 @@ impl ToastStack {
                 self.next_id += 1;
             }
             toast.kind = kind;
+            toast.subject = subject;
             toast.message = message.clone();
             toast.born = Instant::now();
             toast.paused_at = None;
@@ -383,7 +389,7 @@ impl ToastStack {
         self.toasts.push(Toast {
             id,
             kind,
-            subject: ToastSubject::App,
+            subject,
             message,
             result_key,
             action: None,
@@ -586,19 +592,20 @@ impl ToastStack {
     // These wrap the pure data methods with `cx.notify()` + timer tasks so the
     // overlay re-renders in isolation (ADR-0110 Phase 5).
 
-    /// Push a toast, (re)start the auto-dismiss ticker, and re-render this
-    /// entity's subtree only.
+    /// Push app-owned feedback, (re)start the auto-dismiss ticker, and re-render
+    /// this entity's subtree only.
     pub fn push_notify(
         &mut self,
         kind: ToastKind,
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        self.push_keyed_notify(kind, message, None, cx);
+        self.push_keyed_notify(ToastSubject::App, kind, message, None, cx);
     }
 
     pub fn push_keyed_notify(
         &mut self,
+        subject: ToastSubject,
         kind: ToastKind,
         message: impl Into<SharedString>,
         key: Option<String>,
@@ -606,7 +613,7 @@ impl ToastStack {
     ) -> u64 {
         let evicts = self.toasts.len() == TOASTS_MAX;
         // A transient arrival must not steal focus from a persistent lane.
-        let id = self.push_keyed(kind, message, key);
+        let id = self.push_keyed(subject, kind, message, key);
         self.repair_hidden_focus(cx);
         if evicts {
             cx.emit(ToastRemoved(std::mem::take(&mut self.removed_focus)));
@@ -870,16 +877,31 @@ mod tests {
     fn repeated_operation_result_replaces_without_growing_the_stack() {
         let mut stack = ToastStack::new();
         let key = "repo\0push\0failed".to_string();
-        stack.push_keyed(ToastKind::Error, "first cause", Some(key.clone()));
+        stack.push_keyed(
+            ToastSubject::Repository,
+            ToastKind::Error,
+            "first cause",
+            Some(key.clone()),
+        );
         let id = stack.toasts()[0].id;
         let focus = stack.toasts()[0].close_focus.clone();
-        stack.push_keyed(ToastKind::Error, "new cause", Some(key.clone()));
+        stack.push_keyed(
+            ToastSubject::Repository,
+            ToastKind::Error,
+            "new cause",
+            Some(key.clone()),
+        );
         assert_eq!(stack.toasts().len(), 1);
         assert_eq!(stack.toasts()[0].id, id);
         assert!(std::rc::Rc::ptr_eq(&stack.toasts()[0].close_focus, &focus));
         assert!(stack.toasts()[0].message.contains("new cause"));
         stack.start_exit(id);
-        stack.push_keyed(ToastKind::Error, "retry result", Some(key));
+        stack.push_keyed(
+            ToastSubject::Repository,
+            ToastKind::Error,
+            "retry result",
+            Some(key),
+        );
         assert_eq!(
             stack.toasts().len(),
             1,
@@ -894,11 +916,13 @@ mod tests {
             "old exit timer cannot remove the replacement"
         );
         stack.push_keyed(
+            ToastSubject::Repository,
             ToastKind::Success,
             "done",
             Some("repo\0push\0success".into()),
         );
         stack.push_keyed(
+            ToastSubject::Repository,
             ToastKind::Error,
             "other repo",
             Some("other\0push\0failed".into()),
@@ -997,19 +1021,103 @@ mod tests {
 
     #[cfg(feature = "gui-e2e")]
     #[gpui::test]
+    fn settings_arrival_preserves_collapsed_repository_controls(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+        for (kind, partition) in [
+            (ToastKind::Info, ToastPartition::All),
+            (ToastKind::Info, ToastPartition::Transient),
+            (ToastKind::Error, ToastPartition::Persistent),
+        ] {
+            let removed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let (stack, _subscription, focus, id) = cx.update(|cx| {
+                let stack = cx.new(|_| ToastStack::new());
+                let events = removed.clone();
+                let subscription = cx.subscribe(&stack, move |_, event: &ToastRemoved, _| {
+                    events.borrow_mut().extend(event.0.iter().cloned());
+                });
+                let focus = cx.focus_handle();
+                let host = gpui::WindowId::from(1);
+                let id = stack.update(cx, |stack, cx| {
+                    stack.set_trailing_placement(host, ToastAudience::Repository, partition, true);
+                    stack.push_keyed_notify(
+                        ToastSubject::Repository,
+                        kind,
+                        "Older notice",
+                        None,
+                        cx,
+                    );
+                    let id = stack.push_keyed_notify(
+                        ToastSubject::Repository,
+                        kind,
+                        "Visible notice",
+                        None,
+                        cx,
+                    );
+                    assert!(!stack.expanded[ToastAudience::Repository.slot(partition)]);
+                    stack
+                        .toasts()
+                        .last()
+                        .unwrap()
+                        .close_focus
+                        .borrow_mut()
+                        .push((host, focus.clone()));
+                    id
+                });
+                (stack, subscription, focus, id)
+            });
+            stack.update(cx, |stack, cx| {
+                stack.push_keyed_notify(
+                    ToastSubject::Settings,
+                    kind,
+                    "Settings completion",
+                    None,
+                    cx,
+                );
+                let toast = stack.toasts().iter().find(|toast| toast.id == id).unwrap();
+                let controls = toast.close_focus.borrow();
+                assert_eq!(
+                    controls.len(),
+                    1,
+                    "arrival must not retire the visible Repository control"
+                );
+                assert_eq!(controls[0].1, focus, "the original focus handle survives");
+                assert_eq!(
+                    stack.toasts().last().unwrap().subject,
+                    ToastSubject::Settings
+                );
+            });
+            cx.update(|_| {
+                assert!(
+                    removed.borrow().is_empty(),
+                    "no ToastRemoved may reach the production focus subscriber"
+                );
+            });
+        }
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    #[gpui::test]
     fn typed_subjects_isolate_lanes_and_expansion(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext as _;
         cx.update(|cx| {
             let stack = cx.new(|_| ToastStack::new());
             stack.update(cx, |stack, cx| {
-                stack.push(ToastKind::Error, "Identical text is not an owner");
-                let repository = stack.toasts().last().unwrap().id;
-                stack.set_subject(repository, ToastSubject::Repository, cx);
+                let repository = stack.push_keyed_notify(
+                    ToastSubject::Repository,
+                    ToastKind::Error,
+                    "Identical text is not an owner",
+                    None,
+                    cx,
+                );
                 assert!(stack.persistent_lane_open(ToastAudience::Repository));
                 assert!(!stack.persistent_lane_open(ToastAudience::Settings));
-                stack.push(ToastKind::Error, "Identical text is not an owner");
-                let settings = stack.toasts().last().unwrap().id;
-                stack.set_subject(settings, ToastSubject::Settings, cx);
+                let settings = stack.push_keyed_notify(
+                    ToastSubject::Settings,
+                    ToastKind::Error,
+                    "Identical text is not an owner",
+                    None,
+                    cx,
+                );
                 for (audience, expected) in [
                     (ToastAudience::Repository, vec![repository]),
                     (ToastAudience::Settings, vec![settings]),
@@ -1043,12 +1151,20 @@ mod tests {
         cx.update(|cx| {
             let stack = cx.new(|_| ToastStack::new());
             stack.update(cx, |stack, cx| {
-                stack.push(ToastKind::Error, "Same caption");
-                let repository = stack.toasts().last().unwrap().id;
-                stack.set_subject(repository, ToastSubject::Repository, cx);
-                stack.push(ToastKind::Error, "Same caption");
-                let settings = stack.toasts().last().unwrap().id;
-                stack.set_subject(settings, ToastSubject::Settings, cx);
+                stack.push_keyed_notify(
+                    ToastSubject::Repository,
+                    ToastKind::Error,
+                    "Same caption",
+                    None,
+                    cx,
+                );
+                stack.push_keyed_notify(
+                    ToastSubject::Settings,
+                    ToastKind::Error,
+                    "Same caption",
+                    None,
+                    cx,
+                );
                 assert!(stack.dismiss_newest(ToastAudience::Repository, cx));
                 assert!(stack.toasts()[0].dismissing.is_some());
                 assert!(stack.toasts()[1].dismissing.is_none());

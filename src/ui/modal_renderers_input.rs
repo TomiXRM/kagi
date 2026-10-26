@@ -110,9 +110,8 @@ fn input_modal_field(
         )
         .children(control);
     match reason {
-        Some(reason) => field.child(crate::ui::e2e::measure_control(
-            "input-field-error",
-            div()
+        Some(reason) => {
+            let error = div()
                 .id(label)
                 .text_sm()
                 .text_color(rgb(current_theme().input_field_error_text()))
@@ -128,14 +127,19 @@ fn input_modal_field(
                     },
                 )
                 .when(!reason_stale, |error| {
-                    error
-                        .role(Role::Alert)
-                        .aria_label(reason.clone())
-                        .hover_tooltip_builder((label, 0usize), move |window, cx| {
-                            Tooltip::new(reason.clone()).build(window, cx)
-                        })
-                }),
-        )),
+                    error.role(Role::Alert).aria_label(reason.clone())
+                });
+            let error = if reason_stale {
+                error.into_any_element()
+            } else {
+                error
+                    .hover_tooltip_builder((label, 0usize), move |window, cx| {
+                        Tooltip::new(reason.clone()).build(window, cx)
+                    })
+                    .into_any_element()
+            };
+            field.child(crate::ui::e2e::measure_control("input-field-error", error))
+        }
         None => field,
     }
 }

@@ -601,12 +601,27 @@ impl ConflictView {
     }
 }
 
-fn compact_button(
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static COMPACT_LABELS: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_compact_labels_for_e2e() -> std::collections::HashMap<&'static str, &'static str> {
+    COMPACT_LABELS.with(|labels| std::mem::take(&mut *labels.borrow_mut()))
+}
+
+pub(super) fn compact_button(
     id: &'static str,
     label: &'static str,
     role: ButtonRole,
     cx: &gpui::App,
 ) -> Button {
+    #[cfg(feature = "gui-e2e")]
+    COMPACT_LABELS.with(|labels| {
+        labels.borrow_mut().insert(id, label);
+    });
     KagiButton::styled(id, label, role, cx)
         .small()
         .h(theme::scaled_px(20.))

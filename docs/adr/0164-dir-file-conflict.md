@@ -75,3 +75,101 @@ the state kagi sees — the tests drive `repo.merge` directly.)
 - The focused GUI scenarios exercise the Save and D/F adapters one at a time;
   the window-free application tests own the revision, admission, progress and
   exactly-once receipt matrix.
+
+## Git-started namespace and deletion amendment (#1734 / #1735, 2026-10-25)
+
+The CLI/libgit2 distinction above describes the original implementation, not a
+reason to refuse repositories whose merge was started outside Kagi. Extend the
+same detector and namespace operation to Git's parked file: for example,
+`dir-vs-file~HEAD` at an unmerged stage plus `dir-vs-file/child.txt` at an
+unmerged or clean stage. The original path is the logical conflict target.
+Index and source-tree identity must positively attribute the parked file to
+that namespace; a filename suffix alone is never ownership evidence.
+
+The immutable D/F plan freezes the actual file-side path, child stage/OID/mode
+identities and exact worktree removals. Preflight compares those facts before
+the existing recovery snapshot or any mutation. Keep directory removes the
+parked file, resolves the directory-side stages and retains/stages the children.
+Keep file removes the approved directory entries, restores the chosen file at
+the **original** path and stages that original path. Both remove the parked
+artifact. Verification checks the index and worktree, not merely that a stage-0
+entry exists. Unrelated files and lookalike suffix names are outside the plan.
+Saved-file presentation maps a removed Git parking name in `MERGE_MSG` back to
+the original stage-0 file. Retained directory children also appear when Git listed
+only the parking name, with duplicate paths removed. Source trees reject ordinary
+tilde filenames; this read-only mapping does not authorize any mutation.
+Git flattens `/` in parking labels. Resolve both sides' parent trees once, then
+consider their entry names `N` when the final component begins with `N~` and a
+nonempty label. Require an unambiguous file/tree match. This handles tildes in
+names and labels without work proportional to the number of tildes in untrusted
+`MERGE_MSG` data; a 100,000-tilde regression must remain fast and unattributed.
+Plans refuse unsupported gitlink/special modes and nested repository metadata
+before mutation: the ordinary worktree snapshot cannot preserve a nested object
+store, and recovery capture may fail even for keep-directory. Both choices refuse
+at planning rather than promising unavailable recovery. Preflight repeats after
+recovery capture and before the first write.
+Immediately after snapshot capture, pass its typed recovery identity to the
+receipt owner before any fallible progress callback or mutation. Both deletion
+and D/F receipts retain that handle and its backup ref on Success, Partial and
+Unknown outcomes; recovery must not depend on the executor returning success.
+Pin the captured commit through the existing mandatory `refs/kagi/backups/`
+owner before mutation. `recovery` names the snapshot and commit; `backup_refs`
+owns that separate durable root, independent of the ordinary snapshot cap.
+
+The repeated-preflight boundary acquires the real Git `index.lock`, distinct
+from Kagi's repository writer lease. Freeze every unaffected index entry's raw
+path, stage, OID and mode under that lock, preserve the complete private index,
+publish it atomically and retain the lock through verification. Exact unaffected
+entry equality is mandatory; a post-write comparison alone cannot detect an
+external update already overwritten by a stale in-memory index. Compliant Git
+writers cannot enter that read/write window. A noncooperating writer is not
+covered by Git's lock protocol and must not be described as excluded by Kagi's
+repository lease.
+Lock-acquisition errors retain the actual `index.lock` path so presentation can
+classify contention as IndexLocked. Before serializing the ownerless private
+index, smudge stage-0 non-gitlink entries whose mtime is at least the locked real
+index's timestamp by setting their cached size to zero. Publishing a newer index
+must not make a same-timestamp, same-size working-file edit falsely clean.
+
+Directory checkout verification uses filter-aware index-to-worktree comparison,
+not raw file hashes: `eol=crlf`, `ident` and `core.autocrlf` may legitimately
+change checked-out bytes. Nested directories are removed child-before-parent;
+symlinks inside the namespace are unlinked, never traversed, and symlinked
+ancestors are refused.
+
+Delete and D/F receipts use a real post-execution repository summary. A measured
+failed mutation is Partial; once mutation starts, an unreadable after-state is
+Unknown, not Success or an invented successful deletion string. Deterministic
+fault points cover both completed and interrupted mutations with unreadable
+after-state, and an interrupted working-tree mutation with a readable partial state.
+
+The existing conflict-family values also express deletion explicitly:
+`Resolution::Delete` is a family choice and `ConflictDraft::Delete` is the frozen
+request. DD has only Remove from Index… with a separate deleted-on-both-branches hint; either
+modify/delete orientation has Use deleted side and Use modified side. Neither
+an absent-side blob nor a zero-byte Result represents deletion. The delete
+operation uses its own plan/preflight/execute/verify triple under the same
+recorded conflict boundary, preserves recovery and removes only approved
+conflict entries/artifacts. The two renamed destinations of a DD source are
+not deletion targets.
+
+File-local compact actions open the standard plan sheet for deletion and both
+D/F choices. It names the action and target in a sentence-style title, the result
+verb on its confirm button, and exact removed/kept/moved paths in EN/JA, with no
+command syntax. Index-only removal says Remove; working-file removal instead
+says Delete in both title and button. Directory entries end in `/`; parked-file
+restoration is one move row. Freeze the exact next-step label when the sheet
+opens: Review commit for the last merge conflict, Review to continue otherwise.
+The trigger is Secondary. Confirmation is Primary for index-only removal and
+Destructive only when working files are removed; only that latter case shows
+the working-file warning. Cancel/Escape are safe and root Return confirms neither
+role implicitly. Confirmation retains the frozen
+owner and plan token through the existing draft-flush and writer-admission
+boundaries; a changed repository requires a new plan, not renewed approval.
+The sidebar remains navigation and session actions retain #1764's placement.
+
+Design evidence:
+[architecture and figure](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317),
+[independent HIG design review](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394580602).
+The formal ledger adds scoped deletion/parked-namespace HOLD checks and red
+variants; the original baseline had no corresponding REFUTE rows to relabel.

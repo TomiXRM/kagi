@@ -62,6 +62,7 @@ pub(crate) fn buffer_revision(
     digest_part(&mut hash, path.as_os_str().as_encoded_bytes());
     digest_part(&mut hash, identity.as_str().as_bytes());
     match draft {
+        ConflictDraft::Delete => digest_part(&mut hash, b"delete"),
         ConflictDraft::Text { bytes, origins } => {
             digest_part(&mut hash, b"text");
             digest_part(&mut hash, bytes);
@@ -357,6 +358,11 @@ pub(crate) fn verify_save(
         .get_path(path, 0)
         .ok_or_else(|| GitError::Other(format!("{} was not staged", path.display())))?;
     match draft {
+        ConflictDraft::Delete => {
+            return Err(GitError::Other(
+                "deletion requires deletion verification".into(),
+            ));
+        }
         ConflictDraft::Text { bytes, .. } => {
             let root = repo
                 .workdir()
@@ -383,45 +389,7 @@ pub(crate) fn verify_save(
 }
 
 pub(crate) fn verify_dir_file(repo: &Repository, plan: &ops::DirFilePlan) -> Result<(), GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-    if index.get_path(&plan.path, 1).is_some()
-        || index.get_path(&plan.path, 2).is_some()
-        || index.get_path(&plan.path, 3).is_some()
-    {
-        return Err(GitError::Other(
-            "directory/file entry remains unmerged".into(),
-        ));
-    }
-    match plan.choice {
-        ops::DirFileChoice::KeepFile => {
-            let entry = index
-                .get_path(&plan.path, 0)
-                .ok_or_else(|| GitError::Other("kept file is absent from index".into()))?;
-            if entry.id != plan.file_oid || entry.mode != plan.file_mode {
-                return Err(GitError::Other("kept file identity differs".into()));
-            }
-            if plan
-                .dir_children
-                .iter()
-                .any(|path| index.get_path(path, 0).is_some())
-            {
-                return Err(GitError::Other("directory children remain in index".into()));
-            }
-        }
-        ops::DirFileChoice::KeepDirectory => {
-            if index.get_path(&plan.path, 0).is_some()
-                || plan
-                    .dir_children
-                    .iter()
-                    .any(|path| index.get_path(path, 0).is_none())
-            {
-                return Err(GitError::Other("kept directory index shape differs".into()));
-            }
-        }
-    }
-    Ok(())
+    ops::verify_dir_file_resolution(repo, plan)
 }
 
 /// #704 / ADR-0196: measure the abort rather than trusting it. The operation

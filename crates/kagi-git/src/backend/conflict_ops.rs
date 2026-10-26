@@ -20,6 +20,7 @@ use conflict_observe::{
 
 #[derive(Clone, Debug)]
 enum ConflictPreparedAction {
+    Delete(ops::conflict_delete::ConflictDeletePlan),
     Save {
         path: PathBuf,
         draft: ConflictDraft,
@@ -77,6 +78,51 @@ impl ConflictPlan {
         &self.request
     }
 
+    pub fn path_changes(&self) -> kagi_domain::conflict_family::ConflictPathChanges {
+        use kagi_domain::conflict_family::ConflictPathChanges;
+        match &self.action {
+            ConflictPreparedAction::Delete(plan) => ConflictPathChanges {
+                remove_index: vec![plan.path.clone()],
+                remove_worktree: plan.removal_paths.clone(),
+                ..Default::default()
+            },
+            ConflictPreparedAction::DirFile(plan) => {
+                let mut changes = ConflictPathChanges {
+                    remove_worktree: plan.removal_paths.clone(),
+                    remove_directories: plan.removed_directories(),
+                    ..Default::default()
+                };
+                match plan.choice {
+                    ops::DirFileChoice::KeepDirectory => {
+                        changes.remove_index.push(plan.file_path.clone());
+                        changes.keep = plan
+                            .kept_children
+                            .iter()
+                            .map(|entry| entry.path.clone())
+                            .collect();
+                    }
+                    ops::DirFileChoice::KeepFile => {
+                        changes.remove_index = plan.dir_children.clone();
+                        if plan.file_path != plan.path {
+                            changes.remove_index.push(plan.file_path.clone());
+                            changes
+                                .moves
+                                .push((plan.file_path.clone(), plan.path.clone()));
+                        } else {
+                            changes.keep.push(plan.path.clone());
+                        }
+                    }
+                }
+                changes
+            }
+            ConflictPreparedAction::Save { path, .. } => ConflictPathChanges {
+                keep: vec![path.clone()],
+                ..Default::default()
+            },
+            ConflictPreparedAction::Abort { .. } => ConflictPathChanges::default(),
+        }
+    }
+
     pub fn changes_shared_refs(&self) -> bool {
         matches!(
             &self.action,
@@ -96,6 +142,10 @@ pub enum ConflictFaultPoint {
     /// The one case the receipt must call `Unknown` rather than success or a
     /// retryable failure — there is no other way to reach it deterministically.
     AbortAfterStateUnreadable,
+    /// Mutation finished, but its resulting repository state cannot be measured.
+    AfterStateUnreadable,
+    /// Stop after a real working-tree write and make the final measurement fail.
+    AfterWorktreeWriteUnreadable,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +161,26 @@ pub struct ConflictReport {
 /// blocks a restore across it the way a missing record does.
 fn nothing_moved(entry: crate::oplog::OpLogEntry) -> crate::oplog::OpLogEntry {
     entry.with_nothing_moved()
+}
+
+fn check_namespace_mutation_fault(
+    progress: ConflictProgress,
+    fault: Option<ConflictFaultPoint>,
+) -> Result<(), GitError> {
+    if progress == ConflictProgress::WorktreeWritten
+        && matches!(
+            fault,
+            Some(
+                ConflictFaultPoint::AfterWorktreeWrite
+                    | ConflictFaultPoint::AfterWorktreeWriteUnreadable
+            )
+        )
+    {
+        return Err(GitError::Other(
+            "injected failure after conflict working-tree mutation".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl Backend {
@@ -232,6 +302,40 @@ impl Backend {
         })
     }
 
+    pub fn conflict_delete_request(
+        revision: ConflictRevision,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+        kind: kagi_domain::conflict_family::ConflictOperationKind,
+    ) -> Result<ConflictRequest, GitError> {
+        if !buffer.file_resolutions(path).is_some_and(|routes| {
+            routes.contains(&kagi_domain::conflict_family::Resolution::Delete)
+        }) {
+            return Err(GitError::Other(
+                "deletion is not available for this conflict".into(),
+            ));
+        }
+        let identity = buffer.file_identity(path).ok_or_else(|| {
+            GitError::Blocked(Box::new(PlanNote::Conflicts(
+                ConflictsNote::ObservationChanged,
+            )))
+        })?;
+        let draft = ConflictDraft::Delete;
+        Ok(ConflictRequest::Save {
+            path: path.to_path_buf(),
+            revision,
+            buffer_revision: buffer_revision(path, &draft, identity),
+            worktree_fingerprint: buffer.worktree_fingerprint(path).map(str::to_owned),
+            draft,
+            kind,
+            before_hash: buffer
+                .worktree_fingerprint(path)
+                .unwrap_or("unknown")
+                .to_owned(),
+            actions: "delete".into(),
+        })
+    }
+
     /// The Abort request for an observed in-progress operation (#704).
     ///
     /// Takes the pure observation the read model carries, so no caller needs a
@@ -314,12 +418,19 @@ impl Backend {
                         ))));
                     }
                 }
-                ConflictPreparedAction::Save {
-                    path: path.clone(),
-                    draft: draft.clone(),
-                    expected_mode: match draft {
-                        ConflictDraft::Raw { mode, .. } => *mode,
-                        ConflictDraft::Text { .. } => text_mode(&backend.repo, path)?,
+                match draft {
+                    ConflictDraft::Delete => ConflictPreparedAction::Delete(
+                        ops::conflict_delete::plan_conflict_delete(&backend.repo, path)?,
+                    ),
+                    ConflictDraft::Raw { mode, .. } => ConflictPreparedAction::Save {
+                        path: path.clone(),
+                        draft: draft.clone(),
+                        expected_mode: *mode,
+                    },
+                    ConflictDraft::Text { .. } => ConflictPreparedAction::Save {
+                        path: path.clone(),
+                        draft: draft.clone(),
+                        expected_mode: text_mode(&backend.repo, path)?,
                     },
                 }
             }
@@ -403,6 +514,8 @@ impl Backend {
         let mut progress = ConflictProgress::NotStarted;
         let mut after = None;
         let mut recovery = None;
+        let mut recovery_snapshot = None;
+        let mut backup_refs = Vec::new();
         // The observation frozen at plan time is what the receipt reports as
         // `before` on every path out of here — including the one where the
         // repository can no longer be opened. Rebuilding it from the request
@@ -484,6 +597,37 @@ impl Backend {
                     return Err(GitError::Other("injected before conflict mutation".into()));
                 }
                 match &plan.action {
+                    ConflictPreparedAction::Delete(delete) => {
+                        let ConflictRequest::Save {
+                            path,
+                            draft,
+                            buffer_revision,
+                            worktree_fingerprint,
+                            ..
+                        } = &plan.request
+                        else {
+                            return Err(GitError::Other(
+                                "deletion request binding is missing".into(),
+                            ));
+                        };
+                        ResolutionBuffer::validate_save_binding(
+                            &backend.repo,
+                            path,
+                            draft,
+                            buffer_revision,
+                            worktree_fingerprint.as_deref(),
+                        )?;
+                        recovery = Some(ops::conflict_delete::execute_conflict_delete(
+                            &backend.repo,
+                            delete,
+                            &mut recovery_snapshot,
+                            &mut backup_refs,
+                            |value| {
+                                progress = value;
+                                check_namespace_mutation_fault(value, fault)
+                            },
+                        )?);
+                    }
                     ConflictPreparedAction::Save {
                         path,
                         draft,
@@ -519,7 +663,12 @@ impl Backend {
                         recovery = Some(ops::apply_dir_file_resolution_with_progress(
                             &backend.repo,
                             dir_file,
-                            |value| progress = value,
+                            &mut recovery_snapshot,
+                            &mut backup_refs,
+                            |value| {
+                                progress = value;
+                                check_namespace_mutation_fault(value, fault)
+                            },
                         )?);
                         verify_dir_file(&backend.repo, dir_file)?;
                     }
@@ -564,31 +713,43 @@ impl Backend {
             .err()
             .map(ToString::to_string)
             .unwrap_or_else(|| recovery.clone().unwrap_or_else(|| "verified".into()));
-        // #704 / ADR-0196: abort records what the repository *is*, measured
-        // after the attempt. `after` above cannot stand in for it — for an
-        // abort `None` is the successful outcome, so it says nothing about
-        // whether the repository could be read at all.
-        let after_state = if fault == Some(ConflictFaultPoint::AbortAfterStateUnreadable) {
+        // A conflict observation is not an after-state measurement: None can
+        // mean successful completion. Measure the actual repository separately.
+        let after_state = if matches!(
+            fault,
+            Some(
+                ConflictFaultPoint::AbortAfterStateUnreadable
+                    | ConflictFaultPoint::AfterStateUnreadable
+                    | ConflictFaultPoint::AfterWorktreeWriteUnreadable
+            )
+        ) {
             Err(GitError::Other("injected unreadable after-state".into()))
         } else {
             conflicts::current_state_summary(&backend.repo)
         };
         let observed_after = match &plan.request {
             ConflictRequest::Save {
+                draft: ConflictDraft::Delete,
+                ..
+            }
+            | ConflictRequest::ResolveDirFile { .. } => {
+                after_state.clone().unwrap_or_else(|_| ops::StateSummary {
+                    head: "repository state after conflict resolution is unreadable".into(),
+                    dirty: "unknown".into(),
+                })
+            }
+            ConflictRequest::Save {
                 draft, before_hash, ..
             } => ops::StateSummary {
                 head: format!(
                     "staged (stage 0) before={before_hash} after={}",
                     match draft {
+                        ConflictDraft::Delete => "deleted".into(),
                         ConflictDraft::Text { bytes, .. } => short_text_hash(bytes),
                         ConflictDraft::Raw { oid, .. } => oid.chars().take(16).collect(),
                     }
                 ),
                 dirty: "clean".into(),
-            },
-            ConflictRequest::ResolveDirFile { path, choice, .. } => ops::StateSummary {
-                head: format!("kept {} side of {}", choice.slug(), path.display()),
-                dirty: "staged (stage 0)".into(),
             },
             ConflictRequest::Abort { kind, .. } => {
                 after_state.clone().unwrap_or_else(|_| ops::StateSummary {
@@ -597,18 +758,25 @@ impl Backend {
                 })
             }
         };
-        // A restore whose result cannot be measured is `Unknown`, never a
-        // retryable `Failed`: retrying an abort that may already have moved
-        // the ref is the way to lose the commits it detached. `apply` parks a
-        // reconcile entry for it (ADR-0196 決定 2).
-        let unmeasurable = matches!(plan.request, ConflictRequest::Abort { .. })
+        // Once a mutation has started, an unreadable resulting state cannot
+        // safely be called Success, Partial, or a retryable refusal.
+        let requires_measured_after = matches!(
+            plan.request,
+            ConflictRequest::Abort { .. }
+                | ConflictRequest::ResolveDirFile { .. }
+                | ConflictRequest::Save {
+                    draft: ConflictDraft::Delete,
+                    ..
+                }
+        );
+        let unmeasurable = requires_measured_after
             && progress != ConflictProgress::NotStarted
             && after_state.is_err();
         let outcome = match &result {
             _ if unmeasurable => crate::oplog::OpOutcome::Unknown {
                 after: observed_after,
                 evidence: format!(
-                    "{}: the abort had started when the repository became unreadable",
+                    "{}: conflict mutation had started when the repository became unreadable",
                     detail
                 ),
             },
@@ -625,13 +793,23 @@ impl Backend {
                 blockers: vec![error.to_string()],
             },
         };
+        let recovery_handles = recovery_snapshot
+            .into_iter()
+            .map(|snapshot| {
+                crate::oplog::recovery::RecoveryHandle::oid(
+                    crate::oplog::recovery::SAVEPOINT,
+                    snapshot.commit,
+                )
+                .with_reference(snapshot.refname)
+            })
+            .collect();
         let recording = backend.record_receipt(
             &plan.op_name,
             &plan.before,
             outcome,
             recording::Receipt {
-                backup_refs: Vec::new(),
-                recovery: Vec::new(),
+                backup_refs,
+                recovery: recovery_handles,
                 recovery_plan: None,
                 failure_code: None,
                 ref_moves,

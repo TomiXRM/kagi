@@ -1007,7 +1007,7 @@ impl KagiApp {
                         .children(self.render_toasts(
                             window,
                             super::busy::ToastPlacement::Repository,
-                            true,
+                            crate::ui::toast_stack::ToastAudience::Repository,
                             cx,
                         )),
                 );
@@ -1135,10 +1135,11 @@ impl KagiApp {
         // Like Home and Settings, takeovers reserve space only for persistent
         // cards. Transient feedback stays overlaid; a fallback commit list
         // already owns its stack and must not acquire a second one here.
-        let persistent_lane = self
-            .toast_stack
-            .as_ref()
-            .is_some_and(|stack| stack.read(cx).persistent_lane_open());
+        let persistent_lane = self.toast_stack.as_ref().is_some_and(|stack| {
+            stack
+                .read(cx)
+                .persistent_lane_open(crate::ui::toast_stack::ToastAudience::Repository)
+        });
         let center_content = div()
             .relative()
             .flex()
@@ -1157,7 +1158,7 @@ impl KagiApp {
                         .children(self.render_toasts(
                             window,
                             super::busy::ToastPlacement::PersistentLane,
-                            true,
+                            crate::ui::toast_stack::ToastAudience::Repository,
                             cx,
                         )),
                 )
@@ -1169,7 +1170,7 @@ impl KagiApp {
                 el.children(self.render_toasts(
                     window,
                     super::busy::ToastPlacement::Transient,
-                    true,
+                    crate::ui::toast_stack::ToastAudience::Repository,
                     cx,
                 ))
             });

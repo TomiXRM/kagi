@@ -124,7 +124,8 @@ impl KagiApp {
     /// manager. The filesystem call and process launch stay off GPUI's UI thread.
     pub(crate) fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
         let Some(dir) = theme::themes_dir() else {
-            self.push_toast(
+            self.push_toast_for(
+                crate::ui::toast_stack::ToastSubject::Settings,
                 ToastKind::Error,
                 i18n::Msg::SettingsThemesFolderUnavailable.t(),
                 cx,
@@ -140,7 +141,8 @@ impl KagiApp {
             let _ = this.update(cx, |app, cx| {
                 if let Err(error) = result {
                     eprintln!("theme folder: {error}");
-                    app.push_toast(
+                    app.push_toast_for(
+                        crate::ui::toast_stack::ToastSubject::Settings,
                         ToastKind::Error,
                         i18n::themes_folder_failed_fmt(&bounded(&error.to_string())),
                         cx,
@@ -204,7 +206,12 @@ impl KagiApp {
                         state.set_selected_value(&active, window, cx);
                     });
                 }
-                app.push_toast(ToastKind::Success, i18n::themes_reloaded_fmt(custom), cx);
+                app.push_toast_for(
+                    crate::ui::toast_stack::ToastSubject::Settings,
+                    ToastKind::Success,
+                    i18n::themes_reloaded_fmt(custom),
+                    cx,
+                );
                 app.report_theme_load_errors(errors, cx);
                 cx.notify();
             });
@@ -219,7 +226,12 @@ impl KagiApp {
             klog!("theme: load error {}", detail);
             let display = i18n::op::user_text::theme_load_error(&error);
             let message = i18n::theme_load_failed_fmt(&bounded(&display));
-            self.push_toast(ToastKind::Error, message, cx);
+            self.push_toast_for(
+                crate::ui::toast_stack::ToastSubject::Settings,
+                ToastKind::Error,
+                message,
+                cx,
+            );
         }
     }
 }

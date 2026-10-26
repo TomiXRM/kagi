@@ -95,12 +95,13 @@ fn rows(hunk: &Hunk, id: usize, start: usize) -> gpui::Div {
 fn copy_button(hunk: &Hunk, id: usize, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let name = format!("pr-convo-hunk-copy-{id}");
     let full = hunk.full.clone();
-    let copy = cx.listener(move |app: &mut KagiApp, _: &gpui::ClickEvent, _, cx| {
+    let copy = cx.listener(move |app: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
         cx.stop_propagation();
         #[cfg(feature = "gui-e2e")]
         e2e::pr_detail::record_activation(&format!("pr-convo-hunk-copy-{id}"));
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.to_string()));
-        app.push_toast(ToastKind::Info, Msg::PrHunkCopied.t(), cx);
+        let subject = app.toast_subject_for_window(window, cx);
+        app.push_toast_for(subject, ToastKind::Info, Msg::PrHunkCopied.t(), cx);
     });
     let button = Button::new(("pr-convo-hunk-copy", id))
         .ghost()

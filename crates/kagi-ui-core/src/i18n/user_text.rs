@@ -64,10 +64,8 @@ pub fn diagnostic(value: &str) -> Cow<'_, str> {
     if value == kagi_domain::advice_template_en!(ConflictsRepositoryBusy) {
         return Cow::Borrowed(crate::i18n::Msg::AdviceConflictsRepositoryBusy.t());
     }
-    if let Some(name) =
-        value.strip_prefix("Draft could not be read; the damaged file was moved aside as ")
-    {
-        return Cow::Owned(crate::i18n::Msg::conflict_draft_rescued(name));
+    if value.starts_with("Draft could not be read; the damaged file was moved aside as ") {
+        return Cow::Owned(crate::i18n::Msg::conflict_draft_rescued());
     }
     if let Some(result) = ui::diagnostic(value)
         .or_else(|| github::diagnostic(value))
@@ -403,7 +401,7 @@ mod tests {
             let draft = "Draft could not be read; the damaged file was moved aside as buffer.json.corrupt.1";
             assert_eq!(
                 diagnostic(draft),
-                crate::i18n::Msg::conflict_draft_rescued("buffer.json.corrupt.1")
+                crate::i18n::Msg::conflict_draft_rescued()
             );
             let user_data = "feature_repo.index()_session=branch";
             assert!(matches!(diagnostic(user_data), Cow::Borrowed(value) if value == user_data));

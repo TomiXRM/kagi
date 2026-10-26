@@ -156,6 +156,40 @@ pub fn status_for_e2e() -> Option<ToastStatusPresentation> {
     STATUS.with(|slot| slot.borrow().clone())
 }
 
+/// Captured subject ownership, never inferred from notification text. A stack
+/// already belongs to one repository-root window; repository actions retain
+/// their exact frozen session/worktree in `refresh_owner` or their receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastSubject {
+    Repository,
+    Settings,
+    App,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastAudience {
+    Repository,
+    Settings,
+}
+
+impl ToastAudience {
+    const ALL: [Self; 2] = [Self::Repository, Self::Settings];
+
+    pub(super) fn includes(self, toast: &Toast) -> bool {
+        matches!(
+            (self, toast.subject),
+            (
+                Self::Repository,
+                ToastSubject::Repository | ToastSubject::App
+            ) | (Self::Settings, ToastSubject::Settings)
+        )
+    }
+
+    pub(super) fn slot(self, partition: ToastPartition) -> usize {
+        self as usize * 3 + partition as usize
+    }
+}
+
 /// A projection of one lifecycle owner, not a second notification queue.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ToastPartition {
@@ -187,10 +221,10 @@ pub struct ToastStack {
     /// second one). Reset when the stack drains.
     ticker_alive: bool,
     removed_focus: Vec<(gpui::WindowId, gpui::FocusHandle)>,
-    pub(super) expanded: [bool; 3],
-    pub(super) summary_focus: [super::types::ToastCloseFocus; 3],
-    persistent_lane: bool,
-    trailing_placement: Vec<(gpui::WindowId, ToastPartition, bool)>,
+    pub(super) expanded: [bool; 6],
+    pub(super) summary_focus: [super::types::ToastCloseFocus; 6],
+    persistent_lanes: [bool; 2],
+    trailing_placement: Vec<(gpui::WindowId, ToastAudience, ToastPartition, bool)>,
 }
 
 impl ToastStack {
@@ -201,9 +235,9 @@ impl ToastStack {
             ticker_alive: false,
             removed_focus: Vec::new(),
             arrival: None,
-            expanded: [false; 3],
+            expanded: [false; 6],
             summary_focus: Default::default(),
-            persistent_lane: false,
+            persistent_lanes: [false; 2],
             trailing_placement: Vec::new(),
         }
     }
@@ -212,39 +246,75 @@ impl ToastStack {
         &self.toasts
     }
 
-    pub fn persistent_lane_open(&self) -> bool {
-        self.persistent_lane
+    pub fn persistent_lane_open(&self, audience: ToastAudience) -> bool {
+        self.persistent_lanes[audience as usize]
+    }
+
+    fn refresh_persistent_lanes(&mut self) {
+        self.persistent_lanes = ToastAudience::ALL.map(|audience| {
+            self.toasts.iter().any(|toast| {
+                audience.includes(toast) && toast.is_persistent() && toast.dismissing.is_none()
+            })
+        });
+    }
+
+    pub fn set_subject(&mut self, id: u64, subject: ToastSubject, cx: &mut Context<Self>) {
+        if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
+            toast.subject = subject;
+            self.refresh_persistent_lanes();
+            self.repair_hidden_focus(cx);
+            cx.notify();
+        }
     }
 
     pub(super) fn set_trailing_placement(
         &mut self,
         window: gpui::WindowId,
+        audience: ToastAudience,
         partition: ToastPartition,
         trailing: bool,
     ) {
-        // A window uses either the repository host or the two split hosts.
-        self.trailing_placement.retain(|(id, host, _)| {
-            *id != window || (*host == ToastPartition::All) == (partition == ToastPartition::All)
+        // One physical window uses one subject audience at a time.
+        self.trailing_placement.retain(|(id, scope, host, _)| {
+            *id != window
+                || (*scope == audience
+                    && (*host == ToastPartition::All) == (partition == ToastPartition::All))
         });
-        if let Some((_, _, placement)) = self
+        if let Some((_, _, _, placement)) = self
             .trailing_placement
             .iter_mut()
-            .find(|(id, host, _)| *id == window && *host == partition)
+            .find(|(id, scope, host, _)| *id == window && *scope == audience && *host == partition)
         {
             *placement = trailing;
         } else {
-            self.trailing_placement.push((window, partition, trailing));
+            self.trailing_placement
+                .push((window, audience, partition, trailing));
         }
     }
 
     pub(super) fn trailing_placement(
         &self,
         window: gpui::WindowId,
+        audience: ToastAudience,
         partition: ToastPartition,
     ) -> bool {
         self.trailing_placement
             .iter()
-            .any(|(id, host, trailing)| *id == window && *host == partition && *trailing)
+            .any(|(id, scope, host, trailing)| {
+                *id == window && *scope == audience && *host == partition && *trailing
+            })
+    }
+
+    /// Retire this window's card controls when routine feedback moves to its
+    /// conflict footer. Other windows still project the same shared lifecycle.
+    pub(super) fn use_conflict_footer(&mut self, window: gpui::WindowId, cx: &mut Context<Self>) {
+        self.trailing_placement
+            .retain(|(host, audience, partition, _)| {
+                *host != window
+                    || (*audience == ToastAudience::Repository
+                        && *partition == ToastPartition::Persistent)
+            });
+        self.repair_hidden_focus(cx);
     }
 
     pub(super) fn status(&self) -> Option<(u64, &SharedString)> {
@@ -281,7 +351,6 @@ impl ToastStack {
         // lives in Operation Log, so never let raw multi-line stderr turn the
         // overlay into a screen-sized card.
         let message = message.into();
-        self.persistent_lane |= kind == ToastKind::Error;
         let message = if kind == ToastKind::Error {
             SharedString::from(error_preview(message.as_ref()))
         } else {
@@ -305,6 +374,7 @@ impl ToastStack {
             self.arrival = Some((toast.id, message));
             let id = toast.id;
             self.toasts.push(toast);
+            self.refresh_persistent_lanes();
             return id;
         }
         let id = self.next_id;
@@ -313,6 +383,7 @@ impl ToastStack {
         self.toasts.push(Toast {
             id,
             kind,
+            subject: ToastSubject::App,
             message,
             result_key,
             action: None,
@@ -333,6 +404,7 @@ impl ToastStack {
             let removed = self.toasts.remove(oldest);
             self.removed_focus = take_toast_focus(&removed);
         }
+        self.refresh_persistent_lanes();
         id
     }
 
@@ -348,19 +420,15 @@ impl ToastStack {
         toast.dismissing = Some(Instant::now());
         // Only persistent cards can release the lane. Transient expiry never
         // collapses an in-flow lane under a reader's pointer.
-        if toast.is_persistent()
-            && !self
-                .toasts
-                .iter()
-                .any(|toast| toast.is_persistent() && toast.dismissing.is_none())
-        {
-            self.persistent_lane = false;
+        if toast.is_persistent() {
+            self.refresh_persistent_lanes();
         }
     }
 
     /// Release a retired host's controls without dismissing its shared feedback.
     pub(super) fn forget_window(&mut self, id: gpui::WindowId) {
-        self.trailing_placement.retain(|(host, _, _)| *host != id);
+        self.trailing_placement
+            .retain(|(host, _, _, _)| *host != id);
         for focus in &self.summary_focus {
             focus.borrow_mut().retain(|(host, _)| *host != id);
         }
@@ -384,18 +452,20 @@ impl ToastStack {
             self.removed_focus = take_toast_focus(toast);
         }
         self.toasts.retain(|t| t.id != id);
-        for partition in ToastPartition::ALL {
-            if self
-                .toasts
-                .iter()
-                .filter(|toast| partition.includes(toast))
-                .count()
-                <= 1
-            {
-                self.expanded[partition as usize] = false;
-                self.removed_focus.extend(std::mem::take(
-                    &mut *self.summary_focus[partition as usize].borrow_mut(),
-                ));
+        for audience in ToastAudience::ALL {
+            for partition in ToastPartition::ALL {
+                let slot = audience.slot(partition);
+                if self
+                    .toasts
+                    .iter()
+                    .filter(|toast| audience.includes(toast) && partition.includes(toast))
+                    .count()
+                    <= 1
+                {
+                    self.expanded[slot] = false;
+                    self.removed_focus
+                        .extend(std::mem::take(&mut *self.summary_focus[slot].borrow_mut()));
+                }
             }
         }
         if self.toasts.is_empty() {
@@ -448,30 +518,42 @@ impl ToastStack {
     }
 
     // ── Entity orchestration (cx-driven) ─────────────────────────────────────
-    pub(super) fn toggle_expanded(&mut self, partition: ToastPartition, cx: &mut Context<Self>) {
-        self.expanded[partition as usize] = !self.expanded[partition as usize];
+    pub(super) fn toggle_expanded(
+        &mut self,
+        audience: ToastAudience,
+        partition: ToastPartition,
+        cx: &mut Context<Self>,
+    ) {
+        let slot = audience.slot(partition);
+        self.expanded[slot] = !self.expanded[slot];
         self.repair_hidden_focus(cx);
         cx.notify();
     }
     fn repair_hidden_focus(&mut self, cx: &mut Context<Self>) {
-        let newest = ToastPartition::ALL.map(|partition| {
+        let newest: [Option<u64>; 6] = std::array::from_fn(|slot| {
+            let audience = ToastAudience::ALL[slot / 3];
+            let partition = ToastPartition::ALL[slot % 3];
             self.toasts
                 .iter()
                 .rev()
-                .find(|toast| partition.includes(toast))
+                .find(|toast| audience.includes(toast) && partition.includes(toast))
                 .map(|toast| toast.id)
         });
         let mut hidden_focus = Vec::new();
         for toast in &mut self.toasts {
-            let visible = ToastPartition::ALL.map(|partition| {
-                partition.includes(toast)
-                    && (self.expanded[partition as usize]
-                        || newest[partition as usize] == Some(toast.id))
+            let visible: [bool; 6] = std::array::from_fn(|slot| {
+                let audience = ToastAudience::ALL[slot / 3];
+                let partition = ToastPartition::ALL[slot % 3];
+                audience.includes(toast)
+                    && partition.includes(toast)
+                    && (self.expanded[slot] || newest[slot] == Some(toast.id))
             });
             let visible_in = |window| {
                 self.trailing_placement
                     .iter()
-                    .any(|(host, partition, _)| *host == window && visible[*partition as usize])
+                    .any(|(host, audience, partition, _)| {
+                        *host == window && visible[audience.slot(*partition)]
+                    })
             };
             for controls in std::iter::once(&toast.close_focus)
                 .chain(toast.action_focus.iter())
@@ -489,7 +571,7 @@ impl ToastStack {
             if !self
                 .trailing_placement
                 .iter()
-                .any(|(_, partition, _)| visible[*partition as usize])
+                .any(|(_, audience, partition, _)| visible[audience.slot(*partition)])
             {
                 if let Some(start) = toast.paused_at.take() {
                     toast.born += start.elapsed();
@@ -542,9 +624,9 @@ impl ToastStack {
         cx: &mut Context<Self>,
     ) {
         if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
-            self.persistent_lane = true;
             toast.action = Some(action);
             toast.action_focus.get_or_insert_with(Default::default);
+            self.refresh_persistent_lanes();
             self.repair_hidden_focus(cx);
             cx.notify();
         }
@@ -557,9 +639,10 @@ impl ToastStack {
         cx: &mut Context<Self>,
     ) {
         if let Some(toast) = self.toasts.iter_mut().find(|toast| toast.id == id) {
+            toast.subject = ToastSubject::Repository;
             toast.refresh_owner = Some(owner);
             toast.refresh_focus.get_or_insert_with(Default::default);
-            self.persistent_lane = true;
+            self.refresh_persistent_lanes();
             self.repair_hidden_focus(cx);
             cx.notify();
         }
@@ -703,13 +786,31 @@ mod tests {
             );
             stack.start_exit(transient);
             stack.remove(transient);
-            assert!(stack.persistent_lane_open());
+            assert!(stack.persistent_lane_open(ToastAudience::Repository));
         }
         let window = gpui::WindowId::from(1);
-        stack.set_trailing_placement(window, ToastPartition::Persistent, true);
-        stack.set_trailing_placement(window, ToastPartition::Transient, false);
-        assert!(stack.trailing_placement(window, ToastPartition::Persistent));
-        assert!(!stack.trailing_placement(window, ToastPartition::Transient));
+        stack.set_trailing_placement(
+            window,
+            crate::ui::toast_stack::ToastAudience::Repository,
+            ToastPartition::Persistent,
+            true,
+        );
+        stack.set_trailing_placement(
+            window,
+            crate::ui::toast_stack::ToastAudience::Repository,
+            ToastPartition::Transient,
+            false,
+        );
+        assert!(stack.trailing_placement(
+            window,
+            ToastAudience::Repository,
+            ToastPartition::Persistent
+        ));
+        assert!(!stack.trailing_placement(
+            window,
+            ToastAudience::Repository,
+            ToastPartition::Transient
+        ));
         stack.forget_window(window);
         assert!(stack.trailing_placement.is_empty());
     }
@@ -725,9 +826,24 @@ mod tests {
             stack.update(cx, |stack, cx| {
                 let split = gpui::WindowId::from(1);
                 let repository = gpui::WindowId::from(2);
-                stack.set_trailing_placement(split, ToastPartition::Persistent, true);
-                stack.set_trailing_placement(split, ToastPartition::Transient, false);
-                stack.set_trailing_placement(repository, ToastPartition::All, true);
+                stack.set_trailing_placement(
+                    split,
+                    crate::ui::toast_stack::ToastAudience::Repository,
+                    ToastPartition::Persistent,
+                    true,
+                );
+                stack.set_trailing_placement(
+                    split,
+                    crate::ui::toast_stack::ToastAudience::Repository,
+                    ToastPartition::Transient,
+                    false,
+                );
+                stack.set_trailing_placement(
+                    repository,
+                    crate::ui::toast_stack::ToastAudience::Repository,
+                    ToastPartition::All,
+                    true,
+                );
                 stack.push(ToastKind::Error, "persistent");
                 stack.toasts()[0]
                     .close_focus
@@ -739,7 +855,11 @@ mod tests {
                 assert_eq!(retained.len(), 1);
                 assert_eq!(retained[0].0, split);
                 drop(retained);
-                stack.toggle_expanded(ToastPartition::Transient, cx);
+                stack.toggle_expanded(
+                    crate::ui::toast_stack::ToastAudience::Repository,
+                    ToastPartition::Transient,
+                    cx,
+                );
                 assert!(stack.expanded[ToastPartition::Transient as usize]);
                 assert!(!stack.expanded[ToastPartition::Persistent as usize]);
             });
@@ -870,7 +990,48 @@ mod tests {
                     .toasts()
                     .iter()
                     .all(|toast| toast.dismissing.is_some()));
-                assert!(!stack.persistent_lane_open());
+                assert!(!stack.persistent_lane_open(ToastAudience::Repository));
+            });
+        });
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    #[gpui::test]
+    fn typed_subjects_isolate_lanes_and_expansion(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+        cx.update(|cx| {
+            let stack = cx.new(|_| ToastStack::new());
+            stack.update(cx, |stack, cx| {
+                stack.push(ToastKind::Error, "Identical text is not an owner");
+                let repository = stack.toasts().last().unwrap().id;
+                stack.set_subject(repository, ToastSubject::Repository, cx);
+                assert!(stack.persistent_lane_open(ToastAudience::Repository));
+                assert!(!stack.persistent_lane_open(ToastAudience::Settings));
+                stack.push(ToastKind::Error, "Identical text is not an owner");
+                let settings = stack.toasts().last().unwrap().id;
+                stack.set_subject(settings, ToastSubject::Settings, cx);
+                for (audience, expected) in [
+                    (ToastAudience::Repository, vec![repository]),
+                    (ToastAudience::Settings, vec![settings]),
+                ] {
+                    assert_eq!(
+                        stack
+                            .toasts()
+                            .iter()
+                            .filter(|toast| audience.includes(toast))
+                            .map(|toast| toast.id)
+                            .collect::<Vec<_>>(),
+                        expected
+                    );
+                }
+                stack.toggle_expanded(ToastAudience::Settings, ToastPartition::Persistent, cx);
+                assert!(stack.expanded[ToastAudience::Settings.slot(ToastPartition::Persistent)]);
+                assert!(
+                    !stack.expanded[ToastAudience::Repository.slot(ToastPartition::Persistent)]
+                );
+                stack.start_exit(settings);
+                assert!(!stack.persistent_lane_open(ToastAudience::Settings));
+                assert!(stack.persistent_lane_open(ToastAudience::Repository));
             });
         });
     }
@@ -879,16 +1040,16 @@ mod tests {
     fn persistent_lane_survives_transient_expiry_until_explicit_dismissal() {
         let mut stack = ToastStack::new();
         stack.push(ToastKind::Info, "routine");
-        assert!(!stack.persistent_lane_open());
+        assert!(!stack.persistent_lane_open(ToastAudience::Repository));
         stack.push(ToastKind::Error, "persistent");
         let error = stack.toasts()[1].id;
         stack.push(ToastKind::Success, "routine completion");
         let transient = stack.toasts()[2].id;
         stack.start_exit(transient);
         stack.remove(transient);
-        assert!(stack.persistent_lane_open());
+        assert!(stack.persistent_lane_open(ToastAudience::Repository));
         stack.start_exit(error);
-        assert!(!stack.persistent_lane_open());
+        assert!(!stack.persistent_lane_open(ToastAudience::Repository));
     }
 
     #[test]

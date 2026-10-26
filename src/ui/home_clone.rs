@@ -144,7 +144,12 @@ impl KagiApp {
             } else {
                 Msg::OpInProgress.t()
             };
-            self.push_toast(super::ToastKind::Error, busy, cx);
+            self.push_toast_for(
+                crate::ui::toast_stack::ToastSubject::App,
+                super::ToastKind::Error,
+                busy,
+                cx,
+            );
             return;
         }
         // The card stays up as the clone's progress: pressing Clone must
@@ -247,6 +252,11 @@ impl KagiApp {
         );
         self.notice_recording_failure("clone", &report.recording, &request.dest, None);
         let toast_id = self.present_recorded(&report.recording, current, cx);
+        if let (Some(id), Some(stack)) = (toast_id, self.toast_stack.as_ref()) {
+            stack.update(cx, |stack, cx| {
+                stack.set_subject(id, super::toast_stack::ToastSubject::App, cx);
+            });
+        }
         if report.result.is_ok() {
             if current {
                 self.open_repository(request.dest, cx);

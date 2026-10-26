@@ -307,7 +307,8 @@ impl KagiApp {
                     "success",
                 );
                 stack.update(cx, |stack, cx| {
-                    stack.push_keyed_notify(ToastKind::Sync, text, Some(key), cx);
+                    let id = stack.push_keyed_notify(ToastKind::Sync, text, Some(key), cx);
+                    stack.set_subject(id, crate::ui::toast_stack::ToastSubject::Repository, cx);
                 });
             }
             self.status_footer = FooterStatus::Idle("".into());

@@ -465,14 +465,17 @@ pub fn scenario_conflict_draft_corrupt_restore(cx: &mut VisualTestAppContext) {
         cx.read(|cx| {
             let state = app.read(cx);
             let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
-            let message = kagi_ui_core::i18n::Msg::conflict_draft_rescued("buffer.json.corrupt");
+            let message = kagi_ui_core::i18n::Msg::conflict_draft_rescued();
             assert!(
                 toasts.iter().any(|toast| {
                     toast.kind == kagi::ui::ToastKind::Error && toast.message.as_ref() == message
                 }),
-                "a damaged draft must announce its preserved file in {language:?}"
+                "a damaged draft must explain preservation and point to the log in {language:?}"
             );
         });
+        crate::toast_stack_budget::conflict_lane::assert_settings_subject_isolation(
+            cx, &app, window,
+        );
         let entries = kagi_git::oplog::read_oplog_tail(100);
         let rescues: Vec<_> = entries
             .iter()

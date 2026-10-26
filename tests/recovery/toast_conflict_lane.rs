@@ -70,6 +70,8 @@ fn run_case(cx: &mut VisualTestAppContext, layout: &str, lang: i18n::Lang, prese
 fn controls(layout: &str) -> &'static [&'static str] {
     match layout {
         "text" => &[
+            "conflict-hunk-0-current-use",
+            "conflict-hunk-0-current-both",
             "conflict-hunk-0-incoming-use",
             "conflict-hunk-0-incoming-both",
         ],
@@ -127,6 +129,49 @@ fn assert_safe_lane(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
     lane
 }
 
+fn paint_feedback(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    for id in [
+        "toast-transient-stack",
+        "toast-transient-overlay",
+        "busy-snackbar",
+        "busy-snackbar-skip",
+        "busy-snackbar-dismiss",
+        "conflict-footer-busy",
+        "conflict-footer-busy-controls",
+    ] {
+        e2e::clear_control_bounds(window.window_id(), id);
+    }
+    draw(cx, window);
+    for id in [
+        "toast-transient-stack",
+        "toast-transient-overlay",
+        "busy-snackbar",
+    ] {
+        assert!(
+            e2e::control_bounds(window.window_id(), id).is_none(),
+            "Conflict Mode never paints {id} over its choices"
+        );
+    }
+}
+
+fn assert_safe_footer(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
+    let footer = bounds(window, "pr-menu-footer");
+    let message = e2e::footer_message_bounds();
+    let text = bounds(window, "status-footer-text");
+    assert!(text.size.height > px(0.) && text.size.width > px(0.));
+    assert!(message.top() >= footer.top() && message.bottom() <= footer.bottom());
+    assert!(text.top() >= footer.top() && text.bottom() <= footer.bottom());
+    assert!(text.size.height <= theme::scaled_px(22.) + px(1.));
+    for id in controls(layout) {
+        let control = bounds(window, id);
+        assert!(
+            footer.top() >= control.bottom(),
+            "{layout}: footer feedback must not intersect {id}"
+        );
+    }
+    footer
+}
+
 fn exercise_lane(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<KagiApp>,
@@ -158,33 +203,91 @@ fn exercise_lane(
             "persistent feedback reserves real height"
         );
     }
+    let original_footer = assert_safe_footer(window, layout);
+    let original_text = e2e::footer_display_text();
     for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
         let transient = stack.update(cx, |stack, cx| {
-            stack.push_notify(kind, "Unrelated transient fixture", cx);
+            stack.push_notify(kind, "Unrelated transient fixture\nnot a second line", cx);
             stack.toasts().last().unwrap().id
         });
         cx.run_until_parked();
-        draw(cx, window);
+        paint_feedback(cx, window);
         assert_eq!(assert_safe_lane(window, layout), lane);
         assert_eq!(control_bounds(window, layout), shifted);
-        let body = bounds(window, "conflict-pane-content");
-        let transient_bounds = bounds(window, "toast-transient-stack");
-        assert!(
-            transient_bounds.top() >= body.top() + theme::scaled_px(12.) - px(1.)
-                && transient_bounds.top() >= lane.bottom(),
-            "repository transients remain below the persistent lane"
+        assert_eq!(assert_safe_footer(window, layout), original_footer);
+        assert_eq!(
+            e2e::footer_display_text().as_ref(),
+            "Unrelated transient fixture"
         );
-        assert!(
-            (body.right() - transient_bounds.right() - theme::scaled_px(12.)).abs() <= px(1.),
-            "repository transients retain their top-trailing inset"
-        );
-        stack.update(cx, |stack, cx| stack.begin_exit(transient, cx));
-        cx.advance_clock(Duration::from_secs(1));
+        let status = kagi::ui::toast_stack::status_for_e2e().expect("actual arrival status");
+        assert_eq!(status.role, Some(gpui::Role::Status));
+        assert_eq!(status.newest_id, Some(transient));
+        assert_eq!(status.label.as_deref(), Some("Unrelated transient fixture"));
+        stack.update(cx, |stack, _| {
+            stack.advance_age_for_e2e(Duration::from_secs(4));
+            assert!(stack.expiring_ids().contains(&transient));
+        });
+        cx.advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
-        draw(cx, window);
+        cx.advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        paint_feedback(cx, window);
+        assert_eq!(e2e::footer_display_text(), original_text);
+        assert_eq!(assert_safe_footer(window, layout), original_footer);
+        cx.read(|cx| {
+            assert!(stack
+                .read(cx)
+                .toasts()
+                .iter()
+                .all(|toast| toast.id != transient));
+        });
+        assert_eq!(
+            kagi::ui::toast_stack::status_for_e2e().unwrap().newest_id,
+            None,
+            "expiry never re-announces an older persistent error"
+        );
         assert_eq!(assert_safe_lane(window, layout), lane);
         assert_eq!(control_bounds(window, layout), shifted);
     }
+    let (read, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_snapshot_for_e2e(read);
+    app.update(cx, |app, cx| app.reload_external(cx));
+    cx.run_until_parked();
+    crate::busy_dismiss::advance(cx, 10);
+    paint_feedback(cx, window);
+    assert_eq!(assert_safe_lane(window, layout), lane);
+    assert_eq!(control_bounds(window, layout), shifted);
+    assert_eq!(assert_safe_footer(window, layout), original_footer);
+    assert_ne!(e2e::footer_display_text(), original_text);
+    assert!(bounds(window, "conflict-footer-busy").size.height > px(0.));
+    for id in ["busy-snackbar-skip", "busy-snackbar-dismiss"] {
+        let control = bounds(window, id);
+        assert!(control.size.width > px(0.) && control.size.height > px(0.));
+        assert!(
+            control.top() >= original_footer.top() && control.bottom() <= original_footer.bottom()
+        );
+        assert!(control.left() >= bounds(window, "status-footer-text").right());
+    }
+    let control = if matches!(layout, "text" | "raw") {
+        "busy-snackbar-skip"
+    } else {
+        "busy-snackbar-dismiss"
+    };
+    cx.simulate_click(
+        window,
+        bounds(window, control).center(),
+        gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert!(e2e::control_bounds(window.window_id(), "busy-snackbar-skip").is_none());
+    assert_eq!(control_bounds(window, layout), shifted);
+    release.send(());
+    crate::busy_dismiss::ready(cx, app);
+    paint_feedback(cx, window);
+    assert_eq!(e2e::footer_display_text(), original_text);
+    assert_eq!(assert_safe_lane(window, layout), lane);
+    assert_eq!(control_bounds(window, layout), shifted);
     stack.update(cx, |stack, cx| {
         for error in errors {
             stack.begin_exit(error, cx);
@@ -198,4 +301,120 @@ fn exercise_lane(
         original,
         "dismissal leaves no empty lane"
     );
+    stack.update(cx, |stack, cx| {
+        stack.push_notify(kagi::ui::ToastKind::Info, "Older routine feedback", cx);
+        stack.push_notify(kagi::ui::ToastKind::Success, "Newest routine feedback", cx);
+    });
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_eq!(
+        e2e::footer_display_text().as_ref(),
+        "Newest routine feedback"
+    );
+    assert_eq!(control_bounds(window, layout), original);
+    assert_eq!(assert_safe_footer(window, layout), original_footer);
+    stack.update(cx, |stack, _| {
+        stack.advance_age_for_e2e(Duration::from_secs(4))
+    });
+    cx.advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    cx.advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    paint_feedback(cx, window);
+    assert_eq!(e2e::footer_display_text(), original_text);
+    assert_eq!(control_bounds(window, layout), original);
+}
+
+/// Exercise production draft rescue and theme decoding in their real windows.
+pub(crate) fn assert_settings_subject_isolation(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    repository: AnyWindowHandle,
+) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&[
+        "settings_pane",
+        "settings_window_frame",
+        "settings_window_position",
+        "settings_window_height",
+    ]);
+    let _host = crate::settings_window::SettingsHostGuard::native(cx);
+    let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    let rescue_caption = kagi_ui_core::i18n::Msg::conflict_draft_rescued();
+    let rescue = cx.read(|cx| {
+        stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .find(|toast| {
+                toast.subject == ToastSubject::Repository
+                    && toast.message.as_ref() == rescue_caption
+            })
+            .expect("the real typed rescue remains live")
+            .id
+    });
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone().unwrap());
+    conflict.update(cx, |view, cx| {
+        view.conflict_select_file(0);
+        cx.notify();
+    });
+    drop(conflict);
+    cx.run_until_parked();
+    draw(cx, repository);
+    let rescue_probe = format!("toast-dismiss-{rescue}");
+    assert!(bounds(repository, &rescue_probe).size.height > px(0.));
+    cx.simulate_keystrokes(repository, "cmd-,");
+    cx.run_until_parked();
+    let settings = cx
+        .read(|cx| cx.windows())
+        .into_iter()
+        .find(|window| window.window_id() != repository.window_id())
+        .unwrap();
+    e2e::clear_control_bounds(settings.window_id(), &rescue_probe);
+    draw(cx, settings);
+    assert!(e2e::control_bounds(settings.window_id(), &rescue_probe).is_none());
+    assert!(
+        e2e::control_bounds(settings.window_id(), "toast-stack").is_none(),
+        "a repository draft rescue must not create a Settings card or lane"
+    );
+    assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open(ToastAudience::Settings)));
+    let path = theme::themes_dir()
+        .unwrap()
+        .join("owned-window-invalid.json");
+    assert!(!path.exists(), "only create our own isolated theme fixture");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{").unwrap();
+    cx.update_window(settings, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("view.reloadThemes", window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let theme_error = cx.read(|cx| {
+        stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .find(|toast| {
+                toast.subject == ToastSubject::Settings
+                    && toast.kind == kagi::ui::ToastKind::Error
+                    && toast.message.contains("owned-window-invalid.json")
+            })
+            .expect("the real JSON decoder reports a Settings-owned error")
+            .id
+    });
+    let theme_probe = format!("toast-dismiss-{theme_error}");
+    e2e::clear_control_bounds(repository.window_id(), &theme_probe);
+    e2e::clear_control_bounds(settings.window_id(), &rescue_probe);
+    draw(cx, settings);
+    assert!(bounds(settings, &theme_probe).size.height > px(0.));
+    assert!(e2e::control_bounds(settings.window_id(), &rescue_probe).is_none());
+    draw(cx, repository);
+    assert!(bounds(repository, &rescue_probe).size.height > px(0.));
+    assert!(e2e::control_bounds(repository.window_id(), &theme_probe).is_none());
+    cx.update_window(settings, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
+    std::fs::remove_file(path).unwrap();
+    assert!(theme::reload_custom_themes().is_empty());
 }

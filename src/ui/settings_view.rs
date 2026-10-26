@@ -183,6 +183,8 @@ pub(super) fn render_settings_overlay(
     analyze_dirty: bool,
     reset: Option<super::settings_analyze::AnalyzeResetAlert>,
     scroll: gpui::ScrollHandle,
+    notification_lane: Option<AnyElement>,
+    notifications: Option<AnyElement>,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
@@ -206,6 +208,7 @@ pub(super) fn render_settings_overlay(
     let panel_h = (f32::from(viewport.height) * 0.85).min(720.0);
 
     let panel = div()
+        .relative()
         .w(px(panel_w))
         .h(px(panel_h))
         .flex()
@@ -246,6 +249,9 @@ pub(super) fn render_settings_overlay(
                         .on_click(close_click),
                 )),
         )
+        .when_some(notification_lane, |panel, lane| {
+            panel.child(div().flex().justify_end().flex_shrink_0().child(lane))
+        })
         // One persistent scroll owner for the whole body; the kit owns thumb
         // drag/visibility state under the stable scrollbar element id.
         .child(
@@ -294,6 +300,7 @@ pub(super) fn render_settings_overlay(
                         )),
                     cx,
                 ))
+                .children(notifications)
                 // Keep the host's header close button and outer backdrop available.
                 .when_some(controls.smart_consent.clone(), |el, alert| {
                     el.child(super::settings_controls::smart_consent_alert(

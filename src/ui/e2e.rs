@@ -894,6 +894,11 @@ pub fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
     super::render_status::footer_message_bounds()
 }
 
+#[cfg(feature = "gui-e2e")]
+pub fn footer_display_text() -> gpui::SharedString {
+    super::render_status::footer_display_text()
+}
+
 /// Drive the persisted-record presentation with an already-observed outcome.
 /// The append itself remains real, including lock contention and failure.
 pub fn record_persisted_op(

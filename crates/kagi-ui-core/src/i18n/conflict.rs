@@ -1,8 +1,8 @@
 //! Accessible conflict names use operation-dependent role/name labels (ADR-0058).
 use super::{lang, Lang, Msg};
 impl Msg {
-    pub fn conflict_draft_rescued(name: &str) -> String {
-        draft_rescued_for(lang(), name)
+    pub fn conflict_draft_rescued() -> String {
+        draft_rescued_for(lang()).to_owned()
     }
 
     pub fn conflict_draft_restore_failed() -> String {
@@ -92,20 +92,10 @@ fn stopped_for(language: Lang, count: Option<usize>) -> String {
     }
 }
 
-fn draft_rescued_for(language: Lang, name: &str) -> String {
-    let name = kagi_domain::text_safety::sanitize_control_bytes(name);
-    let name = if name.contains('\n') {
-        std::borrow::Cow::Owned(name.replace('\n', "\\n"))
-    } else {
-        std::borrow::Cow::Borrowed(name.as_str())
-    };
+fn draft_rescued_for(language: Lang) -> &'static str {
     match language {
-        Lang::En => {
-            format!("Draft could not be read; the damaged file was moved aside as {name}")
-        }
-        Lang::Ja => {
-            format!("下書きを読めませんでした。破損したファイルを {name} に移しました")
-        }
+        Lang::En => "Couldn't read this repository's saved conflict edits. The unreadable copy was kept — see the Operation Log.",
+        Lang::Ja => "この repository の conflict 編集の保存内容を読み込めませんでした。読めなかったコピーは残してあります（詳細は操作ログ）。",
     }
 }
 
@@ -150,16 +140,20 @@ mod tests {
     }
 
     #[test]
-    fn damaged_draft_notice_names_the_preserved_file_in_both_languages() {
+    fn damaged_draft_notice_keeps_internal_file_identity_in_the_log_only() {
         assert_eq!(
-            draft_rescued_for(Lang::En, "buffer.json.corrupt.1"),
-            "Draft could not be read; the damaged file was moved aside as buffer.json.corrupt.1"
+            draft_rescued_for(Lang::En),
+            "Couldn't read this repository's saved conflict edits. The unreadable copy was kept — see the Operation Log."
         );
         assert_eq!(
-            draft_rescued_for(Lang::Ja, "buffer.json.corrupt.1"),
-            "下書きを読めませんでした。破損したファイルを buffer.json.corrupt.1 に移しました"
+            draft_rescued_for(Lang::Ja),
+            "この repository の conflict 編集の保存内容を読み込めませんでした。読めなかったコピーは残してあります（詳細は操作ログ）。"
         );
-        assert!(!draft_rescued_for(Lang::En, "buffer.json\n.corrupt").contains('\n'));
+        for language in [Lang::En, Lang::Ja] {
+            let preview = draft_rescued_for(language);
+            assert!(!preview.contains("buffer.json") && !preview.contains(".corrupt"));
+            assert!(!preview.contains('/') && !preview.contains('\n'));
+        }
     }
 
     #[test]

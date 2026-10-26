@@ -303,7 +303,12 @@ impl WorkspaceItem for EditorWorkspaceItem {
                 .child(super::editor_workspace::EditorWorkspaceElement::new(
                     ev,
                     panel,
-                    app.render_toasts(window, super::busy::ToastPlacement::Repository, true, cx),
+                    app.render_toasts(
+                        window,
+                        super::busy::ToastPlacement::Repository,
+                        crate::ui::toast_stack::ToastAudience::Repository,
+                        cx,
+                    ),
                 ))
                 .when(cfg!(feature = "gui-e2e"), |el| {
                     el.child(super::e2e::measure_inside("editor-workspace-slot"))

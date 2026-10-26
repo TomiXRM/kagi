@@ -212,8 +212,7 @@ impl KagiApp {
             return;
         }
         for warning in warnings {
-            let name = warning.rescued_path.file_name().unwrap_or_default();
-            let message = Msg::conflict_draft_rescued(&name.to_string_lossy());
+            let message = Msg::conflict_draft_rescued();
             if let Some(error) = warning.recording_error {
                 self.app_notices.push_back(
                     format!(

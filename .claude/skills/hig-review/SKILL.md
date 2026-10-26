@@ -136,17 +136,26 @@ default focus or a root Return action.
 
 **Feedback** — success is quiet (bounded toast/footer); failure is durable
 (Operation Log) with a bounded preview; modals only when the user must decide.
-Repository notifications occupy the center content's top-trailing safe area,
-below its header/help/banner and outside sidebar/Inspector, with a 45%-column
-width cap (#1768). Every conflict layout reserves an in-flow lane for persistent
-cards and their summary between its column/side or saved header and the panes;
-hunk/whole-file choices must never be covered. Directory/file layouts without
-column headers place the lane before their choices. Persistent cards keep
-× / Escape dismissal. Home/Settings likewise open a lane only for Error/action-
-bearing cards; transient feedback stays overlaid and must not move controls.
-Repository transients retain their top-trailing overlay and trailing slide in
-the pane body below the persistent lane; Home/Settings retain their existing
-transient overlay positions.
+Repository cards occupy the center content's top-trailing safe area, outside
+sidebar/Inspector, with a 45%-column width cap (#1768). Every conflict layout
+reserves an in-flow lane for persistent cards and their summary between its
+column/side or saved header and the panes; hunk/whole-file choices must never
+be covered. Directory/file layouts without column headers place the lane before
+their choices. Persistent cards keep × / Escape dismissal. In Conflict Mode,
+routine Info/Success feedback uses the existing fixed-height footer text slot:
+newest message only, one truncated line, the shared four-second lifetime and
+Role::Status arrival announcement. Busy uses that footer's existing spinner;
+slow-read Skip and Hide sit at the trailing end (owner ruling, #1768).
+No transient or busy card may cover conflict content or change its geometry.
+Home/Settings/Graph retain their existing placement policies.
+House rule: notifications appear only in the window that owns their subject
+(owner, #1806). Settings shows only typed theme/settings notices, repository
+results/rescued drafts/refresh stay with their repository root. A standalone
+Home root keeps app-level notices; a repository root's Home tab is still the
+same owning window and retains its repository notices/recovery. Never infer
+ownership or draft-rescue cause from text.
+Draft-rescue previews explain preservation and point to Operation Log; internal
+storage names/paths belong only in the log detail.
 Recovery captions reuse the existing command name,
 and a failed or unfinished refresh must not dismiss the failure preview.
 Any accepted successful read for the captured owner resolves that preview,

@@ -130,8 +130,7 @@ impl ConflictView {
                             .min_w(px(0.))
                             .min_h(px(0.))
                             .child(e2e::measure_inside("conflict-pane-content"))
-                            .child(body)
-                            .children(self.notifications.take()),
+                            .child(body),
                     ),
             )
             .child(

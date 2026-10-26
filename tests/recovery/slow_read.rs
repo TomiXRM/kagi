@@ -50,13 +50,24 @@ fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> (bool, bool)
     let id = window.window_id();
     e2e::clear_control_bounds(id, "busy-snackbar-advice");
     e2e::clear_control_bounds(id, "busy-snackbar-skip");
+    e2e::clear_control_bounds(id, "conflict-footer-busy-advice");
+    e2e::clear_control_bounds(id, "busy-snackbar");
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
     })
     .unwrap();
+    if let Some(advice) = e2e::control_bounds(id, "conflict-footer-busy-advice") {
+        let footer = e2e::footer_message_bounds();
+        assert!(advice.top() >= footer.top() && advice.bottom() <= footer.bottom());
+        assert!(
+            e2e::control_bounds(id, "busy-snackbar").is_none(),
+            "conflict busy feedback never paints a pane card"
+        );
+    }
     (
-        e2e::control_bounds(id, "busy-snackbar-advice").is_some(),
+        e2e::control_bounds(id, "busy-snackbar-advice").is_some()
+            || e2e::control_bounds(id, "conflict-footer-busy-advice").is_some(),
         e2e::control_bounds(id, "busy-snackbar-skip").is_some(),
     )
 }

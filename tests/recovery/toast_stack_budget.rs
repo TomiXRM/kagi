@@ -1,11 +1,12 @@
 //! #1768: bounded notifications use content-local top-trailing anchors.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{px, AnyWindowHandle, Bounds, Pixels, VisualTestAppContext};
+use kagi::ui::toast_stack::{ToastAudience, ToastSubject};
 use kagi::ui::{e2e, i18n, theme, KagiApp};
 use std::time::{Duration, Instant};
 
 #[path = "toast_conflict_lane.rs"]
-mod conflict_lane;
+pub(crate) mod conflict_lane;
 
 pub fn scenario_toast_stack_budget(cx: &mut VisualTestAppContext) {
     non_repository_lane_policy(cx);
@@ -838,8 +839,14 @@ fn assert_mixed_lane_stability(
     lane: Bounds<Pixels>,
 ) {
     let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    let (audience, subject) = match controls_id {
+        "settings-page-controls" => (ToastAudience::Settings, ToastSubject::Settings),
+        "home-page-controls" => (ToastAudience::Repository, ToastSubject::App),
+        _ => (ToastAudience::Repository, ToastSubject::Repository),
+    };
     let stable = |cx: &mut VisualTestAppContext| {
         cx.run_until_parked();
+        e2e::clear_control_bounds(window.window_id(), "busy-snackbar");
         draw(cx, window);
         assert_eq!(
             e2e::control_bounds(window.window_id(), controls_id).unwrap(),
@@ -855,8 +862,10 @@ fn assert_mixed_lane_stability(
     for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
         let id = stack.update(cx, |stack, cx| {
             stack.push_notify(kind, "Mixed-lane transient fixture", cx);
-            assert!(stack.persistent_lane_open());
-            stack.toasts().last().unwrap().id
+            let id = stack.toasts().last().unwrap().id;
+            stack.set_subject(id, subject, cx);
+            assert!(stack.persistent_lane_open(audience));
+            id
         });
         stable(cx);
         let containing = (controls_id == "takeover-page-controls").then(|| Bounds {
@@ -880,15 +889,22 @@ fn assert_mixed_lane_stability(
     cx.run_until_parked();
     crate::busy_dismiss::advance(cx, 10);
     stable(cx);
-    assert!(
-        e2e::control_bounds(window.window_id(), "busy-snackbar").is_some(),
-        "held real repository read displays its busy overlay alongside the lane"
-    );
-    let containing = (controls_id == "takeover-page-controls").then(|| Bounds {
-        origin: gpui::point(lane.left(), lane.top()),
-        size: gpui::size(lane.size.width, controls.bottom() - lane.top()),
-    });
-    assert_transient_overlay(cx, window, "busy-snackbar", containing);
+    if audience == ToastAudience::Repository {
+        assert!(
+            e2e::control_bounds(window.window_id(), "busy-snackbar").is_some(),
+            "held repository read remains visible in its owning window"
+        );
+        let containing = (controls_id == "takeover-page-controls").then(|| Bounds {
+            origin: gpui::point(lane.left(), lane.top()),
+            size: gpui::size(lane.size.width, controls.bottom() - lane.top()),
+        });
+        assert_transient_overlay(cx, window, "busy-snackbar", containing);
+    } else {
+        assert!(
+            e2e::control_bounds(window.window_id(), "busy-snackbar").is_none(),
+            "repository progress must not leak into an unrelated Settings window"
+        );
+    }
     release.send(());
     crate::busy_dismiss::ready(cx, app);
     stable(cx);
@@ -917,7 +933,9 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         crate::busy_dismiss::advance(cx, 10);
         draw(cx, window);
         assert!(e2e::control_bounds(window.window_id(), "busy-snackbar").is_some());
-        assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open()));
+        assert!(!cx.read(|cx| stack
+            .read(cx)
+            .persistent_lane_open(ToastAudience::Repository)));
         assert_eq!(
             e2e::control_bounds(window.window_id(), "takeover-page-controls").unwrap(),
             original,
@@ -928,7 +946,7 @@ fn takeover_lane_policy(cx: &mut VisualTestAppContext) {
         for kind in [kagi::ui::ToastKind::Info, kagi::ui::ToastKind::Success] {
             stack.update(cx, |stack, cx| {
                 stack.push_notify(kind, "Ephemeral takeover fixture", cx);
-                assert!(!stack.persistent_lane_open());
+                assert!(!stack.persistent_lane_open(ToastAudience::Repository));
             });
             cx.run_until_parked();
             draw(cx, window);
@@ -975,6 +993,11 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
     ]);
     let _host = crate::settings_window::SettingsHostGuard::native(cx);
     for settings in [false, true] {
+        let (audience, subject) = if settings {
+            (ToastAudience::Settings, ToastSubject::Settings)
+        } else {
+            (ToastAudience::Repository, ToastSubject::App)
+        };
         let fixture = build_fixture();
         let (app, repository) = mount(cx, fixture.path());
         let window = if settings {
@@ -1001,7 +1024,9 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
         stack.update(cx, |stack, cx| {
             stack.push_notify(kagi::ui::ToastKind::Info, "Transient layout fixture", cx);
-            assert!(!stack.persistent_lane_open());
+            let id = stack.toasts().last().unwrap().id;
+            stack.set_subject(id, subject, cx);
+            assert!(!stack.persistent_lane_open(audience));
         });
         cx.run_until_parked();
         draw(cx, window);
@@ -1016,7 +1041,9 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         assert!((transient.left() - theme::scaled_px(12.)).abs() <= px(1.));
         let error = stack.update(cx, |stack, cx| {
             stack.push_notify(kagi::ui::ToastKind::Error, "Persistent layout fixture", cx);
-            stack.toasts().last().unwrap().id
+            let id = stack.toasts().last().unwrap().id;
+            stack.set_subject(id, subject, cx);
+            id
         });
         cx.run_until_parked();
         draw(cx, window);
@@ -1036,8 +1063,10 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
             stack.advance_age_for_e2e(Duration::from_secs(60));
             assert!(!stack.expiring_ids().contains(&error), "errors persist");
             stack.push_notify(kagi::ui::ToastKind::Success, "Later transient fixture", cx);
+            let id = stack.toasts().last().unwrap().id;
+            stack.set_subject(id, subject, cx);
             assert!(
-                stack.persistent_lane_open(),
+                stack.persistent_lane_open(audience),
                 "transients leave the persistent lane open"
             );
         });
@@ -1057,7 +1086,7 @@ fn non_repository_lane_policy(cx: &mut VisualTestAppContext) {
         stack.update(cx, |stack, cx| stack.begin_exit(error, cx));
         cx.run_until_parked();
         draw(cx, window);
-        assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open()));
+        assert!(!cx.read(|cx| stack.read(cx).persistent_lane_open(audience)));
         assert_eq!(
             e2e::control_bounds(window.window_id(), controls_id)
                 .unwrap()

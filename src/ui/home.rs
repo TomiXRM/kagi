@@ -209,10 +209,11 @@ impl KagiApp {
         } else {
             normal_sidebar
         };
-        let persistent_lane = self
-            .toast_stack
-            .as_ref()
-            .is_some_and(|stack| stack.read(cx).persistent_lane_open());
+        let persistent_lane = self.toast_stack.as_ref().is_some_and(|stack| {
+            stack
+                .read(cx)
+                .persistent_lane_open(crate::ui::toast_stack::ToastAudience::Repository)
+        });
         let home_controls = self.render_home_main(sidebar, compact, window, cx);
         let body = div()
             .id("home-tab-panel")
@@ -293,7 +294,7 @@ impl KagiApp {
                         .children(self.render_toasts(
                             window,
                             super::busy::ToastPlacement::PersistentLane,
-                            true,
+                            crate::ui::toast_stack::ToastAudience::Repository,
                             cx,
                         )),
                 )
@@ -341,7 +342,7 @@ impl KagiApp {
                 home.children(self.render_toasts(
                     window,
                     super::busy::ToastPlacement::Transient,
-                    true,
+                    crate::ui::toast_stack::ToastAudience::Repository,
                     cx,
                 ))
             })

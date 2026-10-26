@@ -675,7 +675,7 @@ fn check_stale_success(
     cx.read(&assert_closed);
     cx.read(|cx| {
         let state = app.read(cx);
-        let expected = kagi_ui_core::i18n::Msg::conflict_draft_rescued("buffer.json.corrupt");
+        let expected = kagi_ui_core::i18n::Msg::conflict_draft_rescued();
         let toasts = state.toast_stack.as_ref().unwrap().read(cx).toasts();
         assert_eq!(
             toasts

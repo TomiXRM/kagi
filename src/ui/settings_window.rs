@@ -13,6 +13,12 @@ use gpui_component::Root;
 struct SettingsWindowHandle(Option<WindowHandle<Root>>);
 impl Global for SettingsWindowHandle {}
 
+pub(super) fn owns_window(id: gpui::WindowId, cx: &App) -> bool {
+    cx.try_global::<SettingsWindowHandle>()
+        .and_then(|handle| handle.0)
+        .is_some_and(|handle| handle.window_id() == id)
+}
+
 pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
     let existing = cx.default_global::<SettingsWindowHandle>().0;
     if let Some(handle) = existing {
@@ -38,7 +44,12 @@ pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
         Err(error) => {
             eprintln!("Settings window: {error}");
             error_owner.update(cx, |app, cx| {
-                app.push_toast(super::ToastKind::Error, Msg::SettingsWindowFailed.t(), cx);
+                app.push_toast_for(
+                    super::toast_stack::ToastSubject::App,
+                    super::ToastKind::Error,
+                    Msg::SettingsWindowFailed.t(),
+                    cx,
+                );
             });
             cx.default_global::<SettingsWindowHandle>().0 = None;
         }
@@ -289,18 +300,18 @@ impl SettingsWindow {
         let host = cx.entity().downgrade();
         let pane = self.pane;
         let zoom = theme::zoom();
-        let persistent_lane = owner
-            .read(cx)
-            .toast_stack
-            .as_ref()
-            .is_some_and(|stack| stack.read(cx).persistent_lane_open());
+        let persistent_lane = owner.read(cx).toast_stack.as_ref().is_some_and(|stack| {
+            stack
+                .read(cx)
+                .persistent_lane_open(super::toast_stack::ToastAudience::Settings)
+        });
         let notifications = persistent_lane
             .then(|| {
                 owner.update(cx, |app, cx| {
                     app.render_toasts(
                         window,
                         super::busy::ToastPlacement::PersistentLane,
-                        false,
+                        crate::ui::toast_stack::ToastAudience::Settings,
                         cx,
                     )
                 })
@@ -472,7 +483,12 @@ impl Render for SettingsWindow {
             ))
             .map(|el| {
                 el.children(owner.update(cx, |app, cx| {
-                    app.render_toasts(window, super::busy::ToastPlacement::Transient, false, cx)
+                    app.render_toasts(
+                        window,
+                        super::busy::ToastPlacement::Transient,
+                        crate::ui::toast_stack::ToastAudience::Settings,
+                        cx,
+                    )
                 }))
             })
             .when_some(

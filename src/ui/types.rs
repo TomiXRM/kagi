@@ -128,7 +128,7 @@ pub enum ToastKind {
     Info,
     /// Operation succeeded (green, 4s).
     Success,
-    /// Operation failed or was refused (red, 8s).
+    /// Operation failed or was refused (red; persists until explicit dismissal).
     Error,
     /// Sync-flavoured info (blue, 4s): renders the same big spinning sync icon
     /// as the busy snackbar, so "already up to date" reads consistently with
@@ -148,10 +148,10 @@ pub enum ToastAction {
     RefreshRepository(crate::app::Attachment),
 }
 
-/// One snackbar entry, stacked bottom-right above the status bar.
+/// One subject-owned notification with a shared lifecycle. Window hosts project
+/// cards or the conflict footer without duplicating timers or action identity.
 ///
-/// Rendered by `render_toasts`; pruned by a 500ms ticker task that runs only
-/// while toasts exist (spawned lazily from `push_toast`/`render`).
+/// Pruned by a ticker that runs only while routine feedback is pending.
 /// We deliberately do NOT use gpui-component's Root notification layer:
 /// pushing into it requires `Root::update` and our render runs *inside*
 /// Root's render pass, so that would re-entrantly borrow the Root entity.
@@ -160,6 +160,7 @@ pub struct Toast {
     /// Unique id (for the dismiss button element id).
     pub id: u64,
     pub kind: ToastKind,
+    pub subject: super::toast_stack::ToastSubject,
     pub message: SharedString,
     /// Stable repository / requested operation / outcome identity.
     pub result_key: Option<String>,

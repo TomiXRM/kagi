@@ -1727,11 +1727,20 @@ impl KagiApp {
 
     // ── W3-NOTIFY: toast helpers ──────────────────────────────
 
-    /// Queue a snackbar toast (bottom-left). Delegates to the `ToastStack`
-    /// entity, which (re)starts the auto-dismiss ticker and re-renders only the
-    /// overlay subtree (ADR-0110 Phase 5). No-op before the window exists.
+    /// Repository feedback stays with this root even after its tab departs.
+    /// Settings and app-level producers capture their subject explicitly.
     pub(crate) fn push_toast(
         &mut self,
+        kind: ToastKind,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.push_toast_for(toast_stack::ToastSubject::Repository, kind, message, cx);
+    }
+
+    pub(crate) fn push_toast_for(
+        &mut self,
+        subject: toast_stack::ToastSubject,
         kind: ToastKind,
         message: impl Into<SharedString>,
         cx: &mut Context<Self>,
@@ -1742,7 +1751,30 @@ impl KagiApp {
                 std::borrow::Cow::Borrowed(_) => message,
                 std::borrow::Cow::Owned(display) => display.into(),
             };
-            stack.update(cx, |stack, cx| stack.push_notify(kind, message, cx));
+            stack.update(cx, |stack, cx| {
+                let id = stack.push_keyed_notify(kind, message, None, cx);
+                stack.set_subject(id, subject, cx);
+            });
+        }
+    }
+
+    pub(super) fn toast_subject_for_window(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> toast_stack::ToastSubject {
+        let settings = matches!(self.menu_overlay, Some(commands::MenuOverlay::Settings));
+        #[cfg(target_os = "macos")]
+        let settings =
+            settings || settings_window::owns_window(window.window_handle().window_id(), cx);
+        #[cfg(not(target_os = "macos"))]
+        let _ = (window, cx);
+        if settings {
+            toast_stack::ToastSubject::Settings
+        } else if self.home_in_front() {
+            toast_stack::ToastSubject::App
+        } else {
+            toast_stack::ToastSubject::Repository
         }
     }
 
@@ -1796,6 +1828,7 @@ impl KagiApp {
             let key = Self::operation_result_key(Path::new(&entry.repo), op, result);
             stack.update(cx, |stack, cx| {
                 let id = stack.push_keyed_notify(kind, message, Some(key), cx);
+                stack.set_subject(id, toast_stack::ToastSubject::Repository, cx);
                 if matches!(kind, ToastKind::Error | ToastKind::Info) {
                     stack.set_action(
                         id,

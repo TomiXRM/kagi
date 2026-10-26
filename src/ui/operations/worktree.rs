@@ -41,6 +41,7 @@ impl KagiApp {
             branch_name_interacted: false,
             branch_name_composing: false,
             plan_stale: false,
+            reserve_name_error: false,
             branch_state: None, // lazy (render)
             path_input,
             path_state: None, // lazy (render)

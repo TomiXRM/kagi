@@ -29,6 +29,7 @@ impl KagiApp {
             branch_name_interacted: false,
             branch_name_composing: false,
             plan_stale: false,
+            reserve_name_error: false,
             // Each opening owns a fresh editor, including when no Window is
             // available yet. Never retain the cancelled editor's text/caret.
             input_state: None,

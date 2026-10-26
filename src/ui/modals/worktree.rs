@@ -71,6 +71,8 @@ pub struct CreateWorktreeModal {
     pub branch_name_composing: bool,
     /// Either branch or path changed since the retained preview was planned.
     pub plan_stale: bool,
+    /// Whether the retained plan's name-error row was eligible before editing.
+    pub reserve_name_error: bool,
     /// Real branch-name input entity (lazy; None headless).
     pub branch_state: Option<Entity<InputState>>,
     /// Target worktree path (synced from `path_state`).

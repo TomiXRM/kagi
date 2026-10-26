@@ -912,6 +912,9 @@ impl KagiApp {
                 .map(|st| st.read(cx).value().to_string())
                 .unwrap_or_default();
             if v != m.input {
+                if !m.plan_stale {
+                    m.reserve_name_error = m.branch_name_interacted || !m.input.is_empty();
+                }
                 let name_cleared = v.is_empty();
                 m.input = v;
                 m.branch_name_interacted = true;
@@ -1012,6 +1015,9 @@ impl KagiApp {
                 m.path_input = path_v;
                 m.path_touched = true;
                 dirty = true;
+            }
+            if !m.plan_stale && (dirty || branch_v != m.branch_input) {
+                m.reserve_name_error = m.branch_name_interacted || !m.branch_input.is_empty();
             }
             if branch_v != m.branch_input {
                 name_cleared = branch_v.is_empty();

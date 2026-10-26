@@ -270,6 +270,38 @@ pub fn scenario_create_branch_feedback(cx: &mut VisualTestAppContext) {
                 let single_line =
                     e2e::control_bounds(window.window_id(), "input-branch-name-error").unwrap();
                 assert!(single_line.size.height > px(0.));
+                if matches!(sheet, Sheet::Worktree) {
+                    let card = e2e::control_bounds(window.window_id(), "modal-card").unwrap();
+                    let field =
+                        e2e::control_bounds(window.window_id(), "input-modal-field").unwrap();
+                    cx.update_window(window, |_, window, cx| {
+                        let input = app
+                            .read(cx)
+                            .create_worktree_modal()
+                            .unwrap()
+                            .path_state
+                            .clone()
+                            .unwrap();
+                        input.update(cx, |input, cx| {
+                            input.set_value("../error-visible-path", window, cx)
+                        });
+                    })
+                    .unwrap();
+                    paint(cx, window);
+                    assert_eq!(
+                        e2e::control_bounds(window.window_id(), "modal-card").unwrap(),
+                        card
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(window.window_id(), "input-modal-field").unwrap(),
+                        field
+                    );
+                    alert(cx, window, Msg::BranchNameEmpty.t(), true);
+                    disabled(sheet, Msg::InputPlanPending.t());
+                    wait_plan(cx, &app, sheet);
+                    paint(cx, window);
+                }
+                assert_error_edit_stable(cx, &app, window, sheet, Msg::BranchNameEmpty.t());
 
                 click(cx, window, sheet.cancel());
                 sheet.open(cx, &app, &head);
@@ -301,6 +333,37 @@ pub fn scenario_create_branch_feedback(cx: &mut VisualTestAppContext) {
         }
     }
     eprintln!("[gui-e2e] PASS create_branch_feedback");
+}
+
+fn assert_error_edit_stable(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    sheet: Sheet,
+    previous_reason: &str,
+) {
+    let card = e2e::control_bounds(window.window_id(), "modal-card").unwrap();
+    let field = e2e::control_bounds(window.window_id(), "input-modal-field").unwrap();
+    // Two edits before the debounce settles must preserve the same reserved
+    // row, without exposing a stale Alert or stale repair text.
+    for _ in 0..2 {
+        cx.simulate_input(window, "x");
+        paint(cx, window);
+        assert_eq!(
+            e2e::control_bounds(window.window_id(), "modal-card").unwrap(),
+            card,
+            "{sheet:?}: editing an error must retain card geometry"
+        );
+        assert_eq!(
+            e2e::control_bounds(window.window_id(), "input-modal-field").unwrap(),
+            field,
+            "{sheet:?}: editing an error must retain field position"
+        );
+        alert(cx, window, previous_reason, false);
+        disabled(sheet, Msg::InputPlanPending.t());
+    }
+    wait_plan(cx, app, sheet);
+    paint(cx, window);
 }
 
 fn check_invalid(
@@ -387,6 +450,7 @@ fn check_invalid(
             app.update(cx, |_, cx| cx.notify());
             paint(cx, window);
         }
+        assert_error_edit_stable(cx, app, window, sheet, &reason);
     }
 }
 

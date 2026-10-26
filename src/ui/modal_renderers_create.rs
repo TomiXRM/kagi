@@ -46,9 +46,9 @@ pub(crate) fn render_create_branch_modal(
     // A pending or failed plan cannot confirm; the action remains visible so
     // its disabled reason is reachable by pointer and assistive technology.
     let plan = modal.plan.plan().cloned();
-    let plan_current = !modal.plan_stale
-        && !modal.branch_name_composing
-        && creation_plan_matches_name(plan.as_deref(), &modal.input);
+    let name_current =
+        !modal.branch_name_composing && creation_plan_matches_name(plan.as_deref(), &modal.input);
+    let plan_current = !modal.plan_stale && name_current;
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
@@ -110,10 +110,12 @@ pub(crate) fn render_create_branch_modal(
             Msg::InputBranchName.t(),
             modal.input_state.as_ref(),
             create_branch_name_reason(
-                plan.as_deref().filter(|_| plan_current),
+                plan.as_deref()
+                    .filter(|_| name_current || modal.reserve_name_error),
                 &modal.input,
                 modal.branch_name_interacted,
             ),
+            !name_current,
         ))
         .child(super::e2e::measure_control(
             "create-branch-checkout-after",
@@ -249,9 +251,9 @@ pub(crate) fn render_create_worktree_modal(
 ) -> impl IntoElement {
     // Pending/failed plans retain a visible, disabled primary action.
     let plan = modal.plan.plan().cloned();
-    let plan_current = !modal.plan_stale
-        && !modal.branch_name_composing
+    let name_current = !modal.branch_name_composing
         && creation_plan_matches_name(plan.as_deref(), &modal.branch_input);
+    let plan_current = !modal.plan_stale && name_current;
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
@@ -297,10 +299,12 @@ pub(crate) fn render_create_worktree_modal(
             },
             modal.branch_state.as_ref(),
             create_branch_name_reason(
-                plan.as_deref().filter(|_| plan_current),
+                plan.as_deref()
+                    .filter(|_| name_current || modal.reserve_name_error),
                 &modal.branch_input,
                 modal.branch_name_interacted,
             ),
+            !name_current,
         ))
         .child(render_input_modal_path_field(
             Msg::InputWorktreePath.t(),
@@ -503,6 +507,7 @@ pub(crate) fn render_create_tag_modal(
                     .find(|b| matches!(b, PlanNote::Tag(TagNote::NameError(_))))
             })
             .map(|b| SharedString::from(plan_note_text(b))),
+        false,
     ));
 
     if let Some(ref p) = plan {

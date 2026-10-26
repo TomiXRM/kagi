@@ -31,6 +31,7 @@ pub(crate) fn render_input_modal_field(
     label: &'static str,
     state: Option<&Entity<InputState>>,
     reason: Option<SharedString>,
+    reason_stale: bool,
 ) -> gpui::Div {
     input_modal_field(
         label,
@@ -43,6 +44,7 @@ pub(crate) fn render_input_modal_field(
             )
         }),
         reason,
+        reason_stale,
     )
 }
 
@@ -86,13 +88,14 @@ pub(crate) fn render_input_modal_path_field(
             )
             .into_any_element()
     });
-    input_modal_field(label, row, reason)
+    input_modal_field(label, row, reason, false)
 }
 
 fn input_modal_field(
     label: &'static str,
     control: Option<gpui::AnyElement>,
     reason: Option<SharedString>,
+    reason_stale: bool,
 ) -> gpui::Div {
     let field = div()
         .flex_shrink_0()
@@ -111,12 +114,11 @@ fn input_modal_field(
             "input-field-error",
             div()
                 .id(label)
-                .role(Role::Alert)
-                .aria_label(reason.clone())
                 .text_sm()
                 .text_color(rgb(current_theme().input_field_error_text()))
                 .whitespace_normal()
                 .child(reason.clone())
+                .when(reason_stale, |error| error.invisible())
                 .when(
                     label == Msg::InputBranchName.t() || label == Msg::InputNewBranchName.t(),
                     |error| {
@@ -125,8 +127,13 @@ fn input_modal_field(
                             .child(super::e2e::measure_inside("input-branch-name-error"))
                     },
                 )
-                .hover_tooltip_builder((label, 0usize), move |window, cx| {
-                    Tooltip::new(reason.clone()).build(window, cx)
+                .when(!reason_stale, |error| {
+                    error
+                        .role(Role::Alert)
+                        .aria_label(reason.clone())
+                        .hover_tooltip_builder((label, 0usize), move |window, cx| {
+                            Tooltip::new(reason.clone()).build(window, cx)
+                        })
                 }),
         )),
         None => field,
@@ -264,6 +271,7 @@ pub(crate) fn render_input_plan_modal(
         label,
         input_state.as_ref(),
         field_reason,
+        false,
     ));
 
     let input_valid = input_state

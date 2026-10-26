@@ -269,6 +269,10 @@ mod create_branch_warnings;
 mod create_branch_cancel_reopen;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_feedback.rs"]
+mod create_branch_feedback;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
 mod smart_picker;
 
@@ -4178,6 +4182,14 @@ mod macos {
             (
                 "create_branch_cancel_reopen",
                 Box::new(crate::create_branch_cancel_reopen::scenario_create_branch_cancel_reopen),
+            ),
+            (
+                "create_branch_feedback",
+                Box::new(crate::create_branch_feedback::scenario_create_branch_feedback),
+            ),
+            (
+                "create_branch_after_unchanged",
+                Box::new(crate::create_branch_feedback::scenario_create_branch_after_unchanged),
             ),
             (
                 "stash_push_stacked_preview",

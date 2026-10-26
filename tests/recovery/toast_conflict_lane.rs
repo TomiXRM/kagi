@@ -267,7 +267,10 @@ fn exercise_lane(
         let control = bounds(window, id);
         assert!(control.size.width > px(0.) && control.size.height > px(0.));
         assert!(
-            control.top() >= original_footer.top() && control.bottom() <= original_footer.bottom()
+            control.top() >= original_footer.top() && control.bottom() <= original_footer.bottom(),
+            "{id}: {control:?} must fit {original_footer:?}, layout={layout}, lang={:?}, zoom={}",
+            kagi::ui::i18n::lang(),
+            kagi::ui::theme::zoom()
         );
         assert!(control.left() >= bounds(window, "status-footer-text").right());
     }
@@ -288,7 +291,12 @@ fn exercise_lane(
     release.send(());
     crate::busy_dismiss::ready(cx, app);
     paint_feedback(cx, window);
-    assert_eq!(e2e::footer_display_text(), original_text);
+    assert_eq!(
+        e2e::footer_display_text().as_ref(),
+        kagi::ui::i18n::Msg::Refreshed.t(),
+        "the completed read publishes its real footer result"
+    );
+    let original_text = e2e::footer_display_text();
     assert_eq!(assert_safe_lane(window, layout), lane);
     assert_eq!(control_bounds(window, layout), shifted);
     stack.update(cx, |stack, cx| {

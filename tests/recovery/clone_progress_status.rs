@@ -174,19 +174,26 @@ fn terminal_run(cx: &mut VisualTestAppContext, success: bool) {
         let destination = parent.path().join("widgets").canonicalize().unwrap();
         assert!(cx.read(|cx| app.read(cx).tabs.iter().any(|tab| tab.path == destination)));
     } else {
+        let receipts = kagi_git::read_oplog_tail_for_repo(&parent.path().join("widgets"), 100);
+        let failure = receipts.iter().find(|entry| entry.op == "clone").unwrap();
+        assert!(matches!(
+            &failure.outcome,
+            kagi_git::oplog::OpOutcome::Failed { error, .. }
+                if error.contains("clone status test failure")
+        ));
         cx.read(|cx| {
-            assert!(app
-                .read(cx)
-                .toast_stack
-                .as_ref()
-                .unwrap()
-                .read(cx)
+            let stack = app.read(cx).toast_stack.as_ref().unwrap().read(cx);
+            let errors: Vec<_> = stack
                 .toasts()
                 .iter()
-                .any(|toast| {
-                    toast.subject == kagi::ui::toast_stack::ToastSubject::App
-                        && toast.message.contains("clone status test failure")
-                }));
+                .filter(|toast| toast.kind == kagi::ui::ToastKind::Error)
+                .collect();
+            assert_eq!(errors.len(), 1, "one notice for the actual failed clone");
+            assert_eq!(errors[0].subject, kagi::ui::toast_stack::ToastSubject::App);
+            assert!(matches!(
+                errors[0].action,
+                Some(kagi::ui::ToastAction::OpenOperationLog(_))
+            ));
         });
     }
     unmount(cx, app, window);

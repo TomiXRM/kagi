@@ -30,6 +30,16 @@ impl BusyIdentity {
     }
 }
 
+/// Match the footer's content box, excluding its unscaled dark-chrome border.
+fn footer_control_height() -> gpui::Pixels {
+    theme::scaled_px(super::STATUS_BAR_H)
+        - gpui::px(if theme().uses_neutral_dark_chrome() {
+            1.
+        } else {
+            0.
+        })
+}
+
 impl KagiApp {
     pub(crate) fn mark_write_busy(&mut self, name: &'static str, cx: &mut Context<Self>) {
         self.write_busy_op = Some(name);
@@ -544,7 +554,7 @@ impl KagiApp {
                 .ghost()
                 .when_some(footer_width, |button, width| {
                     button
-                        .h(theme::scaled_px(super::STATUS_BAR_H))
+                        .h(footer_control_height())
                         .w(width)
                         .px_0()
                         .py_0()
@@ -570,7 +580,7 @@ impl KagiApp {
                 .flex_shrink_0()
                 .when(compact, |button| {
                     button
-                        .h(theme::scaled_px(super::STATUS_BAR_H))
+                        .h(footer_control_height())
                         .w(theme::scaled_px(super::STATUS_BAR_H))
                         .p_0()
                 })
@@ -612,7 +622,7 @@ impl KagiApp {
             .flex_shrink_0()
             .when_some(footer_width, |button, width| {
                 button
-                    .h(theme::scaled_px(super::STATUS_BAR_H))
+                    .h(footer_control_height())
                     .w(width)
                     .px_0()
                     .py_0()

@@ -13,6 +13,12 @@ pub use super::home_clone_card::{
     clone_destination_presentation, take_clone_copy_activations, CloneDestinationPresentation,
 };
 
+/// Exercise the real Copy all projection without adding a button to input cards.
+#[cfg(feature = "gui-e2e")]
+pub fn plan_clipboard_text_for_e2e(plan: &kagi_git::OperationPlan) -> String {
+    super::modal_copy::plan_clipboard_text(plan, &[], kagi_domain::plan_note::ShellKind::Posix)
+}
+
 use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;

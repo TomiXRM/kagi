@@ -81,6 +81,19 @@ pub fn after_state_detail<'a>(title: &PlanTitle, predicted: &'a str) -> std::bor
     }
 }
 
+/// Ref-only branch creation has one consequence, not a duplicate status tally.
+/// This remains true for blocked names; it is not a claim of successful creation.
+pub fn branch_creation_unchanged_after(title: &PlanTitle) -> Option<&'static str> {
+    matches!(
+        title,
+        PlanTitle::Branch(BranchTitle::CreateBranch {
+            checkout: false,
+            ..
+        })
+    )
+    .then(|| Msg::InputBranchWorkingTreeUnchanged.t())
+}
+
 /// Neutral AFTER context comes from the approved plan, never its warning list.
 /// Keep this projection shared by the visible card, accessibility and Copy all.
 pub fn plan_after_state_detail(
@@ -97,6 +110,9 @@ pub fn plan_after_state_detail(
 
     if plan.rebase_scope.is_some() {
         return Cow::Borrowed(Msg::PlanRebaseResultUnknown.t());
+    }
+    if let Some(detail) = branch_creation_unchanged_after(&plan.title) {
+        return Cow::Borrowed(detail);
     }
     let detail = after_state_detail(&plan.title, &plan.predicted.dirty);
     // Do not promise effects for a blocked or no-op operation.
@@ -171,6 +187,12 @@ pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
 pub fn plan_note_text(note: &PlanNote) -> String {
     let note = super::op::user_text::plan_note_payload(note);
     let note = note.as_ref();
+    // Keyed field feedback shares the same UI vocabulary in both languages;
+    // the domain Display / plan_note_contract retain diagnostic wording.
+    if let PlanNote::Common(kagi_domain::plan_note::CommonNote::BranchNameErrorKeyed(error)) = note
+    {
+        return super::branch_name_error(error);
+    }
     match lang() {
         Lang::En => note.message_display_en(),
         Lang::Ja => note_ja_any(note),

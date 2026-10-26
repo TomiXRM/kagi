@@ -25,13 +25,13 @@ use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
-/// The input-confirm cards share form density, but keep their own plan and
-/// confirmation handlers. A field error is one line here; the full reason
-/// remains available to pointer and assistive-technology users.
+/// The input-confirm cards share form density and readable wrapping feedback,
+/// while retaining their own plan and confirmation handlers.
 pub(crate) fn render_input_modal_field(
     label: &'static str,
     state: Option<&Entity<InputState>>,
     reason: Option<SharedString>,
+    reason_stale: bool,
 ) -> gpui::Div {
     input_modal_field(
         label,
@@ -44,6 +44,7 @@ pub(crate) fn render_input_modal_field(
             )
         }),
         reason,
+        reason_stale,
     )
 }
 
@@ -87,13 +88,14 @@ pub(crate) fn render_input_modal_path_field(
             )
             .into_any_element()
     });
-    input_modal_field(label, row, reason)
+    input_modal_field(label, row, reason, false)
 }
 
 fn input_modal_field(
     label: &'static str,
     control: Option<gpui::AnyElement>,
     reason: Option<SharedString>,
+    reason_stale: bool,
 ) -> gpui::Div {
     let field = div()
         .flex_shrink_0()
@@ -108,22 +110,67 @@ fn input_modal_field(
         )
         .children(control);
     match reason {
-        Some(reason) => field.child(crate::ui::e2e::measure_control(
-            "input-field-error",
-            div()
+        Some(reason) => {
+            let error = div()
                 .id(label)
-                .role(Role::Alert)
-                .aria_label(reason.clone())
                 .text_sm()
-                .text_color(rgb(current_theme().color_blocker))
-                .truncate()
+                .text_color(rgb(current_theme().input_field_error_text()))
+                .whitespace_normal()
                 .child(reason.clone())
-                .hover_tooltip_builder((label, 0usize), move |window, cx| {
-                    Tooltip::new(reason.clone()).build(window, cx)
-                }),
-        )),
+                .when(reason_stale, |error| error.invisible())
+                .when(
+                    label == Msg::InputBranchName.t() || label == Msg::InputNewBranchName.t(),
+                    |error| {
+                        error
+                            .relative()
+                            .child(super::e2e::measure_inside("input-branch-name-error"))
+                    },
+                )
+                .when(!reason_stale, |error| {
+                    error.role(Role::Alert).aria_label(reason.clone())
+                });
+            let error = if reason_stale {
+                error.into_any_element()
+            } else {
+                error
+                    .hover_tooltip_builder((label, 0usize), move |window, cx| {
+                        Tooltip::new(reason.clone()).build(window, cx)
+                    })
+                    .into_any_element()
+            };
+            field.child(crate::ui::e2e::measure_control("input-field-error", error))
+        }
         None => field,
     }
+}
+
+/// A retained preview can describe a prior name while the debounce is pending.
+pub(crate) fn creation_plan_matches_name(plan: Option<&OperationPlan>, input: &str) -> bool {
+    use kagi_domain::plan_note::{BranchTitle, PlanTitle, WorktreeTitle};
+    match plan.map(|plan| &plan.title) {
+        Some(PlanTitle::Branch(BranchTitle::CreateBranch { name, .. }))
+        | Some(PlanTitle::Worktree(WorktreeTitle::CreateBranchCheckout { name, .. })) => {
+            name == input
+        }
+        Some(PlanTitle::Worktree(WorktreeTitle::CreateWorktree { branch, .. })) => branch == input,
+        _ => false,
+    }
+}
+
+/// Both creation sheets keep pristine empty-name requests quiet without
+/// removing the plan's blocker or inventing another branch-name validator.
+pub(crate) fn create_branch_name_reason(
+    plan: Option<&OperationPlan>,
+    name: &str,
+    interacted: bool,
+) -> Option<SharedString> {
+    if name.is_empty() && !interacted {
+        return None;
+    }
+    plan?.blockers.iter().find_map(|note| {
+        matches!(note, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
+            .then(|| SharedString::from(plan_note_text(note)))
+    })
 }
 
 pub(crate) fn render_input_modal_heading(
@@ -228,6 +275,7 @@ pub(crate) fn render_input_plan_modal(
         label,
         input_state.as_ref(),
         field_reason,
+        false,
     ));
 
     let input_valid = input_state

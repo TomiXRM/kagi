@@ -65,6 +65,14 @@ pub struct CreateWorktreeModal {
     pub start_title: String,
     /// New branch name (synced from `branch_state`).
     pub branch_input: String,
+    /// Same edit/submit feedback rule as the create-branch name field.
+    pub branch_name_interacted: bool,
+    /// Current marked-text state, sampled from the editor for presentation only.
+    pub branch_name_composing: bool,
+    /// Either branch or path changed since the retained preview was planned.
+    pub plan_stale: bool,
+    /// Whether the retained plan's name-error row was eligible before editing.
+    pub reserve_name_error: bool,
     /// Real branch-name input entity (lazy; None headless).
     pub branch_state: Option<Entity<InputState>>,
     /// Target worktree path (synced from `path_state`).

@@ -522,6 +522,9 @@ pub(super) fn render_sidebar_pages(
         .when(mode == WorkspaceMode::Prs, |pane| {
             pane.child(super::e2e::measure_inside("pr-mode-left-pane"))
         })
+        .when(mode == WorkspaceMode::Issues, |pane| {
+            pane.child(super::e2e::measure_inside("issue-mode-left-pane"))
+        })
         .into_any_element()
 }
 

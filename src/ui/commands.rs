@@ -2352,17 +2352,13 @@ impl KagiApp {
                     if let Some(entity) = self.ui().conflict.as_ref() {
                         entity.update(cx, |view, cx| view.toggle_sidebar(window, cx));
                     }
-                } else if self.pr_mode_visible()
-                    && self.pr_mode().is_some_and(|m| m.active.is_some())
-                {
-                    self.toggle_pr_companion(super::pr_layout::Companion::Navigator, window);
                 } else {
                     self.sidebar.visible = !self.sidebar.visible;
                 }
                 klog!("menu: sidebar_visible={}", self.sidebar.visible);
             }
             "view.togglePrSwimlane" => {
-                self.toggle_pr_companion(super::pr_layout::Companion::Swimlane, window);
+                self.toggle_pr_swimlane(window);
             }
             "view.toggleTerminal" => {
                 self.toggle_bottom_panel(window, cx);
@@ -2730,7 +2726,14 @@ impl KagiApp {
         let superseded_read = self.reads.is_loading(owner);
         // A quiet fetch is background work, never this tab's `&&` predecessor.
         let queue_owner = (!silent).then_some(owner);
-        let Some(lease) = self.reserve_write_for("fetch", &repo_path, queue_owner, cx) else {
+        let refusal_name = if pull_confirm.is_some() {
+            "pull"
+        } else {
+            "fetch"
+        };
+        let Some(lease) =
+            self.reserve_write_for("fetch", refusal_name, &repo_path, queue_owner, cx)
+        else {
             return false;
         };
         let before = kagi_git::StateSummary {

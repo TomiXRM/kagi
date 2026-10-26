@@ -40,6 +40,54 @@ fn auto_fetch_is_neither_anchor_nor_chain_failure() {
 }
 
 #[test]
+fn repository_contention_retains_the_chain_until_the_next_retry() {
+    let mut q = IntentQueue::new();
+    q.apply(QueueEvent::OwnerReturned(session(1)));
+    let first = enqueue(&mut q, 1);
+    let second = enqueue(&mut q, 1);
+    q.apply(QueueEvent::PlanCompleted(first));
+    q.apply(QueueEvent::Approve(first));
+    assert_eq!(
+        q.apply(QueueEvent::Admission {
+            id: first,
+            result: Err(crate::app::AdmissionError::RepositoryBusy),
+        }),
+        vec![
+            QueueEffect::CloseConfirm(first),
+            QueueEffect::InvalidatePlan(first),
+        ],
+    );
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::RepositoryBusy
+        },
+    );
+    assert!(q.apply(QueueEvent::PlanSlotFreed(Some(first))).is_empty());
+    assert!(q.apply(QueueEvent::OwnerReturned(session(1))).is_empty());
+    assert!(q.cancelled(session(1)).is_none());
+    assert_eq!(q.intents(session(1)).unwrap().len(), 2);
+    assert_eq!(q.intents(session(1)).unwrap().back().unwrap().id, second);
+    assert_eq!(
+        q.apply(QueueEvent::RepositoryAvailable(first)),
+        vec![QueueEffect::StartPlan(first)],
+    );
+    q.apply(QueueEvent::PlanCompleted(first));
+    q.apply(QueueEvent::Approve(first));
+    q.apply(QueueEvent::Admission {
+        id: first,
+        result: Ok(stamp(1, 42)),
+    });
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Running {
+            stamp: stamp(1, 42)
+        }
+    );
+    assert!(q.cancelled(session(1)).is_none());
+}
+
+#[test]
 fn stale_admission_cancels_chain_and_closes_its_confirmation() {
     let mut q = IntentQueue::new();
     q.apply(QueueEvent::OwnerReturned(session(1)));

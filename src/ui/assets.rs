@@ -15,7 +15,9 @@
 //! `square-menu` and `route`, lucide.dev (ISC) shapes gpui-component does not
 //! ship, for the icon-only diff / File History header buttons (#809), and
 //! `git-pull-request-draft` and `circle-dot`, lucide.dev (ISC), for Home's
-//! draft PR and issue rows (#928).
+//! draft PR and issue rows (#928). `sidebar-left` is drawn here for the
+//! titlebar sidebar toggle (#1790): stroke 1.75 to match the adjacent tab
+//! text, with list rows so it does not read as `columns-2`.
 
 use std::borrow::Cow;
 
@@ -233,6 +235,11 @@ const ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/route.svg",
         include_bytes!("../../assets/icons/route.svg"),
+    ),
+    // #1790: titlebar sidebar toggle, drawn after SF Symbols `sidebar.left`.
+    (
+        "icons/sidebar-left.svg",
+        include_bytes!("../../assets/icons/sidebar-left.svg"),
     ),
 ];
 

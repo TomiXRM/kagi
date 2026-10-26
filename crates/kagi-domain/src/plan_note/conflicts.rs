@@ -13,6 +13,8 @@
 /// Plan notes for the conflicts (continue/abort/skip) op family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictsNote {
+    /// blocker — another process owns the repository conflict-write lock.
+    RepositoryBusy,
     /// blocker (save/resolve/abort) — the request's read observation is stale.
     ObservationChanged,
     /// blocker (save/resolve/abort) — live preflight found a changed revision.
@@ -70,6 +72,9 @@ impl ConflictsNote {
     /// Byte-identical to the legacy `conflicts.rs` strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
+            ConflictsNote::RepositoryBusy => {
+                crate::advice_template_en!(ConflictsRepositoryBusy).into()
+            }
             ConflictsNote::ObservationChanged => {
                 crate::advice_template_en!(ConflictsObservationChanged).into()
             }

@@ -499,7 +499,7 @@ pub(crate) fn named_button_with_description(
     }
 }
 
-fn button_accessibility(
+pub(crate) fn button_accessibility(
     button: Button,
     label: SharedString,
     toggled: Option<bool>,

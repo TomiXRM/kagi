@@ -120,7 +120,13 @@ impl KagiApp {
                 return;
             }
         };
-        let Some(guard) = self.reserve_write("conflict-skip", &repo_path, cx) else {
+        let Some(guard) = self.reserve_write_for(
+            "conflict-skip",
+            &op_name,
+            &repo_path,
+            self.active_session(),
+            cx,
+        ) else {
             return;
         };
 

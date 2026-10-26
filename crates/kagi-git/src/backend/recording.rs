@@ -5,7 +5,7 @@ use super::{ops, Backend, GitError, OperationOutcome, OperationPlan};
 use crate::oplog::{append_oplog_receipt, recovery, OpLogEntry, RecoveryHandle};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Recording {
     Appended {
         path: PathBuf,

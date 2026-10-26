@@ -149,6 +149,7 @@ impl KagiApp {
     /// and all repository-bound resources it owns. Removing the read or UI
     /// anywhere else would violate `dom(ui) = attached sessions`.
     pub(crate) fn release_session(&mut self, session: crate::app::SessionId) {
+        self.cancel_repository_retries_for_session(session);
         crate::ui::diff_selection::retire_session(session);
         self.app_sessions.detach(session);
         self.reads.forget(session);

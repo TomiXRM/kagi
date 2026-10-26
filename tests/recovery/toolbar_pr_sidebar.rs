@@ -1,4 +1,5 @@
-//! #1652: the persistent PR sidebar opener spends real toolbar width.
+//! #1652: the toolbar fits without the PR sidebar opener, which #1790 moved
+//! to the titlebar after the window controls.
 use crate::macos::{build_fixture, unmount};
 use crate::recovery_layout::{contained, draw};
 use gpui::{px, size, AnyWindowHandle, VisualTestAppContext};
@@ -7,7 +8,6 @@ use kagi_ui_core::{i18n, settings, theme};
 use std::{cell::RefCell, rc::Rc};
 
 const CONTROLS: &[&str] = &[
-    "pr-navigator-toggle",
     "tb-refresh",
     "toolbar-identity",
     "tb-pull",
@@ -69,13 +69,14 @@ pub fn scenario_toolbar_pr_sidebar(cx: &mut VisualTestAppContext) {
                             cx.run_until_parked();
                             draw(cx, win, (width, 660.));
                         }
-                        for id in CONTROLS {
+                        for id in CONTROLS.iter().chain(&["sidebar-toggle"]) {
                             e2e::clear_control_bounds(win.window_id(), id);
                         }
                         draw(cx, win, (width, 660.));
-                        assert!(
-                            e2e::control_bounds(win.window_id(), "pr-navigator-toggle").is_some()
-                        );
+                        let strip = e2e::control_bounds(win.window_id(), "repo-tab-strip").unwrap();
+                        let toggle =
+                            e2e::control_bounds(win.window_id(), "sidebar-toggle").unwrap();
+                        contained(strip, toggle, "sidebar-toggle");
                         let row = e2e::control_bounds(win.window_id(), "toolbar-row").unwrap();
                         let controls: Vec<_> = CONTROLS
                             .iter()

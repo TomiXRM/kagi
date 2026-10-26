@@ -1,25 +1,27 @@
-//! #1118: the reader owns the minimum width; companions reveal over it.
+//! #1118: the reader owns the minimum width; the graph companion reveals
+//! over it. #1790: the PR navigator is the shell's sidebar, not a companion.
 //! Only presentation flags change. The session's PR tabs, inputs and lists stay
 //! mounted in the same center and no read is admitted by a layout transition.
 use super::{
-    button_style::{apply_role, named_button, ButtonRole},
+    button_style::{apply_role, button_accessibility, named_button, ButtonRole},
     i18n::Msg,
     theme, KagiApp,
 };
 use gpui::{div, prelude::*, px, rgb, Context, Window};
-use gpui_component::{button::Button, Icon, Selectable as _, Sizable as _};
+use gpui_component::{
+    button::{Button, ButtonVariants as _},
+    Disableable as _, Icon, Selectable as _, Sizable as _,
+};
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(super) const CENTER_MIN: f32 = 420.;
 const TOOLBAR_H: f32 = 32.;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Companion {
-    Navigator,
     Swimlane,
 }
 
 pub(super) struct Layout {
-    pub navigator: bool,
     pub swimlane: bool,
     pub drawer: Option<Companion>,
     lane_fits: bool,
@@ -34,16 +36,13 @@ impl Layout {
                 px(0.)
             };
         let center = theme::scaled_px(CENTER_MIN);
-        let navigator_width = theme::scaled_px(app.sidebar.width + 4.);
         let lane_width = theme::scaled_px(super::pr_lane::MAX_PANE_WIDTH + 4.);
         let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
-        let navigator =
-            !compact && app.sidebar.visible && (!has_tab || width >= center + navigator_width);
         let lane_fits = width
             >= center
                 + lane_width
                 + if app.sidebar.visible && !compact {
-                    navigator_width
+                    theme::scaled_px(app.pane_fit.sidebar + 4.)
                 } else {
                     px(0.)
                 };
@@ -51,15 +50,11 @@ impl Layout {
             && app
                 .pr_mode()
                 .is_some_and(|m| m.active.is_some() && !m.lane_hidden);
-        let drawer = app.pr_mode().and_then(|m| m.companion).filter(|pane| {
-            has_tab
-                && match pane {
-                    Companion::Navigator => !compact && app.sidebar.visible && !navigator,
-                    Companion::Swimlane => !lane_fits,
-                }
-        });
+        let drawer = app
+            .pr_mode()
+            .and_then(|m| m.companion)
+            .filter(|_| has_tab && !lane_fits);
         Self {
-            navigator,
             swimlane,
             drawer,
             lane_fits,
@@ -67,59 +62,72 @@ impl Layout {
     }
 }
 impl KagiApp {
-    pub(super) fn toggle_pr_companion(&mut self, pane: Companion, window: &Window) {
+    pub(super) fn toggle_pr_swimlane(&mut self, window: &Window) {
         let layout = Layout::for_window(self, window);
-        let navigator_fits =
-            window.viewport_size().width >= theme::scaled_px(CENTER_MIN + self.sidebar.width + 4.);
-        if pane == Companion::Navigator {
-            // The global View preference is still authoritative. Compact reveal
-            // never flips it behind the menu's back.
-            self.sidebar.visible = !(layout.navigator
-                || (self.sidebar.visible
-                    && self.pr_mode().is_some_and(|m| m.companion == Some(pane))));
-        }
-        let sidebar_visible = self.sidebar.visible;
         if let Some(mode) = self.pr_mode_mut() {
-            if pane == Companion::Navigator && (!sidebar_visible || navigator_fits) {
-                mode.companion = None;
-                return;
-            }
-            if pane == Companion::Swimlane && layout.lane_fits {
+            if layout.lane_fits {
                 mode.lane_hidden = !mode.lane_hidden;
                 mode.companion = None;
             } else {
-                mode.companion = if mode.companion == Some(pane) {
-                    None
-                } else {
-                    Some(pane)
+                mode.companion = match mode.companion {
+                    Some(Companion::Swimlane) => None,
+                    None => Some(Companion::Swimlane),
                 };
             }
         }
     }
+
+    /// What the sidebar toggle would hide: the conflict tree or the shell's
+    /// sidebar, which every workspace mode shares (#1790).
+    pub(super) fn sidebar_shown(&self, cx: &gpui::App) -> bool {
+        if self.conflict_body_visible() {
+            if let Some(view) = self.ui().conflict.as_ref() {
+                return !view.read(cx).sidebar_hidden;
+            }
+        }
+        self.sidebar.visible
+    }
 }
 
-/// The leading chrome control remains mounted when the sidebar is hidden.
+/// #1790: the one sidebar toggle sits right after the window controls in every
+/// mode (HIG Toolbars: show/hide sidebar belongs at the far leading edge), so
+/// it never moves when the mode or tab changes. Home has no sidebar: disabled.
 /// Compact windows already have one navigator launcher in the permanent rail.
-pub(super) fn navigator_toggle(
-    app: &KagiApp,
-    window: &Window,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let layout = Layout::for_window(app, window);
-    let selected = layout.navigator || layout.drawer == Some(Companion::Navigator);
-    companion_button(
-        app,
-        "pr-navigator-toggle",
-        "icons/panel-left.svg",
-        "",
-        if selected {
-            Msg::PrHideNavigator.t()
-        } else {
-            Msg::PrShowNavigator.t()
-        },
-        "view.toggleSidebar",
-        selected,
-        cx,
+pub(super) fn sidebar_toggle(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let disabled = app.home_in_front() || app.tabs.is_empty();
+    let shown = !disabled && app.sidebar_shown(cx);
+    let label = if shown {
+        Msg::MenuHideSidebar.t()
+    } else {
+        Msg::MenuShowSidebar.t()
+    };
+    let shortcut = super::commands::effective_keystroke("view.toggleSidebar")
+        .map(|s| super::commands::display_keystroke(&s))
+        .unwrap_or_default();
+    let help = gpui::SharedString::from(format!("{label} {shortcut}").trim_end().to_owned());
+    let owner = app.active_session();
+    super::e2e::measure_control(
+        "sidebar-toggle",
+        button_accessibility(
+            Button::new("sidebar-toggle")
+                .ghost()
+                // Fixed like the traffic lights it follows; draws an 18 pt icon.
+                .with_size(gpui::px(24.))
+                .icon(Icon::empty().path("icons/sidebar-left.svg"))
+                .disabled(disabled)
+                .on_click(cx.listener(
+                    move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+                        if this.active_session() == owner {
+                            this.handle_menu_command("view.toggleSidebar", window, cx);
+                        }
+                    },
+                )),
+            label.into(),
+            Some(shown),
+            None,
+            disabled,
+        )
+        .hover_tooltip("sidebar-toggle-help", help),
     )
 }
 
@@ -213,7 +221,6 @@ pub(super) fn drawer(pane: gpui::AnyElement, companion: Companion) -> gpui::AnyE
         .child(pane)
         .child(super::e2e::measure_inside("pr-companion-drawer"))
         .child(super::e2e::measure_inside(match companion {
-            Companion::Navigator => "pr-companion-navigator",
             Companion::Swimlane => "pr-companion-swimlane",
         }))
         .into_any_element()

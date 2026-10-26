@@ -61,6 +61,9 @@ pub fn branch_tip_not_loaded(branch: &str) -> String {
 
 /// Translate known diagnostic formats, not arbitrary words in paths or Git output.
 pub fn diagnostic(value: &str) -> Cow<'_, str> {
+    if value == kagi_domain::advice_template_en!(ConflictsRepositoryBusy) {
+        return Cow::Borrowed(crate::i18n::Msg::AdviceConflictsRepositoryBusy.t());
+    }
     if let Some(name) =
         value.strip_prefix("Draft could not be read; the damaged file was moved aside as ")
     {

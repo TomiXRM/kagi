@@ -105,12 +105,16 @@ pub enum WriteScope {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AdmissionError {
     Busy,
+    RepositoryBusy,
     StaleApproval,
     NeedsReconcile,
     Identity(String),
 }
 impl std::fmt::Display for AdmissionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if matches!(self, Self::RepositoryBusy) {
+            return f.write_str("Another Kagi window is operating on this repository");
+        }
         write!(f, "{self:?}")
     }
 }
@@ -517,6 +521,13 @@ impl Sessions {
         if self.has_leases() {
             return Err(AdmissionError::Busy);
         }
+        kagi_git::Backend::check_conflict_write_admission(path).map_err(|error| {
+            if error.blocker().is_some() {
+                AdmissionError::RepositoryBusy
+            } else {
+                AdmissionError::Identity(error.to_string())
+            }
+        })?;
         let repo = kagi_git::Backend::open(path)
             .and_then(|backend| backend.write_repo_id())
             .map_err(|error| AdmissionError::Identity(error.to_string()))?;

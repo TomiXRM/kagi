@@ -38,12 +38,71 @@ impl KagiApp {
         });
     }
 
+    /// Repository admission is a probe, not a receipt owner. Record a refused
+    /// user attempt here, under its requested operation, before presenting it.
+    pub(crate) fn report_write_admission_refusal(
+        &mut self,
+        operation: &str,
+        path: &Path,
+        error: app::AdmissionError,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = OpLogEntry::new(
+            operation,
+            path.display().to_string(),
+            StateSummary {
+                head: "unobserved".into(),
+                dirty: "unobserved".into(),
+            },
+            OpOutcome::Refused {
+                blockers: vec![error.to_string()],
+            },
+        )
+        .with_worktree(Some(path.display().to_string()))
+        .with_nothing_moved();
+        let recording = kagi_git::backend::recording::finalize(entry);
+        self.notice_recording_failure(operation, &recording, path, None);
+        if matches!(
+            recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        ) {
+            self.present_recorded(&recording, true, cx);
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        self.insert_recorded_row(&recording, cx);
+        if error == app::AdmissionError::RepositoryBusy {
+            let reason = Msg::AdviceConflictsRepositoryBusy.t();
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(reason.into()));
+            self.push_operation_result(
+                recording.entry(),
+                operation,
+                ToastKind::Error,
+                i18n::op::user_text::operations::failure_preview(operation, reason).into(),
+                cx,
+            );
+            cx.notify();
+        } else {
+            self.report_admission_refusal(error, cx);
+        }
+    }
+
     /// A live writer refuses contextually; reconciliation still offers Inspect.
     pub(crate) fn report_admission_refusal(
         &mut self,
         error: app::AdmissionError,
         cx: &mut Context<Self>,
     ) {
+        if error == app::AdmissionError::RepositoryBusy {
+            let message = Msg::AdviceConflictsRepositoryBusy.t().to_string();
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(message.clone().into()));
+            self.push_toast(ToastKind::Error, message, cx);
+            cx.notify();
+            return;
+        }
         let blocking = self.app_sessions.blocking_reconcile();
         if error == app::AdmissionError::Busy && blocking.is_none() {
             self.status_footer = FooterStatus::Idle(Msg::OpInProgress.t().into());

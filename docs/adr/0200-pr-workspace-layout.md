@@ -854,3 +854,14 @@ opener (chrome or rail), preserving detail inputs, selection and scroll state.
 `pr_section_pointer` drives separate pointer down/up frames at each header edge,
 real scrolling to reveal compact headers, Enter/Space and overlapping sections
 across themes, languages, zoom, resize, reopen and session transitions.
+
+## Amendment — 2026-10-26: the navigator is the shell's sidebar (#1790)
+
+The PR navigator is no longer a #1118 companion. Graph, PRs and Issues share
+one sidebar slot in `render_body`, with one `sidebar.visible`, one open/close
+motion and the shell's pane fitting; `render_pr_mode` and `render_issues_mode`
+draw only their center (and, for PRs, the Graph companion). The navigator
+drawer, its width-based auto-hide and the toggle at the leading edge of the
+reader's toolbar are removed. The one sidebar toggle sits in the titlebar after
+the window controls. The Graph companion keeps its #1118 inline/drawer rule,
+budgeted against the sidebar's fitted width.

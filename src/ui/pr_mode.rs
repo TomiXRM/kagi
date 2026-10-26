@@ -54,6 +54,7 @@ pub struct PrTab {
     pub local_refs_generation: u64,
     /// Visit that admitted the currently tracked local-ref fetch. A reopened
     /// PR can reuse the same generation, but an old visit must not clear it.
+    /// None also marks a silent admission refusal eligible for the next list tick.
     pub local_refs_visit: Option<u64>,
     /// merge-base(base, head) — the diff base for the whole-PR view.
     pub base: CommitId,
@@ -297,7 +298,7 @@ impl KagiApp {
             cx.notify();
             self.prioritize_pr_details(pr.key(), cx);
             if !local_ready {
-                self.fetch_pr_for_open(pr.clone(), cx);
+                self.fetch_pr_for_open(pr.clone(), false, cx);
             } else if let Some((true, conflicts_missing, preview_missing)) =
                 self.pr_mode().and_then(|mode| {
                     mode.tabs.get(ix).map(|tab| {
@@ -359,7 +360,7 @@ impl KagiApp {
         cx.notify();
         self.prioritize_pr_details(pr.key(), cx);
         self.pr_mode_load_conversation(pr, cx);
-        self.fetch_pr_for_open(pr.clone(), cx);
+        self.fetch_pr_for_open(pr.clone(), false, cx);
     }
 
     /// Fetch reviews + comments, and separately the merge status, for `pr`
@@ -1166,28 +1167,12 @@ pub fn render_pr_mode(
                 .yield_focus(app.root_focus.as_ref(), window, cx);
         }
     }
+    // The navigator is the shell's sidebar (#1790); only the graph reveals here.
     let drawer = match layout.drawer {
-        Some(super::pr_layout::Companion::Navigator) => Some(super::pr_layout::drawer(
-            super::workspace_mode::render_sidebar_pages(
-                app,
-                super::workspace_mode::WorkspaceMode::Prs,
-                cx,
-            ),
-            super::pr_layout::Companion::Navigator,
-        )),
-        Some(super::pr_layout::Companion::Swimlane) => {
-            super::pr_lane::render_pr_lane(app, window, cx)
-                .map(|pane| super::pr_layout::drawer(pane, super::pr_layout::Companion::Swimlane))
-        }
+        Some(pane) => super::pr_lane::render_pr_lane(app, window, cx)
+            .map(|lane| super::pr_layout::drawer(lane, pane)),
         None => None,
     };
-    let left = layout.navigator.then(|| {
-        super::workspace_mode::render_sidebar_pages(
-            app,
-            super::workspace_mode::WorkspaceMode::Prs,
-            cx,
-        )
-    });
     // Measured from inside, not wrapped: the body's height chain (`h_full`,
     // `flex_1`) must reach the virtualized feed unbroken.
     let center = div()
@@ -1217,7 +1202,7 @@ pub fn render_pr_mode(
             .child(panel)
             .into_any_element(),
     };
-    // The swimlane sits between the navigator and the body: it is about the
+    // The swimlane sits between the sidebar and the body: it is about the
     // PRs, not about the file being read, and it is absent with no tab open.
     let lane = layout
         .swimlane
@@ -1237,14 +1222,6 @@ pub fn render_pr_mode(
         .min_h(px(0.))
         .h_full()
         .bg(rgb(theme().bg_base))
-        .children(left)
-        .when(layout.navigator, |el| {
-            el.child(vdivider(
-                DividerKind::PrModeLeft,
-                theme().sidebar,
-                "pr-navigator-divider",
-            ))
-        })
         .children(lane)
         .when(layout.swimlane, |el| {
             el.child(vdivider(

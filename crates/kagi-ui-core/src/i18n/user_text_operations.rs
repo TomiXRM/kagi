@@ -3,6 +3,9 @@ use super::{diagnostic, operation_label, state_text};
 use crate::i18n::{lang, Lang};
 use kagi_domain::{operation::OperationOutcome, plan::PullOutcome};
 
+const REPOSITORY_BUSY_EN: &str = "Another Kagi window is using this repository.";
+const REPOSITORY_BUSY_JA: &str = "別の Kagi ウィンドウがこの repository を使用中です。";
+
 pub fn conflict_saved() -> &'static str {
     match lang() {
         Lang::En => "Resolution saved and staged.",
@@ -15,6 +18,18 @@ pub fn completed(op: &str) -> String {
         Lang::En => format!("{label}: Completed."),
         Lang::Ja => format!("{label}: 完了しました。"),
     }
+}
+
+/// Recognize the stable admission cause in previews and after a locale change.
+pub fn is_repository_busy_message(message: &str) -> bool {
+    [
+        crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+        crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+        REPOSITORY_BUSY_EN,
+        REPOSITORY_BUSY_JA,
+    ]
+    .into_iter()
+    .any(|needle| message.contains(needle))
 }
 
 pub fn failed(op: &str, reason: &str) -> String {
@@ -67,12 +82,19 @@ fn outcome_preview(op: &str, reason: &str, outcome: PreviewOutcome) -> String {
             "結果を確認できませんでした。まだ再試行しないでください。",
         ),
     };
-    let cause = FailureCause::classify(reason).text();
+    let failure_cause = FailureCause::classify(reason);
+    let cause = failure_cause.text();
     let details = text(
         "See the Operation Log for details.",
         "詳しくは操作ログを確認してください。",
     );
-    format!("{label}: {status}{cause} {details}")
+    let retry = match (outcome, failure_cause) {
+        (PreviewOutcome::Failed, FailureCause::RepositoryBusy) => {
+            text(" Try again later.", "後でもう一度お試しください。")
+        }
+        _ => "",
+    };
+    format!("{label}: {status}{cause}{retry} {details}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +103,7 @@ enum FailureCause {
     Network,
     Authentication,
     IndexLocked,
+    RepositoryBusy,
     Untrusted,
     Refused,
     Other,
@@ -140,6 +163,13 @@ impl FailureCause {
             "index がロック",
         ]) {
             Self::IndexLocked
+        } else if any(&[
+            crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+            crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+            REPOSITORY_BUSY_EN,
+            REPOSITORY_BUSY_JA,
+        ]) {
+            Self::RepositoryBusy
         } else if any(&[
             "not trusted",
             "untrusted repository",
@@ -203,6 +233,7 @@ impl FailureCause {
                 "The staging area is locked. Check for another Git operation before continuing.",
                 "ステージ領域がロックされています。続行する前に別の Git 操作が実行中でないか確認してください。",
             ),
+            Self::RepositoryBusy => text(REPOSITORY_BUSY_EN, REPOSITORY_BUSY_JA),
             Self::Untrusted => text(
                 "The repository is not trusted for changes. Review its trust settings.",
                 "変更が許可されていないリポジトリです。信頼設定を確認してください。",
@@ -454,6 +485,7 @@ mod tests {
                 FailureCause::Network,
                 FailureCause::Authentication,
                 FailureCause::IndexLocked,
+                FailureCause::RepositoryBusy,
                 FailureCause::Untrusted,
                 FailureCause::Refused,
             ] {
@@ -471,6 +503,59 @@ mod tests {
                 FailureCause::Authentication,
             );
             assert!(!failure_preview("fetch", &authentication).contains("/private/secret"));
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn repository_busy_previews_explain_when_a_refused_write_can_be_retried() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for (language, expected, retry) in [
+            (
+                Lang::En,
+                "Another Kagi window is using this repository. Try again later.",
+                "Try again later.",
+            ),
+            (
+                Lang::Ja,
+                "別の Kagi ウィンドウがこの repository を使用中です。後でもう一度お試しください。",
+                "後でもう一度お試しください。",
+            ),
+        ] {
+            set_lang_no_persist(language);
+            let reason = crate::i18n::Msg::AdviceConflictsRepositoryBusy.t();
+            assert_eq!(FailureCause::classify(reason), FailureCause::RepositoryBusy);
+            for stored_language in [Lang::En, Lang::Ja] {
+                assert!(is_repository_busy_message(
+                    crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(stored_language),
+                ));
+            }
+            for displayed in [REPOSITORY_BUSY_EN, REPOSITORY_BUSY_JA] {
+                assert!(is_repository_busy_message(displayed));
+                assert_eq!(
+                    FailureCause::classify(displayed),
+                    FailureCause::RepositoryBusy
+                );
+            }
+            assert!(!is_repository_busy_message(""));
+            assert!(!is_repository_busy_message("unrelated failure information"));
+            for operation in ["pull", "stage-all", "commit"] {
+                let preview = failure_preview(operation, reason);
+                assert!(is_repository_busy_message(&preview), "{preview}");
+                assert!(preview.contains(expected), "{operation}: {language:?}");
+                for shown in [
+                    partial_preview(operation, reason),
+                    unknown_preview(operation, reason),
+                ] {
+                    assert!(
+                        shown.contains(FailureCause::RepositoryBusy.text()),
+                        "{shown}"
+                    );
+                    assert!(!shown.contains(retry), "{shown}");
+                }
+            }
         }
         set_lang_no_persist(previous);
     }
@@ -580,6 +665,16 @@ mod tests {
                 "stage-hunk",
                 "index.lock: File exists",
                 FailureCause::IndexLocked,
+            ),
+            (
+                "stage",
+                crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+                FailureCause::RepositoryBusy,
+            ),
+            (
+                "stage-all",
+                crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+                FailureCause::RepositoryBusy,
             ),
             (
                 "stash-push",

@@ -1061,6 +1061,7 @@ pub fn plan_conflict_continue(
     buffer: &ResolutionBuffer,
     expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<OperationPlan, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     preflight_continue_revision(repo, expected)?;
     // The full ADR-0067 checklist includes unresolved text, markers, unmerged
     // index paths, binary/deletion choices and the merge message.
@@ -1143,6 +1144,7 @@ pub(crate) fn execute_conflict_continue(
     buffer: &ResolutionBuffer,
     expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueResult, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     // 1. Materialize each resolved buffer file to the working tree and stage it
     //    (collapses stage 1/2/3 → stage 0), so the index carries no unmerged
     //    entries.
@@ -1303,6 +1305,7 @@ fn stage_conflict_resolution_with_worktree_hook(
     expected: &kagi_domain::conflict_family::ConflictRevision,
     after_worktree: impl FnOnce(),
 ) -> Result<(), GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     preflight_continue_revision(repo, expected)?;
     // Both sequencer execution and the merge-panel route must fail closed if
     // the live index cannot be read or another unmerged path is untracked.
@@ -1659,6 +1662,7 @@ pub(crate) fn execute_conflict_save_with_progress(
     path: &Path,
     mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
 ) -> Result<SaveOutcome, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     let mut index = repo
         .index()
         .map_err(|error| GitError::Other(error.message().to_owned()))?;
@@ -1776,6 +1780,7 @@ pub fn plan_conflict_continue_route(
     current_branch: &str,
     expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ContinueRoute, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     preflight_continue_revision(repo, expected)?;
     // Hard gate: refuse to route while any blocker stands (ADR-0067).
     let blockers = continue_blockers(repo, session, buffer)?;
@@ -1840,6 +1845,7 @@ pub(crate) fn execute_merge_commit(
     plan: &OperationPlan,
     message: &str,
 ) -> Result<CommitId, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     if message.trim().is_empty() {
         return Err(GitError::Other(
             "merge commit message must not be empty".to_string(),
@@ -1928,6 +1934,7 @@ pub fn plan_conflict_skip(
     session: &ConflictSession,
     expected: &kagi_domain::conflict_family::ConflictRevision,
 ) -> Result<ConflictSkipPlan, GitError> {
+    let _lock = crate::write_lock::acquire(repo)?;
     if !session.op.is_sequencer() {
         return Err(GitError::Other(
             "skip is only available for rebase / cherry-pick / revert (a merge has no skip)."
@@ -2003,6 +2010,10 @@ pub(crate) fn execute_conflict_skip(
     }
     preflight_skip_revision(repo, &approved.op, &approved.revision)?;
 
+    let expected = crate::backend::conflict_ops::conflict_observe::observation(repo)?
+        .ok_or_else(|| GitError::Other("the conflict ended before skip".into()))?
+        .observation
+        .revision;
     // 1. Preserve the buffer first (never lose partial work).
     let buffer_preserved_at = if !approved.preserve_buffer {
         None
@@ -2013,6 +2024,16 @@ pub(crate) fn execute_conflict_skip(
                 .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?,
         )
     };
+    // Draft sidecar is released before repository admission. Revalidate the
+    // operation under the write lock before invoking the sequencer.
+    let _lock = crate::write_lock::acquire(repo)?;
+    let live = crate::backend::conflict_ops::conflict_observe::observation(repo)?
+        .ok_or_else(|| GitError::Other("the conflict ended before skip".into()))?;
+    if live.observation.revision != expected {
+        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::ObservationChanged,
+        ))));
+    }
 
     // 2. Run the skip, then judge it by the state git left behind (#540).
     //    The exit code alone cannot: `rebase --skip` that drops the step and

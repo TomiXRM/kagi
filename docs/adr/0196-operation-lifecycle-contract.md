@@ -795,8 +795,8 @@ before destructive index/worktree changes.
 
 Contention is `Refused`, never `Failed` or `Unknown`: the durable English blocker
 remains "Another Kagi window is operating on this repository". Display-only
-refusal previews add punctuation and explain that the user can retry after that
-window finishes, in EN/JA; Unknown/Partial previews do not acquire retry advice.
+refusal previews use short, punctuated EN/JA cause and retry-later sentences that
+fit the bounded toast beside its action; Unknown/Partial previews omit retry advice.
 Successful generic/stage admission clears only an Idle/Failed footer containing
 that repository-busy cause (including a localized staging preview), retaining
 unrelated statuses. Operation Log and bounded-toast delivery remain unchanged;

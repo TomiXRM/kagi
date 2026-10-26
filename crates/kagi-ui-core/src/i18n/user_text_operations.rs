@@ -3,6 +3,9 @@ use super::{diagnostic, operation_label, state_text};
 use crate::i18n::{lang, Lang};
 use kagi_domain::{operation::OperationOutcome, plan::PullOutcome};
 
+const REPOSITORY_BUSY_EN: &str = "Another Kagi window is using this repository.";
+const REPOSITORY_BUSY_JA: &str = "別の Kagi ウィンドウがこの repository を使用中です。";
+
 pub fn conflict_saved() -> &'static str {
     match lang() {
         Lang::En => "Resolution saved and staged.",
@@ -19,9 +22,14 @@ pub fn completed(op: &str) -> String {
 
 /// Recognize the stable admission cause in previews and after a locale change.
 pub fn is_repository_busy_message(message: &str) -> bool {
-    [Lang::En, Lang::Ja].into_iter().any(|language| {
-        message.contains(crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(language))
-    })
+    [
+        crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
+        crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+        REPOSITORY_BUSY_EN,
+        REPOSITORY_BUSY_JA,
+    ]
+    .into_iter()
+    .any(|needle| message.contains(needle))
 }
 
 pub fn failed(op: &str, reason: &str) -> String {
@@ -81,10 +89,9 @@ fn outcome_preview(op: &str, reason: &str, outcome: PreviewOutcome) -> String {
         "詳しくは操作ログを確認してください。",
     );
     let retry = match (outcome, failure_cause) {
-        (PreviewOutcome::Failed, FailureCause::RepositoryBusy) => text(
-            " Try again after it finishes.",
-            "完了してから再試行してください。",
-        ),
+        (PreviewOutcome::Failed, FailureCause::RepositoryBusy) => {
+            text(" Try again later.", "後でもう一度お試しください。")
+        }
         _ => "",
     };
     format!("{label}: {status}{cause}{retry} {details}")
@@ -159,6 +166,8 @@ impl FailureCause {
         } else if any(&[
             crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::En),
             crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(Lang::Ja),
+            REPOSITORY_BUSY_EN,
+            REPOSITORY_BUSY_JA,
         ]) {
             Self::RepositoryBusy
         } else if any(&[
@@ -224,10 +233,7 @@ impl FailureCause {
                 "The staging area is locked. Check for another Git operation before continuing.",
                 "ステージ領域がロックされています。続行する前に別の Git 操作が実行中でないか確認してください。",
             ),
-            Self::RepositoryBusy => text(
-                "Another Kagi window is operating on this repository.",
-                "別の Kagi ウィンドウがこの repository を操作中です。",
-            ),
+            Self::RepositoryBusy => text(REPOSITORY_BUSY_EN, REPOSITORY_BUSY_JA),
             Self::Untrusted => text(
                 "The repository is not trusted for changes. Review its trust settings.",
                 "変更が許可されていないリポジトリです。信頼設定を確認してください。",
@@ -509,13 +515,13 @@ mod tests {
         for (language, expected, retry) in [
             (
                 Lang::En,
-                "Another Kagi window is operating on this repository. Try again after it finishes.",
-                "Try again after it finishes.",
+                "Another Kagi window is using this repository. Try again later.",
+                "Try again later.",
             ),
             (
                 Lang::Ja,
-                "別の Kagi ウィンドウがこの repository を操作中です。完了してから再試行してください。",
-                "完了してから再試行してください。",
+                "別の Kagi ウィンドウがこの repository を使用中です。後でもう一度お試しください。",
+                "後でもう一度お試しください。",
             ),
         ] {
             set_lang_no_persist(language);
@@ -526,20 +532,27 @@ mod tests {
                     crate::i18n::Msg::AdviceConflictsRepositoryBusy.t_for(stored_language),
                 ));
             }
+            for displayed in [REPOSITORY_BUSY_EN, REPOSITORY_BUSY_JA] {
+                assert!(is_repository_busy_message(displayed));
+                assert_eq!(
+                    FailureCause::classify(displayed),
+                    FailureCause::RepositoryBusy
+                );
+            }
             assert!(!is_repository_busy_message(""));
             assert!(!is_repository_busy_message("unrelated failure information"));
             for operation in ["pull", "stage-all", "commit"] {
                 let preview = failure_preview(operation, reason);
                 assert!(is_repository_busy_message(&preview), "{preview}");
-                assert!(
-                    preview.contains(expected),
-                    "{operation}: {language:?}"
-                );
+                assert!(preview.contains(expected), "{operation}: {language:?}");
                 for shown in [
                     partial_preview(operation, reason),
                     unknown_preview(operation, reason),
                 ] {
-                    assert!(shown.contains(FailureCause::RepositoryBusy.text()), "{shown}");
+                    assert!(
+                        shown.contains(FailureCause::RepositoryBusy.text()),
+                        "{shown}"
+                    );
                     assert!(!shown.contains(retry), "{shown}");
                 }
             }

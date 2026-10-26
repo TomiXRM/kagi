@@ -395,7 +395,7 @@ pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
             assert!(!state.app_sessions.has_leases());
             assert!(
                 matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message)
-                    if message.contains(kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy.t())),
+                    if kagi_ui_core::i18n::op::user_text::operations::is_repository_busy_message(message)),
                 "active staging refusal retains the specific repository-busy cause"
             );
         });
@@ -813,9 +813,11 @@ pub fn scenario_repository_lock_user_receipts(cx: &mut VisualTestAppContext) {
                 .filter(|toast| toast.kind == ToastKind::Error)
             {
                 errors += 1;
-                assert!(toast
-                    .message
-                    .contains(kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy.t()));
+                assert!(
+                    kagi_ui_core::i18n::op::user_text::operations::is_repository_busy_message(
+                        &toast.message
+                    )
+                );
                 assert!(toast.result_key.is_some(), "recorded refusal is keyed");
                 assert!(
                     matches!(

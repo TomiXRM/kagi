@@ -390,13 +390,16 @@ pub(crate) fn render_create_worktree_modal(
         None
     };
     let button_row = super::button_style::modal_button_row()
-        .child(modal_button(
+        .child(crate::ui::e2e::measure_control(
             "create-worktree-cancel",
-            Msg::PlanCancel.t(),
-            ModalButtonKind::Cancel,
-            None,
-            cancel_handler,
-            cx,
+            modal_button(
+                "create-worktree-cancel",
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel_handler,
+                cx,
+            ),
         ))
         .child(crate::ui::e2e::measure_confirm(modal_button(
             "create-worktree-confirm",

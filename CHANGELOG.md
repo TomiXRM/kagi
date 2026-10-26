@@ -29,6 +29,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Release repository write admission synchronously when its final lexical/reaper owner drops, even while an unrelated fork temporarily inherits the descriptor before exec. Preserve quarantine until every unconfirmed writer stops; cover the fork window without sleeps or acquisition retries. (#1805)
 - Complete both-deleted/renamed conflicts with an explicit confirmed deletion, and offer deleted-side versus modified-side choices for one-sided conflicts. Preserve renamed destinations instead of attempting to select nonexistent blobs. (#1734)
 - Resolve Git-started directory/file conflicts at their original namespace: keep the directory or restore the file, remove the parked `~HEAD` artifact, and show the exact affected paths in the standard confirmation sheet. Verify both index and worktree outcomes; preserve recovery and refuse stale plans. (#1735)
   - Add deletion/parked-namespace formal obligations and independently red missing-route, empty-blob, parked-path, suffix-attribution and leftover-artifact controls.

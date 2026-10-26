@@ -341,6 +341,43 @@ fn plan_state(
         .into_any_element()
 }
 
+fn render_branch_creation_after(sentence: &'static str) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    status_chip_probe::record(sentence);
+    let label = Msg::InputStashAfter.t();
+    apply_group(
+        "plan-state-after",
+        div().id("plan-state-after"),
+        format!("{label}: {sentence}").into(),
+    )
+    .relative()
+    .flex()
+    .flex_row()
+    .items_start()
+    .gap_3()
+    .px_3()
+    .py_2()
+    .when(modal_compact(), |row| row.px_2().py_1())
+    .child(
+        div()
+            .w(theme::scaled_px(64.))
+            .flex_shrink_0()
+            .text_xs()
+            .text_color(rgb(current_theme().text_label))
+            .child(label),
+    )
+    .child(super::e2e::measure_control(
+        "create-branch-after-unchanged",
+        div()
+            .flex_1()
+            .min_w_0()
+            .text_sm()
+            .text_color(rgb(current_theme().text_main))
+            .child(sentence),
+    ))
+    .into_any_element()
+}
+
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
     if let Some(identity) = &plan.tag_push_identity {
         return super::modal_renderers_plan::render_tag_push_scope(identity);
@@ -372,26 +409,34 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
             div()
                 .border_t_1()
                 .border_color(rgb(current_theme().surface))
-                .child(plan_state(
-                    SharedString::from(predicted_head.into_owned()),
-                    &predicted_detail,
-                    Msg::InputStashAfter.t(),
-                    "plan-state-after",
-                    "plan-state-after-label",
-                    "plan-state-after-head",
-                    match &plan.title {
-                        kagi_domain::plan_note::PlanTitle::Merge(_) => plan
-                            .predicted
-                            .dirty
-                            .strip_suffix(" file(s) (resolve in Conflict Mode)")
-                            .map(|short| (short, predicted_detail.as_ref())),
-                        // A blocked plan can retain CURRENT as its prediction;
-                        // do not claim an operation happened in that case.
-                        _ if plan.predicted.dirty == plan.current.dirty => None,
-                        title => kagi_ui_core::i18n::plan::after_state_label(title)
-                            .map(|short| (short, predicted_detail.as_ref())),
+                .child(
+                    if let Some(sentence) =
+                        kagi_ui_core::i18n::plan::branch_creation_unchanged_after(&plan.title)
+                    {
+                        render_branch_creation_after(sentence)
+                    } else {
+                        plan_state(
+                            SharedString::from(predicted_head.into_owned()),
+                            &predicted_detail,
+                            Msg::InputStashAfter.t(),
+                            "plan-state-after",
+                            "plan-state-after-label",
+                            "plan-state-after-head",
+                            match &plan.title {
+                                kagi_domain::plan_note::PlanTitle::Merge(_) => plan
+                                    .predicted
+                                    .dirty
+                                    .strip_suffix(" file(s) (resolve in Conflict Mode)")
+                                    .map(|short| (short, predicted_detail.as_ref())),
+                                // A blocked plan can retain CURRENT as its prediction;
+                                // do not claim an operation happened in that case.
+                                _ if plan.predicted.dirty == plan.current.dirty => None,
+                                title => kagi_ui_core::i18n::plan::after_state_label(title)
+                                    .map(|short| (short, predicted_detail.as_ref())),
+                            },
+                        )
                     },
-                )),
+                ),
         )
         .when(cfg!(feature = "gui-e2e"), |panel| {
             panel.child(super::e2e::measure_inside("plan-state-comparison"))

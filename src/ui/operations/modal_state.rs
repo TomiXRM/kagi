@@ -858,6 +858,26 @@ impl KagiApp {
 // Moved from `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001): lazy InputState creation +
 // per-frame string sync for the input-bearing modals.
 impl KagiApp {
+    /// A refused empty-name submission keeps its instruction and focus together.
+    pub(crate) fn focus_empty_create_branch_name(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self
+            .create_branch_modal()
+            .filter(|modal| modal.input.is_empty() && modal.branch_name_interacted)
+            .and_then(|modal| modal.input_state.clone())
+            .or_else(|| {
+                self.create_worktree_modal()
+                    .filter(|modal| modal.branch_input.is_empty() && modal.branch_name_interacted)
+                    .and_then(|modal| modal.branch_state.clone())
+            });
+        if let Some(input) = input {
+            input.update(cx, |state, cx| state.focus(window, cx));
+        }
+    }
+
     /// Lazily create + sync the real text inputs of the create-branch /
     /// create-worktree / stash-push modals (gpui-component `InputState`).
     ///
@@ -881,15 +901,25 @@ impl KagiApp {
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }
+            m.branch_name_composing = m.input_state.as_ref().is_some_and(|input| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::marked_text_range(state, window, cx).is_some()
+                })
+            });
             let v = m
                 .input_state
                 .as_ref()
                 .map(|st| st.read(cx).value().to_string())
                 .unwrap_or_default();
             if v != m.input {
+                if !m.plan_stale {
+                    m.reserve_name_error = m.branch_name_interacted || !m.input.is_empty();
+                }
+                let name_cleared = v.is_empty();
                 m.input = v;
+                m.branch_name_interacted = true;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(name_cleared, cx);
             }
         }
 
@@ -908,7 +938,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 
@@ -943,6 +973,7 @@ impl KagiApp {
         // Auto-path: while the user has not touched the path field, it
         // follows the branch name (same behaviour as before).
         let mut set_path: Option<String> = None;
+        let mut name_cleared = false;
         if let Some(m) = self.create_worktree_modal_mut() {
             if m.branch_state.is_none() {
                 let initial = m.branch_input.clone();
@@ -963,6 +994,11 @@ impl KagiApp {
                 });
                 m.path_state = Some(st);
             }
+            m.branch_name_composing = m.branch_state.as_ref().is_some_and(|input| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::marked_text_range(state, window, cx).is_some()
+                })
+            });
             let branch_v = m
                 .branch_state
                 .as_ref()
@@ -980,8 +1016,13 @@ impl KagiApp {
                 m.path_touched = true;
                 dirty = true;
             }
+            if !m.plan_stale && (dirty || branch_v != m.branch_input) {
+                m.reserve_name_error = m.branch_name_interacted || !m.branch_input.is_empty();
+            }
             if branch_v != m.branch_input {
+                name_cleared = branch_v.is_empty();
                 m.branch_input = branch_v.clone();
+                m.branch_name_interacted = true;
                 if !m.path_touched {
                     set_path = Some(branch_v);
                 }
@@ -991,7 +1032,7 @@ impl KagiApp {
                 m.error = None;
             }
             if dirty && set_path.is_none() {
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(name_cleared, cx);
             }
         }
         if let Some(branch) = set_path {
@@ -1007,7 +1048,7 @@ impl KagiApp {
                     st.update(cx, |s, cx| s.set_value(auto, window, cx));
                 }
             }
-            self.schedule_modal_replan(cx);
+            self.schedule_modal_replan(name_cleared, cx);
         }
 
         // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
@@ -1032,7 +1073,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 
@@ -1055,7 +1096,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 
@@ -1078,7 +1119,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 

@@ -9,7 +9,8 @@ use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_current_predicted, ModalIcon};
 use super::modal_renderers_input::{
-    render_input_modal_field, render_input_modal_heading, render_input_modal_path_field,
+    create_branch_name_reason, creation_plan_matches_name, render_input_modal_field,
+    render_input_modal_heading, render_input_modal_path_field,
 };
 use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
@@ -45,10 +46,14 @@ pub(crate) fn render_create_branch_modal(
     // A pending or failed plan cannot confirm; the action remains visible so
     // its disabled reason is reachable by pointer and assistive technology.
     let plan = modal.plan.plan().cloned();
+    let name_current =
+        !modal.branch_name_composing && creation_plan_matches_name(plan.as_deref(), &modal.input);
+    let plan_current = !modal.plan_stale && name_current;
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
+        .unwrap_or(true)
+        || !plan_current;
     let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     // ── Cancel handler ──────────────────────────────────────
@@ -65,7 +70,9 @@ pub(crate) fn render_create_branch_modal(
     // T-BP-003: return focus to root_focus after confirm.
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.confirm_create_branch(cx);
-        if let Some(fh) = this.root_focus.clone() {
+        if this.create_branch_modal().is_some() {
+            this.focus_empty_create_branch_name(window, cx);
+        } else if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
@@ -102,13 +109,13 @@ pub(crate) fn render_create_branch_modal(
         .child(render_input_modal_field(
             Msg::InputBranchName.t(),
             modal.input_state.as_ref(),
-            plan.as_ref()
-                .and_then(|p| {
-                    p.blockers.iter().find(|b| {
-                        matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
-                    })
-                })
-                .map(|b| SharedString::from(plan_note_text(b))),
+            create_branch_name_reason(
+                plan.as_deref()
+                    .filter(|_| name_current || modal.reserve_name_error),
+                &modal.input,
+                modal.branch_name_interacted,
+            ),
+            !name_current,
         ))
         .child(super::e2e::measure_control(
             "create-branch-checkout-after",
@@ -121,8 +128,8 @@ pub(crate) fn render_create_branch_modal(
         ));
 
     if let Some(ref p) = plan {
-        // Branch creation leaves HEAD and the working tree unchanged; show
-        // both states using the same stacked comparison as every plan card.
+        // Ref-only creation summarizes unchanged state once; checkout-on
+        // retains the shared comparison's actual plan-derived effects.
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         if !p.warnings.is_empty() {
@@ -173,16 +180,19 @@ pub(crate) fn render_create_branch_modal(
     }
 
     // Keep the primary in place while validation or planning blocks it.
-    let disabled_reason = if has_blockers {
-        error.clone().or_else(|| {
-            plan.as_ref()
-                .and_then(|p| p.blockers.first())
-                .map(|b| SharedString::from(plan_note_text(b)))
-                .or_else(|| Some(Msg::InputPlanPending.t().into()))
-        })
-    } else {
-        None
-    };
+    let disabled_reason =
+        if modal.plan_stale || modal.branch_name_composing || (plan.is_some() && !plan_current) {
+            Some(Msg::InputPlanPending.t().into())
+        } else if has_blockers {
+            error.clone().or_else(|| {
+                plan.as_ref()
+                    .and_then(|p| p.blockers.first())
+                    .map(|b| SharedString::from(plan_note_text(b)))
+                    .or_else(|| Some(Msg::InputPlanPending.t().into()))
+            })
+        } else {
+            None
+        };
     let button_row = super::button_style::modal_button_row()
         .child(crate::ui::e2e::measure_control(
             "create-branch-cancel",
@@ -241,10 +251,14 @@ pub(crate) fn render_create_worktree_modal(
 ) -> impl IntoElement {
     // Pending/failed plans retain a visible, disabled primary action.
     let plan = modal.plan.plan().cloned();
+    let name_current = !modal.branch_name_composing
+        && creation_plan_matches_name(plan.as_deref(), &modal.branch_input);
+    let plan_current = !modal.plan_stale && name_current;
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
+        .unwrap_or(true)
+        || !plan_current;
     let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
@@ -256,7 +270,9 @@ pub(crate) fn render_create_worktree_modal(
     });
     let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.start_create_worktree(cx);
-        if let Some(fh) = this.root_focus.clone() {
+        if this.create_worktree_modal().is_some() {
+            this.focus_empty_create_branch_name(window, cx);
+        } else if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
@@ -282,16 +298,13 @@ pub(crate) fn render_create_worktree_modal(
                 Msg::InputNewBranchName.t()
             },
             modal.branch_state.as_ref(),
-            plan.as_ref()
-                // Empty is an input request, not a user-generated name error.
-                // The plan's blocker still keeps Create disabled.
-                .filter(|_| !modal.branch_input.trim().is_empty())
-                .and_then(|p| {
-                    p.blockers.iter().find(|b| {
-                        matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
-                    })
-                })
-                .map(|b| SharedString::from(plan_note_text(b))),
+            create_branch_name_reason(
+                plan.as_deref()
+                    .filter(|_| name_current || modal.reserve_name_error),
+                &modal.branch_input,
+                modal.branch_name_interacted,
+            ),
+            !name_current,
         ))
         .child(render_input_modal_path_field(
             Msg::InputWorktreePath.t(),
@@ -379,24 +392,30 @@ pub(crate) fn render_create_worktree_modal(
         );
     }
 
-    let disabled_reason = if has_blockers {
-        error.clone().or_else(|| {
-            plan.as_ref()
-                .and_then(|p| p.blockers.first())
-                .map(|b| SharedString::from(plan_note_text(b)))
-                .or_else(|| Some(Msg::InputPlanPending.t().into()))
-        })
-    } else {
-        None
-    };
+    let disabled_reason =
+        if modal.plan_stale || modal.branch_name_composing || (plan.is_some() && !plan_current) {
+            Some(Msg::InputPlanPending.t().into())
+        } else if has_blockers {
+            error.clone().or_else(|| {
+                plan.as_ref()
+                    .and_then(|p| p.blockers.first())
+                    .map(|b| SharedString::from(plan_note_text(b)))
+                    .or_else(|| Some(Msg::InputPlanPending.t().into()))
+            })
+        } else {
+            None
+        };
     let button_row = super::button_style::modal_button_row()
-        .child(modal_button(
+        .child(crate::ui::e2e::measure_control(
             "create-worktree-cancel",
-            Msg::PlanCancel.t(),
-            ModalButtonKind::Cancel,
-            None,
-            cancel_handler,
-            cx,
+            modal_button(
+                "create-worktree-cancel",
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel_handler,
+                cx,
+            ),
         ))
         .child(crate::ui::e2e::measure_confirm(modal_button(
             "create-worktree-confirm",
@@ -488,6 +507,7 @@ pub(crate) fn render_create_tag_modal(
                     .find(|b| matches!(b, PlanNote::Tag(TagNote::NameError(_))))
             })
             .map(|b| SharedString::from(plan_note_text(b))),
+        false,
     ));
 
     if let Some(ref p) = plan {

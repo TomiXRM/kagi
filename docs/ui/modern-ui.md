@@ -112,6 +112,9 @@ Path and group-label line boxes use that same scaled row height; inherited
 typography must not overflow the viewport at fractional UI zoom.
 The native regression checks filename bounds inside the path scroller. DD has
 no absent-side preview or instruction to choose a nonexistent side.
+After D/F resolution, the surviving original file or directory-side paths remain
+in Saved and can be opened for review before advancing, even when Git's conflict
+message named the now-removed parking artifact instead of the restored file.
 Reference: macOS Finder confirmation hierarchy, without importing mobile
 spacing into the dense file row.
 [Design figure and HIG quotations](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317);

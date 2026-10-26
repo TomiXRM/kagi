@@ -329,6 +329,34 @@ fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
         .index()
         .unwrap()
         .has_conflicts());
+    let expected_saved = Path::new(if keep_file { "thing" } else { "thing/child" });
+    let saved_index = cx.read(|cx| {
+        let app = app.read(cx);
+        let pane = app.ui().conflict.as_ref().unwrap().read(cx);
+        let resolved = &pane.mode.as_ref().unwrap().session.resolved;
+        assert_eq!(resolved.len(), 1, "one resolved namespace outcome");
+        resolved
+            .iter()
+            .position(|file| file.path == expected_saved)
+            .unwrap()
+    });
+    assert!(e2e::control_bounds(window.window_id(), "conflict-saved-header").is_some());
+    let saved_row = format!("conflict-saved-row-{saved_index}");
+    if !keep_file && e2e::control_bounds(window.window_id(), &saved_row).is_none() {
+        click_control(cx, window, "conflict-folder-true-thing");
+    }
+    click_control(cx, window, &saved_row);
+    assert!(cx.read(|cx| {
+        let app = app.read(cx);
+        app.ui()
+            .conflict
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .selected_saved
+            .as_deref()
+            == Some(expected_saved)
+    }));
     click_control(cx, window, "conflict-continue");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));

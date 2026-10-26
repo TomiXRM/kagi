@@ -518,6 +518,18 @@ fn cli_parked_namespace_resolves_both_directions_and_choices() {
                     assert!(index.get_path(Path::new("thing"), 0).is_none());
                 }
             }
+            let resolved = detect_conflict_session(&repo).unwrap();
+            assert!(resolved.files.is_empty());
+            let expected = match choice {
+                DirFileChoice::KeepFile => Path::new("thing"),
+                DirFileChoice::KeepDirectory => Path::new("thing/child"),
+            };
+            assert_eq!(resolved.resolved.len(), 1, "{resolved:?}");
+            assert_eq!(resolved.resolved[0].path, expected);
+            assert_eq!(
+                resolved.resolved[0].oid,
+                index.get_path(expected, 0).unwrap().id.to_string()
+            );
             index.write_tree().unwrap();
             assert_eq!(
                 std::fs::read(root.join("thing~unrelated")).unwrap(),

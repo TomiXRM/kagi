@@ -550,13 +550,25 @@ fn collect_resolved_files(
     let mut resolved: Vec<ResolvedConflictFile> = listed
         .iter()
         .filter_map(|listed_path| {
-            let path = bytes_to_pathbuf(listed_path)?;
+            let mut path = bytes_to_pathbuf(listed_path)?;
+            // Git lists the parked file, but KeepFile stages its original
+            // name. This is presentation evidence only, never write authority.
+            let entry = if let Some(entry) = index.get_path(&path, 0) {
+                entry
+            } else {
+                if (1..=3).any(|stage| index.get_path(&path, stage).is_some()) {
+                    return None;
+                }
+                let separator = listed_path.iter().rposition(|byte| *byte == b'~')?;
+                if separator + 1 == listed_path.len() {
+                    return None;
+                }
+                path = bytes_to_pathbuf(&listed_path[..separator])?;
+                index.get_path(&path, 0)?
+            };
             if unmerged.iter().any(|file| file.path == path) {
                 return None;
             }
-            // `get_path(path, 0)` is the stage-0 entry only; an unmerged path has
-            // no stage 0 and an untracked/deleted path has no entry at all.
-            let entry = index.get_path(&path, 0)?;
             Some(ResolvedConflictFile {
                 path,
                 oid: entry.id.to_string(),

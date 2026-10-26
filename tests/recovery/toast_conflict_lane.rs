@@ -75,7 +75,7 @@ fn controls(layout: &str) -> &'static [&'static str] {
             "conflict-hunk-0-incoming-use",
             "conflict-hunk-0-incoming-both",
         ],
-        "raw" => &["conflict-raw-choices"],
+        "raw" => &["conflict-raw-current-use", "conflict-raw-incoming-use"],
         "directory-file" => &["conflict-directory-file-choices"],
         "saved" => &["conflict-saved-preview"],
         _ => unreachable!(),
@@ -124,6 +124,13 @@ fn assert_safe_lane(window: AnyWindowHandle, layout: &str) -> Bounds<Pixels> {
         assert!(
             stack.bottom() <= control.top() && lane.bottom() <= control.top(),
             "{layout}: persistent cards AND summary must not intersect {id}"
+        );
+    }
+    if layout == "raw" {
+        eprintln!(
+            "[gui-e2e] ASSERT raw-lane {:?}/{}: both per-side Use controls below headers/lane; no overlap",
+            i18n::lang(),
+            theme::theme().slug
         );
     }
     lane
@@ -534,9 +541,11 @@ pub(crate) fn assert_rescue_recording_failure(
         assert!(notice
             .message
             .contains(&std::fs::TryLockError::WouldBlock.to_string()));
-        assert!(notice.message.contains(aside.to_str().unwrap()));
-        assert!(!notice.message.contains("Operation Log"));
-        assert!(!notice.message.contains("操作ログ"));
+        let (detail, diagnostic) = notice.message.split_once("\n\n").unwrap();
+        assert!(detail.contains(aside.to_str().unwrap()));
+        assert!(!detail.contains("Operation Log"));
+        assert!(!detail.contains("操作ログ"));
+        assert!(diagnostic.contains(&std::fs::TryLockError::WouldBlock.to_string()));
         assert_eq!(
             state.toast_stack.as_ref().unwrap().read(cx).toasts().len(),
             toast_count,
@@ -550,6 +559,11 @@ pub(crate) fn assert_rescue_recording_failure(
             .count(),
         1,
         "only the earlier, recorded rescue has a receipt"
+    );
+    eprintln!(
+        "[gui-e2e] ASSERT rescue-recording-failure {:?}/{}: retained-file detail has no log reference; recording diagnostic retained; no extra receipt",
+        i18n::lang(),
+        theme::theme().slug
     );
     app.update(cx, |app, cx| app.confirm_app_notice(cx));
 }

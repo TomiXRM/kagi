@@ -63,6 +63,13 @@ checksum coverage as described in `docs/RELEASING.md`.
 `tests/gui_e2e_runner.rs` is an opt-in macOS main-thread runner. It needs both the
 `gui-e2e` feature and `KAGI_GUI_E2E=1`; use an exclusive target directory:
 
+For direct runner execution, select the executable from the **current**
+`cargo test --features gui-e2e --test gui_e2e_runner --no-run --message-format=json`
+compiler-artifact output and record its SHA-256 with the source head. Never
+reuse an executable basename from an earlier run: feature/dependency changes
+can leave a stale runner beside the current one in `target/debug/deps`.
+Record per-assertion locale/theme receipts when settling disputed coverage.
+
 `KAGI_GUI_E2E_ONLY` is not optional — every invocation names the scenarios it
 wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path

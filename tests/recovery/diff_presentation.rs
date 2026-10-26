@@ -275,6 +275,11 @@ pub fn scenario_conflict_preview_no_render_io(cx: &mut VisualTestAppContext) {
     std::fs::rename(repo.join(".git-held"), repo.join(".git")).unwrap();
     drop(conflict);
     unmount(cx, app, win);
+    eprintln!(
+        "[gui-e2e] ASSERT no-render-io {:?}/{}: first uncached and retained renders opened zero backends",
+        i18n::lang(),
+        theme::theme().slug
+    );
     drop(restore);
     eprintln!("[gui-e2e] PASS conflict_preview_no_render_io");
 }
@@ -500,7 +505,10 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
     let pane = bounds("conflict-image-pane");
     let current = bounds("conflict-image-current");
     let incoming = bounds("conflict-image-incoming");
-    for side in ["conflict-image-current", "conflict-image-incoming"] {
+    for (side, action) in [
+        ("conflict-image-current", "conflict-raw-current-use"),
+        ("conflict-image-incoming", "conflict-raw-incoming-use"),
+    ] {
         let column = bounds(&format!("{side}-column"));
         crate::recovery_layout::contained(pane, column, "image column");
         crate::recovery_layout::contained(column, bounds(side), "image box");
@@ -510,7 +518,7 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
             header,
             "fixed side identity",
         );
-        assert!(header.bottom() <= bounds("conflict-raw-choices").top());
+        assert!(header.bottom() <= bounds(action).top());
         assert!((header.left() - column.left()).abs() < gpui::px(1.));
         assert!((header.size.width - column.size.width).abs() < gpui::px(1.));
         crate::recovery_layout::contained(
@@ -559,5 +567,9 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
     assert!(
         (f32::from(incoming.left() - current.right() - gpui::px(1.))).abs() < 1.,
         "{locale}/{zoom}/{dimensions:?}: shared side-pair divider must be exactly one pixel"
+    );
+    eprintln!(
+        "[gui-e2e] ASSERT image-geometry {locale}/{} zoom={zoom} size={dimensions:?}: both per-side Use controls below fixed headers; bounds and scroll assertions passed",
+        theme::theme().slug
     );
 }

@@ -1184,5 +1184,8 @@ state-only defects may be missing. Report:
 | `uv run --project ci check-all` | exit 0 (LOC: no new file over 800) |
 
 Production Settings is unchanged (the experiment only registers two new
-public modules), so no Tier A settings scenario changes; Tier B evidence for
-the new surfaces is the gallery captures above.
+public modules); no Tier A settings scenario was run for this experiment.
+The baseline and early visible-window captures are real-window evidence.
+Later `gui-e2e` gallery captures use native Metal offscreen rendering:
+they prove rendered appearance, not Tier B interaction, keyboard traversal,
+or actual hover/focus delivery. Forced visual states are not behavior tests.

@@ -48,13 +48,13 @@ Update a model
 and its expectation to HOLD in the same PR as the corresponding product fix;
 never weaken an assertion just to restore green.
 
-## Current union — #1775 / #1746 / #1780 / #1784
+## Current union — #1775 / #1746 / #1756 / #1780 / #1784
 
 The reconciled inventory contains **84 lifecycle configurations / 37 negative
-controls**. The full harness at `56dc8c42` matched all 84 expected lifecycle
+controls**. The full harness at `e2df85aa` matched all 84 expected lifecycle
 outcomes (**80,775 summed distinct states**) and detected all 37 negative
-controls (**15,387 summed states**). All 39 pure properties (1,695,651 evaluations),
-36 pure mutants and 34 saved drill projections / 46 logs passed; the forged-Skip
+controls (**15,387 summed states**). All 40 pure properties (1,695,747 evaluations),
+37 pure mutants and 34 saved drill projections / 46 logs passed; the forged-Skip
 control was rejected. Per-row predecessor measurements remain historical unless
 explicitly marked as current-union evidence below.
 The union retains frozen approved staging/merge plans, backend receipts and
@@ -301,7 +301,7 @@ The two added configurations are `writer-termination` (HOLD) and
 historical merged run; they do not include this refinement.
 
 The focused quotient admits at most one CLI invocation per each of two independent
-apps. After admission and spawn, CLI return with a live descendant transfers
+apps. After admission and spawn, an unconfirmed CLI return with a live descendant transfers
 repository ownership to the existing `proc.rs::run_child` janitor; pipe EOF is
 independent and cannot release it. Only explicit process-group stop proof releases
 repository ownership. Per-Sessions reconciliation is a later independent transition,
@@ -317,6 +317,13 @@ existing outer guard until that child's own stop proof. The existing janitor
 uses the non-retiring `proc::group_alive` fact for its own group, leaving any
 still-executing supervisor job registered for later commands. Sessions uses
 the same underlying liveness evidence for its separate lease; no second monitor.
+Only process-wait or output-collection errors transfer admission. Known successful
+CLI and collector completion, including a post-commit helper with closed stdio,
+keeps ADR-0196's Success settlement: the existing group sweeper tracks the helper
+without retaining the repository lock. A real guarded merge-finalization
+regression verifies a Success receipt, a free independent OS probe while the
+helper remains live, and admission of the next real Commit. Successful background
+hooks are outside this Unknown-only quotient; no HOLD assertion is weakened.
 The quotient assumes successful approval/preflight and already-completed draft
 flush, cooperating lock users, a surviving monitoring app, and sound group-stop
 evidence. It does not model kernel internals, escaped descendants, abrupt app
@@ -335,7 +342,7 @@ D/F snapshot-after-admission/preflight ordering remain unchanged.
 - Re-run from the repository root: `uv run --project formal/conflict formal/conflict/run.sh`. `formal/conflict/tla/run.py` contains the self-check table; the committed `.cfg` files are read without rewriting. Select a debugging subset with `--suite tla CHECK` without overwriting the full-suite summary.
 - Dependencies: CPython >=3.11 via `formal/conflict/pyproject.toml` and `uv.lock`; Java 21 on PATH (CI: Temurin 21); pinned TLC release `v1.8.0`, downloaded to cache and verified against `formal/conflict/tla/TLA2TOOLS.sha256` (SHA-256 `d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f`). Historical observed runtime: Adoptium 21.0.13. No third-party Python dependency is used.
 - Machine exit: 0 only when every named invariant/property has its expected verdict **and** TLC has the appropriate zero/nonzero exit; 1 unexpected verdict; 2 launch/timeout/unknown-check errors. Expected refutations are intentionally green at the harness level, red at TLC level.
-- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained union has **84** configurations and **37** negative controls, retaining P2, #1731 preservation, #1732 atomic drafts, #1746 D1/D2/D3, #1780 writer termination and #1760/#1784 flush barriers. Measured union totals await parent validation. See the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Machine-readable evidence is generated under `formal/conflict/tla/results/`.
+- Initial historical run before trace refinement: **44 / 44 expected outcomes, 22.441 seconds, 59,260 distinct states summed across independent runs**. The maintained union has **84** configurations and **37** negative controls, retaining P2, #1731 preservation, #1732 atomic drafts, #1746 D1/D2/D3, #1780 writer termination and #1760/#1784 flush barriers. Measured current-union totals are above. See the [trace appendix](conflict-trace-ledger.md). Counts are TLC distinct states found, not globally unique or exhaustive after a first safety counterexample. Machine-readable evidence is generated under `formal/conflict/tla/results/`.
 
 ## Declared vs implicit
 

@@ -6,7 +6,7 @@ assembly, readiness, blockers, drafts, Skip evidence, and intent/write admission
 No product code is imported or changed by the guard. The reconciled inventory is
 84 TLC configurations and 37 negative controls, retaining P2, D3 repository
 admission, #1780 writer termination and #1731/#1784 draft-preservation/flush guards.
-The unchanged pure inventory is 39 properties (1,695,651 evaluations), 36 mutants,
+The maintained pure inventory is 40 properties (1,695,747 evaluations), 37 mutants,
 and 34 saved drill projections / 46 logs plus a forged-Skip control.
 The full harness matched all 84 expected lifecycle outcomes (80,775 summed
 distinct states) and detected all 37 removed-guard controls (15,387 summed

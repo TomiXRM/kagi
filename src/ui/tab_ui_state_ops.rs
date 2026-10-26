@@ -167,6 +167,7 @@ impl TabUiState {
             repo_session: _,
             terminal_session,
             conflict,
+            conflict_hidden: _,
             conflict_merge_pending,
             file_history,
             file_history_head,

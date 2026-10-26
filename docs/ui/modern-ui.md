@@ -164,6 +164,20 @@ Sizes remain logical px at the pinned gpui-component scale; Kagi's new 100% base
 | Motion | instant or ≤ 150 ms for hover/press; selection crossfade, insertion and existing accordion transitions use 150–250 ms. Share `kagi_ui_core::motion` clock, cubic easing, `theme::reduce_motion()` gating and view-owned frame requests ([ADR-0225](../adr/0225-motion-system.md)). GUI E2E is instant unless its shared clock is frozen. | Retain CommitId / worktree-path / file-path identity, never row indices. Graph insertion uses approach A: final fixed-height list length immediately, remaining negative offset for rows below each inserted key plus inserted-row opacity. Do not animate uniform-list row heights or depend on scroll-contained `with_animation` ticks. The foundation does not yet wire these three new surfaces. A library transition that cannot be turned off is listed as an exception in the PR. |
 | Pane open / close | Kagi `panel_motion` ([`panel_motion.rs`](../../src/ui/panel_motion.rs)) keeps layout and exit-content ownership; shared `motion::Reveal` and `motion::clip` supply timing and clipping for the bottom panel, left sidebar and right pane: open 180 ms ease-out, close 150 ms ease-in; mid-flight changes turn around from the current width/height with duration scaled by distance left. Only the outer box's size moves; content keeps its size, so Terminal's grid and pane layouts never change while sliding. Bottom/left panes follow their toggles; the right pane follows resolved-slot visibility, including Graph selection / Esc (#1001). Inspector / Compare / Commit Panel swaps while shown do not move. Drags of a sliding pane's own divider are ignored (#957); Graph column dividers instead use their painted left edge and remain draggable (#1011). | Whole-workspace changes (Home, tab switch, Conflict, Editor or another mode) are instant, as is Reduce Motion. Reuse shared `Reveal`; measured accordion content remains mounted until closing settles. |
 
+Conflict operation status stays in its existing #704 strip below the toolbar
+when Graph, PRs, Issues or Editor replaces the conflict body (#1748). While the
+same ConflictView is retained offscreen, the strip's leading secondary
+**Back to conflicts / conflict に戻る** is its single return affordance; status
+remains passive and Abort/Skip stay separate at the trailing edge. Do not add a
+toolbar item or copy drafts to implement navigation. Returning remounts the same
+entity, file/hunk selection, scrolled editors and unsaved Result; accepted
+background refreshes update the retained pane without taking over the body.
+Departure retires every hidden conflict focus owner (Result, navigation and
+sidebar controls) to the workspace root so keyboard actions remain available;
+Back restores the same editing input's focus. If the operation
+ends externally before its draft can be preserved, reveal the retained Result
+while handoff is pending or failed: recovery must not depend on a vanished strip.
+
 #1016 PR B extends the same dialog-button contract to Clone, Remote Browse,
 Smart Commit, Update, App Notice, Trust Repo, PR field editing, and Editor
 filesystem/dirty-buffer confirmations without resizing those cards. A name

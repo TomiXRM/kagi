@@ -31,7 +31,7 @@ pub(super) const ICON_IDENTITY_MIN_WIDTH: f32 = 96.;
 #[derive(Default)]
 pub(crate) struct Layout {
     available: f32,
-    widths: [f32; 17],
+    widths: [f32; 16],
     key: Option<StyleKey>,
     last_hidden: u16,
 }
@@ -40,16 +40,8 @@ impl Layout {
     pub(super) fn icon_identity_width(&self, key: StyleKey) -> f32 {
         ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * f32::from_bits(key.2)
     }
-    pub(super) fn sidebar_width(&self, visible: bool, key: StyleKey) -> f32 {
-        if visible {
-            self.widths[16] * f32::from_bits(key.2)
-        } else {
-            0.
-        }
-    }
-    pub(super) fn identity_width(&self, sidebar: bool, key: StyleKey) -> f32 {
+    pub(super) fn identity_width(&self, key: StyleKey) -> f32 {
         (self.widths[14] + self.widths[15] + 24.) * f32::from_bits(key.2)
-            + self.sidebar_width(sidebar, key)
     }
     pub(super) fn workspace_width(&self, visible: u16, hidden: u16, key: StyleKey) -> f32 {
         let scale = f32::from_bits(key.2);
@@ -99,17 +91,10 @@ impl Layout {
             })
     }
 
-    pub(super) fn hidden(
-        &mut self,
-        present: u16,
-        selected: usize,
-        sidebar: bool,
-        key: StyleKey,
-    ) -> u16 {
+    pub(super) fn hidden(&mut self, present: u16, selected: usize, key: StyleKey) -> u16 {
         if self.available == 0.
             || self.pending(present, key) != 0
             || !key.0 && (self.widths[14] == 0. || self.widths[15] == 0.)
-            || sidebar && self.widths[16] == 0.
         {
             // A style change must not remove the focused trigger or an open
             // menu for the measurement frame. Hidden controls get a natural
@@ -141,7 +126,7 @@ impl Layout {
                 // Both flex side columns retain their measured minimums;
                 // extra space is shared equally when those minimums permit it.
                 // Include Refresh/identity margins and the drag spacer.
-                let identity = self.identity_width(sidebar, key);
+                let identity = self.identity_width(key);
                 return identity
                     + repo
                     + repo_spacing
@@ -160,10 +145,7 @@ impl Layout {
             // Refresh/repository/branch summary's readable minimum.
             repo + repo_spacing
                 + side
-                + side.max(
-                    ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale
-                        + self.sidebar_width(sidebar, key),
-                )
+                + side.max(ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale)
                 // Symmetric toolbar padding; native lights and + are above.
                 + 24. * scale
         };
@@ -285,7 +267,7 @@ pub(super) fn probe(
                 return;
             }
             // Absolute canvases measure inside the fixed 2px focus border.
-            // Both toolbar presentations carry that border; identity and the sidebar wrapper do not.
+            // Both toolbar presentations carry that border; identity does not.
             let normalized = if index.is_some() {
                 (width
                     + if index.is_some_and(|i| i <= 14) {
@@ -683,7 +665,7 @@ mod tests {
                         let mut stages = 0_u16;
                         for available in (1..=3000).rev() {
                             layout.measure(None, available as f32 * scale, key);
-                            let hidden = layout.hidden(present, selected, false, key);
+                            let hidden = layout.hidden(present, selected, key);
                             let count = hidden.count_ones() as usize;
                             let expected = order[..count]
                                 .iter()
@@ -694,7 +676,7 @@ mod tests {
                         assert_eq!(stages, 0x7fff, "all 15 stages must be reachable");
                         for available in 1..=3000 {
                             layout.measure(None, available as f32 * scale, key);
-                            let hidden = layout.hidden(present, selected, false, key);
+                            let hidden = layout.hidden(present, selected, key);
                             let count = hidden.count_ones() as usize;
                             assert_eq!(
                                 hidden,
@@ -721,7 +703,7 @@ mod tests {
             layout.measure(Some(index), 36., key);
         }
         assert_eq!(
-            layout.hidden(0x3fff, 8, false, key),
+            layout.hidden(0x3fff, 8, key),
             0x3e00,
             "once only selected Graph remains, every Git command fits without the 100px side reservation"
         );
@@ -736,22 +718,22 @@ mod tests {
             layout.measure(Some(index), 60., key);
         }
         let present = 0x1fff;
-        let hidden = layout.hidden(present, 8, false, key);
+        let hidden = layout.hidden(present, 8, key);
         assert_ne!(hidden, 0);
         let next = (false, i18n::Lang::Ja, 1_f32.to_bits());
         assert_eq!(
-            layout.hidden(present, 8, false, next),
+            layout.hidden(present, 8, next),
             hidden,
             "pending measurement cannot eject a focused/open overflow trigger"
         );
         layout.measure(None, 500., next);
         assert_eq!(
-            layout.hidden(present, 8, false, next),
+            layout.hidden(present, 8, next),
             hidden,
             "partial measurement must preserve the last fit"
         );
         assert_eq!(
-            layout.hidden(1 << 8, 8, false, next),
+            layout.hidden(1 << 8, 8, next),
             hidden & (1 << 8),
             "commands no longer present cannot remain in the menu"
         );

@@ -3501,9 +3501,11 @@ impl KagiApp {
         }
     }
 
-    /// Conflict Mode replaces the normal body before workspace slots are resolved.
+    /// Conflict presentation is independent of its retained entity/operation.
     pub(crate) fn conflict_body_visible(&self) -> bool {
-        self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
+        self.ui().conflict.is_some()
+            && !self.ui().conflict_hidden
+            && !self.ui().conflict_merge_pending
     }
 
     fn commit_list_has_focus(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -3799,11 +3801,12 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
     // Themed title bar: make the native bar transparent so kagi's own top
     // content fills the title-bar area. macOS still draws the traffic lights,
-    // positioned over the document titlebar's unscaled 80px exclusion.
+    // positioned over the document titlebar's unscaled 80px exclusion, on the
+    // 36px row's centre line shared with the sidebar toggle and tabs (#1790).
     Some(gpui::TitlebarOptions {
         title: Some("Kagi".into()),
         appears_transparent: true,
-        traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
+        traffic_light_position: Some(gpui::point(px(9.0), px(11.0))),
     })
 }
 

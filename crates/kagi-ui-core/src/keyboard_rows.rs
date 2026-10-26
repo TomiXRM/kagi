@@ -336,7 +336,6 @@ impl RowFocus {
 
     /// Whether the focus is on a row or a control inside one, in the frame
     /// on screen.
-    #[cfg(feature = "gui-e2e")]
     pub fn holds_focus(&self, window: &Window, cx: &App) -> bool {
         self.handles
             .iter()

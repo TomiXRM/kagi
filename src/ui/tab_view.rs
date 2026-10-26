@@ -496,6 +496,8 @@ pub struct TabUiState {
     pub repo_session: Option<kagi_git::session::RepoSession>,
     pub terminal_session: Option<super::terminal::KagiTerminalSession>,
     pub conflict: Option<Entity<super::conflict_view::ConflictView>>,
+    /// Explicit workspace navigation unmounts the pane, not its draft/state owner.
+    pub conflict_hidden: bool,
     pub conflict_merge_pending: bool,
     pub file_history: Option<Entity<super::file_history::FileHistoryView>>,
     pub file_history_head: Option<String>,
@@ -630,6 +632,7 @@ impl Default for TabUiState {
             repo_session: None,
             terminal_session: None,
             conflict: None,
+            conflict_hidden: false,
             conflict_merge_pending: false,
             file_history: None,
             file_history_head: None,

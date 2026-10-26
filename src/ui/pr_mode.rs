@@ -1167,28 +1167,12 @@ pub fn render_pr_mode(
                 .yield_focus(app.root_focus.as_ref(), window, cx);
         }
     }
+    // The navigator is the shell's sidebar (#1790); only the graph reveals here.
     let drawer = match layout.drawer {
-        Some(super::pr_layout::Companion::Navigator) => Some(super::pr_layout::drawer(
-            super::workspace_mode::render_sidebar_pages(
-                app,
-                super::workspace_mode::WorkspaceMode::Prs,
-                cx,
-            ),
-            super::pr_layout::Companion::Navigator,
-        )),
-        Some(super::pr_layout::Companion::Swimlane) => {
-            super::pr_lane::render_pr_lane(app, window, cx)
-                .map(|pane| super::pr_layout::drawer(pane, super::pr_layout::Companion::Swimlane))
-        }
+        Some(pane) => super::pr_lane::render_pr_lane(app, window, cx)
+            .map(|lane| super::pr_layout::drawer(lane, pane)),
         None => None,
     };
-    let left = layout.navigator.then(|| {
-        super::workspace_mode::render_sidebar_pages(
-            app,
-            super::workspace_mode::WorkspaceMode::Prs,
-            cx,
-        )
-    });
     // Measured from inside, not wrapped: the body's height chain (`h_full`,
     // `flex_1`) must reach the virtualized feed unbroken.
     let center = div()
@@ -1218,7 +1202,7 @@ pub fn render_pr_mode(
             .child(panel)
             .into_any_element(),
     };
-    // The swimlane sits between the navigator and the body: it is about the
+    // The swimlane sits between the sidebar and the body: it is about the
     // PRs, not about the file being read, and it is absent with no tab open.
     let lane = layout
         .swimlane
@@ -1238,14 +1222,6 @@ pub fn render_pr_mode(
         .min_h(px(0.))
         .h_full()
         .bg(rgb(theme().bg_base))
-        .children(left)
-        .when(layout.navigator, |el| {
-            el.child(vdivider(
-                DividerKind::PrModeLeft,
-                theme().sidebar,
-                "pr-navigator-divider",
-            ))
-        })
         .children(lane)
         .when(layout.swimlane, |el| {
             el.child(vdivider(

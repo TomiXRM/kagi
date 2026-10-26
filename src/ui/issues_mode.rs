@@ -48,14 +48,6 @@ fn list_presentation(
     }
 }
 
-fn divider() -> gpui::Div {
-    div()
-        .w(theme::scaled_px(1.0))
-        .flex_shrink_0()
-        .h_full()
-        .bg(rgb(theme().selected))
-}
-
 fn status_text(id: &'static str, text: impl Into<SharedString>, color: u32) -> AnyElement {
     super::e2e::measure_control(
         id,
@@ -645,7 +637,8 @@ fn render_issue_page_tail(
     tail.into_any_element()
 }
 
-/// Render the sidebar navigator and Composer/Thread main workspace.
+/// Render the Composer/Thread main workspace; the navigator is the shell's
+/// sidebar (#1790).
 ///
 /// `panel` is the window's bottom panel. It sits under the main workspace
 /// only, so the navigator keeps the full body height.
@@ -656,17 +649,6 @@ pub fn render_issues_mode(
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     app.ensure_issue_avatars(cx);
-    let compact = super::compact::for_window(window);
-    let left = (!compact).then(|| {
-        super::e2e::measure_control(
-            "issue-mode-left-pane",
-            super::workspace_mode::render_sidebar_pages(
-                app,
-                super::workspace_mode::WorkspaceMode::Issues,
-                cx,
-            ),
-        )
-    });
     let center = render_center(app, window, cx);
     let center = match panel {
         None => center,
@@ -689,8 +671,6 @@ pub fn render_issues_mode(
         .min_h(px(0.))
         .h_full()
         .bg(rgb(theme().bg_base))
-        .children(left)
-        .when(!compact, |el| el.child(divider()))
         .child(center)
         .into_any_element()
 }

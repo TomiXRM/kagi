@@ -336,7 +336,21 @@ impl Render for KagiApp {
                     .center,
             )
         };
-        self.sync_workspace_motion_visibility(center, cx);
+        let workspace_changed = self.sync_workspace_motion_visibility(center, cx);
+        // None of a retained pane's focus owners belong to the next dispatch
+        // tree while hidden, including navigation and source-list controls.
+        if workspace_changed
+            && self.ui().conflict_hidden
+            && self
+                .ui()
+                .conflict
+                .as_ref()
+                .is_some_and(|pane| pane.read(cx).contains_focused_any(window, cx))
+        {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
+            }
+        }
         // A hidden Graph stop must not strand focus after a workspace takeover.
         let graph_hidden = center != Some(super::workspace::CenterPane::CommitList);
         if graph_hidden
@@ -952,7 +966,7 @@ impl Render for KagiApp {
             .child(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // #704 is the exit when the conflict sidebar is hidden or unmounted.
             // Admission remains owned by TabViewState::operation.
             .when(

@@ -1149,7 +1149,10 @@ Stop: iteration 10 reached (protocol). Convergence by the strict rule was **not*
 
 `claudeAgent/claude-opus-5-5` looked only at the iteration-10 captures and
 the reference screenshots — no source, skill, reports or scores — and
-reviewed every part role across pages and themes (#1798 method). Report:
+reviewed every part role across pages and themes (#1798 method). It looked
+at the default dark/light captures, the S3 Japanese captures and four focus
+states; the other hover/pressed/value states were not reviewed, so
+state-only defects may be missing. Report:
 [`../blind-review-i10.md`](../blind-review-i10.md).
 
 - Result: **C1 = 10, C2 = 20, overall 3 / 5.** Rows, group cards, headings,

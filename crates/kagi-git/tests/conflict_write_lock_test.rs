@@ -741,19 +741,17 @@ fn successful_post_commit_background_helper_releases_repository_admission() {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path().join("repo");
-    std::fs::create_dir(&repo).unwrap();
-    init_repo(&repo, "main");
+    let repo = conflict(tmp.path());
     git(&repo, &["config", "commit.gpgsign", "false"]);
     git(&repo, &["config", "core.hooksPath", ".git/hooks"]);
-    write_file(&repo, "file.txt", "base\n");
-    commit_all(&repo, "base");
     let before = git_output(&repo, &["rev-parse", "HEAD"]);
     write_file(&repo, "file.txt", "first\n");
     git(&repo, &["add", "file.txt"]);
     let fixture = LingeringGit::install_post_commit(tmp.path(), &repo);
     let mut backend = Backend::open(&repo).unwrap();
-    let op = kagi_git::Operation::Commit {
+    // Merge finalization executes the real CLI under repository admission;
+    // ordinary Commit obtains its admission probe from the UI's write lease.
+    let op = kagi_git::Operation::MergeCommit {
         message: "successful background hook".into(),
     };
     let plan = backend.plan(&op).unwrap();

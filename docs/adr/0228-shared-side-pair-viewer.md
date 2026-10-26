@@ -300,7 +300,7 @@ themes or native assistive-technology delivery.
 
 `tests/gui_e2e/side_pair.rs` adds image/PDF Use → Save acceptance coverage, including
 image Change → Use, with independently captured stage OIDs/modes/bytes and stage-0 oracles.
-The final native run passed all 21 scenarios selected by `conflict_side_pair_`,
+The initial native run passed all 21 scenarios selected by `conflict_side_pair_`,
 `conflict_delete`, `conflict_dir_file`, `binary_diff_prepared`, `diff_binary_states`,
 `conflict_image_zoom`, `commit_pdf_`, `pdf_media_` and `pdf_focus_retirement`.
 This includes the compact JA 167% PDF fit/focus regression. After integrating
@@ -343,5 +343,18 @@ descriptions use the same typed failure reason as visible captions. Read failure
 retain their actual diagnostic and do not claim an unknown source is a binary
 file or promise an unavailable external-editor action. The PDF sync control uses
 the existing measured `HeaderFit` policy to show its label when space permits.
-The frames above predate these corrections; native rerun and independent HIG
-re-review must use the corrected head.
+The corrected native frames and gate results are attached to
+[#1742](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6425754052)
+for independent HIG re-review. They render production commit `c54126d5`; the
+following test-only commit makes the oversized-PDF AX oracle require the precise
+preview-limit reason instead of generic read failure. The expanded native filter
+first passed 27 of 28 scenarios, then the corrected limit oracle passed its focused
+rerun. All 28 selected scenarios have therefore passed, including deferred image
+cleanup on replacement/retirement/release and rejected-result isolation.
+Workspace tests passed 3,954 tests (184 suites, 49 ignored); formatting, default
+build, Clippy, repository invariants and native-runner compilation passed.
+Fresh EN Light/JA Dark captures and EN Dark/JA Light cross-checks supersede the
+pre-review frames. Both primary locales again verify exact PNG/PDF stage-0 choices
+and unchanged worktree bytes/mode. Every owned native app exited normally.
+OS VoiceOver delivery and IME remain unclaimed; source-level reason mapping and
+the native Tier A limit-description oracle are not substitutes for those checks.

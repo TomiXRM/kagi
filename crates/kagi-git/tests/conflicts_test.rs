@@ -34,11 +34,16 @@ use kagi_git::{
     SkipProgress,
 };
 
+#[path = "conflicts/deletion.rs"]
+mod deletion;
 #[path = "conflicts/domain_hardening.rs"]
 mod domain_hardening;
 
 #[path = "conflicts/receipt_lifecycle.rs"]
 mod receipt_lifecycle;
+
+#[path = "conflicts/namespace_receipts.rs"]
+mod namespace_receipts;
 
 #[path = "conflicts/frozen_staging.rs"]
 mod frozen_staging;

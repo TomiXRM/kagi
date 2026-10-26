@@ -57,6 +57,21 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1734/#1735 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING, including
+the EN/JA `conflict_delete_routes` scenarios. They exercise rendered family
+choices, DD deletion and both Git-parked D/F outcomes through the standard
+confirmation sheet. Cancel and root Return must not mutate; explicit Confirm
+uses the frozen owner/token and clears the targeted unmerged entries. The kept
+file must be staged at the original path, not its parking name, and Continue
+must become reachable after the remaining conflicts are resolved.
+Backend coverage includes `conflicts::deletion` and `dir_file_conflict_test`;
+domain coverage checks all four side-presence combinations.
+Tier B uses private copies of `merge-complex`, EN Apple Light and JA Apple Dark:
+resolve `renamed-src.ts`, exercise both keep-directory and keep-file choices,
+capture their exact-path plan sheets and the ready-to-review state, and check
+index plus worktree witnesses. Do not mutate the shared source fixtures.
+Renderer measurements do not establish native keyboard/AX delivery or screenshots.
+
 For #1731 use `KAGI_GUI_E2E_ONLY='conflict_draft_persist_failure,conflict_abort'`
 with KEEP_GOING. The draft failure scenario makes the real conflicts directory
 unwritable, edits the native Result, and checks the durable Failed receipt,

@@ -110,6 +110,8 @@ mod cherry_revert;
 mod clone;
 mod commit;
 pub(crate) mod conflict_abort;
+pub(crate) mod conflict_delete;
+mod conflict_index;
 mod dir_file_conflict;
 mod discard;
 mod fetch;

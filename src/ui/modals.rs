@@ -2,6 +2,7 @@
 
 pub mod apply_suggestion;
 pub mod branch_plan;
+pub mod conflict_resolution;
 pub mod delete_branch;
 pub mod oplog_restore;
 pub mod rebase;
@@ -785,6 +786,7 @@ pub enum ActiveModal {
     BranchCleanup(BranchCleanupModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),
+    ConflictResolution(conflict_resolution::ConflictResolutionModal),
     ConflictAbort(ConflictAbortModal),
     EditorDirtyGuard(EditorDirtyGuardModal),
     EditorFsPrompt(EditorFsPromptModal),
@@ -844,6 +846,7 @@ impl ActiveModal {
             | M::BranchCleanup(_)
             | M::Discard(_)
             | M::ConflictContinue(_)
+            | M::ConflictResolution(_)
             | M::ConflictAbort(_)
             | M::EditorDirtyGuard(_)
             | M::EditorFsPrompt(_)

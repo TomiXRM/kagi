@@ -163,6 +163,7 @@ impl KagiApp {
                 | M::StashPush(_)
                 | M::StashApply(_)
                 | M::ConflictContinue(_)
+                | M::ConflictResolution(_)
                 | M::EditorFsPrompt(_)
                 | M::TrustRepo(_),
             ) => false,
@@ -172,7 +173,9 @@ impl KagiApp {
     /// Alert-style confirmations have no text field to take focus for them.
     /// Share the named-dialog focus trap, including the owner-trust prompt.
     pub(super) fn active_modal_needs_alert_trap(&self) -> bool {
-        self.active_modal_defaults_to_cancel() || self.trust_repo_modal().is_some()
+        self.active_modal_defaults_to_cancel()
+            || self.conflict_resolution_modal().is_some()
+            || self.trust_repo_modal().is_some()
     }
 
     /// Cards rendered through input_dialog_frame own their replacement focus,
@@ -207,6 +210,7 @@ impl KagiApp {
                 | M::Discard(_)
                 | M::OplogRestore(_)
                 | M::ConflictAbort(_)
+                | M::ConflictResolution(_)
                 | M::EditorDirtyGuard(_)
                 | M::EditorDeleteConfirm(_)
                 | M::RemoveWorktree(_)
@@ -325,6 +329,14 @@ impl KagiApp {
                 && !ks.modifiers.shift
             {
                 if this.input_modal_is_composing(window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                // This destructive sheet has no default button, including Cancel.
+                // Deliberately focused buttons still own their Enter/Space action.
+                if this.front_layer(cx) == front_layer::FrontLayer::Modal
+                    && this.conflict_resolution_modal().is_some()
+                {
                     cx.stop_propagation();
                     return;
                 }

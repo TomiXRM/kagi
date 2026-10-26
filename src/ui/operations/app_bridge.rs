@@ -242,6 +242,7 @@ impl KagiApp {
         };
         match app::admit(&mut self.reads, admitted) {
             Ok(guard) => {
+                self.clear_repository_busy_footer(cx);
                 self.mark_write_busy(name, cx);
                 // A guard writer has no receipt the `&&` chain can judge.
                 self.queue_untracked_write(owner, cx);
@@ -267,6 +268,23 @@ impl KagiApp {
                 }
                 None
             }
+        }
+    }
+
+    /// Admission supersedes only the repository-contention claim, including
+    /// a footer left in the previous language after a locale switch.
+    pub(super) fn clear_repository_busy_footer(&mut self, cx: &mut Context<Self>) {
+        let busy = match &self.status_footer {
+            FooterStatus::Idle(message) | FooterStatus::Failed(message) => {
+                [i18n::Lang::En, i18n::Lang::Ja]
+                    .into_iter()
+                    .any(|lang| message.contains(Msg::AdviceConflictsRepositoryBusy.t_for(lang)))
+            }
+            _ => false,
+        };
+        if busy {
+            self.status_footer = FooterStatus::Idle("".into());
+            cx.notify();
         }
     }
     pub(crate) fn refresh_write_busy(&mut self) {

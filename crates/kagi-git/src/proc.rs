@@ -308,13 +308,13 @@ pub fn run_child(
         job::watch_until_empty(stop_key);
     }
 
-    // A CLI can return with a live helper even after the direct child exited.
-    // Transfer repository admission before returning, and remove its lexical
-    // reentrancy permission so another call on this executor cannot bypass it.
-    let writer_locks = if group_stopped {
-        Vec::new()
-    } else {
+    // Only an unconfirmed run transfers repository admission to the janitor.
+    // A known result releases its lease even if a hook left a background helper;
+    // the job sweeper above still owns that group's eventual cleanup.
+    let writer_locks = if !group_stopped && (status.is_err() || io.is_err()) {
         crate::write_lock::retain_for_termination()
+    } else {
+        Vec::new()
     };
 
     // Hand off whenever something is still ours to own: an unreaped child, or a

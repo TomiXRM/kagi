@@ -540,6 +540,53 @@ esac
         fixture
     }
 
+    fn install_post_commit(root: &Path, repo: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        #[cfg(target_os = "linux")]
+        assert_eq!(unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) }, 0);
+        let fixture = Self {
+            root: root.join("successful-hook"),
+            #[cfg(target_os = "linux")]
+            descendant_reaped: std::cell::Cell::new(false),
+        };
+        std::fs::create_dir(&fixture.root).unwrap();
+        std::env::set_var("KAGI_LOCK_FIXTURE", &fixture.root);
+        std::fs::write(
+            fixture.root.join("descendant"),
+            r#"#!/bin/sh
+echo "$$" > "$KAGI_LOCK_FIXTURE/descendant-pid"
+: > "$KAGI_LOCK_FIXTURE/ready"
+# Bounded even if the isolated harness is killed before its Drop cleanup.
+n=0
+while [ ! -f "$KAGI_LOCK_FIXTURE/release" ] && [ "$n" -lt 1500 ]; do
+    sleep 0.02
+    n=$((n + 1))
+done
+"#,
+        )
+        .unwrap();
+        let hook = repo.join(".git/hooks/post-commit");
+        std::fs::write(
+            &hook,
+            r#"#!/bin/sh
+# Git is the hook's parent and the process-group leader.
+echo "$PPID" > "$KAGI_LOCK_FIXTURE/group"
+# Close all inherited stdio before the helper starts: collectors must see EOF.
+/bin/sh "$KAGI_LOCK_FIXTURE/descendant" </dev/null >/dev/null 2>&1 &
+n=0
+while [ ! -f "$KAGI_LOCK_FIXTURE/ready" ] && [ "$n" -lt 500 ]; do
+    sleep 0.02
+    n=$((n + 1))
+done
+test -f "$KAGI_LOCK_FIXTURE/ready" || exit 91
+exit 0
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fixture
+    }
+
     fn signal(&self, name: &str) {
         std::fs::write(self.root.join(name), "").unwrap();
     }
@@ -685,4 +732,86 @@ fn continue_unaccounted_descendant_keeps_repository_admission_until_group_stops(
 #[test]
 fn skip_unaccounted_descendant_keeps_repository_admission_until_group_stops() {
     unaccounted_conflict_keeps_admission("skip");
+}
+
+#[cfg(unix)]
+#[test]
+fn successful_post_commit_background_helper_releases_repository_admission() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo, "main");
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    git(&repo, &["config", "core.hooksPath", ".git/hooks"]);
+    write_file(&repo, "file.txt", "base\n");
+    commit_all(&repo, "base");
+    let before = git_output(&repo, &["rev-parse", "HEAD"]);
+    write_file(&repo, "file.txt", "first\n");
+    git(&repo, &["add", "file.txt"]);
+    let fixture = LingeringGit::install_post_commit(tmp.path(), &repo);
+    let mut backend = Backend::open(&repo).unwrap();
+    let op = kagi_git::Operation::Commit {
+        message: "successful background hook".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let report = backend.run_recorded(&op, &plan);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert!(matches!(
+        &report.recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    assert_ne!(first, before);
+    let descendant: i32 = std::fs::read_to_string(fixture.root.join("descendant-pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let group = fixture.group();
+    assert_eq!(unsafe { libc::getpgid(descendant) }, group as i32);
+    assert!(kagi_git::proc::group_alive(group));
+    // Probe outside this process as well as on the executor's own thread:
+    // lexical reentrancy must not hide a quarantined OS lock after Success.
+    probe_sidecar(&repo, true);
+    Backend::check_conflict_write_admission(&repo).unwrap();
+
+    // Keep the original helper alive, but do not create a second helper or
+    // overwrite the exact PID that the fixture owns and reaps.
+    std::fs::remove_file(repo.join(".git/hooks/post-commit")).unwrap();
+    write_file(&repo, "file.txt", "second\n");
+    git(&repo, &["add", "file.txt"]);
+    let next = kagi_git::Operation::Commit {
+        message: "next admitted commit".into(),
+    };
+    let plan = backend.plan(&next).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let next_report = backend.run_recorded(&next, &plan);
+    assert!(next_report.result.is_ok(), "{:?}", next_report.result);
+    assert!(matches!(
+        &next_report.recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    assert_ne!(git_output(&repo, &["rev-parse", "HEAD"]), first);
+    assert!(kagi_git::proc::group_alive(group));
+    probe_sidecar(&repo, true);
+    let receipts = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
+    for report in [&report, &next_report] {
+        let receipt = receipts
+            .iter()
+            .find(|entry| entry.id == report.recording.entry().id)
+            .expect("successful commit has its own durable receipt");
+        assert!(matches!(&receipt.outcome, OpOutcome::Success { .. }));
+    }
+
+    fixture.signal("release");
+    wait_until("successful hook descendant is reaped", || {
+        fixture.reap_descendant()
+    });
+    wait_until("successful hook group stops", || {
+        !kagi_git::proc::group_alive(group)
+    });
 }

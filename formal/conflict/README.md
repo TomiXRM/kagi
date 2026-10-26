@@ -161,6 +161,14 @@ also retains the descriptor until its own stop proof. Sessions reconciliation
 uses the same underlying group-liveness evidence but owns a separate lease and
 may finish later. The janitor never retires a still-executing supervisor job,
 so that job's later commands remain registered for abandonment/reaping.
+
+Transfer is limited to an unconfirmed process wait or output collection:
+`!group_stopped && (status.is_err() || io.is_err())`. A successful CLI with
+complete collectors, including a post-commit hook's background helper with closed
+stdio, keeps ADR-0196's existing Success settlement and releases admission.
+The existing group sweeper still watches that helper without quarantining writes.
+A real-Git hook regression covers this boundary; this quotient models Unknown
+termination, not successful background hooks.
 The model assumes a surviving monitoring app, cooperating lock users and sound
 process-group stop evidence; it does not prove escaped descendants, abrupt app
 death, OS lock semantics or arbitrary external Git cooperation. No eventual

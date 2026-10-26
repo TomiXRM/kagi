@@ -6,6 +6,9 @@ use gpui::VisualTestAppContext;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+
 const BUSY: &str = "Another Kagi window is operating on this repository";
 
 /// Hold a separate descriptor on a scoped thread. The backend's
@@ -186,7 +189,146 @@ pub fn scenario_repository_lock_silent_auto_fetch(cx: &mut VisualTestAppContext)
             assert!(state.app_notice().is_none());
         });
     });
+    app.update(cx, |app, cx| {
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(message)
+            if message.as_ref() == kagi_ui_core::i18n::Msg::AdviceConflictsRepositoryBusy.t())
+        );
+        assert!(app.fetch_async_for(true, None, cx));
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(message)
+            if message.is_empty())
+        );
+    });
+    wait_idle(cx, &app);
+    exercise_footer_recovery(cx, &app, &repo);
     unmount(cx, app, window);
+}
+
+/// Exercise both admission adapters with real refusals, including a language
+/// change between refusal and retry. Quiet fetch leaves the admission footer
+/// visible, so a later result cannot hide a stale-contention regression.
+fn exercise_footer_recovery(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    repo: &Path,
+) {
+    use kagi::ui::{
+        i18n::{self, Lang, Msg},
+        FooterStatus,
+    };
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = i18n::lang();
+    for stage in [false, true] {
+        for silent in [false, true] {
+            for language in [Lang::En, Lang::Ja] {
+                app.update(cx, |app, cx| app.set_lang(language, cx));
+                wait_idle(cx, app);
+                let before = read_oplog_tail_for_repo(repo, 100).len();
+                let successes = read_oplog_tail_for_repo(repo, 100)
+                    .iter()
+                    .filter(|entry| {
+                        entry.op == "fetch" && matches!(entry.outcome, OpOutcome::Success { .. })
+                    })
+                    .count();
+                with_repository_lock(repo, || {
+                    app.update(cx, |app, cx| {
+                        assert!(!app.fetch_async_for(silent, None, cx));
+                        let message = match &app.status_footer {
+                            FooterStatus::Idle(message) if silent => message,
+                            FooterStatus::Failed(message) if !silent => message,
+                            other => panic!("wrong refusal footer: {other:?}"),
+                        };
+                        assert_eq!(message.as_ref(), Msg::AdviceConflictsRepositoryBusy.t());
+                    });
+                });
+                let refused = read_oplog_tail_for_repo(repo, 100).len();
+                assert_eq!(refused, before + usize::from(!silent));
+                app.update(cx, |app, cx| {
+                    app.set_lang(
+                        if language == Lang::En {
+                            Lang::Ja
+                        } else {
+                            Lang::En
+                        },
+                        cx,
+                    );
+                });
+                wait_idle(cx, app);
+                std::fs::write(repo.join("footer-retry.txt"), "retry\n").unwrap();
+                app.update(cx, |app, cx| {
+                    if stage {
+                        app.do_stage_file_by_path(
+                            app.active_session().unwrap(),
+                            "footer-retry.txt".into(),
+                            cx,
+                        );
+                    } else {
+                        assert!(app.fetch_async_for(true, None, cx));
+                    }
+                    assert!(
+                        matches!(&app.status_footer, FooterStatus::Idle(message)
+                        if message.is_empty()),
+                        "admission must retire the busy claim"
+                    );
+                });
+                wait_idle(cx, app);
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    assert!(!state.app_sessions.has_leases());
+                    assert!(matches!(&state.status_footer, FooterStatus::Idle(message)
+                        if message.is_empty()));
+                });
+                let entries = read_oplog_tail_for_repo(repo, 100);
+                assert!(entries
+                    .iter()
+                    .all(|entry| entry.op != "conflict-write-admission"));
+                assert_eq!(
+                    entries.len(),
+                    refused + usize::from(!stage),
+                    "only fetch completion records; synchronous stage adds no success receipt"
+                );
+                assert_eq!(
+                    entries
+                        .iter()
+                        .filter(|entry| entry.op == "fetch"
+                            && matches!(entry.outcome, OpOutcome::Success { .. }))
+                        .count(),
+                    successes + usize::from(!stage),
+                    "the admitted fetch must finish successfully"
+                );
+                if stage {
+                    assert!(!git_fixture::git_output(
+                        repo,
+                        &["diff", "--cached", "--", "footer-retry.txt"],
+                    )
+                    .is_empty());
+                }
+            }
+        }
+        for footer in [
+            FooterStatus::Idle("unrelated idle information".into()),
+            FooterStatus::Failed("unrelated failure information".into()),
+            FooterStatus::Success(Msg::AdviceConflictsRepositoryBusy.t().into()),
+        ] {
+            let expected = format!("{footer:?}");
+            app.update(cx, |app, cx| {
+                app.status_footer = footer;
+                if stage {
+                    app.do_stage_file_by_path(
+                        app.active_session().unwrap(),
+                        "footer-retry.txt".into(),
+                        cx,
+                    );
+                } else {
+                    assert!(app.fetch_async_for(true, None, cx));
+                }
+                assert_eq!(format!("{:?}", app.status_footer), expected);
+            });
+            wait_idle(cx, app);
+        }
+    }
+    app.update(cx, |app, cx| app.set_lang(previous, cx));
 }
 
 pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
@@ -219,6 +361,23 @@ pub fn scenario_repository_lock_stage_receipt(cx: &mut VisualTestAppContext) {
             );
         });
     });
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+    });
+    wait_idle(cx, &app);
+    app.update(cx, |app, cx| {
+        app.do_stage_all(app.active_session().unwrap(), cx);
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(message)
+            if message.is_empty()),
+            "successful Stage All must clear the refusal"
+        );
+    });
+    wait_idle(cx, &app);
+    assert!(
+        !git_fixture::git_output(&repo, &["diff", "--cached", "--", "lock-stage.txt"],).is_empty()
+    );
+    assert_one_refusal(&repo, before, "stage");
     unmount(cx, app, window);
 }
 

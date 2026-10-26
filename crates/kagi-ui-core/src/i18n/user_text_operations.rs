@@ -67,12 +67,20 @@ fn outcome_preview(op: &str, reason: &str, outcome: PreviewOutcome) -> String {
             "結果を確認できませんでした。まだ再試行しないでください。",
         ),
     };
-    let cause = FailureCause::classify(reason).text();
+    let failure_cause = FailureCause::classify(reason);
+    let cause = failure_cause.text();
     let details = text(
         "See the Operation Log for details.",
         "詳しくは操作ログを確認してください。",
     );
-    format!("{label}: {status}{cause} {details}")
+    let retry = match (outcome, failure_cause) {
+        (PreviewOutcome::Failed, FailureCause::RepositoryBusy) => text(
+            " Try again after it finishes.",
+            "完了してから再試行してください。",
+        ),
+        _ => "",
+    };
+    format!("{label}: {status}{cause}{retry} {details}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,7 +217,10 @@ impl FailureCause {
                 "The staging area is locked. Check for another Git operation before continuing.",
                 "ステージ領域がロックされています。続行する前に別の Git 操作が実行中でないか確認してください。",
             ),
-            Self::RepositoryBusy => crate::i18n::Msg::AdviceConflictsRepositoryBusy.t(),
+            Self::RepositoryBusy => text(
+                "Another Kagi window is operating on this repository.",
+                "別の Kagi ウィンドウがこの repository を操作中です。",
+            ),
             Self::Untrusted => text(
                 "The repository is not trusted for changes. Review its trust settings.",
                 "変更が許可されていないリポジトリです。信頼設定を確認してください。",
@@ -461,6 +472,7 @@ mod tests {
                 FailureCause::Network,
                 FailureCause::Authentication,
                 FailureCause::IndexLocked,
+                FailureCause::RepositoryBusy,
                 FailureCause::Untrusted,
                 FailureCause::Refused,
             ] {
@@ -478,6 +490,43 @@ mod tests {
                 FailureCause::Authentication,
             );
             assert!(!failure_preview("fetch", &authentication).contains("/private/secret"));
+        }
+        set_lang_no_persist(previous);
+    }
+
+    #[test]
+    fn repository_busy_previews_explain_when_a_refused_write_can_be_retried() {
+        use crate::i18n::{set_lang_no_persist, tests::LOCK};
+        let _guard = LOCK.lock();
+        let previous = lang();
+        for (language, expected, retry) in [
+            (
+                Lang::En,
+                "Another Kagi window is operating on this repository. Try again after it finishes.",
+                "Try again after it finishes.",
+            ),
+            (
+                Lang::Ja,
+                "別の Kagi ウィンドウがこの repository を操作中です。完了してから再試行してください。",
+                "完了してから再試行してください。",
+            ),
+        ] {
+            set_lang_no_persist(language);
+            let reason = crate::i18n::Msg::AdviceConflictsRepositoryBusy.t();
+            assert_eq!(FailureCause::classify(reason), FailureCause::RepositoryBusy);
+            for operation in ["pull", "stage-all", "commit"] {
+                assert!(
+                    failure_preview(operation, reason).contains(expected),
+                    "{operation}: {language:?}"
+                );
+                for shown in [
+                    partial_preview(operation, reason),
+                    unknown_preview(operation, reason),
+                ] {
+                    assert!(shown.contains(FailureCause::RepositoryBusy.text()), "{shown}");
+                    assert!(!shown.contains(retry), "{shown}");
+                }
+            }
         }
         set_lang_no_persist(previous);
     }

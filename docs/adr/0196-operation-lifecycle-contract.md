@@ -144,10 +144,16 @@ repository lock の再入を禁止して**既存の janitor/reaper** へ共有�
 することはできない。weak entry は残し、既存 outer guard 内の別 child にも同じ fd を
 保持させるため、一つの group の停止で別の生存 writer の lock を解放しない。
 
-janitor は Sessions reconciliation と同じ `proc::supervisor::group_stopped` を使い、
-group の停止が証明されるまで lock を保持する。親 CLI の return / reap や stdout /
+共有所有権の移譲は process wait または output collection が Err の未確定実行に限る
+（`!group_stopped && (status.is_err() || io.is_err())`）。stdio を閉じた background
+helper を post-commit hook が残しても、CLI と collector が正常終了した既知の Success
+は本 ADR の settlement 表どおり解放し、repository admission だけを quarantine しない。
+その helper の group handle は既存の sweeper が引き続き管理する。
+
+janitor は Sessions reconciliation と共通の group-liveness evidence を用い、
+実行中の supervisor job を retire しない `proc::group_alive` で空を確認するまで lock を保持する。親 CLI の return / reap や stdout /
 stderr の EOF だけでは解放しない。停止証明が得られなければ fail-closed のままであり、
-timeout で admission を再開しない。repository lock の解放は process の停止証明に、
+timeout で admission を再開しない。quarantine 中の repository lock の解放は process の停止証明に、
 Sessions lease の解放と reconcile の解決は既存の lifecycle 条件にそれぞれ従う。
 この保護は監視する Kagi process が存続し、writer が監視対象 group 内にいることを
 前提とする。Kagi の強制終了や group を脱出した任意の外部 writer まで保証しない。
@@ -787,8 +793,12 @@ Directory/file recovery snapshots are separate from this draft barrier: their re
 write follows repository acquisition and preflight while the lock remains held,
 before destructive index/worktree changes.
 
-Contention is `Refused`, never `Failed` or `Unknown`: durable English blocker
-\"Another Kagi window is operating on this repository\" and Japanese presentation
-\"別の Kagi ウィンドウがこの repository を操作中です\" use existing plan/refusal,
-Operation Log and bounded-toast delivery. No new modal or retry queue is added.
+Contention is `Refused`, never `Failed` or `Unknown`: the durable English blocker
+remains "Another Kagi window is operating on this repository". Display-only
+refusal previews add punctuation and explain that the user can retry after that
+window finishes, in EN/JA; Unknown/Partial previews do not acquire retry advice.
+Successful generic/stage admission clears only an Idle/Failed footer containing
+that repository-busy cause (including a localized staging preview), retaining
+unrelated statuses. Operation Log and bounded-toast delivery remain unchanged;
+no new modal or retry queue is added.
 

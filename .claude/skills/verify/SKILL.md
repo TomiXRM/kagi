@@ -14,6 +14,17 @@ Choose the smallest evidence lane that proves the change. Tier A is deterministi
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
 
+For the advisory conflict formal guard, run
+`mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.
+The runner pins stable TLC v1.7.4 and checks its SHA-256 before every Java launch;
+see `formal/conflict/README.md` for the source, cache and upgrade policy. This TLC
+version leaves SpecTE generation disabled by default and does not accept
+`-noGenerateSpecTE`; concurrent lifecycle JVMs use isolated temporary directories
+to avoid collisions while extracting its standard modules. A pin upgrade must
+preserve every full-suite expected verdict,
+all negative controls, the pure properties and saved-trace replay, not only a
+focused lifecycle check.
+
 **Read this before driving the GUI.** Two rules are load-bearing and easy to miss by
 skimming, so they are stated here as well as where they apply:
 

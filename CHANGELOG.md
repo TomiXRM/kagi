@@ -29,6 +29,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Pin the advisory conflict formal runner to stable TLC v1.7.4 with a verified SHA-256 and version-specific cache, replacing the mutable v1.8.0 prerelease asset without weakening model expectations or hash-before-execution checks.
 - Complete both-deleted/renamed conflicts with an explicit confirmed deletion, and offer deleted-side versus modified-side choices for one-sided conflicts. Preserve renamed destinations instead of attempting to select nonexistent blobs. (#1734)
 - Resolve Git-started directory/file conflicts at their original namespace: keep the directory or restore the file, remove the parked `~HEAD` artifact, and show the exact affected paths in the standard confirmation sheet. Verify both index and worktree outcomes; preserve recovery and refuse stale plans. (#1735)
   - Add deletion/parked-namespace formal obligations and independently red missing-route, empty-blob, parked-path, suffix-attribution and leftover-artifact controls.

@@ -40,13 +40,36 @@ mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/ru
 
 Python >=3.11 and an empty third-party dependency set are declared in
 `pyproject.toml`/`uv.lock`; Z3 is not used. The launcher downloads the pinned
-[TLC v1.8.0 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.8.0)
-to `${XDG_CACHE_HOME:-$HOME/.cache}/kagi-formal-conflict/v1.8.0/tla2tools.jar`
+[TLC v1.7.4 stable release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4)
+to `${XDG_CACHE_HOME:-$HOME/.cache}/kagi-formal-conflict/v1.7.4/tla2tools.jar`
 on first use and verifies `tla/TLA2TOOLS.sha256` **on every run**, including cached
 bytes, before launching Java. The jar is never committed. A bad cached hash is a
 tooling failure; remove the reported cache file and rerun. First use requires
 network access; a verified cached release runs offline. No mise dependency is
 required by CI or by the harness itself.
+
+The stable versioned asset replaces the rolling **v1.8.0 prerelease**, whose
+`tla2tools.jar` was replaced upstream on 2026-10-26. Maven Central has no fixed
+`org.lamport:tla2tools` release (upstream documents snapshots), and the nightly
+archive was unavailable when selecting this pin. v1.7.4 is a published stable
+release, not a rolling/nightly alias; its SHA-256 is
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+GitHub does not mark this older release immutable, so the committed checksum,
+not a server-side immutability guarantee, enforces the exact executable bytes:
+any upstream replacement fails closed before Java runs. Upgrade the release
+and checksum together only after comparing the complete suite's verdicts.
+TLC v1.7.4 leaves SpecTE generation off by default; neither invocation passes
+the newer `-noGenerateSpecTE` option, which that stable release does not support.
+Each concurrent lifecycle JVM gets its own temporary directory because v1.7.4
+extracts standard modules under shared filenames in `java.io.tmpdir`.
+The specs, bounds, assertions, expected verdicts and negative controls are unchanged.
+
+The 2026-10-27 pin comparison against main `b2d3e91` ran the full suite with
+the previously verified v1.8.0 jar (`d15655ee…`) and this v1.7.4 jar. Both produced
+93 matching lifecycle verdicts (48 HOLD / 45 REFUTE; 81,356 summed distinct
+states), all 43 negative controls REFUTE (15,619 summed states), 40 pure properties
+over 1,695,747 evaluations with 37 detected pure mutants, and 34 replayed
+projections / 46 logs with the forged-Skip control rejected (TLC exit 12).
 
 The one command runs both baselines and demands that every deliberate broken
 variant is red. Full-suite JSON is `summary.json`; detailed traces/logs are in

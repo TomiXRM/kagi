@@ -108,6 +108,8 @@ unchanged index state alone is not proof if a watcher refresh dismissed it.
 Path rows use the shared fixed-height dense row around `modal_path_text`; its
 horizontal flex sizing must never collapse a vertically stacked filename.
 The path scroller reserves its capped row-count height without flex compression.
+Path and group-label line boxes use that same scaled row height; inherited
+typography must not overflow the viewport at fractional UI zoom.
 The native regression checks filename bounds inside the path scroller. DD has
 no absent-side preview or instruction to choose a nonexistent side.
 Reference: macOS Finder confirmation hierarchy, without importing mobile

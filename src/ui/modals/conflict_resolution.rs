@@ -173,6 +173,7 @@ pub(crate) fn render(
                 .flex_shrink_0()
                 .h(ui::theme::scaled_px(MODAL_LIST_ROW_H))
                 .text_sm()
+                .line_height(ui::theme::scaled_px(MODAL_LIST_ROW_H))
                 .child(label.t()),
         );
         for path in group.iter().filter(visible) {
@@ -190,10 +191,10 @@ pub(crate) fn render(
                     .w_full()
                     .flex()
                     .items_center()
-                    .child(modal_path_text(SharedString::from(format!(
-                        "{}{suffix}",
-                        path.display()
-                    )))),
+                    .child(
+                        modal_path_text(SharedString::from(format!("{}{suffix}", path.display())))
+                            .line_height(ui::theme::scaled_px(MODAL_LIST_ROW_H)),
+                    ),
             );
         }
     }
@@ -204,6 +205,7 @@ pub(crate) fn render(
                 .flex_shrink_0()
                 .h(ui::theme::scaled_px(MODAL_LIST_ROW_H))
                 .text_sm()
+                .line_height(ui::theme::scaled_px(MODAL_LIST_ROW_H))
                 .child(Msg::ConflictMovePaths.t()),
         );
         for (source, destination) in &modal.changes.moves {
@@ -214,11 +216,14 @@ pub(crate) fn render(
                     .w_full()
                     .flex()
                     .items_center()
-                    .child(modal_path_text(SharedString::from(format!(
-                        "{} → {}",
-                        source.display(),
-                        destination.display()
-                    )))),
+                    .child(
+                        modal_path_text(SharedString::from(format!(
+                            "{} → {}",
+                            source.display(),
+                            destination.display()
+                        )))
+                        .line_height(ui::theme::scaled_px(MODAL_LIST_ROW_H)),
+                    ),
             );
         }
     }

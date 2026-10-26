@@ -69,6 +69,7 @@ fn image_scale(extent: (u32, u32), viewport: (f32, f32)) -> f32 {
 }
 
 type ImageViewports = std::rc::Rc<std::cell::Cell<[Option<gpui::Bounds<gpui::Pixels>>; 2]>>;
+type SizedImage = (std::sync::Arc<gpui::RenderImage>, (u32, u32));
 
 pub(crate) fn side_pair(
     pair: SidePair,
@@ -289,7 +290,7 @@ fn body(
 /// Both body rectangles have been measured before this trailing overlay prepaints.
 /// The upstream Img owns animation and GPU handles; no second decoder or timer.
 fn image_overlay(
-    images: [Option<(std::sync::Arc<gpui::RenderImage>, (u32, u32))>; 2],
+    images: [Option<SizedImage>; 2],
     labels: [SharedString; 2],
     probes: [&'static str; 2],
     extent: (u32, u32),

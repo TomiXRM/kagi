@@ -132,7 +132,13 @@ impl KagiApp {
         // resolved visibility (#1001). Whole-workspace takeovers stay instant.
         let motion_now = kagi_ui_core::motion::now();
         let motion_instant = kagi_ui_core::motion::instant();
-        let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
+        // #1790: one sidebar for Graph, PRs and Issues, one toggle, one motion.
+        let sidebar_shown = matches!(
+            layout.left,
+            workspace::LeftPane::Navigator
+                | workspace::LeftPane::PrList
+                | workspace::LeftPane::IssueList
+        );
         self.panel_motion.sync_sidebar(
             sidebar_shown,
             self.sidebar.visible,

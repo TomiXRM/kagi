@@ -2352,17 +2352,13 @@ impl KagiApp {
                     if let Some(entity) = self.ui().conflict.as_ref() {
                         entity.update(cx, |view, cx| view.toggle_sidebar(window, cx));
                     }
-                } else if self.pr_mode_visible()
-                    && self.pr_mode().is_some_and(|m| m.active.is_some())
-                {
-                    self.toggle_pr_companion(super::pr_layout::Companion::Navigator, window);
                 } else {
                     self.sidebar.visible = !self.sidebar.visible;
                 }
                 klog!("menu: sidebar_visible={}", self.sidebar.visible);
             }
             "view.togglePrSwimlane" => {
-                self.toggle_pr_companion(super::pr_layout::Companion::Swimlane, window);
+                self.toggle_pr_swimlane(window);
             }
             "view.toggleTerminal" => {
                 self.toggle_bottom_panel(window, cx);

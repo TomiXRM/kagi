@@ -53,9 +53,9 @@ fn geometry(
         theme::compact_threshold_rem(),
     );
     names.push("pr-swimlane-toggle");
-    e2e::clear_control_bounds(win.window_id(), "pr-navigator-toggle");
+    e2e::clear_control_bounds(win.window_id(), "sidebar-toggle");
     if !compact {
-        names.push("pr-navigator-toggle");
+        names.push("sidebar-toggle");
     }
     for name in &names {
         e2e::clear_control_bounds(win.window_id(), name);
@@ -109,8 +109,8 @@ fn companion_ax(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
         (
             "pr-mode-left-pane",
             "pr-companion-navigator",
-            Msg::PrShowNavigator,
-            Msg::PrHideNavigator,
+            Msg::MenuShowSidebar,
+            Msg::MenuHideSidebar,
         )
     };
     let visible = e2e::control_bounds(win.window_id(), pane).is_some()
@@ -237,8 +237,8 @@ fn retained(
         &[
             "pr-swimlane-toggle",
             "pr-swimlane-toggle",
-            "pr-navigator-toggle",
-            "pr-navigator-toggle",
+            "sidebar-toggle",
+            "sidebar-toggle",
         ]
     };
     crate::native_ax::activate(cx);
@@ -264,7 +264,7 @@ fn retained(
     }
     if compact {
         assert!(
-            e2e::control_bounds(win.window_id(), "pr-navigator-toggle").is_none(),
+            e2e::control_bounds(win.window_id(), "sidebar-toggle").is_none(),
             "compact uses one navigator launcher, not a competing chrome toggle"
         );
         let launcher = bounds(win, "compact-rail-prs");

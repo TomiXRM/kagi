@@ -1448,3 +1448,10 @@ Containment/nonoverlap, actual Cancel activation and unchanged repository
 state are required in both confirmation stages, including expanded recovery.
 Native geometry is not a substitute for real-window or human visual review.
 
+## Amendment — 2026-10-26: one titlebar centre line (#1790)
+
+The main window's traffic lights move from (9,9) to (9,11). Measured on a 2×
+window, (9,9) put their centre at y≈15.75 in the 36px row while the document
+tabs sit at y=18, so "centred" above was not true. (9,11) puts the lights, the
+new sidebar toggle after them and the tabs on one centre line. Settings keeps
+(9,16).

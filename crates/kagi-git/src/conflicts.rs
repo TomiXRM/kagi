@@ -547,37 +547,90 @@ fn collect_resolved_files(
     if listed.is_empty() {
         return Vec::new();
     }
-    let mut resolved: Vec<ResolvedConflictFile> = listed
-        .iter()
-        .filter_map(|listed_path| {
-            let mut path = bytes_to_pathbuf(listed_path)?;
-            // Git lists the parked file, but KeepFile stages its original
-            // name. This is presentation evidence only, never write authority.
-            let entry = if let Some(entry) = index.get_path(&path, 0) {
-                entry
-            } else {
-                if (1..=3).any(|stage| index.get_path(&path, stage).is_some()) {
-                    return None;
-                }
-                let separator = listed_path.iter().rposition(|byte| *byte == b'~')?;
-                if separator + 1 == listed_path.len() {
-                    return None;
-                }
-                path = bytes_to_pathbuf(&listed_path[..separator])?;
-                index.get_path(&path, 0)?
-            };
-            if unmerged.iter().any(|file| file.path == path) {
-                return None;
-            }
-            Some(ResolvedConflictFile {
+    let mut resolved = Vec::new();
+    for listed_path in &listed {
+        let Some(path) = bytes_to_pathbuf(listed_path) else {
+            continue;
+        };
+        if unmerged.iter().any(|file| file.path == path) {
+            continue;
+        }
+        if let Some(entry) = index.get_path(&path, 0) {
+            resolved.push(ResolvedConflictFile {
                 path,
                 oid: entry.id.to_string(),
-            })
-        })
-        .collect();
+            });
+            continue;
+        }
+        let Some((original, separator)) = resolved_parked_original(repo, index, listed_path, &path)
+        else {
+            continue;
+        };
+        if unmerged.iter().any(|file| file.path.starts_with(&original)) {
+            continue;
+        }
+        if let Some(entry) = index.get_path(&original, 0) {
+            resolved.push(ResolvedConflictFile {
+                path: original,
+                oid: entry.id.to_string(),
+            });
+        } else {
+            // Add/add D/F leaves directory children at stage 0; Git lists
+            // only the parked file, so the children also need attribution.
+            let prefix = &listed_path[..separator];
+            for entry in index.iter().filter(|entry| {
+                entry.flags & 0x3000 == 0
+                    && entry
+                        .path
+                        .strip_prefix(prefix)
+                        .is_some_and(|suffix| suffix.starts_with(b"/"))
+            }) {
+                let Some(path) = bytes_to_pathbuf(&entry.path) else {
+                    continue;
+                };
+                resolved.push(ResolvedConflictFile {
+                    path,
+                    oid: entry.id.to_string(),
+                });
+            }
+        }
+    }
     resolved.sort_by(|a, b| a.path.cmp(&b.path));
     resolved.dedup_by(|a, b| a.path == b.path);
     resolved
+}
+
+/// Read-only presentation evidence after the parked entry has been removed.
+/// Side trees distinguish Git's D/F artifact from an ordinary tilde filename.
+fn resolved_parked_original(
+    repo: &Repository,
+    index: &git2::Index,
+    listed_path: &[u8],
+    parked: &Path,
+) -> Option<(PathBuf, usize)> {
+    if (1..=3).any(|stage| index.get_path(parked, stage).is_some()) {
+        return None;
+    }
+    let separator = listed_path.iter().rposition(|byte| *byte == b'~')?;
+    if separator + 1 == listed_path.len() {
+        return None;
+    }
+    let original = bytes_to_pathbuf(&listed_path[..separator])?;
+    let current = repo.head().ok()?.peel_to_tree().ok()?;
+    let incoming = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"]
+        .into_iter()
+        .find_map(|name| repo.revparse_single(name).ok()?.peel_to_tree().ok())?;
+    if current.get_path(parked).is_ok() || incoming.get_path(parked).is_ok() {
+        return None;
+    }
+    let current_kind = current.get_path(&original).ok()?.kind();
+    let incoming_kind = incoming.get_path(&original).ok()?.kind();
+    matches!(
+        (current_kind, incoming_kind),
+        (Some(git2::ObjectType::Blob), Some(git2::ObjectType::Tree))
+            | (Some(git2::ObjectType::Tree), Some(git2::ObjectType::Blob))
+    )
+    .then_some((original, separator))
 }
 
 /// Bounded read of `MERGE_MSG` only when it is a regular file: a FIFO would

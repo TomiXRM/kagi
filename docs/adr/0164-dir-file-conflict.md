@@ -95,8 +95,9 @@ the **original** path and stages that original path. Both remove the parked
 artifact. Verification checks the index and worktree, not merely that a stage-0
 entry exists. Unrelated files and lookalike suffix names are outside the plan.
 Saved-file presentation maps a removed Git parking name in `MERGE_MSG` back to
-the original stage-0 file. Existing directory-side resolved entries remain
-deduplicated; this read-only mapping does not authorize any mutation.
+the original stage-0 file. Retained directory children also appear when Git listed
+only the parking name, with duplicate paths removed. Source trees reject ordinary
+tilde filenames; this read-only mapping does not authorize any mutation.
 Plans refuse unsupported gitlink/special modes and nested repository metadata
 before mutation: the ordinary worktree snapshot cannot preserve a nested object
 store, and recovery capture may fail even for keep-directory. Both choices refuse

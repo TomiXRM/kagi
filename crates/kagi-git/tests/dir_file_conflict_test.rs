@@ -38,7 +38,7 @@ fn df_conflict(checkout: &str, other: &str) -> (TempDir, Repository) {
 }
 
 fn df_conflict_with_cli(checkout: &str, other: &str, cli: bool) -> (TempDir, Repository) {
-    df_conflict_options(checkout, other, cli, false, false)
+    df_conflict_options(checkout, other, cli, false, false, cli)
 }
 
 fn df_conflict_options(
@@ -47,6 +47,7 @@ fn df_conflict_options(
     cli: bool,
     nested: bool,
     crlf: bool,
+    base_child: bool,
 ) -> (TempDir, Repository) {
     let td = TempDir::new().unwrap();
     let d = td.path();
@@ -57,9 +58,11 @@ fn df_conflict_options(
         std::fs::write(d.join(".gitattributes"), b"thing/** text eol=crlf\n").unwrap();
     }
     std::fs::write(d.join("base.txt"), b"base\n").unwrap();
-    if cli {
+    if base_child {
         std::fs::create_dir_all(d.join(directory)).unwrap();
         std::fs::write(d.join(child), b"base child\n").unwrap();
+    }
+    if cli {
         std::fs::write(
             d.join("thing~tracked-lookalike"),
             b"unrelated tracked file\n",
@@ -70,7 +73,7 @@ fn df_conflict_options(
     git(d, &["commit", "-qm", "base"]);
 
     git(d, &["checkout", "-q", "-b", "file-side"]);
-    if cli {
+    if base_child {
         git(d, &["rm", "-r", "thing"]);
     }
     std::fs::write(d.join("thing"), b"i am a file\n").unwrap();
@@ -477,73 +480,101 @@ fn cli_parked_namespace_resolves_both_directions_and_choices() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    for (current, incoming) in [("file-side", "dir-side"), ("dir-side", "file-side")] {
-        for choice in [DirFileChoice::KeepDirectory, DirFileChoice::KeepFile] {
-            let (td, repo) = df_conflict_with_cli(current, incoming, true);
-            let root = td.path();
-            std::fs::write(root.join("thing~unrelated"), b"leave this alone\n").unwrap();
-            let session = detect_conflict_session(&repo).unwrap();
-            assert_eq!(session.files.len(), 1);
-            assert_eq!(session.files[0].path, Path::new("thing"));
-            assert_eq!(session.files[0].kind, ConflictKind::DirFile);
-            let plan = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
-            assert_ne!(plan.file_path, plan.path);
-            assert!(plan.child_entries.iter().any(|e| e.stage == 1));
-            assert!(plan
-                .child_entries
-                .iter()
-                .any(|e| e.stage == 2 || e.stage == 3));
-            assert!(plan.removal_paths.contains(&plan.file_path));
-            execute_dir_file_resolution(&repo, root, &plan).unwrap();
-            let mut index = repo.index().unwrap();
-            assert!(!index.has_conflicts());
-            assert!(!root.join(&plan.file_path).exists());
-            assert!(!root.join("thing~HEAD").exists());
-            for stage in 0..=3 {
-                assert!(index.get_path(&plan.file_path, stage).is_none());
-            }
-            match choice {
-                DirFileChoice::KeepFile => {
-                    let file = index.get_path(Path::new("thing"), 0).unwrap();
-                    assert_eq!(file.id, plan.file_oid);
-                    assert_eq!(std::fs::read(root.join("thing")).unwrap(), b"i am a file\n");
-                    assert!(index.get_path(Path::new("thing/child"), 0).is_none());
+    for base_child in [false, true] {
+        for (current, incoming) in [("file-side", "dir-side"), ("dir-side", "file-side")] {
+            for choice in [DirFileChoice::KeepDirectory, DirFileChoice::KeepFile] {
+                let (td, repo) =
+                    df_conflict_options(current, incoming, true, false, false, base_child);
+                let root = td.path();
+                std::fs::write(root.join("thing~unrelated"), b"leave this alone\n").unwrap();
+                let session = detect_conflict_session(&repo).unwrap();
+                assert_eq!(session.files.len(), 1);
+                assert_eq!(session.files[0].path, Path::new("thing"));
+                assert_eq!(session.files[0].kind, ConflictKind::DirFile);
+                let plan = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
+                assert_ne!(plan.file_path, plan.path);
+                assert_eq!(plan.child_entries.iter().any(|e| e.stage == 1), base_child);
+                assert!(plan.child_entries.iter().any(|e| {
+                    if base_child {
+                        e.stage == 2 || e.stage == 3
+                    } else {
+                        e.stage == 0
+                    }
+                }));
+                assert!(plan.removal_paths.contains(&plan.file_path));
+                execute_dir_file_resolution(&repo, root, &plan).unwrap();
+                let mut index = repo.index().unwrap();
+                assert!(!index.has_conflicts());
+                assert!(!root.join(&plan.file_path).exists());
+                assert!(!root.join("thing~HEAD").exists());
+                for stage in 0..=3 {
+                    assert!(index.get_path(&plan.file_path, stage).is_none());
                 }
-                DirFileChoice::KeepDirectory => {
-                    assert_eq!(
-                        std::fs::read(root.join("thing/child")).unwrap(),
-                        b"inside dir\n"
-                    );
-                    assert!(index.get_path(Path::new("thing/child"), 0).is_some());
-                    assert!(index.get_path(Path::new("thing"), 0).is_none());
+                match choice {
+                    DirFileChoice::KeepFile => {
+                        let file = index.get_path(Path::new("thing"), 0).unwrap();
+                        assert_eq!(file.id, plan.file_oid);
+                        assert_eq!(std::fs::read(root.join("thing")).unwrap(), b"i am a file\n");
+                        assert!(index.get_path(Path::new("thing/child"), 0).is_none());
+                    }
+                    DirFileChoice::KeepDirectory => {
+                        assert_eq!(
+                            std::fs::read(root.join("thing/child")).unwrap(),
+                            b"inside dir\n"
+                        );
+                        assert!(index.get_path(Path::new("thing/child"), 0).is_some());
+                        assert!(index.get_path(Path::new("thing"), 0).is_none());
+                    }
                 }
+                let resolved = detect_conflict_session(&repo).unwrap();
+                assert!(resolved.files.is_empty());
+                let expected = match choice {
+                    DirFileChoice::KeepFile => Path::new("thing"),
+                    DirFileChoice::KeepDirectory => Path::new("thing/child"),
+                };
+                assert_eq!(resolved.resolved.len(), 1, "{resolved:?}");
+                assert_eq!(resolved.resolved[0].path, expected);
+                assert_eq!(
+                    resolved.resolved[0].oid,
+                    index.get_path(expected, 0).unwrap().id.to_string()
+                );
+                index.write_tree().unwrap();
+                assert_eq!(
+                    std::fs::read(root.join("thing~unrelated")).unwrap(),
+                    b"leave this alone\n"
+                );
+                assert!(index
+                    .get_path(Path::new("thing~tracked-lookalike"), 0)
+                    .is_some());
+                assert_eq!(
+                    std::fs::read(root.join("thing~tracked-lookalike")).unwrap(),
+                    b"unrelated tracked file\n"
+                );
             }
-            let resolved = detect_conflict_session(&repo).unwrap();
-            assert!(resolved.files.is_empty());
-            let expected = match choice {
-                DirFileChoice::KeepFile => Path::new("thing"),
-                DirFileChoice::KeepDirectory => Path::new("thing/child"),
-            };
-            assert_eq!(resolved.resolved.len(), 1, "{resolved:?}");
-            assert_eq!(resolved.resolved[0].path, expected);
-            assert_eq!(
-                resolved.resolved[0].oid,
-                index.get_path(expected, 0).unwrap().id.to_string()
-            );
-            index.write_tree().unwrap();
-            assert_eq!(
-                std::fs::read(root.join("thing~unrelated")).unwrap(),
-                b"leave this alone\n"
-            );
-            assert!(index
-                .get_path(Path::new("thing~tracked-lookalike"), 0)
-                .is_some());
-            assert_eq!(
-                std::fs::read(root.join("thing~tracked-lookalike")).unwrap(),
-                b"unrelated tracked file\n"
-            );
         }
     }
+}
+
+#[test]
+fn removed_ordinary_tilde_path_does_not_attribute_a_saved_namespace() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (td, repo) = df_conflict_with_cli("file-side", "dir-side", true);
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    execute_dir_file_resolution(&repo, td.path(), &plan).unwrap();
+    let mut index = repo.index().unwrap();
+    index
+        .remove_path(Path::new("thing~tracked-lookalike"))
+        .unwrap();
+    index.write().unwrap();
+    std::fs::write(
+        repo.path().join("MERGE_MSG"),
+        b"Merge\n\n# Conflicts:\n#\tthing~tracked-lookalike\n",
+    )
+    .unwrap();
+    assert!(detect_conflict_session(&repo).unwrap().resolved.is_empty());
 }
 
 #[test]
@@ -702,7 +733,7 @@ fn keep_directory_verifies_filtered_crlf_checkout() {
         return;
     }
     for cli in [false, true] {
-        let (td, repo) = df_conflict_options("file-side", "dir-side", cli, false, true);
+        let (td, repo) = df_conflict_options("file-side", "dir-side", cli, false, true, cli);
         let plan =
             plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory)
                 .unwrap();
@@ -726,7 +757,7 @@ fn nested_namespace_choices_do_not_follow_internal_or_external_symlinks() {
     }
     for (current, incoming) in [("file-side", "dir-side"), ("dir-side", "file-side")] {
         for choice in [DirFileChoice::KeepFile, DirFileChoice::KeepDirectory] {
-            let (td, repo) = df_conflict_options(current, incoming, true, true, false);
+            let (td, repo) = df_conflict_options(current, incoming, true, true, false, true);
             let outside = TempDir::new().unwrap();
             std::fs::write(outside.path().join("treasure"), b"outside\n").unwrap();
             std::os::unix::fs::symlink(outside.path(), td.path().join("thing/a/b/outside"))

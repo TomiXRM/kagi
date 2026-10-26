@@ -118,20 +118,14 @@ fn wait_plan(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, sheet: Sheet)
         cx.advance_clock(Duration::from_millis(300));
         cx.run_until_parked();
         if cx.read(|cx| match sheet {
-            Sheet::Branch => app
-                .read(cx)
-                .create_branch_modal()
-                .unwrap()
-                .plan
-                .plan()
-                .is_some(),
-            Sheet::Worktree => app
-                .read(cx)
-                .create_worktree_modal()
-                .unwrap()
-                .plan
-                .plan()
-                .is_some(),
+            Sheet::Branch => {
+                let modal = app.read(cx).create_branch_modal().unwrap();
+                !modal.plan_stale && modal.plan.plan().is_some()
+            }
+            Sheet::Worktree => {
+                let modal = app.read(cx).create_worktree_modal().unwrap();
+                !modal.plan_stale && modal.plan.plan().is_some()
+            }
         }) {
             return;
         }
@@ -185,6 +179,70 @@ pub fn scenario_create_branch_feedback(cx: &mut VisualTestAppContext) {
                 alert(cx, window, Msg::BranchNameEmpty.t(), false);
                 disabled(sheet, Msg::BranchNameEmpty.t());
                 sheet.focused(cx, &app, window);
+                if matches!(sheet, Sheet::Worktree) {
+                    let previous = cx.read(|cx| {
+                        app.read(cx)
+                            .create_worktree_modal()
+                            .unwrap()
+                            .plan
+                            .plan()
+                            .unwrap()
+                            .clone()
+                    });
+                    cx.update_window(window, |_, window, cx| {
+                        let input = app
+                            .read(cx)
+                            .create_worktree_modal()
+                            .unwrap()
+                            .path_state
+                            .clone()
+                            .unwrap();
+                        input.update(cx, |input, cx| {
+                            input.set_value("../edited-path", window, cx)
+                        });
+                    })
+                    .unwrap();
+                    paint(cx, window);
+                    cx.read(|cx| {
+                        let modal = app.read(cx).create_worktree_modal().unwrap();
+                        assert!(
+                            modal.plan_stale,
+                            "path-only edits stay debounced even with an empty name"
+                        );
+                        assert!(std::sync::Arc::ptr_eq(
+                            &previous,
+                            modal.plan.plan().unwrap()
+                        ));
+                    });
+                    wait_plan(cx, &app, sheet);
+                    paint(cx, window);
+                }
+                // Measure both the first keystroke and edits after a ready plan.
+                // The prior preview stays mounted throughout the debounce.
+                for text in ["feature/demo", "x"] {
+                    let card = e2e::control_bounds(window.window_id(), "modal-card").unwrap();
+                    let field =
+                        e2e::control_bounds(window.window_id(), "input-modal-field").unwrap();
+                    cx.simulate_input(window, text);
+                    paint(cx, window);
+                    assert_eq!(
+                        e2e::control_bounds(window.window_id(), "modal-card").unwrap(),
+                        card,
+                        "{sheet:?}: typing must not shrink or move the card"
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(window.window_id(), "input-modal-field").unwrap(),
+                        field,
+                        "{sheet:?}: typing must not move the focused field"
+                    );
+                    disabled(sheet, Msg::InputPlanPending.t());
+                    wait_plan(cx, &app, sheet);
+                    paint(cx, window);
+                }
+                click(cx, window, sheet.cancel());
+                sheet.open(cx, &app, &head);
+                wait_plan(cx, &app, sheet);
+                paint(cx, window);
 
                 // No debounce advance or plan wait: Return must explain this frame.
                 cx.simulate_keystrokes(window, "enter");

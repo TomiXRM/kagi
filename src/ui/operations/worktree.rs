@@ -40,6 +40,7 @@ impl KagiApp {
             branch_input,
             branch_name_interacted: false,
             branch_name_composing: false,
+            plan_stale: false,
             branch_state: None, // lazy (render)
             path_input,
             path_state: None, // lazy (render)
@@ -181,6 +182,7 @@ impl KagiApp {
                 let outcome = session_unavailable(i18n::Op::CreateWorktree);
                 if let Some(modal) = self.create_worktree_modal_mut() {
                     modal.plan.replan(outcome);
+                    modal.plan_stale = false;
                 }
                 return;
             }
@@ -210,6 +212,7 @@ impl KagiApp {
         let outcome = plan_outcome(i18n::Op::CreateWorktree, plan_result);
         if let Some(modal) = self.create_worktree_modal_mut() {
             modal.plan.replan(outcome);
+            modal.plan_stale = false;
         }
     }
 

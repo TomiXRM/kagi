@@ -69,6 +69,8 @@ pub struct CreateWorktreeModal {
     pub branch_name_interacted: bool,
     /// Current marked-text state, sampled from the editor for presentation only.
     pub branch_name_composing: bool,
+    /// Either branch or path changed since the retained preview was planned.
+    pub plan_stale: bool,
     /// Real branch-name input entity (lazy; None headless).
     pub branch_state: Option<Entity<InputState>>,
     /// Target worktree path (synced from `path_state`).

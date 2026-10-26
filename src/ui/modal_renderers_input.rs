@@ -133,6 +133,19 @@ fn input_modal_field(
     }
 }
 
+/// A retained preview can describe a prior name while the debounce is pending.
+pub(crate) fn creation_plan_matches_name(plan: Option<&OperationPlan>, input: &str) -> bool {
+    use kagi_domain::plan_note::{BranchTitle, PlanTitle, WorktreeTitle};
+    match plan.map(|plan| &plan.title) {
+        Some(PlanTitle::Branch(BranchTitle::CreateBranch { name, .. }))
+        | Some(PlanTitle::Worktree(WorktreeTitle::CreateBranchCheckout { name, .. })) => {
+            name == input
+        }
+        Some(PlanTitle::Worktree(WorktreeTitle::CreateWorktree { branch, .. })) => branch == input,
+        _ => false,
+    }
+}
+
 /// Both creation sheets keep pristine empty-name requests quiet without
 /// removing the plan's blocker or inventing another branch-name validator.
 pub(crate) fn create_branch_name_reason(

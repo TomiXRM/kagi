@@ -343,6 +343,8 @@ pub struct CreateBranchModal {
     pub branch_name_interacted: bool,
     /// Current marked-text state, sampled from the editor for presentation only.
     pub branch_name_composing: bool,
+    /// Retain the last preview during debounce, but never confirm stale input.
+    pub plan_stale: bool,
     /// Real text-input entity (gpui-component). Created lazily on first
     /// render (needs a Window); `None` in headless paths.
     pub input_state: Option<Entity<InputState>>,

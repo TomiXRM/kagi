@@ -910,10 +910,11 @@ impl KagiApp {
                 .map(|st| st.read(cx).value().to_string())
                 .unwrap_or_default();
             if v != m.input {
+                let name_cleared = v.is_empty();
                 m.input = v;
                 m.branch_name_interacted = true;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(name_cleared, cx);
             }
         }
 
@@ -932,7 +933,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 
@@ -967,6 +968,7 @@ impl KagiApp {
         // Auto-path: while the user has not touched the path field, it
         // follows the branch name (same behaviour as before).
         let mut set_path: Option<String> = None;
+        let mut name_cleared = false;
         if let Some(m) = self.create_worktree_modal_mut() {
             if m.branch_state.is_none() {
                 let initial = m.branch_input.clone();
@@ -1010,6 +1012,7 @@ impl KagiApp {
                 dirty = true;
             }
             if branch_v != m.branch_input {
+                name_cleared = branch_v.is_empty();
                 m.branch_input = branch_v.clone();
                 m.branch_name_interacted = true;
                 if !m.path_touched {
@@ -1021,7 +1024,7 @@ impl KagiApp {
                 m.error = None;
             }
             if dirty && set_path.is_none() {
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(name_cleared, cx);
             }
         }
         if let Some(branch) = set_path {
@@ -1037,7 +1040,7 @@ impl KagiApp {
                     st.update(cx, |s, cx| s.set_value(auto, window, cx));
                 }
             }
-            self.schedule_modal_replan(cx);
+            self.schedule_modal_replan(name_cleared, cx);
         }
 
         // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
@@ -1062,7 +1065,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 
@@ -1085,7 +1088,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 
@@ -1108,7 +1111,7 @@ impl KagiApp {
             if v != m.input {
                 m.input = v;
                 m.error = None;
-                self.schedule_modal_replan(cx);
+                self.schedule_modal_replan(false, cx);
             }
         }
 

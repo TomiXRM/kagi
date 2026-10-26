@@ -28,6 +28,7 @@ impl KagiApp {
             input: String::new(),
             branch_name_interacted: false,
             branch_name_composing: false,
+            plan_stale: false,
             // Each opening owns a fresh editor, including when no Window is
             // available yet. Never retain the cancelled editor's text/caret.
             input_state: None,
@@ -78,6 +79,7 @@ impl KagiApp {
                 let outcome = session_unavailable(i18n::Op::CreateBranch);
                 if let Some(modal) = self.create_branch_modal_mut() {
                     modal.plan.replan(outcome);
+                    modal.plan_stale = false;
                 }
                 return;
             }
@@ -106,6 +108,7 @@ impl KagiApp {
         let outcome = plan_outcome(i18n::Op::CreateBranch, result);
         if let Some(modal) = self.create_branch_modal_mut() {
             modal.plan.replan(outcome);
+            modal.plan_stale = false;
         }
     }
 

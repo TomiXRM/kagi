@@ -217,12 +217,15 @@ fn exercise_lane(
         assert_eq!(assert_safe_footer(window, layout), original_footer);
         assert_eq!(
             e2e::footer_display_text().as_ref(),
-            "Unrelated transient fixture"
+            "Unrelated transient fixture…"
         );
         let status = kagi::ui::toast_stack::status_for_e2e().expect("actual arrival status");
         assert_eq!(status.role, Some(gpui::Role::Status));
         assert_eq!(status.newest_id, Some(transient));
-        assert_eq!(status.label.as_deref(), Some("Unrelated transient fixture"));
+        assert_eq!(
+            status.label.as_deref(),
+            Some("Unrelated transient fixture…")
+        );
         stack.update(cx, |stack, _| {
             stack.advance_age_for_e2e(Duration::from_secs(4));
             assert!(stack.expiring_ids().contains(&transient));

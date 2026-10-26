@@ -441,7 +441,34 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         "receipt details remain hit-testable"
                     );
                     drop(panel);
-                    // The production native Settings host shares the retained stack.
+                    // Keep the real repository failure; retire only app-level
+                    // geometry fixtures before adding independent Settings
+                    // fixtures within the shared four-notice budget.
+                    app.update(cx, |app, cx| {
+                        app.toast_stack.as_ref().unwrap().update(cx, |stack, cx| {
+                            let fixtures: Vec<_> = stack
+                                .toasts()
+                                .iter()
+                                .filter(|toast| toast.subject == ToastSubject::App)
+                                .map(|toast| toast.id)
+                                .collect();
+                            for id in fixtures {
+                                stack.remove(id);
+                            }
+                            assert_eq!(stack.toasts().len(), 1);
+                            assert_eq!(stack.toasts()[0].subject, ToastSubject::Repository);
+                            for n in 0..3 {
+                                stack.push_notify(
+                                    kagi::ui::ToastKind::Error,
+                                    format!("Settings layout fixture {n}"),
+                                    cx,
+                                );
+                                let id = stack.toasts().last().unwrap().id;
+                                stack.set_subject(id, ToastSubject::Settings, cx);
+                            }
+                        });
+                    });
+                    // The native host shares storage, never notification subjects.
                     cx.simulate_keystrokes(window, "cmd-,");
                     cx.run_until_parked();
                     let settings = cx
@@ -472,7 +499,8 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         e2e::control_bounds(settings.window_id(), "settings-page-controls")
                             .expect("Settings controls painted below persistent lane");
                     assert!(settings_stack.bottom() <= controls.top());
-                    assert!(crate::native_ax::press(cx, settings, &more),
+                    let settings_more = i18n::Msg::ToastMore.t().replace("{count}", "2");
+                    assert!(crate::native_ax::press(cx, settings, &settings_more),
                             "Settings disclosure {dimensions:?}/{zoom}/{preset}/{lang:?}/{distinct}: {}",
                             crate::native_ax::tree(cx, settings));
                     cx.run_until_parked();
@@ -519,11 +547,15 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         (window, true, dimensions),
                         (settings, false, settings_dimensions),
                     ] {
+                        e2e::clear_control_bounds(host.window_id(), "busy-snackbar");
                         draw(cx, host);
                         if repository {
                             assert_content_anchor(cx, host, "busy-snackbar", host_dimensions, true);
                         } else {
-                            assert_transient_overlay(cx, host, "busy-snackbar", None);
+                            assert!(
+                                e2e::control_bounds(host.window_id(), "busy-snackbar").is_none(),
+                                "repository fetch progress never enters Settings"
+                            );
                             assert_eq!(
                                 e2e::control_bounds(host.window_id(), "settings-page-controls")
                                     .unwrap(),

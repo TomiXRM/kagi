@@ -153,6 +153,9 @@ fn terminal_run(cx: &mut VisualTestAppContext, success: bool) {
     let _gh = OfflineGh::with_script(&script);
     let parent = tempfile::tempdir().unwrap();
     let (app, window) = mount(cx, fixture.path());
+    // This leg exercises unattended completion, independent of the host's
+    // native active-window state; current foreground results use the footer.
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
     app.update(cx, |app, cx| app.open_clone_card(listing(), cx));
     draw(cx, &app, window);
     absent(window);
@@ -180,7 +183,10 @@ fn terminal_run(cx: &mut VisualTestAppContext, success: bool) {
                 .read(cx)
                 .toasts()
                 .iter()
-                .any(|toast| toast.message.contains("clone status test failure")));
+                .any(|toast| {
+                    toast.subject == kagi::ui::toast_stack::ToastSubject::App
+                        && toast.message.contains("clone status test failure")
+                }));
         });
     }
     unmount(cx, app, window);

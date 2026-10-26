@@ -1,7 +1,7 @@
 //! #1746: repository admission probes must not manufacture durable receipts.
 use crate::app_conflict::{content_fixture, wait_idle};
 use crate::conflict_draft_revision::RebaseFixture;
-use crate::macos::{build_fixture, mount, unmount};
+use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::VisualTestAppContext;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
@@ -157,6 +157,11 @@ pub fn scenario_repository_lock_silent_auto_fetch(cx: &mut VisualTestAppContext)
     let repo = fixture.path().canonicalize().unwrap();
     let remote = tempfile::tempdir().unwrap();
     crate::fetch_owner::local_remote_with_change(&repo, remote.path());
+    let upstream = remote.path().join("other");
+    let upstream_tip = git_fixture::git_output(&upstream, &["rev-parse", "HEAD"]);
+    let tracking_before =
+        git_fixture::git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]);
+    assert_ne!(tracking_before, upstream_tip);
     let (app, window) = mount(cx, &repo);
     wait_idle(cx, &app);
     let before = read_oplog_tail_for_repo(&repo, 100).len();
@@ -188,6 +193,11 @@ pub fn scenario_repository_lock_silent_auto_fetch(cx: &mut VisualTestAppContext)
             assert!(!state.app_sessions.has_leases());
             assert!(state.app_notice().is_none());
         });
+        assert_eq!(
+            git_fixture::git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
+            tracking_before,
+            "a refused quiet fetch must not move tracking refs"
+        );
     });
     app.update(cx, |app, cx| {
         assert!(
@@ -201,7 +211,12 @@ pub fn scenario_repository_lock_silent_auto_fetch(cx: &mut VisualTestAppContext)
         );
     });
     wait_idle(cx, &app);
-    exercise_footer_recovery(cx, &app, &repo);
+    assert_eq!(
+        git_fixture::git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
+        upstream_tip,
+        "the admitted quiet fetch must update its tracking ref"
+    );
+    exercise_footer_recovery(cx, &app, &repo, &upstream);
     unmount(cx, app, window);
 }
 
@@ -212,6 +227,7 @@ fn exercise_footer_recovery(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<kagi::ui::KagiApp>,
     repo: &Path,
+    upstream: &Path,
 ) {
     use kagi::ui::{
         i18n::{self, Lang, Msg},
@@ -231,6 +247,18 @@ fn exercise_footer_recovery(
                         entry.op == "fetch" && matches!(entry.outcome, OpOutcome::Success { .. })
                     })
                     .count();
+                let retry_body = format!("retry {stage} {silent} {language:?}\n");
+                let tracking_before =
+                    git_fixture::git_output(repo, &["rev-parse", "refs/remotes/origin/main"]);
+                let fetched_tip = if stage {
+                    None
+                } else {
+                    std::fs::write(upstream.join("footer-upstream.txt"), &retry_body).unwrap();
+                    git(upstream, &["add", "footer-upstream.txt"]);
+                    git(upstream, &["commit", "-q", "-m", "footer recovery retry"]);
+                    git(upstream, &["push", "-q", "origin", "main"]);
+                    Some(git_fixture::git_output(upstream, &["rev-parse", "HEAD"]))
+                };
                 with_repository_lock(repo, || {
                     app.update(cx, |app, cx| {
                         assert!(!app.fetch_async_for(silent, None, cx));
@@ -241,6 +269,11 @@ fn exercise_footer_recovery(
                         };
                         assert_eq!(message.as_ref(), Msg::AdviceConflictsRepositoryBusy.t());
                     });
+                    assert_eq!(
+                        git_fixture::git_output(repo, &["rev-parse", "refs/remotes/origin/main"]),
+                        tracking_before,
+                        "the contended fetch must not publish the pending upstream change"
+                    );
                 });
                 let refused = read_oplog_tail_for_repo(repo, 100).len();
                 assert_eq!(refused, before + usize::from(!silent));
@@ -255,7 +288,7 @@ fn exercise_footer_recovery(
                     );
                 });
                 wait_idle(cx, app);
-                std::fs::write(repo.join("footer-retry.txt"), "retry\n").unwrap();
+                std::fs::write(repo.join("footer-retry.txt"), &retry_body).unwrap();
                 app.update(cx, |app, cx| {
                     if stage {
                         app.do_stage_file_by_path(
@@ -298,11 +331,17 @@ fn exercise_footer_recovery(
                     "the admitted fetch must finish successfully"
                 );
                 if stage {
-                    assert!(!git_fixture::git_output(
-                        repo,
-                        &["diff", "--cached", "--", "footer-retry.txt"],
-                    )
-                    .is_empty());
+                    assert_eq!(
+                        git_fixture::git_output(repo, &["show", ":footer-retry.txt"]).trim_end(),
+                        retry_body.trim_end(),
+                        "the recovered stage must publish this attempt's actual content"
+                    );
+                } else {
+                    assert_eq!(
+                        git_fixture::git_output(repo, &["rev-parse", "refs/remotes/origin/main"]),
+                        fetched_tip.unwrap(),
+                        "the admitted quiet fetch must publish this attempt's upstream ref"
+                    );
                 }
             }
         }

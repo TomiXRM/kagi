@@ -7,7 +7,7 @@ use std::time::Duration;
 
 const UNSAVED: &str = "NEWER RESULT; AUTOSAVE FAILED\n";
 
-fn blocked_restore(repo: &Path) -> (PathBuf, Vec<u8>, std::fs::File) {
+fn blocked_restore(repo: &Path) -> (PathBuf, Vec<u8>, kagi_git::advisory_lock::AdvisoryLock) {
     let store = kagi_git::Backend::open(repo)
         .unwrap()
         .resolution_buffer_from_repo()

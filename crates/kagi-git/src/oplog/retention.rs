@@ -3,6 +3,7 @@ use super::{entry_to_json, log_file_path, reading::Reader, OpLogEntry};
 use crate::advisory_lock::AdvisoryLock;
 use crate::{ops::backup, GitError};
 use git2::{Oid, Repository};
+#[cfg(unix)]
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;

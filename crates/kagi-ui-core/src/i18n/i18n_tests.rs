@@ -419,6 +419,14 @@ fn keyed_validation_localizes() {
     let _g = LOCK.lock();
     set_lang_no_persist(Lang::En);
     assert_eq!(branch_name_error(&B::EmptyCreate), "Enter a branch name.");
+    let empty = kagi_domain::plan_note::PlanNote::Common(
+        kagi_domain::plan_note::CommonNote::BranchNameErrorKeyed(B::EmptyCreate),
+    );
+    assert_eq!(plan_note_text(&empty), Msg::BranchNameEmpty.t());
+    assert_eq!(
+        plan::plan_note_contract(&empty),
+        "Branch name must not be empty."
+    );
     assert_eq!(
         worktree_path_error(&W::Empty),
         "Worktree path must not be empty."
@@ -426,6 +434,7 @@ fn keyed_validation_localizes() {
     set_lang_no_persist(Lang::Ja);
     // Localized — no longer the English sentence, and the name stays verbatim.
     assert_ne!(branch_name_error(&B::EmptyCreate), "Enter a branch name.");
+    assert_eq!(plan_note_text(&empty), Msg::BranchNameEmpty.t());
     assert!(branch_name_error(&B::CreateExists("feat".into())).contains("feat"));
     assert!(worktree_path_error(&W::Exists("/p".into())).contains("/p"));
     set_lang_no_persist(Lang::En);

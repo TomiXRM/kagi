@@ -187,6 +187,12 @@ pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
 pub fn plan_note_text(note: &PlanNote) -> String {
     let note = super::op::user_text::plan_note_payload(note);
     let note = note.as_ref();
+    // Keyed field feedback shares the same UI vocabulary in both languages;
+    // the domain Display / plan_note_contract retain diagnostic wording.
+    if let PlanNote::Common(kagi_domain::plan_note::CommonNote::BranchNameErrorKeyed(error)) = note
+    {
+        return super::branch_name_error(error);
+    }
     match lang() {
         Lang::En => note.message_display_en(),
         Lang::Ja => note_ja_any(note),

@@ -191,7 +191,7 @@ pub(crate) fn execute_conflict_delete(
     );
     backup_refs.push(super::backup::retain_object(
         repo,
-        &format!("snapshot-{}", snapshot.id),
+        &super::backup::operation_id(),
         0,
         git2::Oid::from_str(&snapshot.commit).map_err(|e| error(&e.to_string()))?,
     )?);

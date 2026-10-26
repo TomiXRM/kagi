@@ -455,7 +455,7 @@ pub(crate) fn apply_dir_file_resolution_with_progress(
     );
     backup_refs.push(super::backup::retain_object(
         repo,
-        &format!("snapshot-{}", snapshot.id),
+        &super::backup::operation_id(),
         0,
         git2::Oid::from_str(&snapshot.commit).map_err(|e| GitError::Other(e.to_string()))?,
     )?);

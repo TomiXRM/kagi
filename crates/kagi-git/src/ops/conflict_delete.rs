@@ -173,18 +173,28 @@ pub(crate) fn preflight_conflict_delete(
 pub(crate) fn execute_conflict_delete(
     repo: &Repository,
     plan: &ConflictDeletePlan,
+    recovery: &mut Option<super::SnapshotEntry>,
+    backup_refs: &mut Vec<String>,
     mut progress: impl FnMut(ConflictProgress) -> Result<(), GitError>,
 ) -> Result<String, GitError> {
     let _lock = crate::write_lock::acquire(repo)?;
     preflight_conflict_delete(repo, plan)?;
-    let snapshot = super::create_snapshot(
+    let snapshot = recovery.insert(
+        super::create_snapshot(
+            repo,
+            &format!(
+                "auto snapshot before conflict-delete {}",
+                plan.path.display()
+            ),
+        )
+        .map_err(|_| super::conflict_abort::draft_preservation_failed())?,
+    );
+    backup_refs.push(super::backup::retain_object(
         repo,
-        &format!(
-            "auto snapshot before conflict-delete {}",
-            plan.path.display()
-        ),
-    )
-    .map_err(|_| super::conflict_abort::draft_preservation_failed())?;
+        &format!("snapshot-{}", snapshot.id),
+        0,
+        git2::Oid::from_str(&snapshot.commit).map_err(|e| error(&e.to_string()))?,
+    )?);
     progress(ConflictProgress::RecoveryCaptured)?;
     // Snapshot acquisition is not permission to overwrite a concurrent edit.
     let transaction = ConflictIndexTransaction::acquire(repo)?;

@@ -370,11 +370,19 @@ pub(crate) fn execute_dir_file_resolution(
     repo_path: &Path,
     plan: &DirFilePlan,
 ) -> Result<(), GitError> {
-    let result = apply_dir_file_resolution(repo, plan);
-    let recovery = result
-        .as_ref()
-        .map(String::as_str)
-        .unwrap_or("snapshot/recovery status unavailable");
+    let mut snapshot = None;
+    let mut backup_refs = Vec::new();
+    let result = apply_dir_file_resolution_with_progress(
+        repo,
+        plan,
+        &mut snapshot,
+        &mut backup_refs,
+        |_| Ok(()),
+    );
+    let recovery = snapshot.as_ref().map_or_else(
+        || "snapshot/recovery status unavailable".into(),
+        |s| format!("snapshot={} commit={}", s.id, s.commit),
+    );
 
     let before = StateSummary {
         head: format!("dir-file conflict {}", plan.path.display()),
@@ -403,7 +411,17 @@ pub(crate) fn execute_dir_file_resolution(
             error: error.to_string(),
         },
     };
-    let entry = OpLogEntry::new(op_name, repo_path.display().to_string(), before, outcome);
+    let mut entry = OpLogEntry::new(op_name, repo_path.display().to_string(), before, outcome);
+    entry.backup_refs = backup_refs;
+    if let Some(snapshot) = snapshot {
+        entry.recovery.push(
+            crate::oplog::recovery::RecoveryHandle::oid(
+                crate::oplog::recovery::SAVEPOINT,
+                snapshot.commit,
+            )
+            .with_reference(snapshot.refname),
+        );
+    }
     if let Err(e) = append_oplog(&entry) {
         eprintln!("kagi-git: dir-file oplog write failed (non-fatal): {}", e);
     }
@@ -414,35 +432,34 @@ pub(crate) fn execute_dir_file_resolution(
 /// C1 execution primitive. The application boundary owns the one durable
 /// receipt, while the compatibility facade above records through its existing
 /// entry point. Both routes share this exact preflight/mutation implementation.
-pub(crate) fn apply_dir_file_resolution(
-    repo: &Repository,
-    plan: &DirFilePlan,
-) -> Result<String, GitError> {
-    apply_dir_file_resolution_with_progress(repo, plan, |_| Ok(()))
-}
-
 pub(crate) fn apply_dir_file_resolution_with_progress(
     repo: &Repository,
     plan: &DirFilePlan,
+    recovery: &mut Option<super::SnapshotEntry>,
+    backup_refs: &mut Vec<String>,
     mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress) -> Result<(), GitError>,
 ) -> Result<String, GitError> {
     let _lock = crate::write_lock::acquire(repo)?;
     preflight_dir_file_resolution(repo, plan)?;
 
-    let recovery = match crate::ops::create_snapshot(
+    let snapshot = recovery.insert(
+        crate::ops::create_snapshot(
+            repo,
+            &format!(
+                "auto snapshot before conflict-dir-file:{} {}",
+                plan.choice.slug(),
+                plan.path.display()
+            ),
+        )
+        .map_err(|_| crate::ops::conflict_abort::draft_preservation_failed())?,
+    );
+    backup_refs.push(super::backup::retain_object(
         repo,
-        &format!(
-            "auto snapshot before conflict-dir-file:{} {}",
-            plan.choice.slug(),
-            plan.path.display()
-        ),
-    ) {
-        Ok(s) => {
-            progress(kagi_domain::conflict_family::ConflictProgress::RecoveryCaptured)?;
-            format!("snapshot={} commit={}", s.id, s.commit)
-        }
-        Err(_) => return Err(crate::ops::conflict_abort::draft_preservation_failed()),
-    };
+        &format!("snapshot-{}", snapshot.id),
+        0,
+        git2::Oid::from_str(&snapshot.commit).map_err(|e| GitError::Other(e.to_string()))?,
+    )?);
+    progress(kagi_domain::conflict_family::ConflictProgress::RecoveryCaptured)?;
     // Recovery can be slow; it does not authorize changes made while it ran.
     let transaction = ConflictIndexTransaction::acquire(repo)?;
     preflight_dir_file_resolution(repo, plan)?;
@@ -452,7 +469,10 @@ pub(crate) fn apply_dir_file_resolution_with_progress(
     progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten)?;
     verify_dir_file_resolution(repo, plan)?;
     progress(kagi_domain::conflict_family::ConflictProgress::IndexAndWorktreeWritten)?;
-    Ok(recovery)
+    Ok(format!(
+        "snapshot={} commit={}",
+        snapshot.id, snapshot.commit
+    ))
 }
 
 /// The index surgery, kept separate so [`execute_dir_file_resolution`] can log

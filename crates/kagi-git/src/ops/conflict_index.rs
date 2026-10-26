@@ -218,7 +218,10 @@ mod tests {
         assert_eq!(std::fs::metadata(&file).unwrap().len(), 9);
 
         let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
-        conflict_delete::execute_conflict_delete(&repo, &plan, |_| Ok(())).unwrap();
+        conflict_delete::execute_conflict_delete(&repo, &plan, &mut None, &mut Vec::new(), |_| {
+            Ok(())
+        })
+        .unwrap();
         let mut index = repo.index().unwrap();
         index.read(true).unwrap();
         let entry = index.get_path(Path::new("unaffected"), 0).unwrap();
@@ -241,25 +244,31 @@ mod tests {
         let (_tmp, repo) = fixture(false);
         let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
         let mut boundaries = Vec::new();
-        conflict_delete::execute_conflict_delete(&repo, &plan, |progress| {
-            let root = repo.workdir().unwrap().to_path_buf();
-            let blocked = std::thread::spawn(move || {
-                let other = Repository::open(root).unwrap();
-                crate::write_lock::acquire(&other)
-                    .err()
-                    .is_some_and(|error| {
-                        error.blocker()
-                            == Some(&kagi_domain::plan_note::PlanNote::Conflicts(
-                                kagi_domain::plan_note::ConflictsNote::RepositoryBusy,
-                            ))
-                    })
-            })
-            .join()
-            .unwrap();
-            assert!(blocked, "repository admission must be held at {progress:?}");
-            boundaries.push(progress);
-            Ok(())
-        })
+        conflict_delete::execute_conflict_delete(
+            &repo,
+            &plan,
+            &mut None,
+            &mut Vec::new(),
+            |progress| {
+                let root = repo.workdir().unwrap().to_path_buf();
+                let blocked = std::thread::spawn(move || {
+                    let other = Repository::open(root).unwrap();
+                    crate::write_lock::acquire(&other)
+                        .err()
+                        .is_some_and(|error| {
+                            error.blocker()
+                                == Some(&kagi_domain::plan_note::PlanNote::Conflicts(
+                                    kagi_domain::plan_note::ConflictsNote::RepositoryBusy,
+                                ))
+                        })
+                })
+                .join()
+                .unwrap();
+                assert!(blocked, "repository admission must be held at {progress:?}");
+                boundaries.push(progress);
+                Ok(())
+            },
+        )
         .unwrap();
         assert!(boundaries.contains(&ConflictProgress::RecoveryCaptured));
         assert!(boundaries.contains(&ConflictProgress::WorktreeWritten));
@@ -286,6 +295,7 @@ mod tests {
                 }
                 Ok(())
             };
+            let mut recovery = None;
             let result = if let Some(choice) = choice {
                 let plan =
                     dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
@@ -293,20 +303,90 @@ mod tests {
                 dir_file_conflict::apply_dir_file_resolution_with_progress(
                     &repo,
                     &plan,
+                    &mut recovery,
+                    &mut Vec::new(),
                     &mut progress,
                 )
             } else {
                 let plan =
                     conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
-                conflict_delete::execute_conflict_delete(&repo, &plan, &mut progress)
+                conflict_delete::execute_conflict_delete(
+                    &repo,
+                    &plan,
+                    &mut recovery,
+                    &mut Vec::new(),
+                    &mut progress,
+                )
             };
             assert!(result.is_err());
+            assert!(
+                recovery.is_some(),
+                "capture survives repeated-preflight failure"
+            );
             assert_eq!(
                 std::fs::read(repo.path().join("index")).unwrap(),
                 captured.unwrap()
             );
             let path = if directory { "thing/child" } else { "thing" };
             assert!(tmp.path().join(path).exists());
+            assert!(!repo.path().join("index.lock").exists());
+        }
+    }
+
+    #[test]
+    fn recovery_capture_callback_failure_retains_snapshot_before_mutation() {
+        use dir_file_conflict::DirFileChoice::{KeepDirectory, KeepFile};
+        for choice in [None, Some(KeepFile), Some(KeepDirectory)] {
+            let (tmp, repo) = fixture(choice.is_some());
+            let path = if choice.is_some() {
+                "thing/child"
+            } else {
+                "thing"
+            };
+            let bytes = std::fs::read(tmp.path().join(path)).unwrap();
+            let index = std::fs::read(repo.path().join("index")).unwrap();
+            let mut recovery = None;
+            let mut progress = |value| {
+                assert_eq!(value, ConflictProgress::RecoveryCaptured);
+                Err(GitError::Other(
+                    "deterministic recovery callback stop".into(),
+                ))
+            };
+            let result = if let Some(choice) = choice {
+                let plan =
+                    dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
+                        .unwrap();
+                dir_file_conflict::apply_dir_file_resolution_with_progress(
+                    &repo,
+                    &plan,
+                    &mut recovery,
+                    &mut Vec::new(),
+                    &mut progress,
+                )
+            } else {
+                let plan =
+                    conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
+                conflict_delete::execute_conflict_delete(
+                    &repo,
+                    &plan,
+                    &mut recovery,
+                    &mut Vec::new(),
+                    &mut progress,
+                )
+            };
+            assert!(result.is_err());
+            let snapshot = recovery.expect("capture must precede the fallible callback");
+            let commit = repo
+                .find_reference(&snapshot.refname)
+                .unwrap()
+                .peel_to_commit()
+                .unwrap();
+            assert_eq!(commit.id().to_string(), snapshot.commit);
+            let tree = commit.tree().unwrap();
+            let saved = tree.get_path(Path::new(path)).unwrap();
+            assert_eq!(repo.find_blob(saved.id()).unwrap().content(), bytes);
+            assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), bytes);
+            assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
             assert!(!repo.path().join("index.lock").exists());
         }
     }
@@ -331,6 +411,7 @@ mod tests {
                 }
                 Ok(())
             };
+            let mut recovery = None;
             let result = if let Some(choice) = choice {
                 let plan =
                     dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
@@ -338,15 +419,27 @@ mod tests {
                 dir_file_conflict::apply_dir_file_resolution_with_progress(
                     &repo,
                     &plan,
+                    &mut recovery,
+                    &mut Vec::new(),
                     &mut progress,
                 )
             } else {
                 let plan =
                     conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
-                conflict_delete::execute_conflict_delete(&repo, &plan, &mut progress)
+                conflict_delete::execute_conflict_delete(
+                    &repo,
+                    &plan,
+                    &mut recovery,
+                    &mut Vec::new(),
+                    &mut progress,
+                )
             };
             assert!(reached);
             assert!(result.is_err());
+            assert!(
+                recovery.is_some(),
+                "capture survives post-write callback failure"
+            );
             if !directory {
                 assert!(!tmp.path().join("thing").exists());
             }
@@ -364,13 +457,27 @@ mod tests {
                 let plan =
                     dir_file_conflict::plan_dir_file_resolution(&repo, Path::new("thing"), choice)
                         .unwrap();
-                dir_file_conflict::apply_dir_file_resolution(&repo, &plan).unwrap();
+                dir_file_conflict::apply_dir_file_resolution_with_progress(
+                    &repo,
+                    &plan,
+                    &mut None,
+                    &mut Vec::new(),
+                    |_| Ok(()),
+                )
+                .unwrap();
                 assert!(external_update(&repo).status.success());
                 assert!(dir_file_conflict::verify_dir_file_resolution(&repo, &plan).is_err());
             } else {
                 let plan =
                     conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
-                conflict_delete::execute_conflict_delete(&repo, &plan, |_| Ok(())).unwrap();
+                conflict_delete::execute_conflict_delete(
+                    &repo,
+                    &plan,
+                    &mut None,
+                    &mut Vec::new(),
+                    |_| Ok(()),
+                )
+                .unwrap();
                 assert!(external_update(&repo).status.success());
                 assert!(conflict_delete::verify_conflict_delete(&repo, &plan).is_err());
             }

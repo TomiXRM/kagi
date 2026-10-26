@@ -84,6 +84,12 @@ fn assert_worktree_mutated(route: Route, root: &Path) {
 fn check_receipt(fault: Option<ConflictFaultPoint>) {
     for route in [Route::Delete, Route::KeepDirectory, Route::KeepFile] {
         let (tmp, plan) = fixture(route);
+        let removed_path = match route {
+            Route::Delete => "renamed-src.ts",
+            Route::KeepDirectory => "thing~HEAD",
+            Route::KeepFile => "thing/child",
+        };
+        let removed_bytes = std::fs::read(tmp.path().join(removed_path)).unwrap();
         let report = Backend::run_recorded_conflict(&plan, ExecutionPolicy::human(false), fault);
         assert_worktree_mutated(route, tmp.path());
         let entry = report.recording.entry();
@@ -140,6 +146,50 @@ fn check_receipt(fault: Option<ConflictFaultPoint>) {
         assert_eq!(
             std::mem::discriminant(&receipts[0].outcome),
             std::mem::discriminant(&entry.outcome),
+        );
+        assert_eq!(receipts[0].recovery, entry.recovery);
+        assert_eq!(receipts[0].backup_refs, entry.backup_refs);
+        assert_eq!(
+            entry.recovery.len(),
+            1,
+            "snapshot survives {route:?} {fault:?}"
+        );
+        let recovery = &entry.recovery[0];
+        assert_eq!(recovery.kind, kagi_git::oplog::recovery::SAVEPOINT);
+        let reference = recovery.reference.as_ref().unwrap();
+        assert_eq!(entry.backup_refs.len(), 1);
+        assert!(entry.backup_refs[0].starts_with("refs/kagi/backups/"));
+        let id = reference
+            .strip_prefix(kagi_git::ops::SNAPSHOT_REF_PREFIX)
+            .unwrap();
+        let repo = Repository::open(tmp.path()).unwrap();
+        let commit = repo
+            .find_reference(reference)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert_eq!(commit.id().to_string(), recovery.oid);
+        assert_eq!(
+            repo.find_reference(&entry.backup_refs[0]).unwrap().target(),
+            Some(commit.id()),
+        );
+        let tree = commit.tree().unwrap();
+        let blob = tree.get_path(Path::new(removed_path)).unwrap();
+        assert_eq!(repo.find_blob(blob.id()).unwrap().content(), removed_bytes);
+        backend_ops::execute_restore_snapshot(&repo, id).unwrap();
+        assert_eq!(
+            std::fs::read(tmp.path().join(removed_path)).unwrap(),
+            removed_bytes
+        );
+        Backend::open(tmp.path())
+            .unwrap()
+            .prune_snapshots(0)
+            .unwrap();
+        assert!(repo.find_reference(reference).is_err());
+        assert_eq!(
+            repo.find_reference(&entry.backup_refs[0]).unwrap().target(),
+            Some(commit.id()),
+            "mandatory recovery must outlive the ordinary snapshot cap",
         );
     }
 }

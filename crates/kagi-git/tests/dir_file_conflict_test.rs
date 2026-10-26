@@ -41,9 +41,8 @@ fn df_conflict_with_cli(checkout: &str, other: &str, cli: bool) -> (TempDir, Rep
     df_conflict_options(checkout, other, cli, false, false, cli)
 }
 
-fn df_conflict_options(
+fn df_repo_options(
     checkout: &str,
-    other: &str,
     cli: bool,
     nested: bool,
     crlf: bool,
@@ -52,6 +51,8 @@ fn df_conflict_options(
     let td = TempDir::new().unwrap();
     let d = td.path();
     git(d, &["init", "-q", "-b", "main"]);
+    git(d, &["config", "--local", "user.name", "T"]);
+    git(d, &["config", "--local", "user.email", "t@e.com"]);
     let child = if nested { "thing/a/b/c" } else { "thing/child" };
     let directory = if nested { "thing/a/b" } else { "thing" };
     if crlf {
@@ -93,6 +94,19 @@ fn df_conflict_options(
 
     git(d, &["checkout", "-q", checkout]);
     let repo = Repository::open(d).unwrap();
+    (td, repo)
+}
+
+fn df_conflict_options(
+    checkout: &str,
+    other: &str,
+    cli: bool,
+    nested: bool,
+    crlf: bool,
+    base_child: bool,
+) -> (TempDir, Repository) {
+    let (td, repo) = df_repo_options(checkout, cli, nested, crlf, base_child);
+    let d = td.path();
     if cli {
         let result = Command::new("git")
             .args(["merge", "--no-edit", other])
@@ -122,6 +136,83 @@ fn df_conflict_options(
     repo.merge(&[&annotated], None, Some(&mut co)).unwrap();
     drop(annotated);
     (td, repo)
+}
+
+fn assert_tilde_label_choices_remain_saved(cherry_pick: bool) {
+    for choice in [DirFileChoice::KeepDirectory, DirFileChoice::KeepFile] {
+        let (td, repo) = df_repo_options("file-side", true, false, false, false);
+        let root = td.path();
+        git(root, &["commit", "--amend", "-qm", "file ~ subject"]);
+        let args = if cherry_pick {
+            vec!["cherry-pick", "file-side"]
+        } else {
+            git(root, &["checkout", "-q", "-b", "feature"]);
+            git(root, &["commit", "--allow-empty", "-qm", "feature tip"]);
+            vec!["merge", "--no-edit", "feature~1"]
+        };
+        git(root, &["checkout", "-q", "dir-side"]);
+        let result = Command::new("git")
+            .args(&args)
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", root)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "expected real CLI conflict: {result:?}"
+        );
+        let session = detect_conflict_session(&repo).unwrap();
+        assert_eq!(session.files.len(), 1, "{session:?}");
+        assert_eq!(session.files[0].path, Path::new("thing"));
+        assert_eq!(session.files[0].kind, ConflictKind::DirFile);
+        let plan = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
+        let parked = plan.file_path.to_str().unwrap();
+        assert!(
+            parked.contains(if cherry_pick {
+                "~ subject"
+            } else {
+                "feature~1"
+            }),
+            "Git must preserve the tilde-bearing label: {parked}"
+        );
+        execute_dir_file_resolution(&repo, root, &plan).unwrap();
+        let resolved = detect_conflict_session(&repo).unwrap();
+        assert!(resolved.files.is_empty(), "{resolved:?}");
+        let expected = match choice {
+            DirFileChoice::KeepFile => Path::new("thing"),
+            DirFileChoice::KeepDirectory => Path::new("thing/child"),
+        };
+        let index = repo.index().unwrap();
+        assert!(!index.has_conflicts());
+        assert!(!root.join(&plan.file_path).exists());
+        for stage in 0..=3 {
+            assert!(index.get_path(&plan.file_path, stage).is_none());
+        }
+        assert_eq!(resolved.resolved.len(), 1, "{resolved:?}");
+        assert_eq!(resolved.resolved[0].path, expected);
+        assert_eq!(
+            resolved.resolved[0].oid,
+            index.get_path(expected, 0).unwrap().id.to_string()
+        );
+    }
+}
+
+#[test]
+fn cli_merge_revision_with_tilde_keeps_both_choices_saved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    assert_tilde_label_choices_remain_saved(false);
+}
+
+#[test]
+fn cli_cherry_pick_subject_with_tilde_keeps_both_choices_saved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    assert_tilde_label_choices_remain_saved(true);
 }
 
 fn blob_text(repo: &Repository, oid: git2::Oid) -> String {

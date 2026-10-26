@@ -98,11 +98,21 @@ Saved-file presentation maps a removed Git parking name in `MERGE_MSG` back to
 the original stage-0 file. Retained directory children also appear when Git listed
 only the parking name, with duplicate paths removed. Source trees reject ordinary
 tilde filenames; this read-only mapping does not authorize any mutation.
+Every `~` position is a candidate boundary because revision labels and commit
+subjects may themselves contain `~`. Load side trees once and require an
+unambiguous file/tree namespace match rather than assuming the last separator.
 Plans refuse unsupported gitlink/special modes and nested repository metadata
 before mutation: the ordinary worktree snapshot cannot preserve a nested object
 store, and recovery capture may fail even for keep-directory. Both choices refuse
 at planning rather than promising unavailable recovery. Preflight repeats after
 recovery capture and before the first write.
+Immediately after snapshot capture, pass its typed recovery identity to the
+receipt owner before any fallible progress callback or mutation. Both deletion
+and D/F receipts retain that handle and its backup ref on Success, Partial and
+Unknown outcomes; recovery must not depend on the executor returning success.
+Pin the captured commit through the existing mandatory `refs/kagi/backups/`
+owner before mutation. `recovery` names the snapshot and commit; `backup_refs`
+owns that separate durable root, independent of the ordinary snapshot cap.
 
 The repeated-preflight boundary acquires the real Git `index.lock`, distinct
 from Kagi's repository writer lease. Freeze every unaffected index entry's raw

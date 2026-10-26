@@ -115,6 +115,9 @@ no absent-side preview or instruction to choose a nonexistent side.
 After D/F resolution, the surviving original file or directory-side paths remain
 in Saved and can be opened for review before advancing, even when Git's conflict
 message named the now-removed parking artifact instead of the restored file.
+Deletion and D/F receipts retain their captured recovery snapshot even if a later
+write or verification fails. The Operation Log remains the durable recovery entry
+point for Partial and Unknown outcomes, not only successful resolutions.
 Reference: macOS Finder confirmation hierarchy, without importing mobile
 spacing into the dense file row.
 [Design figure and HIG quotations](https://github.com/TomiXRM/kagi/issues/1734#issuecomment-6394541317);

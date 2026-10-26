@@ -611,11 +611,6 @@ fn resolved_parked_original(
     if (1..=3).any(|stage| index.get_path(parked, stage).is_some()) {
         return None;
     }
-    let separator = listed_path.iter().rposition(|byte| *byte == b'~')?;
-    if separator + 1 == listed_path.len() {
-        return None;
-    }
-    let original = bytes_to_pathbuf(&listed_path[..separator])?;
     let current = repo.head().ok()?.peel_to_tree().ok()?;
     let incoming = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"]
         .into_iter()
@@ -623,14 +618,34 @@ fn resolved_parked_original(
     if current.get_path(parked).is_ok() || incoming.get_path(parked).is_ok() {
         return None;
     }
-    let current_kind = current.get_path(&original).ok()?.kind();
-    let incoming_kind = incoming.get_path(&original).ok()?.kind();
-    matches!(
-        (current_kind, incoming_kind),
-        (Some(git2::ObjectType::Blob), Some(git2::ObjectType::Tree))
-            | (Some(git2::ObjectType::Tree), Some(git2::ObjectType::Blob))
-    )
-    .then_some((original, separator))
+    let mut matched = None;
+    for (separator, byte) in listed_path.iter().enumerate() {
+        if *byte != b'~' || separator + 1 == listed_path.len() {
+            continue;
+        }
+        let Some(original) = bytes_to_pathbuf(&listed_path[..separator]) else {
+            continue;
+        };
+        let Ok(current_entry) = current.get_path(&original) else {
+            continue;
+        };
+        let Ok(incoming_entry) = incoming.get_path(&original) else {
+            continue;
+        };
+        if matches!(
+            (current_entry.kind(), incoming_entry.kind()),
+            (Some(git2::ObjectType::Blob), Some(git2::ObjectType::Tree))
+                | (Some(git2::ObjectType::Tree), Some(git2::ObjectType::Blob))
+        ) {
+            // Labels and original paths can both contain tildes. Attribute
+            // only a unique source-tree match, never an arbitrary boundary.
+            if matched.is_some() {
+                return None;
+            }
+            matched = Some((original, separator));
+        }
+    }
+    matched
 }
 
 /// Bounded read of `MERGE_MSG` only when it is a regular file: a FIFO would

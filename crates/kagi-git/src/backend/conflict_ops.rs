@@ -514,6 +514,8 @@ impl Backend {
         let mut progress = ConflictProgress::NotStarted;
         let mut after = None;
         let mut recovery = None;
+        let mut recovery_snapshot = None;
+        let mut backup_refs = Vec::new();
         // The observation frozen at plan time is what the receipt reports as
         // `before` on every path out of here — including the one where the
         // repository can no longer be opened. Rebuilding it from the request
@@ -618,6 +620,8 @@ impl Backend {
                         recovery = Some(ops::conflict_delete::execute_conflict_delete(
                             &backend.repo,
                             delete,
+                            &mut recovery_snapshot,
+                            &mut backup_refs,
                             |value| {
                                 progress = value;
                                 check_namespace_mutation_fault(value, fault)
@@ -659,6 +663,8 @@ impl Backend {
                         recovery = Some(ops::apply_dir_file_resolution_with_progress(
                             &backend.repo,
                             dir_file,
+                            &mut recovery_snapshot,
+                            &mut backup_refs,
                             |value| {
                                 progress = value;
                                 check_namespace_mutation_fault(value, fault)
@@ -787,13 +793,23 @@ impl Backend {
                 blockers: vec![error.to_string()],
             },
         };
+        let recovery_handles = recovery_snapshot
+            .into_iter()
+            .map(|snapshot| {
+                crate::oplog::recovery::RecoveryHandle::oid(
+                    crate::oplog::recovery::SAVEPOINT,
+                    snapshot.commit,
+                )
+                .with_reference(snapshot.refname)
+            })
+            .collect();
         let recording = backend.record_receipt(
             &plan.op_name,
             &plan.before,
             outcome,
             recording::Receipt {
-                backup_refs: Vec::new(),
-                recovery: Vec::new(),
+                backup_refs,
+                recovery: recovery_handles,
                 recovery_plan: None,
                 failure_code: None,
                 ref_moves,

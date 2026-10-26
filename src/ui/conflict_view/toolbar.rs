@@ -68,12 +68,19 @@ impl ConflictView {
             .child(e2e::measure_inside("conflict-sidebar-clip"))
         });
         let header = self.render_file_header(cx);
-        let source_headers = if self.selected_saved.is_none() {
-            self.mode
-                .as_ref()
-                .and_then(crate::ui::conflict_editor::source_headers)
+        let source_headers = if self.selected_saved.is_some() {
+            Some(self.render_saved_header())
         } else {
-            None
+            self.mode.as_ref().and_then(|mode| {
+                crate::ui::conflict_editor::source_headers(mode).or_else(|| {
+                    let file = mode
+                        .selected_file
+                        .and_then(|index| mode.session.files.get(index))?;
+                    file.kind
+                        .is_raw()
+                        .then(|| conflict_binary_view::render_raw_headers(&mode.labels()))
+                })
+            })
         };
         let chrome = self.editor_chrome();
         let body = if self.selected_saved.is_some() {
@@ -113,6 +120,15 @@ impl ConflictView {
                             .min_w(px(0.))
                             .min_h(px(0.))
                             .child(e2e::measure_inside("toast-content-anchor"))
+                            .children(self.notification_lane.take().map(|lane| {
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .flex_shrink_0()
+                                    .justify_end()
+                                    .child(e2e::measure_inside("conflict-notification-lane"))
+                                    .child(lane)
+                            }))
                             .child(body)
                             .children(self.notifications.take()),
                     ),

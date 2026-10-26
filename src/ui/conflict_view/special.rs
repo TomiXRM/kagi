@@ -47,6 +47,7 @@ fn render_dir_file_center(
     };
 
     let choose_row = div()
+        .relative()
         .flex()
         .flex_row()
         .flex_wrap()
@@ -55,6 +56,9 @@ fn render_dir_file_center(
         .py(theme::scaled_px(8.))
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .child(super::e2e::measure_inside(
+            "conflict-directory-file-choices",
+        ))
         .child(super::e2e::measure_control(
             "conflict-keep-directory",
             choose_button(
@@ -165,6 +169,7 @@ pub(super) fn render_center(
     );
 
     let mut choose_row = div()
+        .relative()
         .flex()
         .flex_row()
         .flex_wrap()
@@ -173,6 +178,7 @@ pub(super) fn render_center(
         .py(theme::scaled_px(8.))
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .child(super::e2e::measure_inside("conflict-raw-choices"))
         .child(
             choose_button(
                 keep_current_label,
@@ -201,15 +207,7 @@ pub(super) fn render_center(
         ));
     }
 
-    let preview = render_preview(
-        mode,
-        &path,
-        kind,
-        &labels,
-        raw_preview_scroll,
-        raw_preview,
-        cx,
-    );
+    let preview = render_preview(mode, &path, kind, raw_preview_scroll, raw_preview, cx);
 
     div()
         .flex()
@@ -240,7 +238,6 @@ fn render_preview(
     mode: &ConflictMode,
     path: &std::path::Path,
     kind: ConflictKind,
-    labels: &SideLabels,
     raw_preview_scroll: &gpui::ScrollHandle,
     raw_preview: &conflict_binary_view::PreviewState,
     cx: &mut Context<ConflictView>,
@@ -250,7 +247,6 @@ fn render_preview(
         return super::conflict_binary_view::render_raw_preview(
             raw_preview,
             path,
-            labels,
             raw_preview_scroll,
             cx,
         );

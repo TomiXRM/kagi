@@ -265,11 +265,47 @@ impl ConflictView {
 // ────────────────────────────────────────────────────────────
 
 /// The side-by-side viewer for a raw (binary / symlink / submodule) conflict.
+/// Keep side identities outside the persistent notification lane and scroll body.
+pub(crate) fn render_raw_headers(labels: &SideLabels) -> gpui::AnyElement {
+    let header = |label: String, probe| {
+        div()
+            .relative()
+            .w(theme::scaled_px(IMAGE_MAX_PX))
+            .flex_shrink(1.)
+            .min_w(px(0.))
+            .text_size(theme::scaled_px(11.))
+            .text_color(rgb(theme().text_label))
+            .child(super::e2e::measure_inside(probe))
+            .child(SharedString::from(label))
+    };
+    div()
+        .relative()
+        .flex()
+        .flex_shrink_0()
+        .justify_center()
+        .gap(theme::scaled_px(12.))
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .child(super::e2e::measure_inside("conflict-raw-headers"))
+        .child(header(
+            format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
+            "conflict-image-current-header",
+        ))
+        .child(header(
+            format!(
+                "{} · {}",
+                Msg::ConflictRoleIncoming.t(),
+                labels.incoming.name
+            ),
+            "conflict-image-incoming-header",
+        ))
+        .into_any_element()
+}
+
 /// Rendered below the unchanged take-current / take-incoming buttons.
 pub(crate) fn render_raw_preview(
     state: &PreviewState,
     path: &Path,
-    labels: &SideLabels,
     scroll: &gpui::ScrollHandle,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
@@ -307,22 +343,8 @@ pub(crate) fn render_raw_preview(
                 .self_stretch()
                 .justify_center()
                 .gap(theme::scaled_px(12.))
-                .child(side_column(
-                    &format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
-                    current,
-                    failure,
-                    "conflict-image-current",
-                ))
-                .child(side_column(
-                    &format!(
-                        "{} · {}",
-                        Msg::ConflictRoleIncoming.t(),
-                        labels.incoming.name
-                    ),
-                    incoming,
-                    failure,
-                    "conflict-image-incoming",
-                )),
+                .child(side_column(current, failure, "conflict-image-current"))
+                .child(side_column(incoming, failure, "conflict-image-incoming")),
         );
 
     if show_external {
@@ -417,9 +439,8 @@ fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
     }
 }
 
-/// One side's column: header + mode-specific body.
+/// One side's mode-specific body; identities stay above the notification lane.
 fn side_column(
-    header: &str,
     data: Option<&SideData>,
     failure: Option<&str>,
     probe: &'static str,
@@ -452,20 +473,6 @@ fn side_column(
         .min_h(px(0.))
         .min_w(px(0.))
         .gap(theme::scaled_px(4.))
-        .child(
-            div()
-                .relative()
-                .child(super::e2e::measure_inside(
-                    if probe == "conflict-image-current" {
-                        "conflict-image-current-header"
-                    } else {
-                        "conflict-image-incoming-header"
-                    },
-                ))
-                .text_size(theme::scaled_px(11.))
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(header.to_string())),
-        )
         .child(body)
         .when_some(
             data.and_then(|data| data.image.as_ref()),

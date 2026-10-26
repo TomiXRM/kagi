@@ -388,7 +388,7 @@ fn replace_current_image(repo: &std::path::Path) {
     assert_eq!(index.get_path(path, 2).unwrap().id, current.id);
 }
 
-fn conflict_image_fixture() -> tempfile::TempDir {
+pub(crate) fn conflict_image_fixture() -> tempfile::TempDir {
     conflict_images_fixture(&["image.png"])
 }
 
@@ -456,11 +456,15 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
         let column = bounds(&format!("{side}-column"));
         crate::recovery_layout::contained(pane, column, "image column");
         crate::recovery_layout::contained(column, bounds(side), "image box");
+        let header = bounds(&format!("{side}-header"));
         crate::recovery_layout::contained(
-            column,
-            bounds(&format!("{side}-header")),
-            "image header",
+            bounds("conflict-raw-headers"),
+            header,
+            "fixed side identity",
         );
+        assert!(header.bottom() <= bounds("conflict-raw-choices").top());
+        assert!((header.left() - column.left()).abs() < gpui::px(1.));
+        assert!((header.size.width - column.size.width).abs() < gpui::px(1.));
         crate::recovery_layout::contained(
             column,
             bounds(&format!("{side}-caption")),

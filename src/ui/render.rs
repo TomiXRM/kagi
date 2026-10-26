@@ -989,13 +989,30 @@ impl Render for KagiApp {
                     let height = self.bottom_panel_body_height(window, false);
                     // Conflict Mode replaces render_body, not the window-wide
                     // panel: preserved drafts must remain inspectable here.
+                    let persistent_lane = self
+                        .toast_stack
+                        .as_ref()
+                        .is_some_and(|stack| stack.read(cx).persistent_lane_open());
+                    let lane = persistent_lane
+                        .then(|| {
+                            self.render_toasts(
+                                window,
+                                super::busy::ToastPlacement::PersistentLane,
+                                true,
+                                cx,
+                            )
+                        })
+                        .flatten();
                     let notifications = self.render_toasts(
                         window,
-                        super::busy::ToastPlacement::Repository,
+                        super::busy::ToastPlacement::Transient,
                         true,
                         cx,
                     );
-                    entity.update(cx, |view, _| view.notifications = notifications);
+                    entity.update(cx, |view, _| {
+                        view.notification_lane = lane;
+                        view.notifications = notifications;
+                    });
                     el.child(entity).children(self.render_bottom_panel_slot(
                         visible,
                         height,

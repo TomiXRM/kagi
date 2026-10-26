@@ -137,8 +137,10 @@ pub struct EditorChrome {
 /// Session-owned but outside this entity: `conflict_merge_pending` and the
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
-    /// Host-owned notification element, consumed by this frame's content slot.
+    /// Host-owned transient overlay, consumed by this frame's content slot.
     pub(crate) notifications: Option<gpui::AnyElement>,
+    /// Persistent cards reserve space before every conflict layout's controls.
+    pub(crate) notification_lane: Option<gpui::AnyElement>,
     window_activation_subscription: Option<gpui::Subscription>,
     _draft_quit_subscription: gpui::Subscription,
     pub(crate) operation_chrome_subscription: Option<gpui::Subscription>,
@@ -255,6 +257,7 @@ impl ConflictView {
             mode: None,
             current_commit: String::new(),
             notifications: None,
+            notification_lane: None,
             editing: None,
             page: ConflictPage::Hunk,
             sidebar_hidden: false,

@@ -4,10 +4,14 @@ use gpui::{px, AnyWindowHandle, Bounds, Pixels, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, theme, KagiApp};
 use std::time::{Duration, Instant};
 
+#[path = "toast_conflict_lane.rs"]
+mod conflict_lane;
+
 pub fn scenario_toast_stack_budget(cx: &mut VisualTestAppContext) {
     non_repository_lane_policy(cx);
     takeover_lane_policy(cx);
     conflict_content_anchor(cx);
+    conflict_lane::run(cx);
     repeated_noop_push(cx);
     operation_result_details(cx);
     run_budget_matrix(cx, 1.);

@@ -168,12 +168,9 @@ impl ConflictView {
         .detach();
     }
 
-    pub(super) fn render_saved(
-        &self,
-        chrome: &EditorChrome,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let header = div()
+    pub(super) fn render_saved_header(&self) -> gpui::AnyElement {
+        div()
+            .relative()
             .flex()
             .items_center()
             .flex_shrink_0()
@@ -204,7 +201,16 @@ impl ConflictView {
                             .map(|name| format!("— {}", name.to_string_lossy()))
                             .unwrap_or_default(),
                     )),
-            );
+            )
+            .child(e2e::measure_inside("conflict-saved-header"))
+            .into_any_element()
+    }
+
+    pub(super) fn render_saved(
+        &self,
+        chrome: &EditorChrome,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let body = if self.saved_review_needed {
             div().into_any_element()
         } else if let Some(preview) = &self.saved_preview {
@@ -226,14 +232,15 @@ impl ConflictView {
                 .into_any_element()
         };
         div()
+            .relative()
             .flex()
             .flex_col()
             .flex_1()
             .min_w(px(0.))
             .min_h(px(0.))
             .bg(rgb(theme().bg_base))
-            .child(header)
-            .child(e2e::measure_control("conflict-saved-preview", body))
+            .child(e2e::measure_inside("conflict-saved-preview"))
+            .child(body)
             .into_any_element()
     }
 }

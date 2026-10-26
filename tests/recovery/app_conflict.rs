@@ -43,7 +43,7 @@ pub(crate) fn content_fixture() -> tempfile::TempDir {
     fixture
 }
 
-fn dir_file_fixture() -> tempfile::TempDir {
+pub(crate) fn dir_file_fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
     git(repo, &["init", "-q", "-b", "main"]);

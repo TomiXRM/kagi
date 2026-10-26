@@ -138,9 +138,13 @@ default focus or a root Return action.
 (Operation Log) with a bounded preview; modals only when the user must decide.
 Repository notifications occupy the center content's top-trailing safe area,
 below its header/help/banner and outside sidebar/Inspector, with a 45%-column
-width cap (#1768). Persistent cards keep × / Escape dismissal. Home/Settings
-open an in-flow lane only for Error/action-bearing cards; transient feedback
-must not move controls. Recovery captions reuse the existing command name,
+width cap (#1768). Every conflict layout reserves an in-flow lane for persistent
+cards and their summary between its column/side or saved header and the panes;
+hunk/whole-file choices must never be covered. Directory/file layouts without
+column headers place the lane before their choices. Persistent cards keep
+× / Escape dismissal. Home/Settings likewise open a lane only for Error/action-
+bearing cards; transient feedback stays overlaid and must not move controls.
+Recovery captions reuse the existing command name,
 and a failed or unfinished refresh must not dismiss the failure preview.
 Any accepted successful read for the captured owner resolves that preview,
 including keyboard/menu refresh, tab reactivation and external reload; the

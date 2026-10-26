@@ -263,8 +263,8 @@ impl KagiApp {
         is_slow(elapsed).then_some((name, elapsed.as_secs()))
     }
 
-    /// Render notifications inside the surface's content anchor, or in the
-    /// non-repository persistent lane / transient overlay.
+    /// Render notifications inside the surface's content anchor, or in a
+    /// persistent-only lane / transient overlay.
     pub(super) fn render_toasts(
         &self,
         window: &gpui::Window,

@@ -554,18 +554,25 @@ and focused buttons retain Space / Return. Quiet adoption captions must meet
 4.5:1 and outlines 3:1 against the real conflict band and rest/hover/pressed fills.
 Measure notification bounds against each actual center content, not the window:
 top-trailing below file/graph/editor controls and source-pane column headers,
-outside sidebar/Inspector, at most 45% of that column. Home/Settings/takeovers
-size the lane from persistent cards only; Info/Success and busy feedback stay
-overlaid even while that lane is open. Assert identical full lane/control bounds
+outside sidebar/Inspector, at most 45% of that column. Every conflict layout
+places persistent cards AND the N-more summary in an in-flow lane after its
+column/side/saved header and before the panes and choice controls. Measure
+nonintersection with the actual incoming Use/Both controls in text, and with
+the choose row plus both side headers in raw binary/symlink/submodule fixtures.
+Also cover directory/file choices and saved previews. Home/Settings/takeovers
+likewise size the lane from persistent cards only; Info/Success and busy feedback
+stay overlaid even while that lane is open. Assert identical full lane/control bounds
 after transient arrival, expiry/removal and a real held read's busy feedback;
 separate `toast-persistent-stack`, `toast-transient-stack` and outer
 `toast-transient-overlay` probes prevent mixed-host measurement collisions.
 Keep Settings' last control reachable. The saved-conflict failure has separate
 repository identity and full Operation Log / Refresh Repository labels; failed
 refresh retains it, accepted successful recovery dismisses only its own card.
-Tier B repeats these on a plain binary with real merge conflicts and a saved
-draft read failure, including × / Escape, root Return, focused-button activation
-and actual destructive caption contrast in EN/JA and Light/Dark.
+Tier B repeats these on a plain binary with real text AND raw merge conflicts
+and a saved draft read failure: both source identities and all choice controls
+must remain visible, including with the persistent N-more summary. Include
+× / Escape, root Return, focused-button activation and actual destructive caption
+contrast in EN/JA and Light/Dark.
 For focused activation evidence, inspect the actual focus-ring pixels before
 pressing Space: the header Copy control precedes Cancel in Tab order, so never
 assume the first Tab focuses Cancel or activate Copy during validation. Capture

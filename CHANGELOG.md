@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Share image, PDF, binary, symlink and submodule side-pair presentation between diff and conflicts. Raw conflicts use the text resolver's per-side Use / Used / Not used / Change vocabulary; PDF conflicts start with synchronized scrolling, and Save keeps staging the selected frozen OID/mode rather than preview bytes. Apply the shared 8 MiB image budget and magic-first PNG/JPEG/GIF/WebP/BMP recognition, with real decode outcomes and aligned image geometry. (#1742)
 - Preserve conflict lifecycle and pure-predicate formal models as an advisory CI regression guard, with pinned TLC, explicit issue-mapped expected outcomes, red broken-variant checks, and runtime-reconciled ledgers. (#1731–#1733, #1740, #1743–#1746 (model-external runtime findings: #1734–#1738))
   - Replay 34 saved native-drill projections, reject a forged unarmed Skip, and retain explicit evidence gaps. Refine refreshed-Skip and unreadable-metadata guards; run the 84 lifecycle checks in bounded batches and validate 40 pure properties against 37 pure mutants.
 

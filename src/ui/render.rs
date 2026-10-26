@@ -389,6 +389,14 @@ impl Render for KagiApp {
                     focused_pdf = Some(focus);
                 }
             }
+            if let Some(conflict) = &ui.conflict {
+                if let Some(focus) = conflict.read(cx).focused_pdf_body(window, cx) {
+                    focused_pdf = Some(focus);
+                }
+                if Some(*owner) != active || !self.conflict_body_visible() {
+                    conflict.update(cx, |view, _| view.retire_raw_preview());
+                }
+            }
             if Some(*owner) != active || self.home_in_front() {
                 ui.inspector_model
                     .yield_focus(self.root_focus.as_ref(), window, cx);

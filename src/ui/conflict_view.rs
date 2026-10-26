@@ -106,6 +106,7 @@ pub struct EditorChrome {
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     pub raw_preview_scroll: gpui::ScrollHandle,
     pub(crate) raw_preview: conflict_binary_view::PreviewState,
+    pub(crate) raw_pdfs: Option<super::diff_view::pdf::DiffPdfViewers>,
     /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
     /// Interior-mutable so the render path can fill it lazily; keyed by
     /// (path, theme slug) — row TEXT never changes within a session, only the
@@ -603,6 +604,7 @@ impl ConflictView {
             ab_geom: self.ab_geom.clone(),
             raw_preview_scroll: self.raw_preview_scroll.clone(),
             raw_preview: self.raw_preview.state.clone(),
+            raw_pdfs: self.raw_preview.pdfs.clone(),
             hl_cache: self.hl_cache.clone(),
         }
     }

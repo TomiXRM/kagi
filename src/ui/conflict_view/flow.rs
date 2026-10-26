@@ -177,6 +177,7 @@ pub(super) fn render(
                 chrome.writer_busy,
                 &chrome.raw_preview_scroll,
                 &chrome.raw_preview,
+                chrome.raw_pdfs.as_ref(),
                 cx,
             ));
         }

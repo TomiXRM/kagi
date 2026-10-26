@@ -505,7 +505,7 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
     }
     assert!((f32::from(current.size.width - incoming.size.width)).abs() < 1.);
     assert!(
-        (f32::from(incoming.left() - current.right() - theme::scaled_px(12.))).abs() < 1.,
-        "{locale}/{zoom}/{dimensions:?}: image gap must use scaled units"
+        (f32::from(incoming.left() - current.right() - gpui::px(1.))).abs() < 1.,
+        "{locale}/{zoom}/{dimensions:?}: shared side-pair divider must be exactly one pixel"
     );
 }

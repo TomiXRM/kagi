@@ -190,6 +190,13 @@ impl ConflictView {
                     ))
                     .child(status),
             )
+            .when_some(
+                self.raw_preview
+                    .pdfs
+                    .as_ref()
+                    .and_then(|pdfs| pdfs.control(true, self.writer_busy, cx)),
+                |header, control| header.child(control),
+            )
             .child(div().flex_1());
         if saved && !mode.session.files.is_empty() {
             header = header.child(e2e::measure_control(

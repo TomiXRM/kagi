@@ -216,10 +216,10 @@ pub struct MainDiffView {
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
-    /// W-IMG: before/after GPUI images wrapping supported binary image bytes.
-    /// When set, the pane renders the image panel instead of the "Binary file"
-    /// placeholder. Pixel decoding remains GPUI's responsibility.
+    /// Encoded source handles retained for source-faithful public image probes.
+    /// Rendering uses the decoded handles in `side_pair`, never a second decode.
     pub images: Option<DiffImagePair>,
+    pub side_pair: Option<SidePair>,
     /// #495: grammar for the rows (from the file path); `None` = plain text.
     pub lang: Option<&'static str>,
     /// #495: the theme the rows' spans were computed with; `None` while the
@@ -236,6 +236,123 @@ pub struct DiffImagePair {
     pub new_exists: bool,
     pub old: Option<std::sync::Arc<gpui::Image>>,
     pub new: Option<std::sync::Arc<gpui::Image>>,
+}
+
+/// Immutable worker-prepared presentation; no resolution/selection authority.
+#[derive(Clone)]
+pub enum SideFailure {
+    TooLarge,
+    Decode,
+    Read(SharedString),
+}
+
+#[derive(Clone, Default)]
+pub struct SideMetadata {
+    pub oid: Option<SharedString>,
+    pub size: Option<u64>,
+    pub error: Option<SideFailure>,
+}
+
+#[derive(Clone)]
+pub enum SideContent {
+    Absent,
+    Loading,
+    Text {
+        text: SharedString,
+        meta: SideMetadata,
+    },
+    Image {
+        encoded: std::sync::Arc<gpui::Image>,
+        decoded: Result<std::sync::Arc<gpui::RenderImage>, SharedString>,
+        dimensions: Option<(u32, u32)>,
+        meta: SideMetadata,
+    },
+    Pdf {
+        source: kagi_ui_editor::PdfSource,
+        meta: SideMetadata,
+    },
+    Binary(SideMetadata),
+    Symlink {
+        target: Option<SharedString>,
+        meta: SideMetadata,
+    },
+    Submodule(SideMetadata),
+}
+
+impl SideContent {
+    pub fn failed(error: impl Into<SharedString>) -> Self {
+        Self::Binary(SideMetadata {
+            error: Some(SideFailure::Read(error.into())),
+            ..Default::default()
+        })
+    }
+    pub fn needs_external_compare(&self) -> bool {
+        match self {
+            Self::Binary(_)
+            | Self::Image {
+                decoded: Err(_), ..
+            } => true,
+            Self::Pdf { source, .. } => !source.is_valid(),
+            Self::Symlink { meta, .. } => meta.error.is_some(),
+            _ => false,
+        }
+    }
+    pub fn is_present(&self) -> bool {
+        !matches!(self, Self::Absent | Self::Loading)
+    }
+
+    pub fn metadata(&self) -> Option<&SideMetadata> {
+        match self {
+            Self::Absent | Self::Loading => None,
+            Self::Text { meta, .. }
+            | Self::Image { meta, .. }
+            | Self::Pdf { meta, .. }
+            | Self::Symlink { meta, .. }
+            | Self::Binary(meta)
+            | Self::Submodule(meta) => Some(meta),
+        }
+    }
+
+    pub(crate) fn pdf_source(&self) -> pdf::PreparedPdfSide {
+        match self {
+            Self::Pdf { source, .. } => pdf::PreparedPdfSide::Source(source.clone()),
+            _ if self.metadata().is_some_and(|meta| meta.error.is_some()) => {
+                let error = match self.metadata().and_then(|meta| meta.error.as_ref()) {
+                    Some(SideFailure::Read(error)) => error.to_string(),
+                    Some(SideFailure::TooLarge) => Msg::SidePreviewTooLarge.t().to_owned(),
+                    _ => Msg::SidePreviewDecodeFailed.t().to_owned(),
+                };
+                pdf::PreparedPdfSide::Failed(error)
+            }
+            _ => pdf::PreparedPdfSide::Absent,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SideHeader {
+    pub label: SharedString,
+    pub accent: Option<u32>,
+    pub id: &'static str,
+    pub absent: Msg,
+}
+
+#[derive(Clone)]
+pub struct SidePair {
+    pub left: SideContent,
+    pub right: SideContent,
+    pub headers: [SideHeader; 2],
+}
+
+impl SidePair {
+    pub(crate) fn pdf_sources(&self) -> Option<pdf::PreparedPdfPair> {
+        (matches!(self.left, SideContent::Pdf { .. })
+            || matches!(self.right, SideContent::Pdf { .. }))
+        .then(|| pdf::PreparedPdfPair {
+            old: self.left.pdf_source(),
+            new: self.right.pdf_source(),
+        })
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -476,6 +593,7 @@ pub(crate) fn build_main_diff_view(
         height_source: Default::default(),
         source,
         images: None,
+        side_pair: None,
         lang: lang_for_path(path),
         highlighted: None,
     }

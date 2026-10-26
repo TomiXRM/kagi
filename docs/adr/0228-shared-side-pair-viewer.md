@@ -1,6 +1,6 @@
 # ADR-0228: Shared side-pair viewer
 
-- Status: Accepted architecture; implementation scoped to step ① preparation consolidation
+- Status: Accepted architecture; shared preparation, rendering and adoption implemented; native acceptance pending
 - Date: 2026-10-24
 - References: [#1742](https://github.com/TomiXRM/kagi/issues/1742), [initial architecture review](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6381625496), ADR-0226, ADR-0227; deletion prerequisite #1734
 
@@ -253,3 +253,46 @@ The original fixture's 25/26-byte PNG inputs do not decode; the valid-PNG
 variant separately proves actual image rendering. This step does not claim
 new controls, PDF conflict presentation, native AX/IME coverage or completion
 of steps ②–④ or #1742.
+
+## Steps ②–④ implementation amendment (2026-10-26)
+
+The implementation extends `diff_view.rs` with `SidePair { left, right, headers }`
+and independently typed side content. Existing diff source adapters and the
+conflict attachment both call the preparation owner; neither rendering nor
+adoption reads Git. Signature recognition is pure domain logic shared with the
+backend conflict detector, so an all-ASCII PDF also takes the authoritative raw
+resolution path rather than a lossy text Result. Recognized bytes outrank an
+extension, and successful decode is distinct from merely recognizing a signature.
+
+The common renderer owns source headers, body placeholders, metadata and image
+geometry. Conflict alone supplies action rows. A decision is derived from the
+buffer's raw OID/mode; Change clears that decision in `ResolutionBuffer`, preserving
+the source identities and marking the unresolved draft for normal autosave.
+No viewer-local chosen-side flag or alternative Save writer is introduced.
+The raw Save pipeline and its contract log lines remain unchanged.
+
+The accepted conflict preview owns its PDF pair. Conflict starts synchronized;
+diff retains its independent initial state. Retirement immediately disables
+callbacks and clears subscriptions even when an earlier frame retains cloned
+viewer handles. The root's existing retiring-focus handoff also observes conflict
+PDF bodies and does not steal unrelated input focus.
+
+HIG design gate: the independent review rejected the initial sketch; Main approved
+the revised matrix with final corrections recorded in
+[the v3 proposal](https://github.com/TomiXRM/kagi/issues/1742#issuecomment-6413001918).
+The source header has no controls; an aligned action row sits below it, using
+existing NeutralTinted tool buttons and outline-only Used / Not used labels.
+The unchosen body remains full contrast. PDF keeps the Editor toolbar and one
+pair-level sync control in the file header. External comparison belongs to a
+shared row outside both source groups. EN headers use Current / Incoming.
+Selectable symlink targets and full gitlink OIDs remain source content, not paths
+to follow. The figure's contrast calculations cover Apple Light/Dark, not all
+themes or native assistive-technology delivery.
+
+`tests/gui_e2e/side_pair.rs` adds image/PDF Use → Save acceptance coverage, including
+image Change → Use, with independently captured stage OIDs/modes/bytes and stage-0 oracles.
+Compilation is not native execution evidence. The integrating owner must still
+run the full existing regression filters above and record real-window,
+keyboard/AX and narrow/zoom evidence before closing #1742. Deletion remains the
+#1734-owned frozen confirmation path; its integration is not an empty-blob or
+raw absent-side adoption fallback.

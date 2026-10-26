@@ -798,6 +798,22 @@ impl ResolutionBuffer {
         self.files.get(path).and_then(|fr| fr.raw_result)
     }
 
+    /// Return a raw decision to the unresolved state without changing its frozen
+    /// source identities. This is the raw counterpart of resetting a text hunk;
+    /// Save remains unavailable until another real source is adopted.
+    pub fn reset_raw_resolution(&mut self, path: &Path) -> bool {
+        let Some(file) = self.files.get_mut(path) else {
+            return false;
+        };
+        if !file.raw || file.raw_result.is_none() {
+            return false;
+        }
+        file.begin_edit();
+        file.draft_state = true;
+        file.raw_result = None;
+        true
+    }
+
     /// The absolute working-tree path this buffer was built for (#321 viewer:
     /// lets the UI re-open the backend for blob bytes without a git2 dependency).
     pub fn repo_path(&self) -> &Path {
@@ -1426,6 +1442,50 @@ mod tests {
         };
         b.files.insert(path.clone(), fr);
         (b, path)
+    }
+
+    #[test]
+    fn raw_change_clears_decision_without_changing_frozen_sources() {
+        let (mut buffer, path) = buf_with_sides("", "");
+        let current = RawResolution {
+            oid: git2::Oid::from_str("1111111111111111111111111111111111111111").unwrap(),
+            mode: 0o100644,
+        };
+        let incoming = RawResolution {
+            oid: git2::Oid::from_str("2222222222222222222222222222222222222222").unwrap(),
+            mode: 0o100755,
+        };
+        let file = buffer.files.get_mut(&path).unwrap();
+        file.raw = true;
+        file.current_raw = Some(current);
+        file.incoming_raw = Some(incoming);
+        buffer
+            .apply_choice(&path, ResolutionChoice::Incoming)
+            .unwrap();
+        assert_eq!(buffer.raw_resolution(&path).unwrap().oid, incoming.oid);
+        assert!(buffer.reset_raw_resolution(&path));
+        assert!(!buffer.has_resolution(&path));
+        assert!(!buffer.reset_raw_resolution(&path));
+        assert_eq!(
+            buffer
+                .side_raw_for(&path, SelectionSide::Current)
+                .unwrap()
+                .oid,
+            current.oid
+        );
+        assert_eq!(
+            buffer
+                .side_raw_for(&path, SelectionSide::Incoming)
+                .unwrap()
+                .mode,
+            incoming.mode
+        );
+        assert!(buffer.files.get(&path).unwrap().draft_state);
+        buffer
+            .apply_choice(&path, ResolutionChoice::Current)
+            .unwrap();
+        assert_eq!(buffer.raw_resolution(&path).unwrap().oid, current.oid);
+        assert_eq!(buffer.raw_resolution(&path).unwrap().mode, current.mode);
     }
 
     #[test]

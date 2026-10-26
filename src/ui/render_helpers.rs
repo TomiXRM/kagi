@@ -666,8 +666,39 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     );
     let title = view.title.clone();
     let stats = view.stats.clone();
-    let images = view.images.clone();
-    let pdf_body = header.pdfs.as_ref().map(|viewers| viewers.render());
+    let media_body = view.side_pair.clone().map(|pair| {
+        let pdf = pair.headers[0].id == "main-diff-pdf-old";
+        let image = view.images.is_some();
+        let state = match (pair.left.is_present(), pair.right.is_present()) {
+            (true, true) => Msg::DiffImageModified,
+            (true, false) => Msg::DiffImageDeleted,
+            (false, true) => Msg::DiffImageAdded,
+            _ => Msg::DiffBinaryNoText,
+        };
+        div()
+            .id(if pdf {
+                "main-diff-pdf-panel"
+            } else {
+                "main-diff-image-panel"
+            })
+            .flex_1()
+            .min_h(px(0.))
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .when(image, |el| el.child(diff_state::caption(state)))
+            .child(diff_state::side_pair(
+                pair,
+                [None, None],
+                header.pdfs.as_ref(),
+                if pdf {
+                    ["main-diff-pdf-old-body", "main-diff-pdf-new-body"]
+                } else {
+                    ["main-diff-image-old-body", "main-diff-image-new-body"]
+                },
+            ))
+            .into_any_element()
+    });
     // Already an `Arc` on the view — this is a refcount bump, not a copy.
     let rows = view.rows;
     let rows_for_list = rows.clone();
@@ -692,10 +723,8 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         // ── Header row (fixed height) ─────────────────────────────────────
         .child(header)
         // ── Diff body: full remaining space ──────────────────────────────
-        .child(if let Some(body) = pdf_body {
+        .child(if let Some(body) = media_body {
             body
-        } else if let Some(pair) = images {
-            diff_state::image_panel(pair)
         } else {
             // The owned geometry handle implements the public ScrollbarHandle
             // contract used by the same scrollbar as the other list panes.

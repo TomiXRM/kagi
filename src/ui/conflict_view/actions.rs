@@ -435,6 +435,17 @@ impl ConflictView {
         }
     }
 
+    /// Clear only the draft decision; frozen sources and preview state stay intact.
+    pub(crate) fn conflict_change_raw_choice(&mut self, path: &std::path::Path) {
+        let Some(mode) = self.mode.as_mut() else {
+            return;
+        };
+        if mode.buffer.reset_raw_resolution(path) {
+            mode.refresh_file_status(path);
+            self.autosave_drafts();
+        }
+    }
+
     /// Entry point for "Open external tool" toolbar button (launch is W33). Emits
     /// the contract `klog!` line and marshals the info toast to the parent.
     pub fn conflict_editor_open_external(

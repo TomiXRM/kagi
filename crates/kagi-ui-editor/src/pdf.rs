@@ -52,6 +52,11 @@ pub struct PdfSource {
     pub(super) dimensions: Arc<[(f32, f32)]>,
 }
 impl PdfSource {
+    /// Inspect the already-parsed result without decoding or rasterizing again.
+    pub fn is_valid(&self) -> bool {
+        self.document.is_ok()
+    }
+
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         let too_large = bytes.len() as u64 > MAX_EDITOR_BYTES;
         let bytes = Arc::new(if too_large { Vec::new() } else { bytes });

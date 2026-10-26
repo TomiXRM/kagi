@@ -715,18 +715,30 @@ fn entry_has_mode(entry: Option<&git2::IndexEntry>, mode: u32) -> bool {
     matches!(entry, Some(e) if e.mode == mode)
 }
 
-/// Probe whether an index entry's blob is binary.  A missing entry or
-/// unreadable blob is treated as non-binary (best effort).
+/// Media is resolved by frozen raw identity even when its encoding is all ASCII
+/// (notably PDFs). Unknown formats retain the existing binary/NUL heuristic.
 fn entry_is_binary(repo: &Repository, entry: Option<&git2::IndexEntry>) -> bool {
     let entry = match entry {
         Some(e) => e,
         None => return false,
     };
+    if entry
+        .path
+        .rsplit(|byte| *byte == b'.')
+        .next()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(b"pdf"))
+    {
+        return true;
+    }
     if entry.id.is_zero() {
         return false;
     }
     match repo.find_blob(entry.id) {
-        Ok(blob) => blob.is_binary() || blob_has_nul(blob.content()),
+        Ok(blob) => {
+            kagi_domain::diff::media_kind(blob.content()).is_some()
+                || blob.is_binary()
+                || blob_has_nul(blob.content())
+        }
         Err(_) => false,
     }
 }
@@ -2171,6 +2183,30 @@ mod frozen_staging_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_documents_take_the_frozen_raw_resolution_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = Repository::init(temp.path()).unwrap();
+        let mut index = repo.index().unwrap();
+        for (name, bytes, expected) in [
+            (
+                "document.data",
+                b"%PDF-1.7\nall ASCII document\n".as_slice(),
+                true,
+            ),
+            ("broken.PDF", b"unreadable document".as_slice(), true),
+            ("image.data", b"GIF89a".as_slice(), true),
+            ("ordinary.txt", b"ordinary text\n".as_slice(), false),
+        ] {
+            std::fs::write(temp.path().join(name), bytes).unwrap();
+            index.add_path(Path::new(name)).unwrap();
+            let entry = index.get_path(Path::new(name), 0).unwrap();
+            assert!(!repo.find_blob(entry.id).unwrap().is_binary());
+            assert_eq!(entry_is_binary(&repo, Some(&entry)), expected, "{name}");
+        }
+        assert!(!entry_is_binary(&repo, None));
+    }
 
     #[test]
     fn slugs_are_stable() {

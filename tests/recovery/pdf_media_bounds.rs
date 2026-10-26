@@ -281,7 +281,20 @@ pub fn scenario_pdf_media_symlink(cx: &mut VisualTestAppContext) {
         e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
     });
     wip_open(cx, &app, window, "link.pdf", false);
-    assert_failed_side(cx, &app, window, false);
+    let pane = pane(cx, &app);
+    cx.read(|cx| {
+        let pane = pane.read(cx);
+        assert!(pane.pdf_viewer_for_e2e(false, cx).is_none());
+        let pair = pane
+            .view
+            .side_pair
+            .as_ref()
+            .expect("shared symlink presentation");
+        assert!(
+            matches!(&pair.right, kagi::ui::SideContent::Symlink { target: Some(link), meta }
+            if link.as_ref() == target.to_string_lossy() && meta.error.is_none())
+        );
+    });
     assert_eq!(
         native_ax::node(cx, window, "main-diff-pdf-old".into())["aria"]["description"],
         Msg::DiffPdfNoPrevious.t()

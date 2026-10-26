@@ -183,6 +183,15 @@ where it will be covered by an animation or a popover.
 **Writing / Accessibility** — labels are verbs for actions and nouns for
 states, EN and JA; every control has a role, a name, a visible focus ring and
 a keyboard path; status badges are labels, not disabled buttons.
+Input feedback `[HIG]` — `writing.md › Best practices`: "Show errors right
+next to the field, and instruct people how to enter the information correctly,
+rather than scolding them for not following the rules."
+`[house]` #1774: create-branch and create-worktree names stay quiet while empty
+and pristine; editing or attempted Return reveals the current keyed reason,
+with empty-name Return keeping field focus. Wrap the reason to preserve its
+instruction; never introduce a different validator to shorten the copy.
+Field-error contrast is checked against the actual painted card, not just the
+modal token. Consequence summaries must agree in the visual row, AX and Copy all.
 
 ## How a finding reads
 

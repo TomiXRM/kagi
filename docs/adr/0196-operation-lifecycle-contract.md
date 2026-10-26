@@ -158,6 +158,13 @@ Sessions lease の解放と reconcile の解決は既存の lifecycle 条件に�
 この保護は監視する Kagi process が存続し、writer が監視対象 group 内にいることを
 前提とする。Kagi の強制終了や group を脱出した任意の外部 writer まで保証しない。
 
+最終 `RepositoryLockFile` owner が保持する共通 `AdvisoryLock` guard は fd の close
+より先に明示的に unlock する（#1805）。同じ guard を conflict draft と oplog
+append/retention の sidecar にも使用する。別 thread の無関係な fork が CLOEXEC fd を
+exec 前に一時継承しても、owner 終了後の解放を遅らせないためである。repository の
+lexical guard と各 janitor の `Arc` が全てなくなるまでは unlock せず、group 停止の
+証明条件は変更しない。
+
 Continue / Skip の draft flush・preservation は repository lock の前に完了し、
 draft lock と入れ子にしない。D/F recovery snapshot の ref write はこれと異なり、
 repository admission と preflight の**後**に同じ repository lock 内で行う。

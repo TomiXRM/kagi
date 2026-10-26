@@ -1,7 +1,9 @@
 //! Explicit entry retirement. No age/cap sweep: backups live as long as receipts.
 use super::{entry_to_json, log_file_path, reading::Reader, OpLogEntry};
+use crate::advisory_lock::AdvisoryLock;
 use crate::{ops::backup, GitError};
 use git2::{Oid, Repository};
+#[cfg(unix)]
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
@@ -46,7 +48,7 @@ fn valid_backup_kind(kind: Option<git2::ObjectType>) -> bool {
 
 /// Stable sidecar lock survives atomic log replacement. Append shares it.
 /// Fail closed if another writer owns it; do not block a GUI thread on a lock.
-pub(super) fn lock(path: &std::path::Path) -> Result<File, GitError> {
+pub(super) fn lock(path: &std::path::Path) -> Result<AdvisoryLock, GitError> {
     crate::advisory_lock::lock_exclusive(
         &path.with_extension("jsonl.lock"),
         std::time::Duration::ZERO,
@@ -56,12 +58,27 @@ pub(super) fn lock(path: &std::path::Path) -> Result<File, GitError> {
 
 /// Concurrent normal appends must not lose records just because a short write
 /// is in progress. Bound waiting so a stalled external owner cannot hang us.
-pub(super) fn append_lock(path: &std::path::Path) -> Result<File, GitError> {
+pub(super) fn append_lock(path: &std::path::Path) -> Result<AdvisoryLock, GitError> {
     crate::advisory_lock::lock_exclusive(
         &path.with_extension("jsonl.lock"),
         std::time::Duration::from_secs(1),
     )
     .map_err(io)
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn retention_lock_releases_while_unrelated_fork_is_alive() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("operations.jsonl");
+    for owner in [lock, append_lock] {
+        let owner = owner(&path).unwrap();
+        let admission = crate::advisory_lock::tests::with_unrelated_fork(|| {
+            drop(owner);
+            lock(&path)
+        });
+        drop(admission.expect("oplog owner must unlock before an unrelated fork execs"));
+    }
 }
 
 pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogPlan, GitError> {
@@ -167,7 +184,7 @@ pub(super) fn execute_locked(
     repo: &Repository,
     plan: &ForgetOplogPlan,
     retired: &mut bool,
-    lock: &mut File,
+    lock: &mut AdvisoryLock,
 ) -> Result<(), GitError> {
     if std::fs::read_to_string(&plan.path).map_err(io)? != plan.before {
         return Err(io("oplog changed after confirmation; re-plan"));
@@ -228,7 +245,8 @@ pub(super) fn validate_append_roots(entry: &OpLogEntry) -> Result<(), GitError> 
 
 /// The stable lock file also holds the next sequence id. Reserve before append
 /// or retirement; failed writes may leave gaps, never reuse a retired identity.
-pub(super) fn reserve_id(lock: &mut File, floor: u64) -> Result<u64, GitError> {
+pub(super) fn reserve_id(lock: &mut AdvisoryLock, floor: u64) -> Result<u64, GitError> {
+    let lock = lock.file_mut();
     lock.rewind().map_err(io)?;
     let mut previous = String::new();
     lock.read_to_string(&mut previous).map_err(io)?;

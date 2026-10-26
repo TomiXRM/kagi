@@ -1843,13 +1843,28 @@ impl KagiApp {
 
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
     /// silence before doing git work, so typing stays fluid.
-    fn schedule_modal_replan(&mut self, cx: &mut Context<Self>) {
+    fn schedule_modal_replan(&mut self, name_cleared: bool, cx: &mut Context<Self>) {
+        // Retain preview geometry while typing; only feedback and confirmation
+        // wait for a plan matching the current inputs.
+        if let Some(modal) = self.create_branch_modal_mut() {
+            modal.plan_stale = true;
+        }
+        if let Some(modal) = self.create_worktree_modal_mut() {
+            modal.plan_stale = true;
+        }
         if let Some(modal) = self.stash_push_modal_mut() {
             modal.plan = None;
             self.app_sessions.invalidate_plan();
         }
         self.modal_replan_gen = self.modal_replan_gen.wrapping_add(1);
         let gen = self.modal_replan_gen;
+        // Clearing a name needs its current required-input instruction this
+        // frame, not a stale invalid-name reason during the typing debounce.
+        if name_cleared {
+            self.run_modal_replans(cx);
+            cx.notify();
+            return;
+        }
         cx.spawn(async move |this, acx| {
             acx.background_executor()
                 .timer(Duration::from_millis(250))
@@ -3407,6 +3422,7 @@ impl KagiApp {
             M::TerminalPaste(_) => self.confirm_terminal_paste(cx),
             M::TrustRepo(_) => self.confirm_trust_repo(cx),
         }
+        self.focus_empty_create_branch_name(window, cx);
     }
 
     /// Esc while a modal is open: cancel/close the active modal. Returns `true`

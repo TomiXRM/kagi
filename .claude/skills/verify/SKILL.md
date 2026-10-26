@@ -14,6 +14,17 @@ Choose the smallest evidence lane that proves the change. Tier A is deterministi
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
 
+For the advisory conflict formal guard, run
+`mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.
+The runner pins stable TLC v1.7.4 and checks its SHA-256 before every Java launch;
+see `formal/conflict/README.md` for the source, cache and upgrade policy. This TLC
+version leaves SpecTE generation disabled by default and does not accept
+`-noGenerateSpecTE`; concurrent lifecycle JVMs use isolated temporary directories
+to avoid collisions while extracting its standard modules. A pin upgrade must
+preserve every full-suite expected verdict,
+all negative controls, the pure properties and saved-trace replay, not only a
+focused lifecycle check.
+
 **Read this before driving the GUI.** Two rules are load-bearing and easy to miss by
 skimming, so they are stated here as well as where they apply:
 
@@ -118,6 +129,21 @@ Save/Abort without a close sheet; both must pass the current-generation barrier.
 actual GPUI shutdown hook without first draining autosave, and checks both durable
 bodies. Non-cancellable OS termination has a shared 200 ms budget, not an unlimited
 durability guarantee; storage errors/slow I/O retain an unacknowledged crash window.
+
+For #1774 use
+`KAGI_GUI_E2E_ONLY='create_branch_feedback,create_branch_after_unchanged,create_branch_cancel_reopen,create_branch_warnings'`.
+The feedback matrix covers EN/JA and Apple Light/Dark for both creation sheets:
+pristine/reopened empty, same-frame Return, erased names, actual CreateInvalidRef
+copy and natural wrapping at normal/enlarged scale. `input-branch-name-error`
+measures the actual field reason; AX assertions use the complete Alert label.
+The AFTER scenario checks the renderer-fed sentence and group name plus
+`plan_clipboard_text_for_e2e`, which calls the production Copy all projection:
+input sheets have no Copy all button, so this is not a native clipboard-click
+claim. Keep checkout-on predictions and repository-state witnesses.
+Pair with `input_field_error_ink_meets_aa_on_all_theme_modal_surfaces` in UI core.
+Tier B captures untouched, Return-empty, invalid-ref and checkout-off AFTER in
+EN Apple Light and JA Apple Dark with an isolated plain app. Preserve the actual
+validator and inspect the wrapped repair instruction, focus and pinned footer.
 
 For #1706 W3 use
 `KAGI_GUI_E2E_ONLY='issue_conversation_enabled_input_copy,issue_conversation_offscreen_select_all,neighbor_plan_labels,rebase_plan_labels,plan_footer_long_branch,squash_evidence_,pr_fields_escape_focus,conflict_,pull_,queue_checkout_missing_ref_refuses,queue_checkout_linked_worktree_refuses'`

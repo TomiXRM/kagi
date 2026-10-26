@@ -154,7 +154,7 @@ def tlc(name):
     command = ['java', '-XX:+UseSerialGC',
                '-XX:ActiveProcessorCount=1', '-Xms32m', '-Xmx256m',
                '-cp', os.environ['TLA2TOOLS_JAR'],
-               'tlc2.TLC', '-workers', '1', '-seed', '1', '-fp', '0', '-noGenerateSpecTE',
+               'tlc2.TLC', '-workers', '1', '-seed', '1', '-fp', '0',
                '-metadir', str(out / (name + '-states')), '-config', name + '.cfg', name + '.tla']
     t0 = time.monotonic()
     run = subprocess.run(command, cwd=OUT, text=True, stdout=subprocess.PIPE,

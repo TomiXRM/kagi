@@ -26,6 +26,10 @@ impl KagiApp {
             at,
             start_title,
             input: String::new(),
+            branch_name_interacted: false,
+            branch_name_composing: false,
+            plan_stale: false,
+            reserve_name_error: false,
             // Each opening owns a fresh editor, including when no Window is
             // available yet. Never retain the cancelled editor's text/caret.
             input_state: None,
@@ -76,6 +80,7 @@ impl KagiApp {
                 let outcome = session_unavailable(i18n::Op::CreateBranch);
                 if let Some(modal) = self.create_branch_modal_mut() {
                     modal.plan.replan(outcome);
+                    modal.plan_stale = false;
                 }
                 return;
             }
@@ -104,6 +109,7 @@ impl KagiApp {
         let outcome = plan_outcome(i18n::Op::CreateBranch, result);
         if let Some(modal) = self.create_branch_modal_mut() {
             modal.plan.replan(outcome);
+            modal.plan_stale = false;
         }
     }
 
@@ -111,6 +117,15 @@ impl KagiApp {
     ///
     /// Only verified success dismisses the form; failures retain its input.
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = self.create_branch_modal_mut() {
+            modal.branch_name_interacted = true;
+            cx.notify();
+            // An unfilled form is field feedback, not an operation attempt.
+            // Keep nonempty names on the full refusal/preflight pipeline.
+            if modal.input.is_empty() {
+                return;
+            }
+        }
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
         self.run_modal_replans(cx);

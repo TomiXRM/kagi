@@ -135,6 +135,15 @@ pub(crate) fn plan_clipboard_text(
         }
         out.push_str(Msg::PlanTagLocalUnchanged.t());
         out.push('\n');
+    } else if let Some(after) = plan::branch_creation_unchanged_after(&plan.title) {
+        out.push_str(&format!(
+            "\n{}: {} [{}]\n{}: {}\n",
+            Msg::InputStashCurrent.t(),
+            state_text(&current_head),
+            state_text(&plan.current.dirty),
+            Msg::InputStashAfter.t(),
+            after
+        ));
     } else {
         out.push_str(&format!(
             "\n{}: {} [{}]\n{}: {} [{}]\n",

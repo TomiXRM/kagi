@@ -1,7 +1,8 @@
 //! ADR-0191's same-directory write/sync/rename convention, with a draft lock.
 use super::*;
+use crate::advisory_lock::AdvisoryLock;
 use sha2::{Digest, Sha256};
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 
 #[derive(Debug, Clone, Default)]
@@ -202,9 +203,9 @@ fn rescue(path: &Path) -> Result<PathBuf, GitError> {
     Err(error(path, "all reserved .corrupt names are occupied"))
 }
 
-/// Never unlink the sidecar: every process must lock the same inode. Closing the
-/// File (also on panic or process death) releases the OS advisory lock.
-pub(super) fn lock(path: &Path) -> Result<File, GitError> {
+/// Never unlink the sidecar: every process must lock the same inode. The guard
+/// explicitly unlocks on drop; process death also releases the OS advisory lock.
+pub(super) fn lock(path: &Path) -> Result<AdvisoryLock, GitError> {
     let lock_path = sibling(path, ".lock");
     crate::advisory_lock::lock_exclusive(&lock_path, std::time::Duration::from_secs(2)).map_err(
         |e| {
@@ -215,6 +216,21 @@ pub(super) fn lock(path: &Path) -> Result<File, GitError> {
             }
         },
     )
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn draft_lock_releases_while_unrelated_fork_is_alive() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("buffer.json");
+    let owner = lock(&path).unwrap();
+    let admission = crate::advisory_lock::tests::with_unrelated_fork(|| {
+        drop(owner);
+        crate::advisory_lock::lock_exclusive(&sibling(&path, ".lock"), std::time::Duration::ZERO)
+    });
+    drop(
+        admission.expect("draft owner must unlock buffer.json.lock before an unrelated fork execs"),
+    );
 }
 
 /// Deliberately duplicated across the crate boundary: the byte-for-byte algorithm

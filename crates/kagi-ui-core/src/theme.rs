@@ -361,6 +361,11 @@ impl Theme {
         self.readable_text_on(self.color_blocker, backgrounds, 4.6)
     }
 
+    /// Field instructions must read on both modal and the card's painted panel.
+    pub fn input_field_error_text(&self) -> u32 {
+        self.destructive_text_on(&[self.modal, self.elevated_surface(self.panel)])
+    }
+
     fn readable_text_on(&self, color: u32, backgrounds: &[u32], minimum: f64) -> u32 {
         let readable = |color| {
             backgrounds
@@ -1735,6 +1740,20 @@ mod nagi_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_field_error_ink_meets_aa_on_all_theme_modal_surfaces() {
+        for theme in THEMES {
+            let ink = theme.input_field_error_text();
+            for background in [theme.modal, theme.elevated_surface(theme.panel)] {
+                assert!(
+                    contrast_ratio(ink, background) >= 4.5,
+                    "{} field error #{ink:06x} on #{background:06x}",
+                    theme.slug
+                );
+            }
+        }
+    }
 
     #[test]
     fn destructive_text_meets_aa_on_composited_conflict_chrome() {

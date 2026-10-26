@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 NEW_CHECKS = {'skip-refresh-broken', 'skip-confirm-cli-race',
@@ -38,14 +39,18 @@ def run(checks, root):
         cmd = ['java', '-XX:+UseSerialGC',
                '-XX:ActiveProcessorCount=1', '-Xms32m', '-Xmx256m',
                '-cp', os.environ['TLA2TOOLS_JAR'],
-               'tlc2.TLC', '-workers', '1', '-seed', '1', '-fp', '0', '-noGenerateSpecTE',
+               'tlc2.TLC', '-workers', '1', '-seed', '1', '-fp', '0',
                '-metadir', str(check_out / (name + '-states')), '-config', str(cfg_root / (name + '.cfg')),
                str(root / 'ConflictLifecycle.tla')]
         t0 = time.monotonic()
         try:
-            p = subprocess.run(cmd, cwd=root, text=True, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, timeout=55)
-            text, code = p.stdout, p.returncode
+            # TLC 1.7.4 extracts standard modules into java.io.tmpdir using
+            # shared filenames; isolate each JVM so peers cannot truncate them.
+            with tempfile.TemporaryDirectory(prefix='kagi-tlc-') as tmp:
+                p = subprocess.run([cmd[0], f'-Djava.io.tmpdir={tmp}', *cmd[1:]],
+                                   cwd=root, text=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, timeout=55)
+                text, code = p.stdout, p.returncode
         except (subprocess.TimeoutExpired, OSError) as exc:
             text, code = str(exc), None
         elapsed = round(time.monotonic()-t0, 3)

@@ -129,7 +129,9 @@ pub(super) fn render_center(
     if kind == ConflictKind::DirFile {
         return render_dir_file_center(&path, writer_busy, cx);
     }
-    if kind.is_raw() {
+    use kagi_domain::conflict_family::Resolution;
+    let resolutions = mode.buffer.file_resolutions(&path).unwrap_or_default();
+    if kind.is_raw() && resolutions.iter().any(|r| *r != Resolution::Delete) {
         return super::conflict_binary_view::render_raw_preview(
             raw_preview,
             mode,
@@ -142,8 +144,6 @@ pub(super) fn render_center(
         );
     }
 
-    use kagi_domain::conflict_family::Resolution;
-    let resolutions = mode.buffer.file_resolutions(&path).unwrap_or_default();
     if resolutions.contains(&Resolution::Delete) {
         let delete_label = if resolutions.len() == 1 {
             Msg::ConflictConfirmDeletion
@@ -216,15 +216,7 @@ pub(super) fn render_center(
                 )
             })
             .when(resolutions.len() > 1, |pane| {
-                pane.child(render_preview(
-                    mode,
-                    &path,
-                    kind,
-                    &labels,
-                    raw_preview_scroll,
-                    raw_preview,
-                    cx,
-                ))
+                pane.child(render_preview(mode, &path))
             })
             .into_any_element();
     }

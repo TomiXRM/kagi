@@ -293,6 +293,10 @@ themes or native assistive-technology delivery.
 image Change → Use, with independently captured stage OIDs/modes/bytes and stage-0 oracles.
 Compilation is not native execution evidence. The integrating owner must still
 run the full existing regression filters above and record real-window,
-keyboard/AX and narrow/zoom evidence before closing #1742. Deletion remains the
-#1734-owned frozen confirmation path; its integration is not an empty-blob or
-raw absent-side adoption fallback.
+keyboard/AX and narrow/zoom evidence before closing #1742. After integrating
+#1734, the absent-side button freezes a deletion intent and defers it to the
+existing application confirmation boundary. It never adopts an empty blob;
+ancestor-only deletion keeps the single Remove from Index action. The real PNG
+modify/delete scenario covers both absent sides in EN/JA, inert root Return,
+Escape cancellation, unchanged preconfirmation index/worktree, and confirmed
+absence of stages 0–3 with one successful receipt.

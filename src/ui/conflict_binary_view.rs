@@ -317,9 +317,6 @@ fn raw_action_row(
     } else {
         RawSideTarget::Deleted
     };
-    let RawSideTarget::Adopt(side) = target else {
-        return None;
-    };
     let key = match side {
         SelectionSide::Current => "current",
         SelectionSide::Incoming => "incoming",
@@ -366,20 +363,28 @@ fn raw_action_row(
     let label = if decided {
         Msg::ConflictChange
     } else {
-        Msg::ConflictUseThisSide
+        match target {
+            RawSideTarget::Adopt(_) => Msg::ConflictUseThisSide,
+            RawSideTarget::Deleted => Msg::ConflictUseDeletedSide,
+        }
     };
     let name = if decided {
         Msg::ConflictChangeAccessible
     } else {
-        Msg::ConflictUseThisSideAccessible
+        match target {
+            RawSideTarget::Adopt(_) => Msg::ConflictUseThisSideAccessible,
+            RawSideTarget::Deleted => Msg::ConflictUseDeletedSide,
+        }
     };
+    #[cfg(feature = "gui-e2e")]
+    super::conflict_editor_a11y::record(&id, name.t(), label.t(), "");
     let path = path.to_path_buf();
     let revision = mode.revision.clone();
     let button = super::conflict_editor::tool_button(
         &button_id,
         label.t(),
         super::button_style::ButtonRole::NeutralTinted,
-        cx.listener(move |view, _, _, cx| {
+        cx.listener(move |view, _, window, cx| {
             if view.writer_busy
                 || !view.mode.as_ref().is_some_and(|mode| {
                     mode.revision == revision
@@ -394,14 +399,25 @@ fn raw_action_row(
             if decided {
                 view.conflict_change_raw_choice(&path);
             } else {
-                view.conflict_apply_choice(
-                    &path,
-                    match side {
-                        SelectionSide::Current => kagi_git::ResolutionChoice::Current,
-                        SelectionSide::Incoming => kagi_git::ResolutionChoice::Incoming,
-                    },
-                    cx,
-                );
+                match target {
+                    RawSideTarget::Adopt(side) => view.conflict_apply_choice(
+                        &path,
+                        match side {
+                            SelectionSide::Current => kagi_git::ResolutionChoice::Current,
+                            SelectionSide::Incoming => kagi_git::ResolutionChoice::Incoming,
+                        },
+                        cx,
+                    ),
+                    RawSideTarget::Deleted => {
+                        let intent = view.freeze_delete_intent(&path);
+                        let app = view.app.clone();
+                        cx.spawn_in(window, async move |_, cx| {
+                            let _ = app
+                                .update_in(cx, |app, _, cx| app.accept_conflict_intent(intent, cx));
+                        })
+                        .detach();
+                    }
+                }
             }
             cx.notify();
         }),

@@ -3576,6 +3576,10 @@ mod macos {
                 Box::new(crate::side_pair::scenario_conflict_side_pair_pdf),
             ),
             (
+                "conflict_side_pair_modify_delete",
+                Box::new(crate::side_pair::scenario_conflict_side_pair_modify_delete),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),

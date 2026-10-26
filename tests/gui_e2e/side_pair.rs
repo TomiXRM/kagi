@@ -255,3 +255,103 @@ pub fn scenario_conflict_side_pair_pdf(cx: &mut VisualTestAppContext) {
         choose_and_save(cx, &fixture, "pair.pdf", side, true);
     }
 }
+
+pub fn scenario_conflict_side_pair_modify_delete(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::i18n::{self, Lang, Msg};
+    let _settings = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original = i18n::lang();
+    let base = crate::diff_highlight::png_bytes([0, 255, 0, 255]);
+    let current = crate::diff_highlight::png_bytes([255, 0, 0, 255]);
+    let incoming = crate::diff_highlight::png_bytes([0, 0, 255, 255]);
+    for lang in [Lang::En, Lang::Ja] {
+        for (absent_stage, absent_side) in [(2, "current"), (3, "incoming")] {
+            let fixture = fixture("pair.png", &base, &current, &incoming);
+            let repo = fixture.path().canonicalize().unwrap();
+            let repository = git2::Repository::open(&repo).unwrap();
+            let head = repository.head().unwrap().target().unwrap();
+            let mut index = repository.index().unwrap();
+            index.remove(Path::new("pair.png"), absent_stage).unwrap();
+            index.write().unwrap();
+            drop(index);
+            let surviving_stage = if absent_stage == 2 { 3 } else { 2 };
+            let survivor = index_blob(&repo, "pair.png", surviving_stage);
+            std::fs::write(repo.join("pair.png"), &survivor.bytes).unwrap();
+            let before = std::fs::read(repo.join(".git/index")).unwrap();
+            drop(repository);
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                app.set_lang(lang, cx);
+                app.detect_conflict_mode(cx);
+            });
+            cx.run_until_parked();
+            let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+            conflict.update(cx, |view, cx| {
+                view.conflict_select_file(0);
+                cx.notify();
+            });
+            wait_preview(cx, window, &conflict);
+            let action = format!("conflict-raw-{absent_side}-use");
+            let (role, name, label) = kagi::ui::conflict_editor_a11y::control(&action).unwrap();
+            assert_eq!(role, gpui::Role::Button);
+            assert_eq!(name, Msg::ConflictUseDeletedSide.t());
+            assert_eq!(label, Msg::ConflictUseDeletedSide.t());
+            click_control(cx, window, &action);
+            cx.read(|cx| {
+                let app = app.read(cx);
+                let modal = app
+                    .conflict_resolution_modal()
+                    .expect("frozen deletion sheet");
+                assert_eq!(modal.path, Path::new("pair.png"));
+                assert_eq!(
+                    modal.changes.remove_index,
+                    vec![Path::new("pair.png").to_path_buf()]
+                );
+                assert_eq!(
+                    modal.changes.remove_worktree,
+                    vec![Path::new("pair.png").to_path_buf()]
+                );
+            });
+            cx.simulate_keystrokes(window, "enter");
+            cx.run_until_parked();
+            assert!(cx.read(|cx| app.read(cx).conflict_resolution_modal().is_some()));
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), before);
+            assert_eq!(
+                std::fs::read(repo.join("pair.png")).unwrap(),
+                survivor.bytes
+            );
+            cx.simulate_keystrokes(window, "escape");
+            cx.run_until_parked();
+            assert!(cx.read(|cx| app.read(cx).conflict_resolution_modal().is_none()));
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), before);
+            assert_eq!(
+                std::fs::read(repo.join("pair.png")).unwrap(),
+                survivor.bytes
+            );
+            assert!(read_oplog_tail_for_repo(&repo, 100).is_empty());
+            click_control(cx, window, &action);
+            click_control(cx, window, "conflict-resolution-confirm");
+            wait_idle(cx, &app);
+            crate::busy_dismiss::ready(cx, &app);
+            let repository = git2::Repository::open(&repo).unwrap();
+            let index = repository.index().unwrap();
+            for stage in 0..=3 {
+                assert!(index.get_path(Path::new("pair.png"), stage).is_none());
+            }
+            assert!(!index.has_conflicts());
+            assert!(!repo.join("pair.png").exists());
+            assert_eq!(repository.head().unwrap().target(), Some(head));
+            assert!(repo.join(".git/MERGE_HEAD").exists());
+            let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "conflict-save:merge")
+                .collect();
+            assert_eq!(receipts.len(), 1);
+            assert!(matches!(receipts[0].outcome, OpOutcome::Success { .. }));
+            drop(index);
+            drop(repository);
+            drop(conflict);
+            unmount(cx, app, window);
+        }
+    }
+    i18n::set_lang(original);
+}

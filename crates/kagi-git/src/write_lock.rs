@@ -4,11 +4,11 @@
 //! preflight and keeps the descriptor through verification. An unconfirmed
 //! subprocess hands ownership to its reaper until the whole group stops.
 //! Never unlink this sidecar: replacing its inode would split exclusion.
+use crate::advisory_lock::AdvisoryLock;
 use crate::GitError;
 use kagi_domain::plan_note::{ConflictsNote, PlanNote};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs::File;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -17,19 +17,9 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 pub(crate) struct RepositoryLockFile {
-    file: File,
+    _file: AdvisoryLock,
     active_guards: AtomicUsize,
     reentrant: AtomicBool,
-}
-
-impl Drop for RepositoryLockFile {
-    fn drop(&mut self) {
-        // Only the final lexical/reaper owner releases admission. Closing alone
-        // can leave flock held by an unrelated fork until that child execs,
-        // even though the descriptor is CLOEXEC. Unlock the shared open-file
-        // description now; File's drop still closes it if unlocking fails.
-        let _ = self.file.unlock();
-    }
 }
 
 thread_local! {
@@ -84,7 +74,7 @@ fn acquire_with_timeout(
             }
         })?;
         let file = Arc::new(RepositoryLockFile {
-            file,
+            _file: file,
             active_guards: AtomicUsize::new(1),
             reentrant: AtomicBool::new(true),
         });
@@ -223,54 +213,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn final_retained_handle_releases_lock_while_unrelated_fork_is_alive() {
-        use std::io::{Read, Write};
-        use std::os::fd::AsRawFd;
-        use std::os::unix::net::UnixStream;
-
         let root = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(root.path()).unwrap();
         let outer = acquire(&repo).unwrap();
         let retained = retain_for_termination();
         drop(outer);
-        let (mut parent, child) = UnixStream::pair().unwrap();
-        parent
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
-        let child_fd = child.as_raw_fd();
-        // Reproduce the fork-to-exec window of an unrelated concurrent command.
-        // CLOEXEC cannot close its inherited lock descriptor until exec runs.
-        // SAFETY: the child calls only async-signal-safe libc functions and
-        // _exit; it never runs Rust destructors or touches inherited mutexes.
-        let pid = unsafe { libc::fork() };
-        assert!(pid >= 0, "fork failed: {}", std::io::Error::last_os_error());
-        if pid == 0 {
-            unsafe {
-                let ready = [1u8];
-                if libc::write(child_fd, ready.as_ptr().cast(), 1) != 1 {
-                    libc::_exit(1);
-                }
-                let mut signal = libc::pollfd {
-                    fd: child_fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                // Bound child cleanup even if a parent assertion panics.
-                let result = libc::poll(&mut signal, 1, 10_000);
-                libc::_exit(if result > 0 { 0 } else { 2 });
-            }
-        }
-        drop(child);
-        let mut ready = [0u8];
-        parent
-            .read_exact(&mut ready)
-            .expect("fork child did not confirm descriptor inheritance within 10s");
-        drop(retained);
-        let admission = acquire_with_timeout(&repo, Duration::ZERO);
-        parent.write_all(&[1]).unwrap();
-        let mut status = 0;
-        // SAFETY: pid is this test's child; status points to initialized storage.
-        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
-        assert_eq!(status, 0, "fork child failed or timed out");
+        let admission = crate::advisory_lock::tests::with_unrelated_fork(|| {
+            drop(retained);
+            acquire_with_timeout(&repo, Duration::ZERO)
+        });
         drop(
             admission.expect(
                 "final retained handle must release admission before an unrelated fork execs",

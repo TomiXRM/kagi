@@ -52,7 +52,7 @@ impl ConflictIndexTransaction {
             .write(true)
             .create_new(true)
             .open(&lock_path)
-            .map_err(io_error)?;
+            .map_err(|error| GitError::Other(format!("{}: {error}", lock_path.display())))?;
         Ok(Self {
             lock_path,
             _lock: lock,
@@ -68,6 +68,23 @@ impl ConflictIndexTransaction {
     }
 
     pub(super) fn write(&self, index: &mut Index) -> Result<(), GitError> {
+        // An ownerless index skips libgit2's racy-clean smudge. Preserve that
+        // protection before publishing a newer timestamp over the real index.
+        let modified = filetime::FileTime::from_last_modification_time(
+            &std::fs::metadata(&self.index_path).map_err(io_error)?,
+        );
+        let timestamp = (modified.unix_seconds(), modified.nanoseconds());
+        for position in 0..index.len() {
+            let mut entry = index.get(position).expect("entry within index length");
+            if entry.flags & 0x3000 == 0
+                && entry.mode != 0o160000
+                && entry.file_size != 0
+                && (i64::from(entry.mtime.seconds()), entry.mtime.nanoseconds()) >= timestamp
+            {
+                entry.file_size = 0;
+                index.add(&entry).map_err(git_error)?;
+            }
+        }
         index.write().map_err(git_error)?;
         let private: &Path = index
             .path()
@@ -165,8 +182,58 @@ mod tests {
         let (_tmp, repo) = fixture(false);
         let lock = repo.path().join("index.lock");
         std::fs::write(&lock, b"another writer").unwrap();
-        assert!(ConflictIndexTransaction::acquire(&repo).is_err());
+        let error = ConflictIndexTransaction::acquire(&repo).err().unwrap();
+        assert!(error.to_string().contains(&format!("{}: ", lock.display())));
+        assert!(error.to_string().contains("File exists"));
         assert_eq!(std::fs::read(lock).unwrap(), b"another writer");
+    }
+
+    #[test]
+    fn deletion_keeps_same_timestamp_same_size_unrelated_edit_dirty() {
+        let (tmp, repo) = fixture(false);
+        repo.config()
+            .unwrap()
+            .set_bool("core.trustctime", false)
+            .unwrap();
+        repo.config()
+            .unwrap()
+            .set_str("core.checkstat", "minimal")
+            .unwrap();
+        let file = tmp.path().join("unaffected");
+        let stamp = filetime::FileTime::from_unix_time(1_700_000_000, 0);
+        filetime::set_file_mtime(&file, stamp).unwrap();
+        let index_path = repo.path().join("index");
+        // Seed a valid-looking stat cache without owner-aware auto-smudging.
+        let mut index = Index::open(&index_path).unwrap();
+        let mut entry = index.get_path(Path::new("unaffected"), 0).unwrap();
+        let original_oid = entry.id;
+        entry.mtime = git2::IndexTime::new(1_700_000_000, 0);
+        entry.file_size = 9;
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+        drop(index);
+        filetime::set_file_mtime(&index_path, stamp).unwrap();
+        std::fs::write(&file, b"modified\n").unwrap();
+        filetime::set_file_mtime(&file, stamp).unwrap();
+        assert_eq!(std::fs::metadata(&file).unwrap().len(), 9);
+
+        let plan = conflict_delete::plan_conflict_delete(&repo, Path::new("thing")).unwrap();
+        conflict_delete::execute_conflict_delete(&repo, &plan, |_| Ok(())).unwrap();
+        let mut index = repo.index().unwrap();
+        index.read(true).unwrap();
+        let entry = index.get_path(Path::new("unaffected"), 0).unwrap();
+        assert_eq!(entry.id, original_oid);
+        assert_eq!(entry.file_size, 0, "racy stat cache must be smudged");
+        let diff = std::process::Command::new("git")
+            .args(["diff-files", "--name-only", "--", "unaffected"])
+            .current_dir(tmp.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", tmp.path())
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .unwrap();
+        assert!(diff.status.success(), "{:?}", diff.stderr);
+        assert_eq!(diff.stdout, b"unaffected\n");
     }
 
     #[test]

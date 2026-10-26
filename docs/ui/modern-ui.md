@@ -86,18 +86,25 @@ Ellipses identify plan-opening actions. Keep existing geometry,
 hover/pressed/focus-visible states and writer-busy admission; do not introduce a
 second control style or infer side presence from empty text.
 
-The standard plan sheet names the action and target in its title, and uses the
-result verb (Remove, Keep Directory, Keep File) for explicit confirmation.
+The standard plan sheet names the action and target in a sentence-style title,
+and uses the result verb (Remove, Delete, Keep Directory, Keep File) for explicit
+confirmation. Index-only removal asks “Remove ‘{path}’ from the index?”; removing
+a working file instead asks “Delete ‘{path}’?” and confirms with Delete / 削除.
 It discloses exact index removals, worktree removals and retained paths in EN/JA;
 directory nodes have a trailing `/`, and parked-file restoration is one
 `source → original destination` move, not duplicate removal/restoration entries.
 Confirmation is Primary when no working file is removed, Destructive otherwise;
 the working-file warning is likewise conditional. Neither role has a default
-root Return route; Cancel/Escape preserve the repository. The body refers to the
-actual Review to continue / 確認へ進む label without quotation marks.
+root Return route; Cancel/Escape preserve the repository. Freeze the continuation
+label when opening the sheet: Review commit / commit を確認 for the last merge
+conflict, otherwise Review to continue / 確認へ進む. The body names that exact
+label without quotation marks and says the operation remains in progress until
+the user chooses it.
 The immutable plan token and owner survive until explicit confirmation.
 Test target-bearing titles and both languages at narrow widths; genuine keyboard/AX
 delivery and EN Light / JA Dark screenshots remain Tier B evidence, not renderer assertions.
+Before/after Return captures must both visibly contain the same open sheet;
+unchanged index state alone is not proof if a watcher refresh dismissed it.
 Path rows use the shared fixed-height dense row around `modal_path_text`; its
 horizontal flex sizing must never collapse a vertically stacked filename.
 The path scroller reserves its capped row-count height without flex compression.

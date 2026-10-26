@@ -109,6 +109,11 @@ external update already overwritten by a stale in-memory index. Compliant Git
 writers cannot enter that read/write window. A noncooperating writer is not
 covered by Git's lock protocol and must not be described as excluded by Kagi's
 repository lease.
+Lock-acquisition errors retain the actual `index.lock` path so presentation can
+classify contention as IndexLocked. Before serializing the ownerless private
+index, smudge stage-0 non-gitlink entries whose mtime is at least the locked real
+index's timestamp by setting their cached size to zero. Publishing a newer index
+must not make a same-timestamp, same-size working-file edit falsely clean.
 
 Directory checkout verification uses filter-aware index-to-worktree comparison,
 not raw file hashes: `eol=crlf`, `ident` and `core.autocrlf` may legitimately
@@ -133,9 +138,12 @@ conflict entries/artifacts. The two renamed destinations of a DD source are
 not deletion targets.
 
 File-local compact actions open the standard plan sheet for deletion and both
-D/F choices. It names the action and target in its title, the result verb on its
-confirm button, and exact removed/kept/moved paths in EN/JA, with no command
-syntax. Directory entries end in `/`; parked-file restoration is one move row.
+D/F choices. It names the action and target in a sentence-style title, the result
+verb on its confirm button, and exact removed/kept/moved paths in EN/JA, with no
+command syntax. Index-only removal says Remove; working-file removal instead
+says Delete in both title and button. Directory entries end in `/`; parked-file
+restoration is one move row. Freeze the exact next-step label when the sheet
+opens: Review commit for the last merge conflict, Review to continue otherwise.
 The trigger is Secondary. Confirmation is Primary for index-only removal and
 Destructive only when working files are removed; only that latter case shows
 the working-file warning. Cancel/Escape are safe and root Return confirms neither

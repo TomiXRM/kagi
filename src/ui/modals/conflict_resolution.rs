@@ -23,11 +23,15 @@ pub struct ConflictResolutionModal {
     pub changes: ConflictPathChanges,
     pub kind: ResolutionKind,
     pub path: std::path::PathBuf,
+    pub continuation: Msg,
 }
 
 impl ConflictResolutionModal {
     pub fn title(&self) -> String {
         let (message, suffix) = match self.kind {
+            ResolutionKind::Remove if !self.changes.remove_worktree.is_empty() => {
+                (Msg::ConflictDeleteTitle, "")
+            }
             ResolutionKind::Remove => (Msg::ConflictRemoveTitle, ""),
             ResolutionKind::KeepDirectory => (Msg::ConflictKeepDirectoryTitle, "/"),
             ResolutionKind::KeepFile => (Msg::ConflictKeepFileTitle, ""),
@@ -39,6 +43,9 @@ impl ConflictResolutionModal {
 
     pub fn confirm_label(&self) -> &'static str {
         match self.kind {
+            ResolutionKind::Remove if !self.changes.remove_worktree.is_empty() => {
+                Msg::ConflictDeleteConfirm
+            }
             ResolutionKind::Remove => Msg::ConflictRemoveConfirm,
             ResolutionKind::KeepDirectory => Msg::ConflictKeepDirectoryConfirm,
             ResolutionKind::KeepFile => Msg::ConflictKeepFileConfirm,
@@ -220,7 +227,7 @@ pub(crate) fn render(
             div().text_sm().child(
                 Msg::ConflictResolutionConsequence
                     .t()
-                    .replace("{continue}", Msg::ConflictReviewContinue.t()),
+                    .replace("{continue}", modal.continuation.t()),
             ),
         )
         .when(destructive, |body| {

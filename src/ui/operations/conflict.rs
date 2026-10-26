@@ -394,12 +394,18 @@ impl KagiApp {
                 _ => return false,
             };
             let revision = plan.request().revision().clone();
-            let Some(intent_token) = self
-                .ui()
-                .conflict
-                .as_ref()
-                .map(|pane| pane.read(cx).intent_token)
-            else {
+            let Some((intent_token, continuation)) = self.ui().conflict.as_ref().and_then(|pane| {
+                let pane = pane.read(cx);
+                let mode = pane.mode.as_ref()?;
+                let continuation = if mode.session.files.len() == 1
+                    && matches!(mode.session.op, kagi_git::ConflictOp::Merge { .. })
+                {
+                    Msg::ConflictToCommit
+                } else {
+                    Msg::ConflictReviewContinue
+                };
+                Some((pane.intent_token, continuation))
+            }) else {
                 return false;
             };
             self.set_conflict_resolution_modal(
@@ -411,6 +417,7 @@ impl KagiApp {
                     changes,
                     kind,
                     path,
+                    continuation,
                 },
             );
             cx.notify();

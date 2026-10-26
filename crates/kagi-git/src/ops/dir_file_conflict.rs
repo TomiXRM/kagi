@@ -16,13 +16,10 @@
 //! directory children. Side-tree identities attribute that parking path to the
 //! original namespace; the suffix alone never authorizes grouping or removal.
 //!
-//! The two namespaces cannot coexist in one tree, so there is no text merge:
-//! resolution is a single binary choice ([`DirFileChoice`]). This module owns
-//! the `plan_ / preflight_ / execute_` triple (CLAUDE.md invariant #4). Because
-//! a D/F resolution is a conflict-lane operation (like `conflict-save`, it stages
-//! into the index and is re-detected away) rather than a [`crate::Backend::run`]
-//! `Operation`, `execute_` writes its own oplog entry — the single record for the
-//! op — so no write path is unlogged.
+//! The namespaces cannot coexist: resolution is one [`DirFileChoice`]. This
+//! module owns the plan/preflight/execute triple. D/F resolution belongs to the
+//! conflict lane rather than [`crate::Backend::run`], so `execute_` records
+//! exactly one oplog entry.
 
 use std::path::{Path, PathBuf};
 

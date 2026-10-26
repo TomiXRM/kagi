@@ -103,6 +103,7 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
                 vec![Path::new("file.txt").to_path_buf()]
             );
             assert_eq!(modal.path, Path::new("file.txt"));
+            assert_eq!(modal.continuation, i18n::Msg::ConflictToCommit);
             assert_eq!(
                 modal.kind,
                 kagi::ui::modals::conflict_resolution::ResolutionKind::Remove
@@ -112,9 +113,11 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
                 !current && !incoming
             );
         });
-        let (title, confirm) = match lang {
-            Lang::En => ("Remove “file.txt” from the Index?", "Remove"),
-            Lang::Ja => ("「file.txt」を index から削除しますか？", "削除"),
+        let (title, confirm) = match (lang, current || incoming) {
+            (Lang::En, false) => ("Remove “file.txt” from the index?", "Remove"),
+            (Lang::Ja, false) => ("「file.txt」を index から削除しますか？", "削除"),
+            (Lang::En, true) => ("Delete “file.txt”?", "Delete"),
+            (Lang::Ja, true) => ("「file.txt」を削除しますか？", "削除"),
         };
         assert_resolution_dialog(title, confirm, current || incoming);
         let list = e2e::control_bounds(window.window_id(), "conflict-resolution-paths")
@@ -169,6 +172,44 @@ fn delete_leg(cx: &mut VisualTestAppContext, lang: Lang, current: bool, incoming
     unmount(cx, app, window);
 }
 
+fn continuation_leg(cx: &mut VisualTestAppContext, lang: Lang, merge: bool, last: bool) {
+    let fixture = deletion_fixture(false, false, false);
+    let root = fixture.path();
+    if !merge {
+        let head = std::fs::read(root.join(".git/MERGE_HEAD")).unwrap();
+        std::fs::remove_file(root.join(".git/MERGE_HEAD")).unwrap();
+        std::fs::write(root.join(".git/CHERRY_PICK_HEAD"), head).unwrap();
+    }
+    if !last {
+        let repository = git2::Repository::open(root).unwrap();
+        let mut index = repository.index().unwrap();
+        let mut second = index.get_path(Path::new("file.txt"), 1).unwrap();
+        second.path = b"other.txt".to_vec();
+        second.flags = (second.flags & !0x0fff) | second.path.len() as u16;
+        index.add(&second).unwrap();
+        index.write().unwrap();
+    }
+    let before = index_identity(root);
+    let (app, window) = mount(cx, root);
+    app.update(cx, |app, cx| {
+        app.set_lang(lang, cx);
+        app.detect_conflict_mode(cx);
+    });
+    cx.run_until_parked();
+    click_control(cx, window, "conflict-row-0");
+    click_control(cx, window, "conflict-delete");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app
+            .conflict_resolution_modal()
+            .expect("prepared deletion sheet");
+        assert_eq!(modal.continuation, i18n::Msg::ConflictReviewContinue);
+    });
+    click_control(cx, window, "conflict-resolution-cancel");
+    assert_eq!(index_identity(root), before);
+    unmount(cx, app, window);
+}
+
 fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
@@ -214,6 +255,7 @@ fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
         let app = app.read(cx);
         let modal = app.conflict_resolution_modal().unwrap();
         assert_eq!(modal.path, Path::new("thing"));
+        assert_eq!(modal.continuation, i18n::Msg::ConflictToCommit);
         let changes = &modal.changes;
         if keep_file {
             assert_eq!(
@@ -233,8 +275,8 @@ fn parked_leg(cx: &mut VisualTestAppContext, lang: Lang, keep_file: bool) {
         }
     });
     let (title, confirm) = match (lang, keep_file) {
-        (Lang::En, false) => ("Keep Directory “thing/”?", "Keep Directory"),
-        (Lang::En, true) => ("Keep File “thing”?", "Keep File"),
+        (Lang::En, false) => ("Keep directory “thing/”?", "Keep Directory"),
+        (Lang::En, true) => ("Keep file “thing”?", "Keep File"),
         (Lang::Ja, false) => (
             "ディレクトリ「thing/」を採用しますか？",
             "ディレクトリを採用",
@@ -323,6 +365,9 @@ pub(super) fn run(cx: &mut VisualTestAppContext, lang: Lang) {
     }
     for keep_file in [false, true] {
         parked_leg(cx, lang, keep_file);
+    }
+    for (merge, last) in [(true, false), (false, true)] {
+        continuation_leg(cx, lang, merge, last);
     }
     i18n::set_lang(original);
 }

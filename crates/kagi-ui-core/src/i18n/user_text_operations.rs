@@ -575,6 +575,10 @@ mod tests {
                 FailureCause::IndexLocked,
             ),
             ("index.lock: File exists", FailureCause::IndexLocked),
+            (
+                "/private/repository/.git/index.lock: File exists (os error 17)",
+                FailureCause::IndexLocked,
+            ),
             ("The staging area is locked.", FailureCause::IndexLocked),
             (
                 "ステージ領域がロックされています。",

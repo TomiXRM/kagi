@@ -5,6 +5,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-27
+
 ### Added
 
 - Share image, PDF, binary, symlink and submodule side-pair presentation between diff and conflicts. Raw conflicts use the text resolver's per-side Use / Used / Not used / Change vocabulary; PDF conflicts start with synchronized scrolling, and Save keeps staging the selected frozen OID/mode rather than preview bytes. Apply the shared 8 MiB image budget and magic-first PNG/JPEG/GIF/WebP/BMP recognition, with real decode outcomes and aligned image geometry. (#1742)

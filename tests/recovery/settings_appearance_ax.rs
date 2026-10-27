@@ -58,12 +58,32 @@ fn appearance_matrix(
     }
 }
 
-fn probe(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, id: &str) -> kagi_ui_settings::ControlProbe {
-    cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).control_probe(id).unwrap_or_else(|| panic!("missing shared control {id}")))
+fn probe(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    id: &str,
+) -> kagi_ui_settings::ControlProbe {
+    cx.read(|cx| {
+        app.read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .control_probe(id)
+            .unwrap_or_else(|| panic!("missing shared control {id}"))
+    })
 }
 
 fn focused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<String> {
-    cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).control_probes().into_iter().find(|probe| probe.focused).map(|probe| probe.id))
+    cx.read(|cx| {
+        app.read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .control_probes()
+            .into_iter()
+            .find(|probe| probe.focused)
+            .map(|probe| probe.id)
+    })
 }
 
 fn focus_theme(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -71,7 +91,8 @@ fn focus_theme(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
     cx.update_window(window, |_, w, cx| {
         let view = app.read(cx).settings_entity().unwrap();
         view.update(cx, |view, cx| view.focus_control(&id, w, cx));
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 fn theme_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -88,7 +109,11 @@ fn theme_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
     let target = focused(cx, app).expect("theme card retains keyboard focus");
     assert_ne!(target, id);
     assert!(!probe(cx, app, &target).selected, "focus is not selection");
-    assert_eq!(theme::theme().slug, slug, "navigation does not apply a theme");
+    assert_eq!(
+        theme::theme().slug,
+        slug,
+        "navigation does not apply a theme"
+    );
     keys(cx, window, "escape");
     draw(cx, window);
     assert_eq!(theme::theme().slug, slug);
@@ -100,8 +125,16 @@ fn theme_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
     assert_eq!(settings::read_setting("theme").as_deref(), Some(selected));
     assert!(probe(cx, app, &target).selected);
     assert_eq!(probe(cx, app, &target).name, theme::theme().display_name());
-    let selected_count = cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).control_probes()
-        .iter().filter(|probe| probe.id.starts_with("settings-theme-") && probe.selected).count());
+    let selected_count = cx.read(|cx| {
+        app.read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .control_probes()
+            .iter()
+            .filter(|probe| probe.id.starts_with("settings-theme-") && probe.selected)
+            .count()
+    });
     assert_eq!(selected_count, 1, "theme cards are an exclusive choice");
     custom_theme_ax(cx, app, window);
 }
@@ -172,7 +205,8 @@ fn compact_threshold_ax_leg(
         }
         focus_zoom_by_tab(cx, app, window, "compact-threshold-inc", None);
         draw(cx, window);
-        let focused = crate::settings_controls::bounds(cx, window, "compact-threshold-inc").unwrap();
+        let focused =
+            crate::settings_controls::bounds(cx, window, "compact-threshold-inc").unwrap();
         // The actual kit focus target (verified by F19 during traversal), not
         // merely its row, must clear both the fixed tabs and the body bottom.
         crate::recovery_layout::contained(
@@ -368,12 +402,18 @@ fn custom_theme_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window:
     }
     cx.update_window(window, |_, window, cx| {
         let view = app.read(cx).settings_entity().unwrap();
-        view.update(cx, |view, cx| view.focus_control("settings-theme-ax-theme-b", window, cx));
-    }).unwrap();
+        view.update(cx, |view, cx| {
+            view.focus_control("settings-theme-ax-theme-b", window, cx)
+        });
+    })
+    .unwrap();
     keys(cx, window, "enter");
     draw(cx, window);
     assert_eq!(theme::theme().slug, "ax-theme-b");
-    assert_eq!(settings::read_setting("theme").as_deref(), Some("ax-theme-b"));
+    assert_eq!(
+        settings::read_setting("theme").as_deref(),
+        Some("ax-theme-b")
+    );
     assert!(probe(cx, app, "settings-theme-ax-theme-b").selected);
     assert!(!probe(cx, app, "settings-theme-ax-theme-a").selected);
 }
@@ -408,10 +448,7 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         draw(cx, window);
         assert_eq!(theme::zoom(), expected);
         let value = format!("{:.0}%", expected * 100.);
-        assert_eq!(
-            probe(cx, app, "zoom-value").value,
-            value
-        );
+        assert_eq!(probe(cx, app, "zoom-value").value, value);
         assert_eq!(
             settings::read_setting("ui_zoom").unwrap(),
             format!("{:.0}", expected * 1000.)

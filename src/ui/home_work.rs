@@ -579,7 +579,6 @@ impl KagiApp {
         self.home_github.work.pane_focus.focused(window)
     }
 
-
     /// Is the focus inside Settings' focus trap (#974) — its container or a
     /// control in it?
     pub fn settings_trap_contains_focus_for_e2e(&self, window: &Window, cx: &gpui::App) -> bool {

@@ -192,3 +192,8 @@ The #1816 design records the owner-approved sidebar-vs-toolbar and fixed
 category-hue deviations. Preserve ADR-0223 window chrome/lifecycle. Native and
 browser exercise the same controls; browser evidence cannot replace native
 OS, process, persistence or Git safety verification.
+
+The browser host embeds the same pinned component icon bytes via the asset
+crate's published Cargo build metadata. It must not silently omit symbols or
+depend on CDN timing: fixture-only transport/assets differ, production
+rendering, control semantics and palette data do not.

@@ -3977,7 +3977,8 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
 
     // The same retained palette handle supplied to the shared cards resolves
     // its display name live; changing language must not require a new catalog.
-    let option = cx.read(|cx| app.read(cx).settings_snapshot().themes)
+    let option = cx
+        .read(|cx| app.read(cx).settings_snapshot().themes)
         .into_iter()
         .find(|palette| palette.slug == "color-vision")
         .unwrap();
@@ -3992,7 +3993,11 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
             window.draw(cx).clear();
         })
         .unwrap();
-        assert_eq!(option.display_name(), want, "{lang:?}: retained theme card palette");
+        assert_eq!(
+            option.display_name(),
+            want,
+            "{lang:?}: retained theme card palette"
+        );
     }
     app.update(cx, |app, cx| app.set_lang(previous, cx));
 

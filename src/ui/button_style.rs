@@ -470,15 +470,6 @@ pub(crate) fn named_button(
     button_accessibility(button, label.into(), toggled, None, false)
 }
 
-/// The pinned kit disables interaction/paint but does not publish AX disabled.
-pub(crate) fn named_disabled_button(
-    button: Button,
-    label: impl Into<SharedString>,
-    disabled: bool,
-) -> Button {
-    button_accessibility(button, label.into(), None, None, disabled)
-}
-
 pub(crate) fn named_button_with_description(
     id: impl Into<ElementId>,
     button: Button,

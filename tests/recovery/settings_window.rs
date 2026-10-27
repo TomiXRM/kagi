@@ -173,7 +173,11 @@ pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
                 assert_screen_fit(cx, settings, "first content-driven resize");
                 assert_manual_move_preserved(cx, settings);
                 for pane in kagi_ui_settings::Pane::ALL {
-                    let bounds = crate::settings_controls::bounds(cx, settings, &format!("settings-pane-{}", pane.id()))
+                    let bounds = crate::settings_controls::bounds(
+                        cx,
+                        settings,
+                        &format!("settings-pane-{}", pane.id()),
+                    )
                     .expect("pane control");
                     cx.simulate_click(settings, bounds.center(), gpui::Modifiers::none());
                     assert_screen_fit(cx, settings, "pane switch");
@@ -416,7 +420,10 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
             .center();
         cx.simulate_click(settings, pane, gpui::Modifiers::none());
         draw(cx, settings);
-        assert_eq!(kagi::ui::settings::read_setting("settings_pane").as_deref(), Some("general"));
+        assert_eq!(
+            kagi::ui::settings::read_setting("settings_pane").as_deref(),
+            Some("general")
+        );
         cx.simulate_keystrokes(settings, "cmd-w");
         cx.run_until_parked();
         cx.simulate_keystrokes(repo, "cmd-,");
@@ -429,7 +436,9 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
         });
         draw(cx, reopened);
         assert!(
-            crate::settings_controls::probe(cx, reopened, "settings-pane-general").unwrap().selected,
+            crate::settings_controls::probe(cx, reopened, "settings-pane-general")
+                .unwrap()
+                .selected,
             "reopen restores the last pane"
         );
         cx.update_window(reopened, |_, window, _| {
@@ -455,13 +464,27 @@ pub fn scenario_settings_window_open_raise(cx: &mut VisualTestAppContext) {
             let (app, repo) = mount(cx, fixture.path());
             cx.simulate_keystrokes(repo, "cmd-,");
             cx.run_until_parked();
-            let host = cx.read(|cx| cx.windows().into_iter()
-                .find(|window| window.window_id() != repo.window_id()).unwrap());
+            let host = cx.read(|cx| {
+                cx.windows()
+                    .into_iter()
+                    .find(|window| window.window_id() != repo.window_id())
+                    .unwrap()
+            });
             draw(cx, host);
-            assert!(crate::settings_controls::probe(cx, host,
-                &format!("settings-pane-{}", expected.id())).unwrap().selected);
-            assert_eq!(kagi::ui::settings::read_setting("settings_pane").as_deref(),
-                Some(expected.id()), "legacy pane migrates to a stable ID");
+            assert!(
+                crate::settings_controls::probe(
+                    cx,
+                    host,
+                    &format!("settings-pane-{}", expected.id())
+                )
+                .unwrap()
+                .selected
+            );
+            assert_eq!(
+                kagi::ui::settings::read_setting("settings_pane").as_deref(),
+                Some(expected.id()),
+                "legacy pane migrates to a stable ID"
+            );
             cx.simulate_keystrokes(host, "cmd-w");
             cx.run_until_parked();
             unmount(cx, app, repo);

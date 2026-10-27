@@ -3223,18 +3223,15 @@ impl KagiApp {
             } => Some(self.render_info_overlay(title, lines, (&scroll, &focus), window, cx)),
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
-            MenuOverlay::Settings => {
-
-                Some(super::settings_view::render_settings_overlay(
-                    cx.entity(),
-                    self.settings_entity(),
-                    self.settings_focus.clone(),
-                    self.analyze_reset_alert().cloned(),
-                    self.settings_smart_consent().cloned(),
-                    window,
-                    cx,
-                ))
-            }
+            MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
+                cx.entity(),
+                self.settings_entity(),
+                self.settings_focus.clone(),
+                self.analyze_reset_alert().cloned(),
+                self.settings_smart_consent().cloned(),
+                window,
+                cx,
+            )),
             // Issue #352: command palette.
             MenuOverlay::CommandPalette => Some(self.render_command_palette(window, cx)),
         }

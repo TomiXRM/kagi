@@ -4,8 +4,8 @@ use super::{commands, i18n::Msg, settings, theme, KagiApp};
 use gpui::prelude::*;
 use gpui::{
     div, point, px, size, App, AppContext, Bounds, Context, Entity, FocusHandle, Global,
-    MouseButton, Render, Subscription, WeakEntity, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    MouseButton, Render, Subscription, WeakEntity, Window, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use gpui_component::Root;
 
@@ -14,9 +14,20 @@ struct SettingsWindowHandle(Option<WindowHandle<Root>>);
 impl Global for SettingsWindowHandle {}
 
 #[cfg(feature = "gui-e2e")]
-pub(super) fn view_for_window(window: &Window, cx: &App) -> Option<Entity<kagi_ui_settings::SettingsView>> {
-    window.root::<Root>().flatten()
-        .and_then(|root| root.read(cx).view().clone().downcast::<SettingsWindow>().ok())
+pub(super) fn view_for_window(
+    window: &Window,
+    cx: &App,
+) -> Option<Entity<kagi_ui_settings::SettingsView>> {
+    window
+        .root::<Root>()
+        .flatten()
+        .and_then(|root| {
+            root.read(cx)
+                .view()
+                .clone()
+                .downcast::<SettingsWindow>()
+                .ok()
+        })
         .map(|host| host.read(cx).view.clone())
 }
 
@@ -130,23 +141,35 @@ struct SettingsWindow {
 
 impl SettingsWindow {
     fn new(owner: Entity<KagiApp>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let view = owner.read(cx).settings_entity().expect("Settings initialized before native host");
+        let view = owner
+            .read(cx)
+            .settings_entity()
+            .expect("Settings initialized before native host");
         cx.observe(&view, |_, _, cx| cx.notify()).detach();
         let host = cx.entity().downgrade();
-        view.update(cx, |view, cx| view.set_content_measure(std::rc::Rc::new(move |bounds, window, cx| {
-            let _ = host.update(cx, |host, cx| {
-                let height = f32::from(bounds.size.height) + 46.;
-                let pane = host.view.read(cx).pane();
-                let zoom = theme::zoom();
-                let displays = display_configuration();
-                if host.last_fit.is_some_and(|previous| {
-                    (previous.0 - height).abs() < 0.5 && previous.1 == pane
-                        && previous.2 == zoom && previous.3 == displays
-                }) { return; }
-                host.last_fit = Some((height, pane, zoom, displays));
-                fit_content(window, height, cx);
-            });
-        }), cx));
+        view.update(cx, |view, cx| {
+            view.set_content_measure(
+                std::rc::Rc::new(move |bounds, window, cx| {
+                    let _ = host.update(cx, |host, cx| {
+                        let height = f32::from(bounds.size.height) + 46.;
+                        let pane = host.view.read(cx).pane();
+                        let zoom = theme::zoom();
+                        let displays = display_configuration();
+                        if host.last_fit.is_some_and(|previous| {
+                            (previous.0 - height).abs() < 0.5
+                                && previous.1 == pane
+                                && previous.2 == zoom
+                                && previous.3 == displays
+                        }) {
+                            return;
+                        }
+                        host.last_fit = Some((height, pane, zoom, displays));
+                        fit_content(window, height, cx);
+                    });
+                }),
+                cx,
+            )
+        });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         window.on_window_should_close(cx, |window, cx| {
@@ -206,8 +229,6 @@ impl SettingsWindow {
             _toast_removed: toast_removed,
         }
     }
-
-
 }
 
 impl Render for SettingsWindow {
@@ -283,7 +304,11 @@ impl Render for SettingsWindow {
             .child(titlebar(pane))
             .child(self.view.clone())
             .when_some(
-                owner.read(cx).analyze_reset_alert().filter(|alert| alert.window == window.window_handle().window_id()).cloned(),
+                owner
+                    .read(cx)
+                    .analyze_reset_alert()
+                    .filter(|alert| alert.window == window.window_handle().window_id())
+                    .cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),
             )
             .when_some(
@@ -449,4 +474,3 @@ fn titlebar(pane: kagi_ui_settings::Pane) -> gpui::Div {
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move()),
         )
 }
-

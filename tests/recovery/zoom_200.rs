@@ -91,10 +91,18 @@ fn settings_window(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: A
         let id = format!("settings-pane-{}", pane.id());
         usable(cx, viewport, win, &id);
         click(cx, win, &id);
-        assert_eq!(settings::read_setting("settings_pane").as_deref(), Some(pane.id()));
+        assert_eq!(
+            settings::read_setting("settings_pane").as_deref(),
+            Some(pane.id())
+        );
     }
     click(cx, win, "settings-pane-appearance");
-    assert_eq!(crate::settings_controls::probe(cx, win, "zoom-value").unwrap().value, "200%");
+    assert_eq!(
+        crate::settings_controls::probe(cx, win, "zoom-value")
+            .unwrap()
+            .value,
+        "200%"
+    );
     reveal_zoom(cx, win);
     assert!(
         crate::settings_controls::probe(cx, win, "zoom-inc")
@@ -133,7 +141,12 @@ fn settings_window(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: A
         })
         .unwrap();
     draw(cx, reopened);
-    assert_eq!(crate::settings_controls::probe(cx, reopened, "zoom-value").unwrap().value, "200%");
+    assert_eq!(
+        crate::settings_controls::probe(cx, reopened, "zoom-value")
+            .unwrap()
+            .value,
+        "200%"
+    );
     cx.update_window(reopened, |_, window, _| window.remove_window())
         .unwrap();
     cx.run_until_parked();

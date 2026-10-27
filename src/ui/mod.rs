@@ -166,6 +166,7 @@ mod overlay_focus;
 mod picker_failure;
 mod settings_analyze;
 mod settings_controls;
+mod settings_themes;
 pub mod settings_view;
 #[cfg(target_os = "macos")]
 mod settings_window;
@@ -184,7 +185,6 @@ mod tab_view;
 pub mod tabs;
 pub mod tag_menu;
 pub mod terminal;
-mod settings_themes;
 mod timeline_row;
 pub mod trust_prompt;
 pub mod window_restore;

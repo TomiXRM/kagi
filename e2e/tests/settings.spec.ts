@@ -62,8 +62,10 @@ async function pane(page: Page, id: string) {
 }
 async function replaceDraft(page: Page, text: string) {
   await click(page, "settings-analyze-input");
-  await page.keyboard.press("ControlOrMeta+A");
-  await page.keyboard.insertText(text);
+  // wasm32 uses GPUI's non-macOS binding table. Type real key events: the
+  // browser platform consumes keydown text, not Playwright's insertText shortcut.
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type(text);
   await expect.poll(async () => (await observed(page)).draft).toBe(text);
 }
 

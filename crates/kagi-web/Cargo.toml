@@ -18,6 +18,7 @@ kagi-domain = { path = "../kagi-domain" }
 kagi-ui-core = { path = "../kagi-ui-core" }
 kagi-ui-settings = { path = "../kagi-ui-settings", features = ["gui-e2e"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
 serde_json = "1"
 # Same rev-less zed git deps as the root Cargo.toml (cargo unifies on the
 # workspace Cargo.lock pin).

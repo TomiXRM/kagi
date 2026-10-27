@@ -475,8 +475,14 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
         let id = format!("settings-theme-{}", kagi::ui::theme::theme().slug);
         crate::settings_controls::click(cx, window, &id);
         assert!(
-            cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
-                .control_probe(&id).unwrap().focused),
+            cx.read(|cx| app
+                .read(cx)
+                .settings_entity()
+                .unwrap()
+                .read(cx)
+                .control_probe(&id)
+                .unwrap()
+                .focused),
             "the real theme card holds focus"
         );
         if close_by == "escape" {
@@ -822,9 +828,17 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     crate::settings_controls::click(cx, window, "settings-pane-appearance");
     let id = format!("settings-theme-{}", kagi::ui::theme::theme().slug);
     crate::settings_controls::click(cx, window, &id);
-    assert!(cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
-        .control_probe(&id).unwrap().focused),
-        "the theme card holds focus before the modal arrives");
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .control_probe(&id)
+            .unwrap()
+            .focused),
+        "the theme card holds focus before the modal arrives"
+    );
     app.update(cx, |app, cx| app.open_stash_push_modal(cx));
     draw(cx, window);
     assert!(
@@ -852,9 +866,17 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     draw(cx, window);
     let id = format!("settings-theme-{}", kagi::ui::theme::theme().slug);
     crate::settings_controls::click(cx, window, &id);
-    assert!(cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
-        .control_probe(&id).unwrap().focused),
-        "the fieldless modal arrives while the theme card holds focus");
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .control_probe(&id)
+            .unwrap()
+            .focused),
+        "the fieldless modal arrives while the theme card holds focus"
+    );
     app.update(cx, |app, cx| app.open_push_modal(cx));
     draw(cx, window);
     assert!(

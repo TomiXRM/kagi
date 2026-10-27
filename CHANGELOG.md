@@ -5,9 +5,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Rebuild Settings as eight stable sidebar panes: Appearance, Graph, Editor, Terminal, Network & Sync, Smart Commit, Analyze and General. Retain every existing preference and native effect; use fixed category tiles, palette-driven theme cards, separate keyboard focus/selection/ON states, and wrapping EN/JA controls. Preserve native window chrome and Analyze drafts across pane changes and reopening. (#1814, #1816)
+
 ### Internal
 
-- Introduce the production Settings presentation boundary with a shared language control and typed host events, exercised by native Settings and the deterministic WASM verification host. Native storage/discovery stays outside the shared view; portable core no longer compiles native persistence APIs. This internal boundary proof precedes the full sidebar cutover and does not claim that rebuild complete. (#1816)
+- Share the actual Settings renderer and typed input events between native Settings and the deterministic WASM verification host. Native storage/discovery stays outside the portable API; existing persistence remains authoritative. Browser coverage drives production controls, delayed/error Analyze outcomes, all panes, EN/JA, light/dark, resize and 167% zoom rather than a copied gallery. (#1816)
+
 ### Fixed
 
 - Restore one bottom-left notification stack in the owning surface's centre content, including Conflict Mode and Settings' content pane. Persistent, transient and busy feedback share the same bounded anchor without shifting content or covering the sidebar, Inspector, toolbar or status bar. Remove conflict-footer routing while preserving typed notification ownership, audience-scoped Escape, actions, lifetimes and Operation Log detail. (Owner ruling, #1590 restored 2026-10-27.)

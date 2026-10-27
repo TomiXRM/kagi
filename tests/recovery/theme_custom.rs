@@ -179,10 +179,13 @@ fn assert_notice_visible_in_invoking_window(
             && bounds.size.height > gpui::px(0.)),
         "the actual notice is painted with Settings closed"
     );
-    assert!(cx.read(|cx| !matches!(
-        kagi.read(cx).menu_overlay,
-        Some(commands::MenuOverlay::Settings)
-    )), "notice is visible without mounting the Settings renderer");
+    assert!(
+        cx.read(|cx| !matches!(
+            kagi.read(cx).menu_overlay,
+            Some(commands::MenuOverlay::Settings)
+        )),
+        "notice is visible without mounting the Settings renderer"
+    );
 }
 
 /// Type `query` into the real command palette and run its top row, the way
@@ -218,7 +221,11 @@ fn select_lists(
     slug: &str,
 ) -> bool {
     cx.read(|cx| {
-        kagi.read(cx).settings_snapshot().themes.iter().any(|theme| theme.slug == slug)
+        kagi.read(cx)
+            .settings_snapshot()
+            .themes
+            .iter()
+            .any(|theme| theme.slug == slug)
     })
 }
 

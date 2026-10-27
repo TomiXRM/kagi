@@ -34,9 +34,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui::{
-    prelude::*, App, ClickEvent, Div, FocusHandle, KeyBinding, Role, SharedString, Stateful, Window,
-};
+use gpui::{prelude::*, App, Div, FocusHandle, KeyBinding, Stateful, Window};
 
 // Root callers retain their existing API while Git-free panes share the same implementation.
 #[allow(unused_imports)]
@@ -137,113 +135,4 @@ impl FocusSlots {
             handle.focus(window, cx);
         }
     }
-}
-
-/// A switch the keyboard and assistive technology reach (#970). gpui-
-/// component's `Switch` draws it and keeps its pointer handling; around it a
-/// Tab stop (`focus`) named `label`, with the `Switch` role and its
-/// checked state, which Enter / Space flip (gpui's keyboard click). Only a
-/// keyboard click is taken here: a pointer click is the `Switch`'s, and
-/// taking it too would write (and reload) the same new state twice.
-/// `on_toggle` gets the new state. The ring sits in a negative
-/// margin, so the control takes the room it took before.
-pub(crate) fn switch(
-    id: &'static str,
-    focus: FocusHandle,
-    scroll: gpui::ScrollHandle,
-    label: SharedString,
-    help: SharedString,
-    checked: bool,
-    on_toggle: impl Fn(bool, &mut Window, &mut App) + 'static,
-) -> gpui::AnyElement {
-    let toggled = if checked {
-        gpui::Toggled::True
-    } else {
-        gpui::Toggled::False
-    };
-    // What assistive technology is given, for Tier A.
-    #[cfg(feature = "gui-e2e")]
-    record_switch(id, &label, toggled == gpui::Toggled::True);
-    #[cfg(feature = "gui-e2e")]
-    SWITCH_HELP.with(|m| m.borrow_mut().insert(id, help.to_string()));
-    let on_toggle = Rc::new(on_toggle);
-    let pointer = on_toggle.clone();
-    let inner = gpui_component::switch::Switch::new(id)
-        .checked(checked)
-        .on_click(move |next: &bool, window, cx| pointer(*next, window, cx));
-    let wrapper = with_ring(
-        gpui::div()
-            .id(SharedString::from(format!("{id}-key")))
-            .track_focus(&focus.clone().tab_index(0).tab_stop(true)),
-    )
-    .m(-gpui::px(RING))
-    .rounded_full()
-    .role(Role::Switch)
-    .aria_label(label)
-    .aria_description(help)
-    .aria_toggled(toggled)
-    .on_key_down(stop_activation_keys)
-    .on_click(move |event: &ClickEvent, window, cx| {
-        if event.is_keyboard() {
-            on_toggle(!checked, window, cx);
-        }
-    })
-    .child(inner);
-    super::e2e::measure_control(
-        format!("{id}-key"),
-        RevealingSwitch {
-            id,
-            wrapper,
-            focus,
-            scroll,
-        },
-    )
-}
-
-/// Render-time access to the existing switch and scroll owners, without another
-/// element or focus target around the switch's keyboard wrapper.
-#[derive(IntoElement)]
-struct RevealingSwitch {
-    id: &'static str,
-    wrapper: Stateful<Div>,
-    focus: FocusHandle,
-    scroll: gpui::ScrollHandle,
-}
-
-impl gpui::RenderOnce for RevealingSwitch {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        super::button_style::reveal_on_focus(
-            self.wrapper,
-            self.id.into(),
-            self.focus,
-            self.scroll,
-            window,
-            cx,
-        )
-    }
-}
-
-// The switches as last drawn: id → (label, checked), for Tier A (#970).
-#[cfg(feature = "gui-e2e")]
-thread_local! {
-    static SWITCHES: RefCell<std::collections::HashMap<&'static str, (String, bool)>> =
-        RefCell::new(Default::default());
-    static SWITCH_HELP: RefCell<std::collections::HashMap<&'static str, String>> =
-        RefCell::new(Default::default());
-}
-
-#[cfg(feature = "gui-e2e")]
-fn record_switch(id: &'static str, label: &str, checked: bool) {
-    SWITCHES.with(|m| m.borrow_mut().insert(id, (label.to_string(), checked)));
-}
-
-/// What the last drawn frame named switch `id` and the checked state it
-/// gave assistive technology.
-#[cfg(feature = "gui-e2e")]
-pub(crate) fn recorded_switch(id: &str) -> Option<(String, bool)> {
-    SWITCHES.with(|m| m.borrow().get(id).cloned())
-}
-#[cfg(feature = "gui-e2e")]
-pub fn recorded_switch_help(id: &str) -> Option<String> {
-    SWITCH_HELP.with(|m| m.borrow().get(id).cloned())
 }

@@ -19,7 +19,6 @@ pub(super) struct SmartConsentAlert {
     pub alert_return_focus: super::overlay_focus::AlertReturnFocus,
 }
 
-
 impl KagiApp {
     pub(super) fn settings_smart_consent(&self) -> Option<&SmartConsentAlert> {
         self.settings_controls.smart_consent.as_ref()
@@ -93,8 +92,13 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.settings_controls.view.clone() else { return };
-        let request = self.settings_controls.reset_request.take()
+        let Some(view) = self.settings_controls.view.clone() else {
+            return;
+        };
+        let request = self
+            .settings_controls
+            .reset_request
+            .take()
             .unwrap_or_else(|| view.read(cx).analyze_request(cx));
         self.save_analyze_request(request, reset, window, cx);
     }
@@ -106,21 +110,41 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = if reset { settings::DEFAULT_ANALYZE_IGNORE } else { request.text.as_ref() };
+        let text = if reset {
+            settings::DEFAULT_ANALYZE_IGNORE
+        } else {
+            request.text.as_ref()
+        };
         let result = match settings::write_analyze_ignore(text) {
             Ok(()) => {
                 self.settings_controls.saved_ignore = Some(text.to_owned());
-                self.push_toast_for(super::toast_stack::ToastSubject::Settings, ToastKind::Info, Msg::SettingsAnalyzeIgnoreSaved.t(), cx);
+                self.push_toast_for(
+                    super::toast_stack::ToastSubject::Settings,
+                    ToastKind::Info,
+                    Msg::SettingsAnalyzeIgnoreSaved.t(),
+                    cx,
+                );
                 if reset {
-                    kagi_ui_settings::AnalyzeResult::Reset { request, text: settings::DEFAULT_ANALYZE_IGNORE.into() }
+                    kagi_ui_settings::AnalyzeResult::Reset {
+                        request,
+                        text: settings::DEFAULT_ANALYZE_IGNORE.into(),
+                    }
                 } else {
                     kagi_ui_settings::AnalyzeResult::Saved(request)
                 }
             }
             Err(error) => {
                 let message = super::i18n::analyze_ignore_failed_fmt(&error.to_string());
-                self.push_toast_for(super::toast_stack::ToastSubject::Settings, ToastKind::Error, message.clone(), cx);
-                kagi_ui_settings::AnalyzeResult::Failed { request, error: message.into() }
+                self.push_toast_for(
+                    super::toast_stack::ToastSubject::Settings,
+                    ToastKind::Error,
+                    message.clone(),
+                    cx,
+                );
+                kagi_ui_settings::AnalyzeResult::Failed {
+                    request,
+                    error: message.into(),
+                }
             }
         };
         if let Some(view) = &self.settings_controls.view {
@@ -131,7 +155,10 @@ impl KagiApp {
     }
 
     pub(super) fn analyze_ignore_dirty(&self, cx: &App) -> bool {
-        self.settings_controls.view.as_ref().is_some_and(|view| view.read(cx).analyze_dirty(cx))
+        self.settings_controls
+            .view
+            .as_ref()
+            .is_some_and(|view| view.read(cx).analyze_dirty(cx))
     }
 }
 

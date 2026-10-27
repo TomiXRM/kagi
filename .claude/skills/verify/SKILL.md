@@ -21,8 +21,17 @@ The `?story=settings` verification host mounts `kagi-ui-settings::SettingsView`,
 the same entity used by native Settings; it does not copy its input handlers.
 Its deterministic adapter records typed requests and seeds effective values
 without native persistence. A request count proves dispatch, not native durability.
-Use the script's nightly WASM toolchain (`wasm_thread` requires it), and install
-the pinned Playwright Chromium runtime before testing.
+Use pinned `nightly-2026-10-18` (`wasm_thread` requires nightly) and
+`wasm-bindgen-cli 0.2.123`; install the pinned Playwright Chromium runtime before
+testing. The host embeds the exact pinned component icon bytes using the
+component asset crate's published build metadata, not network/CDN replacements.
+The matrix covers all eight panes at EN/JA × Apple Light/Dark × normal/narrow/
+167% zoom, real pointer/keyboard input, focus vs selection/ON, and retained
+Analyze drafts with delayed/error host results. The fixture's close/reopen means
+retaining the view while unmounted; native window/consent lifecycle still needs
+Tier A. Run the entire `npx playwright test --workers=1` suite to include the
+existing inspector resize story. WASM input uses the non-macOS keymap (Ctrl+A);
+type real key events rather than `insertText`, which bypasses that platform path.
 
 For the advisory conflict formal guard, run
 `mise exec java@temurin-21 -- uv run --project formal/conflict formal/conflict/run.sh`.

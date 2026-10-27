@@ -32,7 +32,8 @@ pub(crate) fn probe(
     cx.update_window(window, |_, window, cx| {
         kagi::ui::settings_view::settings_view_for_window_for_e2e(window, cx)
             .and_then(|view| view.read(cx).control_probe(id))
-    }).unwrap()
+    })
+    .unwrap()
 }
 
 pub(crate) fn bounds(
@@ -40,7 +41,8 @@ pub(crate) fn bounds(
     window: AnyWindowHandle,
     id: &str,
 ) -> Option<gpui::Bounds<gpui::Pixels>> {
-    probe(cx, window, id).map(|probe| probe.bounds)
+    probe(cx, window, id)
+        .map(|probe| probe.bounds)
         .or_else(|| e2e::control_bounds(window.window_id(), id))
 }
 
@@ -105,7 +107,10 @@ fn focus(
     cx.update_window(window, |_, w, cx| {
         let view = app.read(cx).settings_entity().unwrap();
         let id = if models {
-            format!("sc-model-{}", app.read(cx).smart_commit.detected_models[slot])
+            format!(
+                "sc-model-{}",
+                app.read(cx).smart_commit.detected_models[slot]
+            )
         } else {
             format!("sc-provider-{}", ["ollama", "claude-code", "codex"][slot])
         };
@@ -130,18 +135,29 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
         let tabs = cx.read(|cx| {
             let view = app.read(cx).settings_entity().unwrap();
             ["ollama", "claude-code", "codex"].map(|slug| {
-                view.read(cx).control_probe(&format!("sc-provider-{slug}")).unwrap()
+                view.read(cx)
+                    .control_probe(&format!("sc-provider-{slug}"))
+                    .unwrap()
             })
         });
         assert_eq!(tabs.len(), 3, "all providers remain visible");
         assert_eq!(tabs.iter().filter(|t| t.selected).count(), 1);
-        assert!(tabs.iter().all(|t| t.role == gpui::Role::RadioButton && !t.name.is_empty()));
-        assert!(tabs[2].name.contains(&i18n::provider_not_found_hint("Codex")));
+        assert!(tabs
+            .iter()
+            .all(|t| t.role == gpui::Role::RadioButton && !t.name.is_empty()));
+        assert_eq!(tabs[2].name, "Codex");
+        assert!(probe(cx, window, "settings-provider-help")
+            .unwrap()
+            .value
+            .contains(&i18n::provider_not_found_hint("Codex")));
         assert!(tabs[2].disabled && !tabs[2].selected);
         focus(cx, app, window, false, 0);
         keys(cx, window, "right");
-        assert_eq!(cx.read(|cx| app.read(cx).smart_commit.provider), SmartProvider::Ollama,
-            "roving focus does not select a provider");
+        assert_eq!(
+            cx.read(|cx| app.read(cx).smart_commit.provider),
+            SmartProvider::Ollama,
+            "roving focus does not select a provider"
+        );
         keys(cx, window, "enter");
         assert_eq!(
             cx.read(|cx| app.read(cx).smart_commit.provider),
@@ -154,8 +170,10 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
         draw(cx, window);
         keys(cx, window, "right");
         let unavailable = probe(cx, window, "sc-provider-codex").unwrap();
-        assert!(unavailable.focused && unavailable.disabled && !unavailable.selected,
-            "unavailable choices explain themselves without becoming selected");
+        assert!(
+            unavailable.focused && unavailable.disabled && !unavailable.selected,
+            "unavailable choices explain themselves without becoming selected"
+        );
         keys(cx, window, "space");
         assert_ne!(
             settings::read_setting("smart_commit_provider").as_deref(),
@@ -174,7 +192,9 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             assert_eq!(
                 cx.read(|cx| {
                     let view = app.read(cx).settings_entity().unwrap();
-                    view.read(cx).control_probes().iter()
+                    view.read(cx)
+                        .control_probes()
+                        .iter()
                         .filter(|probe| probe.id.starts_with("sc-model-") && probe.selected)
                         .count()
                 }),
@@ -202,26 +222,46 @@ fn provider_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: An
             let selected_model = cx.read(|cx| app.read(cx).smart_commit.model.clone());
             let persisted_model = settings::read_setting("smart_commit_model");
             app.update(cx, |app, cx| {
-                app.smart_commit.provider = SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode);
+                app.smart_commit.provider =
+                    SmartProvider::Cli(kagi_git::message_gen::CliProvider::ClaudeCode);
                 app.seed_settings(cx);
             });
             draw(cx, window);
-            assert!(probe(cx, window, "sc-provider-claude-code").unwrap().focused,
-                "a hidden model group repairs focus to the effective provider");
-            assert!(!cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx)
-                .control_probes().iter().any(|probe| probe.id.starts_with("sc-model-"))));
-            assert_eq!(settings::read_setting("smart_commit_model"), persisted_model,
-                "focus repair cannot persist a different model");
+            assert!(
+                probe(cx, window, "sc-provider-claude-code")
+                    .unwrap()
+                    .focused,
+                "a hidden model group repairs focus to the effective provider"
+            );
+            assert!(!cx.read(|cx| app
+                .read(cx)
+                .settings_entity()
+                .unwrap()
+                .read(cx)
+                .control_probes()
+                .iter()
+                .any(|probe| probe.id.starts_with("sc-model-"))));
+            assert_eq!(
+                settings::read_setting("smart_commit_model"),
+                persisted_model,
+                "focus repair cannot persist a different model"
+            );
             app.update(cx, |app, cx| {
                 app.smart_commit.provider = SmartProvider::Ollama;
                 app.smart_commit.detected_models.clear();
                 app.seed_settings(cx);
             });
             draw(cx, window);
-            let unavailable = probe(cx, window, &format!("sc-model-{}", selected_model.unwrap())).unwrap();
-            assert!(unavailable.selected && unavailable.disabled,
-                "a saved unavailable model stays visible rather than silently selecting another");
-            assert_eq!(settings::read_setting("smart_commit_model"), persisted_model);
+            let unavailable =
+                probe(cx, window, &format!("sc-model-{}", selected_model.unwrap())).unwrap();
+            assert!(
+                unavailable.selected && unavailable.disabled,
+                "a saved unavailable model stays visible rather than silently selecting another"
+            );
+            assert_eq!(
+                settings::read_setting("smart_commit_model"),
+                persisted_model
+            );
         }
     }
 }
@@ -237,7 +277,8 @@ pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name
     let viewport = if name.starts_with("settings-pane-") || probe(cx, window, name).is_none() {
         cx.update_window(window, |_, w, _| {
             gpui::Bounds::new(gpui::point(gpui::px(0.), gpui::px(0.)), w.viewport_size())
-        }).unwrap()
+        })
+        .unwrap()
     } else {
         self::bounds(cx, window, "settings-detail-scroll").expect("production detail viewport")
     };
@@ -358,11 +399,20 @@ fn dismissal_keeps_settings_commands(
     // The sidebar uses manual selection: arrows move focus, Enter selects.
     click(cx, window, "settings-pane-analyze");
     keys(cx, window, "up");
-    assert_eq!(settings::read_setting("settings_pane").as_deref(), Some("analyze"));
+    assert_eq!(
+        settings::read_setting("settings_pane").as_deref(),
+        Some("analyze")
+    );
     keys(cx, window, "enter");
-    assert_eq!(settings::read_setting("settings_pane").as_deref(), Some("smart_commit"));
+    assert_eq!(
+        settings::read_setting("settings_pane").as_deref(),
+        Some("smart_commit")
+    );
     keys(cx, window, "down enter");
-    assert_eq!(settings::read_setting("settings_pane").as_deref(), Some("analyze"));
+    assert_eq!(
+        settings::read_setting("settings_pane").as_deref(),
+        Some("analyze")
+    );
     cx.simulate_keystrokes(window, "cmd-w");
     cx.run_until_parked();
     assert!(
@@ -416,9 +466,18 @@ fn unwritable_directory(
         assert_eq!(error.kind, ToastKind::Error);
         assert!(error.message.contains("Permission denied"));
         assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
-        assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), baseline);
-        assert_eq!(cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()), "draft-ignore\n");
-        assert!(probe(cx, window, "settings-analyze-error").unwrap().value.contains("Permission denied"));
+        assert_eq!(
+            cx.read(|cx| view.read(cx).analyze_baseline().to_string()),
+            baseline
+        );
+        assert_eq!(
+            cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()),
+            "draft-ignore\n"
+        );
+        assert!(probe(cx, window, "settings-analyze-error")
+            .unwrap()
+            .value
+            .contains("Permission denied"));
         drop(restore);
         assert_eq!(std::fs::read(path).unwrap(), b"saved bytes");
         dismiss_feedback(cx, app, window);
@@ -470,12 +529,22 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
         assert!(error.message.contains("directory") || error.message.contains("Directory"));
         assert!(error.message.chars().count() <= 241);
         assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
-        assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), baseline,
-            "failed Save and Reset cannot acknowledge a new baseline");
-        assert_eq!(probe(cx, window, "settings-analyze-status").unwrap().value,
-            Msg::SettingsAnalyzeIgnoreUnsaved.t());
-        assert!(probe(cx, window, "settings-analyze-error").unwrap().value.contains("analyze_ignore"),
-            "the authoritative OS failure is visible inline as well as in feedback");
+        assert_eq!(
+            cx.read(|cx| view.read(cx).analyze_baseline().to_string()),
+            baseline,
+            "failed Save and Reset cannot acknowledge a new baseline"
+        );
+        assert_eq!(
+            probe(cx, window, "settings-analyze-status").unwrap().value,
+            Msg::SettingsAnalyzeIgnoreUnsaved.t()
+        );
+        assert!(
+            probe(cx, window, "settings-analyze-error")
+                .unwrap()
+                .value
+                .contains("analyze_ignore"),
+            "the authoritative OS failure is visible inline as well as in feedback"
+        );
         assert_eq!(
             cx.read(|cx| input.read(cx).value().to_string()),
             "draft-ignore\n",

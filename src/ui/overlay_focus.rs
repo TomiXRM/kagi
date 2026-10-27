@@ -19,7 +19,7 @@
 //! plan modal without a text field therefore asks for the root on open, the
 //! same rule the conflict Abort confirmation follows (#755).
 
-use gpui::{Context, FocusHandle, SharedString, Window};
+use gpui::{Context, FocusHandle, Window};
 
 use super::commands::MenuOverlay;
 use super::front_layer::FrontLayer;

@@ -302,10 +302,18 @@ pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
         )),
         "Command-Period on a theme card must not close Settings"
     );
-    assert!(cx.read(|cx| {
-        app.read(cx).settings_entity().unwrap().read(cx)
-            .control_probe(&card).unwrap().selected
-    }), "cancellation must preserve the selected theme card");
+    assert!(
+        cx.read(|cx| {
+            app.read(cx)
+                .settings_entity()
+                .unwrap()
+                .read(cx)
+                .control_probe(&card)
+                .unwrap()
+                .selected
+        }),
+        "cancellation must preserve the selected theme card"
+    );
     assert_eq!(theme::theme().slug, before);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS command_period_settings_select");

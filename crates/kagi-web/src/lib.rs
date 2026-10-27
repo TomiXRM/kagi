@@ -6,6 +6,8 @@
 
 use gpui::{div, prelude::*, px, rems, rgb, SharedString, Window};
 #[cfg(target_family = "wasm")]
+mod assets;
+#[cfg(target_family = "wasm")]
 mod settings_fixture;
 
 /// Catalog root: one story per known layout-regression class.
@@ -108,7 +110,7 @@ mod web {
         let _ = console_log::init_with_level(log::Level::Info);
 
         gpui_platform::web_init();
-        let app = gpui_platform::single_threaded_web();
+        let app = gpui_platform::single_threaded_web().with_assets(assets::Assets);
         // Keep the app alive for the page's lifetime (same workaround as
         // upstream story-web): leak the Rc so drop never runs.
         let app = {
@@ -161,6 +163,7 @@ mod web {
 
     #[wasm_bindgen]
     pub fn settings_command(command: &str, value: Option<String>) -> Result<(), JsValue> {
-        settings_fixture::command(command, value.as_deref()).map_err(|error| JsValue::from_str(&error))
+        settings_fixture::command(command, value.as_deref())
+            .map_err(|error| JsValue::from_str(&error))
     }
 }

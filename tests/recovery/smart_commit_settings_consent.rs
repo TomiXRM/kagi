@@ -30,7 +30,10 @@ fn settle(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     }
 }
 
-fn settings_body(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> gpui::Bounds<gpui::Pixels> {
+fn settings_body(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+) -> gpui::Bounds<gpui::Pixels> {
     crate::settings_controls::bounds(cx, window, "settings-detail-scroll")
         .expect("the production Settings detail viewport")
 }
@@ -192,7 +195,9 @@ fn assert_declined(
     assert_switch(cx, host, false);
     assert_no_post(server);
     assert!(
-        crate::settings_controls::probe(cx, host, "sc-enabled-toggle").unwrap().focused,
+        crate::settings_controls::probe(cx, host, "sc-enabled-toggle")
+            .unwrap()
+            .focused,
         "decline returns focus to the owning Settings switch"
     );
 }
@@ -288,7 +293,10 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     assert_no_post(&server);
     host = open_settings(cx, root, native);
     assert_switch(cx, host, false);
-    assert_eq!(cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()), retained);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).settings_entity().unwrap().entity_id()),
+        retained
+    );
     assert!(
         e2e::control_bounds(host.window_id(), "settings-smart-consent-alert").is_none(),
         "reopening retains the view but never resurrects the closed host's consent"
@@ -311,7 +319,9 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     assert_switch(cx, host, true);
     assert_no_post(&server);
     assert!(
-        crate::settings_controls::probe(cx, host, "sc-enabled-toggle").unwrap().focused,
+        crate::settings_controls::probe(cx, host, "sc-enabled-toggle")
+            .unwrap()
+            .focused,
         "Confirm restores Settings focus"
     );
 

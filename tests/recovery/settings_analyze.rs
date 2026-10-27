@@ -326,11 +326,17 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
 }
 fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     assert_eq!(
-        crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
         Msg::SettingsAnalyzeIgnoreClean.t(),
         "clean draft has explicit localized state"
     );
-    assert!(crate::settings_controls::probe(cx, window, "settings-analyze-save").unwrap().disabled);
+    assert!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-save")
+            .unwrap()
+            .disabled
+    );
     click(cx, window, "settings-analyze-save");
     assert!(
         cx.read(|cx| app
@@ -347,11 +353,19 @@ fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
     draft(cx, app, window, "saved-pattern\n");
     assert!(!cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
-    assert_eq!(crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
-        Msg::SettingsAnalyzeIgnoreClean.t());
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreClean.t()
+    );
     draft(cx, app, window, "unsaved-pattern\n");
-    assert_eq!(crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
-        Msg::SettingsAnalyzeIgnoreUnsaved.t());
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreUnsaved.t()
+    );
     click(cx, window, "settings-pane-appearance");
     click(cx, window, "settings-pane-analyze");
     assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
@@ -368,13 +382,25 @@ fn save_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWin
     );
     click(cx, window, "settings-analyze-save");
     assert_eq!(settings::read_analyze_ignore_text(), "unsaved-pattern\n");
-    assert_eq!(crate::settings_controls::probe(cx, window, "settings-analyze-status").unwrap().value,
-        Msg::SettingsAnalyzeIgnoreSaved.t());
-    assert!(crate::settings_controls::probe(cx, window, "settings-analyze-save").unwrap().disabled);
+    assert_eq!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-status")
+            .unwrap()
+            .value,
+        Msg::SettingsAnalyzeIgnoreSaved.t()
+    );
+    assert!(
+        crate::settings_controls::probe(cx, window, "settings-analyze-save")
+            .unwrap()
+            .disabled
+    );
     stale_analyze_result(cx, app, window);
 }
 
-fn stale_analyze_result(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+fn stale_analyze_result(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     let view = cx.read(|cx| app.read(cx).settings_entity().unwrap());
     draft(cx, app, window, "captured-save\n");
     let request = cx.read(|cx| view.read(cx).analyze_request(cx));
@@ -384,12 +410,23 @@ fn stale_analyze_result(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, wi
     draft(cx, app, window, "newer-draft\n");
     cx.update_window(window, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.seed_analyze_result(kagi_ui_settings::AnalyzeResult::Saved(request.clone()), window, cx);
+            view.seed_analyze_result(
+                kagi_ui_settings::AnalyzeResult::Saved(request.clone()),
+                window,
+                cx,
+            );
         });
-    }).unwrap();
+    })
+    .unwrap();
     draw(cx, window);
-    assert_eq!(cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()), "newer-draft\n");
-    assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), "captured-save\n");
+    assert_eq!(
+        cx.read(|cx| view.read(cx).analyze_request(cx).text.to_string()),
+        "newer-draft\n"
+    );
+    assert_eq!(
+        cx.read(|cx| view.read(cx).analyze_baseline().to_string()),
+        "captured-save\n"
+    );
     assert!(cx.read(|cx| view.read(cx).analyze_dirty(cx)));
     assert_eq!(settings::read_analyze_ignore_text(), "captured-save\n");
     click(cx, window, "settings-analyze-save");
@@ -398,30 +435,70 @@ fn stale_analyze_result(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, wi
         view.update(cx, |view, cx| {
             view.seed_analyze_result(kagi_ui_settings::AnalyzeResult::Saved(request), window, cx);
         });
-    }).unwrap();
-    assert_eq!(cx.read(|cx| view.read(cx).analyze_baseline().to_string()), "newer-draft\n",
-        "an older acknowledgement cannot roll back the newer accepted baseline");
+    })
+    .unwrap();
+    assert_eq!(
+        cx.read(|cx| view.read(cx).analyze_baseline().to_string()),
+        "newer-draft\n",
+        "an older acknowledgement cannot roll back the newer accepted baseline"
+    );
     assert!(!cx.read(|cx| view.read(cx).analyze_dirty(cx)));
 }
 fn help_leg(cx: &mut VisualTestAppContext, _app: &Entity<KagiApp>, window: AnyWindowHandle) {
     for (pane, id, text) in [
-        ("graph", "settings-avatar-help", Msg::SettingsLaneCompactDesc),
+        (
+            "graph",
+            "settings-avatar-help",
+            Msg::SettingsLaneCompactDesc,
+        ),
         ("graph", "settings-copy-help", Msg::SettingsGraphCopyDesc),
         ("network", "settings-fetch-help", Msg::SettingsAutoFetchDesc),
-        ("appearance", "settings-motion-help", Msg::SettingsReduceMotionDesc),
-        ("terminal", "settings-terminal-lock-help", Msg::SettingsTerminalAutoLockDesc),
-        ("appearance", "settings-custom-themes-help", Msg::SettingsCustomThemesDesc),
-        ("smart_commit", "settings-smart-enable-help", Msg::SettingsSmartEnableDesc),
-        ("smart_commit", "settings-provider-help", Msg::SettingsSmartProviderDesc),
-        ("analyze", "settings-analyze-help", Msg::SettingsAnalyzeIgnoreDesc),
+        (
+            "appearance",
+            "settings-motion-help",
+            Msg::SettingsReduceMotionDesc,
+        ),
+        (
+            "terminal",
+            "settings-terminal-lock-help",
+            Msg::SettingsTerminalAutoLockDesc,
+        ),
+        (
+            "appearance",
+            "settings-custom-themes-help",
+            Msg::SettingsCustomThemesDesc,
+        ),
+        (
+            "smart_commit",
+            "settings-smart-enable-help",
+            Msg::SettingsSmartEnableDesc,
+        ),
+        (
+            "smart_commit",
+            "settings-provider-help",
+            Msg::SettingsSmartProviderDesc,
+        ),
+        (
+            "analyze",
+            "settings-analyze-help",
+            Msg::SettingsAnalyzeIgnoreDesc,
+        ),
     ] {
         click(cx, window, &format!("settings-pane-{pane}"));
-        let help = crate::settings_controls::probe(cx, window, id).expect("full help rendered without hover");
-        let viewport = crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
-        assert_eq!(help.value, text.t(), "the rendered help contains the full localized explanation");
+        let help = crate::settings_controls::probe(cx, window, id)
+            .expect("full help rendered without hover");
+        let viewport =
+            crate::settings_controls::bounds(cx, window, "settings-detail-scroll").unwrap();
+        assert_eq!(
+            help.value,
+            text.t(),
+            "the rendered help contains the full localized explanation"
+        );
         assert!(help.bounds.size.height > gpui::px(0.));
-        assert!(help.bounds.left() >= viewport.left() && help.bounds.right() <= viewport.right(),
-            "{id} wraps inside the production detail column");
+        assert!(
+            help.bounds.left() >= viewport.left() && help.bounds.right() <= viewport.right(),
+            "{id} wraps inside the production detail column"
+        );
     }
 }
 pub fn scenario_settings_analyze_reset_confirm(cx: &mut VisualTestAppContext) {
@@ -445,7 +522,8 @@ fn portable_reset_leg(
     draft(cx, app, window, "portable-draft\n");
     let frame = crate::settings_controls::bounds(cx, window, "settings-frame").unwrap();
     for _ in 0..12 {
-        let bounds = crate::settings_controls::bounds(cx, window, "settings-analyze-reset").unwrap();
+        let bounds =
+            crate::settings_controls::bounds(cx, window, "settings-analyze-reset").unwrap();
         if frame.contains(&bounds.center()) {
             cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
             break;

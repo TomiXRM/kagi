@@ -123,7 +123,13 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
             app.update(cx, |app, cx| app.seed_settings(cx));
             for policy in [ScrollbarShow::Always, ScrollbarShow::Scrolling] {
                 cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = policy);
-                let handle = cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).scroll_handle());
+                let handle = cx.read(|cx| {
+                    app.read(cx)
+                        .settings_entity()
+                        .unwrap()
+                        .read(cx)
+                        .scroll_handle()
+                });
                 handle.set_offset(point(px(0.), px(0.)));
                 // Start auto-hide's visibility interval through the actual owner.
                 draw(cx, win);
@@ -131,7 +137,8 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
                     handle.set_offset(point(px(0.), px(-1.)));
                     draw(cx, win);
                 }
-                let sidebar_before = crate::settings_controls::bounds(cx, win, "settings-pane-appearance").unwrap();
+                let sidebar_before =
+                    crate::settings_controls::bounds(cx, win, "settings-pane-appearance").unwrap();
                 drag(cx, win, "settings-detail-scroll", &handle);
                 assert_eq!(
                     crate::settings_controls::bounds(cx, win, "settings-pane-appearance").unwrap(),
@@ -157,7 +164,13 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
     .unwrap();
     draw(cx, win);
     assert_eq!(
-        cx.read(|cx| app.read(cx).settings_entity().unwrap().read(cx).scroll_handle().offset()),
+        cx.read(|cx| app
+            .read(cx)
+            .settings_entity()
+            .unwrap()
+            .read(cx)
+            .scroll_handle()
+            .offset()),
         gpui::Point::default(),
         "reopening Settings reveals the first controls"
     );

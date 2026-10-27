@@ -36,20 +36,20 @@ impl SettingsView {
             |(slug, selected, focused, zoom, count)| {
                 slug != &self.snapshot.theme_slug
                     || *selected != selected_index
-                    || *focused != focused_index
+                    || (focused_index.is_some() && *focused != focused_index)
                     || *zoom != self.snapshot.zoom
                     || *count != themes.len()
             },
         ) {
             self.theme_scroll.scroll_to_item(target);
-            self.theme_reveal = Some((
-                self.snapshot.theme_slug.clone(),
-                selected_index,
-                focused_index,
-                self.snapshot.zoom,
-                themes.len(),
-            ));
         }
+        self.theme_reveal = Some((
+            self.snapshot.theme_slug.clone(),
+            selected_index,
+            focused_index,
+            self.snapshot.zoom,
+            themes.len(),
+        ));
         let mut cards = div()
             .id("settings-theme-cards")
             .role(Role::RadioGroup)

@@ -453,7 +453,6 @@ for (const [language, appearance, zoom] of [
     const thresholdRow = control("settings-threshold-row");
     const motionRow = control("settings-motion-row");
     contains(viewport, zoomRow);
-    contains(viewport, thresholdRow);
     for (const [row, ids] of [
       [zoomRow, ["settings-zoom-help", "zoom-dec", "zoom-value", "zoom-inc"]],
       [thresholdRow, ["settings-threshold-help", "compact-threshold-dec", "compact-threshold-value", "compact-threshold-inc", "compact-threshold-help"]],
@@ -481,6 +480,11 @@ for (const [language, appearance, zoom] of [
       body: Buffer.from(JSON.stringify(state.controls.filter(control => /zoom|threshold|motion/.test(control.id)), null, 2)),
       contentType: "application/json",
     });
+    // At 167%, both complete rows need separate viewport positions.
+    // Preserve strict containment instead of requiring simultaneous visibility.
+    await reveal(page, "settings-threshold-row");
+    contains(viewport, await probe(page, "settings-threshold-row"));
+    await info.attach(`${language}-${zoom}-threshold-row.png`, { body: await page.screenshot(), contentType: "image/png" });
 
     await page.mouse.wheel(0, 100000);
     await frames(page);
@@ -730,6 +734,9 @@ for (const [language, appearance, zoom] of [
     expect(browsedX).toBeLessThan(firstX);
     await host(page, "reseed");
     expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
+    await click(page, "settings-pane-appearance");
+    expect((await probe(page, cards[0].id)).x).toBeCloseTo(browsedX);
+    await page.mouse.move(strip.x + strip.width / 2, strip.y + strip.height / 2);
     const beforeVertical = (await observed(page)).scrollY;
     await page.mouse.wheel(0, 120); await frames(page);
     expect((await observed(page)).scrollY).toBeLessThan(beforeVertical);
